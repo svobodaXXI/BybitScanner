@@ -148,9 +148,8 @@ def draw_chart(
 
 
         geometry = result.get(
-            "geometry",
-            {}
-        )
+            "geometry"
+        ) or {}
 
 
         upper_data = geometry.get(

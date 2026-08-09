@@ -146,9 +146,8 @@ def save_report(
 
 
         geometry = result.get(
-            "geometry",
-            {}
-        )
+            "geometry"
+        ) or {}
 
 
         validation = result.get(

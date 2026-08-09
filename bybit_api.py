@@ -4,6 +4,7 @@ bybit_api.py
 Data Layer BybitScanner.
 
 Отвечает только за:
+- получение списка активных Bybit USDT perpetual инструментов;
 - получение рыночных данных Bybit;
 - преобразование данных в DataFrame.
 
@@ -14,7 +15,6 @@ Data Layer BybitScanner.
 - Signal;
 - Telegram.
 """
-
 
 from pybit.unified_trading import HTTP
 import pandas as pd
@@ -44,21 +44,86 @@ session.client.trust_env = False
 # ==================================================
 
 def get_symbols():
+    """
+    Возвращает актуальный список активных
+    Bybit USDT Linear Perpetual инструментов.
 
-    data = session.get_tickers(
-        category=BYBIT_CATEGORY
-    )
+    Источник:
+    Bybit Instruments Info.
+
+    Используется pagination, чтобы не потерять
+    инструменты при количестве больше лимита API.
+    """
 
     symbols = []
+    cursor = None
 
-    for item in data["result"]["list"]:
+    while True:
 
-        symbol = item["symbol"]
+        params = {
+            "category": BYBIT_CATEGORY,
+            "limit": 1000
+        }
 
-        if symbol.endswith("USDT"):
-            symbols.append(symbol)
+        if cursor:
+            params["cursor"] = cursor
 
-    symbols.sort()
+        data = session.get_instruments_info(
+            **params
+        )
+
+        result = data.get(
+            "result",
+            {}
+        )
+
+        items = result.get(
+            "list",
+            []
+        )
+
+        for item in items:
+
+            symbol = item.get(
+                "symbol",
+                ""
+            )
+
+            quote_coin = item.get(
+                "quoteCoin",
+                ""
+            )
+
+            contract_type = item.get(
+                "contractType",
+                ""
+            )
+
+            status = item.get(
+                "status",
+                ""
+            )
+
+            if (
+                quote_coin == "USDT"
+                and contract_type == "LinearPerpetual"
+                and status == "Trading"
+                and symbol
+            ):
+                symbols.append(
+                    symbol
+                )
+
+        cursor = result.get(
+            "nextPageCursor"
+        )
+
+        if not cursor:
+            break
+
+    symbols = sorted(
+        set(symbols)
+    )
 
     return symbols
 
@@ -72,6 +137,10 @@ def get_candles(
     interval,
     limit
 ):
+    """
+    Загружает свечи Bybit
+    и возвращает pandas DataFrame.
+    """
 
     try:
 
@@ -89,14 +158,10 @@ def get_candles(
         )
 
         if not rows:
-
             return pd.DataFrame()
 
-
         df = pd.DataFrame(
-
             rows,
-
             columns=[
                 "time",
                 "open",
@@ -106,52 +171,38 @@ def get_candles(
                 "volume",
                 "turnover"
             ]
-
         )
 
-
         numeric = [
-
             "open",
             "high",
             "low",
             "close",
             "volume"
-
         ]
-
 
         for column in numeric:
 
             df[column] = pd.to_numeric(
-
                 df[column],
-
                 errors="coerce"
-
             )
-
 
         df = df.dropna(
             subset=numeric
         )
 
-
         if df.empty:
-
             return pd.DataFrame()
-
 
         df["time"] = pd.to_numeric(
             df["time"],
             errors="coerce"
         )
 
-
         df = df.dropna(
             subset=["time"]
         )
-
 
         df = df.sort_values(
             "time"
@@ -159,9 +210,7 @@ def get_candles(
             drop=True
         )
 
-
         return df
-
 
     except Exception as error:
 

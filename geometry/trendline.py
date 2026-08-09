@@ -130,15 +130,6 @@ def fit_trendline(points):
 
 
 
-    debug(
-        "TRENDLINE",
-        "slope=",
-        slope,
-        "intercept=",
-        intercept,
-        "points=",
-        clean_points
-    )
 
 
 

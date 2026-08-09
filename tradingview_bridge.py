@@ -67,9 +67,8 @@ def extract_geometry(result):
     """
 
     geometry = result.get(
-        "geometry",
-        {}
-    )
+        "geometry"
+    ) or {}
 
     return {
 

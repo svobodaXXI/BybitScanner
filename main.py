@@ -1,45 +1,43 @@
-﻿"""
+"""
 main.py
 
 Точка входа BybitScanner.
 
 Текущий режим:
 
-- тестовый запуск;
-- анализ 5 выбранных альткоинов;
+- получение актуальных Bybit USDT Linear Perpetual инструментов;
+- ограниченный тестовый запуск через MAX_SYMBOLS;
+- анализ выбранных инструментов;
 - адаптация найденного сигнала;
 - сохранение сигнала в памяти;
-- Telegram test mode;
+- Telegram production mode;
 - компактный вывод в консоль.
 """
 
 import config
 
 from analyzer import analyze_symbol
-from config import MODE, MIN_SCORE
+from bybit_api import get_symbols
+from config import MODE, MIN_SCORE, MAX_SYMBOLS
 
 from signal_adapter import prepare_signal
 from signal_memory import update_signal
 from notification import send_signal
 
 
-TEST_SYMBOLS = [
-    "1000PEPEUSDT",
-    "WIFUSDT",
-    "BONKUSDT",
-    "DOGSUSDT",
-    "NOTUSDT",
-]
-
-
 def main():
+    symbols = get_symbols()
+
+    if MAX_SYMBOLS is not None:
+        symbols = symbols[:MAX_SYMBOLS]
+
     print("=" * 60)
     print("BybitScanner")
     print("=" * 60)
 
     print(f"Mode              : {MODE}")
     print(f"Minimum Score     : {MIN_SCORE}")
-    print(f"Symbols           : {len(TEST_SYMBOLS)}")
+    print(f"Symbols           : {len(symbols)}")
     print(
         "Telegram Test     : "
         f"{config.TELEGRAM_TEST_MODE}"
@@ -48,7 +46,7 @@ def main():
     print("=" * 60)
     print()
 
-    for symbol in TEST_SYMBOLS:
+    for symbol in symbols:
         try:
             analysis_result = analyze_symbol(symbol)
 
