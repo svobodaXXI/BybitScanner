@@ -1,0 +1,2322 @@
+{
+    ".gitignore.py": {
+        "size": 84,
+        "hash": "bc3e0b288e2f355654b04ff77d6819c43a48a17998fd4eccc8904026431cb94b"
+    },
+    "alerts.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "analyzer.py": {
+        "size": 4487,
+        "hash": "b5c1f1c86b4d154693f3a40796b739c3ea4476ca90758282cb445af0bd94c9cf"
+    },
+    "breakout.py": {
+        "size": 2570,
+        "hash": "6f795b0831df5f7443f64efd20537397eb9891505160598f2ab1ad35fadedbc8"
+    },
+    "bybit_api.py": {
+        "size": 2053,
+        "hash": "eeef166bbdc54958ed6df3b0f8510260c3eec194d20a2ade0843f09d17706a06"
+    },
+    "chart.py": {
+        "size": 5267,
+        "hash": "baaa54221b4058b5898b4008f404340f74c3b8cde055e21534bdeb3810c145ba"
+    },
+    "chart_clean.py": {
+        "size": 9960,
+        "hash": "549802fd9f86fc00b8e27ca441b6c1152eb3e23ed62975769e1fe8e4facc33fa"
+    },
+    "confidence.py": {
+        "size": 1771,
+        "hash": "dd6679b189c422c191714ff6881342196a79628af2f05584109a371ae7faf35a"
+    },
+    "config.py": {
+        "size": 2142,
+        "hash": "711193fb2757b99f78ade61a79dda820ac218d716fe5f0c97e5d8fca60c510bd"
+    },
+    "confirmation.py": {
+        "size": 6438,
+        "hash": "a678e908f84c76caa60b77526cb3c783b241aa328b918a88b384a841ca05f252"
+    },
+    "debug.txt": {
+        "size": 399164,
+        "hash": "1f6a8dde7c4d5d302db486c5949e0386fda57be2eabf479b55d87d205adbf62b"
+    },
+    "export_debug.py": {
+        "size": 6369,
+        "hash": "4aa5fccfab1a3dda013f157f48a64f456c88e09cc4b67f64d3527791730b8051"
+    },
+    "float_search.txt": {
+        "size": 210542,
+        "hash": "7d8a8e06b2bcfc0f74011ee9131250624a44b0741f32d67a978c55a32d915f0e"
+    },
+    "geometry.py": {
+        "size": 33,
+        "hash": "b46390743124f387dc271a47744799207aed52edee4d7dfe86d2ee72b4bebb98"
+    },
+    "GEOMETRY_CONTRACT.md": {
+        "size": 5314,
+        "hash": "27cfbe4f796366db99780440077a0e06d8271ebaf30ea63a8841aaf3e430556e"
+    },
+    "importer.py.txt": {
+        "size": 1138,
+        "hash": "14b6a5fe7ede1d0cbc6f2ad9f66d9082562657ea06c8e0c78725e986f461837a"
+    },
+    "indicators.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "main.py": {
+        "size": 1855,
+        "hash": "a2f4c206b76d486fa6579e9cff324ddbedfe91c8018daad7e5fdfb0e45094bb0"
+    },
+    "network.py": {
+        "size": 265,
+        "hash": "d3445f6817e4b6dcdaee8c1b9e78610b6ba61a232a5e613e1a744d9bd392c5ab"
+    },
+    "notification.py": {
+        "size": 1768,
+        "hash": "9f6ce88c3c9b993ea1852791c330c97eeb8c7e79bf38aae1281ebb217bd70b04"
+    },
+    "notification_manager.py": {
+        "size": 2573,
+        "hash": "cc3397843ea1a0cffc04409049f0a708d723d26006f4048fc1b47e30ea5a4b1d"
+    },
+    "pivots.py": {
+        "size": 2285,
+        "hash": "8704aa1a4d2ddf706bacaeb1afe44a4d41b72c8c8380c94b480abdcff8cb883d"
+    },
+    "project_snapshot.py": {
+        "size": 6154,
+        "hash": "fce9a4619286c969436e005ba6fbb7a70f8ac644d232ff7d86079433d9d408f4"
+    },
+    "project_tree.txt": {
+        "size": 233956,
+        "hash": "87b3da9834691dfa102e821cb64b8feb425c7882f6c8883d2bcee0ab9a880e98"
+    },
+    "PROJECT_TREE_CURRENT.txt": {
+        "size": 141634,
+        "hash": "a1c6030d7cac04c06a02d74ff01e206cca9c1f1187120e42655693d31dd0da9e"
+    },
+    "project_tree_raw.txt": {
+        "size": 11290,
+        "hash": "59dedd2cf64a571dbd1140197386137bea6d8f191897096680dae36f72629169"
+    },
+    "ranking.py": {
+        "size": 1765,
+        "hash": "fb38e9c3abcf3e77619b366e48f412abf59338fc239c1121b60b10979219cb0e"
+    },
+    "report.py": {
+        "size": 9273,
+        "hash": "139a91ce46a94d0c8fd797156a96b67bcf45e7104ff8bf1190e1772ff78301f5"
+    },
+    "requirements.txt": {
+        "size": 409,
+        "hash": "e262ab7c14973a351969b66f78263016f6a07012028df1c05e273abbbd807403"
+    },
+    "scanner.py": {
+        "size": 2137,
+        "hash": "c3b1294f0d79791e0edbe21687bef8bf28c2ce02a210954379eb409a7cd51de1"
+    },
+    "signal.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "signals_history.json": {
+        "size": 1223,
+        "hash": "449cb2480ca59638265c550ac1c5e4458c8d443323dcbb2c3b17fdfc05e9644b"
+    },
+    "signal_adapter.py": {
+        "size": 790,
+        "hash": "ef92f4aa835fa114af0f0277b4b0c9029d69e41df56190575401968e2d4dde11"
+    },
+    "signal_memory.py": {
+        "size": 2706,
+        "hash": "df19d12ab7209606db2f6e8193614ef06c567ee83509da35e1941f3225a4e876"
+    },
+    "SNAPSHOT.md": {
+        "size": 18547,
+        "hash": "29ca009badd6f732d90ee0827ee63de18aa322bf59a98f9e3b0b4c3dabbc67b5"
+    },
+    "structure.txt": {
+        "size": 66150,
+        "hash": "2c020d6d6ee19cef551865b0a9a0eb70e41083abfaf8b178bfc12619c5cae698"
+    },
+    "symbols.py": {
+        "size": 458,
+        "hash": "a8e959bcfcbc248bb874a072083ded408a4ab211d053e282e479cd0bf338517e"
+    },
+    "telegram_bot.py": {
+        "size": 1469,
+        "hash": "7871cdea0f0d94685be90641794219c0e5650b7996a8a0e9a123722fc90fd8a8"
+    },
+    "telegram_formatter.py": {
+        "size": 1698,
+        "hash": "da9fd255b58419ef3320ffd4c6f88310c3a7a47fdbd354d592f233b81781f29f"
+    },
+    "test_candidate.py": {
+        "size": 736,
+        "hash": "c42867726ba7902afb95bce49109dc65a2b08948cef88d026c4d245315d6274a"
+    },
+    "test_event_flow.py": {
+        "size": 388,
+        "hash": "01b469ab97e46aa0ced1d2cfd0c3fd294c9792ec2756aff91510d374e4af161b"
+    },
+    "test_formatter.py": {
+        "size": 455,
+        "hash": "34363607cec809d3d9bfd233e0f0749d9281a409ae7208eb53897535bbcc5356"
+    },
+    "test_notification (2).py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "test_notification.py": {
+        "size": 223,
+        "hash": "b86607fe3a7f4cd338f0be88b4327363a4490ff14607800eb95fb8dbeab29870"
+    },
+    "test_signal_flow.py": {
+        "size": 666,
+        "hash": "190451c66e1b1f34cc5cfad7d6d070e727a99d34d4dc786e490197c0bf8f24cd"
+    },
+    "test_telegram.py": {
+        "size": 2522,
+        "hash": "68df6b835f84977a8dd5e22c347b5023b82e90f14ce0d6446f32940e116a1284"
+    },
+    "test_tradingview_bridge.py": {
+        "size": 3073,
+        "hash": "2e46718246588876f3dceaa8632d82c01ca551e45d32bb3e3edace774528d24a"
+    },
+    "test_tradingview_import.py": {
+        "size": 2229,
+        "hash": "7c1aff1f30393fafe2bfdd3cd09b438418115f3a8b43ed56143ae35be2ce3b98"
+    },
+    "tradingview_bridge.py": {
+        "size": 5258,
+        "hash": "92f1351c236f40d8a3c323f9e1bc90de196f787c53dd3e4fff059686cb936b03"
+    },
+    "trainer.py": {
+        "size": 4974,
+        "hash": "a6c08555b106c7392d984302080173ea6e1cbcdbbb6c863da623a214fbc40051"
+    },
+    "tree.txt": {
+        "size": 14740,
+        "hash": "ed7b7ad82575801b5162db7c9a7cc37ecdefa29f207d440c0bdd3a2c8496e428"
+    },
+    "utils.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "volatility_filter.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "volume_filter.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "wedge_legacy.py": {
+        "size": 7241,
+        "hash": "17bb99adc24778a59c2beb5891eea2256ae1e359ff3404fb5304139172f27db2"
+    },
+    "wedge_legacy_root.py": {
+        "size": 4420,
+        "hash": "74a60c98b273ec2058568f509bc82f5ca12e352c3fdfc1742f7285d8bfd67154"
+    },
+    "Инструкции +комм строка.txt": {
+        "size": 468,
+        "hash": "23bb61ba2b08692b7ae60edc7d3a54614dc791c7fc4e28927c37084869ff7703"
+    },
+    "Токен Телеграм от бота.txt": {
+        "size": 46,
+        "hash": "cfb6099ed0e6d9750d3daca395cc198560d2361aa16bc422c296006cf4eeae69"
+    },
+    ".pytest_cache\\.gitignore": {
+        "size": 37,
+        "hash": "3ed731b65d06150c138e2dadb0be0697550888a6b47eb8c45ecc9adba8b8e9bd"
+    },
+    ".pytest_cache\\CACHEDIR.TAG": {
+        "size": 191,
+        "hash": "37dc88ef9a0abeddbe81053a6dd8fdfb13afb613045ea1eb4a5c815a74a3bde4"
+    },
+    ".pytest_cache\\README.md": {
+        "size": 302,
+        "hash": "73fd6fccdd802c419a6b2d983d6c3173b7da97558ac4b589edec2dfe443db9ad"
+    },
+    "analyzer\\candles.py": {
+        "size": 639,
+        "hash": "96669a2976d410acb8b2278b18dfb114bb0254dbe9d8ebcaaf2989f6b7be1065"
+    },
+    "analyzer\\charts.py": {
+        "size": 404,
+        "hash": "29a2564d17bf0efc65143917c0a08afa79babe497d5613594bbd002d35413514"
+    },
+    "analyzer\\core.py": {
+        "size": 5201,
+        "hash": "da798a21c847bf78189451c4798949373c882d737f05e519c9a3d68d9a6475d5"
+    },
+    "analyzer\\reports.py": {
+        "size": 395,
+        "hash": "f3c73ea88253da109e8a5fd1013326d12391bafbf042ca23465e688787fe0e0e"
+    },
+    "analyzer\\scoring.py": {
+        "size": 506,
+        "hash": "9892943cb5fc3087af9b6328205a96326b0a647872d44a15af252172a466d0e5"
+    },
+    "analyzer\\__init__.py": {
+        "size": 131,
+        "hash": "f348814ba535e2fb9464af11bb6b3494fbbe15264f2e2cf08ad993acdd794ba7"
+    },
+    "Backups\\BybitScanner_Project_Sync_Architecture_Intelligence_Milestone_2026-07-28.zip": {
+        "size": 4949749,
+        "hash": "1ee2ebefadea95b15a4cbd4d6eb98d60c0e44f1f9a6721a34e47b9b14eb99bee"
+    },
+    "Backups\\main_backup_before_notifications.py": {
+        "size": 6528,
+        "hash": "fa74c75109651efed8badc9e57109e36f1e0a954571d44696caa0c492576736a"
+    },
+    "Backups\\main_before_telegram.py": {
+        "size": 4829,
+        "hash": "cea9a8ac734b36c6faf1b6cd172ef0c68175aa59b095805169a3d5d09bdc70d4"
+    },
+    "Backups\\PROJECT_RULES.md": {
+        "size": 8863,
+        "hash": "9fba0be46b22d26a66f60b8fadb0014d9d9c2379fff54cc67da35e6347bfc55e"
+    },
+    "Backups\\README.txt": {
+        "size": 157,
+        "hash": "ba251c049e222f5ed9905b99ec2fd0a7610e5595d043f0a42ef36f5091e2880c"
+    },
+    "Backups\\wedge.py": {
+        "size": 6770,
+        "hash": "183648060d34a38082b5aa72c80a756d6505ff71bdf8fa3f8bcffe903bd8d40e"
+    },
+    "Backups\\wedge_before_geometry20.py": {
+        "size": 6770,
+        "hash": "183648060d34a38082b5aa72c80a756d6505ff71bdf8fa3f8bcffe903bd8d40e"
+    },
+    "charts\\0GUSDT_analysis.png": {
+        "size": 44931,
+        "hash": "a6ce7811f55638181c45f751a915dc1927d65ffdd210815efe9a76353869bf88"
+    },
+    "charts\\1000LUNCUSDT_analysis.png": {
+        "size": 71075,
+        "hash": "eb748f0953b9f9336060007fca4d59877c007747ef66461aa2c0b23bf422c9f3"
+    },
+    "charts\\1000PEPEUSDT_analysis.png": {
+        "size": 73584,
+        "hash": "917bcc37e6a5b873a275e85c7a4ddb07b3838ca593cdcf9565cef0d3e0b0980a"
+    },
+    "charts\\1000RATSUSDT_analysis.png": {
+        "size": 44439,
+        "hash": "756b92f3bb5404b19fbe5d7ea0539cec7a42e3885797ba092ec0b845b9636fe1"
+    },
+    "charts\\1000TAGUSDT_analysis.png": {
+        "size": 49627,
+        "hash": "6cb0fbccc7e571f46d99a94094b7aef9eb38cba5f54c8f8310b672677ee14c1b"
+    },
+    "charts\\1000TURBOUSDT_analysis.png": {
+        "size": 55683,
+        "hash": "a0a5fbddd66014c0b0456d37190d9badb4975dab9f653070a7e02e5f25aa159a"
+    },
+    "charts\\1INCHUSDT_analysis.png": {
+        "size": 73879,
+        "hash": "23a28e2c8ce4c32f5508c41d59ec5788ec450ccc650f8a2bbccaab50f55e53fa"
+    },
+    "charts\\2ZUSDT_analysis.png": {
+        "size": 63142,
+        "hash": "dc31dd85c71e3a7bff746c79cf53cbbf41cde62471993c0de0baea5d8a066ef5"
+    },
+    "charts\\AAVEUSDT_analysis.png": {
+        "size": 64040,
+        "hash": "f58460c12256452942fc8cdc8bea5594d34d200eb31d60e9834fa179ee01938c"
+    },
+    "charts\\ADAUSDT_analysis.png": {
+        "size": 42361,
+        "hash": "637826cf6c4219d13b3852d80dff4ba2018ce676a7740dd5c0ee17da9ed86380"
+    },
+    "charts\\AEHRUSDT_analysis.png": {
+        "size": 56463,
+        "hash": "7723f41b034d35847276ab6774f6dcdc559b37f0a4486941576b0bb47a36e337"
+    },
+    "charts\\AEROUSDT_analysis.png": {
+        "size": 57635,
+        "hash": "0c4c518b247492ead22b542f34b7efeea8a566d08b307cb06b58467bd5d35257"
+    },
+    "charts\\AEVOUSDT_analysis.png": {
+        "size": 70779,
+        "hash": "8127cbb341925758a06ccf845b708e0d49bfe2a9c37f60a77db5e81c46d7953a"
+    },
+    "charts\\AIGENSYNUSDT_analysis.png": {
+        "size": 51312,
+        "hash": "8e53c419813c649b5cb2b61fcc3200d8e06eae0ad3d67de8b454ba2cfef86cc5"
+    },
+    "charts\\AIOUSDT_analysis.png": {
+        "size": 63481,
+        "hash": "ca31ed7229978cc1c513cc99721cd49333e04fdb40ad7fd54b17127c2f19babc"
+    },
+    "charts\\AIOZUSDT_analysis.png": {
+        "size": 60562,
+        "hash": "5649614f4fe6b2f4434e890f5419c326ec218fc03bc29a82478d8564205edf91"
+    },
+    "charts\\AKTUSDT_analysis.png": {
+        "size": 58546,
+        "hash": "4ec3d30c0435af4fc7ff6ed9d15e3776e5b47d13044e5dbc6aed463ec5713546"
+    },
+    "charts\\ALICEUSDT_analysis.png": {
+        "size": 45137,
+        "hash": "214868fb5186760fea2a44b4c3e43e60b962bd5aeea8f0101b3db16a9813f140"
+    },
+    "charts\\ALLOUSDT_analysis.png": {
+        "size": 43421,
+        "hash": "beb3a6f8178eb99580648eaa64d890ce83de336bb776bee656f88e3317ac9fcf"
+    },
+    "charts\\ALPINEUSDT_analysis.png": {
+        "size": 64309,
+        "hash": "567edced5bb8d062f102de28916ce9b8f0d2a563be7ef2fb9b40567dc518a2ee"
+    },
+    "charts\\AMDSTOCKUSDT_analysis.png": {
+        "size": 40192,
+        "hash": "b8da12a3ff11fd8a28e184b0f02afb1138157d89e29f679b17e3a3957a0961ae"
+    },
+    "charts\\ANIMEUSDT_analysis.png": {
+        "size": 65360,
+        "hash": "6afa1216f6b584b5819b46891ce9527fde15a310c23cf9b30a7e0b0f21c88172"
+    },
+    "charts\\ANKRUSDT_analysis.png": {
+        "size": 42707,
+        "hash": "6a0b2ffb9d25466d46393c66951e3e6ccfc1410af31b51d150ed2536421b3a22"
+    },
+    "charts\\APEUSDT_analysis.png": {
+        "size": 45382,
+        "hash": "f1c788b8e0d1bb3e82cf642ef03f517d572ee99048cc015696bd9af6a5d536d2"
+    },
+    "charts\\API3USDT_analysis.png": {
+        "size": 42711,
+        "hash": "4c562dccdb90ff7f8f41f802392de2aad76fd96272d4210ef0f17f413cc32e76"
+    },
+    "charts\\APPSTOCKUSDT_analysis.png": {
+        "size": 48906,
+        "hash": "c1f422783be5d01673a34ebd42b6c2a95338029a4c5e6ba0db23febc6fc894a5"
+    },
+    "charts\\APTUSDT_analysis.png": {
+        "size": 63939,
+        "hash": "b8edea6f3d17eac11702813aba9efd99227d59cea2bf590981bf5e9ed44145d2"
+    },
+    "charts\\ARBUSDT_analysis.png": {
+        "size": 47242,
+        "hash": "65c58bf5958bbb4165f15732c14bd13028a8a4e9b5aab27db8aefb6068df6b34"
+    },
+    "charts\\ARCUSDT_analysis.png": {
+        "size": 47682,
+        "hash": "c3c4568ea852227b3f66fa28be42be6229eef484979a22dad8fce54da361d8f9"
+    },
+    "charts\\ARKKUSDT_analysis.png": {
+        "size": 61290,
+        "hash": "db0ab5f743c17e131b667b9114269b009982b62bfdc33a33c15d0a03693b7498"
+    },
+    "charts\\ARKMUSDT_analysis.png": {
+        "size": 64082,
+        "hash": "cec5540ddc9d1d01cbec392dbfae17cc1853c9a79dea350df68ca334706c98aa"
+    },
+    "charts\\ARKUSDT_analysis.png": {
+        "size": 69986,
+        "hash": "e337b69f62bfcf94515dc77f6994f2a6550d403c53317f6f4bb3dc08643f8ada"
+    },
+    "charts\\ARPAUSDT_analysis.png": {
+        "size": 70670,
+        "hash": "38941a0c101020ab05618e078b99fb327e12a02036f1bfc6248d8f57a0abeea7"
+    },
+    "charts\\ARUSDT_analysis.png": {
+        "size": 60849,
+        "hash": "67c994801c0d0c1a3371727fb591c20b3a1e8be074fda3890e1bd16be7e387ca"
+    },
+    "charts\\ARXUSDT_analysis.png": {
+        "size": 57163,
+        "hash": "e7d4dab254863e5631ed2b219bac5b2d5fbc6229dc0f3b5a7236e4efb08a8d6b"
+    },
+    "charts\\ATOMUSDT_analysis.png": {
+        "size": 62948,
+        "hash": "b809cd85333af68001a483dfcbc6e030373f12ee5617618135f727336d11b529"
+    },
+    "charts\\ATUSDT_analysis.png": {
+        "size": 75000,
+        "hash": "b39083a1e94180ed3b5a5c6bb94a1270da6c26b3425b89a908b7a3a2e5429688"
+    },
+    "charts\\AUSDT_analysis.png": {
+        "size": 49197,
+        "hash": "00fe39fbb1445fa2047e47d8442b84596a508ab6a8325a4b4cafb9c121b3231f"
+    },
+    "charts\\AVAUSDT_analysis.png": {
+        "size": 77027,
+        "hash": "bdb1ec1e2e9a7e6679f893dab3330efc522f8edb74d6fdae4c626fef3ddbe500"
+    },
+    "charts\\AVAXUSDT_analysis.png": {
+        "size": 66896,
+        "hash": "240065aded5a77df8cf5e6a83bed06c56435fc54e786c84e632e0a8d816d635f"
+    },
+    "charts\\AWEUSDT_analysis.png": {
+        "size": 46759,
+        "hash": "a8bb8dc6e21965756f386ea1b0224eeed2b79b4446b1c25e0ffc19bec545c76b"
+    },
+    "charts\\AXTIUSDT_analysis.png": {
+        "size": 67809,
+        "hash": "cd159791955a67a9a2b6c25a9e5bdc29694c605280517f13c109240eeba184d6"
+    },
+    "charts\\BANANAUSDT_analysis.png": {
+        "size": 64732,
+        "hash": "78d7df332e358c31e95bb4a7c2aedc4676df6d37d26f3faa3867735a4d7b334f"
+    },
+    "charts\\BANDUSDT_analysis.png": {
+        "size": 40927,
+        "hash": "4bae7fd89706018189cbde9558ffe8acd76d21215852c2e2160cd2070bea2a10"
+    },
+    "charts\\BANUSDT_analysis.png": {
+        "size": 51264,
+        "hash": "269b53c3fe1538858fc2a41b5226acc0f8345671a82bc0f43032310976041b31"
+    },
+    "charts\\BARDUSDT_analysis.png": {
+        "size": 56120,
+        "hash": "1310820d90c4c23e534e2794d47339256ec8f353c0574297326b8dc90392590d"
+    },
+    "charts\\BATUSDT_analysis.png": {
+        "size": 48697,
+        "hash": "f841133cd5dc5d8114d14a22ef782afbb2dba0e451f33ee647b183fb847d5873"
+    },
+    "charts\\BCHUSDT_analysis.png": {
+        "size": 64094,
+        "hash": "0d28c5ee97f8c4b384730722463da178e9a65b60b78f08492ec7b40b93b43570"
+    },
+    "charts\\BEAMUSDT_analysis.png": {
+        "size": 65140,
+        "hash": "f79712d91e78c3e44fe042d3211d8743a0e1103a6e7919ed8e2a229f3d4117de"
+    },
+    "charts\\BEATUSDT_analysis.png": {
+        "size": 67841,
+        "hash": "942f4358b869cc0d44d1f3a2d7c68ff19da978245129b8f3319c8c418489d1c8"
+    },
+    "charts\\BELUSDT_analysis.png": {
+        "size": 43508,
+        "hash": "0a8c172eb1c8ea785614beb45ac0a17b60c1b86af8305c567953b89d67ae164d"
+    },
+    "charts\\BERAUSDT_analysis.png": {
+        "size": 57572,
+        "hash": "36e9c7d74947e378797118c5682fcc2dfea37b6301db5dd3a378cadeec5b26db"
+    },
+    "charts\\BICOUSDT_analysis.png": {
+        "size": 44109,
+        "hash": "9a44bbd58d0559c8f0217c0ef424815211efd58fb54f5c3124c08980289bc480"
+    },
+    "charts\\BIOUSDT_analysis.png": {
+        "size": 51640,
+        "hash": "0f482212deabdf883fe5cfc423b291d29b73284f52b764027c98f1f1de4d4334"
+    },
+    "charts\\BIRBUSDT_analysis.png": {
+        "size": 51951,
+        "hash": "95630da1f1f3a604bba37c5b0aa4ad9d6db8407579b35300124c545e51d65fd4"
+    },
+    "charts\\BNBUSDT_analysis.png": {
+        "size": 51473,
+        "hash": "1f9d5c25de4cae18bb1880bc68875f19d6684ace27004bf648d72226d9b0aa4a"
+    },
+    "charts\\BOTUSDT_analysis.png": {
+        "size": 61193,
+        "hash": "c02b606964f632946d563827853fcab260a1804e8ad8ec2f7f6a3105f09eebf8"
+    },
+    "charts\\BPUSDT_analysis.png": {
+        "size": 49321,
+        "hash": "ade232431f7a3bd47339ae80aa038a5b5c8686bd7310cf68040c66aadc9829d0"
+    },
+    "charts\\BREVUSDT_analysis.png": {
+        "size": 47081,
+        "hash": "0a6751b77ad1dc4f6e2e1bc62513be0e20e8a30ed8d6e8ea6f208debe560b0d5"
+    },
+    "charts\\BSVUSDT_analysis.png": {
+        "size": 63618,
+        "hash": "6390f6598e0a7658faa2f8443a8567754bbb033f8fbc33a20bc2ae8ac334ee32"
+    },
+    "charts\\BTCUSDT_analysis.png": {
+        "size": 54040,
+        "hash": "f58dc9e9b59ac80a9cbc69b4d57e514178d4a0482ab9c7071b71680d27e6e4dd"
+    },
+    "charts\\BTRUSDT_analysis.png": {
+        "size": 58789,
+        "hash": "c8333bb6d6ddc335fc2be8198ffb434efc1196f9c2c4e1905199112a620d7f4f"
+    },
+    "charts\\BZUSDT_analysis.png": {
+        "size": 54125,
+        "hash": "8e23387b3a3f902292158e55a02b5b521c1b9cc69bce8f6bdf887757bb7b4bbf"
+    },
+    "charts\\CAKEUSDT_analysis.png": {
+        "size": 58119,
+        "hash": "b49e80918ac866778b89c6ebe24c7b8541e9ba5b3cff2fef84807b40c8be7dfb"
+    },
+    "charts\\CARVUSDT_analysis.png": {
+        "size": 45105,
+        "hash": "8da3c2c4a9fcd7aae407a507b58bb95dfee0c50c86b77bb44927af421f3af67d"
+    },
+    "charts\\CBRSUSDT_analysis.png": {
+        "size": 55381,
+        "hash": "e5694fe02d4b5c704d7c640b0bf91f698a3d125270577ad2bf8bb968047e57b6"
+    },
+    "charts\\CCUSDT_analysis.png": {
+        "size": 48523,
+        "hash": "ae87cc4ef663a6097b0399c42dfa2d018c25357add1bc48f34cbe5d82e502333"
+    },
+    "charts\\CELOUSDT_analysis.png": {
+        "size": 53388,
+        "hash": "12bba3b55fa2606b554941237299a3c0aef9d5f3b7ddcd0fcd70af1261b64871"
+    },
+    "charts\\CFXUSDT_analysis.png": {
+        "size": 41657,
+        "hash": "10606a89c543d67c14b8d69360164ff4681c00c8fb81e14a4847b77c42022134"
+    },
+    "charts\\CGPTUSDT_analysis.png": {
+        "size": 67700,
+        "hash": "b633219653e0b8484fc97290e198ec521e17983d26fada7c2b7507af98af8823"
+    },
+    "charts\\CHRUSDT_analysis.png": {
+        "size": 56961,
+        "hash": "79dac17ea9f94dda29b5a0dce22ea819d1450ddf4eb76fe42bc127633268619e"
+    },
+    "charts\\CLANKERUSDT_analysis.png": {
+        "size": 63250,
+        "hash": "69bc29fdcb1bc38e1f129bdd0f47e0b9b63241ba37784f3ca47e5a5ee80513ec"
+    },
+    "charts\\CLUSDT_analysis.png": {
+        "size": 68526,
+        "hash": "b978faf324cf0606783c65211a50418e6dc21c590323e1f9ab05be99cb7145d4"
+    },
+    "charts\\ENAUSDT_analysis.png": {
+        "size": 59186,
+        "hash": "5819b71ab7755407abfbc4336f5465d2ede77bc3ef82ad7eca32ee85a142f6ae"
+    },
+    "charts\\ETHUSDT_analysis.png": {
+        "size": 55568,
+        "hash": "a8322e887fea2045d10b28050f3f02b75162e83daa376ab2258e7254162bbaef"
+    },
+    "charts\\INJUSDT_analysis.png": {
+        "size": 48790,
+        "hash": "a8e83043b89b128a3c84747421e8a662b66307b34209f928c30976c3ae82aba6"
+    },
+    "charts\\JUPUSDT_analysis.png": {
+        "size": 59533,
+        "hash": "00cddfa6b36137da10d9752585d5068dca38d6031da74da2bc3178b09de416ee"
+    },
+    "charts\\NOTUSDT_analysis.png": {
+        "size": 66580,
+        "hash": "1bcb6cd8d719a59a1ae49fa8e65c2e4b2dcda47984fe4cecdf4d078ab09a1319"
+    },
+    "charts\\SEIUSDT_analysis.png": {
+        "size": 44702,
+        "hash": "c3ee271b2842b792228fbd148455998b8403a9f4acd21a5e64b8621d48f874af"
+    },
+    "charts\\SOLUSDT_analysis.png": {
+        "size": 52443,
+        "hash": "264552f5d4cbf051374988c95b473f819939d3307b0e6f2bbda8dc689904a166"
+    },
+    "charts\\SUIUSDT_analysis.png": {
+        "size": 65605,
+        "hash": "a491c99a480f422e257012d3cca9dfe48925172fe852ce7f377f70634f5ef735"
+    },
+    "charts\\TIAUSDT_analysis.png": {
+        "size": 68658,
+        "hash": "a276452707177c96a9690958d525fc60112ad048ccb1432c3b1339a53c624686"
+    },
+    "charts\\WIFUSDT_analysis.png": {
+        "size": 51468,
+        "hash": "ed6540949025342882482275e878028cef40409bb00e0c05ded0a230a657a1b7"
+    },
+    "charts\\XRPUSDT_analysis.png": {
+        "size": 50661,
+        "hash": "ea0ae99c284d1e54c3ce2b3b8c465db510d905c668acdbdcb84436a975303e68"
+    },
+    "contracts\\annotation_contract.py": {
+        "size": 2767,
+        "hash": "dbadaf9b76dc0f79dcbe904e40ba93e5ddb0ccd4e0ba8d1296c50a1c0ef45aa8"
+    },
+    "contracts\\signal_contract.py": {
+        "size": 2454,
+        "hash": "4fbb46d8709286a856d3307dbe82610552a49ecba2c3db4389a3b215edd05c1c"
+    },
+    "contracts\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "debug\\ETHUSDT.json": {
+        "size": 24340,
+        "hash": "a12e3118d95370cf2a2985be9a9a2267e2eb5f190a63383caf92d2e4a67adabc"
+    },
+    "debug\\ETHUSDT.txt": {
+        "size": 1523,
+        "hash": "3dc5210f17283b16d99144f21df2dfa555dc51a4fba2f363d4ea04621e583bdd"
+    },
+    "debug\\ETHUSDT_analysis.png": {
+        "size": 59079,
+        "hash": "e7b116596434987aed62c5d4026f7a00e90552b02f1a7608261f94490dfc61bb"
+    },
+    "debug\\XRPUSDT.json": {
+        "size": 2000,
+        "hash": "7f3fa7ff9c723fbd7b16e056defeade564db4bb11e0a7fb1e8b04e1959d52a5c"
+    },
+    "debug\\XRPUSDT.txt": {
+        "size": 1430,
+        "hash": "d889f10bfbe18e83b5ef5fd71d953706869363f292c3aef2dfd33fa02d46c518"
+    },
+    "debug\\XRPUSDT_analysis.png": {
+        "size": 44704,
+        "hash": "57430b6bc4045dae7ffaf75fd94dae7de0f308cf8cf9bc5c65bbf9288c516e68"
+    },
+    "DOCUMENTS\\ARCHITECTURE.md": {
+        "size": 10659,
+        "hash": "ed3ef115aaa6b59fee1167707b8e212885ebd2a6d334a0d888d96ed9ab0abd68"
+    },
+    "DOCUMENTS\\ARCHITECTURE_RULES.md": {
+        "size": 11550,
+        "hash": "597183b6eb71ca0b1af7f263b8fea20332220a7629c33a32f90df583f576c7c2"
+    },
+    "DOCUMENTS\\ARCHITECTURE_RULE_ENGINE.md": {
+        "size": 6353,
+        "hash": "2967e540b26987c134f28d731d72fb09acf2e368ce557ada8b8c51c7b4d4766c"
+    },
+    "DOCUMENTS\\ASSISTANT_PROTOCOL.md": {
+        "size": 8491,
+        "hash": "bbaa36fe920c584ebb7f447a06fc8edfe5e7697266a9cd0f6ffb47f1f3c825b2"
+    },
+    "DOCUMENTS\\CHANGELOG.md": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "DOCUMENTS\\CODE_RULES.md": {
+        "size": 3387,
+        "hash": "c059f11932f5478759a7e4eea4e1646231d73c817c820b563d646a8166215d71"
+    },
+    "DOCUMENTS\\DECISION_LOG.md": {
+        "size": 6342,
+        "hash": "654f508055aa06b7c00c660a712d35640dac9b280b04002c874a4ea90e30a7d3"
+    },
+    "DOCUMENTS\\DEVELOPMENT_GUIDE.md": {
+        "size": 8638,
+        "hash": "cbb8d4e43236e90d984d8382a5c453a477c157c17e9905e7e5c25519dbd416c1"
+    },
+    "DOCUMENTS\\DOCUMENTATION_RULES.md": {
+        "size": 17725,
+        "hash": "6d3cedbec98e856cd373aef6ac02112c9d5c9356b8af07de801b54d733007749"
+    },
+    "DOCUMENTS\\GLOSSARY.md": {
+        "size": 4889,
+        "hash": "c52db0ffd4832fa9327c7f9c0188fbacd6e96cde703155ce5a6997d78d117905"
+    },
+    "DOCUMENTS\\LAYER_REGISTRY.md": {
+        "size": 5001,
+        "hash": "e8f1b35c38e401a47ea8c25124739e9065f94caecd8fc538851410018df64650"
+    },
+    "DOCUMENTS\\MODULE_REGISTRY.md": {
+        "size": 4050,
+        "hash": "d4b167b0d46e3396c6cfcd8a588342ad3084ef786c42ad97df01fb51f2022363"
+    },
+    "DOCUMENTS\\PROJECT_CONTRACTS.md": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "DOCUMENTS\\PROJECT_MAP.md": {
+        "size": 8370,
+        "hash": "b9db7dafb680d6427d3b5c8bc3f75e48f6b29a1a42e6e11ee83a35ceffbdb3ce"
+    },
+    "DOCUMENTS\\PROJECT_MAP_v3.5_backup.md": {
+        "size": 13184,
+        "hash": "e1fd5b71e48147bf015cf835ad0d873cbfaf16130fb16fea0594aace67c674ad"
+    },
+    "DOCUMENTS\\PROJECT_RULES.md": {
+        "size": 14587,
+        "hash": "ea863eb65b381249f120bb801303b1fdd886ffb2a01a85e8e74d7e80f3460d24"
+    },
+    "DOCUMENTS\\PROJECT_STANDARDS.md": {
+        "size": 6145,
+        "hash": "7c2f8ee6a4f9e849563d8b799fb2ca28e6d6772f5526879b737ea72272b86721"
+    },
+    "DOCUMENTS\\PROJECT_STATE.md": {
+        "size": 10513,
+        "hash": "359b54785c848f03852c42ab59336baf3fbacf53891fb5da5277cd36e74910be"
+    },
+    "DOCUMENTS\\PROJECT_SYNC.md": {
+        "size": 10907,
+        "hash": "9be96ec6a7ef721b1482d8c9e737f5bac03de26cef14ced87135e4e78e830d0f"
+    },
+    "DOCUMENTS\\PROJECT_SYNC_ARCHITECTURE.md": {
+        "size": 7235,
+        "hash": "c95ca0478b35e3f03b7a9cbf5304dfd5c33db50035a3e059a851b7a131cf30c5"
+    },
+    "DOCUMENTS\\PROJECT_SYNC_COMPONENTS.md": {
+        "size": 7030,
+        "hash": "ad12c630460b4e069ba575a306005f05a186ee97202dbc27611dbabecccd6a76"
+    },
+    "DOCUMENTS\\PROJECT_SYNC_HISTORY.md": {
+        "size": 4764,
+        "hash": "6674a43c93aa9387796f9ba39a79516b3b4535d46eef8c1a987f877cbbea1e77"
+    },
+    "DOCUMENTS\\PROJECT_SYNC_ROADMAP.md": {
+        "size": 4124,
+        "hash": "88afebbee43d9d78d05a5da656b064b17d104f1cdaeecd93148ae8eefee027ca"
+    },
+    "DOCUMENTS\\PROJECT_TREE.md": {
+        "size": 19162,
+        "hash": "9f69a09b3818ca81255f5cb528b8def4fe10757eea56188c0da8f5c1448a8b31"
+    },
+    "DOCUMENTS\\README.md": {
+        "size": 9501,
+        "hash": "cd5551b4f5432b664dfa5807fcf8048d9ee8fa67e6de994ae583cc5981a5a6f8"
+    },
+    "DOCUMENTS\\requirements.md": {
+        "size": 409,
+        "hash": "e262ab7c14973a351969b66f78263016f6a07012028df1c05e273abbbd807403"
+    },
+    "DOCUMENTS\\ROADMAP.md": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "DOCUMENTS\\ROLE_REGISTRY.md": {
+        "size": 4365,
+        "hash": "88ab9634972188321c0997dd996b27854c67d01d7b3742b6a1ce8b441ac51172"
+    },
+    "DOCUMENTS\\SNAPSHOT.md": {
+        "size": 7172,
+        "hash": "5d4f4458c7c3db08a9a262ed09ad7fafecbeb0ad818d13432ffee470f6fa4421"
+    },
+    "DOCUMENTS\\STATE_ARCHITECTURE.md": {
+        "size": 6761,
+        "hash": "29a9f3b4a30429ae6bc8c2577573cb3d8b95383d3f4db0c7decd7d23cb2cae58"
+    },
+    "DOCUMENTS\\STATE_DEVELOPMENT.md": {
+        "size": 5139,
+        "hash": "967ed46e4c65391df182ed4c74495f43ebb4ca7afaac1f3124f29eec542ef1fe"
+    },
+    "DOCUMENTS\\STATE_DOCUMENTATION.md": {
+        "size": 4067,
+        "hash": "240b0fce0e08902276d5afd28d7c43cadfc6571bbd81c6a29b6b54bde92125e2"
+    },
+    "DOCUMENTS\\STATE_DOCUMENTATION_AUTOMATION.md": {
+        "size": 4602,
+        "hash": "b69704c633e359b80bc64b44877d2571bd624cf9b69a7a4187c8812996b11fb5"
+    },
+    "DOCUMENTS\\STATE_PIPELINE_ENGINE.md": {
+        "size": 5956,
+        "hash": "2f6d8dbc85a17e2d996eae09be5aa875aba3d1bdcb0c88a48317265defa03e98"
+    },
+    "DOCUMENTS\\STATE_PROJECT_SYNC.md": {
+        "size": 6448,
+        "hash": "d23bcd3e44c5da553c3d2e9f4ee49ab00668feba17f26b4a092a7797dd6d6113"
+    },
+    "DOCUMENTS\\STATE_TRADING_SYSTEM.md": {
+        "size": 9591,
+        "hash": "396e3b1f44e1c9c753be8fc2171b1d927603a13f403b5b6f831c4cee060e215a"
+    },
+    "DOCUMENTS\\SUBSYSTEM_REGISTRY.md": {
+        "size": 3910,
+        "hash": "667b362f307bb40a75412fb2e7a27a5170f2edc24359be48ddaa71bc00ae1c53"
+    },
+    "DOCUMENTS\\TESTING_GUIDE.md": {
+        "size": 8658,
+        "hash": "c1e44fe888e9fedbc3b12b8269a44b6baaaa7af2260f8e449163d0b62cfa5588"
+    },
+    "DOCUMENTS\\TRADINGVIEW_JSON_CONTRACT.md": {
+        "size": 4880,
+        "hash": "6217f5bd3b53e1403fbe9651d21d6c6a353e33b034e80a28d5f197a33d9469b5"
+    },
+    "DOCUMENTS\\WORKFLOW_RULES.md": {
+        "size": 12754,
+        "hash": "d3581dddf32a170712f4a550d7236f709e1139a014c57b681bd24205b7956dc1"
+    },
+    "geometry\\apex.py": {
+        "size": 2550,
+        "hash": "fbb64c63ba059cd3a4fca50a9bab9d8502faad1ac1bf8fe974d44e4d3ea8ac76"
+    },
+    "geometry\\candidate.py": {
+        "size": 2021,
+        "hash": "01d320ba44fe7d7cde2e77eba038a370b862acb93827651066a2d45ab7ad5890"
+    },
+    "geometry\\characterization.py": {
+        "size": 1937,
+        "hash": "ffb264fd9752416e650fa6cbd415e3ef1cd096ae1b13aa6b7d24d82dbda1d960"
+    },
+    "geometry\\compression.py": {
+        "size": 2398,
+        "hash": "430b05436d49be2305ea730e3ccbd97932c0dfc7224001722668525471407e0f"
+    },
+    "geometry\\engine.py": {
+        "size": 3055,
+        "hash": "e403e113adf5020e7982a7240bb37ed650a1e034aa1cce4ef280179183a2e75b"
+    },
+    "geometry\\evaluation.py": {
+        "size": 2853,
+        "hash": "ba108ec2a5d53a992ddd836f9808befdfddd9e51939e8fa45c7170eb001cd1ae"
+    },
+    "geometry\\filter.py": {
+        "size": 2853,
+        "hash": "41e24cb12260fc78745ec59295f32ad4bce3dce669c7a9b9a0ae18e122a0ea8a"
+    },
+    "geometry\\model.py": {
+        "size": 1342,
+        "hash": "50ce07ea08688ad43cefaf282b5de96b96723b636c8de3b11c1f5a3276ab2dd2"
+    },
+    "geometry\\ranking.py": {
+        "size": 1307,
+        "hash": "668a95196098963653dfc5d5eecd03073e61209ef0a7fd51c2eb28bea1840013"
+    },
+    "geometry\\touches.py": {
+        "size": 2715,
+        "hash": "59a6a4720f3c949047d0709aa60822383a3d33df2ea2e14fc7b9160ca172de35"
+    },
+    "geometry\\trendline.py": {
+        "size": 3222,
+        "hash": "1a8058d04af7ae76a3a1a3937b3f7eae127d37dc1b06359de9a21f618210de5a"
+    },
+    "geometry\\validation.py": {
+        "size": 2683,
+        "hash": "4f415afcd46077744109d3c437d04cad5ad23e6b3d3547574611216bc62c7409"
+    },
+    "geometry\\__init__.py": {
+        "size": 635,
+        "hash": "efd36b88752f77e81592044e9b1bf0081622ab6d2e9645c6ef2a1eecb9a085fa"
+    },
+    "reports\\0GUSDT.txt": {
+        "size": 1532,
+        "hash": "f74a91371222e8faeab581298df1a41496942557368c7874e3b42053f1d40e68"
+    },
+    "reports\\1000LUNCUSDT.txt": {
+        "size": 1609,
+        "hash": "2087a56db8ae94a0951c8df7a7a1042faafb20e54ee910209f78f4881891e603"
+    },
+    "reports\\1000PEPEUSDT.txt": {
+        "size": 2260,
+        "hash": "d0f1b75a87c447ba8193f976f662dcd4002788e4e10c63c393697983c024a57b"
+    },
+    "reports\\1000RATSUSDT.txt": {
+        "size": 1577,
+        "hash": "2e55958008aff03d36419603af9decafac4ff441713e258de06a6d365b06def4"
+    },
+    "reports\\1000TAGUSDT.txt": {
+        "size": 1772,
+        "hash": "ed1d9b9b9fb33955debe4555fe5d9283e3729050354a8c5318baa6db48f11979"
+    },
+    "reports\\1000TURBOUSDT.txt": {
+        "size": 1756,
+        "hash": "740b6a6146ca1991f3d760167914e63e2e5f29d05f733635271a36b81962a56b"
+    },
+    "reports\\1INCHUSDT.txt": {
+        "size": 1700,
+        "hash": "730aa220e0f6c18e7f157023ed2095a31492cf300c816df68956ba2106383b75"
+    },
+    "reports\\2ZUSDT.txt": {
+        "size": 1626,
+        "hash": "a0d713b4cb79abbf37418dba6473967c1f5b8149f4941b3b490dc7efa5c3ad1b"
+    },
+    "reports\\AAVEUSDT.txt": {
+        "size": 1702,
+        "hash": "28ef418b1a735d6bdf7476f20cb4f8288f49bdc51f4bc506f87ad72ace8dd97c"
+    },
+    "reports\\ADAUSDT.txt": {
+        "size": 1465,
+        "hash": "10e93ce30eaae42be73f13b7a2ecdd421bb918bb7477de12b6c029d5a6635026"
+    },
+    "reports\\AEHRUSDT.txt": {
+        "size": 1678,
+        "hash": "d6d8119e56d65a3819c7de46c449e357c1ca837f16bde898801ef444773419b0"
+    },
+    "reports\\AEROUSDT.txt": {
+        "size": 1637,
+        "hash": "c4ea2ca3e3d755b721d087eeffb223a28896e844b72d1298bb5e6ea13eff8f67"
+    },
+    "reports\\AEVOUSDT.txt": {
+        "size": 1648,
+        "hash": "3356adf7c52d3e7d5af8219d8effa9ff6b097fd10ca48c6490815d6c52bd3605"
+    },
+    "reports\\AIGENSYNUSDT.txt": {
+        "size": 1683,
+        "hash": "f48e92c08972637460afab48e5d4bfc5c7751e6fdaa15326ec2157b1d6c3b97c"
+    },
+    "reports\\AIOUSDT.txt": {
+        "size": 1743,
+        "hash": "be4b5c15e0abdaf0137d550ed33f3b6210a0aec751092ef5d3e5e1b8c89cfa07"
+    },
+    "reports\\AIOZUSDT.txt": {
+        "size": 1595,
+        "hash": "aa1543887d43b948ec9a42740ac8d647cbf355ad9e5739e03d8bc0495e88ccf0"
+    },
+    "reports\\AKTUSDT.txt": {
+        "size": 1723,
+        "hash": "76f9e2910914c6a0f45892d958955a7f4bd8e5f4b8ce67cd29a260375f438be3"
+    },
+    "reports\\ALICEUSDT.txt": {
+        "size": 1526,
+        "hash": "0ab38178c3b08bbf2f621322812dd5063d3086c8da832d9f08249951621d7b4a"
+    },
+    "reports\\ALLOUSDT.txt": {
+        "size": 2144,
+        "hash": "4fc54adbad4d6f57d3952658aa3f04382962e719c98c463a56894fefae8866f2"
+    },
+    "reports\\ALPINEUSDT.txt": {
+        "size": 1587,
+        "hash": "8cc93be78b9e93a3b9f2cf80dc55efe7b09e08657f0c54e7d465303cb42f9de9"
+    },
+    "reports\\AMDSTOCKUSDT.txt": {
+        "size": 1484,
+        "hash": "445913d75d165c2c093cdd34185fa96c024c275982dabeee0b986d6c6473541f"
+    },
+    "reports\\ANIMEUSDT.txt": {
+        "size": 1515,
+        "hash": "e77be2919b2d51b18d87770adcbedbc7d46c3cc27a84078b4730cbcfe3f6003f"
+    },
+    "reports\\ANKRUSDT.txt": {
+        "size": 1560,
+        "hash": "53123883c4734ae6e3a1ef76e8f57b054133fc0bb04f6e90edbe929e40c66468"
+    },
+    "reports\\APEUSDT.txt": {
+        "size": 1624,
+        "hash": "a7e0da10878d1e4c33000b5644dc8c223043a8ec29284708b5c880a1e312a2c6"
+    },
+    "reports\\API3USDT.txt": {
+        "size": 1567,
+        "hash": "324ffe87c4a0c487edf1f940215a3e1052e3ff84bd8d9e63d328a908c5a71680"
+    },
+    "reports\\APPSTOCKUSDT.txt": {
+        "size": 1531,
+        "hash": "8e66519e1562909795a5cfe6be6bc321347cfa201403c2fea7bee7db84ccf3d5"
+    },
+    "reports\\APTUSDT.txt": {
+        "size": 1817,
+        "hash": "855c4bc73b346c8e30278e3d5dcb5639cd49a451c7d9cd4ea37aa26222e70142"
+    },
+    "reports\\ARBUSDT.txt": {
+        "size": 1580,
+        "hash": "f64ed088a9d7804fb3cb0771d92044eaac24c5169057ed00e0f576e8702a31b1"
+    },
+    "reports\\ARCUSDT.txt": {
+        "size": 1694,
+        "hash": "d6e997727a4e00d66933942c22943877abeae9c4d54aea7422e1737e5f8a9b79"
+    },
+    "reports\\ARKKUSDT.txt": {
+        "size": 1565,
+        "hash": "905e1c9039f4ac680d019707a381a8afb76cb3be8ae22eca59f4c7898a9f2912"
+    },
+    "reports\\ARKMUSDT.txt": {
+        "size": 1661,
+        "hash": "605d49496ab383420f54365ffec3f1831ed1bcce2ac6eb9d6cc7e4cd5a3480d1"
+    },
+    "reports\\ARKUSDT.txt": {
+        "size": 1494,
+        "hash": "da37a613340c90402a1c03f74c37e48dee132220fdeb85dbf0107f5f370b7e3f"
+    },
+    "reports\\ARPAUSDT.txt": {
+        "size": 1511,
+        "hash": "d84b4b0fa9e39d18996a12ba9741f1f08eda35fb62768a0663d07665025d6a37"
+    },
+    "reports\\ARUSDT.txt": {
+        "size": 1577,
+        "hash": "1c408c4f69ce5dc52202869a8258f2fabf815906c486cb5c68b69d275799dd21"
+    },
+    "reports\\ARXUSDT.txt": {
+        "size": 1656,
+        "hash": "2c1c17b6de3d4d478e431b5bfc438f3e2d7710afcaf81177868a1813dd3364be"
+    },
+    "reports\\ATOMUSDT.txt": {
+        "size": 1588,
+        "hash": "d6f7de9c61268957d1dbbe2569ed839d33fd61153b952c9cb8ab265a299c1925"
+    },
+    "reports\\ATUSDT.txt": {
+        "size": 1521,
+        "hash": "a7530ee6376f745c039bc6844d3fed759a60c4fb8e17da202f742c4b2622b654"
+    },
+    "reports\\AUSDT.txt": {
+        "size": 1551,
+        "hash": "eb0f87daad53a439a52172ed4a5a0e74cf12776c6a79474801de652ca72a81b5"
+    },
+    "reports\\AVAUSDT.txt": {
+        "size": 1512,
+        "hash": "1d9f06e0bd55037d7df6dc73971460840bf7e73da303f4281614e119d5ea2e0d"
+    },
+    "reports\\AVAXUSDT.txt": {
+        "size": 1595,
+        "hash": "546defd8a32a5920057eb2a09f6b47a824f4c8fd70a3157e371c335ca6252819"
+    },
+    "reports\\AWEUSDT.txt": {
+        "size": 1648,
+        "hash": "19a699edf21c3f468a03249cdad3279218a4194f609c5ff9dbb8f735fd135a4c"
+    },
+    "reports\\AXTIUSDT.txt": {
+        "size": 1453,
+        "hash": "95bf90ab9ab67a8d562b715f71bc51f6d9bc2af3feedba729d15954403bf49a6"
+    },
+    "reports\\BANANAUSDT.txt": {
+        "size": 1570,
+        "hash": "b765c280241ae40ee01616f75eedc15181b319beae19300005d27587968aab21"
+    },
+    "reports\\BANDUSDT.txt": {
+        "size": 1513,
+        "hash": "bd9bf801aec444bdfabda490459633bb84dcbb04425a6c1767639eb4a3f66a38"
+    },
+    "reports\\BANUSDT.txt": {
+        "size": 1620,
+        "hash": "93d5c1988cbaf7711b5c5c76350ab6d565c21985257513d9b3e5d3b8370f5035"
+    },
+    "reports\\BARDUSDT.txt": {
+        "size": 1696,
+        "hash": "cd54a78338f684472cfd9c2c83e4ea6bac7f12e5e616449b4723cb67f6948983"
+    },
+    "reports\\BATUSDT.txt": {
+        "size": 1524,
+        "hash": "ff35dac48ea95f616d267a5343ca92a4a888a74df01fb53315f114210c3b59c5"
+    },
+    "reports\\BCHUSDT.txt": {
+        "size": 1497,
+        "hash": "cde022f78ad6c4c871bfdd2f72e282ccb5490636d6efd964d92d82a6e1d6bc44"
+    },
+    "reports\\BEAMUSDT.txt": {
+        "size": 1599,
+        "hash": "c2ddf8100371558643404852dca746b23112d420cc9659d8640cde23f33f8463"
+    },
+    "reports\\BEATUSDT.txt": {
+        "size": 2033,
+        "hash": "59a155915e8f89decadfd10988400934e1c0d5d8880b7d273ac6b76213400517"
+    },
+    "reports\\BELUSDT.txt": {
+        "size": 1572,
+        "hash": "866fdf0f661b629f9fd9aaac42f482cf3856bb051114a3e5cc86089276cefb55"
+    },
+    "reports\\BERAUSDT.txt": {
+        "size": 1629,
+        "hash": "7f64570cb16135e91ad0a44e97adb6a208de3835e8507c3c0d7a852c24545ad5"
+    },
+    "reports\\BICOUSDT.txt": {
+        "size": 1530,
+        "hash": "d667fa22f02118d7dc8c54bc3ad5361fc0adeb41b7935a51693b6c8ef1fcb504"
+    },
+    "reports\\BIOUSDT.txt": {
+        "size": 1595,
+        "hash": "7bcbda637cbdeb20d691492cf8d38384be20853ce3f483bebc9f451a8545fd04"
+    },
+    "reports\\BIRBUSDT.txt": {
+        "size": 1616,
+        "hash": "5c6456fdc6be8f7970f3c019627d19376dc4c50e0fba47a31bd7f3c6c1a6f9de"
+    },
+    "reports\\BNBUSDT.txt": {
+        "size": 1188,
+        "hash": "354b41d7c53c5611f7864fad0bd700e4f52b96014bdfe6bacc0222964d56a6bf"
+    },
+    "reports\\BOTUSDT.txt": {
+        "size": 1610,
+        "hash": "323599f0e15ccdc6370a856a99e8032340f374064c89589acffebb0bb4efdfa0"
+    },
+    "reports\\BPUSDT.txt": {
+        "size": 1547,
+        "hash": "ba253857917e683f76990c0bfc289b70ebd28c555659b4abcf00cba81718eaee"
+    },
+    "reports\\BREVUSDT.txt": {
+        "size": 1568,
+        "hash": "7f7631720dfd3df5ae03ef29092e9f7d08be9e73ee7903dabbd04a6f24513721"
+    },
+    "reports\\BSVUSDT.txt": {
+        "size": 1524,
+        "hash": "d6e7d29fcb5f86bbad6c917da6a23adb8550a285b4d30064ee05779b0e244b31"
+    },
+    "reports\\BTCUSDT.txt": {
+        "size": 1158,
+        "hash": "a2cc3b1031522018825fe7fcc1bdb0f2455a60b78b14145de885141cfbd4d58f"
+    },
+    "reports\\BTRUSDT.txt": {
+        "size": 1517,
+        "hash": "f95e8564f07d92b5d289f86180a3b476e1d69b80419ff4f97915dd113ca5406a"
+    },
+    "reports\\BZUSDT.txt": {
+        "size": 1610,
+        "hash": "4fecbdec908ca9a934cd062b3ead8cd5c9be98e1ff5c9f550d8c824f901608b9"
+    },
+    "reports\\CAKEUSDT.txt": {
+        "size": 1578,
+        "hash": "8a490527fd0ded0df6dd5649e39bef7b917369ead51a4e8776d81e0e0fab45a8"
+    },
+    "reports\\CARVUSDT.txt": {
+        "size": 1618,
+        "hash": "59dddc06a546d567189cf6f4c96e57ac43d35367b098daeb756ded631461ff7a"
+    },
+    "reports\\CBRSUSDT.txt": {
+        "size": 1575,
+        "hash": "e04f325fb2cbb70e245b5010a13433dfb921d6b4174f36ce3a2648c50af283af"
+    },
+    "reports\\CCUSDT.txt": {
+        "size": 1594,
+        "hash": "4e93edfbcc602a2b2f5c5bb1ef67274eca9e8a780efd95d911911e63267378a7"
+    },
+    "reports\\CELOUSDT.txt": {
+        "size": 1648,
+        "hash": "efc6875da4b0aa5b1dbd999adc9eb1cb98c0a2875b0957de709e04083e376129"
+    },
+    "reports\\CFXUSDT.txt": {
+        "size": 1593,
+        "hash": "0d2e7a0760e0f9e3853401a05253f6803640657c545322679e447e53633f60fc"
+    },
+    "reports\\CGPTUSDT.txt": {
+        "size": 1559,
+        "hash": "799fa366a0300a063f5a474e4409c57c058f47a2e29d94f77c95561e53f5e478"
+    },
+    "reports\\CHRUSDT.txt": {
+        "size": 1559,
+        "hash": "dd1b9cc661afb5416a7055a8d101ee54e982a0c08572a9b1b769ee942fde8cc8"
+    },
+    "reports\\CLANKERUSDT.txt": {
+        "size": 1697,
+        "hash": "6622de452dc5d5c677aa7a0a8d1975480bd0093bf0e61f6d34ddfb72a963364f"
+    },
+    "reports\\CLUSDT.txt": {
+        "size": 1657,
+        "hash": "072be012772933f0647156ca5b17983fb25951d1419ae51a3be01bf81d8ad776"
+    },
+    "reports\\ENAUSDT.txt": {
+        "size": 1461,
+        "hash": "91e37da145290e4ba468a57ddad7406a2d4819015001ce67ab6a0e9f274aa87c"
+    },
+    "reports\\ETHUSDT.txt": {
+        "size": 1523,
+        "hash": "e8fd9c942db81e32037a8087e6de989e1ac8796563b61132308ac7d31c42d8fd"
+    },
+    "reports\\INJUSDT.txt": {
+        "size": 1701,
+        "hash": "8bd4d93c6772af252496f5736606553238704a4ec7036cbbb6bcaa391734386c"
+    },
+    "reports\\JUPUSDT.txt": {
+        "size": 1578,
+        "hash": "28db5306080539028220947fa6421bf382ff5663296a9bbcf49e41c84f281805"
+    },
+    "reports\\NOTUSDT.txt": {
+        "size": 2130,
+        "hash": "d141cfd76922c854d043808215fbfe9afc7a09e59f58358264081edb4fe9fb13"
+    },
+    "reports\\SEIUSDT.txt": {
+        "size": 1351,
+        "hash": "36f3f8b8cf3770d6c7e84c4835751467afd801d72fcb95b4f698a1c62fc1348b"
+    },
+    "reports\\SOLUSDT.txt": {
+        "size": 1234,
+        "hash": "24e39a54c0fae64d1ed3c7b026380b90559f83b0a73a364fe508585e793fdd6c"
+    },
+    "reports\\SUIUSDT.txt": {
+        "size": 1268,
+        "hash": "1dbe24feb697acf3d7e95811f3b3c6f671ecd33561b78fb5a91498ba991649f3"
+    },
+    "reports\\TIAUSDT.txt": {
+        "size": 1386,
+        "hash": "e4520063b117f1f63f50cf48f0649dc2379d74eb03553ccf98381e688b157a00"
+    },
+    "reports\\WIFUSDT.txt": {
+        "size": 2130,
+        "hash": "c879cf13509cf3dfa71e97be1edd23a344293ab2dd221a5cc9a4cd85d556a0ca"
+    },
+    "reports\\XRPUSDT.txt": {
+        "size": 1418,
+        "hash": "9cf1af792878cbb3f8b5a567374e3efbc13a70ef04b896dfbef1e8d552963dd1"
+    },
+    "signal\\filter.py": {
+        "size": 2383,
+        "hash": "0c6d515479b7d72781e69448b35ae6091bb4a08d2e02757b7151ddd3dde84d2d"
+    },
+    "signal\\quality.py": {
+        "size": 3731,
+        "hash": "ef910a0e056216c23fc20601acfd0fd0f9824aebd60c1cef986f989e695f513f"
+    },
+    "signal\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "signals\\INJUSDT_20260726_153025.json": {
+        "size": 15839,
+        "hash": "52ea3e3502bb20f7d06a4a05e3acfb3d1910ba209b0a4d4de22ed1beebe60f59"
+    },
+    "signals\\INJUSDT_20260726_155958.json": {
+        "size": 17069,
+        "hash": "44f5af091b959909ce4cd3cf99e7ebb2fd5d816560d930d782a77c5635aaf597"
+    },
+    "signals\\INJUSDT_20260726_160800.json": {
+        "size": 9860,
+        "hash": "2e5e86d12563d3f0bcf4453ff08f24ea29a2f4c20b2da929e8f59980d815e5e2"
+    },
+    "structures\\breakout.py": {
+        "size": 3139,
+        "hash": "b2b5c17b40b26870b1e31907631f0153675aba052eb2f7d1b5dab63a49cf4672"
+    },
+    "structures\\channel.py": {
+        "size": 1931,
+        "hash": "8af60a25261534fb0e49eaa24f851f20180a3e537c89920316188c88c647846e"
+    },
+    "structures\\classifier.py": {
+        "size": 1631,
+        "hash": "9d215df2d6fa9a56d02bfb69e1d4233a5dd4a827f9b7ca3662e4479c55d8d0f9"
+    },
+    "structures\\geometry_filter.py": {
+        "size": 2928,
+        "hash": "b4e63e0a24f34a558fb9b8bd3506b810973c2c22d6a8eaa5c9d5028bb6aa0a96"
+    },
+    "structures\\price_position.py": {
+        "size": 3426,
+        "hash": "db6cb589cb2fb2e8737bb698a491ce618a8e983ddc914ac4f1ede1d4ff272620"
+    },
+    "structures\\validation.py": {
+        "size": 2509,
+        "hash": "36eb7ee2b1ec58de217610926bd7f0d47b7461a4a4d8645cbbde92cbe30e2bae"
+    },
+    "structures\\wedge.py": {
+        "size": 1604,
+        "hash": "e45ee72b8e7694f8ab5838461828e02ba9bc074fe662c287f44434b1c52c170a"
+    },
+    "structures\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tests\\test_geometry.py": {
+        "size": 682,
+        "hash": "49c56b0ae14806cc41124c9b83f19e595c90371a4bdde93b2b5c4af1e30c1482"
+    },
+    "tests\\test_geometry_pipeline.py": {
+        "size": 2044,
+        "hash": "3808b0b5542206b5bd5c6a65e907e73eeb229d475192d2c55d7244aa3f270f21"
+    },
+    "tests\\test_wedge_pipeline.py": {
+        "size": 2970,
+        "hash": "a93ad446e0641081321745bcd6687c3cc309196344c99d5d3cc2481c4b6cf723"
+    },
+    "tools\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tradingview\\importer.py": {
+        "size": 1282,
+        "hash": "5fa5b48bd758544f0395150eb216cb095186a2a6905e7002739579c2bc60deff"
+    },
+    "tradingview\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "training\\storage.py": {
+        "size": 2150,
+        "hash": "8e79748cda754a4a085c6d6e8aff4c8c99e48ea101ca6b7cf79a0bc395bd86f9"
+    },
+    "wedge\\analyzer.py": {
+        "size": 3634,
+        "hash": "dd1a0db79ff4f871efae8deafe2c9b95862c837ceff715946805a9e6b4406327"
+    },
+    "wedge\\classifier.py": {
+        "size": 1281,
+        "hash": "7ae5895dcc4f285cf575f394303a2454b2a68dd1f51ccd983d7f0c8886feab94"
+    },
+    "wedge\\detector.py": {
+        "size": 4536,
+        "hash": "0b7a08c78c893a93cfcfe08e575a9de2af40d6b26478fb7641218ba84284eb1f"
+    },
+    "wedge\\quality.py": {
+        "size": 3293,
+        "hash": "f7165ec784b998c77ada8f934e4e30d938af6918dc0329caf5ceee0354d9924d"
+    },
+    "wedge\\result.py": {
+        "size": 3546,
+        "hash": "4ecdb0de827e2a9539fe1406f5eb368e1defecffbd02b3eed47bce22f98959a8"
+    },
+    "wedge\\scoring.py": {
+        "size": 2376,
+        "hash": "d45b30e47a5adde3890f0b92fb160fc75b38d1125919207583602cc273aaa6bf"
+    },
+    "wedge\\__init__.py": {
+        "size": 457,
+        "hash": "4869a941f600af546364d70d3446960ca82034cbebf9ab2aa9d2ee2e7caddcc2"
+    },
+    ".pytest_cache\\v\\cache\\nodeids": {
+        "size": 288,
+        "hash": "8eab1e13b14426c3a5b13267ad9bc565127b5ecdc11a4469734e4a5d3f1cf502"
+    },
+    "Backups\\analyzer\\candles.py": {
+        "size": 639,
+        "hash": "96669a2976d410acb8b2278b18dfb114bb0254dbe9d8ebcaaf2989f6b7be1065"
+    },
+    "Backups\\analyzer\\charts.py": {
+        "size": 404,
+        "hash": "29a2564d17bf0efc65143917c0a08afa79babe497d5613594bbd002d35413514"
+    },
+    "Backups\\analyzer\\core.py": {
+        "size": 5459,
+        "hash": "e1e37c28475183f0fdff42e9f4cfcd52fd91391f9685cc33816ffee0ba1eb403"
+    },
+    "Backups\\analyzer\\reports.py": {
+        "size": 395,
+        "hash": "f3c73ea88253da109e8a5fd1013326d12391bafbf042ca23465e688787fe0e0e"
+    },
+    "Backups\\analyzer\\scoring.py": {
+        "size": 506,
+        "hash": "9892943cb5fc3087af9b6328205a96326b0a647872d44a15af252172a466d0e5"
+    },
+    "Backups\\analyzer\\__init__.py": {
+        "size": 131,
+        "hash": "f348814ba535e2fb9464af11bb6b3494fbbe15264f2e2cf08ad993acdd794ba7"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_014318.bak": {
+        "size": 7027,
+        "hash": "58a9eb0217fb34a366f3f39d0c1aecdc25ef3fcc6662ea3d8e7d0a2493bc219f"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_014410.bak": {
+        "size": 7027,
+        "hash": "58a9eb0217fb34a366f3f39d0c1aecdc25ef3fcc6662ea3d8e7d0a2493bc219f"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_152536.bak": {
+        "size": 7027,
+        "hash": "58a9eb0217fb34a366f3f39d0c1aecdc25ef3fcc6662ea3d8e7d0a2493bc219f"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_152624.bak": {
+        "size": 7027,
+        "hash": "58a9eb0217fb34a366f3f39d0c1aecdc25ef3fcc6662ea3d8e7d0a2493bc219f"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_153034.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_153413.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_153712.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_154715.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_154836.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_154946.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_155022.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260731_155727.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_132305.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_132324.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_132338.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_132446.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_132711.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_145006.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_145007.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_161340_374998.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_161341_281056.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_161344_578574.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_161344_693498.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_164248_625731.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\CHANGELOG.md.20260801_164248_765101.bak": {
+        "size": 7755,
+        "hash": "3ab42b2d9667bb544a3cd12760b063ef55926ca6a4aa20dfff325f92dedb63a2"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_014318.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_014410.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_152536.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_152624.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_153034.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_153413.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_153712.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_154715.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_154836.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_154946.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_155022.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260731_155727.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_132305.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_132324.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_132338.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_132446.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_132711.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_145006.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_145007.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_161340_712026.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_161341_284000.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_161344_581573.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_161344_696498.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_164248_629712.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_CONTRACTS.md.20260801_164248_768079.bak": {
+        "size": 8229,
+        "hash": "397c9188a714b5666d59107ae8d787d16862fbc8363a5418742b5c45ac699fe0"
+    },
+    "Backups\\document_updates\\PROJECT_STATE.md.20260731_013808.bak": {
+        "size": 6844,
+        "hash": "dbba661d2bfa11142f76f85791a0245167d821606777a24427541a6996d5b3f8"
+    },
+    "Backups\\document_updates\\PROJECT_STATE.md.20260731_013941.bak": {
+        "size": 6844,
+        "hash": "dbba661d2bfa11142f76f85791a0245167d821606777a24427541a6996d5b3f8"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_014318.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_014410.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_152536.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_152624.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_153034.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_153413.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_153712.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_154715.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_154836.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_154946.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_155022.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260731_155727.bak": {
+        "size": 8087,
+        "hash": "d9f84cc8b5a1915da45ec22dc5ee7cc74f1b3bd9bf5ee51bde5fc71b3e7c85df"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_132305.bak": {
+        "size": 9202,
+        "hash": "361fa97049089d4d92c74564a4e1f8e04dd8436eeb48efd95223387238b2b565"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_132324.bak": {
+        "size": 9202,
+        "hash": "361fa97049089d4d92c74564a4e1f8e04dd8436eeb48efd95223387238b2b565"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_132338.bak": {
+        "size": 9202,
+        "hash": "361fa97049089d4d92c74564a4e1f8e04dd8436eeb48efd95223387238b2b565"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_132446.bak": {
+        "size": 9202,
+        "hash": "361fa97049089d4d92c74564a4e1f8e04dd8436eeb48efd95223387238b2b565"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_132711.bak": {
+        "size": 9202,
+        "hash": "361fa97049089d4d92c74564a4e1f8e04dd8436eeb48efd95223387238b2b565"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_145006.bak": {
+        "size": 9202,
+        "hash": "361fa97049089d4d92c74564a4e1f8e04dd8436eeb48efd95223387238b2b565"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_145007.bak": {
+        "size": 9202,
+        "hash": "361fa97049089d4d92c74564a4e1f8e04dd8436eeb48efd95223387238b2b565"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_161340_715024.bak": {
+        "size": 10907,
+        "hash": "9be96ec6a7ef721b1482d8c9e737f5bac03de26cef14ced87135e4e78e830d0f"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_161341_286007.bak": {
+        "size": 10907,
+        "hash": "9be96ec6a7ef721b1482d8c9e737f5bac03de26cef14ced87135e4e78e830d0f"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_161344_582571.bak": {
+        "size": 10907,
+        "hash": "9be96ec6a7ef721b1482d8c9e737f5bac03de26cef14ced87135e4e78e830d0f"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_161344_697508.bak": {
+        "size": 10907,
+        "hash": "9be96ec6a7ef721b1482d8c9e737f5bac03de26cef14ced87135e4e78e830d0f"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_164248_631708.bak": {
+        "size": 10907,
+        "hash": "9be96ec6a7ef721b1482d8c9e737f5bac03de26cef14ced87135e4e78e830d0f"
+    },
+    "Backups\\document_updates\\PROJECT_SYNC.md.20260801_164248_771092.bak": {
+        "size": 10907,
+        "hash": "9be96ec6a7ef721b1482d8c9e737f5bac03de26cef14ced87135e4e78e830d0f"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_014318.bak": {
+        "size": 10689,
+        "hash": "0af245d6447fdd21059c518c72cec41f694feee06814c0782dcdff8a665c4327"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_014410.bak": {
+        "size": 10689,
+        "hash": "0af245d6447fdd21059c518c72cec41f694feee06814c0782dcdff8a665c4327"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_152536.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_152624.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_153034.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_153413.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_153712.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_154715.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_154836.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_154946.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_155022.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260731_155727.bak": {
+        "size": 11742,
+        "hash": "9780f01b8d07c8ff9f7fe624445e7e35ec471563d6ee57df307d39e32befbf3a"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_132305.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_132324.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_132338.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_132446.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_132711.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_145006.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_145007.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_161340_718022.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_161341_288019.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_161344_583571.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_161344_699490.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_164248_634723.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\document_updates\\ROADMAP.md.20260801_164248_773075.bak": {
+        "size": 10357,
+        "hash": "63d088879defc68fe1b560c7fff82dcb7ac8396182740e13770a66c687728248"
+    },
+    "Backups\\geometry\\apex.py": {
+        "size": 1144,
+        "hash": "4ad42c0a447df25f440d37302bf20a0bdea4717429f7c9a3dcbd104e14a275de"
+    },
+    "Backups\\geometry\\candidate.py": {
+        "size": 1987,
+        "hash": "d6e55c2bef2a8c51be358721aaa92638cd5e647638bf63d86a527f793a74d249"
+    },
+    "Backups\\geometry\\characterization.py": {
+        "size": 1937,
+        "hash": "ffb264fd9752416e650fa6cbd415e3ef1cd096ae1b13aa6b7d24d82dbda1d960"
+    },
+    "Backups\\geometry\\compression.py": {
+        "size": 2398,
+        "hash": "430b05436d49be2305ea730e3ccbd97932c0dfc7224001722668525471407e0f"
+    },
+    "Backups\\geometry\\engine.py": {
+        "size": 2583,
+        "hash": "5edea5a389b4e07b3fe899536188db3a4fc4815317a5d7d9109604d2a3e2d46c"
+    },
+    "Backups\\geometry\\touches.py": {
+        "size": 2795,
+        "hash": "c8400c9e48e5595a4a9be08db78937f1cdf18984be7f2314993f562a8e37c176"
+    },
+    "Backups\\geometry\\trendline.py": {
+        "size": 1806,
+        "hash": "6fc9067a70f10dae41b757048f955214b8180dea33074d77d2135c2c438ee8f9"
+    },
+    "Backups\\geometry\\__init__.py": {
+        "size": 637,
+        "hash": "01885a07d47b3e3e1ac85497567281e41a6685328e51eb0c8c9e1fd959c7f7dd"
+    },
+    "Backups\\legacy\\geometry.py": {
+        "size": 33,
+        "hash": "b46390743124f387dc271a47744799207aed52edee4d7dfe86d2ee72b4bebb98"
+    },
+    "Backups\\legacy\\scanner.py": {
+        "size": 2137,
+        "hash": "c3b1294f0d79791e0edbe21687bef8bf28c2ce02a210954379eb409a7cd51de1"
+    },
+    "Backups\\geometry\\validation\\apex.py": {
+        "size": 1166,
+        "hash": "e2e67a619d229f6e6710176a866e333e52d8932043117cff5d9633a3f0ef74c1"
+    },
+    "Backups\\geometry\\validation\\compression.py": {
+        "size": 406,
+        "hash": "9fc512ac72a9f4a1cf330fba2269eeb15b4c25d5c485e0847122a4c020f2a06d"
+    },
+    "Backups\\geometry\\validation\\geometry.py": {
+        "size": 1143,
+        "hash": "de4502d7582d3663f9357f59626af46cbeabe372df5ef8dcfaf6acddcc1e668f"
+    },
+    "Backups\\geometry\\validation\\slopes.py": {
+        "size": 618,
+        "hash": "8918356a1e32a2905786fe9f37402af3f797536bdaec8dc15f899ce44140ddcb"
+    },
+    "Backups\\geometry\\validation\\touches.py": {
+        "size": 352,
+        "hash": "e30d74296c43394cdb3350d4141755fb112cf66eeecfb4681b61281da1adcebf"
+    },
+    "Backups\\geometry\\validation\\__init__.py": {
+        "size": 471,
+        "hash": "82925090654463279d4a001df22511e6ddfa60c373e003485a722f03255421ae"
+    },
+    "geometry\\debug\\inspector.py": {
+        "size": 3593,
+        "hash": "1c274a546b581165fa190ab397545ffb45009aa5609404b4b548d24f801b54d3"
+    },
+    "geometry\\debug\\logger.py": {
+        "size": 713,
+        "hash": "1f5284c18a3da2a5a776e95ad10a8cc966142fb5b7b00cf69e866afc3eede599"
+    },
+    "geometry\\debug\\__init__.py": {
+        "size": 496,
+        "hash": "eb6c953d64d306f7619124f1baf9fc3a7b432ebdc4128c4beaa75506b9d2f908"
+    },
+    "geometry\\validation\\apex.py": {
+        "size": 5755,
+        "hash": "3c1955347e7d767668a4a2e1e9e4e68759f6736bc17f730e88bb805ac9443489"
+    },
+    "geometry\\validation\\apex_quality.py": {
+        "size": 3296,
+        "hash": "3165a061e32701c75c78f87696ebee3e495bf7afa619812288da909847d9a31b"
+    },
+    "geometry\\validation\\compression.py": {
+        "size": 2479,
+        "hash": "bf59dcc0dd1ba02e3f51c39a39b413e68e13a8ca3f785e12eb5d726ec42d16b8"
+    },
+    "geometry\\validation\\geometry.py": {
+        "size": 2249,
+        "hash": "0dee27b3528cae764f90b6a22907dfd778fbceb3eb28f669777f179faca23179"
+    },
+    "geometry\\validation\\slopes.py": {
+        "size": 2125,
+        "hash": "5018cefda37a3c5d72e8e7594842463e8067259d38fd94dd3167d5a3923bb695"
+    },
+    "geometry\\validation\\touches.py": {
+        "size": 2839,
+        "hash": "5896bf694a46e424d61b26cf7ad8751a427763da20b9767457ed14d45b7cbf49"
+    },
+    "geometry\\validation\\__init__.py": {
+        "size": 471,
+        "hash": "82925090654463279d4a001df22511e6ddfa60c373e003485a722f03255421ae"
+    },
+    "tools\\project_sync\\architecture.py": {
+        "size": 1306,
+        "hash": "f39acba5672e2bdd0fc815a3d69d54e07a14643d2a656081c862a913af764fa9"
+    },
+    "tools\\project_sync\\architecture_analyzer.py": {
+        "size": 1793,
+        "hash": "fa593c1150f29c601ac9da2baea172f5fbbd085914305e3a6c0b409b1ab306fc"
+    },
+    "tools\\project_sync\\architecture_pipeline.py": {
+        "size": 1052,
+        "hash": "d15c3b8d54641f7849edbece4624010b0ed4e938d7ae2130e87b0a62fb106e11"
+    },
+    "tools\\project_sync\\architecture_report.py": {
+        "size": 1445,
+        "hash": "f3e05261603c899fc3995ff872ece495d127d34fe4c0f40ac4974cfdb08ddb48"
+    },
+    "tools\\project_sync\\architecture_rules.py": {
+        "size": 1414,
+        "hash": "bd684d6bb13097326b4100746c4236422d33eee972028ee51d8d200e537e89f2"
+    },
+    "tools\\project_sync\\default_rules.py": {
+        "size": 1549,
+        "hash": "5776bcaa1a891be70c165aed2bd59df18e59951f6a0d496a50d5dc7a54b2432a"
+    },
+    "tools\\project_sync\\engine.py": {
+        "size": 3519,
+        "hash": "59f455a0b4d62a38cebb7b38a52abaf52e0879607d59b513491af42d20d70261"
+    },
+    "tools\\project_sync\\model.py": {
+        "size": 1678,
+        "hash": "72e71e27742518ccce04d6e37a261ae9cc610899d4c2e9ad883727dd37678c89"
+    },
+    "tools\\project_sync\\project_sync_runner.py": {
+        "size": 6305,
+        "hash": "8d8319fccbd69778ee32f667c019e209a9d05c5e2e49382ae1fc5b9defa2f554"
+    },
+    "tools\\project_sync\\registry.py": {
+        "size": 1173,
+        "hash": "c6095698a94802f4862c3094e5c6f0d1d18dee1f2974163ffc0005edfb61da74"
+    },
+    "tools\\project_sync\\registry_builder.py": {
+        "size": 1202,
+        "hash": "0f023d328917dac7fe811d00a55f5fc4a911e2afa84f1b8e5c1a6bf45e612226"
+    },
+    "tools\\project_sync\\registry_report.py": {
+        "size": 1811,
+        "hash": "a9f193922ad52f54c26e30d93da4c434941debf4ae78ec88abd958b646c1f73e"
+    },
+    "tools\\project_sync\\report.py": {
+        "size": 1336,
+        "hash": "bb87bee568cbc14db6ef51bdd9fa4e9c2fe435bae0a2b4bbf73cb21dfe613ec4"
+    },
+    "tools\\project_sync\\rules.py": {
+        "size": 1140,
+        "hash": "a510fa414385f03822bb3fae1f5a015f844524d1bdcb7134f8ae7e694b4d7d85"
+    },
+    "tools\\project_sync\\scanner.py": {
+        "size": 1444,
+        "hash": "59864c6385be84ba3d2982eabb5ae892dbd46d5dbc2bb9f4cf2f52db8522b63d"
+    },
+    "tools\\project_sync\\validation.py": {
+        "size": 1131,
+        "hash": "3dfa08891c8d7471059c2c1eb373e1eca2394a18a995378b7f9f84b5e4648a7e"
+    },
+    "tools\\project_sync\\validation_report.py": {
+        "size": 1594,
+        "hash": "7d1bf534212ad2aa950846d22ebf1328b300fe646379192c285344d6e1bb9dbe"
+    },
+    "tools\\project_sync\\validator.py": {
+        "size": 1722,
+        "hash": "776b30cf42655fd7f8c532e2bc76f1a92d5edd81d3b7332a8aa0f31e04110d45"
+    },
+    "tools\\project_sync\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\analysis\\dependency_analyzer.py": {
+        "size": 3493,
+        "hash": "e61fbc505f9d547b0fe62d9f5fc7719257c012ebc131085d94f28d6fa29b05b2"
+    },
+    "tools\\project_sync\\analysis\\document_dependency_analyzer.py": {
+        "size": 4113,
+        "hash": "e23e0e0acf8778cea1bede2dbbce539cd2a0f6bcf1a3a0ff44c8110b7f9d6470"
+    },
+    "tools\\project_sync\\analysis\\impact_analyzer.py": {
+        "size": 2833,
+        "hash": "9c71bb19f4a32d4005a14ef18fb8300aad15519eb2d957fa0256f16f1a887f6d"
+    },
+    "tools\\project_sync\\analysis\\impact_pipeline.py": {
+        "size": 2814,
+        "hash": "e1a7fdd9217d02a5d1b2f117b7aee66b1e07b2262c897934f3f3fec3c69bbc89"
+    },
+    "tools\\project_sync\\analysis\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\change_detection\\change_detector.py": {
+        "size": 5176,
+        "hash": "1f335f1994f27a119a85317875a36d589ea11c969f18655528a9b2e2623b27ce"
+    },
+    "tools\\project_sync\\change_detection\\snapshot_compare.py": {
+        "size": 3170,
+        "hash": "73f8350b0966f86106fc8f8516df029abcd812c9e43ae814ad18978b214c6f41"
+    },
+    "tools\\project_sync\\change_detection\\snapshot_creator.py": {
+        "size": 1068,
+        "hash": "bae97a1cb61786600c20ac3092d840a514c5bae31142393bba7b5f85ce7fa68c"
+    },
+    "tools\\project_sync\\change_detection\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\context\\pipeline_context.json": {
+        "size": 454,
+        "hash": "1e28682b984042af9f258d0ba09a50b3d5495e2fda13e5758b481329a48b6916"
+    },
+    "tools\\project_sync\\documentation\\document_graph.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\documentation\\impact_engine.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\documentation\\migration_planner.py": {
+        "size": 1876,
+        "hash": "e3fbe3354dd0813623642f0953006ddbf667ed721e128fce3450fe552efe316c"
+    },
+    "tools\\project_sync\\documentation\\migration_report.py": {
+        "size": 1381,
+        "hash": "25ad53d8240904595cdc5ad8cddf1fe4f2c6cadb66b8e8f761bab157487549c3"
+    },
+    "tools\\project_sync\\documentation\\models.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\documentation\\sync_advisor.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\documentation\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\health\\project_health_report.py": {
+        "size": 2266,
+        "hash": "120270b0ac8a24f2c8c4c1dfa013eaa2cf804df7348101b74a2ca39ecb58007d"
+    },
+    "tools\\project_sync\\health\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\impact\\impact_analyzer.py": {
+        "size": 2978,
+        "hash": "888523bab97fc8a541c109f00ce2cecb8a548534e2e78e116ff2ae51eae27909"
+    },
+    "tools\\project_sync\\migration\\approval_controller.py": {
+        "size": 3315,
+        "hash": "8a6c7fa536e3001dae8ef7db6c39ad99206cd4cd9d5290f551e7d6218ffc6f08"
+    },
+    "tools\\project_sync\\migration\\decision_handler.py": {
+        "size": 3636,
+        "hash": "301222aa578560bc6285ecd01d463ddd230b5abe33f4aa4eaf6a90a8f1280c25"
+    },
+    "tools\\project_sync\\migration\\document_updater.py": {
+        "size": 10568,
+        "hash": "d561d3b264849e346d1bac12c3b64978d58836969bcc6613cb9c4fc26ee78a68"
+    },
+    "tools\\project_sync\\migration\\migration_decision_handler.py": {
+        "size": 3547,
+        "hash": "c9eb71cc552f7a31382ee94c5aa7748b7d1bada2cbe4feee3cfb1c942bb20327"
+    },
+    "tools\\project_sync\\migration\\migration_executor.py": {
+        "size": 5019,
+        "hash": "e82547d5914e6b887d8b6e094d7a0d4dad24e7edff931876d5a86ee1892e786c"
+    },
+    "tools\\project_sync\\migration\\migration_planner.py": {
+        "size": 7218,
+        "hash": "c954de26a238f45ee4a2db0fb1a9e6f875112624fcc62c7e1c9474b45325c03a"
+    },
+    "tools\\project_sync\\models\\document_model.py": {
+        "size": 1607,
+        "hash": "c660ebb37725e20af5ef6df66f59c98bece566f9e2e19855d7bfc94d321665a9"
+    },
+    "tools\\project_sync\\models\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\pipeline\\context.py": {
+        "size": 1667,
+        "hash": "a0ae543b3d67b6e70ff59272ab0bff8a2a6fdbd802a0a0016bcb230867ba2393"
+    },
+    "tools\\project_sync\\pipeline\\executor.py": {
+        "size": 1616,
+        "hash": "5719f846009e8b302717a18d79794c873d80b53aeedde073f19cdc0f2eeeb33d"
+    },
+    "tools\\project_sync\\pipeline\\migration_stage.py": {
+        "size": 1701,
+        "hash": "af848a4177a8e21dafdfa9975e9c092a5269d9e3465085d80684d60641fd3703"
+    },
+    "tools\\project_sync\\pipeline\\pipeline.py": {
+        "size": 3869,
+        "hash": "d413a53c868987a317906c9e64d5e9eff2dd35cdfede469275e9c10f5e706ff0"
+    },
+    "tools\\project_sync\\pipeline\\project_sync_runner.py": {
+        "size": 12486,
+        "hash": "c83db288f4db61015be4988666ee5de0b84ec99d339b0fdbb038964264ad4b1d"
+    },
+    "tools\\project_sync\\pipeline\\project_sync_runner.py.corrupt_backup_20260801": {
+        "size": 12072,
+        "hash": "f43cc2adabe8d8c969049fbaa4030b550e0cbe59f3745b8421df3706700a979d"
+    },
+    "tools\\project_sync\\pipeline\\registry.py": {
+        "size": 4144,
+        "hash": "5da6e3e43bb6497085c200766e287aaef4dc637b2a61ff2afb1b2aa93e7e35c3"
+    },
+    "tools\\project_sync\\pipeline\\result.py": {
+        "size": 2223,
+        "hash": "6760114db96540be7f26f87198d9dd85d548f32ae2685296b92995fdceb54650"
+    },
+    "tools\\project_sync\\pipeline\\stage.py": {
+        "size": 938,
+        "hash": "22968b479f3945b5c34b1752268f85e0110265339ead005fd6a5a773f5cf8ae4"
+    },
+    "tools\\project_sync\\pipeline\\stage_adapter.py": {
+        "size": 1214,
+        "hash": "5900244204d696b040d57760c9f5ae1107e96ef5ac17b1cf33109fee06350aca"
+    },
+    "tools\\project_sync\\pipeline\\test_pipeline.py": {
+        "size": 1440,
+        "hash": "2975e0db072b70c2580ee687021de3331495c33085fb0f7e0b266ca6f7ce1f2f"
+    },
+    "tools\\project_sync\\pipeline\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\registry\\document_registry.py": {
+        "size": 5015,
+        "hash": "fa5616a957c9c70c981e7311a2028514859ff41cf938ac35c38d4bd8fef29aec"
+    },
+    "tools\\project_sync\\registry\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\reports\\architecture_registry.json": {
+        "size": 182133,
+        "hash": "2fa1a8b5ee99ed83d32bce906441419d10f7739ab06c395d1e74c1224618904b"
+    },
+    "tools\\project_sync\\reports\\change_report.json": {
+        "size": 1602,
+        "hash": "1765820488f4f78f2e604e91df9ef10325dd6583baa0ee2d83664052300b5973"
+    },
+    "tools\\project_sync\\reports\\document_dependencies.json": {
+        "size": 6592,
+        "hash": "298cbdb8827bb99613da4987f9d55b58fb936eddcb5f10c6f4d952f86d1ed449"
+    },
+    "tools\\project_sync\\reports\\document_registry.json": {
+        "size": 25210,
+        "hash": "63910cf91389e1ba93f952348a3f7d155911ad1fef8f4cf59bbf8ca29dd0d572"
+    },
+    "tools\\project_sync\\reports\\document_update_report.json": {
+        "size": 793,
+        "hash": "de30cc34e7b48e82f2d60a471bececcdcdd514e6427cfab9ca7ea813ffb7efd3"
+    },
+    "tools\\project_sync\\reports\\impact_pipeline_report.json": {
+        "size": 196,
+        "hash": "5800487de26c0af0d8a85b3d692afb2d4d52de8b324a8dc96d197cbe7adb1fb8"
+    },
+    "tools\\project_sync\\reports\\impact_report.json": {
+        "size": 253,
+        "hash": "1592d97de30161b18906bd600ce2284011985b8104910db1ce80fcacc54f2d0b"
+    },
+    "tools\\project_sync\\reports\\migration_approval.json": {
+        "size": 604,
+        "hash": "541afe8cdff0568a70e5c8750a9862eeea65ef4fef4d6aa62b50166b06e3544a"
+    },
+    "tools\\project_sync\\reports\\migration_context.json": {
+        "size": 391,
+        "hash": "cb9907afb612fa12483c27d175a5397d877330a91ad11fb4aa186c4c6b051082"
+    },
+    "tools\\project_sync\\reports\\migration_decision.json": {
+        "size": 616,
+        "hash": "3ecc760300e6f828d4d92d28a32b7c6555d13ad057ea58ef8360bb8e672347f8"
+    },
+    "tools\\project_sync\\reports\\migration_execution_report.json": {
+        "size": 834,
+        "hash": "89fc4c0d28eb3ec04c366d84b1501de8138d2a2338d1d5ca497d8ae95c0f65e2"
+    },
+    "tools\\project_sync\\reports\\migration_plan.json": {
+        "size": 468,
+        "hash": "e9fab572d91e06b56135ffd836d978d3920a86cc16526b299a36e351c35fe705"
+    },
+    "tools\\project_sync\\reports\\migration_report.json": {
+        "size": 363,
+        "hash": "4968ae15e44b578232a6bdb2cb9bcd5962d0579ecac6ecb47c11b46cccbe486d"
+    },
+    "tools\\project_sync\\reports\\module_registry.json": {
+        "size": 161291,
+        "hash": "44d7754b48a010977b66fb6194845d870d0e2b9f26f0053f45a77967a2f68323"
+    },
+    "tools\\project_sync\\reports\\pipeline_context.json": {
+        "size": 297,
+        "hash": "aaf3eafaa9bcb582736c5bc545a9a654211c9e2f2e0b04c875a256146e666fc5"
+    },
+    "tools\\project_sync\\reports\\pipeline_report.json": {
+        "size": 8393,
+        "hash": "68c03b1dce429bac5d2f6d8faa79c0ae0af0b9fbba273381a2fcac691223516f"
+    },
+    "tools\\project_sync\\reports\\post_migration_validation_report.json": {
+        "size": 915,
+        "hash": "bd12397b21b8a1eb80eac0a5c1d4ca3ba20d6b8561c48ccefc99935020bdf009"
+    },
+    "tools\\project_sync\\reports\\project_health_report.json": {
+        "size": 163,
+        "hash": "e2beaa82d8a59ed4355805df133af2730b7f0651c844a8a148752563e4e3e418"
+    },
+    "tools\\project_sync\\reports\\project_sync_state.json": {
+        "size": 562,
+        "hash": "63a71e4c2ec9a4df3c956968e1120a689f7c0faffba755b0a81b5e000e8824b9"
+    },
+    "tools\\project_sync\\reports\\scan_report.json": {
+        "size": 157,
+        "hash": "b611681bf1f183d6859c454a533a98d96c4b583ea59667d0af3d5fd57949aff9"
+    },
+    "tools\\project_sync\\reports\\state_intelligence_report.json": {
+        "size": 1728,
+        "hash": "34205435cb9ed28e5faaa40b9a51ab0937892bf42f0d4f7acceededfcb165044"
+    },
+    "tools\\project_sync\\reports\\synchronization_plan.json": {
+        "size": 8441,
+        "hash": "5dbea96014b204ddd0661aec2df41c967d89f351377e892957d06843645f0217"
+    },
+    "tools\\project_sync\\reports\\validation_report.json": {
+        "size": 5853,
+        "hash": "68c75f86d4d867e69e0422d251f9918082f4ad183fa4a41cbce3f48c9b773bad"
+    },
+    "tools\\project_sync\\reports\\validation_report.py": {
+        "size": 1909,
+        "hash": "d99389254868308bc0e1b3cd0bbaad6e0334511adfadd957baf45c531b5d1c73"
+    },
+    "tools\\project_sync\\rules\\rule_base.py": {
+        "size": 1477,
+        "hash": "171115e56b6a978903179735de1731eb010306c20186d4ceb58d8666e1ce9c20"
+    },
+    "tools\\project_sync\\rules\\rule_executor.py": {
+        "size": 1968,
+        "hash": "42c8ef82dab7efbbc3d8adcf816ad5718a185562b97f512834080af1ade20be7"
+    },
+    "tools\\project_sync\\rules\\rule_loader.py": {
+        "size": 863,
+        "hash": "7184635583022765893e926a8ea44628fc4f9a43f00025ce059d5ba12d480025"
+    },
+    "tools\\project_sync\\rules\\rule_registry.py": {
+        "size": 1627,
+        "hash": "77b07b02d0a953fb42dbb8d187796fd3288524075661fb00d204740a54c2e7e3"
+    },
+    "tools\\project_sync\\rules\\rule_result.py": {
+        "size": 1274,
+        "hash": "7ba256f57c3fab6969b4c64053114e483a704b1e1fe715371aafb6a44ca15ffa"
+    },
+    "tools\\project_sync\\rules\\__init__.py": {
+        "size": 148,
+        "hash": "d7d286a3e66051a5c8a8e2ae72792d00acc24084fb361241aed371237d40d4d6"
+    },
+    "tools\\project_sync\\snapshots\\latest_snapshot.json": {
+        "size": 92437,
+        "hash": "56dacec2fb9ecc410e9454bae4d6184815cb2c6139c07eb765664006fa4ad395"
+    },
+    "tools\\project_sync\\snapshots\\previous_document_registry.json": {
+        "size": 17255,
+        "hash": "7932975cbe9c0d97866e393ad52a885b6bedbdd04cd21c2a7b3894199b0f8070"
+    },
+    "tools\\project_sync\\snapshots\\snapshot_compare.py": {
+        "size": 3356,
+        "hash": "942a1229013137257a552ba2027e33f9366078bcc048877f06bae6e3ef365fd3"
+    },
+    "tools\\project_sync\\state\\state_analyzer.py": {
+        "size": 4487,
+        "hash": "6ae0557006cc61259d41f7f3cbc1615a16f9f4dc70540d93ab4b7d39654ea24d"
+    },
+    "tools\\project_sync\\state\\sync_state_builder.py": {
+        "size": 3789,
+        "hash": "5b29dd99dfab55e9aee936c1cafd2d8ce1174ff0d9f3925bea9daf3d761dfafe"
+    },
+    "tools\\project_sync\\state\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\synchronization\\sync_planner.py": {
+        "size": 7525,
+        "hash": "24e8c87d5b703d98a7f3ea98bc73569bf9ae25db17919c7603b28fdbe9ac5220"
+    },
+    "tools\\project_sync\\synchronization\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\validation\\architecture_compliance_engine.py": {
+        "size": 1915,
+        "hash": "fc09bc18183c2d3acff3823ba8a94465fa393a4785694d85a9eb1c95dff72165"
+    },
+    "tools\\project_sync\\validation\\artifact_validator.py": {
+        "size": 3192,
+        "hash": "b803c06de7ce8db912e472382a732ea7919ccfc532ae87e4500bf755a04f210e"
+    },
+    "tools\\project_sync\\validation\\document_validator.py": {
+        "size": 2780,
+        "hash": "d86be5a345617c589ff364f616463f86bb1a8a2f9bb3807d6a1e9c41808d0be5"
+    },
+    "tools\\project_sync\\validation\\post_migration_validator.py": {
+        "size": 4297,
+        "hash": "f17b0400afb195c76053b1346d2a79f408ffde06d4a2fe1e2d7db7c6c42ce420"
+    },
+    "tools\\project_sync\\validation\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\validators\\architecture_validator.py": {
+        "size": 1404,
+        "hash": "d0dd13faaf2ca3554ad3e429fe8afbd205416d147c541f26d8bec8ae3f019bbd"
+    },
+    "tools\\project_sync\\validators\\document_validator.py": {
+        "size": 2618,
+        "hash": "9a4e502acebd0ca4922a14d598ded881c1ed1549c9c90ee94374a685e72682e3"
+    },
+    "tools\\project_sync\\validators\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\registry\\architecture\\architecture_registry.py": {
+        "size": 1540,
+        "hash": "d8303ed7c1bd86d00a431da80b32922e6fcbf97c53ead1722b47eb7223f65726"
+    },
+    "tools\\project_sync\\registry\\architecture\\__init__.py": {
+        "size": 0,
+        "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "tools\\project_sync\\rules\\handlers\\architecture_first_rule.py": {
+        "size": 1719,
+        "hash": "43d894ce7b732f0246943c5132955a00c5a344f5e9fbbc82d76f6a5fa1f4cef2"
+    },
+    "tools\\project_sync\\rules\\handlers\\dependency_direction_rule.py": {
+        "size": 2576,
+        "hash": "9f0b967b122d53c27d8697bd3e30edd96761121e3f90f944d1f041f09557b4f7"
+    },
+    "tools\\project_sync\\rules\\handlers\\single_responsibility_rule.py": {
+        "size": 2059,
+        "hash": "7d78c97f54688a8f0d5effd402008e84849406788842e366f9712c1d98bbf511"
+    },
+    "training\\annotations\\INJUSDT_20260726_175715.json": {
+        "size": 1168,
+        "hash": "b520ba29862f5373cad53fb3ccb21d9bae814168df0778b1fc2ac97f071aec62"
+    }
+}

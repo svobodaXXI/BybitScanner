@@ -1,0 +1,362 @@
+{
+    "project_path": "C:\\BybitScanner",
+    "data": {
+        "migration_status": "APPROVED",
+        "migration_required": true,
+        "migration_approval_required": true,
+        "migration_documents": [
+            "CHANGELOG.md",
+            "PROJECT_CONTRACTS.md",
+            "PROJECT_SYNC.md",
+            "ROADMAP.md"
+        ],
+        "migration_plan": [
+            {
+                "document": "CHANGELOG.md",
+                "actions": [
+                    "synchronize_state_reference"
+                ],
+                "approval_required": true,
+                "changes": {
+                    "added": [],
+                    "removed": [],
+                    "modified": [
+                        "PROJECT_STATE.md"
+                    ],
+                    "total_changes": 1
+                },
+                "risk": "LOW"
+            },
+            {
+                "document": "PROJECT_CONTRACTS.md",
+                "actions": [
+                    "synchronize_state_reference"
+                ],
+                "approval_required": true,
+                "changes": {
+                    "added": [],
+                    "removed": [],
+                    "modified": [
+                        "PROJECT_STATE.md"
+                    ],
+                    "total_changes": 1
+                },
+                "risk": "LOW"
+            },
+            {
+                "document": "PROJECT_SYNC.md",
+                "actions": [
+                    "synchronize_state_reference"
+                ],
+                "approval_required": true,
+                "changes": {
+                    "added": [],
+                    "removed": [],
+                    "modified": [
+                        "PROJECT_STATE.md"
+                    ],
+                    "total_changes": 1
+                },
+                "risk": "LOW"
+            },
+            {
+                "document": "ROADMAP.md",
+                "actions": [
+                    "synchronize_state_reference"
+                ],
+                "approval_required": true,
+                "changes": {
+                    "added": [],
+                    "removed": [],
+                    "modified": [
+                        "PROJECT_STATE.md"
+                    ],
+                    "total_changes": 1
+                },
+                "risk": "LOW"
+            }
+        ],
+        "post_migration_validation_status": "NO_UPDATES",
+        "post_migration_validation_report": {
+            "stage": "post_migration_validation",
+            "status": "NO_UPDATES",
+            "migration_required": true,
+            "documents": [
+                "CHANGELOG.md",
+                "PROJECT_CONTRACTS.md",
+                "PROJECT_SYNC.md",
+                "ROADMAP.md"
+            ],
+            "checks": {
+                "execution_status": "NO_UPDATES",
+                "documents": "SUCCESS",
+                "updates": "NO_UPDATES",
+                "updated_documents": "NO_UPDATES",
+                "backups": "NO_UPDATES",
+                "execution_errors": "SUCCESS"
+            },
+            "errors": [],
+            "return_code": 0,
+            "artifact": "C:\\BybitScanner\\tools\\project_sync\\reports\\post_migration_validation_report.json"
+        }
+    },
+    "artifacts": {
+        "document_registry": {
+            "stage": "tools.project_sync.registry.document_registry",
+            "success": true,
+            "data": {
+                "output": "Registered documents: 41",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.registry.document_registry",
+                "return_code": 0
+            }
+        },
+        "validation": {
+            "stage": "tools.project_sync.validation.document_validator",
+            "success": true,
+            "data": {
+                "output": "Validated documents: 41",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.validation.document_validator",
+                "return_code": 0
+            }
+        },
+        "dependency_analysis": {
+            "stage": "tools.project_sync.analysis.dependency_analyzer",
+            "success": true,
+            "data": {
+                "output": "Analyzed documents: 41",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.analysis.dependency_analyzer",
+                "return_code": 0
+            }
+        },
+        "impact_analysis": {
+            "stage": "tools.project_sync.analysis.impact_analyzer",
+            "success": true,
+            "data": {
+                "output": "Affected documents: 4",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.analysis.impact_analyzer",
+                "return_code": 0
+            }
+        },
+        "snapshot_compare": {
+            "stage": "tools.project_sync.change_detection.snapshot_compare",
+            "success": true,
+            "data": {
+                "output": "Detected changes: 5",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.change_detection.snapshot_compare",
+                "return_code": 0
+            }
+        },
+        "health_check": {
+            "stage": "tools.project_sync.health.project_health_report",
+            "success": true,
+            "data": {
+                "output": "Health status: OK",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.health.project_health_report",
+                "return_code": 0
+            }
+        },
+        "synchronization_planning": {
+            "stage": "tools.project_sync.synchronization.sync_planner",
+            "success": true,
+            "data": {
+                "output": "{\n    \"component\": \"synchronization_planner\",\n    \"version\": \"2.2\",\n    \"sources\": [\n        \"impact_report\",\n        \"change_report\",\n        \"state_intelligence_report\"\n    ],\n    \"state_health\": {\n        \"status\": \"HEALTHY\",\n        \"missing_documents\": [],\n        \"invalid_documents\": [],\n        \"documents_checked\": 6\n    },\n    \"documents_to_review\": [\n        \"CHANGELOG.md\",\n        \"PROJECT_CONTRACTS.md\",\n        \"PROJECT_SYNC.md\",\n        \"ROADMAP.md\"\n    ],\n    \"changed_documents\": [\n        \"ARCHITECTURE.md\",\n        \"ASSISTANT_PROTOCOL.md\",\n        \"CHANGELOG.md\",\n        \"PROJECT_STATE.md\",\n        \"PROJECT_TREE.md\"\n    ],\n    \"change_summary\": {\n        \"added\": [],\n        \"removed\": [],\n        \"modified\": [\n            \"ARCHITECTURE.md\",\n            \"ASSISTANT_PROTOCOL.md\",\n            \"CHANGELOG.md\",\n            \"PROJECT_STATE.md\",\n            \"PROJECT_TREE.md\"\n        ],\n        \"total_changes\": 5\n    },\n    \"migration_plan\": [\n        {\n            \"document\": \"CHANGELOG.md\",\n            \"changes\": {\n                \"added\": [],\n                \"removed\": [],\n                \"modified\": [\n                    \"ARCHITECTURE.md\",\n                    \"ASSISTANT_PROTOCOL.md\",\n                    \"CHANGELOG.md\",\n                    \"PROJECT_STATE.md\",\n                    \"PROJECT_TREE.md\"\n                ],\n                \"total_changes\": 5\n            },\n            \"actions\": [\n                \"synchronize_state_reference\"\n            ],\n            \"risk\": \"LOW\",\n            \"approval_required\": true\n        },\n        {\n            \"document\": \"PROJECT_CONTRACTS.md\",\n            \"changes\": {\n                \"added\": [],\n                \"removed\": [],\n                \"modified\": [\n                    \"ARCHITECTURE.md\",\n                    \"ASSISTANT_PROTOCOL.md\",\n                    \"CHANGELOG.md\",\n                    \"PROJECT_STATE.md\",\n                    \"PROJECT_TREE.md\"\n                ],\n                \"total_changes\": 5\n            },\n            \"actions\": [\n                \"synchronize_state_reference\"\n            ],\n            \"risk\": \"LOW\",\n            \"approval_required\": true\n        },\n        {\n            \"document\": \"PROJECT_SYNC.md\",\n            \"changes\": {\n                \"added\": [],\n                \"removed\": [],\n                \"modified\": [\n                    \"ARCHITECTURE.md\",\n                    \"ASSISTANT_PROTOCOL.md\",\n                    \"CHANGELOG.md\",\n                    \"PROJECT_STATE.md\",\n                    \"PROJECT_TREE.md\"\n                ],\n                \"total_changes\": 5\n            },\n            \"actions\": [\n                \"synchronize_state_reference\"\n            ],\n            \"risk\": \"LOW\",\n            \"approval_required\": true\n        },\n        {\n            \"document\": \"ROADMAP.md\",\n            \"changes\": {\n                \"added\": [],\n                \"removed\": [],\n                \"modified\": [\n                    \"ARCHITECTURE.md\",\n                    \"ASSISTANT_PROTOCOL.md\",\n                    \"CHANGELOG.md\",\n                    \"PROJECT_STATE.md\",\n                    \"PROJECT_TREE.md\"\n                ],\n                \"total_changes\": 5\n            },\n            \"actions\": [\n                \"synchronize_state_reference\"\n            ],\n            \"risk\": \"LOW\",\n            \"approval_required\": true\n        }\n    ],\n    \"count\": 4,\n    \"migration_required\": true,\n    \"approval_required\": true,\n    \"status\": \"READY\"\n}",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.synchronization.sync_planner",
+                "return_code": 0
+            }
+        },
+        "state_intelligence": {
+            "stage": "tools.project_sync.state.state_analyzer",
+            "success": true,
+            "data": {
+                "output": "STATE INTELLIGENCE ENGINE\nStatus: HEALTHY\nDocuments: 6",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.state.state_analyzer",
+                "return_code": 0
+            }
+        },
+        "state_synchronization_planning": {
+            "stage": "tools.project_sync.state.state_synchronization_planner",
+            "success": true,
+            "data": {
+                "output": "STATE SYNCHRONIZATION PLANNER\nStatus: READY\nSynchronization required: False\nDocuments: 6\nActions: 2",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.state.state_synchronization_planner",
+                "return_code": 0
+            }
+        },
+        "state_synchronization": {
+            "stage": "tools.project_sync.state.state_synchronizer",
+            "success": true,
+            "data": {
+                "output": "STATE SYNCHRONIZER\nStatus: NOT_REQUIRED\nSynchronization required: False\nDocuments: 6\nActions: 2",
+                "errors": []
+            },
+            "message": "",
+            "errors": [],
+            "metadata": {
+                "module": "tools.project_sync.state.state_synchronizer",
+                "return_code": 0
+            }
+        },
+        "migration": {
+            "stage": "migration",
+            "status": "APPROVED",
+            "migration_required": true,
+            "approval_required": true,
+            "documents": [
+                "CHANGELOG.md",
+                "PROJECT_CONTRACTS.md",
+                "PROJECT_SYNC.md",
+                "ROADMAP.md"
+            ],
+            "actions": [
+                "synchronize_state_reference"
+            ],
+            "migration_plan": [
+                {
+                    "document": "CHANGELOG.md",
+                    "actions": [
+                        "synchronize_state_reference"
+                    ],
+                    "approval_required": true,
+                    "changes": {
+                        "added": [],
+                        "removed": [],
+                        "modified": [
+                            "PROJECT_STATE.md"
+                        ],
+                        "total_changes": 1
+                    },
+                    "risk": "LOW"
+                },
+                {
+                    "document": "PROJECT_CONTRACTS.md",
+                    "actions": [
+                        "synchronize_state_reference"
+                    ],
+                    "approval_required": true,
+                    "changes": {
+                        "added": [],
+                        "removed": [],
+                        "modified": [
+                            "PROJECT_STATE.md"
+                        ],
+                        "total_changes": 1
+                    },
+                    "risk": "LOW"
+                },
+                {
+                    "document": "PROJECT_SYNC.md",
+                    "actions": [
+                        "synchronize_state_reference"
+                    ],
+                    "approval_required": true,
+                    "changes": {
+                        "added": [],
+                        "removed": [],
+                        "modified": [
+                            "PROJECT_STATE.md"
+                        ],
+                        "total_changes": 1
+                    },
+                    "risk": "LOW"
+                },
+                {
+                    "document": "ROADMAP.md",
+                    "actions": [
+                        "synchronize_state_reference"
+                    ],
+                    "approval_required": true,
+                    "changes": {
+                        "added": [],
+                        "removed": [],
+                        "modified": [
+                            "PROJECT_STATE.md"
+                        ],
+                        "total_changes": 1
+                    },
+                    "risk": "LOW"
+                }
+            ],
+            "updates": {},
+            "updates_count": 0,
+            "source": "migration_control_chain",
+            "artifacts": {
+                "migration_plan": "C:\\BybitScanner\\tools\\project_sync\\reports\\migration_plan.json",
+                "migration_decision": "C:\\BybitScanner\\tools\\project_sync\\reports\\migration_decision.json",
+                "migration_approval": "C:\\BybitScanner\\tools\\project_sync\\reports\\migration_approval.json"
+            }
+        },
+        "post_migration_validation": {
+            "stage": "post_migration_validation",
+            "status": "NO_UPDATES",
+            "migration_required": true,
+            "documents": [
+                "CHANGELOG.md",
+                "PROJECT_CONTRACTS.md",
+                "PROJECT_SYNC.md",
+                "ROADMAP.md"
+            ],
+            "checks": {
+                "execution_status": "NO_UPDATES",
+                "documents": "SUCCESS",
+                "updates": "NO_UPDATES",
+                "updated_documents": "NO_UPDATES",
+                "backups": "NO_UPDATES",
+                "execution_errors": "SUCCESS"
+            },
+            "errors": [],
+            "return_code": 0,
+            "artifact": "C:\\BybitScanner\\tools\\project_sync\\reports\\post_migration_validation_report.json"
+        }
+    },
+    "metadata": {
+        "project": "BybitScanner",
+        "created": "2026-08-08T10:26:25.254960",
+        "project_root": "C:\\BybitScanner"
+    },
+    "errors": []
+}

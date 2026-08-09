@@ -1,0 +1,4839 @@
+# BybitScanner — Project State
+
+Version:
+
+7.8
+
+Date:
+
+2026-08-08
+
+Document Type:
+
+PROJECT_STATE_DOCUMENT
+
+Status:
+
+ACTIVE
+
+---
+
+# DOCUMENT_METADATA
+
+document_id:
+
+BS-DOC-STATE-001
+
+purpose:
+
+Главный индекс текущего состояния проекта BybitScanner,
+его архитектуры, подсистем, документации, Project Sync Framework,
+Context Recovery Protocol и правил сохранения рабочего контекста.
+
+machine_readable:
+
+true
+
+parser_version:
+
+1.0
+
+---
+
+# CURRENT_PROJECT_STATUS
+
+status:
+
+ACTIVE
+
+architecture_state:
+
+STABLE
+
+development_state:
+
+ACTIVE
+
+documentation_state:
+
+STABLE
+
+project_sync_state:
+
+HEALTHY
+
+architecture_hygiene_state:
+
+PLANNED
+
+context_recovery_state:
+
+ACTIVE
+
+context_integrity_state:
+
+ACTIVE
+
+assistant_efficiency_state:
+
+ACTIVE
+
+overall_state:
+
+STABLE
+
+---
+
+# CONTEXT_RECOVERY_PROTOCOL
+
+Status:
+
+ACTIVE
+
+Protocol:
+
+CONTEXT_RECOVERY_PROTOCOL
+
+Purpose:
+
+Обеспечить восстановление рабочего контекста
+ассистента при начале продолжения работы с проектом
+без необходимости каждый раз повторно передавать
+полный комплект проектной документации.
+
+Primary entry document:
+
+PROJECT_STATE.md
+
+Canonical recovery document set:
+
+1. PROJECT_STATE.md
+2. PROJECT_TREE.md
+3. ASSISTANT_PROTOCOL.md
+4. PROJECT_RULES.md
+5. ARCHITECTURE.md
+
+Recovery set size:
+
+5
+
+---
+
+## CONTEXT_RECOVERY_RULE
+
+PROJECT_STATE.md является
+основной точкой восстановления контекста.
+
+Если пользователь передаёт только
+PROJECT_STATE.md после потери,
+обновления или недостаточности контекста,
+ассистент должен самостоятельно определить,
+что для полного восстановления рабочего
+контекста необходимо обратиться также
+к каноническому набору из пяти документов.
+
+Обязательный набор:
+
+* PROJECT_STATE.md;
+* PROJECT_TREE.md;
+* ASSISTANT_PROTOCOL.md;
+* PROJECT_RULES.md;
+* ARCHITECTURE.md.
+
+---
+
+## CONTEXT_RECOVERY_EXECUTION
+
+При необходимости восстановления контекста
+ассистент должен:
+
+1. прочитать PROJECT_STATE.md;
+2. определить по PROJECT_STATE.md необходимость
+   выполнения Context Recovery Protocol;
+3. получить PROJECT_TREE.md;
+4. получить ASSISTANT_PROTOCOL.md;
+5. получить PROJECT_RULES.md;
+6. получить ARCHITECTURE.md;
+7. сверить полученную информацию;
+8. считать контекст восстановленным только
+   после проверки всех пяти документов.
+
+---
+
+## CONTEXT_RECOVERY_COMPLETION
+
+После успешного выполнения протокола:
+
+context_recovery_status:
+
+COMPLETED
+
+context_recovery_required:
+
+false
+
+canonical_context_set_loaded:
+
+true
+
+loaded_documents:
+
+5
+
+После этого ассистент не должен
+требовать повторную передачу всех пяти
+документов при каждом следующем сообщении
+с PROJECT_STATE.md.
+
+Повторное выполнение протокола требуется
+только если:
+
+* контекст был потерян;
+* состояние восстановления больше
+  не хранится в доступном контексте;
+* пользователь явно запросил
+  повторное восстановление;
+* PROJECT_STATE.md указывает на изменение
+  канонического recovery set;
+* один из обязательных документов был
+  существенно изменён и требуется повторная
+  сверка;
+* ассистент не может достоверно подтвердить,
+  что Context Recovery Protocol уже выполнялся.
+
+---
+
+## CONTEXT_RECOVERY_MEMORY_RULE
+
+Если в текущем доступном контексте уже
+зафиксировано, что Context Recovery Protocol
+был выполнен и canonical recovery set
+был загружен, повторно требовать
+весь набор документов запрещается.
+
+PROJECT_STATE.md не должен автоматически
+запускать повторный запрос пяти документов
+при каждом своём получении.
+
+PROJECT_STATE.md используется как
+контрольная точка состояния и как указатель
+на механизм восстановления, а не как причина
+для бесконечного повторения процедуры.
+
+---
+
+## CONTEXT_RECOVERY_PATH_RULE
+
+PROJECT_TREE.md является
+единственным источником истины
+для фактических путей файлов проекта.
+
+Ассистент не должен самостоятельно
+угадывать, реконструировать или
+придумывать пути к документам,
+программным модулям или другим файлам.
+
+При необходимости открытия файла
+сначала должен быть использован
+актуальный PROJECT_TREE.md.
+
+Если путь отсутствует в доступном
+PROJECT_TREE.md или не может быть
+достоверно подтверждён, ассистент
+не должен выдавать предполагаемый путь
+как фактический.
+
+---
+
+## CONTEXT_RECOVERY_DOCUMENT_PRIORITY
+
+При восстановлении контекста документы
+используются в следующем порядке:
+
+1. PROJECT_STATE.md
+   — текущее состояние проекта;
+
+2. PROJECT_TREE.md
+   — источник истины для структуры
+   и путей файлов;
+
+3. ASSISTANT_PROTOCOL.md
+   — правила взаимодействия,
+   продолжения работы и выдачи артефактов;
+
+4. PROJECT_RULES.md
+   — нормативные правила проекта;
+
+5. ARCHITECTURE.md
+   — каноническая архитектурная модель.
+
+---
+
+## CONTEXT_RECOVERY_SINGLE_SOURCE_RULE
+
+Для каждой категории информации
+используется соответствующий канонический
+источник.
+
+Project State:
+
+PROJECT_STATE.md
+
+Filesystem paths:
+
+PROJECT_TREE.md
+
+Assistant behavior:
+
+ASSISTANT_PROTOCOL.md
+
+Project rules:
+
+PROJECT_RULES.md
+
+Architecture:
+
+ARCHITECTURE.md
+
+При конфликте информации ассистент
+не должен самостоятельно выбирать
+предполагаемую версию.
+
+Приоритет определяется назначением
+соответствующего канонического документа
+и действующими правилами проекта.
+
+---
+
+## CONTEXT_RECOVERY_NO_DUPLICATE_REQUEST_RULE
+
+Если пользователь уже передал
+PROJECT_STATE.md и Context Recovery Protocol
+уже был выполнен ранее в доступном контексте,
+ассистент не должен отвечать запросом:
+
+"пришлите PROJECT_TREE.md";
+
+"пришлите ASSISTANT_PROTOCOL.md";
+
+"пришлите PROJECT_RULES.md";
+
+"пришлите ARCHITECTURE.md";
+
+если нет конкретной причины считать,
+что соответствующий документ отсутствует
+или устарел.
+
+Повторный запрос разрешён только при
+реальной необходимости восстановления
+или сверки.
+
+---
+
+## CONTEXT_RECOVERY_CONTEXT_AUTHORITY_RULE
+
+PROJECT_STATE.md является источником истины
+для текущего рабочего состояния проекта.
+
+Нельзя заменять актуальное состояние проекта
+старой информацией из ранее сохранённого,
+непроверенного или утратившего актуальность
+контекста ассистента.
+
+Если ранее сохранённый контекст
+противоречит текущему PROJECT_STATE.md,
+приоритет имеет текущий PROJECT_STATE.md
+в пределах категории Project State.
+
+Старая информация не должна автоматически
+возвращать проект к предыдущему этапу,
+приоритету или рабочему направлению.
+
+---
+
+## CONTEXT_RECOVERY_NO_ROLLBACK_RULE
+
+После успешного восстановления контекста
+ассистент не должен самостоятельно:
+
+* возвращать ранее отложенный приоритет;
+* восстанавливать завершённый этап;
+* отменять принятое рабочее решение;
+* считать старое направление текущим;
+* заменять актуальное состояние историческим;
+* инициировать работу по устаревшему roadmap;
+* предлагать повторное выполнение уже завершённой
+  операции без конкретного основания.
+
+Любой переход на другой рабочий приоритет
+должен быть подтверждён актуальными
+каноническими документами либо явным
+решением пользователя.
+
+---
+
+# CONTEXT_INTEGRITY_STATE
+
+Status:
+
+ACTIVE
+
+Purpose:
+
+Защитить текущий рабочий контекст
+от отката к устаревшим состояниям,
+конфликтов между источниками,
+повторного выполнения уже завершённых
+процедур и неправильной маршрутизации задач.
+
+Primary authority:
+
+PROJECT_STATE.md
+
+Behavior authority:
+
+ASSISTANT_PROTOCOL.md
+
+Project rule authority:
+
+PROJECT_RULES.md
+
+Filesystem authority:
+
+PROJECT_TREE.md
+
+Architecture authority:
+
+ARCHITECTURE.md
+
+---
+
+## CONTEXT_INTEGRITY_RULES
+
+Ассистент обязан перед выполнением
+новой проектной задачи определить:
+
+1. текущий рабочий приоритет;
+2. текущую рабочую фазу;
+3. активный рабочий контур;
+4. статус соответствующей подсистемы;
+5. наличие уже выполненного решения;
+6. наличие более нового канонического состояния.
+
+Если задача относится к текущему
+рабочему контуру, она не должна
+перенаправляться в исторический,
+отложенный или вспомогательный контур.
+
+---
+
+## CONTEXT_INTEGRITY_STALE_INFORMATION_RULE
+
+Историческая информация может использоваться
+только как историческая информация.
+
+Она не может автоматически использоваться
+как текущее состояние.
+
+При наличии двух состояний:
+
+CURRENT:
+
+актуальный Project State;
+
+HISTORICAL:
+
+старое состояние из предыдущего контекста;
+
+используется CURRENT.
+
+---
+
+## CONTEXT_INTEGRITY_CONFLICT_RULE
+
+При обнаружении конфликта ассистент должен
+сначала определить категорию конфликта
+и применить соответствующий канонический
+источник.
+
+Ассистент не должен самостоятельно
+комбинировать противоречащие версии
+в новое состояние.
+
+Если конфликт невозможно разрешить
+по назначению канонических документов,
+необходимо остановить изменение состояния
+и запросить только минимально необходимое
+уточнение.
+
+---
+
+# ASSISTANT_EFFICIENCY_STATE
+
+Status:
+
+ACTIVE
+
+Purpose:
+
+Минимизировать потери рабочего времени
+пользователя, связанные с восстановлением
+контекста, повторной передачей информации,
+повторным выполнением уже завершённых
+действий и ошибочной маршрутизацией задач.
+
+Primary objective:
+
+MAXIMIZE_DEVELOPMENT_TIME
+
+Secondary objective:
+
+MINIMIZE_CONTEXT_RECOVERY_OVERHEAD
+
+---
+
+## ASSISTANT_EFFICIENCY_RULE
+
+Приоритетом ассистента является
+не увеличение количества процедур,
+а сохранение непрерывности разработки.
+
+Context Recovery Protocol должен
+использоваться как механизм восстановления,
+а не как дополнительная постоянная
+процедура сопровождения.
+
+---
+
+## ASSISTANT_EFFICIENCY_NO_REPEAT_RULE
+
+Ассистент не должен повторно просить
+пользователя предоставить информацию,
+которая уже достоверно присутствует
+в доступном текущем контексте.
+
+Запрещено без необходимости повторно
+запрашивать:
+
+* уже переданные документы;
+* уже подтверждённые решения;
+* уже установленные приоритеты;
+* уже известные пути;
+* уже выполненные проверки;
+* уже зафиксированные результаты.
+
+---
+
+## ASSISTANT_EFFICIENCY_ARTIFACT_FIRST_RULE
+
+При наличии достаточного контекста
+ассистент должен переходить
+непосредственно к выполнению задачи.
+
+Не следует заменять выполнение задачи:
+
+* длинным повторным пересказом контекста;
+* повторным перечислением известных правил;
+* повторным объяснением уже принятого решения;
+* ненужным восстановлением уже восстановленного
+  контекста;
+* обсуждением исторических состояний,
+  не относящихся к текущей задаче.
+
+---
+
+## ASSISTANT_EFFICIENCY_TASK_ROUTING_RULE
+
+Каждая новая задача должна сначала
+сопоставляться с CURRENT_WORK_CONTROL.
+
+Если задача относится к текущему
+приоритету, она выполняется непосредственно.
+
+Если задача относится к отложенному
+направлению, ассистент не должен
+самостоятельно переключать рабочий
+приоритет только потому, что направление
+существует в документации.
+
+Переключение выполняется:
+
+* по актуальному Project State;
+* либо по явному решению пользователя.
+
+---
+
+## ASSISTANT_EFFICIENCY_MINIMAL_RESPONSE_RULE
+
+В рабочем режиме сопровождения проекта
+ответ должен содержать только то,
+что необходимо для продолжения работы:
+
+* текущий результат;
+* необходимый артефакт;
+* необходимую команду;
+* необходимое уточнение.
+
+Длинное объяснение допустимо только
+если оно необходимо для решения
+технической или архитектурной проблемы.
+
+---
+
+## ASSISTANT_EFFICIENCY_DEVELOPMENT_TIME_RULE
+
+Главная метрика эффективности
+рабочего взаимодействия:
+
+полезное время разработки /
+общее время взаимодействия.
+
+Цель:
+
+увеличивать долю времени,
+затрачиваемого непосредственно
+на развитие проекта.
+
+Context Recovery,
+документационная синхронизация
+и внутренние проверки должны
+занимать только необходимый минимум.
+
+---
+
+# CONTEXT_RECOVERY_PROTOCOL_RESULT
+
+Successful recovery state:
+
+COMPLETED
+
+Required documents:
+
+5
+
+Canonical documents:
+
+* PROJECT_STATE.md;
+* PROJECT_TREE.md;
+* ASSISTANT_PROTOCOL.md;
+* PROJECT_RULES.md;
+* ARCHITECTURE.md.
+
+Path authority:
+
+PROJECT_TREE.md
+
+Behavior authority:
+
+ASSISTANT_PROTOCOL.md
+
+Project rules authority:
+
+PROJECT_RULES.md
+
+Architecture authority:
+
+ARCHITECTURE.md
+
+Current-state authority:
+
+PROJECT_STATE.md
+
+Recovery policy:
+
+EXECUTE_ONCE_UNTIL_CONTEXT_LOSS
+
+Context integrity:
+
+ACTIVE
+
+Assistant efficiency:
+
+ACTIVE
+
+---
+
+# CURRENT_WORK_CONTROL
+
+Status:
+
+ACTIVE
+
+Current work priority:
+
+SCANNER_GEOMETRY
+
+Current work domain:
+
+Trading Intelligence / Geometry Engine
+
+Current project phase:
+
+SCANNER_GEOMETRY_DEVELOPMENT
+
+Primary objective:
+
+Довести геометрию сканера
+до приемлемого рабочего состояния,
+повысить качество определения
+графических структур Wedge
+и создать основу для практически
+приемлемой работы сканера.
+
+Current development policy:
+
+Главный текущий приоритет проекта —
+разработка геометрии сканера.
+
+Documentation Automation не является
+текущим рабочим приоритетом.
+
+Documentation Automation не отменяется,
+но её дальнейшее развитие отложено
+до последующего этапа проекта.
+
+Главная текущая задача проекта:
+
+Сделать сканер достаточно рабочим,
+чтобы его результаты анализа
+стали приемлемыми для дальнейшего
+развития Trading Intelligence.
+
+Task routing rule:
+
+Новые задачи в первую очередь
+направляются в текущий рабочий контур
+Scanner Geometry.
+
+Приоритеты:
+
+1. Scanner Geometry;
+2. Wedge Detection Quality;
+3. Scanner Reliability;
+4. Trading Intelligence;
+5. Scanner Feature Development;
+6. Documentation Automation;
+7. Architecture Hygiene.
+
+Documentation Automation:
+
+DEFERRED
+
+Documentation Automation status:
+
+IN_PROGRESS
+
+Documentation Automation priority:
+
+DEFERRED
+
+Documentation Automation remains:
+
+PLANNED_CONTINUATION
+
+Important:
+
+Documentation Automation не считается
+отменённой или завершённой.
+
+Она временно снимается с первого
+приоритета и переносится на более поздний
+этап развития проекта.
+
+Trading Scanner Development:
+
+PRIMARY
+
+Trading Intelligence Development:
+
+ACTIVE
+
+Geometry Development:
+
+PRIMARY
+
+Wedge Detection Development:
+
+PRIMARY
+
+Scanner Feature Development:
+
+AVAILABLE
+
+New Trading Logic:
+
+AVAILABLE
+
+Documentation Automation Development:
+
+DEFERRED
+
+Architecture Hygiene Development:
+
+DEFERRED
+
+Current decision:
+
+CURRENT PRIORITY = SCANNER_GEOMETRY
+
+Important:
+
+Текущий приоритет направлен
+на практическое улучшение сканера.
+
+Documentation Automation временно
+не является блокирующим направлением.
+
+---
+
+# CURRENT_DEVELOPMENT_PRIORITY
+
+Priority:
+
+SCANNER_GEOMETRY
+
+Priority level:
+
+HIGHEST
+
+Primary subsystem:
+
+geometry/
+
+Secondary subsystem:
+
+wedge/
+
+Related subsystems:
+
+* analyzer/;
+* structures/;
+* signal/;
+* signals/;
+* charts/;
+* reports/;
+* tradingview/.
+
+Primary objective:
+
+Повысить точность,
+стабильность
+и практическую полезность
+геометрического анализа Wedge.
+
+Current development direction:
+
+Geometry Accuracy
+
+↓
+
+Wedge Detection Quality
+
+↓
+
+Scanner Reliability
+
+↓
+
+Acceptable Scanner Operation
+
+↓
+
+Further Trading Intelligence
+
+Development principle:
+
+Сначала сканер должен начать
+приемлемо работать на реальных
+рыночных данных.
+
+Только после достижения
+приемлемого качества базового
+геометрического анализа
+целесообразно расширять
+интеллектуальный и функциональный
+контур.
+
+---
+
+# PROJECT_SYNC_STATE
+
+system:
+
+BybitScanner Project Sync Framework
+
+status:
+
+HEALTHY
+
+pipeline_status:
+
+HEALTHY
+
+pipeline_engine:
+
+OPERATIONAL
+
+pipeline_engine_version:
+
+3.2
+
+canonical_pipeline_stages:
+
+12
+
+registered_documents:
+
+41
+
+validated_documents:
+
+41
+
+dependency_analysis:
+
+SUCCESS
+
+impact_analysis:
+
+SUCCESS
+
+change_detection:
+
+SUCCESS
+
+health_check:
+
+SUCCESS
+
+state_intelligence:
+
+SUCCESS
+
+synchronization_planning:
+
+SUCCESS
+
+state_synchronization_planning:
+
+SUCCESS
+
+state_synchronization:
+
+NOT_REQUIRED
+
+migration_planning:
+
+SUCCESS
+
+migration_decision:
+
+SUCCESS
+
+approval_control:
+
+SUCCESS
+
+migration_execution_gate:
+
+SUCCESS
+
+migration_execution:
+
+NO_UPDATES
+
+post_migration_validation:
+
+NO_UPDATES
+
+registry_stages:
+
+SUCCESS
+
+pipeline_report:
+
+SUCCESS
+
+critical_errors:
+
+0
+
+Latest execution checkpoint:
+
+2026-08-07
+
+Latest migration execution report:
+
+migration_execution_report.json
+
+Latest migration execution status:
+
+NO_UPDATES
+
+Latest migration requirement:
+
+true
+
+---
+
+# PROJECT_SYNC_PIPELINE
+
+Flow:
+
+Document Registry
+
+↓
+
+Validation
+
+↓
+
+Dependency Analysis
+
+↓
+
+Impact Analysis
+
+↓
+
+Snapshot Compare
+
+↓
+
+Health Check
+
+↓
+
+Synchronization Planning
+
+↓
+
+State Intelligence
+
+↓
+
+State Synchronization Planning
+
+↓
+
+State Synchronization
+
+↓
+
+Migration
+
+↓
+
+Post Migration Validation
+
+↓
+
+Pipeline Report
+
+Status:
+
+HEALTHY
+
+Execution:
+
+SUCCESS
+
+Canonical pipeline:
+
+12 stages
+
+Pipeline engine version:
+
+3.2
+
+Registered documents:
+
+41
+
+Validated documents:
+
+41
+
+Critical errors:
+
+0
+
+Important:
+
+Migration Planning,
+Migration Decision,
+Approval Control,
+Document Update
+и Snapshot Creation являются
+операциями Migration Lifecycle
+и не являются отдельными
+registered Pipeline Stage.
+
+---
+
+# PROJECT_SYNC_CANONICAL_STAGES
+
+Canonical registered stages:
+
+1. document_registry
+2. validation
+3. dependency_analysis
+4. impact_analysis
+5. snapshot_compare
+6. health_check
+7. synchronization_planning
+8. state_intelligence
+9. state_synchronization_planning
+10. state_synchronization
+11. migration
+12. post_migration_validation
+
+Total:
+
+12
+
+Registry:
+
+PipelineRegistry
+
+Single Source Of Truth:
+
+true
+
+Operational result:
+
+Canonical Pipeline consists
+of exactly 12 registered stages.
+
+---
+
+# PROJECT_SYNC_MIGRATION_LIFECYCLE
+
+Migration control subsystem:
+
+IMPLEMENTED
+
+Current controlled flow:
+
+Change Detection
+
+↓
+
+Impact Analysis
+
+↓
+
+Synchronization Planning
+
+↓
+
+Migration Planning
+
+↓
+
+Migration Decision
+
+↓
+
+Approval Control
+
+↓
+
+Document Update
+
+↓
+
+Migration Execution
+
+↓
+
+Post Migration Validation
+
+↓
+
+Snapshot Creation
+
+Current state:
+
+COMPLETED_WITH_NO_UPDATES
+
+Migration requirement:
+
+true
+
+Approval requirement:
+
+true
+
+Approval gate:
+
+ACTIVE
+
+Automatic approval:
+
+DISABLED
+
+Current migration decision:
+
+WAITING_APPROVAL
+
+Current migration decision value:
+
+PENDING
+
+Current approval artifact:
+
+APPROVED
+
+Current migration execution:
+
+NO_UPDATES
+
+Current post migration validation:
+
+NO_UPDATES
+
+Document updates:
+
+0
+
+Updated documents:
+
+0
+
+Backups created:
+
+0
+
+Execution errors:
+
+0
+
+Current migration action:
+
+synchronize_state_reference
+
+Latest execution checkpoint:
+
+2026-08-07
+
+Latest execution status:
+
+NO_UPDATES
+
+Latest execution report:
+
+migration_execution_report.json
+
+Important:
+
+Migration decision artifact remains
+WAITING_APPROVAL / PENDING.
+
+Explicit approval is stored separately
+in migration_approval.json.
+
+The approved artifact is accepted
+by Migration Executor through the
+separate Approval Control mechanism.
+
+Actual document execution produced
+NO_UPDATES because the prepared
+updates set was empty.
+
+---
+
+# PROJECT_SYNC_PIPELINE_ENGINE
+
+Status:
+
+OPERATIONAL
+
+Version:
+
+3.2
+
+Execution model:
+
+Pipeline Engine
+
+Core components:
+
+* PipelineContext;
+* PipelineResult;
+* PipelineStage;
+* PipelineExecutor;
+* PipelineRegistry;
+* stage_adapter.py;
+* project_sync_runner.py;
+* PipelineReport.
+
+Pipeline rules:
+
+* PipelineRegistry is the canonical stage registry;
+* PipelineExecutor executes registered stages;
+* PipelineContext carries shared execution state;
+* PipelineResult is the standard stage result;
+* PipelineStage defines the execution contract;
+* Stage Adapter compatibility is preserved;
+* orchestration remains separated from analysis logic;
+* PipelineReport is the canonical final report model;
+* runner does not maintain a second report model.
+
+Current registry capability:
+
+MigrationStage is implemented
+as a registry-compatible stage.
+
+PostMigrationValidationStage is implemented
+as a registry-compatible stage.
+
+Current integration state:
+
+ACTIVE
+
+Current canonical stage count:
+
+12
+
+Current runner role:
+
+Bootstrap and runtime entry point.
+
+Important:
+
+project_sync_runner.py does not define
+the canonical Pipeline composition.
+
+Current runtime architecture:
+
+PipelineRegistry
+
+↓
+
+PipelineExecutor
+
+↓
+
+PipelineStage
+
+↓
+
+PipelineContext
+
+↓
+
+PipelineResult
+
+↓
+
+PipelineReport
+
+---
+
+# PIPELINE_REPORT_STATE
+
+Status:
+
+ACTIVE
+
+Model:
+
+PipelineReport
+
+Module:
+
+tools/project_sync/pipeline/report.py
+
+Model status:
+
+OPERATIONAL
+
+Current runtime integration:
+
+COMPLETED
+
+Current report persistence:
+
+pipeline_report.json
+
+Current report version:
+
+3.2
+
+Important:
+
+PipelineReport является
+канонической моделью итогового
+Pipeline Report.
+
+Runner использует PipelineReport
+для формирования и сохранения
+итогового pipeline_report.json.
+
+Вторичная локальная модель итогового
+JSON report устранена из canonical
+runtime contour.
+
+Canonical report fields:
+
+* pipeline;
+* version;
+* status;
+* created;
+* stages;
+* results;
+* errors.
+
+Current report status:
+
+HEALTHY
+
+Current report stage count:
+
+12
+
+---
+
+# DOCUMENTATION_STATE
+
+Registered documents:
+
+41
+
+Validation:
+
+41 documents checked
+
+Validation status:
+
+SUCCESS
+
+Warnings:
+
+* ASSISTANT_PROTOCOL.md;
+* PROJECT_RULES.md;
+* TRADINGVIEW_JSON_CONTRACT.md.
+
+Warnings do not prevent pipeline execution.
+
+Critical documentation errors:
+
+0
+
+Documentation health:
+
+HEALTHY
+
+Documentation automation:
+
+ACTIVE
+
+Documentation automation completion:
+
+NOT_COMPLETED
+
+Documentation automation priority:
+
+DEFERRED
+
+---
+
+# DOCUMENTATION_AUTOMATION_STATE
+
+Status:
+
+IN_PROGRESS
+
+Priority:
+
+DEFERRED
+
+Current phase:
+
+PAUSED_FOR_SCANNER_DEVELOPMENT
+
+Objective:
+
+Завершить автоматизированный
+контур сопровождения документации
+на последующем этапе проекта.
+
+Implemented:
+
+* document registry;
+* document validation;
+* dependency analysis;
+* impact analysis;
+* change detection;
+* synchronization planning;
+* state intelligence;
+* state synchronization planning;
+* state synchronization;
+* migration planning;
+* migration decision;
+* approval control;
+* document update;
+* migration execution;
+* post migration validation;
+* snapshot creation;
+* pipeline reporting;
+* PipelineReport integration.
+
+Remaining automation gap:
+
+PROJECT_STATE.md rewrite:
+
+NOT_FULLY_AUTOMATED
+
+Architecture Hygiene:
+
+PLANNED
+
+Architecture Compactness:
+
+PLANNED
+
+Document lifecycle orchestration:
+
+PARTIALLY_COMPLETED
+
+Completion criterion:
+
+Documentation Automation считается
+незавершённой до тех пор, пока все
+обязательные компоненты,
+определённые текущим roadmap и
+Project State, не будут реализованы
+и проверены.
+
+Work policy:
+
+Documentation Automation временно
+отложена.
+
+Она не является текущим рабочим
+приоритетом и не должна автоматически
+перехватывать задачи, относящиеся
+к геометрии, Wedge Detection
+или практической работоспособности
+сканера.
+
+Возврат к Documentation Automation
+будет выполнен после достижения
+приемлемого рабочего состояния
+основного сканера либо по отдельному
+явному рабочему решению.
+
+---
+
+# SCANNER_GEOMETRY_STATE
+
+Status:
+
+ACTIVE DEVELOPMENT
+
+Priority:
+
+HIGHEST
+
+Subsystem:
+
+geometry/
+
+Related subsystem:
+
+wedge/
+
+Current objective:
+
+Повысить точность геометрического
+анализа графических структур
+и довести Wedge Detection
+до приемлемого практического качества.
+
+Primary development targets:
+
+* trendline analysis;
+* pivot geometry;
+* apex calculation;
+* convergence analysis;
+* compression analysis;
+* touch analysis;
+* geometric validation;
+* GeometryModel reliability;
+* Wedge classification quality;
+* geometry candidate ranking.
+
+Current direction:
+
+Geometry Accuracy
+
+↓
+
+Wedge Detection
+
+↓
+
+Scanner Reliability
+
+↓
+
+Acceptable Scanner Operation
+
+Current policy:
+
+Геометрия является главным
+техническим направлением проекта.
+
+Развитие должно быть ориентировано
+не только на формальную корректность
+геометрических расчётов,
+но и на качество результатов
+на реальных рыночных данных.
+
+---
+
+# GEOMETRY_PIPELINE_VALIDATION_STATE
+
+Status:
+
+VALIDATED
+
+Validation date:
+
+2026-08-08
+
+Validation scope:
+
+Geometry Engine end-to-end pipeline
+
+Validation command:
+
+python -m tests.test_geometry_pipeline
+
+Environment preparation:
+
+$env:PYTHONPATH="C:\BybitScanner"
+
+Import resolution:
+
+SUCCESS
+
+Validated import:
+
+from geometry.engine import analyze_geometry
+
+Import error:
+
+NONE
+
+Geometry result:
+
+OK
+
+Returned model:
+
+geometry.model.GeometryModel
+
+Geometry pipeline status:
+
+SUCCESS
+
+---
+
+## GEOMETRY_TRENDLINE_VALIDATION
+
+Upper trendline:
+
+slope:
+
+-1.0000000000000033
+
+intercept:
+
+109.99999999999997
+
+points:
+
+4
+
+error_mean:
+
+5.3290705182007514e-14
+
+error_max:
+
+8.5265128291212024e-14
+
+Lower trendline:
+
+slope:
+
+0.6599999999999986
+
+intercept:
+
+90.29999999999998
+
+points:
+
+4
+
+error_mean:
+
+0.25
+
+error_max:
+
+0.4000000000000199
+
+Trendline calculation:
+
+VALIDATED
+
+---
+
+## GEOMETRY_APEX_VALIDATION
+
+Apex index:
+
+11.867469879518051
+
+Apex price:
+
+98.13253012048187
+
+Slope difference:
+
+1.660000000000002
+
+Valid intersection:
+
+true
+
+Apex validation:
+
+VALID
+
+Apex quality:
+
+VALID
+
+---
+
+## GEOMETRY_COMPRESSION_VALIDATION
+
+Start width:
+
+19.7
+
+End width:
+
+5.2
+
+Compression percent:
+
+73.6
+
+Is compressing:
+
+true
+
+Compression validation:
+
+VALID
+
+---
+
+## GEOMETRY_TOUCH_VALIDATION
+
+Upper touches:
+
+4
+
+Lower touches:
+
+4
+
+Total touches:
+
+8
+
+Touches valid:
+
+true
+
+Touch validation:
+
+VALID
+
+---
+
+## GEOMETRY_FINAL_VALIDATION
+
+Validation:
+
+VALID
+
+Validation checks:
+
+slopes:
+
+valid: true
+
+reason:
+
+Slope difference acceptable
+
+apex:
+
+valid: true
+
+reason:
+
+Apex slightly before structure end
+
+apex_quality:
+
+valid: true
+
+reason:
+
+Apex geometry stable
+
+compression:
+
+valid: true
+
+reason:
+
+Compression acceptable
+
+touches:
+
+valid: true
+
+reason:
+
+Touch confirmation acceptable
+
+failed_checks:
+
+[]
+
+Final Geometry Engine validation:
+
+SUCCESS
+
+---
+
+## GEOMETRY_DEBUG_RESULT
+
+Raw candidates:
+
+upper: 1
+
+lower: 1
+
+Filtered candidates:
+
+upper: 1
+
+lower: 1
+
+Candidate points:
+
+upper:
+
+* index: 0, price: 110
+* index: 5, price: 105
+* index: 10, price: 100
+* index: 15, price: 95
+
+lower:
+
+* index: 0, price: 90
+* index: 5, price: 94
+* index: 10, price: 97
+* index: 15, price: 100
+
+Geometry model generation:
+
+SUCCESS
+
+Dictionary serialization:
+
+SUCCESS
+
+---
+
+# GEOMETRY_CANDIDATE_PAIR_VALIDATION_STATE
+
+Status:
+
+VALIDATED
+
+Validation date:
+
+2026-08-08
+
+Validation scope:
+
+Candidate line construction
+and candidate pair geometric validation.
+
+Validated imports:
+
+from geometry.candidate import build_candidate_lines
+
+from geometry.evaluation import evaluate_candidate_pair
+
+---
+
+## GEOMETRY_INVALID_PAIR_TEST
+
+Synthetic upper candidate:
+
+* index: 0, price: 100
+* index: 1, price: 102
+* index: 2, price: 104
+* index: 3, price: 106
+
+Upper slope:
+
+approximately:
+
+2.0
+
+Synthetic lower candidate:
+
+* index: 0, price: 90
+* index: 1, price: 87
+* index: 2, price: 84
+* index: 3, price: 81
+
+Lower slope:
+
+approximately:
+
+-3.0
+
+Candidate pair result:
+
+NOT_VALID
+
+Validation:
+
+valid:
+
+false
+
+Failed checks:
+
+* apex;
+* compression.
+
+Apex:
+
+apex_index:
+
+approximately:
+
+-2.0
+
+Apex position:
+
+INVALID
+
+Compression:
+
+compression_percent:
+
+-150.0
+
+is_compressing:
+
+false
+
+Compression validation:
+
+INVALID
+
+Touches:
+
+upper_touches:
+
+4
+
+lower_touches:
+
+4
+
+total_touches:
+
+8
+
+Touch validation:
+
+VALID
+
+Important:
+
+Candidate pair validation correctly
+отклоняет структуру, несмотря
+на достаточное количество touches,
+поскольку apex и compression
+не соответствуют требованиям
+геометрической структуры.
+
+Result:
+
+CANDIDATE_PAIR_REJECTION = VALIDATED
+
+---
+
+# GEOMETRY_MODEL_SCHEMA_VALIDATION_STATE
+
+Status:
+
+VALIDATED
+
+Validation date:
+
+2026-08-08
+
+Validation scope:
+
+GeometryModel output contract.
+
+Validated scenario:
+
+Converging upper and lower trendlines.
+
+Returned model type:
+
+geometry.model.GeometryModel
+
+Serialization:
+
+SUCCESS
+
+Model fields:
+
+* upper_line;
+* lower_line;
+* apex;
+* compression;
+* touches;
+* validation;
+* candidate_points.
+
+Model field count:
+
+7
+
+Forbidden intelligence fields:
+
+* score;
+* signal;
+* confidence;
+* confirmation.
+
+Forbidden fields detected:
+
+NONE
+
+HAS_SCORE_FIELD:
+
+false
+
+HAS_SIGNAL_FIELD:
+
+false
+
+GeometryModel responsibility:
+
+Геометрическая модель содержит
+только геометрические результаты
+и validation state.
+
+Она не должна самостоятельно
+содержать trading score, signal,
+confidence или confirmation.
+
+Result:
+
+GEOMETRY_MODEL_BOUNDARY = VALIDATED
+
+---
+
+# GEOMETRY_RANKING_VALIDATION_STATE
+
+Status:
+
+VALIDATED
+
+Validation date:
+
+2026-08-08
+
+Validation scope:
+
+Geometry ranking layer.
+
+Validated import:
+
+from geometry.ranking import rank_geometry
+
+Validated geometry:
+
+валидная сходящаяся структура
+с:
+
+* upper slope approximately -2.0;
+* lower slope approximately 2.0;
+* apex after structure end;
+* compression 60%;
+* upper touches 4;
+* lower touches 4;
+* total touches 8;
+* validation valid = true.
+
+Ranking result:
+
+VALID_SCORE:
+
+180
+
+Ranking of None:
+
+NONE_SCORE:
+
+-999
+
+GeometryModel instance field check:
+
+HAS_SCORE_FIELD:
+
+false
+
+HAS_SIGNAL_FIELD:
+
+false
+
+Ranking responsibility:
+
+Geometry ranking выполняется
+отдельным ranking layer.
+
+GeometryModel не хранит
+score как собственное поле.
+
+Result:
+
+GEOMETRY_RANKING = VALIDATED
+
+---
+
+## GEOMETRY_RANKING_BOUNDARY
+
+Architecture rule:
+
+GeometryModel:
+
+GEOMETRY_ONLY
+
+Ranking:
+
+SEPARATE_LAYER
+
+Score ownership:
+
+geometry.ranking
+
+Signal ownership:
+
+NOT_IN_GEOMETRY_MODEL
+
+Confidence ownership:
+
+NOT_IN_GEOMETRY_MODEL
+
+Confirmation ownership:
+
+NOT_IN_GEOMETRY_MODEL
+
+Important:
+
+Проверка подтверждает архитектурное
+разделение геометрического результата
+и последующего ranking/trading intelligence
+контура.
+
+Текущая geometry модель не загрязняется
+полями:
+
+* score;
+* signal;
+* confidence;
+* confirmation.
+
+---
+
+# GEOMETRY_VALIDATION_SUMMARY
+
+Geometry Engine:
+
+SUCCESS
+
+GeometryModel:
+
+VALID
+
+Trendline Analysis:
+
+VALIDATED
+
+Apex Calculation:
+
+VALIDATED
+
+Slope Difference:
+
+VALIDATED
+
+Compression Analysis:
+
+VALIDATED
+
+Touch Analysis:
+
+VALIDATED
+
+Geometric Validation:
+
+VALIDATED
+
+Candidate Pair Construction:
+
+VALIDATED
+
+Candidate Pair Rejection:
+
+VALIDATED
+
+GeometryModel Serialization:
+
+VALIDATED
+
+GeometryModel Boundary:
+
+VALIDATED
+
+Geometry Ranking:
+
+VALIDATED
+
+Valid Geometry Score:
+
+180
+
+None Geometry Score:
+
+-999
+
+GeometryModel score field:
+
+ABSENT
+
+GeometryModel signal field:
+
+ABSENT
+
+GeometryModel confidence field:
+
+ABSENT
+
+GeometryModel confirmation field:
+
+ABSENT
+
+Failed Geometry Engine checks:
+
+0
+
+---
+
+# GEOMETRY_IMPORT_EXECUTION_NOTE
+
+Первоначальный прямой запуск тестового файла
+через:
+
+python .\tests\test_geometry_pipeline.py
+
+не обеспечивал разрешение корневого
+пакета geometry.
+
+Причина:
+
+корень проекта C:\BybitScanner
+не находился в Python import path.
+
+После установки:
+
+$env:PYTHONPATH="C:\BybitScanner"
+
+и запуска теста как module:
+
+python -m tests.test_geometry_pipeline
+
+Geometry Engine успешно импортирован,
+pipeline полностью выполнен,
+GeometryModel успешно создан.
+
+Текущий результат:
+
+IMPORT RESOLUTION = SUCCESS
+
+GEOMETRY PIPELINE = SUCCESS
+
+Это подтверждает работоспособность
+текущего geometry runtime contour
+при корректном project-root import environment.
+
+---
+
+# TRADING_SCANNER_DEVELOPMENT_STATE
+
+Status:
+
+ACTIVE
+
+Priority:
+
+HIGH
+
+Current objective:
+
+Получить сканер, который
+стабильно обрабатывает рыночные
+данные и выдаёт приемлемые
+результаты обнаружения Wedge.
+
+Primary dependencies:
+
+* geometry;
+* wedge;
+* analyzer;
+* charts;
+* reports;
+* signal.
+
+Current focus:
+
+Scanner Geometry
+
+Current operational target:
+
+Acceptable Scanner Operation
+
+Development principle:
+
+Сначала качество базового
+сканирования и геометрии,
+затем расширение функциональности.
+
+---
+
+# TRADING_INTELLIGENCE_STATE
+
+Status:
+
+ACTIVE
+
+Priority:
+
+HIGH
+
+Current status:
+
+DEVELOPMENT_AVAILABLE
+
+Current focus:
+
+Поддержка развития геометрии
+и Wedge Detection.
+
+Future expansion:
+
+* signal intelligence;
+* confirmation logic;
+* market structure intelligence;
+* advanced scanner logic.
+
+Restriction:
+
+Новые сложные интеллектуальные
+механизмы не должны вытеснять
+работу над базовой геометрической
+надёжностью сканера.
+
+---
+
+# ARCHITECTURE_STATE
+
+Architecture:
+
+STABLE
+
+Architecture validation:
+
+SUCCESS
+
+Rule Engine:
+
+ACTIVE
+
+Pipeline Engine:
+
+OPERATIONAL
+
+Project Sync integration:
+
+ACTIVE
+
+Pipeline Registry:
+
+ACTIVE
+
+Pipeline Executor:
+
+ACTIVE
+
+Pipeline Stage Contract:
+
+ACTIVE
+
+Pipeline Stage Adapter:
+
+ACTIVE
+
+Pipeline Context:
+
+ACTIVE
+
+Pipeline Result:
+
+ACTIVE
+
+Pipeline Report:
+
+ACTIVE
+
+Migration Control:
+
+IMPLEMENTED
+
+Approval Control:
+
+IMPLEMENTED
+
+Document Update:
+
+IMPLEMENTED
+
+Migration Execution:
+
+IMPLEMENTED
+
+Post Migration Validation:
+
+IMPLEMENTED
+
+Snapshot Creation:
+
+IMPLEMENTED
+
+MigrationStage integration:
+
+ACTIVE
+
+PostMigrationValidationStage integration:
+
+ACTIVE
+
+PipelineReport integration:
+
+COMPLETED
+
+Canonical operational pipeline:
+
+12 STAGES
+
+---
+
+# ARCHITECTURE_HYGIENE_STATE
+
+Status:
+
+PLANNED
+
+Name:
+
+Architecture Hygiene / File Integrity Intelligence
+
+Purpose:
+
+Автоматический контроль компактности
+архитектуры проекта и выявление
+файлов, компонентов и артефактов,
+которые не соответствуют актуальной
+архитектуре или могли появиться
+в результате ошибочного, устаревшего
+или дублирующего изменения.
+
+Current implementation:
+
+NOT_IMPLEMENTED
+
+Current automation:
+
+NOT_ACTIVE
+
+Priority:
+
+DEFERRED
+
+Planned capabilities:
+
+* duplicate file detection;
+* duplicate module detection;
+* orphan file detection;
+* unused module detection;
+* stale file detection;
+* obsolete artifact detection;
+* accidental file detection;
+* abandoned implementation detection;
+* duplicate implementation detection;
+* compatibility-layer verification;
+* architecture-to-filesystem comparison;
+* registry-to-filesystem comparison;
+* document-to-filesystem comparison;
+* unexpected generated artifact detection;
+* historical artifact classification;
+* canonical file identification;
+* architecture compactness measurement;
+* file ownership validation;
+* dependency-based relevance analysis.
+
+Important:
+
+Architecture Hygiene не должна
+автоматически удалять файлы.
+
+Первый режим работы:
+
+DETECT_AND_REPORT
+
+Любое удаление или изменение
+файлов должно проходить через
+существующий Migration Lifecycle
+и Approval Gate.
+
+Planned output:
+
+architecture_hygiene_report.json
+
+Safety principle:
+
+DETECTION_FIRST
+
+NO_AUTONOMOUS_DELETION
+
+---
+
+# ARCHITECTURE_COMPACTNESS_STATE
+
+Status:
+
+PLANNED
+
+Priority:
+
+DEFERRED
+
+Purpose:
+
+Количественная оценка того,
+насколько фактическая файловая
+и модульная структура проекта
+соответствует канонической архитектуре.
+
+Current compactness score:
+
+NOT_AVAILABLE
+
+Current baseline:
+
+NOT_ESTABLISHED
+
+---
+
+# CHANGE_DETECTION_STATE
+
+Status:
+
+ACTIVE
+
+Change Detection:
+
+SUCCESS
+
+Files analyzed:
+
+594
+
+Changes detected during latest known
+pipeline execution:
+
+3
+
+Added:
+
+0
+
+Modified:
+
+3
+
+Deleted:
+
+0
+
+Change report:
+
+change_report.json
+
+Current Change Detection result:
+
+SUCCESS
+
+Important:
+
+Current Change Detection фиксирует
+изменения файлов, но ещё не выполняет
+полноценную Architecture Hygiene
+классификацию всех файлов проекта.
+
+---
+
+# DEPENDENCY_ANALYSIS_STATE
+
+Status:
+
+ACTIVE
+
+Documents analyzed:
+
+41
+
+Execution:
+
+SUCCESS
+
+Report:
+
+document_dependencies.json
+
+---
+
+# IMPACT_ANALYSIS_STATE
+
+Status:
+
+ACTIVE
+
+Documents analyzed:
+
+41
+
+Execution:
+
+SUCCESS
+
+Affected documents:
+
+4
+
+Report:
+
+impact_report.json
+
+Current affected documents:
+
+* CHANGELOG.md;
+* PROJECT_CONTRACTS.md;
+* PROJECT_SYNC.md;
+* ROADMAP.md.
+
+---
+
+# SYNCHRONIZATION_STATE
+
+Status:
+
+READY
+
+Planner:
+
+synchronization_planner
+
+Sources:
+
+* impact_report;
+* change_report;
+* state_intelligence_report.
+
+State health:
+
+HEALTHY
+
+Missing documents:
+
+0
+
+Invalid documents:
+
+0
+
+Documents checked:
+
+6
+
+Documents to review:
+
+* CHANGELOG.md;
+* PROJECT_CONTRACTS.md;
+* PROJECT_SYNC.md;
+* ROADMAP.md.
+
+Current synchronization result:
+
+State synchronization required:
+
+false
+
+State documents:
+
+6
+
+State actions:
+
+2
+
+Current migration requirement:
+
+true
+
+Approval requirement:
+
+true
+
+Migration decision:
+
+WAITING_APPROVAL
+
+Migration decision value:
+
+PENDING
+
+Approval control:
+
+ACTIVE
+
+Approval artifact:
+
+APPROVED
+
+Migration execution result:
+
+NO_UPDATES
+
+Post migration validation result:
+
+NO_UPDATES
+
+---
+
+# STATE_INTELLIGENCE_STATE
+
+Status:
+
+HEALTHY
+
+Documents analyzed:
+
+6
+
+State documents:
+
+* PROJECT_STATE.md;
+* STATE_ARCHITECTURE.md;
+* STATE_PROJECT_SYNC.md;
+* STATE_DOCUMENTATION.md;
+* STATE_DEVELOPMENT.md;
+* STATE_PIPELINE_ENGINE.md.
+
+Missing documents:
+
+0
+
+Invalid documents:
+
+0
+
+State health:
+
+HEALTHY
+
+---
+
+# STATE_SYNCHRONIZATION_STATE
+
+Planner:
+
+state_synchronization_planner
+
+Synchronizer:
+
+state_synchronizer
+
+Status:
+
+NOT_REQUIRED
+
+Synchronization required:
+
+false
+
+Documents:
+
+6
+
+Actions:
+
+2
+
+Result:
+
+Current state documents are internally synchronized.
+
+Important:
+
+NOT_REQUIRED means that the State Synchronization subsystem
+определил, что дополнительное действие
+синхронизации state-документов в текущем
+цикле не требуется.
+
+---
+
+# MIGRATION_PLANNING_STATE
+
+Component:
+
+migration_planner.py
+
+Version:
+
+2.4
+
+Status:
+
+READY
+
+Migration required:
+
+true
+
+Documents:
+
+* CHANGELOG.md;
+* PROJECT_CONTRACTS.md;
+* PROJECT_SYNC.md;
+* ROADMAP.md.
+
+Actions:
+
+* synchronize_state_reference.
+
+Updates:
+
+0
+
+Updates count:
+
+0
+
+Approval required:
+
+true
+
+Migration plan validity:
+
+VALID
+
+Risk:
+
+LOW
+
+---
+
+# MIGRATION_DECISION_STATE
+
+Component:
+
+migration_decision_handler.py
+
+Version:
+
+2.2
+
+Responsibility:
+
+Validate migration readiness
+and create controlled migration decision.
+
+Current implementation:
+
+IMPLEMENTED
+
+Current status:
+
+WAITING_APPROVAL
+
+Current decision:
+
+PENDING
+
+Plan validity:
+
+true
+
+Migration required:
+
+true
+
+Approval required:
+
+true
+
+Automatic approval:
+
+false
+
+Decision states:
+
+* PENDING;
+* WAITING_APPROVAL;
+* APPROVED;
+* REJECTED.
+
+Approval separation:
+
+ACTIVE
+
+Migration execution:
+
+CONTROLLED
+
+Important:
+
+Current migration decision artifact
+remains WAITING_APPROVAL / PENDING.
+
+Explicit approval is stored separately
+in migration_approval.json.
+
+The explicit approval artifact was
+accepted by Migration Executor.
+
+---
+
+# APPROVAL_CONTROL_STATE
+
+Component:
+
+approval_controller.py
+
+Version:
+
+2.5
+
+Status:
+
+ACTIVE
+
+Approval model:
+
+Explicit approval
+
+Automatic approval:
+
+DISABLED
+
+Approval gate:
+
+ACTIVE
+
+Current status:
+
+APPROVED
+
+Approval:
+
+true
+
+Explicit approval:
+
+true
+
+Automatic approval:
+
+false
+
+Plan validity:
+
+true
+
+Migration required:
+
+true
+
+Approval required:
+
+true
+
+Approval timestamp:
+
+2026-08-05T01:14:13.149819
+
+Decision binding:
+
+d344248bbece5f934cdc711e20c5b6a0740f2d4cc07181683dd191b7969a87f6
+
+Execution without valid approval state:
+
+PROHIBITED
+
+Current approval artifact:
+
+migration_approval.json
+
+---
+
+# DOCUMENT_UPDATE_STATE
+
+Component:
+
+document_updater.py
+
+Status:
+
+IMPLEMENTED
+
+Responsibilities:
+
+* validate approval;
+* resolve project documents;
+* validate update targets;
+* create backups;
+* apply explicitly supplied updates;
+* generate document update report.
+
+Backup requirement:
+
+ACTIVE
+
+Backup directory:
+
+Backups/document_updates
+
+Machine-readable report:
+
+document_update_report.json
+
+Current execution:
+
+NO_UPDATES
+
+Updates count:
+
+0
+
+Updated documents:
+
+0
+
+Backups:
+
+0
+
+Reason:
+
+No document updates were required
+by the current migration plan.
+
+Current migration action:
+
+synchronize_state_reference
+
+Document Update Engine не выполнил
+изменений, поскольку updates = {}.
+
+---
+
+# MIGRATION_EXECUTION_STATE
+
+Component:
+
+migration_executor.py
+
+Version:
+
+2.5
+
+Status:
+
+NO_UPDATES
+
+Responsibilities:
+
+* validate approval;
+* validate current migration decision;
+* validate decision binding;
+* validate migration scope;
+* invoke Document Update Engine;
+* collect backups;
+* collect updated documents;
+* collect errors;
+* generate execution report.
+
+Approval bypass:
+
+PROHIBITED
+
+Execution report:
+
+migration_execution_report.json
+
+Current execution:
+
+NO_UPDATES
+
+Migration required:
+
+true
+
+Executed documents:
+
+0
+
+Backups:
+
+0
+
+Updated documents:
+
+0
+
+Execution errors:
+
+0
+
+Latest execution checkpoint:
+
+2026-08-07
+
+Latest execution timestamp:
+
+2026-08-07T17:58:15.993113
+
+Current gate result:
+
+PASSED_WITH_NO_UPDATES
+
+Reason:
+
+Migration Executor получил
+валидный explicit approval,
+проверил текущий migration decision,
+проверил decision binding,
+проверил migration scope
+и передал execution в
+Document Update Engine.
+
+Document Update Engine вернул:
+
+NO_UPDATES
+
+Фактическое изменение документов
+не выполнялось.
+
+Latest report state:
+
+migration_execution_report.json
+
+---
+
+# POST_MIGRATION_VALIDATION_STATE
+
+Component:
+
+post_migration_validator.py
+
+Version:
+
+2.4
+
+Status:
+
+NO_UPDATES
+
+Pipeline Stage:
+
+post_migration_validation
+
+Stage status:
+
+REGISTERED
+
+Implementation path:
+
+tools/project_sync/migration/post_migration_validator.py
+
+Historical duplicate implementation path:
+
+tools/project_sync/validation/post_migration_validator.py
+
+Historical duplicate implementation status:
+
+DELETED
+
+Current validation result:
+
+NO_UPDATES
+
+Validation checks:
+
+* execution_status — NO_UPDATES;
+* documents — SUCCESS;
+* updates — NO_UPDATES;
+* updated_documents — NO_UPDATES;
+* backups — NO_UPDATES;
+* execution_errors — SUCCESS.
+
+Current state:
+
+NO_UPDATES
+
+---
+
+# SNAPSHOT_STATE
+
+Snapshot subsystem:
+
+ACTIVE
+
+Snapshot Creator:
+
+IMPLEMENTED
+
+Snapshot Compare:
+
+IMPLEMENTED
+
+Current baseline:
+
+previous_document_registry.json
+
+Current registry:
+
+document_registry.json
+
+Snapshot purpose:
+
+Контрольная точка состояния
+Document Registry.
+
+Snapshot Creator:
+
+VERIFIED
+
+Verified command:
+
+python -m tools.project_sync.change_detection.snapshot_creator
+
+Snapshot result:
+
+previous_document_registry.json created successfully.
+
+---
+
+# CURRENT_HEALTH
+
+Architecture Validation:
+
+SUCCESS
+
+Tree Validation:
+
+SUCCESS
+
+Document Validation:
+
+SUCCESS
+
+Rule Engine Validation:
+
+SUCCESS
+
+Pipeline Validation:
+
+SUCCESS
+
+Pipeline Engine Validation:
+
+SUCCESS
+
+Dependency Analysis:
+
+SUCCESS
+
+Impact Analysis:
+
+SUCCESS
+
+Change Detection:
+
+SUCCESS
+
+Health Check:
+
+SUCCESS
+
+Synchronization Planning:
+
+SUCCESS
+
+State Intelligence:
+
+SUCCESS
+
+State Synchronization Planning:
+
+SUCCESS
+
+State Synchronization:
+
+NOT_REQUIRED
+
+Migration Planning:
+
+SUCCESS
+
+Migration Decision:
+
+SUCCESS
+
+Approval Control:
+
+SUCCESS
+
+Migration Execution:
+
+NO_UPDATES
+
+Post Migration Validation:
+
+NO_UPDATES
+
+Snapshot Creation:
+
+IMPLEMENTED
+
+Pipeline Report:
+
+SUCCESS
+
+Architecture Hygiene:
+
+PLANNED
+
+Architecture Compactness:
+
+NOT_AVAILABLE
+
+Documentation Automation:
+
+IN_PROGRESS
+
+Documentation Automation Priority:
+
+DEFERRED
+
+Scanner Geometry:
+
+ACTIVE
+
+Scanner Geometry Priority:
+
+HIGHEST
+
+Geometry Pipeline Validation:
+
+SUCCESS
+
+GeometryModel Validation:
+
+SUCCESS
+
+Geometry Trendline Analysis:
+
+SUCCESS
+
+Geometry Apex Calculation:
+
+SUCCESS
+
+Geometry Compression Analysis:
+
+SUCCESS
+
+Geometry Touch Analysis:
+
+SUCCESS
+
+Geometry Candidate Pair Validation:
+
+SUCCESS
+
+Geometry Candidate Pair Rejection:
+
+SUCCESS
+
+Geometry Ranking Validation:
+
+SUCCESS
+
+Geometry Validation:
+
+SUCCESS
+
+Wedge Detection:
+
+ACTIVE
+
+Wedge Detection Priority:
+
+HIGHEST
+
+Context Recovery:
+
+ACTIVE
+
+Context Integrity:
+
+ACTIVE
+
+Assistant Efficiency:
+
+ACTIVE
+
+Overall:
+
+STABLE
+
+Pipeline:
+
+HEALTHY
+
+Canonical Pipeline Stages:
+
+12
+
+Critical Errors:
+
+0
+
+---
+
+# DEVELOPMENT_STATE
+
+Current development focus:
+
+Scanner Geometry Development
+
+Current priority:
+
+Scanner Geometry
+
+Active direction:
+
+Trading Intelligence / Geometry Engine
+
+Development status:
+
+SCANNER_GEOMETRY_ACTIVE
+
+Primary development objective:
+
+Довести геометрию сканера
+и Wedge Detection
+до приемлемого практического качества.
+
+Current priority order:
+
+1. Scanner Geometry;
+2. Wedge Detection Quality;
+3. Scanner Reliability;
+4. Trading Intelligence;
+5. Scanner Feature Development;
+6. Documentation Automation;
+7. Architecture Hygiene.
+
+Current scanner development targets:
+
+* geometry accuracy;
+* trendline quality;
+* pivot quality;
+* apex calculation;
+* convergence;
+* compression;
+* touch validation;
+* candidate pair validation;
+* geometry ranking;
+* Wedge classification;
+* false-positive reduction;
+* scanner reliability.
+
+Current verified Geometry Engine targets:
+
+* trendline calculation — VALIDATED;
+* apex calculation — VALIDATED;
+* convergence/slope difference — VALIDATED;
+* compression calculation — VALIDATED;
+* touch validation — VALIDATED;
+* candidate pair construction — VALIDATED;
+* candidate pair rejection — VALIDATED;
+* GeometryModel construction — VALIDATED;
+* GeometryModel boundary — VALIDATED;
+* geometry validation — VALIDATED;
+* geometry ranking — VALIDATED;
+* dictionary serialization — VALIDATED.
+
+Geometry ranking separation:
+
+VALIDATED
+
+Valid geometry ranking result:
+
+180
+
+None ranking result:
+
+-999
+
+GeometryModel forbidden fields:
+
+score — ABSENT
+
+signal — ABSENT
+
+confidence — ABSENT
+
+confirmation — ABSENT
+
+Completed Project Sync foundation:
+
+* Architecture Intelligence;
+* Documentation Intelligence;
+* Change Detection;
+* Dependency Analysis;
+* Impact Analysis;
+* Synchronization Planning;
+* State Intelligence;
+* State Synchronization Planning;
+* State Synchronization;
+* Pipeline Engine;
+* Pipeline Registry;
+* Pipeline Executor;
+* Pipeline Context;
+* Pipeline Result;
+* Pipeline Stage Adapter;
+* Pipeline Report;
+* Migration Planning;
+* Migration Decision;
+* Approval Control;
+* Document Update;
+* Migration Execution;
+* Post Migration Validation;
+* Snapshot Creation.
+
+Current operational pipeline:
+
+12 stages
+
+Current pipeline result:
+
+HEALTHY
+
+Current registered documents:
+
+41
+
+Current validated documents:
+
+41
+
+Current migration state:
+
+Migration plan READY.
+
+Migration decision WAITING_APPROVAL.
+
+Migration decision value PENDING.
+
+Approval artifact APPROVED.
+
+Migration execution NO_UPDATES.
+
+Post-migration validation NO_UPDATES.
+
+Document updates 0.
+
+Updated documents 0.
+
+Backups 0.
+
+Execution errors 0.
+
+Latest migration execution checkpoint:
+
+2026-08-07
+
+Current architectural integration state:
+
+Project Sync Framework has an operational
+12-stage canonical Pipeline Runner architecture.
+
+PipelineReport is integrated as the
+canonical final report model.
+
+Migration execution remains controlled by
+the explicit Approval Gate.
+
+Automatic approval remains disabled.
+
+Post Migration Validator has a single
+canonical implementation in the migration layer.
+
+Current geometry validation state:
+
+Geometry Engine end-to-end pipeline
+successfully executed on 2026-08-08.
+
+The test produced:
+
+GEOMETRY RESULT: OK
+
+Returned model:
+
+geometry.model.GeometryModel
+
+Validation:
+
+valid: true
+
+Failed checks:
+
+[]
+
+The current synthetic geometry scenario
+successfully validates:
+
+* upper trendline;
+* lower trendline;
+* apex;
+* slope difference;
+* compression;
+* touches;
+* geometric validation;
+* model serialization.
+
+Additional candidate pair validation
+successfully demonstrates that an invalid
+non-compressing pair is rejected through
+apex and compression checks.
+
+Current geometry ranking validation
+successfully demonstrates:
+
+VALID_SCORE = 180
+
+NONE_SCORE = -999
+
+GeometryModel does not contain:
+
+* score;
+* signal;
+* confidence;
+* confirmation.
+
+Current environment requirement:
+
+Project root must be available to Python
+through PYTHONPATH when executing the
+test module in the current environment.
+
+Validated environment:
+
+$env:PYTHONPATH="C:\BybitScanner"
+
+Validated module execution:
+
+python -m tests.test_geometry_pipeline
+
+Current documentation automation direction:
+
+DEFERRED
+
+Current geometry direction:
+
+ACTIVE
+
+Current scanner direction:
+
+ACTIVE
+
+Important:
+
+Documentation Automation временно
+не является главным направлением.
+
+Основной инженерный приоритет —
+геометрия сканера и качество
+Wedge Detection.
+
+---
+
+# AUTOMATION_STATE
+
+Project Sync analysis:
+
+AUTOMATED
+
+Pipeline automation:
+
+OPERATIONAL
+
+State Intelligence:
+
+OPERATIONAL
+
+State Synchronization analysis:
+
+AUTOMATED
+
+Migration Planning:
+
+AUTOMATED
+
+Migration Decision:
+
+AUTOMATED
+
+Approval Control:
+
+AUTOMATED
+
+Migration execution gate:
+
+AUTOMATED
+
+Pipeline reporting:
+
+AUTOMATED
+
+PipelineReport integration:
+
+COMPLETED
+
+PROJECT_STATE.md rewrite:
+
+NOT_FULLY_AUTOMATED
+
+Documentation Automation:
+
+IN_PROGRESS
+
+Documentation Automation Completion:
+
+NOT_COMPLETED
+
+Documentation Automation Priority:
+
+DEFERRED
+
+Architecture Hygiene:
+
+PLANNED
+
+Architecture Compactness Measurement:
+
+PLANNED
+
+Duplicate File Detection:
+
+PLANNED
+
+Orphan File Detection:
+
+PLANNED
+
+Stale File Detection:
+
+PLANNED
+
+Obsolete Artifact Detection:
+
+PLANNED
+
+Accidental File Detection:
+
+PLANNED
+
+Automatic File Deletion:
+
+DISABLED
+
+Priority Control:
+
+Scanner Geometry сохраняет
+высший текущий приоритет.
+
+Documentation Automation
+переведена в отложенное направление.
+
+Task Routing:
+
+Новые задачи в первую очередь
+маршрутизируются в Geometry Engine,
+Wedge Detection и связанные компоненты
+сканера.
+
+Задачи Documentation Automation
+обрабатываются после выполнения
+основного текущего рабочего приоритета
+либо по отдельному явному решению.
+
+---
+
+# ARCHITECTURE_CONSOLIDATION_STATE
+
+Status:
+
+COMPLETED
+
+Completed:
+
+* canonical Pipeline Registry;
+* canonical Pipeline Executor;
+* unified PipelineStage contract;
+* Pipeline Context;
+* Pipeline Result;
+* Stage Adapter;
+* Migration Stage;
+* Post Migration Validation Stage;
+* 12-stage canonical runtime composition;
+* PipelineReport canonical model;
+* PipelineReport runtime integration;
+* unified pipeline_report.json persistence;
+* removal of duplicate Post Migration Validator implementation.
+
+Current consolidation target:
+
+NONE
+
+Target status:
+
+COMPLETED
+
+Restriction:
+
+No second Pipeline registry,
+no second execution contour
+and no second canonical stage list
+may be introduced.
+
+Current architectural result:
+
+PipelineReport consolidation completed
+without changing the canonical stage count.
+
+Post Migration Validation implementation
+is consolidated in the migration subsystem.
+
+---
+
+# ARCHITECTURE_HYGIENE_ROADMAP_STATE
+
+Current target:
+
+Architecture Hygiene / File Integrity Intelligence
+
+Status:
+
+PLANNED
+
+Priority:
+
+DEFERRED
+
+Purpose:
+
+Создать автоматический механизм,
+который позволит Project Sync
+не только отслеживать изменения,
+но и понимать, является ли каждый
+файл проекта архитектурно необходимым,
+актуальным и принадлежащим
+каноническому контуру.
+
+Primary checks:
+
+* duplicate detection;
+* orphan detection;
+* stale detection;
+* obsolete detection;
+* unexpected file detection;
+* unused implementation detection;
+* compatibility implementation detection;
+* generated artifact classification;
+* historical artifact classification;
+* ownership verification;
+* dependency relevance;
+* architecture deviation detection.
+
+Primary output:
+
+architecture_hygiene_report.json
+
+Secondary output:
+
+architecture_compactness_score
+
+Safety model:
+
+REPORT_ONLY
+
+then:
+
+CONTROLLED_REVIEW
+
+then:
+
+MIGRATION_LIFECYCLE
+
+then:
+
+APPROVED_CHANGE
+
+No direct autonomous deletion.
+
+---
+
+# VALIDATION_STATE
+
+Latest migration lifecycle validation performed:
+
+2026-08-07
+
+Latest known migration execution:
+
+2026-08-07T17:58:15.993113
+
+Latest Geometry Engine validation:
+
+2026-08-08
+
+Geometry validation command:
+
+python -m tests.test_geometry_pipeline
+
+Geometry import environment:
+
+$env:PYTHONPATH="C:\BybitScanner"
+
+Migration Approval Controller:
+
+SUCCESS
+
+Migration Executor:
+
+SUCCESS
+
+Post Migration Validator:
+
+SUCCESS
+
+Approval result:
+
+APPROVED
+
+Migration execution result:
+
+NO_UPDATES
+
+Post migration validation result:
+
+NO_UPDATES
+
+Migration documents:
+
+* CHANGELOG.md;
+* PROJECT_CONTRACTS.md;
+* PROJECT_SYNC.md;
+* ROADMAP.md.
+
+Migration action:
+
+synchronize_state_reference
+
+Prepared updates:
+
+0
+
+Executed updates:
+
+0
+
+Created backups:
+
+0
+
+Execution errors:
+
+0
+
+Approval timestamp:
+
+2026-08-05T01:14:13.149819
+
+Latest execution timestamp:
+
+2026-08-07T17:58:15.993113
+
+Migration execution report:
+
+migration_execution_report.json
+
+Post migration validation report:
+
+post_migration_validation_report.json
+
+Compilation validation:
+
+SUCCESS
+
+Geometry Pipeline validation:
+
+SUCCESS
+
+GeometryModel validation:
+
+SUCCESS
+
+Trendline validation:
+
+SUCCESS
+
+Apex validation:
+
+SUCCESS
+
+Compression validation:
+
+SUCCESS
+
+Touch validation:
+
+SUCCESS
+
+Candidate Pair validation:
+
+SUCCESS
+
+Geometry Ranking validation:
+
+SUCCESS
+
+Geometric validation:
+
+SUCCESS
+
+Important:
+
+The migration lifecycle was exercised
+through Approval Control,
+Migration Executor
+and Post Migration Validator.
+
+No document content was changed.
+
+Latest migration execution again produced:
+
+NO_UPDATES
+
+Migration requirement remains:
+
+true
+
+Geometry Engine validation performed
+separately on 2026-08-08 produced:
+
+GEOMETRY RESULT: OK
+
+Validation:
+
+valid: true
+
+failed_checks:
+
+[]
+
+Candidate pair validation performed
+separately on 2026-08-08 produced:
+
+valid:
+
+false
+
+failed_checks:
+
+* apex;
+* compression.
+
+This confirms that the candidate pair
+validation layer rejects a geometrically
+invalid non-compressing structure.
+
+Geometry ranking validation performed
+separately on 2026-08-08 produced:
+
+VALID_SCORE:
+
+180
+
+NONE_SCORE:
+
+-999
+
+GeometryModel field boundary verification:
+
+HAS_SCORE_FIELD:
+
+false
+
+HAS_SIGNAL_FIELD:
+
+false
+
+Forbidden fields:
+
+* score;
+* signal;
+* confidence;
+* confirmation.
+
+Duplicate Post Migration Validator verification:
+
+Command:
+
+Get-ChildItem C:\BybitScanner -Recurse -Filter "post_migration_validator.py" | Select-Object FullName,Length
+
+Result:
+
+Only one active implementation remains:
+
+C:\BybitScanner\tools\project_sync\migration\post_migration_validator.py
+
+Historical duplicate:
+
+C:\BybitScanner\tools\project_sync\validation\post_migration_validator.py
+
+Status:
+
+DELETED
+
+---
+
+# RELATED_DOCUMENTS
+
+## CONTEXT_RECOVERY_CANONICAL_SET
+
+Canonical recovery documents:
+
+1. PROJECT_STATE.md
+2. PROJECT_TREE.md
+3. ASSISTANT_PROTOCOL.md
+4. PROJECT_RULES.md
+5. ARCHITECTURE.md
+
+Recovery rule:
+
+PROJECT_STATE.md является
+точкой входа.
+
+PROJECT_TREE.md является
+источником истины для путей.
+
+ASSISTANT_PROTOCOL.md определяет
+правила взаимодействия и выдачи артефактов.
+
+PROJECT_RULES.md определяет
+нормативные правила проекта.
+
+ARCHITECTURE.md определяет
+каноническую архитектурную модель.
+
+---
+
+project_sync_state:
+
+DOCUMENTS/STATE_PROJECT_SYNC.md
+
+snapshot:
+
+DOCUMENTS/SNAPSHOT.md
+
+architecture:
+
+DOCUMENTS/STATE_ARCHITECTURE.md
+
+pipeline:
+
+DOCUMENTS/STATE_PIPELINE_ENGINE.md
+
+documentation:
+
+DOCUMENTS/STATE_DOCUMENTATION.md
+
+development:
+
+DOCUMENTS/STATE_DEVELOPMENT.md
+
+project_rules:
+
+DOCUMENTS/PROJECT_RULES.md
+
+assistant_protocol:
+
+DOCUMENTS/ASSISTANT_PROTOCOL.md
+
+contracts:
+
+DOCUMENTS/PROJECT_CONTRACTS.md
+
+roadmap:
+
+DOCUMENTS/ROADMAP.md
+
+project_tree:
+
+DOCUMENTS/PROJECT_TREE.md
+
+Important:
+
+Перечень RELATED_DOCUMENTS выше
+не является Context Recovery Set.
+
+Для первоначального восстановления
+рабочего контекста используются только
+пять документов, определённых
+в CONTEXT_RECOVERY_PROTOCOL.
+
+Остальные документы могут быть
+запрошены только при необходимости
+конкретной задачи.
+
+---
+
+# VERSION_UPDATE_REASON
+
+from:
+
+PROJECT_STATE v7.7
+
+to:
+
+PROJECT_STATE v7.8
+
+reason:
+
+* дата Project State сохранена
+  на текущей контрольной точке 2026-08-08;
+* сохранён фактический результат
+  Geometry Engine validation от 2026-08-08;
+* подтверждено разрешение импорта
+  корневого пакета geometry через
+  PYTHONPATH;
+* подтверждён успешный запуск:
+  python -m tests.test_geometry_pipeline;
+* подтверждено:
+  GEOMETRY RESULT: OK;
+* подтверждён тип результата:
+  geometry.model.GeometryModel;
+* подтверждена успешная генерация
+  верхней trendline;
+* подтверждена успешная генерация
+  нижней trendline;
+* подтверждён расчёт apex;
+* подтверждён расчёт slope difference;
+* подтверждён compression analysis;
+* подтверждён touch analysis;
+* подтверждена geometric validation;
+* confirmed failed_checks = [];
+* подтверждена успешная сериализация
+  GeometryModel в DICT;
+* проведена отдельная проверка
+  build_candidate_lines;
+* проведена отдельная проверка
+  evaluate_candidate_pair;
+* подтверждено корректное отклонение
+  невалидной пары кандидатов;
+* для невалидной пары выявлены
+  failed_checks:
+  apex и compression;
+* подтверждено, что наличие 8 touches
+  само по себе не делает структуру
+  геометрически валидной;
+* проведена отдельная проверка
+  geometry.ranking.rank_geometry;
+* подтверждён результат:
+  VALID_SCORE = 180;
+* подтверждён результат:
+  NONE_SCORE = -999;
+* подтверждено отсутствие
+  score в GeometryModel;
+* подтверждено отсутствие
+  signal в GeometryModel;
+* подтверждено отсутствие
+  confidence в GeometryModel;
+* подтверждено отсутствие
+  confirmation в GeometryModel;
+* зафиксировано архитектурное
+  разделение GeometryModel
+  и Geometry Ranking;
+* сохранён текущий приоритет
+  SCANNER_GEOMETRY;
+* подтверждено состояние
+  Geometry Development:
+  ACTIVE;
+* подтверждено состояние
+  Wedge Detection:
+  ACTIVE;
+* сохранено состояние
+  Scanner Reliability как следующего
+  практического направления;
+* сохранено отложенное состояние
+  Documentation Automation;
+* сохранено состояние Project Sync:
+  HEALTHY;
+* сохранён canonical 12-stage Pipeline;
+* сохранён Pipeline Engine v3.2;
+* сохранены 41 зарегистрированный
+  и 41 проверенный документ;
+* критические ошибки остаются на уровне 0;
+* сохранён PipelineReport как canonical
+  final report model;
+* сохранена консолидация Post Migration Validator;
+* сохранено состояние Migration Execution:
+  NO_UPDATES;
+* сохранено migration_required:
+  true;
+* сохранено explicit approval:
+  APPROVED;
+* сохранено разделение Migration Decision
+  и Approval Control;
+* сохранены 0 updates;
+* сохранены 0 updated documents;
+* сохранены 0 backups;
+* сохранены 0 execution errors;
+* сохранён CONTEXT_RECOVERY_PROTOCOL;
+* сохранён CONTEXT_INTEGRITY_STATE;
+* сохранён ASSISTANT_EFFICIENCY_STATE;
+* сохранён canonical recovery set из пяти
+  документов;
+* PROJECT_TREE.md сохранён как единственный
+  источник истины для путей;
+* сохранён запрет отката к историческому
+  состоянию;
+* сохранено правило минимизации
+  Context Recovery Overhead;
+* учтён актуальный Assistant Protocol v3.8.
+
+---
+
+# FINAL_NOTE
+
+BybitScanner находится
+в стабильном архитектурном состоянии.
+
+Основная задача текущего этапа —
+не дальнейшее расширение автоматизации
+документации, а повышение практической
+работоспособности самого сканера.
+
+Project Sync Framework имеет рабочий
+Pipeline Engine и канонический
+12-stage operational Pipeline.
+
+PipelineReport consolidation завершена.
+
+Canonical Post Migration Validator
+прошёл синтаксическую проверку.
+
+Дублирующая реализация
+Post Migration Validator удалена.
+
+Последний известный цикл Migration Lifecycle
+от 2026-08-07 завершился:
+
+Migration Execution:
+
+NO_UPDATES
+
+Post Migration Validation:
+
+NO_UPDATES
+
+Фактическое изменение документов:
+
+0
+
+Новая контрольная точка Geometry Engine
+от 2026-08-08 завершилась:
+
+Geometry Pipeline:
+
+SUCCESS
+
+Geometry Result:
+
+OK
+
+GeometryModel:
+
+VALID
+
+Geometry Validation:
+
+VALID
+
+Failed Checks:
+
+[]
+
+Candidate Pair Validation:
+
+SUCCESS
+
+Invalid Candidate Pair:
+
+REJECTED
+
+Candidate Pair Failed Checks:
+
+* apex;
+* compression.
+
+Geometry Ranking:
+
+VALIDATED
+
+Valid Geometry Score:
+
+180
+
+None Geometry Score:
+
+-999
+
+GeometryModel score:
+
+ABSENT
+
+GeometryModel signal:
+
+ABSENT
+
+GeometryModel confidence:
+
+ABSENT
+
+GeometryModel confirmation:
+
+ABSENT
+
+Контрольный тест:
+
+python -m tests.test_geometry_pipeline
+
+Import Environment:
+
+$env:PYTHONPATH="C:\BybitScanner"
+
+Context Recovery Protocol:
+
+ACTIVE
+
+Context Integrity:
+
+ACTIVE
+
+Assistant Efficiency:
+
+ACTIVE
+
+Canonical Context Recovery Set:
+
+1. PROJECT_STATE.md
+2. PROJECT_TREE.md
+3. ASSISTANT_PROTOCOL.md
+4. PROJECT_RULES.md
+5. ARCHITECTURE.md
+
+Правило восстановления:
+
+PROJECT_STATE.md является
+точкой входа для восстановления.
+
+При необходимости полного
+восстановления контекста ассистент
+самостоятельно получает остальные
+четыре документа.
+
+После успешного выполнения
+протокола повторно требовать
+весь набор документов запрещено,
+пока факт восстановления доступен
+в текущем контексте.
+
+PROJECT_TREE.md является
+единственным источником истины
+для путей.
+
+Угадывание или реконструкция
+путей без PROJECT_TREE.md запрещены.
+
+Актуальный PROJECT_STATE.md имеет
+приоритет над устаревшей информацией
+из предыдущего контекста ассистента
+в категории текущего состояния проекта.
+
+Историческое состояние не должно
+самостоятельно возвращать проект
+к предыдущему приоритету или этапу.
+
+Текущий рабочий приоритет:
+
+SCANNER_GEOMETRY
+
+Текущая рабочая фаза:
+
+SCANNER_GEOMETRY_DEVELOPMENT
+
+Приоритеты проекта:
+
+1. SCANNER_GEOMETRY;
+2. WEDGE_DETECTION_QUALITY;
+3. SCANNER_RELIABILITY;
+4. TRADING_INTELLIGENCE;
+5. SCANNER_FEATURE_DEVELOPMENT;
+6. DOCUMENTATION_AUTOMATION;
+7. ARCHITECTURE_HYGIENE.
+
+Текущий основной контур:
+
+Geometry Engine
+
+↓
+
+Wedge Detection
+
+↓
+
+Scanner Reliability
+
+↓
+
+Acceptable Scanner Operation
+
+↓
+
+Further Trading Intelligence
+
+Текущий статус геометрии:
+
+ACTIVE DEVELOPMENT
+
+Geometry Pipeline:
+
+VALIDATED
+
+GeometryModel:
+
+VALIDATED
+
+Trendline Analysis:
+
+VALIDATED
+
+Apex Calculation:
+
+VALIDATED
+
+Compression Analysis:
+
+VALIDATED
+
+Touch Analysis:
+
+VALIDATED
+
+Candidate Pair Validation:
+
+VALIDATED
+
+Candidate Pair Rejection:
+
+VALIDATED
+
+Geometry Ranking:
+
+VALIDATED
+
+Geometric Validation:
+
+VALIDATED
+
+GeometryModel Boundary:
+
+VALIDATED
+
+GeometryModel:
+
+не содержит score,
+signal,
+confidence,
+confirmation.
+
+Текущий статус Wedge Detection:
+
+ACTIVE
+
+Текущий статус Scanner Development:
+
+PRIMARY
+
+Текущий статус Documentation Automation:
+
+IN_PROGRESS / DEFERRED
+
+Documentation Automation:
+
+НЕ ОТМЕНЕНА.
+
+Documentation Automation:
+
+НЕ ЯВЛЯЕТСЯ ТЕКУЩИМ ПРИОРИТЕТОМ.
+
+Architecture Hygiene:
+
+PLANNED / DEFERRED
+
+Project Sync:
+
+HEALTHY
+
+Context Recovery Protocol:
+
+ACTIVE
+
+Context Integrity:
+
+ACTIVE
+
+Assistant Efficiency:
+
+ACTIVE
+
+Основное рабочее решение:
+
+Сначала сделать сканер
+приемлемо работающим.
+
+После этого вернуться
+к дальнейшей автоматизации
+документации и архитектурной
+гигиене.
+
+Главный принцип взаимодействия:
+
+НЕ ТЕРЯТЬ РАБОЧИЙ КОНТЕКСТ.
+
+НЕ ОТКАТЫВАТЬСЯ К УСТАРЕВШЕМУ СОСТОЯНИЮ.
+
+НЕ ПЕРЕСПРАШИВАТЬ УЖЕ ДОСТУПНУЮ ИНФОРМАЦИЮ.
+
+НЕ ПЕРЕКЛЮЧАТЬ ТЕКУЩИЙ ПРИОРИТЕТ
+БЕЗ КАНОНИЧЕСКОГО ОСНОВАНИЯ.
+
+НЕ ЗАМЕНЯТЬ РАЗРАБОТКУ
+НЕОБЯЗАТЕЛЬНЫМИ ПРОЦЕДУРАМИ.
+
+МАКСИМИЗИРОВАТЬ ПОЛЕЗНОЕ ВРЕМЯ
+НЕПОСРЕДСТВЕННОЙ РАЗРАБОТКИ ПРОЕКТА.
+
+Текущая контрольная точка:
+
+41 документ зарегистрирован;
+
+41 документ проверен;
+
+Dependency Analysis — SUCCESS;
+
+Impact Analysis — SUCCESS;
+
+Change Detection — SUCCESS;
+
+Health Check — SUCCESS;
+
+Synchronization Planning — SUCCESS;
+
+State Intelligence — SUCCESS;
+
+State Synchronization Planning — SUCCESS;
+
+State Synchronization — NOT_REQUIRED;
+
+Migration Planning — READY;
+
+Migration Decision — WAITING_APPROVAL;
+
+Migration Decision Value — PENDING;
+
+Approval Control — APPROVED;
+
+Migration Execution — NO_UPDATES;
+
+Post Migration Validation — NO_UPDATES;
+
+Document Updates — 0;
+
+Updated Documents — 0;
+
+Backups — 0;
+
+Execution Errors — 0;
+
+Latest Migration Execution Checkpoint — 2026-08-07;
+
+Pipeline Report — SUCCESS;
+
+Pipeline — HEALTHY;
+
+Pipeline Stages — 12;
+
+Pipeline Engine — OPERATIONAL;
+
+Pipeline Engine Version — 3.2;
+
+PipelineReport — OPERATIONAL;
+
+PipelineReport Integration — COMPLETED;
+
+Critical Errors — 0.
+
+Geometry Pipeline Validation — SUCCESS;
+
+GeometryModel Validation — SUCCESS;
+
+Trendline Validation — SUCCESS;
+
+Apex Validation — SUCCESS;
+
+Compression Validation — SUCCESS;
+
+Touch Validation — SUCCESS;
+
+Candidate Pair Validation — SUCCESS;
+
+Candidate Pair Rejection — SUCCESS;
+
+Geometry Ranking Validation — SUCCESS;
+
+Geometric Validation — SUCCESS;
+
+Geometry Failed Checks — 0;
+
+Valid Geometry Score — 180;
+
+None Geometry Score — -999;
+
+GeometryModel score field — ABSENT;
+
+GeometryModel signal field — ABSENT;
+
+GeometryModel confidence field — ABSENT;
+
+GeometryModel confirmation field — ABSENT;
+
+SCANNER_GEOMETRY:
+
+CURRENT HIGHEST PRIORITY
+
+WEDGE_DETECTION:
+
+PRIMARY DEVELOPMENT DIRECTION
+
+SCANNER_RELIABILITY:
+
+NEXT PRACTICAL TARGET
+
+DOCUMENTATION_AUTOMATION:
+
+DEFERRED
+
+ARCHITECTURE_HYGIENE:
+
+DEFERRED
+
+PROJECT_SYNC:
+
+OPERATIONAL INFRASTRUCTURE
+
+CONTEXT_RECOVERY_PROTOCOL:
+
+OPERATIONAL CONTEXT MECHANISM
+
+CONTEXT_INTEGRITY:
+
+ACTIVE
+
+ASSISTANT_EFFICIENCY:
+
+ACTIVE
+
+# END_OF_DOCUMENT

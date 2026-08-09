@@ -1,0 +1,774 @@
+﻿"""
+BybitScanner Project Sync Framework
+
+Project Sync Pipeline Runner v2.3
+
+Responsibility:
+Execute complete Project Sync workflow.
+
+Pipeline:
+
+Document Registry
+        ↓
+Validation
+        ↓
+Dependency Analysis
+        ↓
+Impact Analysis
+        ↓
+Change Detection
+        ↓
+Health Check
+        ↓
+State Intelligence
+        ↓
+Synchronization Planning
+        ↓
+Migration Context
+        ↓
+Migration Planning
+        ↓
+Migration Decision
+        ↓
+Approval Control
+        ↓
+Document Update
+        ↓
+Migration Execution
+        ↓
+Post Migration Validation
+        ↓
+Snapshot Creation
+        ↓
+Pipeline Report
+
+This module:
+- bootstraps project root;
+- creates shared pipeline context;
+- executes registered stages;
+- passes required migration artifacts;
+- enforces migration execution gates;
+- collects execution results;
+- creates unified report.
+
+It does not:
+- implement analysis logic;
+- modify documents directly.
+"""
+
+from pathlib import Path
+import json
+import subprocess
+import sys
+from datetime import datetime
+
+# --------------------------------------------------
+
+# PROJECT ROOT BOOTSTRAP
+
+# --------------------------------------------------
+
+PROJECT_ROOT = Path(
+"C:/BybitScanner"
+)
+
+if str(PROJECT_ROOT) not in sys.path:
+
+sys.path.insert(
+    0,
+    str(PROJECT_ROOT)
+)
+
+# --------------------------------------------------
+
+# INTERNAL IMPORTS
+
+# --------------------------------------------------
+
+from tools.project_sync.pipeline.registry import (
+PipelineRegistry,
+)
+
+from tools.project_sync.pipeline.stage_adapter import (
+execute_stage,
+)
+
+# --------------------------------------------------
+
+# PATHS
+
+# --------------------------------------------------
+
+PROJECT_SYNC_ROOT = (
+PROJECT_ROOT
+/ "tools"
+/ "project_sync"
+)
+
+REPORT_PATH = (
+PROJECT_SYNC_ROOT
+/ "reports"
+/ "pipeline_report.json"
+)
+
+CONTEXT_PATH = (
+PROJECT_SYNC_ROOT
+/ "context"
+/ "pipeline_context.json"
+)
+
+MIGRATION_APPROVAL_PATH = (
+PROJECT_SYNC_ROOT
+/ "reports"
+/ "migration_approval.json"
+)
+
+# --------------------------------------------------
+
+# PIPELINE MODULES
+
+# --------------------------------------------------
+
+PIPELINE_STEPS = [
+
+(
+    "document_registry",
+    "tools.project_sync.registry.document_registry",
+),
+
+(
+    "validation",
+    "tools.project_sync.validation.document_validator",
+),
+
+(
+    "dependency_analysis",
+    "tools.project_sync.analysis.dependency_analyzer",
+),
+
+(
+    "impact_analysis",
+    "tools.project_sync.analysis.impact_analyzer",
+),
+
+(
+    "change_detection",
+    "tools.project_sync.change_detection.change_detector",
+),
+
+(
+    "health_check",
+    "tools.project_sync.health.project_health_report",
+),
+
+(
+    "state_intelligence",
+    "tools.project_sync.state.state_analyzer",
+),
+
+(
+    "synchronization_planning",
+    "tools.project_sync.synchronization.sync_planner",
+),
+
+]
+
+MIGRATION_STEPS = [
+
+(
+    "migration_planning",
+    "tools.project_sync.migration.migration_planner",
+    str(CONTEXT_PATH),
+),
+
+(
+    "migration_decision",
+    "tools.project_sync.migration.migration_decision_handler",
+    str(CONTEXT_PATH),
+),
+
+(
+    "approval_control",
+    "tools.project_sync.migration.approval_controller",
+    None,
+),
+
+(
+    "document_update",
+    "tools.project_sync.migration.document_updater",
+    str(MIGRATION_APPROVAL_PATH),
+),
+
+(
+    "migration_execution",
+    "tools.project_sync.migration.migration_executor",
+    None,
+),
+
+(
+    "post_migration_validation",
+    "tools.project_sync.validation.post_migration_validator",
+    None,
+),
+
+(
+    "snapshot_creation",
+    "project_snapshot",
+    None,
+),
+
+]
+
+# --------------------------------------------------
+
+# PIPELINE CONTEXT
+
+# --------------------------------------------------
+
+def create_pipeline_context():
+
+CONTEXT_PATH.parent.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+context = {
+
+    "project":
+        "BybitScanner",
+
+    "created":
+        datetime.now().isoformat(),
+
+    "documents":
+
+        [
+
+            "CHANGELOG.md",
+
+            "PROJECT_CONTRACTS.md",
+
+            "PROJECT_SYNC.md",
+
+            "ROADMAP.md",
+
+        ],
+
+    "actions":
+
+        [
+
+            "validate_structure",
+
+            "preserve_document_content",
+
+        ],
+
+    "migration":
+
+        {
+
+            "approval_artifact":
+                str(MIGRATION_APPROVAL_PATH),
+
+            "controlled_execution":
+                True,
+
+        },
+
+}
+
+CONTEXT_PATH.write_text(
+
+    json.dumps(
+
+        context,
+
+        indent=4,
+
+        ensure_ascii=False,
+
+    ),
+
+    encoding="utf-8",
+
+)
+
+# --------------------------------------------------
+
+# MODULE EXECUTION
+
+# --------------------------------------------------
+
+def run_module(
+name: str,
+module: str,
+argument: str | None = None,
+):
+
+command = [
+
+    sys.executable,
+
+    "-m",
+
+    module,
+
+]
+
+if argument:
+
+    command.append(
+        argument
+    )
+
+result = subprocess.run(
+
+    command,
+
+    cwd=PROJECT_ROOT,
+
+    capture_output=True,
+
+    text=True,
+
+)
+
+return {
+
+    "stage":
+
+        name,
+
+    "module":
+
+        module,
+
+    "success":
+
+        result.returncode == 0,
+
+    "output":
+
+        result.stdout.strip(),
+
+    "errors":
+
+        (
+
+            [result.stderr.strip()]
+
+            if result.stderr.strip()
+
+            else []
+
+        ),
+
+}
+
+# --------------------------------------------------
+
+# REGISTRY EXECUTION
+
+# --------------------------------------------------
+
+def run_registry_stages():
+
+registry = PipelineRegistry()
+
+registry.register_default_stages()
+
+results = []
+
+for name in registry.list_stages():
+
+    stage = registry.create(
+        name
+    )
+
+    result = execute_stage(
+        stage
+    )
+
+    results.append(
+
+        {
+
+            "stage":
+
+                name,
+
+            **result.to_dict(),
+
+        }
+
+    )
+
+return results
+
+# --------------------------------------------------
+
+# SKIPPED STAGE RESULT
+
+# --------------------------------------------------
+
+def skipped_stage(
+name: str,
+module: str,
+reason: str,
+):
+
+return {
+
+    "stage":
+
+        name,
+
+    "module":
+
+        module,
+
+    "success":
+
+        False,
+
+    "skipped":
+
+        True,
+
+    "output":
+
+        "",
+
+    "errors":
+
+        [reason],
+
+}
+
+# --------------------------------------------------
+
+# REPORT
+
+# --------------------------------------------------
+
+def build_report(
+results: list[dict],
+):
+
+failed = [
+
+    item
+
+    for item in results
+
+    if not item.get(
+        "success",
+        False
+    )
+
+    and not item.get(
+        "skipped",
+        False
+    )
+
+]
+
+skipped = [
+
+    item
+
+    for item in results
+
+    if item.get(
+        "skipped",
+        False
+    )
+
+]
+
+report = {
+
+    "pipeline":
+
+        "project_sync_pipeline_engine",
+
+    "version":
+
+        "2.3",
+
+    "status":
+
+        "HEALTHY"
+
+        if not failed
+
+        else "FAILED",
+
+    "stages":
+
+        len(results),
+
+    "completed":
+
+        len(results)
+        - len(skipped),
+
+    "failed":
+
+        len(failed),
+
+    "skipped":
+
+        len(skipped),
+
+    "results":
+
+        results,
+
+    "errors":
+
+        failed,
+
+}
+
+REPORT_PATH.parent.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+REPORT_PATH.write_text(
+
+    json.dumps(
+
+        report,
+
+        indent=4,
+
+        ensure_ascii=False,
+
+    ),
+
+    encoding="utf-8",
+
+)
+
+return report
+
+# --------------------------------------------------
+
+# PIPELINE RUN
+
+# --------------------------------------------------
+
+def run_pipeline():
+
+results = []
+
+create_pipeline_context()
+
+# ----------------------------------------------
+# CORE ANALYSIS PIPELINE
+# ----------------------------------------------
+
+for name, module in PIPELINE_STEPS:
+
+    result = run_module(
+        name,
+        module,
+    )
+
+    results.append(
+        result
+    )
+
+    if not result["success"]:
+
+        return build_report(
+            results
+        )
+
+# ----------------------------------------------
+# MIGRATION PIPELINE
+# ----------------------------------------------
+
+migration_results = {}
+
+for name, module, argument in MIGRATION_STEPS:
+
+    # ------------------------------------------
+    # MIGRATION EXECUTION GATE
+    # ------------------------------------------
+
+    if name == "migration_execution":
+
+        document_update = migration_results.get(
+            "document_update"
+        )
+
+        if (
+            document_update is None
+            or not document_update.get(
+                "success",
+                False
+            )
+        ):
+
+            result = skipped_stage(
+
+                name,
+
+                module,
+
+                "Migration execution blocked: "
+                "document_update did not complete successfully.",
+
+            )
+
+            results.append(
+                result
+            )
+
+            migration_results[name] = result
+
+            continue
+
+    # ------------------------------------------
+    # POST MIGRATION VALIDATION GATE
+    # ------------------------------------------
+
+    if name == "post_migration_validation":
+
+        migration_execution = migration_results.get(
+            "migration_execution"
+        )
+
+        if (
+            migration_execution is None
+            or not migration_execution.get(
+                "success",
+                False
+            )
+        ):
+
+            result = skipped_stage(
+
+                name,
+
+                module,
+
+                "Post-migration validation blocked: "
+                "migration_execution did not complete successfully.",
+
+            )
+
+            results.append(
+                result
+            )
+
+            migration_results[name] = result
+
+            continue
+
+    # ------------------------------------------
+    # SNAPSHOT GATE
+    # ------------------------------------------
+
+    if name == "snapshot_creation":
+
+        post_validation = migration_results.get(
+            "post_migration_validation"
+        )
+
+        if (
+            post_validation is None
+            or not post_validation.get(
+                "success",
+                False
+            )
+        ):
+
+            result = skipped_stage(
+
+                name,
+
+                module,
+
+                "Snapshot creation blocked: "
+                "post_migration_validation did not complete successfully.",
+
+            )
+
+            results.append(
+                result
+            )
+
+            migration_results[name] = result
+
+            continue
+
+    # ------------------------------------------
+    # EXECUTE MIGRATION STAGE
+    # ------------------------------------------
+
+    result = run_module(
+
+        name,
+
+        module,
+
+        argument,
+
+    )
+
+    results.append(
+        result
+    )
+
+    migration_results[name] = result
+
+# ----------------------------------------------
+# REGISTERED PIPELINE STAGES
+# ----------------------------------------------
+
+results.extend(
+    run_registry_stages()
+)
+
+return build_report(
+    results
+)
+
+# --------------------------------------------------
+
+# ENTRY POINT
+
+# --------------------------------------------------
+
+if **name** == "**main**":
+
+report = run_pipeline()
+
+print(
+    "PROJECT SYNC PIPELINE ENGINE"
+)
+
+print(
+    f"Status: {report['status']}"
+)
+
+print(
+    f"Stages: {report['stages']}"
+)
+
+print(
+    f"Completed: {report['completed']}"
+)
+
+print(
+    f"Failed: {report['failed']}"
+)
+
+print(
+    f"Skipped: {report['skipped']}"
+)

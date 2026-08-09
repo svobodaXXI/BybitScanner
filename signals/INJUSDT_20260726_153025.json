@@ -1,0 +1,436 @@
+{
+    "pattern": "Falling Wedge",
+    "reason": "Descending converging trendlines",
+    "score": 90,
+    "geometry": {
+        "upper_line": {
+            "slope": -0.0011467470380378273,
+            "intercept": 5.1442427769694445,
+            "points": 4,
+            "error_mean": 0.03293494076075687,
+            "error_max": 0.05705674495946855
+        },
+        "lower_line": {
+            "slope": -0.0008134749419183693,
+            "intercept": 5.058883670760041,
+            "points": 4,
+            "error_mean": 0.031246100232326546,
+            "error_max": 0.05185247261865289
+        },
+        "apex": {
+            "index": 256.1243716569879,
+            "price": 4.850532912402494,
+            "slope_difference": 0.000333272096119458,
+            "valid_intersection": true
+        },
+        "compression": {
+            "start_width": 0.080693,
+            "end_width": 0.022037,
+            "compression_percent": 72.69,
+            "is_compressing": true
+        },
+        "touches": {
+            "upper_touches": 2,
+            "lower_touches": 2,
+            "total_touches": 4,
+            "valid": true
+        },
+        "validation": {
+            "valid": true,
+            "checks": {
+                "slopes": {
+                    "valid": true,
+                    "reason": "Slope difference acceptable",
+                    "details": {
+                        "upper_slope": -0.0011467470380378273,
+                        "lower_slope": -0.0008134749419183693,
+                        "difference": 0.000333272096119458
+                    }
+                },
+                "apex": {
+                    "valid": true,
+                    "reason": "Apex geometry stable",
+                    "details": {
+                        "upper_slope": -0.0011467470380378273,
+                        "lower_slope": -0.0008134749419183693,
+                        "slope_difference": 0.000333272096119458,
+                        "apex_index": 256.1243716569879,
+                        "start_index": 14,
+                        "end_index": 190,
+                        "structure_length": 176,
+                        "distance": 66.12437165698788,
+                        "ratio": 0.376,
+                        "position": "after_structure"
+                    }
+                },
+                "apex_quality": {
+                    "valid": true,
+                    "reason": "Apex geometry stable",
+                    "details": {
+                        "upper_slope": -0.0011467470380378273,
+                        "lower_slope": -0.0008134749419183693,
+                        "slope_difference": 0.000333272096119458,
+                        "apex_index": 256.1243716569879,
+                        "distance": 66.12437165698788,
+                        "ratio": 0.376
+                    }
+                },
+                "compression": {
+                    "valid": true,
+                    "reason": "Compression acceptable",
+                    "details": {
+                        "compression_percent": 72.69,
+                        "minimum_percent": 5,
+                        "is_compressing": true
+                    }
+                },
+                "touches": {
+                    "valid": true,
+                    "reason": "Touch confirmation acceptable",
+                    "details": {
+                        "upper_touches": 2,
+                        "lower_touches": 2,
+                        "total_touches": 4
+                    }
+                }
+            },
+            "failed_checks": []
+        },
+        "candidate_points": {
+            "upper": [
+                {
+                    "index": 37,
+                    "price": 5.093,
+                    "type": "high"
+                },
+                {
+                    "index": 85,
+                    "price": 5.077,
+                    "type": "high"
+                },
+                {
+                    "index": 158,
+                    "price": 4.906,
+                    "type": "high"
+                },
+                {
+                    "index": 190,
+                    "price": 4.962,
+                    "type": "high"
+                }
+            ],
+            "lower": [
+                {
+                    "index": 14,
+                    "price": 5.027,
+                    "type": "low"
+                },
+                {
+                    "index": 24,
+                    "price": 5.05,
+                    "type": "low"
+                },
+                {
+                    "index": 114,
+                    "price": 5.018,
+                    "type": "low"
+                },
+                {
+                    "index": 140,
+                    "price": 4.903,
+                    "type": "low"
+                }
+            ]
+        }
+    },
+    "validation": {
+        "valid": true,
+        "checks": {
+            "slopes": {
+                "valid": true,
+                "reason": "Slope difference acceptable",
+                "details": {
+                    "upper_slope": -0.0011467470380378273,
+                    "lower_slope": -0.0008134749419183693,
+                    "difference": 0.000333272096119458
+                }
+            },
+            "apex": {
+                "valid": true,
+                "reason": "Apex geometry stable",
+                "details": {
+                    "upper_slope": -0.0011467470380378273,
+                    "lower_slope": -0.0008134749419183693,
+                    "slope_difference": 0.000333272096119458,
+                    "apex_index": 256.1243716569879,
+                    "start_index": 14,
+                    "end_index": 190,
+                    "structure_length": 176,
+                    "distance": 66.12437165698788,
+                    "ratio": 0.376,
+                    "position": "after_structure"
+                }
+            },
+            "apex_quality": {
+                "valid": true,
+                "reason": "Apex geometry stable",
+                "details": {
+                    "upper_slope": -0.0011467470380378273,
+                    "lower_slope": -0.0008134749419183693,
+                    "slope_difference": 0.000333272096119458,
+                    "apex_index": 256.1243716569879,
+                    "distance": 66.12437165698788,
+                    "ratio": 0.376
+                }
+            },
+            "compression": {
+                "valid": true,
+                "reason": "Compression acceptable",
+                "details": {
+                    "compression_percent": 72.69,
+                    "minimum_percent": 5,
+                    "is_compressing": true
+                }
+            },
+            "touches": {
+                "valid": true,
+                "reason": "Touch confirmation acceptable",
+                "details": {
+                    "upper_touches": 2,
+                    "lower_touches": 2,
+                    "total_touches": 4
+                }
+            }
+        },
+        "failed_checks": []
+    },
+    "quality": {
+        "quality": "B Setup",
+        "reason": "Valid structure awaiting confirmation"
+    },
+    "warnings": [],
+    "score_breakdown": {
+        "structure": 40,
+        "compression": 25,
+        "touches": 10,
+        "quality": 15
+    },
+    "high_slope": -0.0011467470380378273,
+    "high_intercept": 5.1442427769694445,
+    "low_slope": -0.0008134749419183693,
+    "low_intercept": 5.058883670760041,
+    "compression": 72.69,
+    "high_touches": 2,
+    "low_touches": 2,
+    "detection": {
+        "detected": true,
+        "candidate": "validated_structure",
+        "pattern": "Falling Wedge",
+        "reason": "Geometry validation passed"
+    },
+    "confirmation": {
+        "breakout": false,
+        "breakout_quality": {
+            "status": "NO_BREAKOUT",
+            "quality": "NONE"
+        },
+        "retest": false,
+        "support_hold": false,
+        "retest_score": 0,
+        "volume": false,
+        "breakout_score": 0,
+        "volume_score": 0,
+        "volatility_score": 0,
+        "confirmation_score": 0,
+        "confirmed": false,
+        "direction": "WAIT"
+    },
+    "final_score": 90,
+    "signal": {
+        "approved": false,
+        "reason": "Good structure waiting confirmation"
+    },
+    "tradingview": {
+        "created_at": "2026-07-26T12:30:25.082271",
+        "symbol": "INJUSDT",
+        "exchange": "BYBIT",
+        "timeframe": "5",
+        "pattern": "Falling Wedge",
+        "score": 90,
+        "quality": "B Setup",
+        "direction": "WAIT",
+        "geometry": {
+            "upper_line": {
+                "slope": -0.0011467470380378273,
+                "intercept": 5.1442427769694445,
+                "points": 4,
+                "error_mean": 0.03293494076075687,
+                "error_max": 0.05705674495946855
+            },
+            "lower_line": {
+                "slope": -0.0008134749419183693,
+                "intercept": 5.058883670760041,
+                "points": 4,
+                "error_mean": 0.031246100232326546,
+                "error_max": 0.05185247261865289
+            },
+            "apex": {
+                "index": 256.1243716569879,
+                "price": 4.850532912402494,
+                "slope_difference": 0.000333272096119458,
+                "valid_intersection": true
+            },
+            "compression": {
+                "start_width": 0.080693,
+                "end_width": 0.022037,
+                "compression_percent": 72.69,
+                "is_compressing": true
+            },
+            "touches": {
+                "upper_touches": 2,
+                "lower_touches": 2,
+                "total_touches": 4,
+                "valid": true
+            },
+            "validation": {
+                "valid": true,
+                "checks": {
+                    "slopes": {
+                        "valid": true,
+                        "reason": "Slope difference acceptable",
+                        "details": {
+                            "upper_slope": -0.0011467470380378273,
+                            "lower_slope": -0.0008134749419183693,
+                            "difference": 0.000333272096119458
+                        }
+                    },
+                    "apex": {
+                        "valid": true,
+                        "reason": "Apex geometry stable",
+                        "details": {
+                            "upper_slope": -0.0011467470380378273,
+                            "lower_slope": -0.0008134749419183693,
+                            "slope_difference": 0.000333272096119458,
+                            "apex_index": 256.1243716569879,
+                            "start_index": 14,
+                            "end_index": 190,
+                            "structure_length": 176,
+                            "distance": 66.12437165698788,
+                            "ratio": 0.376,
+                            "position": "after_structure"
+                        }
+                    },
+                    "apex_quality": {
+                        "valid": true,
+                        "reason": "Apex geometry stable",
+                        "details": {
+                            "upper_slope": -0.0011467470380378273,
+                            "lower_slope": -0.0008134749419183693,
+                            "slope_difference": 0.000333272096119458,
+                            "apex_index": 256.1243716569879,
+                            "distance": 66.12437165698788,
+                            "ratio": 0.376
+                        }
+                    },
+                    "compression": {
+                        "valid": true,
+                        "reason": "Compression acceptable",
+                        "details": {
+                            "compression_percent": 72.69,
+                            "minimum_percent": 5,
+                            "is_compressing": true
+                        }
+                    },
+                    "touches": {
+                        "valid": true,
+                        "reason": "Touch confirmation acceptable",
+                        "details": {
+                            "upper_touches": 2,
+                            "lower_touches": 2,
+                            "total_touches": 4
+                        }
+                    }
+                },
+                "failed_checks": []
+            }
+        },
+        "market": {
+            "symbol": "INJUSDT",
+            "exchange": "BYBIT",
+            "timeframe": "5"
+        },
+        "pattern_data": {
+            "name": "Falling Wedge",
+            "score": 90,
+            "quality": "B Setup",
+            "direction": "WAIT"
+        },
+        "validation": {
+            "valid": true,
+            "checks": {
+                "slopes": {
+                    "valid": true,
+                    "reason": "Slope difference acceptable",
+                    "details": {
+                        "upper_slope": -0.0011467470380378273,
+                        "lower_slope": -0.0008134749419183693,
+                        "difference": 0.000333272096119458
+                    }
+                },
+                "apex": {
+                    "valid": true,
+                    "reason": "Apex geometry stable",
+                    "details": {
+                        "upper_slope": -0.0011467470380378273,
+                        "lower_slope": -0.0008134749419183693,
+                        "slope_difference": 0.000333272096119458,
+                        "apex_index": 256.1243716569879,
+                        "start_index": 14,
+                        "end_index": 190,
+                        "structure_length": 176,
+                        "distance": 66.12437165698788,
+                        "ratio": 0.376,
+                        "position": "after_structure"
+                    }
+                },
+                "apex_quality": {
+                    "valid": true,
+                    "reason": "Apex geometry stable",
+                    "details": {
+                        "upper_slope": -0.0011467470380378273,
+                        "lower_slope": -0.0008134749419183693,
+                        "slope_difference": 0.000333272096119458,
+                        "apex_index": 256.1243716569879,
+                        "distance": 66.12437165698788,
+                        "ratio": 0.376
+                    }
+                },
+                "compression": {
+                    "valid": true,
+                    "reason": "Compression acceptable",
+                    "details": {
+                        "compression_percent": 72.69,
+                        "minimum_percent": 5,
+                        "is_compressing": true
+                    }
+                },
+                "touches": {
+                    "valid": true,
+                    "reason": "Touch confirmation acceptable",
+                    "details": {
+                        "upper_touches": 2,
+                        "lower_touches": 2,
+                        "total_touches": 4
+                    }
+                }
+            },
+            "failed_checks": []
+        },
+        "tradingview": {
+            "url": "https://www.tradingview.com/chart/?symbol=BYBIT:INJUSDT&interval=5"
+        },
+        "trainer": {
+            "source": "BybitScanner"
+        }
+    }
+}

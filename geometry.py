@@ -1,0 +1,1 @@
+analyze_geometry(df, highs, lows)

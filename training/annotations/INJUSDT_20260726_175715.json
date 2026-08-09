@@ -1,0 +1,49 @@
+{
+    "created_at": "2026-07-26T14:57:15.909881",
+    "source": "TradingView",
+    "symbol": "INJUSDT",
+    "exchange": "BYBIT",
+    "timeframe": "15",
+    "pattern": "Falling Wedge",
+    "annotation": {
+        "upper_line": {
+            "start": {
+                "index": 100,
+                "price": 5.2
+            },
+            "end": {
+                "index": 150,
+                "price": 5.0
+            }
+        },
+        "lower_line": {
+            "start": {
+                "index": 100,
+                "price": 4.7
+            },
+            "end": {
+                "index": 150,
+                "price": 4.85
+            }
+        },
+        "apex": {
+            "index": 210,
+            "price": 4.92
+        },
+        "touches": {
+            "upper": [
+                100,
+                120,
+                150
+            ],
+            "lower": [
+                105,
+                130,
+                160
+            ]
+        }
+    },
+    "comment": "Пример ручной разметки клина трейдером",
+    "quality": "A setup",
+    "trainer_ready": false
+}

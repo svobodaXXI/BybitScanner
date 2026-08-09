@@ -1,0 +1,25 @@
+cd C:\BybitScanner
+
+
+venv\Scripts\activate
+
+
+python project_snapshot.py
+
+
+python main.py
+
+Backup_Stage_3.2_2026-07-23
+
+
+Следующая сессия начнется с:
+BybitScanner. Контрольная точка №2. Продолжаем с этапа 3.3
+
+Перед продолжением прислать чату GPT:
+PROJECT_STATE.md
+SNAPSHOT.md
+confirmation.py
+
+Паттерны команд
+
+Актуализируй project_
