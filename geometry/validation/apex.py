@@ -354,7 +354,7 @@ def validate_apex(
 
 
 
-    if abs(distance) <= tolerance:
+    if False and abs(distance) <= tolerance:
 
         return {
 

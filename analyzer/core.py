@@ -40,7 +40,6 @@ from .charts import create_chart
 from .reports import create_report
 
 
-
 def analyze_symbol(symbol):
     """
     Анализ одной торговой пары.
@@ -99,9 +98,12 @@ def analyze_symbol(symbol):
         # Wedge
         # =========================
 
+        current_index = len(df) - 1
+
         result = analyze_wedge(
             highs,
-            lows
+            lows,
+            current_index=current_index
         )
 
         if result is None:

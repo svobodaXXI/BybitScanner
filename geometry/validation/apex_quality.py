@@ -22,7 +22,7 @@ def evaluate_apex_quality(
     start_index,
     end_index,
     min_slope_difference=0.00005,
-    max_ratio=3.0
+    max_ratio=1.0
 ):
     """
     Проверяет качество Apex.

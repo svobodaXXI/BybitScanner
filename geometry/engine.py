@@ -55,7 +55,8 @@ from .debug.logger import (
 
 def analyze_geometry(
     highs,
-    lows
+    lows,
+    current_index=None
 ):
     """
     Главная функция анализа геометрии.
@@ -67,6 +68,10 @@ def analyze_geometry(
 
     lows:
         Pivot Low точки
+
+    current_index:
+        индекс последней доступной
+        рыночной свечи
 
     Возвращает:
 
@@ -147,7 +152,8 @@ def analyze_geometry(
 
             geometry = evaluate_candidate_pair(
                 upper_candidate,
-                lower_candidate
+                lower_candidate,
+                current_index=current_index
             )
 
             if geometry is None:

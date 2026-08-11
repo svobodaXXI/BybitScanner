@@ -11,7 +11,9 @@ Geometry Model
 - Apex;
 - Compression;
 - Touches;
-- Validation.
+- Validation;
+- границы структуры;
+- текущий индекс рынка.
 
 Не содержит:
 - Score;
@@ -30,6 +32,9 @@ class GeometryModel:
         compression,
         touches,
         validation,
+        start_index=None,
+        end_index=None,
+        current_index=None,
         candidate_points=None
     ):
 
@@ -42,6 +47,10 @@ class GeometryModel:
         self.touches = touches
 
         self.validation = validation
+
+        self.start_index = start_index
+        self.end_index = end_index
+        self.current_index = current_index
 
         self.candidate_points = (
             candidate_points
@@ -70,6 +79,15 @@ class GeometryModel:
 
             "validation":
                 self.validation,
+
+            "start_index":
+                self.start_index,
+
+            "end_index":
+                self.end_index,
+
+            "current_index":
+                self.current_index,
 
             "candidate_points":
                 self.candidate_points

@@ -67,7 +67,7 @@ def main():
                 analysis.get("score", 0)
             )
 
-            if not pattern:
+            if pattern in (None, "", "No wedge", "Unknown"):
                 print(f"{symbol:<15} no wedge")
                 continue
 

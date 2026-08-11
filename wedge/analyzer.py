@@ -65,7 +65,6 @@ from .scoring import calculate_score
 
 
 
-
 def _normalize_geometry(
     geometry
 ):
@@ -85,16 +84,12 @@ def _normalize_geometry(
 
         return None
 
-
-
     if hasattr(
         geometry,
         "to_dict"
     ):
 
         return geometry.to_dict()
-
-
 
     if isinstance(
         geometry,
@@ -103,22 +98,18 @@ def _normalize_geometry(
 
         return geometry
 
-
-
     return None
-
 
 
 
 def analyze_wedge(
     highs,
-    lows
+    lows,
+    current_index=None
 ):
     """
     Полный анализ структуры.
     """
-
-
 
     #
     # 1. Geometry
@@ -126,24 +117,19 @@ def analyze_wedge(
 
     geometry = analyze_geometry(
         highs,
-        lows
+        lows,
+        current_index=current_index
     )
-
-
 
     geometry_data = _normalize_geometry(
         geometry
     )
-
-
 
     if geometry_data is None:
 
         return create_result(
             reason="Not enough geometry data"
         )
-
-
 
     #
     # 2. Detector
@@ -153,15 +139,11 @@ def analyze_wedge(
         geometry_data
     )
 
-
-
     if not detection["detected"]:
-
 
         validation = geometry_data.get(
             "validation"
         )
-
 
         result = create_result(
 
@@ -175,16 +157,12 @@ def analyze_wedge(
 
         )
 
-
         result["detection"] = detection
-
 
         return attach_legacy_geometry(
             result,
             geometry_data
         )
-
-
 
     #
     # 3. Quality
@@ -194,13 +172,9 @@ def analyze_wedge(
         "validation"
     )
 
-
-
     quality = evaluate_quality(
         validation
     )
-
-
 
     #
     # 4. Classifier
@@ -212,11 +186,7 @@ def analyze_wedge(
 
     )
 
-
     pattern = classification["pattern"]
-
-
-
 
     #
     # 5. Score
@@ -226,26 +196,19 @@ def analyze_wedge(
 
         pattern,
 
-
         geometry_data.get(
             "compression",
             {}
         ),
-
 
         geometry_data.get(
             "touches",
             {}
         ),
 
-
         quality
 
     )
-
-
-
-
 
     #
     # 6. Result
@@ -267,18 +230,11 @@ def analyze_wedge(
 
     )
 
-
-
     result["score_breakdown"] = (
         score_data["score_breakdown"]
     )
 
-
-
     result["detection"] = detection
-
-
-
 
     return attach_legacy_geometry(
         result,

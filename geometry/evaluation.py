@@ -26,10 +26,10 @@ from .validation import validate_geometry
 from .model import GeometryModel
 
 
-
 def evaluate_candidate_pair(
     upper_candidate,
-    lower_candidate
+    lower_candidate,
+    current_index=None
 ):
     """
     Оценивает пару линий
@@ -40,16 +40,12 @@ def evaluate_candidate_pair(
     GeometryModel
     """
 
-
-
     if (
         upper_candidate is None
         or lower_candidate is None
     ):
 
         return None
-
-
 
     upper_line = upper_candidate.get(
         "line"
@@ -59,16 +55,12 @@ def evaluate_candidate_pair(
         "line"
     )
 
-
-
     if (
         upper_line is None
         or lower_line is None
     ):
 
         return None
-
-
 
     upper_points = upper_candidate.get(
         "points",
@@ -80,8 +72,6 @@ def evaluate_candidate_pair(
         []
     )
 
-
-
     if (
         not upper_points
         or not lower_points
@@ -89,20 +79,15 @@ def evaluate_candidate_pair(
 
         return None
 
-
-
     start_index = min(
         upper_points[0]["index"],
         lower_points[0]["index"]
     )
 
-
     end_index = max(
         upper_points[-1]["index"],
         lower_points[-1]["index"]
     )
-
-
 
     #
     # Apex
@@ -112,8 +97,6 @@ def evaluate_candidate_pair(
         upper_line,
         lower_line
     )
-
-
 
     #
     # Compression
@@ -126,8 +109,6 @@ def evaluate_candidate_pair(
         end_index
     )
 
-
-
     #
     # Touches
     #
@@ -138,8 +119,6 @@ def evaluate_candidate_pair(
         upper_points,
         lower_points
     )
-
-
 
     #
     # Validation
@@ -154,8 +133,6 @@ def evaluate_candidate_pair(
         start_index,
         end_index
     )
-
-
 
     #
     # Geometry Model Contract
@@ -174,6 +151,12 @@ def evaluate_candidate_pair(
         touches=touches,
 
         validation=validation,
+
+        start_index=start_index,
+
+        end_index=end_index,
+
+        current_index=current_index,
 
         candidate_points={
 

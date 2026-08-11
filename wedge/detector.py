@@ -1,29 +1,29 @@
 """
 wedge.detector
 
-Определение геометрической структуры.
+РћРїСЂРµРґРµР»РµРЅРёРµ РіРµРѕРјРµС‚СЂРёС‡РµСЃРєРѕР№ СЃС‚СЂСѓРєС‚СѓСЂС‹.
 
-Отвечает только за:
-- наличие структуры;
-- предварительную классификацию;
-- описание признаков.
+РћС‚РІРµС‡Р°РµС‚ С‚РѕР»СЊРєРѕ Р·Р°:
+- РЅР°Р»РёС‡РёРµ СЃС‚СЂСѓРєС‚СѓСЂС‹;
+- РїСЂРµРґРІР°СЂРёС‚РµР»СЊРЅСѓСЋ РєР»Р°СЃСЃРёС„РёРєР°С†РёСЋ;
+- РѕРїРёСЃР°РЅРёРµ РїСЂРёР·РЅР°РєРѕРІ.
 
-Не отвечает за:
+РќРµ РѕС‚РІРµС‡Р°РµС‚ Р·Р°:
 - Validation;
 - Score;
 - Quality;
-- торговую логику.
+- С‚РѕСЂРіРѕРІСѓСЋ Р»РѕРіРёРєСѓ.
 
 Architecture v2.4:
 
 GeometryModel
-    ↓
+    в†“
 Detector
-    ↓
+    в†“
 Classifier
-    ↓
+    в†“
 Quality
-    ↓
+    в†“
 Score
 """
 
@@ -32,15 +32,15 @@ def _normalize_geometry(
     geometry
 ):
     """
-    Приводит GeometryModel
-    или dict к единому формату.
+    РџСЂРёРІРѕРґРёС‚ GeometryModel
+    РёР»Рё dict Рє РµРґРёРЅРѕРјСѓ С„РѕСЂРјР°С‚Сѓ.
 
-    Поддерживает:
+    РџРѕРґРґРµСЂР¶РёРІР°РµС‚:
 
-    новый формат:
+    РЅРѕРІС‹Р№ С„РѕСЂРјР°С‚:
         GeometryModel
 
-    старый формат:
+    СЃС‚Р°СЂС‹Р№ С„РѕСЂРјР°С‚:
         dict
     """
 
@@ -78,13 +78,13 @@ def detect_structure(
     geometry
 ):
     """
-    Определяет, похожа ли Geometry Model
-    на клин или другую сжимающуюся структуру.
+    РћРїСЂРµРґРµР»СЏРµС‚, РїРѕС…РѕР¶Р° Р»Рё Geometry Model
+    РЅР° РєР»РёРЅ РёР»Рё РґСЂСѓРіСѓСЋ СЃР¶РёРјР°СЋС‰СѓСЋСЃСЏ СЃС‚СЂСѓРєС‚СѓСЂСѓ.
 
-    Validation используется только как источник
-    диагностической информации.
+    Validation РёСЃРїРѕР»СЊР·СѓРµС‚СЃСЏ С‚РѕР»СЊРєРѕ РєР°Рє РёСЃС‚РѕС‡РЅРёРє
+    РґРёР°РіРЅРѕСЃС‚РёС‡РµСЃРєРѕР№ РёРЅС„РѕСЂРјР°С†РёРё.
 
-    Он НЕ блокирует обнаружение.
+    РћРЅ РќР• Р±Р»РѕРєРёСЂСѓРµС‚ РѕР±РЅР°СЂСѓР¶РµРЅРёРµ.
     """
 
 
@@ -214,8 +214,44 @@ def detect_structure(
     #
 
 
-    features = {
+    current_index = geometry.get(
+        "current_index"
+    )
 
+    end_index = geometry.get(
+        "end_index"
+    )
+
+    apex = geometry.get(
+        "apex",
+        {}
+    )
+
+    apex_index = (
+        apex.get("index")
+        if isinstance(apex, dict)
+        else None
+    )
+
+    freshness_bars = None
+
+    if (
+        current_index is not None
+        and end_index is not None
+    ):
+        freshness_bars = (
+            current_index
+            -
+            end_index
+        )
+
+    before_apex = bool(
+        current_index is not None
+        and apex_index is not None
+        and current_index <= apex_index
+    )
+
+    features = {
 
         "compression":
 
@@ -226,8 +262,6 @@ def detect_structure(
                 )
             ),
 
-
-
         "touches":
 
             bool(
@@ -237,16 +271,12 @@ def detect_structure(
                 )
             ),
 
-
-
         "apex":
 
             geometry.get(
                 "apex"
             )
             is not None,
-
-
 
         "validation":
 
@@ -255,34 +285,42 @@ def detect_structure(
                     "valid",
                     False
                 )
+            ),
+
+        "freshness":
+
+            bool(
+                freshness_bars is not None
+                and 0 <= freshness_bars <= 15
+                and before_apex
             )
 
     }
-
-
-
     structure_points = sum(
 
-        [
+            [
 
-            features["compression"],
+                features["compression"],
 
-            features["touches"],
+                features["touches"],
 
-            features["apex"]
+                features["apex"]
 
-        ]
+            ]
 
-    )
-
-
+        )
 
     #
     # Decision
     #
 
-
-    if structure_points >= 2:
+    if (
+        structure_points >= 2
+        and
+        features["validation"]
+        and
+        features["freshness"]
+    ):
 
         return {
 
