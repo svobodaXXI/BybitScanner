@@ -191,6 +191,182 @@ Signal Visualization / Target Projection Layer
 
 ---
 
+# FEATURE-002
+
+name:
+
+Geometry Review Bridge / Web Geometry Reviewer
+
+status:
+
+DEFERRED / ARCHITECTURE DIRECTION APPROVED
+
+---
+
+## PURPOSE
+
+Создать интерактивный контур проверки
+и коррекции геометрии, найденной BybitScanner.
+
+Основной workflow:
+
+Scanner
+
+↓
+
+Geometry / Overlay Payload
+
+↓
+
+Web Geometry Reviewer
+
+↓
+
+Human Review / Geometry Correction
+
+↓
+
+Annotation
+
+↓
+
+Training Dataset
+
+↓
+
+Geometry Calibration
+
+---
+
+## EXISTING_INFRASTRUCTURE
+
+reuse_existing_components:
+
+- tradingview_bridge.py;
+- tradingview/importer.py;
+- training/storage.py;
+- contracts/annotation_contract.py;
+- TRADINGVIEW_JSON_CONTRACT.md.
+
+principle:
+
+Существующая инфраструктура TradingView Bridge
+не должна заменяться новой реализацией с нуля.
+
+Она должна эволюционировать в более общий
+Geometry Review Bridge.
+
+TradingView остаётся внешним инструментом
+просмотра графика и ручной проверки,
+но не является обязательным ядром
+Geometry Reviewer.
+
+---
+
+## GEOMETRY_REVIEW_MODEL
+
+review_input:
+
+- symbol;
+- timeframe;
+- candles;
+- upper_line;
+- lower_line;
+- anchor points;
+- apex;
+- compression;
+- touches;
+- validation;
+- scanner score.
+
+review_actions:
+
+- ACCEPT;
+- CORRECT;
+- REJECT.
+
+correction_capabilities:
+
+- перемещение anchor points;
+- коррекция upper trendline;
+- коррекция lower trendline;
+- сохранение исправленной геометрии.
+
+review_output:
+
+Human-validated Annotation Contract.
+
+---
+
+## ANCHOR_GEOMETRY_INTEGRATION
+
+principle:
+
+Текущая anchor-based geometry должна стать
+основным форматом интерактивной коррекции линий.
+
+Relevant line properties:
+
+- anchor_index;
+- anchor_price;
+- second_index;
+- second_price;
+- slope;
+- intercept.
+
+Две anchor points определяют линию
+и позволяют человеку визуально корректировать
+геометрию непосредственно на графике.
+
+---
+
+## TRAINING_FEEDBACK_LOOP
+
+target_workflow:
+
+Scanner Prediction
+
+↓
+
+Human Reference
+
+↓
+
+Actual Market Outcome
+
+↓
+
+Training Dataset
+
+↓
+
+Geometry Calibration
+
+purpose:
+
+Создать накопительную базу примеров,
+позволяющую сравнивать геометрию сканера
+с человеческой разметкой и фактической
+рыночной отработкой структуры.
+
+---
+
+## IMPLEMENTATION_STAGE
+
+implementation_after:
+
+- Anchor Geometry stabilization;
+- Wedge Geometry stabilization;
+- Geometry Ranking stabilization;
+- Wedge Detection reliability.
+
+recommended_stage:
+
+Geometry Intelligence / Human Feedback Layer
+
+---
+
+
 # FEATURE_STATUS_SUMMARY
 
 FEATURE-001:
@@ -200,6 +376,14 @@ Pattern Measured-Move Target Visualization
 Status:
 
 DEFERRED / APPROVED FOR FUTURE IMPLEMENTATION
+
+FEATURE-002:
+
+Geometry Review Bridge / Web Geometry Reviewer
+
+Status:
+
+DEFERRED / ARCHITECTURE DIRECTION APPROVED
 
 ---
 

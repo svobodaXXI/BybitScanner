@@ -4,7 +4,14 @@
   "category": "target_watch_setup",
   "reference_type": "manual",
   "accepted": true,
-  "purpose": "Positive reference for early wedge monitoring",
+  "purpose": "Positive reference for early wedge monitoring and successful breakout follow-through",
   "geometry_assessment": "desired",
-  "notes": "Example of a forming wedge worth monitoring before breakout."
+  "outcome": {
+    "status": "successful_breakout",
+    "direction": "long",
+    "follow_through": "strong",
+    "target_assessment": "near_target_reached",
+    "notes": "Breakout from the wedge was followed by a strong upward move. The setup developed close to the expected measured-move target and would justify substantial profit taking."
+  },
+  "notes": "Example of a forming wedge worth monitoring before breakout. Later confirmed as a strong successful long breakout reference."
 }
