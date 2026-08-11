@@ -1,0 +1,33 @@
+﻿{
+  "symbol": "TWTUSDT",
+  "pattern": "Falling Wedge",
+  "category": "wedge_parent_structure_preferred",
+  "reference_type": "scanner_vs_manual",
+  "accepted": true,
+  "scanner_classification_accepted": true,
+  "scanner_geometry_accepted": false,
+  "manual_geometry_accepted": true,
+  "preferred_reference": "manual.png",
+  "purpose": "Geometry Ranking reference for preferring a structurally meaningful parent Falling Wedge over a smaller nested candidate",
+  "geometry_assessment": "classification_correct_geometry_too_local",
+  "issues": [
+    "Scanner correctly identifies Falling Wedge",
+    "Scanner selects a small nested structure instead of the larger parent wedge",
+    "Manual geometry begins from more meaningful structural extrema",
+    "Parent geometry explains a substantially larger portion of the price structure"
+  ],
+  "desired_behavior": [
+    "Prefer meaningful structural extrema as primary anchors",
+    "Reward sufficient structure span",
+    "Reward boundary support distributed across the lifetime of the pattern",
+    "Balance freshness against anchor quality and structural significance",
+    "Avoid excessive preference for short nested geometries",
+    "Preserve the parent structure when it better explains current price action"
+  ],
+  "outcome": {
+    "direction": "bullish",
+    "breakout_observed": true,
+    "post_breakout_continuation_observed": true
+  },
+  "notes": "Useful positive Falling Wedge calibration example. The Scanner classification is reasonable, but Geometry Ranking should have selected the larger manually reconstructed parent structure."
+}

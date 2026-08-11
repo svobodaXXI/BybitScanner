@@ -1,0 +1,25 @@
+﻿{
+  "symbol": "SOXXUSDT",
+  "pattern": "Rising Wedge",
+  "category": "false_wedge_no_visible_geometry",
+  "reference_type": "scanner_only",
+  "accepted": false,
+  "scanner_geometry_accepted": false,
+  "manual_reference": null,
+  "purpose": "Negative calibration reference for rejecting Rising Wedge detections without a visually reconstructable wedge structure",
+  "geometry_assessment": "false_pattern_without_convincing_visible_geometry",
+  "issues": [
+    "Scanner reports Rising Wedge but no convincing wedge boundaries are visible",
+    "Meaningful converging upper and lower trendlines cannot be confidently reconstructed",
+    "General upward price movement is incorrectly treated as sufficient wedge evidence",
+    "Scanner assigns 100/100 despite weak fundamental geometry evidence"
+  ],
+  "desired_behavior": [
+    "Require both trendlines to have meaningful structural anchors",
+    "Require a reconstructable pair of converging boundaries",
+    "Reject Rising Wedge candidates based primarily on directional price movement",
+    "Prefer no pattern when structural evidence is insufficient",
+    "Prevent maximum scores when core wedge geometry is absent"
+  ],
+  "notes": "No manual.png is intentionally provided. Together with SKHYUSDT this forms an independent negative example of Rising Wedge detection without convincing visible geometry."
+}

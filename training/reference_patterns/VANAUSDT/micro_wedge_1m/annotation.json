@@ -1,0 +1,30 @@
+﻿{
+  "symbol": "VANAUSDT",
+  "timeframe": "1m",
+  "pattern": "Falling Wedge",
+  "category": "valid_micro_wedge_low_potential",
+  "reference_type": "manual",
+  "accepted": true,
+  "geometry_accepted": true,
+  "trade_priority": "LOW",
+  "preferred_reference": "manual.png",
+  "purpose": "Reference for separating valid pattern geometry from insufficient trading potential",
+  "geometry_assessment": "valid_micro_falling_wedge",
+  "outcome": {
+    "breakout_direction": "bullish",
+    "breakout_observed": true
+  },
+  "potential": {
+    "observed_percent": 0.51,
+    "assessment": "possibly_too_small",
+    "minimum_required_percent": null
+  },
+  "desired_behavior": [
+    "Detect the structure as a valid Falling Wedge when geometry requirements are satisfied",
+    "Do not invalidate good geometry merely because the measured move is small",
+    "Evaluate trading potential separately from Geometry Quality",
+    "Allow low-potential structures to be suppressed from Telegram without rejecting their geometry",
+    "Do not establish a hard minimum potential threshold from this single reference"
+  ],
+  "notes": "Positive geometry but possible negative trade-opportunity example. Approximately 0.51 percent potential is preserved as calibration evidence, not as a finalized filtering threshold."
+}

@@ -1,0 +1,27 @@
+﻿{
+  "symbol": "OUSTUSDT",
+  "category": "false_wedge_triangle_candidate",
+  "reference_type": "scanner_vs_manual",
+  "scanner_pattern": "Rising Wedge",
+  "preferred_pattern": "Triangle Compression",
+  "scanner_classification_accepted": false,
+  "manual_geometry_accepted": true,
+  "preferred_reference": "manual.png",
+  "current_use": "negative_wedge_reference",
+  "future_use": "positive_triangle_reference",
+  "purpose": "Prevent converging triangle structures from being incorrectly classified as Rising Wedge while preserving the example for future triangle calibration",
+  "geometry_assessment": "valid_converging_structure_incorrect_pattern_classification",
+  "issues": [
+    "Scanner incorrectly classifies the structure as Rising Wedge",
+    "Upper boundary slopes downward while lower boundary slopes upward",
+    "The geometry is more consistent with Triangle Compression than Rising Wedge",
+    "Convergence alone is insufficient for wedge classification"
+  ],
+  "desired_behavior": [
+    "Do not classify a structure as Rising Wedge when the upper trendline slopes downward and the lower trendline slopes upward",
+    "Use trendline slope direction as a primary pattern classification feature",
+    "Classify converging opposite-slope boundaries as Triangle Compression",
+    "Keep wedge calibration separate from future triangle calibration"
+  ],
+  "notes": "Use this example now as a negative wedge reference. Preserve manual.png as a future positive reference when Triangle Compression detection is calibrated."
+}

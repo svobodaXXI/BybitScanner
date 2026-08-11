@@ -1,0 +1,17 @@
+﻿{
+  "symbol": "VANAUSDT",
+  "timeframe": "5m",
+  "reference_type": "manual",
+  "category": "structural_trendline_reference",
+  "accepted": true,
+  "preferred_reference": "manual.png",
+  "purpose": "Positive reference for detecting a meaningful long-lived descending structural resistance trendline independently from complete pattern detection",
+  "structure": "descending_resistance_trendline",
+  "desired_behavior": [
+    "Anchor the trendline at a meaningful structural high",
+    "Reward long-lived trendlines that continue to explain subsequent price action",
+    "Use repeated price interaction as evidence of structural significance",
+    "Allow a valuable structural trendline to exist even when no high-quality wedge or triangle can be constructed from it"
+  ],
+  "notes": "This reference separates trendline quality from complete pattern quality. The descending upper boundary is useful even if the corresponding 5m wedge has weak convergence."
+}

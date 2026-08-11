@@ -1,0 +1,25 @@
+﻿{
+  "symbol": "ENSOUSDT",
+  "pattern": "Falling Wedge",
+  "category": "mid_structure_boundary_violation",
+  "reference_type": "scanner_vs_manual",
+  "accepted": "conditional",
+  "scanner_geometry_accepted": false,
+  "manual_geometry_accepted": "low_quality",
+  "preferred_reference": "manual.png",
+  "purpose": "Calibration reference for position-dependent boundary violation penalties",
+  "geometry_assessment": "recognizable_wedge_with_mid_structure_violation",
+  "issues": [
+    "Scanner trendline selection is structurally inferior to manual geometry",
+    "A significant lower-boundary violation occurs around the middle of the structure",
+    "The violation occurs too early to be treated as a normal near-apex false breakout",
+    "Price subsequently returns inside the candidate structure"
+  ],
+  "desired_behavior": [
+    "Penalize significant boundary violations occurring in the early or middle part of a wedge",
+    "Make boundary violation penalty dependent on its position within the structure",
+    "Allow smaller penalties for false breakout and re-entry behavior close to the apex",
+    "Do not give a structurally damaged wedge the same quality as a clean wedge"
+  ],
+  "notes": "Manual geometry is better than scanner geometry but is not an ideal positive reference. The mid-structure downside violation materially reduces wedge quality. A similar event near the apex could be acceptable as a false-breakout/re-entry scenario."
+}

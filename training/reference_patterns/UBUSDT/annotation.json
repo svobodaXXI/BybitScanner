@@ -1,0 +1,36 @@
+﻿{
+  "symbol": "UBUSDT",
+  "pattern": "Triangle Compression",
+  "category": "acceptable_scanner_geometry_manual_preferred",
+  "reference_type": "scanner_vs_manual",
+  "accepted": true,
+  "scanner_classification_accepted": true,
+  "scanner_geometry_accepted": true,
+  "manual_geometry_accepted": true,
+  "manual_geometry_preferred": true,
+  "preferred_reference": "manual.png",
+  "purpose": "Positive ranking reference where Scanner finds a valid triangle but a more structurally complete parent geometry is preferred",
+  "geometry_assessment": "scanner_valid_manual_structurally_better",
+  "issues": [
+    "Scanner triangle is valid and should not be rejected",
+    "Scanner selects a somewhat more local representation of the structure",
+    "Manual lower boundary begins from the significant low created after the preceding sharp decline",
+    "Manual upper boundary begins from a meaningful structural high",
+    "Manual geometry better represents the natural origin and full lifetime of the compression"
+  ],
+  "desired_behavior": [
+    "Keep the Scanner geometry as an acceptable Triangle Compression candidate",
+    "Prefer the manual-style geometry when both candidates are available",
+    "Reward boundaries originating from meaningful structural extrema",
+    "Reward geometries explaining a larger coherent portion of the structure",
+    "Do not make Geometry Ranking so strict that acceptable smaller triangles are rejected",
+    "Support graded geometry quality rather than only valid or invalid classification"
+  ],
+  "quality_order": [
+    "preferred_structural_geometry",
+    "acceptable_scanner_geometry",
+    "weak_geometry",
+    "reject"
+  ],
+  "notes": "Important positive boundary case. Scanner detection is acceptable; calibration should improve candidate selection without converting this valid signal into a rejection."
+}

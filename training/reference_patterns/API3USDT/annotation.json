@@ -1,0 +1,24 @@
+﻿{
+  "symbol": "API3USDT",
+  "pattern": "Falling Wedge",
+  "category": "incorrect_anchor_selection",
+  "reference_type": "scanner_vs_manual",
+  "accepted": true,
+  "scanner_geometry_accepted": false,
+  "preferred_reference": "manual.png",
+  "purpose": "Calibration reference for trendline anchor selection and geometry ranking",
+  "geometry_assessment": "pattern_correct_geometry_suboptimal",
+  "issues": [
+    "Scanner upper trendline does not originate from the primary structural high",
+    "Scanner lower trendline does not originate from a meaningful structural low",
+    "Scanner lower trendline has weak pivot confirmation",
+    "Selected geometry is mathematically valid but structurally inferior to manual geometry"
+  ],
+  "desired_behavior": [
+    "Prefer trendlines anchored to meaningful structural extrema",
+    "Require subsequent pivots to confirm the selected trendline",
+    "Penalize candidate lines with weak structural anchor quality",
+    "Prefer geometry representing the dominant current wedge"
+  ],
+  "notes": "Manual TradingView markup is the preferred geometry. This example should be used to improve candidate selection and Geometry Ranking rather than to reject Falling Wedge detection itself."
+}

@@ -1,0 +1,28 @@
+﻿{
+  "symbol": "SKHYNIXUSDT",
+  "category": "triangle_parent_structure_preferred",
+  "reference_type": "scanner_vs_manual",
+  "scanner_pattern": "Triangle Compression",
+  "preferred_pattern": "Triangle Compression",
+  "scanner_classification_accepted": true,
+  "scanner_geometry_accepted": false,
+  "manual_geometry_accepted": true,
+  "preferred_reference": "manual.png",
+  "current_use": "geometry_ranking_reference",
+  "future_use": "positive_triangle_reference",
+  "purpose": "Calibration reference for selecting the dominant parent structure instead of an excessively local nested geometry",
+  "geometry_assessment": "classification_correct_geometry_too_local",
+  "issues": [
+    "Scanner correctly identifies Triangle Compression",
+    "Scanner selects an excessively short local structure",
+    "Scanner ignores the larger structurally meaningful parent triangle",
+    "The parent structure has stronger anchor extrema and broader price-action support"
+  ],
+  "desired_behavior": [
+    "Prefer meaningful structural anchors over arbitrary locality",
+    "Balance freshness against structure span and anchor quality",
+    "Reward trendlines supported by pivots distributed across the structure",
+    "Avoid selecting a small nested geometry when a stronger parent structure explains the same current price action"
+  ],
+  "notes": "Important counterexample to excessive freshness/locality weighting. Preserve for future Triangle Compression calibration, but also use now when designing Geometry Ranking for wedges."
+}

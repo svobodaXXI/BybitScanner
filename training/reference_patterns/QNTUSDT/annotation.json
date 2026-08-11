@@ -1,0 +1,24 @@
+﻿{
+  "symbol": "QNTUSDT",
+  "pattern": "Falling Wedge",
+  "category": "false_wedge_floating_anchors",
+  "reference_type": "scanner_only",
+  "accepted": false,
+  "scanner_geometry_accepted": false,
+  "manual_reference": null,
+  "purpose": "Negative calibration reference for rejecting geometries whose trendlines are not anchored to meaningful structural extrema",
+  "geometry_assessment": "false_pattern_due_to_floating_anchors",
+  "issues": [
+    "Upper trendline begins without a meaningful structural high anchor",
+    "Lower trendline begins without a meaningful structural low anchor",
+    "The selected lines are mathematically convergent but visually unsupported",
+    "No convincing manual wedge geometry can be reconstructed from the same price structure"
+  ],
+  "desired_behavior": [
+    "Reject wedge candidates whose primary trendline anchors are not significant pivots",
+    "Do not accept convergence alone as sufficient evidence of a wedge",
+    "Require structural justification for both trendline origins",
+    "Prefer no wedge over a mathematically fitted but visually unsupported wedge"
+  ],
+  "notes": "No manual.png is intentionally provided. The absence of a convincing manual reconstruction is itself part of the negative reference."
+}

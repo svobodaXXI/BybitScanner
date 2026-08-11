@@ -1,0 +1,25 @@
+﻿{
+  "symbol": "SKHYUSDT",
+  "pattern": "Rising Wedge",
+  "category": "false_wedge_no_visible_geometry",
+  "reference_type": "scanner_only",
+  "accepted": false,
+  "scanner_geometry_accepted": false,
+  "manual_reference": null,
+  "purpose": "Negative calibration reference for rejecting Rising Wedge detections without visually and structurally supported wedge geometry",
+  "geometry_assessment": "false_pattern_without_convincing_visible_geometry",
+  "issues": [
+    "Scanner reports Rising Wedge despite the absence of a convincing visible wedge structure",
+    "A structurally justified pair of converging trendlines cannot be confidently reconstructed",
+    "The upward price movement alone is insufficient evidence of a Rising Wedge",
+    "Scanner assigns 100/100 to a pattern with weak visual and structural justification"
+  ],
+  "desired_behavior": [
+    "Require both wedge boundaries to be supported by meaningful structural extrema",
+    "Require a visually reconstructable converging structure before accepting Rising Wedge",
+    "Do not infer Rising Wedge merely from an upward price trend",
+    "Reject the candidate when no convincing pair of structural trendlines exists",
+    "Prevent maximum pattern scores when fundamental geometry evidence is weak or absent"
+  ],
+  "notes": "No manual.png is intentionally provided because no convincing manual Rising Wedge geometry can be reconstructed. This is a pure negative Rising Wedge reference."
+}

@@ -1,0 +1,24 @@
+﻿{
+  "symbol": "EGLDUSDT",
+  "pattern": "Falling Wedge",
+  "category": "incorrect_anchor_selection",
+  "reference_type": "scanner_vs_manual",
+  "accepted": true,
+  "scanner_geometry_accepted": false,
+  "preferred_reference": "manual.png",
+  "purpose": "Calibration reference for structural trendline anchor selection",
+  "geometry_assessment": "pattern_correct_geometry_suboptimal",
+  "issues": [
+    "Scanner upper trendline does not originate from the primary structural high",
+    "Scanner lower trendline starts from a weak structural anchor",
+    "Scanner geometry is insufficiently supported by meaningful pivot extrema",
+    "Pattern classification is correct but trendline selection is structurally inferior"
+  ],
+  "desired_behavior": [
+    "Prefer the dominant structural high as the initial upper anchor",
+    "Prefer meaningful pivot lows as lower trendline anchors",
+    "Reward trendlines confirmed by subsequent pivots",
+    "Penalize geometrically valid lines with weak anchor quality"
+  ],
+  "notes": "Second independent example of incorrect anchor selection. Together with API3USDT it indicates a recurring Geometry candidate/ranking problem rather than an isolated detection error."
+}

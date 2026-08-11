@@ -1,0 +1,32 @@
+﻿{
+  "symbol": "SKHYNIXUSDT",
+  "pattern": "L-Shaped Impulse Continuation",
+  "pattern_alias": "Г-образная формация",
+  "category": "future_pattern_positive_reference",
+  "reference_type": "manual",
+  "accepted": true,
+  "preferred_reference": "manual.png",
+  "current_use": "future_pattern_reference",
+  "implementation_status": "deferred",
+  "purpose": "Reference example for future detection of an impulse continuation formation with measured-move target projection",
+  "structure": [
+    "pre_impulse_base_or_swing_extreme",
+    "strong_directional_impulse",
+    "previous_significant_high_or_low_break",
+    "short_pause_consolidation_or_retest",
+    "continuation"
+  ],
+  "target_model": {
+    "principle": "move_1_equals_move_2",
+    "long": "Measure the first impulse from the pre-impulse trough to the new significant high and project the same price distance upward for continuation",
+    "short": "Mirror the long logic: measure the first downside impulse from the pre-impulse peak to the new significant low and project the same price distance downward"
+  },
+  "desired_behavior": [
+    "Detect a strong impulse that updates the previous significant extreme in one directional movement",
+    "Identify the structural trough or peak preceding the impulse",
+    "Distinguish the post-impulse pause from a full trend reversal",
+    "Calculate continuation potential using the measured-move 1 equals 2 principle",
+    "Support mirrored LONG and SHORT variants"
+  ],
+  "notes": "User-defined formation currently called L-Shaped Impulse Continuation. Preserve as a future Pattern Engine reference. Do not implement until current wedge calibration and reliability work is stabilized."
+}
