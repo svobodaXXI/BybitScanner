@@ -1,0 +1,10 @@
+﻿{
+  "symbol": "HOMEUSDT",
+  "pattern": "Falling Wedge",
+  "category": "target_watch_setup",
+  "reference_type": "manual",
+  "accepted": true,
+  "purpose": "Positive reference for early wedge monitoring",
+  "geometry_assessment": "desired",
+  "notes": "Example of a forming wedge worth monitoring before breakout."
+}

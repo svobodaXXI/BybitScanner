@@ -1,0 +1,10 @@
+﻿{
+  "symbol": "HEIUSDT",
+  "pattern": "Falling Wedge",
+  "category": "near_ideal",
+  "reference_type": "scanner",
+  "accepted": true,
+  "purpose": "Positive reference for near-ideal scanner geometry",
+  "geometry_assessment": "near_ideal",
+  "notes": "Scanner-selected wedge geometry closely matches the desired visual structure."
+}

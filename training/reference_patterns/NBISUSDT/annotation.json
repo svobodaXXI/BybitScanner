@@ -1,0 +1,10 @@
+﻿{
+  "symbol": "NBISUSDT",
+  "pattern": "Rising Wedge",
+  "category": "false_breakout_reentry",
+  "reference_type": "scanner",
+  "accepted": true,
+  "purpose": "Positive reference for false breakout and re-entry behavior",
+  "geometry_assessment": "valid_structure_with_reentry",
+  "notes": "Price moved outside the wedge, formed an external arc-like structure, then returned inside the original pattern. Mirror behavior is relevant for Falling Wedge."
+}

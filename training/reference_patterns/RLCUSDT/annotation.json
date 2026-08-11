@@ -1,0 +1,11 @@
+﻿{
+  "symbol": "RLCUSDT",
+  "pattern": "Falling Wedge",
+  "category": "correct_pattern_wrong_line_selection",
+  "reference_type": "scanner_vs_manual",
+  "accepted": true,
+  "purpose": "Calibration reference for geometry candidate ranking",
+  "geometry_assessment": "pattern_correct_geometry_suboptimal",
+  "preferred_reference": "manual.png",
+  "notes": "Scanner detected the correct pattern, but manual trendlines better represent the current local wedge structure."
+}
