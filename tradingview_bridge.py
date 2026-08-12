@@ -30,19 +30,22 @@ from contracts.signal_contract import build_signal_contract
 
 def normalize_symbol(symbol):
     """
-    Приводит тикер к формату TradingView.
+    Приводит Bybit USDT perpetual ticker
+    к формату TradingView.
     """
 
     if not symbol:
         return ""
 
-    symbol = symbol.upper()
+    symbol = str(symbol).upper().strip()
 
     if ":" in symbol:
         return symbol
 
-    return f"BYBIT:{symbol}"
+    if symbol.endswith("USDT"):
+        symbol = f"{symbol}.P"
 
+    return f"BYBIT:{symbol}"
 
 def create_tradingview_url(
     symbol,

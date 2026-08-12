@@ -14,7 +14,8 @@ notification.py
 
 - принимает результат;
 - форматирует сообщение;
-- отправляет текст и график в Telegram.
+- отправляет текст и график в Telegram;
+- добавляет ссылку TradingView.
 """
 
 import os
@@ -24,13 +25,20 @@ from telegram_bot import (
     send_photo
 )
 
+from tradingview_bridge import (
+    create_tradingview_url
+)
+
 import config
 
 
 CHARTS_DIR = "charts"
 
 
-def format_signal(result, test_mode=False):
+def format_signal(
+    result,
+    test_mode=False
+):
     """
     Преобразует результат анализа
     в сообщение для Telegram.
@@ -45,13 +53,22 @@ def format_signal(result, test_mode=False):
     )
 
     direction = (
-        result.get("confirmation", {})
-        .get("direction", "WAIT")
+        result.get(
+            "confirmation",
+            {}
+        )
+        .get(
+            "direction",
+            "WAIT"
+        )
     )
 
     score = result.get(
         "final_score",
-        result.get("score", 0)
+        result.get(
+            "score",
+            0
+        )
     )
 
     symbol = result.get(
@@ -60,8 +77,14 @@ def format_signal(result, test_mode=False):
     )
 
     confirmed = (
-        result.get("confirmation", {})
-        .get("confirmed", False)
+        result.get(
+            "confirmation",
+            {}
+        )
+        .get(
+            "confirmed",
+            False
+        )
     )
 
     status = (
@@ -98,12 +121,49 @@ def format_signal(result, test_mode=False):
     return message.strip()
 
 
-def send_signal(result, test_mode=False):
+def build_tradingview_keyboard(
+    symbol,
+    timeframe
+):
+    """
+    Создаёт Telegram inline keyboard
+    со ссылкой TradingView.
+    """
+
+    tradingview_url = (
+        create_tradingview_url(
+            symbol,
+            timeframe
+        )
+    )
+
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text":
+                        "📈 Open TradingView",
+
+                    "url":
+                        tradingview_url
+                }
+            ]
+        ]
+    }
+
+
+def send_signal(
+    result,
+    test_mode=False
+):
     """
     Отправляет сигнал в Telegram.
 
     Если для символа существует сохранённый
     график, он отправляется после текста.
+
+    Под графиком добавляется кнопка
+    открытия текущего символа в TradingView.
     """
 
     if not config.TELEGRAM_ENABLED:
@@ -130,34 +190,64 @@ def send_signal(result, test_mode=False):
     if not symbol:
         return True
 
+    timeframe = str(
+        result.get(
+            "timeframe",
+            getattr(
+                config,
+                "TIMEFRAME",
+                "5"
+            )
+        )
+    )
+
     chart_path = os.path.join(
         CHARTS_DIR,
         f"{symbol}_analysis.png"
     )
 
-    if not os.path.exists(chart_path):
+    if not os.path.exists(
+        chart_path
+    ):
         print(
-            f"[TELEGRAM] Chart not found: {chart_path}"
+            f"[TELEGRAM] Chart not found: "
+            f"{chart_path}"
         )
         return True
 
+    reply_markup = (
+        build_tradingview_keyboard(
+            symbol,
+            timeframe
+        )
+    )
+
     try:
+
         response = send_photo(
             config.TELEGRAM_TOKEN,
             config.TELEGRAM_CHAT_ID,
-            chart_path
+            chart_path,
+            reply_markup=reply_markup
         )
 
-        if not response.get("ok", False):
+        if not response.get(
+            "ok",
+            False
+        ):
             print(
-                f"[TELEGRAM PHOTO ERROR] {response}"
+                f"[TELEGRAM PHOTO ERROR] "
+                f"{response}"
             )
             return False
 
         return True
 
     except Exception as error:
+
         print(
-            f"[TELEGRAM PHOTO ERROR] {error}"
+            f"[TELEGRAM PHOTO ERROR] "
+            f"{error}"
         )
+
         return False

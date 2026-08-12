@@ -5,7 +5,8 @@ telegram_bot.py
 
 Отвечает только за:
 - отправку текстовых сообщений;
-- отправку изображений.
+- отправку изображений;
+- optional inline keyboard markup.
 
 Не содержит:
 - анализа сигналов;
@@ -14,13 +15,16 @@ telegram_bot.py
 """
 
 
+import json
+
 import requests
 
 
 def send_message(
     token,
     chat_id,
-    text
+    text,
+    reply_markup=None
 ):
     """
     Отправка текстового сообщения Telegram.
@@ -36,6 +40,11 @@ def send_message(
         "text": text
     }
 
+    if reply_markup is not None:
+        data["reply_markup"] = json.dumps(
+            reply_markup
+        )
+
     response = requests.post(
         url,
         data=data,
@@ -45,15 +54,17 @@ def send_message(
     return response.json()
 
 
-
 def send_photo(
     token,
     chat_id,
     photo_path,
-    caption=""
+    caption="",
+    reply_markup=None
 ):
     """
     Отправка изображения Telegram.
+
+    Поддерживает optional inline keyboard.
     """
 
     url = (
@@ -74,6 +85,11 @@ def send_photo(
             "chat_id": chat_id,
             "caption": caption
         }
+
+        if reply_markup is not None:
+            data["reply_markup"] = json.dumps(
+                reply_markup
+            )
 
         response = requests.post(
             url,
