@@ -24,5 +24,17 @@
     "Reward trendlines supported by pivots distributed across the structure",
     "Avoid selecting a small nested geometry when a stronger parent structure explains the same current price action"
   ],
-  "notes": "Important counterexample to excessive freshness/locality weighting. Preserve for future Triangle Compression calibration, but also use now when designing Geometry Ranking for wedges."
+  "outcome_reference": {
+    "file": "successful_breakout_outcome.png",
+    "status": "successful_upside_breakout",
+    "direction": "long",
+    "follow_through": "strong",
+    "target_reached": true,
+    "target_price": 1037.87,
+    "target_exceeded": true,
+    "outcome_assessment": "strong_success",
+    "purpose": "Positive market-outcome reference for breakout behavior and future target-projection calibration",
+    "notes": "The later market move produced a strong upside breakout. The projected target near 1037.87 was reached and materially exceeded."
+  },
+  "notes": "Important counterexample to excessive freshness/locality weighting. Preserve for future Triangle Compression calibration, but also use now when designing Geometry Ranking for wedges. A later successful upside breakout outcome is preserved separately and must not overwrite the original geometry-classification reference."
 }
