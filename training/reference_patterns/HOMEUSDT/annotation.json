@@ -4,7 +4,7 @@
   "category": "target_watch_setup",
   "reference_type": "manual",
   "accepted": true,
-  "purpose": "Positive reference for early wedge monitoring and successful breakout follow-through",
+  "purpose": "Positive reference for early wedge monitoring, successful breakout follow-through, and future late-excursion research",
   "geometry_assessment": "desired",
   "outcome": {
     "status": "successful_breakout",
@@ -13,5 +13,34 @@
     "target_assessment": "near_target_reached",
     "notes": "Breakout from the wedge was followed by a strong upward move. The setup developed close to the expected measured-move target and would justify substantial profit taking."
   },
-  "notes": "Example of a forming wedge worth monitoring before breakout. Later confirmed as a strong successful long breakout reference."
+  "late_excursion_reference": {
+    "status": "research_hypothesis",
+    "timeframe": "1",
+    "file": "late_excursion_arc_cluster_1m.png",
+    "concept": "nested_late_excursion_arc_cluster",
+    "pattern_context": "Falling Wedge",
+    "expected_side": "lower_boundary",
+    "observed_sequence": [
+      "parent wedge already substantially formed",
+      "smaller late downside excursion",
+      "partial re-entry / continued formation",
+      "larger final downside excursion",
+      "return toward or inside the parent structure",
+      "strong upside realization"
+    ],
+    "multi_excursion_possible": true,
+    "nested_excursions_observed": true,
+    "research_use": [
+      "future Arc Pattern Recognition",
+      "future Late Excursion Detection",
+      "future Post-Excursion Re-entry analysis",
+      "future multi-timeframe structure research",
+      "future liquidity-sweep confirmation research"
+    ],
+    "current_engine_effect": "none",
+    "ranking_effect": "none",
+    "validation_effect": "none",
+    "notes": "Reference only. The observed late excursions must not currently modify the parent wedge boundaries, Geometry Ranking, Validation, or Wedge Detection. The working hypothesis is that late downside excursions may form after much of a Falling Wedge has already developed and may precede re-entry and upside realization. Multiple nested excursions may occur. This is not yet a confirmed trading rule."
+  },
+  "notes": "Example of a forming wedge worth monitoring before breakout. Later confirmed as a strong successful long breakout reference. The 1m late-excursion screenshot is preserved separately as a research reference and must not be interpreted as an active geometry or signal rule."
 }

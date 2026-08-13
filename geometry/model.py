@@ -35,7 +35,8 @@ class GeometryModel:
         start_index=None,
         end_index=None,
         current_index=None,
-        candidate_points=None
+        candidate_points=None,
+        pair_metrics=None
     ):
 
         self.upper_line = upper_line
@@ -55,6 +56,10 @@ class GeometryModel:
         self.candidate_points = (
             candidate_points
             or {}
+        )
+        self.pair_metrics = (
+        pair_metrics
+        or {}
         )
 
 
@@ -90,6 +95,9 @@ class GeometryModel:
                 self.current_index,
 
             "candidate_points":
-                self.candidate_points
+                self.candidate_points,
+
+            "pair_metrics":
+                self.pair_metrics
 
         }

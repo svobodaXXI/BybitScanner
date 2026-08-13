@@ -24,7 +24,7 @@ from .compression import calculate_compression
 from .touches import analyze_touches
 from .validation import validate_geometry
 from .model import GeometryModel
-
+from .pair_metrics import calculate_pair_metrics
 
 def evaluate_candidate_pair(
     upper_candidate,
@@ -135,6 +135,16 @@ def evaluate_candidate_pair(
     )
 
     #
+    # Pair Metrics
+    #
+
+    pair_metrics = calculate_pair_metrics(
+        upper_candidate,
+        lower_candidate,
+        current_index
+    )
+
+    #
     # Geometry Model Contract
     #
 
@@ -166,6 +176,8 @@ def evaluate_candidate_pair(
             "lower":
                 lower_points
 
-        }
+        },
+
+        pair_metrics=pair_metrics
 
     )
