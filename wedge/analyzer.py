@@ -62,6 +62,7 @@ from .quality import evaluate_quality
 
 
 from .scoring import calculate_score
+from .potential import calculate_potential_move
 
 
 
@@ -197,6 +198,15 @@ def analyze_wedge(
     pattern = classification["pattern"]
 
     #
+    # Structural Potential
+    #
+
+    potential = calculate_potential_move(
+        pattern,
+        geometry_data
+    )
+
+    #
     # 5. Score
     #
 
@@ -243,6 +253,8 @@ def analyze_wedge(
     )
 
     result["detection"] = detection
+
+    result["potential"] = potential
 
     result["geometry_mode"] = (
         geometry_data

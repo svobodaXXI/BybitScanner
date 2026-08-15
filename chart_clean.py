@@ -38,6 +38,12 @@ import pandas as pd
 import numpy as np
 import mplfinance as mpf
 import matplotlib as mpl
+
+import matplotlib as mpl
+
+# Cyrillic-capable font for Russian signal interface.
+mpl.rcParams["font.family"] = "DejaVu Sans"
+mpl.rcParams["axes.unicode_minus"] = False
 import matplotlib.pyplot as plt
 
 
@@ -161,9 +167,21 @@ def draw_chart(
     )
 
 
-    df.index = pd.to_datetime(
-        df["time"],
-        unit="ms"
+    # ????? ??????? ?????????? ?? ?????? (???, UTC+3).
+    # ????? ??????????? ??????? timezone ?? ???????,
+    # ????? mplfinance ????????? ????????? ???????.
+    df.index = (
+        pd.to_datetime(
+            df["time"],
+            unit="ms",
+            utc=True
+        )
+        .dt.tz_convert(
+            "Europe/Moscow"
+        )
+        .dt.tz_localize(
+            None
+        )
     )
 
 
@@ -421,12 +439,15 @@ def draw_chart(
 
         figsize=(12,7),
 
+        datetime_format="%H:%M",
         returnfig=True
 
     )
 
 
     ax = axes[0]
+
+    ax.set_xlabel('МСК')
 
 
 
@@ -588,12 +609,98 @@ def draw_chart(
 
     if result:
 
-
         pattern = result.get(
             "pattern",
-            ""
+            "No wedge"
         )
 
+        pattern_names = {
+            "Falling Wedge":
+                'Нисходящий клин',
+
+            "Rising Wedge":
+                'Восходящий клин',
+
+            "Triangle Compression":
+                'Сжимающийся треугольник',
+
+            "No wedge":
+                'Клин не найден',
+
+            "Unknown":
+                'Неизвестная структура',
+        }
+
+        structure_name = pattern_names.get(
+            pattern,
+            pattern
+        )
+
+        geometry = (
+            result.get(
+                "geometry"
+            )
+            or {}
+        )
+
+        pair_metrics = (
+            geometry.get(
+                "pair_metrics"
+            )
+            or {}
+        )
+
+        geometry_mode = result.get(
+            "geometry_mode"
+        )
+
+        if not geometry_mode:
+            geometry_mode = pair_metrics.get(
+                "geometry_mode",
+                "NONE"
+            )
+
+        geometry_names = {
+            "CANONICAL":
+                'КАНОНИЧЕСКАЯ',
+
+            "EXPLORATORY":
+                'ИССЛЕДОВАТЕЛЬСКАЯ',
+
+            "NONE":
+                'НЕТ',
+
+            "UNKNOWN":
+                'НЕТ',
+
+            "REJECT":
+                'ОТКЛОНЕНА',
+        }
+
+        geometry_name = geometry_names.get(
+            geometry_mode,
+            str(geometry_mode)
+        )
+
+        detection = (
+            result.get(
+                "detection"
+            )
+            or {}
+        )
+
+        pattern_confirmed = bool(
+            detection.get(
+                "detected",
+                False
+            )
+        )
+
+        detection_name = (
+            "ПОДТВЕРЖДЕН"
+            if pattern_confirmed
+            else "НЕ ПОДТВЕРЖДЕН"
+        )
 
         score = result.get(
             "final_score",
@@ -603,44 +710,44 @@ def draw_chart(
             )
         )
 
-
-        compression = result.get(
-            "compression",
-            0
+        training_name = (
+            "ПОДХОДИТ"
+            if (
+                geometry_mode == "CANONICAL"
+                and pattern_confirmed
+            )
+            else "НЕ ИСПОЛЬЗУЕТСЯ"
         )
 
-
-        quality = result.get(
-            "quality",
-            {}
+        potential = (
+            result.get("potential")
+            or {}
         )
 
-
-        quality_name = quality.get(
-            "quality",
-            ""
+        signed_potential = potential.get(
+            "signed_percent"
         )
 
+        if signed_potential is None:
 
-        confirmation = result.get(
-            "confirmation",
-            {}
-        )
+            potential_name = (
+                'РАСЧЁТ НЕДОСТУПЕН'
+            )
 
+        else:
 
-        direction = confirmation.get(
-            "direction",
-            "WAIT"
-        )
-
+            potential_name = (
+                f"{signed_potential:+.2f}%"
+            )
 
         title = (
-
-            f"{symbol} | {pattern}\n"
-            f"{quality_name} | {direction}\n"
-            f"Score: {score}/100   "
-            f"Compression: {compression}%"
-
+            f"{symbol}\n"
+            f"СТРУКТУРА: {structure_name}\n"
+            f"ГЕОМЕТРИЯ: {geometry_name}\n"
+            f"ПАТТЕРН: {detection_name}\n"
+            f"КАЧЕСТВО СТРУКТУРЫ: {score}/100\n"
+            f"ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}\n"
+            f"ОБУЧЕНИЕ: {training_name}"
         )
 
 
