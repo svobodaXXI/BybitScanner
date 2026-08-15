@@ -1,0 +1,41 @@
+{
+  "symbol": "REUSDT",
+  "pattern": "L-Shaped Impulse Continuation",
+  "pattern_alias": "Г-образная формация",
+  "category": "future_pattern_positive_reference",
+  "reference_type": "manual",
+  "accepted": true,
+  "preferred_reference": "manual.png",
+  "current_use": "future_pattern_reference",
+  "implementation_status": "deferred",
+  "purpose": "Reference example for future detection of an L-shaped consolidation/compression near a significant higher-timeframe level, potentially functioning as part of a larger inverse head-and-shoulders structure",
+  "structure": [
+    "prior_directional_move_or_recovery",
+    "approach_to_significant_higher_timeframe_resistance",
+    "short_horizontal_or_tight_consolidation",
+    "compression_against_level",
+    "possible_breakout_or_rejection_resolution"
+  ],
+  "context": {
+    "higher_timeframe_level": true,
+    "role": [
+      "compression_against_resistance",
+      "possible_right_shoulder_component_of_inverse_head_and_shoulders"
+    ],
+    "stage": "before_resolution",
+    "outcome_pending": true
+  },
+  "target_model": {
+    "principle": "context_dependent",
+    "note": "Do not assign a fixed target model yet. First collect before/after examples and compare breakout, rejection, and continuation outcomes."
+  },
+  "desired_behavior": [
+    "Detect an L-shaped pause or compression near a significant higher-timeframe level",
+    "Distinguish level compression from ordinary sideways noise",
+    "Recognize when the formation is nested inside a larger pattern such as inverse head and shoulders",
+    "Store the formation as a contextual feature rather than an automatic trade signal",
+    "Support mirrored bullish and bearish variants",
+    "Collect outcome data before implementation or scoring"
+  ],
+  "notes": "User-defined REUSDT example. L-shaped compression appears directly under a significant resistance area and may simultaneously form part of the right side/right shoulder of a larger inverse head-and-shoulders structure. Preserve as a future Pattern Engine research reference. Save the later resolution as outcome.png regardless of whether the setup succeeds or fails."
+}

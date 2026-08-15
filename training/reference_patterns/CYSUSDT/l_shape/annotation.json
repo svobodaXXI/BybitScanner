@@ -1,0 +1,40 @@
+{
+  "symbol": "CYSUSDT",
+  "pattern": "L-Shaped Impulse Continuation",
+  "pattern_alias": "Г-образная формация",
+  "category": "future_pattern_research_reference",
+  "reference_type": "manual",
+  "accepted": true,
+  "preferred_reference": "manual.png",
+  "current_use": "future_pattern_reference",
+  "implementation_status": "deferred",
+  "purpose": "Reference example for future study of an inverted L-shaped base forming after a strong downside impulse near a significant higher-timeframe level.",
+  "structure": [
+    "strong_directional_down_impulse",
+    "approach_to_significant_higher_timeframe_level",
+    "sharp_loss_of_downside_momentum",
+    "short_horizontal_base_or_accumulation",
+    "future_resolution_pending"
+  ],
+  "context": {
+    "higher_timeframe_level": true,
+    "role": [
+      "possible_accumulation_or_absorption_near_support",
+      "possible_compression_or_base_before_resolution"
+    ],
+    "stage": "before_resolution",
+    "outcome_pending": true
+  },
+  "target_model": {
+    "principle": "context_dependent",
+    "note": "Do not assign a fixed target model yet. Preserve the pre-resolution state and compare it with the later outcome."
+  },
+  "desired_behavior": [
+    "Detect a sharp directional impulse followed by abrupt momentum loss near a significant higher-timeframe level",
+    "Recognize a compact horizontal base as a contextual L-shaped structure",
+    "Distinguish genuine base formation from ordinary sideways noise",
+    "Support mirrored bullish and bearish variants",
+    "Store and compare both successful and failed outcomes before implementation or scoring"
+  ],
+  "notes": "User-defined CYSUSDT research example captured before resolution. The inverted L-shaped structure appears after a strong downside impulse at a higher-timeframe level and may represent accumulation, absorption, or compression. Preserve the later resolution as outcome.png regardless of success or failure."
+}
