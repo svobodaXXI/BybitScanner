@@ -198,7 +198,9 @@ def calculate_convergence_metrics(
 def calculate_pair_metrics(
     upper_candidate,
     lower_candidate,
-    current_index
+    current_index,
+    highs=None,
+    lows=None
 ):
     """
     Собирает диагностические
@@ -358,6 +360,114 @@ def calculate_pair_metrics(
     if convergence_metrics is None:
         return None
 
+    #
+    # Anchor Sequence
+    #
+
+    upper_slope = upper_line.get(
+        "slope",
+        0
+    )
+
+    lower_slope = lower_line.get(
+        "slope",
+        0
+    )
+
+    anchor_family = "unknown"
+    primary_anchor = None
+    secondary_anchor = None
+    expected_secondary_index = None
+    sequence_valid = False
+
+    if (
+        upper_slope > 0
+        and lower_slope > 0
+    ):
+
+        anchor_family = "rising"
+
+        primary_anchor = lower_anchor
+        secondary_anchor = upper_anchor
+
+        next_highs = sorted(
+            point["index"]
+            for point in (highs or [])
+            if (
+                isinstance(point, dict)
+                and point.get("index") is not None
+                and point["index"] > primary_anchor
+            )
+        )
+
+        expected_secondary_index = (
+            next_highs[0]
+            if next_highs
+            else None
+        )
+
+        sequence_valid = (
+            secondary_anchor
+            == expected_secondary_index
+        )
+
+    elif (
+        upper_slope < 0
+        and lower_slope < 0
+    ):
+
+        anchor_family = "falling"
+
+        primary_anchor = upper_anchor
+        secondary_anchor = lower_anchor
+
+        next_lows = sorted(
+            point["index"]
+            for point in (lows or [])
+            if (
+                isinstance(point, dict)
+                and point.get("index") is not None
+                and point["index"] > primary_anchor
+            )
+        )
+
+        expected_secondary_index = (
+            next_lows[0]
+            if next_lows
+            else None
+        )
+
+        sequence_valid = (
+            secondary_anchor
+            == expected_secondary_index
+        )
+
+    elif (
+        upper_slope < 0
+        and lower_slope > 0
+    ):
+
+        anchor_family = "triangle"
+
+        sequence_valid = True
+
+    anchor_sequence = {
+        "family":
+            anchor_family,
+
+        "primary_anchor":
+            primary_anchor,
+
+        "secondary_anchor":
+            secondary_anchor,
+
+        "expected_secondary_index":
+            expected_secondary_index,
+
+        "valid":
+            sequence_valid
+    }
+
     return {
         "common_start":
             common_start,
@@ -409,6 +519,9 @@ def calculate_pair_metrics(
 
         "true_converging":
             true_converging,
+
+        "anchor_sequence":
+            anchor_sequence,
 
         **convergence_metrics
     }

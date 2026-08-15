@@ -166,6 +166,40 @@ def draw_chart(
                     lower_intercept
                 )
 
+                upper_anchor = upper.get(
+                    "anchor_index",
+                    0
+                )
+
+                lower_anchor = lower.get(
+                    "anchor_index",
+                    0
+                )
+
+                upper_anchor = max(
+                    int(upper_anchor or 0),
+                    0
+                )
+
+                lower_anchor = max(
+                    int(lower_anchor or 0),
+                    0
+                )
+
+                upper_line = np.asarray(
+                    upper_line,
+                    dtype=float
+                )
+
+                lower_line = np.asarray(
+                    lower_line,
+                    dtype=float
+                )
+
+                upper_line[:upper_anchor] = np.nan
+                lower_line[:lower_anchor] = np.nan
+
+
                 addplots.append(
                     mpf.make_addplot(
                         upper_line,

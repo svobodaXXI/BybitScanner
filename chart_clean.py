@@ -101,20 +101,59 @@ def draw_chart(
 
     original_length = len(df)
 
+    # =====================================
+    # Dynamic chart context
+    # ?????????? ??????? ?? primary anchor,
+    # ????? ???? ????? ????????, ???????
+    # ???????????? ????????? ?????????.
+    # =====================================
 
-    window = 120
+    geometry_for_window = (
+        result.get("geometry")
+        if result
+        else None
+    ) or {}
 
-
-    df = df.tail(
-        window
-    ).copy()
-
-
-    chart_offset = (
-        original_length
-        -
-        len(df)
+    pair_metrics_for_window = (
+        geometry_for_window.get(
+            "pair_metrics"
+        )
+        or {}
     )
+
+    anchor_sequence_for_window = (
+        pair_metrics_for_window.get(
+            "anchor_sequence"
+        )
+        or {}
+    )
+
+    primary_anchor = (
+        anchor_sequence_for_window.get(
+            "primary_anchor"
+        )
+    )
+
+    pre_anchor_context = 25
+
+    if primary_anchor is not None:
+
+        chart_offset = max(
+            0,
+            int(primary_anchor)
+            - pre_anchor_context
+        )
+
+    else:
+
+        chart_offset = max(
+            0,
+            original_length - 120
+        )
+
+    df = df.iloc[
+        chart_offset:
+    ].copy()
 
 
     df["time"] = df["time"].astype(
@@ -266,76 +305,90 @@ def draw_chart(
 
 
 
-            # начало структуры
+            # Real geometry anchors
 
-            if apex_x is not None:
+            upper_anchor_original = upper_data.get(
+                "anchor_index"
+            )
 
+            lower_anchor_original = lower_data.get(
+                "anchor_index"
+            )
 
-                start_x = max(
-                    0,
-                    int(apex_x - 80)
-                )
+            if upper_anchor_original is None:
+                upper_anchor_original = 0
 
+            if lower_anchor_original is None:
+                lower_anchor_original = 0
 
-            else:
+            upper_start_x = max(
+                0,
+                int(upper_anchor_original) - chart_offset
+            )
 
-                start_x = 0
+            lower_start_x = max(
+                0,
+                int(lower_anchor_original) - chart_offset
+            )
 
+            common_start_x = max(
+                upper_start_x,
+                lower_start_x
+            )
 
+            end_x = len(df) - 1
 
-            end_x = len(df)-1
-
-
-
-            mask = (
-                chart_x >= start_x
+            upper_mask = (
+                chart_x >= upper_start_x
             ) & (
                 chart_x <= end_x
             )
 
+            lower_mask = (
+                chart_x >= lower_start_x
+            ) & (
+                chart_x <= end_x
+            )
 
-            if mask.any():
+            common_mask = (
+                chart_x >= common_start_x
+            ) & (
+                chart_x <= end_x
+            )
 
+            upper_plot = np.where(
+                upper_mask,
+                upper_chart,
+                np.nan
+            )
 
-                upper_plot = np.where(
-                    mask,
-                    upper_chart,
-                    np.nan
+            lower_plot = np.where(
+                lower_mask,
+                lower_chart,
+                np.nan
+            )
+
+            addplots.append(
+                mpf.make_addplot(
+                    upper_plot,
+                    width=2
                 )
+            )
 
-
-                lower_plot = np.where(
-                    mask,
-                    lower_chart,
-                    np.nan
+            addplots.append(
+                mpf.make_addplot(
+                    lower_plot,
+                    width=2
                 )
+            )
 
+            if common_mask.any():
 
-                addplots.append(
+                wedge_x = chart_x[common_mask]
 
-                    mpf.make_addplot(
-                        upper_plot,
-                        width=2
-                    )
+                wedge_upper = upper_chart[common_mask]
 
-                )
-
-
-                addplots.append(
-
-                    mpf.make_addplot(
-                        lower_plot,
-                        width=2
-                    )
-
-                )
-
-
-                wedge_x = chart_x[mask]
-
-                wedge_upper = upper_chart[mask]
-
-                wedge_lower = lower_chart[mask]
+                wedge_lower = lower_chart[common_mask]
 
 
 

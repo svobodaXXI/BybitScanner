@@ -105,7 +105,8 @@ def _normalize_geometry(
 def analyze_wedge(
     highs,
     lows,
-    current_index=None
+    current_index=None,
+    candles=None
 ):
     """
     Полный анализ структуры.
@@ -118,7 +119,8 @@ def analyze_wedge(
     geometry = analyze_geometry(
         highs,
         lows,
-        current_index=current_index
+        current_index=current_index,
+        candles=candles
     )
 
     geometry_data = _normalize_geometry(
@@ -158,6 +160,12 @@ def analyze_wedge(
         )
 
         result["detection"] = detection
+
+        result["geometry_mode"] = (
+            geometry_data
+            .get("pair_metrics", {})
+            .get("geometry_mode", "NONE")
+)
 
         return attach_legacy_geometry(
             result,
@@ -235,6 +243,12 @@ def analyze_wedge(
     )
 
     result["detection"] = detection
+
+    result["geometry_mode"] = (
+        geometry_data
+        .get("pair_metrics", {})
+        .get("geometry_mode", "NONE")
+)
 
     return attach_legacy_geometry(
         result,

@@ -103,7 +103,8 @@ def analyze_symbol(symbol):
         result = analyze_wedge(
             highs,
             lows,
-            current_index=current_index
+            current_index=current_index,
+            candles=df
         )
 
         if result is None:

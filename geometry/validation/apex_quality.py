@@ -21,7 +21,7 @@ def evaluate_apex_quality(
     apex,
     start_index,
     end_index,
-    min_slope_difference=0.00005,
+    min_slope_difference=0.05,
     max_ratio=1.0
 ):
     """
@@ -95,6 +95,17 @@ def evaluate_apex_quality(
         upper_slope
         -
         lower_slope
+    )
+
+    slope_scale = max(
+        abs(upper_slope),
+        abs(lower_slope),
+        1e-12
+    )
+
+    relative_slope_difference = (
+        slope_difference
+        / slope_scale
     )
 
 
@@ -171,7 +182,7 @@ def evaluate_apex_quality(
     # Линии почти параллельны
     #
 
-    if slope_difference < min_slope_difference:
+    if relative_slope_difference < min_slope_difference:
 
         return {
 

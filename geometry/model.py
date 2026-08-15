@@ -13,7 +13,10 @@ Geometry Model
 - Touches;
 - Validation;
 - границы структуры;
-- текущий индекс рынка.
+- текущий индекс рынка;
+- candidate points;
+- Pair Metrics;
+- Envelope Metrics.
 
 Не содержит:
 - Score;
@@ -36,7 +39,8 @@ class GeometryModel:
         end_index=None,
         current_index=None,
         candidate_points=None,
-        pair_metrics=None
+        pair_metrics=None,
+        envelope_metrics=None
     ):
 
         self.upper_line = upper_line
@@ -57,16 +61,20 @@ class GeometryModel:
             candidate_points
             or {}
         )
+
         self.pair_metrics = (
-        pair_metrics
-        or {}
+            pair_metrics
+            or {}
         )
 
+        self.envelope_metrics = (
+            envelope_metrics
+            or {}
+        )
 
     def to_dict(self):
 
         return {
-
             "upper_line":
                 self.upper_line,
 
@@ -98,6 +106,22 @@ class GeometryModel:
                 self.candidate_points,
 
             "pair_metrics":
-                self.pair_metrics
+                self.pair_metrics,
 
+            "envelope_metrics":
+                self.envelope_metrics,
+
+            "geometry_family":
+                getattr(
+                    self,
+                    "geometry_family",
+                    None
+                ),
+
+            "family_scores":
+                getattr(
+                    self,
+                    "family_scores",
+                    {}
+                )
         }

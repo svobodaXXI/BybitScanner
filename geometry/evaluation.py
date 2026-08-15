@@ -25,11 +25,15 @@ from .touches import analyze_touches
 from .validation import validate_geometry
 from .model import GeometryModel
 from .pair_metrics import calculate_pair_metrics
+from .envelope_metrics import calculate_envelope_metrics
 
 def evaluate_candidate_pair(
     upper_candidate,
     lower_candidate,
-    current_index=None
+    highs=None,
+    lows=None,
+    current_index=None,
+    candles=None
 ):
     """
     Оценивает пару линий
@@ -141,8 +145,77 @@ def evaluate_candidate_pair(
     pair_metrics = calculate_pair_metrics(
         upper_candidate,
         lower_candidate,
-        current_index
+        current_index,
+        highs=highs or [],
+        lows=lows or []
     )
+
+    if pair_metrics is None:
+        return None
+
+    anchor_sequence = (
+        pair_metrics.get(
+            "anchor_sequence"
+        )
+        or {}
+    )
+
+    anchor_family = anchor_sequence.get(
+        "family"
+    )
+
+    if anchor_family in (
+        "rising",
+        "falling"
+    ):
+
+        geometry_mode = (
+            "CANONICAL"
+            if anchor_sequence.get(
+                "valid",
+                False
+            )
+            else "EXPLORATORY"
+        )
+
+    elif anchor_family == "triangle":
+
+        geometry_mode = "EXPLORATORY"
+
+    else:
+
+        geometry_mode = "REJECT"
+
+    pair_metrics[
+        "geometry_mode"
+    ] = geometry_mode
+
+    envelope_metrics = calculate_envelope_metrics(
+        upper_candidate,
+        lower_candidate,
+        highs or [],
+        lows or [],
+        current_index,
+        candles=candles
+    )
+
+    upper_envelope = (
+        envelope_metrics.get("upper", {})
+        if envelope_metrics
+        else {}
+    )
+
+    lower_envelope = (
+        envelope_metrics.get("lower", {})
+        if envelope_metrics
+        else {}
+    )
+
+    if (
+        upper_envelope.get("support_count", 0) < 2
+        or lower_envelope.get("support_count", 0) < 2
+    ):
+        return None
 
     #
     # Geometry Model Contract
@@ -178,6 +251,8 @@ def evaluate_candidate_pair(
 
         },
 
-        pair_metrics=pair_metrics
+        pair_metrics=pair_metrics,
+
+        envelope_metrics=envelope_metrics
 
     )

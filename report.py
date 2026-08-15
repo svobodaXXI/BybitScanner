@@ -124,9 +124,53 @@ def save_report(
             "-" * 40
         )
 
-
         lines.append(
             f"Pattern       : {result.get('pattern')}"
+        )
+
+
+        geometry = (
+            result.get("geometry")
+            or {}
+        )
+
+        pair_metrics = (
+            geometry.get("pair_metrics")
+            or {}
+        )
+
+        geometry_mode = pair_metrics.get(
+            "geometry_mode",
+            "UNKNOWN"
+        )
+
+        training_eligible = (
+            "YES"
+            if geometry_mode == "CANONICAL"
+            else "NO"
+        )
+
+        detection = (
+            result.get("detection")
+            or {}
+        )
+
+        detection_status = (
+            "CONFIRMED"
+            if detection.get("detected", False)
+            else "REJECTED"
+        )
+
+        lines.append(
+            f"Geometry Mode : {geometry_mode}"
+        )
+
+        lines.append(
+            f"Detection Status : {detection_status}"
+        )
+
+        lines.append(
+            f"Training Eligible : {training_eligible}"
         )
 
 

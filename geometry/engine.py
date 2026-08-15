@@ -1,4 +1,4 @@
-﻿"""
+"""
 geometry.engine
 
 Главный модуль Geometry Engine.
@@ -56,7 +56,8 @@ from .debug.logger import (
 def analyze_geometry(
     highs,
     lows,
-    current_index=None
+    current_index=None,
+    candles=None
 ):
     """
     Главная функция анализа геометрии.
@@ -153,7 +154,10 @@ def analyze_geometry(
             geometry = evaluate_candidate_pair(
                 upper_candidate,
                 lower_candidate,
-                current_index=current_index
+                highs=highs,
+                lows=lows,
+                current_index=current_index,
+                candles=candles
             )
 
             if geometry is None:
@@ -197,5 +201,99 @@ def analyze_geometry(
     #
     # 6. Только валидированная модель
     #
+
+    if best_geometry is not None:
+
+        pair_metrics = getattr(
+            best_geometry,
+            "pair_metrics",
+            {}
+        ) or {}
+
+        envelope_metrics = getattr(
+            best_geometry,
+            "envelope_metrics",
+            {}
+        ) or {}
+
+        upper_envelope = (
+            envelope_metrics.get("upper")
+            or {}
+        )
+
+        lower_envelope = (
+            envelope_metrics.get("lower")
+            or {}
+        )
+
+        debug(
+            "GEOMETRY_BEST",
+            {
+                "score":
+                    best_score,
+
+                "current_index":
+                    getattr(
+                        best_geometry,
+                        "current_index",
+                        None
+                    ),
+
+                "upper_anchor":
+                    best_geometry.upper_line.get(
+                        "anchor_index"
+                    ),
+
+                "lower_anchor":
+                    best_geometry.lower_line.get(
+                        "anchor_index"
+                    ),
+
+                "upper_slope":
+                    best_geometry.upper_line.get(
+                        "slope"
+                    ),
+
+                "lower_slope":
+                    best_geometry.lower_line.get(
+                        "slope"
+                    ),
+
+                "common_start":
+                    pair_metrics.get(
+                        "common_start"
+                    ),
+
+                "common_span":
+                    pair_metrics.get(
+                        "common_span"
+                    ),
+
+                "shared_span":
+                    pair_metrics.get(
+                        "shared_structure_span"
+                    ),
+
+                "upper_support":
+                    upper_envelope.get(
+                        "support_count"
+                    ),
+
+                "upper_support_span":
+                    upper_envelope.get(
+                        "support_span"
+                    ),
+
+                "lower_support":
+                    lower_envelope.get(
+                        "support_count"
+                    ),
+
+                "lower_support_span":
+                    lower_envelope.get(
+                        "support_span"
+                    )
+            }
+        )
 
     return best_geometry

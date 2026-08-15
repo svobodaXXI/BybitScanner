@@ -74,6 +74,45 @@ def _normalize_geometry(
 
 
 
+def _max_consecutive_run(indices):
+    """
+    ???????????? ????? ???????????????? ????? candle indices.
+    """
+
+    if not indices:
+        return 0
+
+    values = sorted(
+        set(
+            int(index)
+            for index in indices
+        )
+    )
+
+    best = 1
+    current = 1
+
+    for previous, index in zip(
+        values,
+        values[1:]
+    ):
+
+        if index == previous + 1:
+
+            current += 1
+
+            best = max(
+                best,
+                current
+            )
+
+        else:
+
+            current = 1
+
+    return best
+
+
 def detect_structure(
     geometry
 ):
@@ -210,6 +249,98 @@ def detect_structure(
 
 
     #
+    # Directional Candle Containment
+    #
+
+    envelope_metrics = geometry.get(
+        "envelope_metrics",
+        {}
+    )
+
+    candle_containment = (
+        envelope_metrics.get(
+            "candle_containment"
+        )
+        or {}
+    )
+
+    fully_above_upper = (
+        candle_containment.get(
+            "fully_above_upper_indices",
+            []
+        )
+    )
+
+    fully_below_lower = (
+        candle_containment.get(
+            "fully_below_lower_indices",
+            []
+        )
+    )
+
+    upper_severe_run = _max_consecutive_run(
+        fully_above_upper
+    )
+
+    lower_severe_run = _max_consecutive_run(
+        fully_below_lower
+    )
+
+    # ???? ????????? ???????? ??? ??????
+    # ????????? ???????? ????? ?? ??????? ???????.
+    max_strict_severe_run = 2
+
+    if pattern == "Falling Wedge":
+
+        strict_side = "upper"
+
+        strict_severe_run = (
+            upper_severe_run
+        )
+
+        containment_valid = (
+            strict_severe_run
+            <= max_strict_severe_run
+        )
+
+    elif pattern == "Rising Wedge":
+
+        strict_side = "lower"
+
+        strict_severe_run = (
+            lower_severe_run
+        )
+
+        containment_valid = (
+            strict_severe_run
+            <= max_strict_severe_run
+        )
+
+    elif pattern == "Triangle Compression":
+
+        strict_side = "both"
+
+        strict_severe_run = max(
+            upper_severe_run,
+            lower_severe_run
+        )
+
+        containment_valid = (
+            upper_severe_run
+            <= max_strict_severe_run
+            and
+            lower_severe_run
+            <= max_strict_severe_run
+        )
+
+    else:
+
+        strict_side = "none"
+        strict_severe_run = 0
+        containment_valid = False
+
+
+    #
     # Geometry Features
     #
 
@@ -293,7 +424,29 @@ def detect_structure(
                 freshness_bars is not None
                 and 0 <= freshness_bars <= 15
                 and before_apex
-            )
+            ),
+
+        "containment":
+
+            bool(
+                containment_valid
+            ),
+
+        "containment_strict_side":
+
+            strict_side,
+
+        "containment_strict_run":
+
+            strict_severe_run,
+
+        "containment_upper_run":
+
+            upper_severe_run,
+
+        "containment_lower_run":
+
+            lower_severe_run
 
     }
     structure_points = sum(
@@ -320,6 +473,8 @@ def detect_structure(
         features["validation"]
         and
         features["freshness"]
+        and
+        features["containment"]
     ):
 
         return {
