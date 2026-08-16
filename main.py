@@ -15,6 +15,7 @@ main.py
 """
 
 import config
+import time
 
 from analyzer import analyze_symbol
 from bybit_api import get_symbols
@@ -23,9 +24,12 @@ from config import MODE, MIN_SCORE, MAX_SYMBOLS
 from signal_adapter import prepare_signal
 from signal_memory import update_signal
 from notification import send_signal
+from telegram_bot import send_message
 
 
 def main():
+    scan_started_at = time.perf_counter()
+
     symbols = get_symbols()
 
     if MAX_SYMBOLS is not None:
@@ -128,10 +132,45 @@ def main():
                 f"ERROR: {error_text}"
             )
 
+    elapsed_seconds = (
+        time.perf_counter()
+        - scan_started_at
+    )
+
+    elapsed_minutes = int(
+        elapsed_seconds // 60
+    )
+
+    elapsed_remainder = int(
+        elapsed_seconds % 60
+    )
+
     print()
     print("=" * 60)
     print("Scan finished")
+    print(
+        f"Elapsed: "
+        f"{elapsed_minutes:02d}:"
+        f"{elapsed_remainder:02d}"
+    )
     print("=" * 60)
+
+    try:
+        send_message(
+            config.TELEGRAM_TOKEN,
+            config.TELEGRAM_CHAT_ID,
+        (
+            "SCAN FINISHED\n"
+            f"Elapsed: "
+            f"{elapsed_minutes:02d}:"
+            f"{elapsed_remainder:02d}"
+        )
+        )
+    except Exception as e:
+        print(
+            "[TELEGRAM SCAN FINISH ERROR]",
+            e
+        )
 
 
 if __name__ == "__main__":

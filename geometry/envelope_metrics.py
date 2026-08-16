@@ -833,6 +833,52 @@ def evaluate_candle_containment(
         )
     )
 
+    midpoint = start + ((end - start) // 2)
+
+    upper_early_indices = [
+        index
+        for index in upper_outside_indices
+        if index <= midpoint
+    ]
+
+    lower_early_indices = [
+        index
+        for index in lower_outside_indices
+        if index <= midpoint
+    ]
+
+    upper_late_indices = [
+        index
+        for index in upper_outside_indices
+        if index > midpoint
+    ]
+
+    lower_late_indices = [
+        index
+        for index in lower_outside_indices
+        if index > midpoint
+    ]
+
+    def _max_consecutive_run(indices):
+        if not indices:
+            return 0
+
+        ordered = sorted(set(indices))
+        best = 1
+        current = 1
+
+        for previous, current_index in zip(
+            ordered,
+            ordered[1:]
+        ):
+            if current_index == previous + 1:
+                current += 1
+                best = max(best, current)
+            else:
+                current = 1
+
+        return best
+
     return {
         "tolerance_percent":
             tolerance_percent,
@@ -904,6 +950,35 @@ def evaluate_candle_containment(
                 / evaluated_count
                 if evaluated_count
                 else 0.0
+            ),
+
+        "midpoint_index":
+            midpoint,
+
+        "upper_early_outside_count":
+            len(upper_early_indices),
+
+        "lower_early_outside_count":
+            len(lower_early_indices),
+
+        "upper_early_max_run":
+            _max_consecutive_run(
+                upper_early_indices
+            ),
+
+        "lower_early_max_run":
+            _max_consecutive_run(
+                lower_early_indices
+            ),
+
+        "upper_late_max_run":
+            _max_consecutive_run(
+                upper_late_indices
+            ),
+
+        "lower_late_max_run":
+            _max_consecutive_run(
+                lower_late_indices
             )
     }
 

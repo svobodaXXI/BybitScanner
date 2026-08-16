@@ -26,6 +26,7 @@ from .validation import validate_geometry
 from .model import GeometryModel
 from .pair_metrics import calculate_pair_metrics
 from .envelope_metrics import calculate_envelope_metrics
+from .pre_pattern import detect_pre_pattern_impulse
 
 def evaluate_candidate_pair(
     upper_candidate,
@@ -153,6 +154,17 @@ def evaluate_candidate_pair(
     if pair_metrics is None:
         return None
 
+    pre_pattern_impulse = (
+        detect_pre_pattern_impulse(
+            candles,
+            start_index
+        )
+    )
+
+    pair_metrics[
+        "pre_pattern_impulse"
+    ] = pre_pattern_impulse
+
     anchor_sequence = (
         pair_metrics.get(
             "anchor_sequence"
@@ -198,6 +210,98 @@ def evaluate_candidate_pair(
         current_index,
         candles=candles
     )
+
+    candle_containment = (
+        envelope_metrics.get(
+            "candle_containment",
+            {}
+        )
+        if envelope_metrics
+        else {}
+    ) or {}
+
+    early_outside_run = max(
+        candle_containment.get(
+            "upper_early_max_run",
+            0
+        ),
+        candle_containment.get(
+            "lower_early_max_run",
+            0
+        )
+    )
+
+    if (
+        geometry_mode == "CANONICAL"
+        and early_outside_run >= 3
+    ):
+        geometry_mode = "EXPLORATORY"
+
+        pair_metrics[
+            "geometry_mode"
+        ] = geometry_mode
+
+        pair_metrics[
+            "canonical_downgrade_reason"
+        ] = (
+            "early_multicandle_boundary_excursion"
+        )
+
+    evaluated_count = candle_containment.get(
+        "evaluated_count",
+        0
+    )
+
+    strict_outside_count = 0
+
+    if anchor_family == "rising":
+        strict_outside_count = (
+            candle_containment.get(
+                "upper_outside_count",
+                0
+            )
+        )
+
+    elif anchor_family == "falling":
+        strict_outside_count = (
+            candle_containment.get(
+                "lower_outside_count",
+                0
+            )
+        )
+
+    strict_outside_ratio = (
+        strict_outside_count
+        / evaluated_count
+        if evaluated_count
+        else 0.0
+    )
+
+    if (
+        geometry_mode == "CANONICAL"
+        and anchor_family in (
+            "rising",
+            "falling"
+        )
+        and strict_outside_ratio > 0.20
+    ):
+        geometry_mode = "EXPLORATORY"
+
+        pair_metrics[
+            "geometry_mode"
+        ] = geometry_mode
+
+        pair_metrics[
+            "canonical_downgrade_reason"
+        ] = (
+            "strict_boundary_outside_ratio"
+        )
+
+        pair_metrics[
+            "strict_outside_ratio"
+        ] = float(
+            strict_outside_ratio
+        )
 
     upper_envelope = (
         envelope_metrics.get("upper", {})

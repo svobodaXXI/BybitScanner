@@ -126,8 +126,8 @@ def build_tradingview_keyboard(
     timeframe
 ):
     """
-    Создаёт Telegram inline keyboard
-    со ссылкой TradingView.
+    Telegram inline keyboard:
+    TradingView + Review Queue.
     """
 
     tradingview_url = (
@@ -137,15 +137,50 @@ def build_tradingview_keyboard(
         )
     )
 
+    symbol = str(symbol)
+    timeframe = str(timeframe)
+
     return {
         "inline_keyboard": [
             [
                 {
                     "text":
-                        "📈 Open TradingView",
+                        "\U0001F4C8 Open TradingView",
 
                     "url":
                         tradingview_url
+                }
+            ],
+            [
+                {
+                    "text":
+                        "\U0001F4CC \u0412 \u0440\u0430\u0437\u0431\u043e\u0440",
+
+                    "callback_data":
+                        f"review:queue:{symbol}:{timeframe}"
+                },
+                {
+                    "text":
+                        "\u2705 \u0425\u043e\u0440\u043e\u0448\u0438\u0439",
+
+                    "callback_data":
+                        f"review:good:{symbol}:{timeframe}"
+                }
+            ],
+            [
+                {
+                    "text":
+                        "\u274C \u0413\u0435\u043e\u043c\u0435\u0442\u0440\u0438\u044f",
+
+                    "callback_data":
+                        f"review:geometry:{symbol}:{timeframe}"
+                },
+                {
+                    "text":
+                        "\u2693 Anchor/START",
+
+                    "callback_data":
+                        f"review:anchor:{symbol}:{timeframe}"
                 }
             ]
         ]

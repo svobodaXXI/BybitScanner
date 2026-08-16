@@ -1,35 +1,35 @@
-"""
+﻿"""
 geometry.engine
 
-Главный модуль Geometry Engine.
+Р“Р»Р°РІРЅС‹Р№ РјРѕРґСѓР»СЊ Geometry Engine.
 
-Собирает геометрические кандидаты
-и выбирает лучшую валидированную модель структуры.
+РЎРѕР±РёСЂР°РµС‚ РіРµРѕРјРµС‚СЂРёС‡РµСЃРєРёРµ РєР°РЅРґРёРґР°С‚С‹
+Рё РІС‹Р±РёСЂР°РµС‚ Р»СѓС‡С€СѓСЋ РІР°Р»РёРґРёСЂРѕРІР°РЅРЅСѓСЋ РјРѕРґРµР»СЊ СЃС‚СЂСѓРєС‚СѓСЂС‹.
 
 Pipeline:
 
 Pivot Points
-↓
+в†“
 Candidate Engine
-↓
+в†“
 Candidate Filtering
-↓
+в†“
 Candidate Pairs
-↓
+в†“
 Geometry Evaluation
-↓
+в†“
 Validation Gate
-↓
+в†“
 Geometry Ranking
-↓
+в†“
 Validated Geometry Model
 
-Не содержит:
+РќРµ СЃРѕРґРµСЂР¶РёС‚:
 
 - Score;
 - Signal;
 - Telegram;
-- торговых решений.
+- С‚РѕСЂРіРѕРІС‹С… СЂРµС€РµРЅРёР№.
 """
 
 from .candidate import (
@@ -60,24 +60,24 @@ def analyze_geometry(
     candles=None
 ):
     """
-    Главная функция анализа геометрии.
+    Р“Р»Р°РІРЅР°СЏ С„СѓРЅРєС†РёСЏ Р°РЅР°Р»РёР·Р° РіРµРѕРјРµС‚СЂРёРё.
 
-    Принимает:
+    РџСЂРёРЅРёРјР°РµС‚:
 
     highs:
-        Pivot High точки
+        Pivot High С‚РѕС‡РєРё
 
     lows:
-        Pivot Low точки
+        Pivot Low С‚РѕС‡РєРё
 
     current_index:
-        индекс последней доступной
-        рыночной свечи
+        РёРЅРґРµРєСЃ РїРѕСЃР»РµРґРЅРµР№ РґРѕСЃС‚СѓРїРЅРѕР№
+        СЂС‹РЅРѕС‡РЅРѕР№ СЃРІРµС‡Рё
 
-    Возвращает:
+    Р’РѕР·РІСЂР°С‰Р°РµС‚:
 
-        лучшую валидированную
-        геометрическую модель.
+        Р»СѓС‡С€СѓСЋ РІР°Р»РёРґРёСЂРѕРІР°РЅРЅСѓСЋ
+        РіРµРѕРјРµС‚СЂРёС‡РµСЃРєСѓСЋ РјРѕРґРµР»СЊ.
     """
 
     if (
@@ -141,11 +141,12 @@ def analyze_geometry(
         return None
 
     #
-    # 3. Evaluation всех пар
+    # 3. Evaluation РІСЃРµС… РїР°СЂ
     #
 
     best_geometry = None
     best_score = -999
+    best_mode_priority = -1
 
     for upper_candidate in upper_candidates:
 
@@ -166,8 +167,8 @@ def analyze_geometry(
             #
             # 4. Validation Gate
             #
-            # Только валидированная геометрия
-            # допускается к Ranking.
+            # РўРѕР»СЊРєРѕ РІР°Р»РёРґРёСЂРѕРІР°РЅРЅР°СЏ РіРµРѕРјРµС‚СЂРёСЏ
+            # РґРѕРїСѓСЃРєР°РµС‚СЃСЏ Рє Ranking.
             #
 
             validation = getattr(
@@ -185,21 +186,45 @@ def analyze_geometry(
             #
             # 5. Geometry Ranking
             #
-            # Только качество геометрии.
-            # Не торговый Score.
+            # РўРѕР»СЊРєРѕ РєР°С‡РµСЃС‚РІРѕ РіРµРѕРјРµС‚СЂРёРё.
+            # РќРµ С‚РѕСЂРіРѕРІС‹Р№ Score.
             #
 
             geometry_score = rank_geometry(
                 geometry
             )
 
-            if geometry_score > best_score:
+            pair_metrics = getattr(
+                geometry,
+                "pair_metrics",
+                {}
+            ) or {}
 
+            geometry_mode = pair_metrics.get(
+                "geometry_mode",
+                "EXPLORATORY"
+            )
+
+            mode_priority = (
+                1
+                if geometry_mode == "CANONICAL"
+                else 0
+            )
+
+            if (
+                mode_priority > best_mode_priority
+                or (
+                    mode_priority == best_mode_priority
+                    and geometry_score > best_score
+                )
+            ):
+
+                best_mode_priority = mode_priority
                 best_score = geometry_score
                 best_geometry = geometry
 
     #
-    # 6. Только валидированная модель
+    # 6. РўРѕР»СЊРєРѕ РІР°Р»РёРґРёСЂРѕРІР°РЅРЅР°СЏ РјРѕРґРµР»СЊ
     #
 
     if best_geometry is not None:
