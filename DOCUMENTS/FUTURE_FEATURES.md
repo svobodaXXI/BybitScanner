@@ -366,6 +366,257 @@ Geometry Intelligence / Human Feedback Layer
 
 ---
 
+# FEATURE-003
+
+name:
+
+Signal Report Archive / GitHub Sync
+
+status:
+
+PLANNED / ARCHITECTURE DIRECTION APPROVED
+
+priority:
+
+HIGH
+
+---
+
+## PURPOSE
+
+Создать автоматический архив структурированных
+отчётов по сигналам BybitScanner,
+доступный для последующего анализа
+непосредственно через GitHub.
+
+Цель:
+
+минимизировать необходимость ручной передачи
+консольного вывода, отчётов и графиков
+между пользователем и ассистентом.
+
+---
+
+## SIGNAL_REPORT_MODEL
+
+Для каждого реально сформированного
+и отправленного торгового сигнала
+Scanner должен сохранять структурированный
+машиночитаемый JSON-отчёт.
+
+Отчёт должен включать по возможности:
+
+- timestamp;
+- symbol;
+- timeframe;
+- pattern;
+- direction;
+- score;
+- geometry score;
+- upper anchor;
+- lower anchor;
+- START;
+- slopes;
+- apex;
+- compression;
+- touches;
+- geometry_mode;
+- canonical downgrade reason;
+- containment diagnostics;
+- pre_pattern_impulse;
+- breakout / confirmation data;
+- calculated potential / target;
+- ссылку или идентификатор соответствующего
+  Telegram Review / annotation.
+
+Формат должен допускать расширение
+по мере развития Geometry Engine.
+
+---
+
+## STORAGE_MODEL
+
+recommended_structure:
+
+signal_reports/
+    YYYY-MM-DD/
+        SYMBOL_TIMEFRAME_TIMESTAMP.json
+
+Принцип:
+
+обычные автоматически создаваемые PNG-графики
+не должны массово сохраняться в GitHub.
+
+Причина:
+
+- быстрое увеличение размера репозитория;
+- бинарные файлы плохо подходят
+  для истории Git;
+- большинство обычных графиков
+  не требуется для последующего анализа.
+
+---
+
+## REFERENCE_CHART_POLICY
+
+Ценные графические примеры,
+отобранные человеком или системой,
+могут сохраняться отдельно в:
+
+training/reference_patterns/
+
+К таким материалам относятся:
+
+- подтверждённые хорошие паттерны;
+- geometry errors;
+- anchor / START errors;
+- необычные структуры;
+- фактические outcomes;
+- эталонные обучающие примеры.
+
+---
+
+## TELEGRAM_REVIEW_INTEGRATION
+
+Signal Report Archive должен быть связан
+с Telegram Review Queue.
+
+target_relationship:
+
+Scanner Signal
+
+↓
+
+Signal JSON
+
+↓
+
+Telegram Review
+
+↓
+
+Human Labels
+
+↓
+
+Outcome
+
+↓
+
+Training / Geometry Calibration
+
+Один рыночный пример должен иметь возможность
+накапливать несколько human-review labels,
+например:
+
+- good;
+- geometry_error;
+- anchor_error;
+- queue / needs_review.
+
+---
+
+## GITHUB_SYNC
+
+Новые отчёты должны синхронизироваться
+с GitHub пакетно.
+
+Предпочтительная точка синхронизации:
+
+после успешного завершения полного Scan.
+
+Не создавать отдельный Git commit
+для каждого сигнала.
+
+Один Scan должен по возможности создавать
+не более одного автоматического
+Signal Report Sync commit.
+
+---
+
+## ASSISTANT_ACCESS
+
+После синхронизации ассистент должен иметь
+возможность читать Signal Reports
+непосредственно из GitHub
+при диагностике и разработке.
+
+Это должно позволить:
+
+- сравнивать группы сигналов;
+- анализировать good / bad geometry;
+- искать систематические ошибки anchors / START;
+- исследовать pre-pattern context;
+- оценивать качество новых фильтров;
+- анализировать outcomes;
+- уменьшить необходимость ручного
+  копирования диагностического вывода.
+
+---
+
+## SAFETY_AND_REPOSITORY_RULES
+
+Signal Reports не должны содержать:
+
+- Telegram bot token;
+- API secrets;
+- passwords;
+- другие приватные credentials.
+
+config.py остаётся вне GitHub.
+
+Автоматическая GitHub-синхронизация
+не должна отправлять:
+
+- config.py;
+- временные .bak файлы;
+- обычные массовые charts;
+- другие исключённые рабочие артефакты.
+
+---
+
+## IMPLEMENTATION_STAGE
+
+recommended_stage:
+
+Scanner Diagnostics / Training Feedback Infrastructure
+
+implementation_direction:
+
+Signal Report
+
+→
+
+Review Queue
+
+→
+
+Outcome
+
+→
+
+GitHub Archive
+
+→
+
+Comparative Analysis
+
+→
+
+Geometry Calibration
+
+---
+
+## STATUS
+
+architecture_direction:
+
+APPROVED
+
+implementation:
+
+PLANNED
+
 
 # FEATURE_STATUS_SUMMARY
 
