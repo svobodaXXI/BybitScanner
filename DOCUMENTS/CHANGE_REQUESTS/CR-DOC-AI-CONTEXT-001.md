@@ -7,7 +7,7 @@
   "id": "CR-DOC-AI-CONTEXT-001",
   "title": "Documentation and AI Context Workflow Modernization",
   "status": "IN_PROGRESS",
-  "revision": "1.3",
+  "revision": "1.4",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Implement a compact TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD workflow with durable task recovery and explicit legacy-risk handling.",
   "non_goals": [
@@ -70,6 +70,12 @@
     "Return a machine-visible non-zero result for applicable BLOCKING warnings or stale/invalid context",
     "Apply warnings only through declared task path/symbol scope; do not build a full-repository dependency graph"
   ],
+  "phase_4_verification_evidence": [
+    "32 focused ChangeRequest, ContextDump and LegacyWarning governance tests passed",
+    "Artifact-free compile passed for the four affected Python files",
+    "Real CR-DOC-AI-CONTEXT-001 ContextDump generated and standalone validation returned PASS with exit code 0",
+    "git diff --check and scoped allowlist review passed"
+  ],
   "approved_decisions": [
     "Current local checkout represents current working reality",
     "Git owns detailed implementation history",
@@ -118,20 +124,21 @@
     {"id": "PHASE_1", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_2", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_3", "status": "IMPLEMENTED_VERIFIED"},
-    {"id": "PHASE_4", "status": "APPROVED_NOT_IMPLEMENTED"},
+    {"id": "PHASE_4", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_5", "status": "NOT_STARTED"},
     {"id": "PHASE_6", "status": "NOT_STARTED"}
   ],
   "current_phase": "PHASE_4",
-  "current_checkpoint": "PHASE_4_PRE_IMPLEMENTATION_CHECKPOINT",
-  "implementation_status": "PHASE_4_IMPLEMENTATION_NOT_STARTED",
+  "current_checkpoint": "PHASE_4_COMPLETED",
+  "implementation_status": "PHASE_4_IMPLEMENTED_VERIFIED",
   "next_phase": "PHASE_5",
   "next_phase_authorization": "NOT_AUTHORIZED",
   "related_commits": [
     {"phase": "PHASE_0", "commit": "24005986bc127f3d7da2bad19f528063280a0b6a"},
     {"phase": "PHASE_1", "commit": "2f503db280572cf5733ab130017ff0b6bba97644"},
     {"phase": "PHASE_2", "commit": "5bb91e0a946101db26ddeb8002d179bfd2b70c78"},
-    {"phase": "PHASE_3", "commit": "476cdd5ccaea927dc2b29c1f01ff6022cbf9bc97"}
+    {"phase": "PHASE_3", "commit": "476cdd5ccaea927dc2b29c1f01ff6022cbf9bc97"},
+    {"phase": "PHASE_4_CHECKPOINT", "commit": "a51a25e"}
   ],
   "amendment_history": [
     {
@@ -148,6 +155,11 @@
       "revision": "1.3",
       "reason": "Human authorization and bounded pre-implementation specification for Phase 4 staleness and LegacyWarning enforcement",
       "date": "2026-08-17"
+    },
+    {
+      "revision": "1.4",
+      "reason": "Phase 4 standalone staleness validation and scoped LegacyWarning enforcement implemented and verified",
+      "date": "2026-08-17"
     }
   ]
 }
@@ -159,7 +171,7 @@
 The approved architecture and rationale remain owned by the referenced contracts and `DECISION-007`.
 This file is the durable task-specific authorization and recovery record, not a replacement for project authority.
 
-Phase 0 through Phase 3 are complete and verified. Phase 4 is authorized by revision 1.3 but implementation has not started. Phase 5 is not authorized.
+Phase 0 through Phase 4 are complete and verified. Phase 5 is not authorized.
 
 ## Amendment rule
 

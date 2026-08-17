@@ -37,6 +37,16 @@ class RegistryValidationResult:
         return not self.errors
 
 
+@dataclass(frozen=True)
+class WarningEnforcementResult:
+    status: str
+    warnings: tuple[Mapping[str, Any], ...]
+
+    @property
+    def blocking(self) -> bool:
+        return self.status == "BLOCKING"
+
+
 def load_registry(path: str | Path) -> dict[str, Any]:
     """Load a LegacyWarning registry without mutating it or project state."""
 
@@ -179,6 +189,28 @@ def warning_level(warnings: Sequence[Mapping[str, Any]]) -> str:
     if warnings:
         return "ADVISORY"
     return "PASS"
+
+
+def enforce_scoped_warnings(
+    data: Mapping[str, Any],
+    *,
+    paths: Sequence[str] = (),
+    symbols: Sequence[str] = (),
+) -> WarningEnforcementResult:
+    """Return deterministic warning enforcement for declared task scope only."""
+
+    validation = validate_registry(data)
+    if not validation.valid:
+        raise ValueError("Invalid LegacyWarning registry: " + "; ".join(validation.errors))
+    matches: dict[str, Mapping[str, Any]] = {}
+    for path in sorted(set(paths)):
+        for warning in query_warnings(data, path=path):
+            matches[str(warning["warning_id"])] = warning
+    for symbol in sorted(set(symbols)):
+        for warning in query_warnings(data, symbol=symbol):
+            matches[str(warning["warning_id"])] = warning
+    warnings = tuple(matches[key] for key in sorted(matches))
+    return WarningEnforcementResult(warning_level(warnings), warnings)
 
 
 def main() -> int:

@@ -2,7 +2,7 @@
 
 Version:
 
-3.8
+3.9
 
 Date:
 
@@ -1942,8 +1942,11 @@ implementation_v1:
 * Markdown output includes task revision, branch, HEAD, dirty-state digest, authority-source hashes and relevant LegacyWarnings;
 * deterministic ordering is required; generation time is intentionally variable provenance;
 * missing required scope, source or authority section fails generation clearly.
+* standalone validation compares task identity/revision, branch, HEAD, ChangeRequest, authority, scoped files, scoped Git state and relevant LegacyWarning state;
+* unrelated dirty paths and unrelated warning records do not invalidate scoped context;
+* validation returns machine-visible PASS, ADVISORY, STALE, BLOCKING or FAIL results without the full Project Sync pipeline.
 
-Phase 3 generation is IMPLEMENTED_VERIFIED. Full stale-context and dependency-aware LegacyWarning enforcement remains Phase 4 work.
+Phase 3 generation and Phase 4 standalone staleness validation are IMPLEMENTED_VERIFIED.
 
 ---
 
@@ -1974,7 +1977,11 @@ invariants:
 * retirement requires verified replacement/compatibility and explicit authoritative update;
 * canonical records are stored in `DOCUMENTS/LEGACY_WARNINGS.json`;
 * standalone record validation and read-only path/symbol query are provided by `tools/project_sync/governance/legacy_warning.py`;
-* full dependency/scoped enforcement remains Phase 4 work.
+* deterministic enforcement applies warnings only to declared task paths/symbols;
+* applicable ADVISORY warnings remain non-blocking and applicable BLOCKING warnings return machine-visible failure;
+* full-repository dependency graph analysis is outside the scoped enforcement contract.
+
+Phase 4 scoped enforcement is IMPLEMENTED_VERIFIED.
 
 ---
 
@@ -2542,15 +2549,21 @@ Migration Lifecycle.
 
 from:
 
-PROJECT_CONTRACTS v3.7
+PROJECT_CONTRACTS v3.8
 
 to:
 
-PROJECT_CONTRACTS v3.8
+PROJECT_CONTRACTS v3.9
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 3 (v3.7 to v3.8):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 4 (v3.8 to v3.9):
+
+* registered standalone ContextDump staleness/provenance validation;
+* registered deterministic scoped LegacyWarning enforcement and machine-visible outcomes;
+* excluded unrelated dirty/warning state from scoped freshness decisions.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 3 (v3.7 to v3.8):
 
 * registered the minimal standalone ContextDump generator and its task-scoped inputs;
 * recorded deterministic derived output and provenance behavior;

@@ -8,8 +8,10 @@ from pathlib import Path
 from tools.project_sync.governance.context_dump import (
     ContextDumpError,
     GitState,
+    VALIDATION_EXIT_CODES,
     build_context_dump,
     generate_context_dump,
+    validate_context_dump,
 )
 
 
@@ -117,6 +119,24 @@ class ContextDumpTests(unittest.TestCase):
             )
         }
 
+    def _generate(self, git_state: GitState = FIXED_GIT) -> Path:
+        return generate_context_dump(
+            self.root,
+            self.request_path,
+            git_state=git_state,
+            generated_at=FIXED_TIME,
+        )
+
+    def _registry(self) -> dict:
+        return json.loads(
+            (self.root / "DOCUMENTS/LEGACY_WARNINGS.json").read_text(encoding="utf-8")
+        )
+
+    def _write_registry(self, registry: dict) -> None:
+        (self.root / "DOCUMENTS/LEGACY_WARNINGS.json").write_text(
+            json.dumps(registry), encoding="utf-8"
+        )
+
     def test_build_is_deterministic_scoped_and_contains_provenance(self):
         first = build_context_dump(
             self.root, self.request_path, git_state=FIXED_GIT, generated_at=FIXED_TIME
@@ -149,6 +169,114 @@ class ContextDumpTests(unittest.TestCase):
         self.assertEqual(output, self.root / "runtime/context/CR-TEST-001.md")
         self.assertTrue(output.is_file())
         self.assertEqual(before, self._source_hashes())
+
+    def test_fresh_advisory_context_is_valid_and_non_blocking(self):
+        output = self._generate()
+        result = validate_context_dump(
+            self.root, output, self.request_path, git_state=FIXED_GIT
+        )
+        self.assertTrue(result.valid)
+        self.assertEqual("ADVISORY", result.status)
+        self.assertEqual(("LW-TEST",), result.warning_ids)
+        self.assertEqual(0, VALIDATION_EXIT_CODES[result.status])
+
+    def test_applicable_blocking_warning_is_machine_blocking(self):
+        registry = self._registry()
+        registry["warnings"][0]["severity"] = "BLOCKING"
+        registry["warnings"][0]["new_usage_prohibited"] = True
+        self._write_registry(registry)
+        output = self._generate()
+        result = validate_context_dump(
+            self.root, output, self.request_path, git_state=FIXED_GIT
+        )
+        self.assertFalse(result.valid)
+        self.assertEqual("BLOCKING", result.status)
+        self.assertEqual(2, VALIDATION_EXIT_CODES[result.status])
+
+    def test_task_revision_branch_and_head_changes_are_stale(self):
+        output = self._generate()
+        metadata = _request_metadata()
+        metadata["revision"] = "1.1"
+        self._write_request(metadata)
+        result = validate_context_dump(
+            self.root,
+            output,
+            self.request_path,
+            git_state=GitState("feature", "b" * 40, FIXED_GIT.status_short),
+        )
+        self.assertEqual("STALE", result.status)
+        self.assertIn("task revision changed", result.reasons)
+        self.assertIn("branch changed", result.reasons)
+        self.assertIn("HEAD changed", result.reasons)
+        self.assertIn("ChangeRequest content changed", result.reasons)
+        self.assertEqual(1, VALIDATION_EXIT_CODES[result.status])
+
+    def test_authority_and_scoped_file_changes_are_stale(self):
+        output = self._generate()
+        (self.root / "DOCUMENTS/AUTHORITY.md").write_text(
+            "# CONTRACT-TEST\n\nChanged.\n", encoding="utf-8"
+        )
+        (self.root / "scoped.py").write_text("VALUE = 2\n", encoding="utf-8")
+        result = validate_context_dump(
+            self.root, output, self.request_path, git_state=FIXED_GIT
+        )
+        self.assertEqual("STALE", result.status)
+        self.assertIn("authoritative source content changed", result.reasons)
+        self.assertIn("scoped file content changed", result.reasons)
+
+    def test_relevant_warning_change_is_stale(self):
+        output = self._generate()
+        registry = self._registry()
+        registry["warnings"][0]["reason"] = "Changed warning."
+        self._write_registry(registry)
+        result = validate_context_dump(
+            self.root, output, self.request_path, git_state=FIXED_GIT
+        )
+        self.assertEqual("STALE", result.status)
+        self.assertIn("relevant LegacyWarning state changed", result.reasons)
+
+    def test_unrelated_warning_change_does_not_make_context_stale(self):
+        output = self._generate()
+        registry = self._registry()
+        unrelated = copy.deepcopy(registry["warnings"][0])
+        unrelated["warning_id"] = "LW-UNRELATED"
+        unrelated["affected_paths"] = ["unrelated.py"]
+        registry["warnings"].append(unrelated)
+        self._write_registry(registry)
+        result = validate_context_dump(
+            self.root, output, self.request_path, git_state=FIXED_GIT
+        )
+        self.assertEqual("ADVISORY", result.status)
+
+    def test_unrelated_dirty_state_does_not_make_context_stale(self):
+        output = self._generate()
+        changed_unrelated = GitState(
+            "main", "a" * 40, (" M scoped.py", "?? another-unrelated.tmp")
+        )
+        result = validate_context_dump(
+            self.root, output, self.request_path, git_state=changed_unrelated
+        )
+        self.assertEqual("ADVISORY", result.status)
+
+    def test_malformed_context_is_explicit_failure(self):
+        output = self.root / "bad.md"
+        output.write_text("not context", encoding="utf-8")
+        result = validate_context_dump(
+            self.root, output, self.request_path, git_state=FIXED_GIT
+        )
+        self.assertEqual("FAIL", result.status)
+        self.assertEqual(1, VALIDATION_EXIT_CODES[result.status])
+
+    def test_unknown_context_schema_is_explicit_failure(self):
+        output = self._generate()
+        content = output.read_text(encoding="utf-8").replace(
+            '"schema_version": "1.1"', '"schema_version": "9.9"', 1
+        )
+        output.write_text(content, encoding="utf-8")
+        result = validate_context_dump(
+            self.root, output, self.request_path, git_state=FIXED_GIT
+        )
+        self.assertEqual("FAIL", result.status)
 
     def test_missing_scope_fails_clearly_and_writes_nothing(self):
         metadata = copy.deepcopy(_request_metadata())

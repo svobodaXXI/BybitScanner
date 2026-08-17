@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from tools.project_sync.governance.legacy_warning import (
+    enforce_scoped_warnings,
     load_registry,
     query_warnings,
     validate_registry,
@@ -92,6 +93,23 @@ class LegacyWarningGovernanceTests(unittest.TestCase):
 
     def test_unmatched_query_passes(self):
         self.assertEqual("PASS", warning_level(query_warnings(self.registry, path="main.py")))
+
+    def test_scoped_enforcement_is_deterministic_and_blocking(self):
+        result = enforce_scoped_warnings(
+            self.registry,
+            paths=["main.py", "wedge_legacy.py", "wedge_legacy.py"],
+        )
+        self.assertTrue(result.blocking)
+        self.assertEqual("BLOCKING", result.status)
+        self.assertEqual(
+            ["LW-WEDGE-LEGACY-001"],
+            [warning["warning_id"] for warning in result.warnings],
+        )
+
+    def test_scoped_advisory_enforcement_is_non_blocking(self):
+        result = enforce_scoped_warnings(self.registry, paths=["SNAPSHOT.md"])
+        self.assertFalse(result.blocking)
+        self.assertEqual("ADVISORY", result.status)
 
 
 if __name__ == "__main__":

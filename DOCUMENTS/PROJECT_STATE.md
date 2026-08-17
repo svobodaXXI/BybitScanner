@@ -2,7 +2,7 @@
 
 Version:
 
-7.16
+7.17
 
 Date:
 
@@ -870,11 +870,11 @@ SPEC_APPROVED
 
 Checkpoint:
 
-PHASE_4_PRE_IMPLEMENTATION_CHECKPOINT
+PHASE_4_COMPLETED
 
 Implementation status:
 
-PHASE_4_IMPLEMENTATION_NOT_STARTED
+PHASE_4_IMPLEMENTED_VERIFIED
 
 Owning references:
 
@@ -885,15 +885,15 @@ Owning references:
 
 Current authorization:
 
-Phase 4 standalone staleness validation and scoped LegacyWarning enforcement only.
+Phase 4 standalone staleness validation and scoped LegacyWarning enforcement completed and verified.
 
 Next phase:
 
-PHASE_4_IMPLEMENTATION
+PHASE_5_CODEX_WORKFLOW_INTEGRATION
 
 Important:
 
-Phase 4 is authorized by ChangeRequest revision 1.3. Implementation has not started. Phase 5 is not authorized.
+Phase 4 is complete and verified. Phase 5 requires separate authorization and has not started.
 
 ---
 
@@ -4453,15 +4453,21 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.15
+PROJECT_STATE v7.16
 
 to:
 
-PROJECT_STATE v7.16
+PROJECT_STATE v7.17
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 4 authorization (v7.15 to v7.16):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 4 implementation (v7.16 to v7.17):
+
+* recorded PHASE_4_COMPLETED / PHASE_4_IMPLEMENTED_VERIFIED;
+* recorded focused validation evidence and standalone PASS on the real durable task;
+* recorded Phase 5 as the next separately authorized phase.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 4 authorization (v7.15 to v7.16):
 
 * recorded the bounded Phase 4 authorization and pre-implementation checkpoint;
 * recorded implementation as NOT_STARTED and Phase 5 as unauthorized;
