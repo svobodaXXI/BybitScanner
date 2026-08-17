@@ -7,8 +7,8 @@
   "id": "CR-DOC-AI-CONTEXT-001",
   "title": "Documentation and AI Context Workflow Modernization",
   "status": "IN_PROGRESS",
-  "revision": "1.5",
-  "lifecycle_stage": "SPEC",
+  "revision": "1.6",
+  "lifecycle_stage": "RECORD",
   "objective": "Implement a compact TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD workflow with durable task recovery and explicit legacy-risk handling.",
   "non_goals": [
     "Change production scanner or analytical behavior",
@@ -42,6 +42,8 @@
     "DOCUMENTS/PROJECT_STATE.md#AI_CONTEXT_WORKFLOW_STATE"
   ],
   "context_scope_paths": [
+    "AGENTS.md",
+    "tools/project_sync/governance/codex_workflow.py",
     "tools/project_sync/governance/context_dump.py",
     "tools/project_sync/governance/legacy_warning.py",
     "DOCUMENTS/CHANGE_REQUESTS/CR-DOC-AI-CONTEXT-001.md",
@@ -50,6 +52,7 @@
     "DOCUMENTS/ROADMAP.md"
   ],
   "context_test_paths": [
+    "tests/test_codex_workflow_governance.py",
     "tests/test_context_dump_governance.py",
     "tests/test_legacy_warning_governance.py"
   ],
@@ -137,6 +140,14 @@
     "Artifact-free compile, existing focused governance regressions, git diff --check and scoped allowlist review pass",
     "Fresh-agent interruption simulation succeeds without full five-document recovery or full Project Sync execution"
   ],
+  "phase_5_verification_evidence": [
+    "16 focused Codex workflow orchestration tests passed",
+    "48 combined ChangeRequest, ContextDump, LegacyWarning and Codex workflow governance tests passed",
+    "Artifact-free compile passed for the Phase 5 module and focused test",
+    "Representative CLI PASS returned 0, BLOCKING returned 2 and durable direct recovery returned 0",
+    "Standalone ChangeRequest and generated ContextDump validation passed",
+    "git diff --check and scoped implementation allowlist review passed"
+  ],
   "phase_5_rollback_boundary": "One separately revertible scoped Phase 5 implementation commit; reverting it leaves Phase 1-4 governance and all production scanner behavior intact.",
   "approved_decisions": [
     "Current local checkout represents current working reality",
@@ -188,12 +199,12 @@
     {"id": "PHASE_2", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_3", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_4", "status": "IMPLEMENTED_VERIFIED"},
-    {"id": "PHASE_5", "status": "AUTHORIZED_NOT_STARTED"},
+    {"id": "PHASE_5", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_6", "status": "NOT_STARTED"}
   ],
   "current_phase": "PHASE_5",
-  "current_checkpoint": "PHASE_5_PRE_IMPLEMENTATION_CHECKPOINT",
-  "implementation_status": "PHASE_5_NOT_STARTED",
+  "current_checkpoint": "PHASE_5_COMPLETED",
+  "implementation_status": "PHASE_5_IMPLEMENTED_VERIFIED",
   "next_phase": "PHASE_6",
   "next_phase_authorization": "NOT_AUTHORIZED",
   "related_commits": [
@@ -228,6 +239,11 @@
       "revision": "1.5",
       "reason": "Human authorization and bounded pre-implementation specification for Phase 5 Codex workflow integration",
       "date": "2026-08-18"
+    },
+    {
+      "revision": "1.6",
+      "reason": "Phase 5 Codex workflow orchestration implemented and verified; Phase 6 remains separately unauthorized",
+      "date": "2026-08-18"
     }
   ]
 }
@@ -239,8 +255,7 @@
 The approved architecture and rationale remain owned by the referenced contracts and `DECISION-007`.
 This file is the durable task-specific authorization and recovery record, not a replacement for project authority.
 
-Phase 0 through Phase 4 are complete and verified. Phase 5 is human-authorized at its
-pre-implementation checkpoint; Phase 5 implementation has not started. Phase 6 is not authorized.
+Phase 0 through Phase 5 are complete and verified. Phase 6 is not authorized.
 
 ## Amendment rule
 

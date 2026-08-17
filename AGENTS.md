@@ -30,6 +30,8 @@ Generated ContextDumps, reports, snapshots, caches, backups, historical copies, 
 
 Use lightweight Task/Spec for small routine work. Substantial, risky, architectural, or multi-session work resolves its approved record under `DOCUMENTS/CHANGE_REQUESTS/` as defined by `CONTRACT-CHANGE-REQUEST-001`. Material scope or contract changes require an approved amendment before implementation continues. Applicable BLOCKING LegacyWarnings must not be bypassed.
 
+Use `tools.project_sync.governance.codex_workflow` as the narrow pre-implementation gate. Lightweight work uses `lightweight --path PATH` (or `--symbol`) and direct scoped recovery. Durable work uses `durable CHANGE_REQUEST`; add `--context PATH` to validate an existing dump, or request generation only for multi-session, context-heavy, recovery-package, or explicitly requested context. `PASS` and `ADVISORY` may continue; `STALE`, `FAIL`, and `BLOCKING` must stop. Missing ContextDump permits direct recovery but never bypasses scoped LegacyWarnings. ContextDump remains derived and non-authoritative.
+
 ## Change safety
 
 Before editing, inspect actual targets and `git status --short`. Treat unrelated pre-existing changes and untracked files as user-owned. Never overwrite, reformat, stage, clean, restore, reset, delete, move, discard, commit, or push user work unless explicitly authorized. Keep changes minimal, scoped, reversible, and contract-compatible.

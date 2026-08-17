@@ -2,7 +2,7 @@
 
 Version:
 
-4.12
+4.13
 
 Date:
 
@@ -861,11 +861,11 @@ Documentation and AI Context Workflow Modernization
 
 Lifecycle state:
 
-SPEC_APPROVED / PHASE_5_PRE_IMPLEMENTATION_CHECKPOINT
+SPEC_APPROVED / PHASE_5_COMPLETED
 
 Implementation status:
 
-PHASE_5_NOT_STARTED
+PHASE_5_IMPLEMENTED_VERIFIED
 
 Objective:
 
@@ -897,7 +897,7 @@ Migration phases:
 2. ChangeRequest and LegacyWarning schema/storage/validation — IMPLEMENTED_VERIFIED.
 3. Minimal ContextDump generator targeting ignored `runtime/context/` — IMPLEMENTED_VERIFIED.
 4. Staleness and scoped LegacyWarning enforcement — IMPLEMENTED_VERIFIED.
-5. Codex workflow integration.
+5. Codex workflow integration — IMPLEMENTED_VERIFIED.
 6. Measured context-cost reduction and safe documentation deduplication.
 
 Acceptance criteria:
@@ -924,10 +924,10 @@ PHASE_5_CODEX_WORKFLOW_INTEGRATION
 
 Phase 5 authorization state:
 
-HUMAN_AUTHORIZED / PRE_IMPLEMENTATION_CHECKPOINT
+COMPLETED / IMPLEMENTED_VERIFIED
 
-Phase 5 bounded scope and acceptance are owned by ChangeRequest revision 1.5.
-Implementation has not started. Phase 6 remains separately unauthorized.
+Phase 5 implementation evidence is owned by ChangeRequest revision 1.6.
+Phase 6 remains separately unauthorized and has not started.
 
 ---
 
@@ -982,15 +982,21 @@ RULE-008:
 
 from:
 
-ROADMAP v4.11
+ROADMAP v4.12
 
 to:
 
-ROADMAP v4.12
+ROADMAP v4.13
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 5 authorization (v4.11 to v4.12):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 5 implementation (v4.12 to v4.13):
+
+* recorded Codex workflow integration as IMPLEMENTED_VERIFIED;
+* recorded focused orchestration and governance verification;
+* preserved Phase 6 as separately unauthorized.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 5 authorization (v4.11 to v4.12):
 
 * recorded Phase 5 as human-authorized at PRE_IMPLEMENTATION_CHECKPOINT;
 * routed bounded scope and acceptance to ChangeRequest revision 1.5 without duplication;
