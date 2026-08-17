@@ -2,11 +2,11 @@
 
 Version:
 
-4.3
+4.5
 
 Date:
 
-2026-08-01
+2026-08-17
 
 Document Type:
 
@@ -141,37 +141,25 @@ Knowledge System
 
 current_focus:
 
-Pipeline Architecture Consolidation
+Scanner Geometry / Targeted Runtime Reliability
 
 current_state:
 
-Project Sync Framework способен:
+Performance Architecture Audit completed.
 
-* анализировать структуру проекта;
-* создавать Registry модели;
-* выполнять Architecture Validation;
-* выполнять Document Validation;
-* выполнять Dependency Analysis;
-* выполнять Impact Analysis;
-* выполнять Change Detection;
-* выполнять Health Monitoring;
-* выполнять State Analysis;
-* создавать Synchronization Plans;
-* управлять Migration Workflow;
-* контролировать Approval State;
-* выполнять Pipeline Workflow;
-* выполнять Migration Execution;
-* выполнять Document Update операции.
+Architecture verdict:
+
+HEALTHY_WITH_TARGETED_BOTTLENECKS
 
 current_transition:
 
 От:
 
-Pipeline Stabilization
+Structural audit findings
 
 К:
 
-Unified Pipeline Architecture
+Measured, minimal and regression-tested improvements
 
 ---
 
@@ -550,69 +538,37 @@ Automation Layer
 
 priority_order:
 
-0.
-
-Pipeline Architecture Consolidation
-
 1.
 
-Pipeline Executor Integration
+Restore explicit Signal admission
 
 2.
 
-Registry Single Source Of Truth
+Gate chart/report side effects and isolate failures
 
 3.
 
-Documentation Automation Stability
+Correct Telegram delivery-state semantics
 
 4.
 
-Project Sync Intelligence
+Instrument Geometry performance before optimization
 
 5.
 
-Architecture Rule Engine Expansion
+Harden signal-history persistence
 
 6.
 
-State Intelligence Expansion
+Harden startup market-data failure handling
 
 7.
 
-Geometry Accuracy
+Evaluate bounded market-data concurrency
 
 8.
 
-Human Annotation
-
-9.
-
-Dataset Creation
-
-10.
-
-Geometry Calibration
-
-11.
-
-Validation Calibration
-
-12.
-
-Pattern Detection
-
-13.
-
-Confirmation Engine
-
-14.
-
-Signal Layer
-
-15.
-
-Trading Automation
+Decouple notification latency if measurements justify it
 
 ---
 
@@ -620,25 +576,266 @@ Trading Automation
 
 Текущий приоритет:
 
-Pipeline Architecture Consolidation
+SCANNER_GEOMETRY
 
 активные задачи:
 
-* устранение дублирования Runner/Pipeline;
-* перевод Runner на PipelineExecutor;
-* Registry как Single Source Of Truth;
-* завершение PipelineContext Integration;
-* завершение PipelineResult Contract;
-* унификация Stage Contract;
-* стандартизация Pipeline Report.
+* сохранить качество Geometry/Wedge;
+* восстановить явный Signal admission;
+* устранить доказанные runtime bottlenecks
+  минимальными целевыми изменениями;
+* измерить Geometry до её оптимизации.
 
 следующий этап:
 
-Unified Pipeline Engine
+Signal admission contract verification
 
 долгосрочная цель:
 
-Self Maintained Project System
+Acceptable Scanner Operation
+
+---
+
+# TARGETED_PERFORMANCE_IMPLEMENTATION_PLAN
+
+Status:
+
+APPROVED / NOT_STARTED
+
+Source:
+
+Performance Architecture Audit 2026-08-17
+
+Audit conclusion:
+
+* CRITICAL findings: NONE;
+* unbounded in-process scanner memory leak: NOT_DEMONSTRATED;
+* architecture: HEALTHY_WITH_TARGETED_BOTTLENECKS;
+* major redesign: NOT_REQUIRED;
+* full scanner asyncio conversion: NOT_JUSTIFIED.
+
+## PRIORITY_1_SIGNAL_ADMISSION
+
+Status:
+
+APPROVED_NOT_IMPLEMENTED
+
+Objective:
+
+Восстановить одно явное production-решение
+о допуске Signal.
+
+Contract authority:
+
+DOCUMENTS/PROJECT_CONTRACTS.md / CONTRACT-SIGNAL-001
+
+Current mismatch authority:
+
+DOCUMENTS/PROJECT_STATE.md / PERFORMANCE_ARCHITECTURE_AUDIT_STATE
+
+Approved implementation scope:
+
+* `signal/filter.py`;
+* `analyzer/core.py`;
+* `main.py`;
+* focused isolated Signal admission regression tests.
+
+Scope rule:
+
+NO_EXPANSION_WITHOUT_NEW_EVIDENCE
+
+Acceptance / regression requirements:
+
+* canonical `Elite Setup` admission;
+* legacy-compatible `A+ Setup` admission;
+* A / B / Watch / Invalid boundaries under the current Signal contract;
+* `score == MIN_SCORE` boundary;
+* `score < MIN_SCORE` rejection;
+* Hunter mode;
+* Sniper mode;
+* confirmation boundary;
+* approved signal reaches normal persistence and notification;
+* rejected signal is suppressed from normal persistence;
+* rejected signal is suppressed from normal Telegram;
+* diagnostic mode, when used, does not change `approved` and does not persist a rejected signal;
+* existing Signal/event tests do not regress.
+
+Follow-up verification:
+
+* do not automatically delete or migrate historical unapproved persistence;
+* after admission restoration, verify its effect on `NEW` / `STRENGTHENING`.
+
+## PRIORITY_2_CHART_REPORT_SIDE_EFFECTS
+
+Objective:
+
+Не создавать production chart/report
+для результатов, которые будут отброшены.
+
+Planned result:
+
+* diagnostic output только по явной configuration;
+* chart/report failures изолированы
+  от успешного analytical result;
+* Matplotlib figures закрываются
+  также на exception paths;
+* Geometry/Wedge detection behavior не меняется.
+
+## PRIORITY_3_TELEGRAM_DELIVERY_STATE
+
+Objective:
+
+Исправить notification delivery semantics.
+
+Planned result:
+
+* analytical/history state отделён
+  от notification delivery state;
+* HTTP и Telegram success проверяются явно;
+* delivered state устанавливается
+  только после успешной доставки;
+* failed/pending delivery сохраняется
+  для безопасного retry;
+* duplicate notifications предотвращаются.
+
+Classification:
+
+RELIABILITY_CORRECTION / NOT_ASYNC_REFACTOR
+
+## PRIORITY_4_GEOMETRY_INSTRUMENTATION
+
+Rule:
+
+DO_NOT_OPTIMIZE_GEOMETRY_BLINDLY
+
+Required measurements:
+
+* raw upper candidate count;
+* raw lower candidate count;
+* filtered upper candidate count;
+* filtered lower candidate count;
+* candidate pair count;
+* rejection counts by important gate;
+* expensive envelope/candle evaluation count;
+* candidate generation elapsed time;
+* pair evaluation elapsed time;
+* Geometry elapsed time per symbol.
+
+Optimization gate:
+
+Только после измерений разрешается
+оценивать cheap pair preconditions,
+early gates и row-access optimization.
+
+Protected boundaries:
+
+* Geometry detection quality;
+* GeometryModel;
+* Geometry → Wedge contract.
+
+## PRIORITY_5_SIGNAL_HISTORY_PERSISTENCE
+
+Planned result:
+
+* сокращены лишние full reload/rewrite cycles,
+  где это практически оправдано;
+* persistence crash-safe и atomic;
+* known-corrupt history не заменяется
+  молча пустым history;
+* текущая signal-history semantics сохраняется,
+  если отдельно не утверждено иное.
+
+## PRIORITY_6_STARTUP_MARKET_DATA_FAILURES
+
+Planned result:
+
+* symbol-discovery failure отделён
+  от legitimate empty result;
+* transient startup failure не выдаётся
+  как успешный zero-symbol scan;
+* retry/backoff ограничен и контролируем.
+
+## PRIORITY_7_BOUNDED_MARKET_DATA_CONCURRENCY
+
+Status:
+
+DEFERRED_UNTIL_MEASURED
+
+Evaluation scope:
+
+* candle fetching only;
+* conservative worker limit;
+* Bybit rate-limit and retry compliance;
+* deterministic per-symbol analysis
+  сохраняется там, где это полезно;
+* сначала оценивается small thread pool
+  или narrowly asynchronous HTTP layer.
+
+Forbidden:
+
+END_TO_END_ASYNCIO_CONVERSION
+
+## PRIORITY_8_NOTIFICATION_LATENCY
+
+Status:
+
+DEFERRED_UNTIL_DELIVERY_CORRECTNESS_AND_MEASUREMENT
+
+Evaluation scope:
+
+* small bounded notification worker/queue;
+* limited concurrency;
+* explicit backpressure;
+* Telegram rate-limit handling.
+
+Forbidden:
+
+UNBOUNDED_FIRE_AND_FORGET_TASKS
+
+# PERFORMANCE_NON_GOALS
+
+Не входят в утверждённый performance refactor:
+
+* GeometryModel rewrite;
+* Geometry → Wedge contract rewrite;
+* pivot detection architecture rewrite;
+* Wedge classification/scoring architecture rewrite;
+* confirmation architecture rewrite;
+* pandas candle representation replacement
+  для текущих bounded 200-row frames;
+* complete scanner asyncio conversion;
+* Project Sync / migration architecture changes;
+* объединение charting, Telegram,
+  Signal и Geometry в одну subsystem;
+* broad parallelization всего
+  `analyze_symbol()` при наличии
+  Matplotlib и shared persistence.
+
+# PERFORMANCE_DEFERRED_OPTIONAL
+
+Deferred findings:
+
+* explicit requests.Session reuse for Telegram;
+* production Geometry debug-output reduction,
+  если profiling не покажет material impact;
+* review-queue retention policy.
+
+Review queue rule:
+
+Training/reference data сохраняются.
+Automatic deletion запрещено
+без отдельно утверждённой retention policy.
+
+# PERFORMANCE_IMPLEMENTATION_PRINCIPLES
+
+1. Correctness before throughput.
+2. Measure before optimizing Geometry.
+3. Minimal targeted fixes before architectural rewrites.
+4. Preserve working analytical contracts.
+5. Separate I/O concurrency from CPU-bound analysis.
+6. Regression-test scanner behavior and Geometry quality.
+7. Do not change pattern-detection thresholds for speed.
+8. Do not sacrifice candidate quality or known valid Geometry examples without explicit evidence and approval.
 
 ---
 
@@ -693,20 +890,32 @@ RULE-008:
 
 from:
 
-ROADMAP v4.2
+ROADMAP v4.4
 
 to:
 
-ROADMAP v4.3
+ROADMAP v4.5
 
 reason:
 
-* отражён переход к Pipeline Architecture Consolidation;
-* Pipeline Registry закреплён как Single Source Of Truth;
-* выделена задача устранения дублирования Runner и ProjectSyncPipeline;
-* добавлен этап интеграции PipelineExecutor;
-* добавлена стандартизация Pipeline Report;
-* актуализированы архитектурные правила Pipeline Engine.
+Current checkpoint — Signal Admission Recovery (v4.4 to v4.5):
+
+* approved Signal admission contract and confirmed mismatches recorded;
+* Priority 1 status set to APPROVED_NOT_IMPLEMENTED;
+* minimal implementation scope, acceptance matrix and historical-state follow-up recorded;
+
+Previous checkpoint preserved — Performance Architecture Audit (v4.3 to v4.4):
+
+* зафиксирован утверждённый результат Performance Architecture Audit;
+* текущий Roadmap синхронизирован с приоритетом SCANNER_GEOMETRY;
+* утверждён порядок восьми targeted implementation priorities;
+* Signal admission поставлен перед throughput optimization;
+* chart/report и Telegram reliability выделены как отдельные целевые этапы;
+* Geometry instrumentation поставлена перед Geometry optimization;
+* bounded market-data concurrency и notification worker отложены до измерений;
+* запрещён end-to-end asyncio conversion;
+* зафиксированы performance non-goals, deferred findings и implementation principles;
+* сохранены действующие analytical contracts и Project Sync architecture.
 
 ---
 

@@ -2,11 +2,11 @@
 
 Version:
 
-7.8
+7.10
 
 Date:
 
-2026-08-08
+2026-08-17
 
 Document Type:
 
@@ -77,6 +77,10 @@ ACTIVE
 assistant_efficiency_state:
 
 ACTIVE
+
+performance_architecture_state:
+
+TARGETED_IMPROVEMENTS_PLANNED
 
 overall_state:
 
@@ -2346,6 +2350,134 @@ Development principle:
 
 ---
 
+# PERFORMANCE_ARCHITECTURE_AUDIT_STATE
+
+Status:
+
+COMPLETED
+
+Audit date:
+
+2026-08-17
+
+Scope:
+
+Current local production scanner runtime
+
+Critical findings:
+
+NONE
+
+Unbounded in-process scanner memory leak:
+
+NOT_DEMONSTRATED
+
+Overall architecture verdict:
+
+HEALTHY_WITH_TARGETED_BOTTLENECKS
+
+Major redesign required:
+
+false
+
+Full scanner asyncio conversion justified:
+
+false
+
+Architecture decision:
+
+Существующая аналитическая архитектура,
+границы ответственности и контракты
+должны быть сохранены.
+
+Изменения допускаются только как
+минимальные целевые исправления
+конкретных эксплуатационных проблем.
+
+Approved implementation order:
+
+1. Restore explicit Signal admission;
+2. Gate chart/report side effects and isolate failures;
+3. Correct Telegram delivery-state semantics;
+4. Instrument Geometry performance before optimization;
+5. Harden signal-history persistence;
+6. Harden startup market-data failure handling;
+7. Evaluate bounded market-data concurrency after measurement;
+8. Decouple notification latency only if measurements justify it.
+
+Current execution state:
+
+DOCUMENTATION_ONLY
+
+Implementation started:
+
+false
+
+Implementation authority:
+
+DOCUMENTS/ROADMAP.md
+
+Signal admission implementation status:
+
+APPROVED_NOT_IMPLEMENTED
+
+Signal admission implementation started:
+
+false
+
+Confirmed current mismatches:
+
+1. `signal["approved"]` is computed but ignored downstream;
+2. `MIN_SCORE` is displayed but is not enforced as an admission threshold;
+3. `config.MODE` is ignored because `analyze_symbol()` hardcodes `"hunter"`;
+4. Signal Quality emits canonical `"Elite Setup"`, while Signal Filter expects legacy `"A+ Setup"`.
+
+Signal admission contract authority:
+
+DOCUMENTS/PROJECT_CONTRACTS.md / CONTRACT-SIGNAL-001
+
+Historical unapproved persistence:
+
+FOLLOW_UP_VERIFICATION
+
+Decision:
+
+* do not delete or migrate existing records automatically;
+* after admission is restored, verify their effect on `NEW` / `STRENGTHENING` semantics.
+
+Known risk:
+
+Historical entries may affect `NEW` / `STRENGTHENING` classification after admission restoration.
+
+Approved minimal implementation scope:
+
+* `signal/filter.py`;
+* `analyzer/core.py`;
+* `main.py`;
+* focused isolated Signal admission regression tests.
+
+Scope expansion rule:
+
+NO_EXPANSION_WITHOUT_NEW_EVIDENCE
+
+Next action:
+
+Implement and validate the approved scope only after explicit user confirmation.
+
+Important:
+
+Текущий приоритет SCANNER_GEOMETRY
+сохраняется.
+
+Performance work не разрешает
+изменять Geometry thresholds,
+ухудшать качество кандидатов,
+переписывать GeometryModel,
+нарушать Geometry → Wedge contract
+или выполнять end-to-end async rewrite.
+
+---
+
 # TRADING_INTELLIGENCE_STATE
 
 Status:
@@ -4273,13 +4405,34 @@ Important:
 
 from:
 
-PROJECT_STATE v7.7
+PROJECT_STATE v7.9
 
 to:
 
-PROJECT_STATE v7.8
+PROJECT_STATE v7.10
 
 reason:
+
+Current checkpoint — Signal Admission Recovery (v7.9 to v7.10):
+
+* approved Signal admission contract recorded as a recovery checkpoint;
+* four current Signal admission mismatches recorded;
+* Signal implementation status set to APPROVED_NOT_IMPLEMENTED;
+* minimal implementation scope and historical persistence follow-up recorded;
+
+Previous checkpoint preserved — Performance Architecture Audit (v7.8 to v7.9):
+
+* зафиксирован результат Performance Architecture Audit;
+* подтверждено отсутствие CRITICAL findings;
+* не выявлен доказанный unbounded in-process scanner memory leak;
+* архитектура классифицирована как HEALTHY_WITH_TARGETED_BOTTLENECKS;
+* подтверждено отсутствие оснований для major redesign;
+* отклонён полный перевод scanner runtime на asyncio;
+* утверждён порядок восьми целевых implementation priorities;
+* Geometry instrumentation поставлена перед Geometry optimization;
+* сохранены GeometryModel, Geometry → Wedge contract и действующие аналитические границы;
+* сохранён текущий приоритет SCANNER_GEOMETRY;
+* implementation state зафиксирован как DOCUMENTATION_ONLY;
 
 * дата Project State сохранена
   на текущей контрольной точке 2026-08-08;
@@ -4381,7 +4534,7 @@ reason:
   состоянию;
 * сохранено правило минимизации
   Context Recovery Overhead;
-* учтён актуальный Assistant Protocol v3.8.
+* учтён актуальный Assistant Protocol v4.1.
 
 ---
 

@@ -2,11 +2,11 @@
 
 Version:
 
-3.3
+3.4
 
 Date:
 
-2026-08-02
+2026-08-17
 
 Document Type:
 
@@ -361,7 +361,7 @@ SIGNAL_CONTRACT
 
 status:
 
-PLANNED
+ACTIVE
 
 name:
 
@@ -370,6 +370,60 @@ Signal Object Contract
 owner_layer:
 
 Signal Layer
+
+admission_owner:
+
+Signal Layer
+
+admission_result:
+
+`approved`
+
+approved_semantics:
+
+`approved = true` means the signal passed the complete Signal Layer admission policy.
+`approved = false` means it is rejected from normal downstream persistence and notification.
+
+downstream_rule:
+
+`main.py` MUST use final `approved` as the single normal persistence and notification gate.
+`main.py` MUST NOT reproduce score, confirmation, quality or mode admission rules.
+
+minimum_score_rule:
+
+`MIN_SCORE` is an absolute lower admission threshold enforced inside Signal Layer.
+If `score < MIN_SCORE`, normal admission MUST be rejected.
+`score == MIN_SCORE` remains eligible for evaluation by the selected mode rules.
+
+mode_rule:
+
+* the selected mode comes from `config.MODE`;
+* Hunter does not require `confirmed` universally; its quality and confirmation rules remain owned by Signal Layer;
+* Sniper is stricter; its existing intended confirmation semantics MUST be preserved when confirmed by current code and documentation;
+* mode policy MUST NOT be duplicated in `main.py`.
+
+quality_label_rule:
+
+* `"Elite Setup"` is the canonical current label;
+* `"A+ Setup"` may be accepted only as a legacy-compatible alias;
+* new results MUST NOT introduce a parallel canonical label.
+
+diagnostic_rule:
+
+* diagnostic / `TELEGRAM_TEST_MODE` may display rejected signals explicitly as rejected;
+* diagnostic display MUST NOT change `approved`;
+* diagnostic bypass is not normal admission;
+* rejected signals MUST NOT enter normal signal persistence/history;
+* rejected signals MUST NOT enter normal Telegram delivery.
+
+historical_state_rule:
+
+Existing historically persisted unapproved records MUST NOT be deleted or migrated automatically.
+Their effect on `NEW` / `STRENGTHENING` MUST be verified after admission restoration.
+
+implementation_status:
+
+APPROVED_NOT_IMPLEMENTED
 
 purpose:
 
@@ -2324,13 +2378,21 @@ Migration Lifecycle.
 
 from:
 
-PROJECT_CONTRACTS v3.2
+PROJECT_CONTRACTS v3.3
 
 to:
 
-PROJECT_CONTRACTS v3.3
+PROJECT_CONTRACTS v3.4
 
 reason:
+
+Current checkpoint — Signal Admission Recovery (v3.3 to v3.4):
+
+* activated and defined CONTRACT-SIGNAL-001 admission ownership and downstream gate;
+* established `MIN_SCORE`, mode, canonical quality-label, diagnostic and persistence rules;
+* recorded implementation status as APPROVED_NOT_IMPLEMENTED;
+
+Previous version reason preserved — PROJECT_CONTRACTS v3.3:
 
 * синхронизирован Project Sync Pipeline Contract с актуальным canonical 12-stage Pipeline;
 * исправлена карта Project Sync Pipeline Contract Map;
