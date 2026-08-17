@@ -2,7 +2,7 @@
 
 Version:
 
-5.6
+5.7
 
 Date:
 
@@ -1101,22 +1101,22 @@ PROJECT_RULES
 
 ---
 
-## 20.10 GitHub First File Access
+## 20.10 Current Local Checkout Authority
 
-GitHub является предпочтительным источником
-чтения файлов, уже зафиксированных в репозитории.
+Текущая local filesystem определяет,
+какие файлы и данные фактически существуют сейчас.
+Local Git state определяет связь branch, HEAD, index и working tree.
+Нормативный смысл определяет owning authoritative document.
 
-Если актуальный файл доступен через GitHub,
-ассистент не должен просить пользователя:
+GitHub используется для synchronization, collaboration,
+review, pull requests и remote history,
+но не переопределяет более новое local state.
+Remote changes становятся local working truth
+только после явной синхронизации.
 
-* открывать его через `notepad`;
-* копировать его содержимое в чат;
-* повторно передавать неизменённый файл.
-
-`notepad` используется только для локальных файлов,
-которые отсутствуют в GitHub,
-имеют незапушенные изменения
-или требуют визуальной проверки пользователем.
+Расхождение implementation и normative contract
+фиксируется как mismatch и разрешается через Task/Spec;
+dirty code не переопределяет contract автоматически.
 
 ---
 ## 20.11 Context Efficiency
@@ -1135,13 +1135,23 @@ GitHub является предпочтительным источником
 при реальном риске его нехватки
 или по прямому запросу пользователя.
 
-## 20.12 GitHub First / Minimal Artifact Transfer
+Routine recovery начинается с root `AGENTS.md`,
+local Git state и active Task/ChangeRequest.
+Затем читаются только task-relevant owning sections.
 
-При наличии актуального GitHub repository:
+Полный review PROJECT_STATE, PROJECT_TREE,
+PROJECT_RULES, ARCHITECTURE и ASSISTANT_PROTOCOL
+выполняется только при неизвестном scope,
+authority conflict, severe interruption
+или architecture-wide задаче.
 
-1. сначала используется GitHub;
+## 20.12 Remote Collaboration / Minimal Artifact Transfer
+
+При использовании GitHub:
+
+1. сначала проверяется current local checkout и Git state;
 2. читаются только необходимые файлы или участки;
-3. локальное содержимое запрашивается только при расхождении с GitHub;
+3. remote state не считается локально применённым до явной синхронизации;
 4. небольшие изменения выполняются минимальным способом;
 5. полный файл передаётся только при необходимости;
 6. после проверенных изменений используется Git commit как checkpoint.
@@ -1565,13 +1575,22 @@ DOCUMENTS/SNAPSHOT.md
 
 from:
 
-PROJECT_RULES v5.2
+PROJECT_RULES v5.6
 
 to:
 
-PROJECT_RULES v5.3
+PROJECT_RULES v5.7
 
 reason:
+
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 1:
+
+* established current-local checkout authority and deterministic Git/GitHub boundaries;
+* replaced GitHub First with remote collaboration semantics;
+* established staged/task-scoped routine recovery with deep recovery retained;
+* registered root `AGENTS.md` as the routine recovery entry by reference.
+
+Previous version reason preserved — PROJECT_RULES v5.3:
 
 * добавлено обязательное правило
   Context Window Monitoring;

@@ -100,17 +100,17 @@ parser_version:
 длинным описанием будущих действий.
 
 ---
-# 4. GITHUB_FIRST_FILE_ACCESS
+# 4. CURRENT_LOCAL_FILE_ACCESS
 
-Если файл зафиксирован в актуальном GitHub repository,
-ассистент должен получить его непосредственно из GitHub.
+Ассистент начинает с current local checkout
+и проверяет local Git state.
 
-Запрашивать файл у пользователя допускается только если:
+GitHub используется для synchronization,
+collaboration, review и remote history,
+но не переопределяет более новое local state.
 
-* файл отсутствует в GitHub;
-* существуют незапушенные локальные изменения;
-* требуется локальная runtime-конфигурация;
-* GitHub-версия не соответствует текущему рабочему состоянию.
+Remote content становится local working truth
+только после явной синхронизации.
 
 Команда `notepad` используется только когда
 пользователю действительно необходимо открыть
@@ -697,7 +697,7 @@ notepad путь\к\файлу
 
 Ассистент должен:
 
-* использовать GitHub First;
+* начинать с current local checkout и Git state;
 * минимизировать повторную передачу файлов;
 * выбирать минимально достаточный способ изменения;
 * объединять безопасные однотипные действия;
@@ -752,52 +752,24 @@ Architecture Hygiene subsystem.
 
 ---
 
-# 28. CONTEXT_RECOVERY_PROTOCOL
+# 28. STAGED_CONTEXT_RECOVERY_PROTOCOL
 
-При восстановлении рабочего контекста
-используется единый canonical recovery set:
-
-1. PROJECT_STATE.md;
-2. PROJECT_TREE.md;
-3. ASSISTANT_PROTOCOL.md;
-4. PROJECT_RULES.md;
-5. ARCHITECTURE.md.
-
-Primary entry document:
+Primary entry:
 
 ```text
-DOCUMENTS/PROJECT_STATE.md
+AGENTS.md
 ```
 
-Recovery protocol:
+Ассистент должен:
 
-```text
-EXECUTE_ONCE_UNTIL_CONTEXT_LOSS
-```
+1. проверить local branch, HEAD, index/working tree и current task;
+2. получить active mission pointer из PROJECT_STATE или применимый Task/ChangeRequest;
+3. прочитать только owning sections, необходимые для task scope;
+4. расширить review до PROJECT_STATE, PROJECT_TREE, PROJECT_RULES, ARCHITECTURE и ASSISTANT_PROTOCOL только при неизвестном scope, authority conflict, severe interruption или architecture-wide работе.
 
-После восстановления контекста
-ассистент не должен повторно запрашивать
-уже полученные документы без необходимости.
-
-PROJECT_STATE является источником
-актуального состояния проекта.
-
-PROJECT_TREE является источником
-фактических физических путей.
-
-ASSISTANT_PROTOCOL является источником
-правил взаимодействия ассистента
-с проектом.
-
-PROJECT_RULES является источником
-рабочих правил проекта.
-
-ARCHITECTURE является источником
-архитектурной модели.
-
-При наличии более новых версий
-соответствующих документов
-используется актуальная версия.
+Routine scoped work не требует полного deep-recovery set.
+Authority/recovery rules принадлежат PROJECT_RULES.md;
+current mission state принадлежит PROJECT_STATE.md.
 
 ---
 

@@ -2,7 +2,7 @@
 
 Version:
 
-7.12
+7.13
 
 Date:
 
@@ -107,60 +107,47 @@ Purpose:
 
 Primary entry document:
 
-PROJECT_STATE.md
+AGENTS.md
 
-Canonical recovery document set:
+Recovery model:
 
-1. PROJECT_STATE.md
-2. PROJECT_TREE.md
-3. ASSISTANT_PROTOCOL.md
-4. PROJECT_RULES.md
-5. ARCHITECTURE.md
+STAGED_TASK_SCOPED
 
-Recovery set size:
+Deep recovery set:
 
-5
+* PROJECT_STATE.md;
+* PROJECT_TREE.md;
+* PROJECT_RULES.md;
+* ARCHITECTURE.md;
+* ASSISTANT_PROTOCOL.md.
+
+Routine mandatory set size:
+
+TASK_DEPENDENT
 
 ---
 
 ## CONTEXT_RECOVERY_RULE
 
-PROJECT_STATE.md является
-основной точкой восстановления контекста.
-
-Если пользователь передаёт только
-PROJECT_STATE.md после потери,
-обновления или недостаточности контекста,
-ассистент должен самостоятельно определить,
-что для полного восстановления рабочего
-контекста необходимо обратиться также
-к каноническому набору из пяти документов.
-
-Обязательный набор:
-
-* PROJECT_STATE.md;
-* PROJECT_TREE.md;
-* ASSISTANT_PROTOCOL.md;
-* PROJECT_RULES.md;
-* ARCHITECTURE.md.
+AGENTS.md является compact primary recovery entry.
+PROJECT_STATE.md предоставляет active mission,
+current phase, priority и next action.
+Routine scoped work читает только
+task-relevant owning sections.
+Полный deep recovery set не является
+обязательным routine startup context.
 
 ---
 
 ## CONTEXT_RECOVERY_EXECUTION
 
-При необходимости восстановления контекста
-ассистент должен:
+При восстановлении контекста ассистент должен:
 
-1. прочитать PROJECT_STATE.md;
-2. определить по PROJECT_STATE.md необходимость
-   выполнения Context Recovery Protocol;
-3. получить PROJECT_TREE.md;
-4. получить ASSISTANT_PROTOCOL.md;
-5. получить PROJECT_RULES.md;
-6. получить ARCHITECTURE.md;
-7. сверить полученную информацию;
-8. считать контекст восстановленным только
-   после проверки всех пяти документов.
+1. прочитать AGENTS.md и проверить local Git/filesystem state;
+2. определить current Task/ChangeRequest и dirty scope;
+3. получить active mission pointer из PROJECT_STATE или applicable task record;
+4. прочитать только owning authority sections для current scope;
+5. использовать deep recovery set только при unknown scope, authority conflict, severe interruption или architecture-wide работе.
 
 ---
 
@@ -176,13 +163,13 @@ context_recovery_required:
 
 false
 
-canonical_context_set_loaded:
+recovery_scope:
 
-true
+TASK_SCOPED
 
-loaded_documents:
+deep_recovery_loaded:
 
-5
+ONLY_IF_REQUIRED
 
 После этого ассистент не должен
 требовать повторную передачу всех пяти
@@ -209,11 +196,9 @@ loaded_documents:
 
 ## CONTEXT_RECOVERY_MEMORY_RULE
 
-Если в текущем доступном контексте уже
-зафиксировано, что Context Recovery Protocol
-был выполнен и canonical recovery set
-был загружен, повторно требовать
-весь набор документов запрещается.
+Если task-scoped authority уже загружена
+и остаётся актуальной, повторно требовать
+её или полный deep recovery set запрещается.
 
 PROJECT_STATE.md не должен автоматически
 запускать повторный запрос пяти документов
@@ -228,18 +213,19 @@ PROJECT_STATE.md используется как
 
 ## CONTEXT_RECOVERY_PATH_RULE
 
-PROJECT_TREE.md является
-единственным источником истины
-для фактических путей файлов проекта.
+Current local filesystem определяет,
+какие пути фактически существуют сейчас.
+PROJECT_TREE.md остаётся authority
+для важных canonical/logical path roles.
 
 Ассистент не должен самостоятельно
 угадывать, реконструировать или
 придумывать пути к документам,
 программным модулям или другим файлам.
 
-При необходимости открытия файла
-сначала должен быть использован
-актуальный PROJECT_TREE.md.
+При открытии файла путь проверяется
+в current filesystem; canonical role
+сверяется с PROJECT_TREE.md.
 
 Если путь отсутствует в доступном
 PROJECT_TREE.md или не может быть
@@ -607,23 +593,35 @@ Context Recovery,
 
 # CONTEXT_RECOVERY_PROTOCOL_RESULT
 
-Successful recovery state:
+Recovery state:
 
-COMPLETED
+STAGED_OPERATIONAL
 
-Required documents:
+Routine entry:
 
-5
+AGENTS.md
 
-Canonical documents:
+Task authority:
+
+PROJECT_STATE active mission pointer or applicable Task/ChangeRequest
+
+Scoped authority:
+
+TASK_RELEVANT_OWNING_SECTIONS
+
+Deep recovery documents:
 
 * PROJECT_STATE.md;
 * PROJECT_TREE.md;
-* ASSISTANT_PROTOCOL.md;
 * PROJECT_RULES.md;
-* ARCHITECTURE.md.
+* ARCHITECTURE.md;
+* ASSISTANT_PROTOCOL.md.
 
-Path authority:
+Physical path existence:
+
+CURRENT_LOCAL_FILESYSTEM
+
+Canonical/logical path-role authority:
 
 PROJECT_TREE.md
 
@@ -645,7 +643,7 @@ PROJECT_STATE.md
 
 Recovery policy:
 
-EXECUTE_ONCE_UNTIL_CONTEXT_LOSS
+STAGED_TASK_SCOPED_WITH_DEEP_FALLBACK
 
 Context integrity:
 
@@ -872,11 +870,11 @@ SPEC_APPROVED
 
 Checkpoint:
 
-PRE_IMPLEMENTATION_CHECKPOINT
+PHASE_1_COMPLETED
 
 Implementation status:
 
-NOT_STARTED
+PHASE_1_IMPLEMENTED_VERIFIED
 
 Owning references:
 
@@ -886,15 +884,15 @@ Owning references:
 
 Current authorization:
 
-Phase 0 documentation recovery checkpoint only.
+Phase 1 canonical agent entry and authority reconciliation only.
 
-Next authorized action after checkpoint approval:
+Next phase:
 
-PHASE_1_CANONICAL_AGENT_ENTRY_AND_AUTHORITY_RECONCILIATION
+PHASE_2_CHANGE_REQUEST_AND_LEGACY_WARNING_SCHEMA_STORAGE_VALIDATION
 
 Important:
 
-Phase 1 requires separate authorization. No modernization implementation has started.
+Phase 1 is complete. Phase 2 requires separate authorization and has not started.
 
 ---
 
@@ -4363,23 +4361,26 @@ DELETED
 
 # RELATED_DOCUMENTS
 
-## CONTEXT_RECOVERY_CANONICAL_SET
+## CONTEXT_RECOVERY_DEEP_SET
 
-Canonical recovery documents:
+Deep recovery documents:
 
 1. PROJECT_STATE.md
 2. PROJECT_TREE.md
-3. ASSISTANT_PROTOCOL.md
-4. PROJECT_RULES.md
-5. ARCHITECTURE.md
+3. PROJECT_RULES.md
+4. ARCHITECTURE.md
+5. ASSISTANT_PROTOCOL.md
 
 Recovery rule:
 
-PROJECT_STATE.md является
-точкой входа.
+AGENTS.md является routine entry point.
+PROJECT_STATE.md предоставляет active mission pointer.
 
-PROJECT_TREE.md является
-источником истины для путей.
+Current local filesystem подтверждает
+фактическое наличие путей.
+
+PROJECT_TREE.md определяет важные
+canonical/logical path roles.
 
 ASSISTANT_PROTOCOL.md определяет
 правила взаимодействия и выдачи артефактов.
@@ -4441,14 +4442,9 @@ Important:
 Перечень RELATED_DOCUMENTS выше
 не является Context Recovery Set.
 
-Для первоначального восстановления
-рабочего контекста используются только
-пять документов, определённых
-в CONTEXT_RECOVERY_PROTOCOL.
-
-Остальные документы могут быть
-запрошены только при необходимости
-конкретной задачи.
+Routine recovery использует staged/task-scoped model.
+Deep set загружается только при условиях,
+определённых CONTEXT_RECOVERY_PROTOCOL.
 
 ---
 
@@ -4456,15 +4452,22 @@ Important:
 
 from:
 
-PROJECT_STATE v7.11
+PROJECT_STATE v7.12
 
 to:
 
-PROJECT_STATE v7.12
+PROJECT_STATE v7.13
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 0 (v7.11 to v7.12):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 1 (v7.12 to v7.13):
+
+* established AGENTS.md as routine entry and staged/task-scoped recovery;
+* retained deep recovery for exceptional scope;
+* recorded PHASE_1_COMPLETED / PHASE_1_IMPLEMENTED_VERIFIED;
+* recorded Phase 2 as the next separately authorized phase.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 0 (v7.11 to v7.12):
 
 * recorded SPEC_APPROVED / PRE_IMPLEMENTATION_CHECKPOINT;
 * recorded implementation status NOT_STARTED and Phase 1 as the next separately authorized action;
