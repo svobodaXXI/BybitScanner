@@ -2,7 +2,7 @@
 
 Version:
 
-4.15
+4.16
 
 Date:
 
@@ -861,11 +861,11 @@ Documentation and AI Context Workflow Modernization
 
 Lifecycle state:
 
-SPEC_APPROVED / PHASE_6_COMPLETED
+MISSION_CLOSED / MISSION_CLOSE_COMPLETED
 
 Implementation status:
 
-PHASE_6_IMPLEMENTED_VERIFIED
+IMPLEMENTED_VERIFIED / CLOSED
 
 Objective:
 
@@ -920,13 +920,13 @@ Phase 0 is documentation-only and does not authorize later implementation.
 
 Current next phase:
 
-MISSION_CLOSE_REVIEW
+NONE
 
-Mission-close authorization state:
+Post-mission routing:
 
-NOT_AUTHORIZED
+SCANNER_GEOMETRY_TASK_SELECTION — NOT_STARTED / NOT_AUTHORIZED
 
-Phase 6 measurements, classification and verification are owned by ChangeRequest revision 1.8.
+Phase 0 through Phase 6 and mission close are complete. Final outcome is owned by ChangeRequest revision 1.9.
 Detailed implementation history is owned by Git.
 
 ---
@@ -982,20 +982,20 @@ RULE-008:
 
 from:
 
-ROADMAP v4.14
+ROADMAP v4.15
 
 to:
 
-ROADMAP v4.15
+ROADMAP v4.16
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 6 implementation (v4.14 to v4.15):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 mission close (v4.15 to v4.16):
 
-* recorded measured context reduction as IMPLEMENTED_VERIFIED;
-* routed evidence and current recovery state to ChangeRequest revision 1.8;
-* removed completed Phase 0–5 checkpoint narration now owned by Git;
-* retained mission close as a separately unauthorized action.
+* recorded MISSION_CLOSE_COMPLETED and the durable ChangeRequest as CLOSED;
+* retained Phase 0–6 as implemented and verified;
+* recorded the final 35.80 percent recovery-footprint reduction;
+* returned planning to `SCANNER_GEOMETRY` task selection without starting or authorizing new implementation.
 
 Previous checkpoint preserved — Signal Admission Implementation (v4.5 to v4.6):
 

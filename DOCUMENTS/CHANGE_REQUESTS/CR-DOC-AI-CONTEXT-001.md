@@ -6,8 +6,8 @@
   "schema_version": "1.0",
   "id": "CR-DOC-AI-CONTEXT-001",
   "title": "Documentation and AI Context Workflow Modernization",
-  "status": "IN_PROGRESS",
-  "revision": "1.8",
+  "status": "CLOSED",
+  "revision": "1.9",
   "lifecycle_stage": "RECORD",
   "objective": "Implement a compact TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD workflow with durable task recovery and explicit legacy-risk handling.",
   "non_goals": [
@@ -92,6 +92,15 @@
     "Completed phase details and superseded version narratives are Git-owned history",
     "PROJECT_STATE and ROADMAP retain only current operational/planning summaries"
   ],
+  "mission_outcome": [
+    "TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD workflow established",
+    "Durable ChangeRequest governance established",
+    "Task-scoped ContextDump generation and freshness validation established",
+    "LegacyWarning enforcement established",
+    "Codex governance workflow integration established",
+    "Measured context-budget reduction completed; AGENTS plus ChangeRequest reduced 35.80 percent from the approved baseline",
+    "Production scanner behavior remained outside mission scope"
+  ],
   "approved_decisions": [
     "Current local checkout represents current working reality",
     "Git owns detailed implementation history",
@@ -134,26 +143,30 @@
     {"id": "PHASE_4", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_5", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_6", "status": "IMPLEMENTED_VERIFIED"},
-    {"id": "MISSION_CLOSE", "status": "NOT_STARTED"}
+    {"id": "MISSION_CLOSE", "status": "COMPLETED"},
+    {"id": "NO_NEXT_PHASE", "status": "NOT_APPLICABLE"}
   ],
-  "current_phase": "PHASE_6",
-  "current_checkpoint": "PHASE_6_COMPLETED",
+  "current_phase": "MISSION_CLOSE",
+  "current_checkpoint": "MISSION_CLOSE_COMPLETED",
   "implementation_status": "PHASE_6_IMPLEMENTED_VERIFIED",
-  "next_phase": "MISSION_CLOSE",
-  "next_phase_authorization": "NOT_AUTHORIZED",
+  "next_phase": "NO_NEXT_PHASE",
+  "next_phase_authorization": "NOT_APPLICABLE",
   "related_commits": [
     {"phase": "PHASE_0", "commit": "24005986bc127f3d7da2bad19f528063280a0b6a"},
     {"phase": "PHASE_1", "commit": "2f503db280572cf5733ab130017ff0b6bba97644"},
     {"phase": "PHASE_2", "commit": "5bb91e0a946101db26ddeb8002d179bfd2b70c78"},
     {"phase": "PHASE_3", "commit": "476cdd5ccaea927dc2b29c1f01ff6022cbf9bc97"},
     {"phase": "PHASE_4_CHECKPOINT", "commit": "a51a25e"},
+    {"phase": "PHASE_4", "commit": "aa7ff09"},
     {"phase": "PHASE_5", "commit": "2283b97"},
-    {"phase": "PHASE_6_CHECKPOINT", "commit": "dd3bcf7d23a0ba49c5cb0c64170927404b734122"}
+    {"phase": "PHASE_6_CHECKPOINT", "commit": "dd3bcf7d23a0ba49c5cb0c64170927404b734122"},
+    {"phase": "PHASE_6", "commit": "5c2def64f1848f65dc52d61f901085a05e4d9b79"}
   ],
   "amendment_history": [
     {"revision": "1.6", "reason": "Phase 5 implemented and verified", "date": "2026-08-18"},
     {"revision": "1.7", "reason": "Phase 6 human-authorized bounded specification", "date": "2026-08-18"},
-    {"revision": "1.8", "reason": "Phase 6 measured context reduction implemented and verified", "date": "2026-08-18"}
+    {"revision": "1.8", "reason": "Phase 6 measured context reduction implemented and verified", "date": "2026-08-18"},
+    {"revision": "1.9", "reason": "Human-authorized mission close after Phase 0-6 implementation and verification", "date": "2026-08-18"}
   ]
 }
 ```
@@ -161,10 +174,10 @@
 
 ## Recovery summary
 
-Phase 0 through Phase 6 are implemented and verified. Detailed implementation deltas remain in Git.
+Phase 0 through Phase 6 are implemented and verified; `MISSION_CLOSE` is complete. Detailed implementation deltas remain in Git.
 The referenced contracts and `DECISION-007` own general semantics and rationale; this file owns task-specific authorization and recovery state.
 
-Next action: review and separately authorize `MISSION_CLOSE`. No later phase is authorized.
+No later phase exists. Project work returns to authoritative `SCANNER_GEOMETRY` priority routing; no next implementation task is selected or authorized by this closure.
 
 ## Amendment rule
 

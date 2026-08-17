@@ -2,7 +2,7 @@
 
 Version:
 
-7.21
+7.22
 
 Date:
 
@@ -862,15 +862,19 @@ Development principle:
 
 Active mission:
 
+NONE
+
+Last completed mission:
+
 CR-DOC-AI-CONTEXT-001 — Documentation and AI Context Workflow Modernization
 
 Lifecycle state:
 
-SPEC_APPROVED
+MISSION_CLOSED
 
 Checkpoint:
 
-PHASE_6_COMPLETED
+MISSION_CLOSE_COMPLETED
 
 Implementation status:
 
@@ -885,15 +889,15 @@ Owning references:
 
 Current authorization:
 
-Phase 6 measured context reduction and safe documentation deduplication is implemented and verified in ChangeRequest revision 1.8.
+ChangeRequest revision 1.9 is CLOSED after verified completion of Phase 0 through Phase 6 and human-authorized mission close.
 
-Next phase:
+Next project action:
 
-MISSION_CLOSE_REVIEW
+SCANNER_GEOMETRY_TASK_SELECTION
 
 Important:
 
-Phase 0 through Phase 6 are complete and verified. Mission close requires separate authorization.
+The authoritative project priority remains `SCANNER_GEOMETRY`. No next implementation task is selected or authorized by this mission closure.
 
 ---
 
@@ -4453,20 +4457,20 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.20
+PROJECT_STATE v7.21
 
 to:
 
-PROJECT_STATE v7.21
+PROJECT_STATE v7.22
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 6 implementation (v7.20 to v7.21):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 mission close (v7.21 to v7.22):
 
-* recorded PHASE_6_COMPLETED / PHASE_6_IMPLEMENTED_VERIFIED;
-* routed measured results and recovery evidence to ChangeRequest revision 1.8;
-* removed superseded Phase 0–5 checkpoint narration now owned by Git;
-* recorded mission-close review as separately unauthorized.
+* recorded MISSION_CLOSE_COMPLETED and ChangeRequest revision 1.9 as CLOSED;
+* preserved Phase 0–6 implementation verification and the 35.80 percent recovery reduction;
+* cleared the AI modernization mission from active implementation work;
+* routed next task selection to the existing `SCANNER_GEOMETRY` project priority without authorizing new work.
 
 Previous checkpoint preserved — Signal Admission Implementation (v7.10 to v7.11):
 
