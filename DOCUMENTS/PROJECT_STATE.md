@@ -2,7 +2,7 @@
 
 Version:
 
-7.22
+7.24
 
 Date:
 
@@ -898,6 +898,34 @@ SCANNER_GEOMETRY_TASK_SELECTION
 Important:
 
 The authoritative project priority remains `SCANNER_GEOMETRY`. No next implementation task is selected or authorized by this mission closure.
+
+---
+
+# ACTIVE_TASK_STATE
+
+Task:
+
+CR-SCANNER-GEOMETRY-001 — Consolidate Directional Envelope Ownership in Wedge Layer
+
+Lifecycle:
+
+SPEC / PRE_IMPLEMENTATION_CHECKPOINT
+
+Implementation status:
+
+IMPLEMENTATION_NOT_STARTED
+
+Authorization:
+
+HUMAN_AUTHORIZED_NOT_STARTED
+
+Owning record:
+
+`DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.1
+
+Next action:
+
+Begin the bounded implementation under ChangeRequest revision 1.1.
 
 ---
 
@@ -4457,15 +4485,27 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.21
+PROJECT_STATE v7.23
 
 to:
 
-PROJECT_STATE v7.22
+PROJECT_STATE v7.24
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 mission close (v7.21 to v7.22):
+Current checkpoint — CR-SCANNER-GEOMETRY-001 implementation authorization (v7.23 to v7.24):
+
+* recorded ChangeRequest revision 1.1 as human-authorized for bounded implementation;
+* preserved implementation status as not started;
+* routed the next action to implementation under the approved scope.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 Task/Spec (v7.22 to v7.23):
+
+* selected directional envelope ownership as the next durable `SCANNER_GEOMETRY` task;
+* recorded the pre-implementation checkpoint and owning ChangeRequest revision 1.0;
+* recorded implementation as not started and not authorized pending explicit human approval.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 mission close (v7.21 to v7.22):
 
 * recorded MISSION_CLOSE_COMPLETED and ChangeRequest revision 1.9 as CLOSED;
 * preserved Phase 0–6 implementation verification and the 35.80 percent recovery reduction;

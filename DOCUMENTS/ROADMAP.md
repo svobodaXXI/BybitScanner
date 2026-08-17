@@ -2,7 +2,7 @@
 
 Version:
 
-4.16
+4.18
 
 Date:
 
@@ -931,6 +931,33 @@ Detailed implementation history is owned by Git.
 
 ---
 
+# CR-SCANNER-GEOMETRY-001
+
+Title:
+
+Consolidate Directional Envelope Ownership in Wedge Layer
+
+Status:
+
+SPEC / PRE_IMPLEMENTATION_CHECKPOINT / HUMAN_AUTHORIZED_NOT_STARTED
+
+Planned scope:
+
+* keep Geometry raw metrics and ranking direction-neutral;
+* remove premature opposite-side directional interpretation from `geometry/evaluation.py`;
+* apply STRICT/EXCURSION semantics in Wedge after operational pattern determination;
+* reuse existing envelope metrics and add focused directional regression coverage.
+
+Acceptance and risks:
+
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.1.
+
+Next action:
+
+Begin bounded implementation under revision 1.1. Implementation has not started.
+
+---
+
 # ROADMAP_UPDATE_RULES
 
 RULE-001:
@@ -982,15 +1009,26 @@ RULE-008:
 
 from:
 
-ROADMAP v4.15
+ROADMAP v4.17
 
 to:
 
-ROADMAP v4.16
+ROADMAP v4.18
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 mission close (v4.15 to v4.16):
+Current checkpoint — CR-SCANNER-GEOMETRY-001 implementation authorization (v4.17 to v4.18):
+
+* recorded revision 1.1 as human-authorized for bounded implementation;
+* preserved implementation as not started and retained the approved scope and acceptance criteria.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 Task/Spec (v4.16 to v4.17):
+
+* selected the next durable Scanner Geometry task and recorded its bounded scope;
+* routed acceptance criteria and risks to ChangeRequest revision 1.0;
+* retained implementation as not started and not authorized.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 mission close (v4.15 to v4.16):
 
 * recorded MISSION_CLOSE_COMPLETED and the durable ChangeRequest as CLOSED;
 * retained Phase 0–6 as implemented and verified;
