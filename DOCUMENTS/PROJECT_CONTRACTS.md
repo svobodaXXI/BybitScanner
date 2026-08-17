@@ -2,7 +2,7 @@
 
 Version:
 
-3.4
+3.5
 
 Date:
 
@@ -423,7 +423,17 @@ Their effect on `NEW` / `STRENGTHENING` MUST be verified after admission restora
 
 implementation_status:
 
-APPROVED_NOT_IMPLEMENTED
+IMPLEMENTED_VERIFIED
+
+implementation_conformance:
+
+CONFORMS_TO_CONTRACT
+
+verification_evidence:
+
+* focused Signal admission tests: 9 OK;
+* artifact-free compile: PASS;
+* scoped diff-check: PASS.
 
 purpose:
 
@@ -2378,15 +2388,21 @@ Migration Lifecycle.
 
 from:
 
-PROJECT_CONTRACTS v3.3
+PROJECT_CONTRACTS v3.4
 
 to:
 
-PROJECT_CONTRACTS v3.4
+PROJECT_CONTRACTS v3.5
 
 reason:
 
-Current checkpoint — Signal Admission Recovery (v3.3 to v3.4):
+Current checkpoint — Signal Admission Implementation (v3.4 to v3.5):
+
+* implementation status recorded as IMPLEMENTED_VERIFIED;
+* implementation conformance recorded without changing normative contract semantics;
+* focused verification evidence recorded.
+
+Previous checkpoint preserved — Signal Admission Recovery (v3.3 to v3.4):
 
 * activated and defined CONTRACT-SIGNAL-001 admission ownership and downstream gate;
 * established `MIN_SCORE`, mode, canonical quality-label, diagnostic and persistence rules;

@@ -2,7 +2,7 @@
 
 Version:
 
-7.10
+7.11
 
 Date:
 
@@ -2407,11 +2407,11 @@ Approved implementation order:
 
 Current execution state:
 
-DOCUMENTATION_ONLY
+SIGNAL_ADMISSION_IMPLEMENTED_VERIFIED
 
 Implementation started:
 
-false
+true
 
 Implementation authority:
 
@@ -2419,18 +2419,18 @@ DOCUMENTS/ROADMAP.md
 
 Signal admission implementation status:
 
-APPROVED_NOT_IMPLEMENTED
+IMPLEMENTED_VERIFIED
 
 Signal admission implementation started:
 
-false
+true
 
-Confirmed current mismatches:
+Resolved mismatches:
 
-1. `signal["approved"]` is computed but ignored downstream;
-2. `MIN_SCORE` is displayed but is not enforced as an admission threshold;
-3. `config.MODE` is ignored because `analyze_symbol()` hardcodes `"hunter"`;
-4. Signal Quality emits canonical `"Elite Setup"`, while Signal Filter expects legacy `"A+ Setup"`.
+1. RESOLVED — downstream now gates on `signal["approved"]`;
+2. RESOLVED — `MIN_SCORE` is enforced inside Signal Layer;
+3. RESOLVED — `config.MODE` is forwarded to Signal evaluation;
+4. RESOLVED — canonical `"Elite Setup"` and legacy-compatible `"A+ Setup"` are aligned.
 
 Signal admission contract authority:
 
@@ -2460,9 +2460,22 @@ Scope expansion rule:
 
 NO_EXPANSION_WITHOUT_NEW_EVIDENCE
 
+Focused verification:
+
+* `python -B -m unittest tests.test_signal_admission` — 9 tests OK;
+* artifact-free compile — PASS;
+* scoped `git diff --check` — PASS.
+
+Open non-blocking follow-ups:
+
+* verify historical unapproved persistence impact on `NEW` / `STRENGTHENING`;
+* replace unsafe script-style Signal/event tests with isolated tests;
+* improve rejected diagnostic visibility in Telegram formatter;
+* consider neutral Hunter approval reason wording.
+
 Next action:
 
-Implement and validate the approved scope only after explicit user confirmation.
+Create a scoped Signal implementation commit after explicit user confirmation.
 
 Important:
 
@@ -4405,20 +4418,25 @@ Important:
 
 from:
 
-PROJECT_STATE v7.9
+PROJECT_STATE v7.10
 
 to:
 
-PROJECT_STATE v7.10
+PROJECT_STATE v7.11
 
 reason:
 
-Current checkpoint — Signal Admission Recovery (v7.9 to v7.10):
+Current checkpoint — Signal Admission Implementation (v7.10 to v7.11):
+
+* Signal admission implementation recorded as IMPLEMENTED_VERIFIED;
+* four documented mismatches recorded as resolved;
+* focused verification recorded: 9 tests OK, compile PASS and diff-check PASS;
+* remaining follow-ups retained as non-blocking work.
+
+Previous checkpoint preserved — Signal Admission Recovery (v7.9 to v7.10):
 
 * approved Signal admission contract recorded as a recovery checkpoint;
-* four current Signal admission mismatches recorded;
-* Signal implementation status set to APPROVED_NOT_IMPLEMENTED;
-* minimal implementation scope and historical persistence follow-up recorded;
+* implementation scope, mismatches and follow-up risks recorded before implementation;
 
 Previous checkpoint preserved — Performance Architecture Audit (v7.8 to v7.9):
 

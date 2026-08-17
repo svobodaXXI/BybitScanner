@@ -31,7 +31,9 @@ from tradingview_bridge import create_signal_payload
 
 from config import (
     TIMEFRAME,
-    CANDLE_LIMIT
+    CANDLE_LIMIT,
+    MODE,
+    MIN_SCORE
 )
 
 from .candles import load_candles
@@ -171,7 +173,8 @@ def analyze_symbol(symbol):
             result.get("quality"),
             result["final_score"],
             confirmation,
-            mode="hunter"
+            mode=MODE,
+            min_score=MIN_SCORE
         )
 
         # =========================

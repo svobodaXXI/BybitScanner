@@ -21,7 +21,8 @@ def evaluate_signal(
     quality,
     score,
     confirmation,
-    mode="hunter"
+    mode,
+    min_score
 ):
     """
     Определяет, является ли сигнал подходящим.
@@ -75,6 +76,22 @@ def evaluate_signal(
         }
 
 
+    # =========================
+    # Absolute score threshold
+    # =========================
+
+    if score < min_score:
+
+        return {
+
+            "approved": False,
+
+            "reason":
+                "Score below minimum threshold"
+
+        }
+
+
 
     # =========================
     # Hunter mode
@@ -84,6 +101,7 @@ def evaluate_signal(
 
 
         if quality_name in (
+            "Elite Setup",
             "A+ Setup",
             "A Setup"
         ):

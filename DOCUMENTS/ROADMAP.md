@@ -2,7 +2,7 @@
 
 Version:
 
-4.5
+4.6
 
 Date:
 
@@ -618,7 +618,7 @@ Audit conclusion:
 
 Status:
 
-APPROVED_NOT_IMPLEMENTED
+IMPLEMENTED_VERIFIED
 
 Objective:
 
@@ -660,10 +660,24 @@ Acceptance / regression requirements:
 * diagnostic mode, when used, does not change `approved` and does not persist a rejected signal;
 * existing Signal/event tests do not regress.
 
+Acceptance status:
+
+FOCUSED_VERIFICATION_SATISFIED_WITH_NON_BLOCKING_FOLLOW_UPS
+
+Verification evidence:
+
+* 9 focused Signal admission tests — OK;
+* artifact-free compile — PASS;
+* scoped diff-check — PASS.
+* legacy script-style Signal/event files — compile PASS, execution deferred because of persistence/Telegram side effects.
+
 Follow-up verification:
 
 * do not automatically delete or migrate historical unapproved persistence;
 * after admission restoration, verify its effect on `NEW` / `STRENGTHENING`.
+* replace unsafe script-style Signal/event tests with isolated regression tests;
+* improve rejected diagnostic visibility in Telegram formatter;
+* consider neutral Hunter approval reason wording — LOW.
 
 ## PRIORITY_2_CHART_REPORT_SIDE_EFFECTS
 
@@ -890,15 +904,21 @@ RULE-008:
 
 from:
 
-ROADMAP v4.4
+ROADMAP v4.5
 
 to:
 
-ROADMAP v4.5
+ROADMAP v4.6
 
 reason:
 
-Current checkpoint — Signal Admission Recovery (v4.4 to v4.5):
+Current checkpoint — Signal Admission Implementation (v4.5 to v4.6):
+
+* Priority 1 implementation and focused verification recorded as complete;
+* acceptance status recorded as satisfied;
+* remaining technical-debt and historical-state items retained as non-blocking follow-ups.
+
+Previous checkpoint preserved — Signal Admission Recovery (v4.4 to v4.5):
 
 * approved Signal admission contract and confirmed mismatches recorded;
 * Priority 1 status set to APPROVED_NOT_IMPLEMENTED;

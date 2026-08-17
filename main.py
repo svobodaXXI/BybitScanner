@@ -75,6 +75,31 @@ def main():
                 print(f"{symbol:<15} no wedge")
                 continue
 
+            signal_decision = analysis.get("signal") or {}
+
+            if not signal_decision.get("approved", False):
+                telegram_sent = False
+
+                if config.TELEGRAM_TEST_MODE:
+                    telegram_sent = send_signal(
+                        {
+                            **analysis,
+                            "symbol": symbol,
+                            "final_score": score
+                        },
+                        test_mode=True
+                    )
+
+                print(
+                    f"{symbol:<15} "
+                    f"{pattern:<20} "
+                    f"score={score} "
+                    f"signal=REJECTED "
+                    f"telegram="
+                    f"{'TEST' if telegram_sent else 'NO'}"
+                )
+                continue
+
             signal = prepare_signal(
                 symbol,
                 analysis
