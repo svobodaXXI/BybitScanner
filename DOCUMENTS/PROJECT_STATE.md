@@ -2,7 +2,7 @@
 
 Version:
 
-7.24
+7.26
 
 Date:
 
@@ -909,23 +909,23 @@ CR-SCANNER-GEOMETRY-001 — Consolidate Directional Envelope Ownership in Wedge 
 
 Lifecycle:
 
-SPEC / PRE_IMPLEMENTATION_CHECKPOINT
+RECORD / CHECKPOINT_COMMIT_AUTHORIZED
 
 Implementation status:
 
-IMPLEMENTATION_NOT_STARTED
+IMPLEMENTED_VERIFIED_REVIEWED
 
-Authorization:
+Review verdict:
 
-HUMAN_AUTHORIZED_NOT_STARTED
+READY_FOR_RECORD
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.1
+`DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.3
 
 Next action:
 
-Begin the bounded implementation under ChangeRequest revision 1.1.
+Create the human-authorized scoped implementation/record commit; mission close remains separate.
 
 ---
 
@@ -4485,15 +4485,27 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.23
+PROJECT_STATE v7.25
 
 to:
 
-PROJECT_STATE v7.24
+PROJECT_STATE v7.26
 
 reason:
 
-Current checkpoint — CR-SCANNER-GEOMETRY-001 implementation authorization (v7.23 to v7.24):
+Current checkpoint — CR-SCANNER-GEOMETRY-001 checkpoint commit authorization (v7.25 to v7.26):
+
+* recorded ChangeRequest revision 1.3 and explicit human authorization for the scoped checkpoint commit;
+* preserved verified implementation, review verdict, acceptance disposition and residual risks;
+* kept mission close as a separate future action.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 implementation review record (v7.24 to v7.25):
+
+* recorded implementation and focused verification as complete;
+* recorded independent review verdict `READY_FOR_RECORD` with no BLOCKING or IMPORTANT findings;
+* retained criterion 13 as manual reference validation deferred and routed the next action to a scoped commit.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 implementation authorization (v7.23 to v7.24):
 
 * recorded ChangeRequest revision 1.1 as human-authorized for bounded implementation;
 * preserved implementation status as not started;

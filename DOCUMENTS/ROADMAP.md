@@ -2,7 +2,7 @@
 
 Version:
 
-4.18
+4.20
 
 Date:
 
@@ -939,7 +939,7 @@ Consolidate Directional Envelope Ownership in Wedge Layer
 
 Status:
 
-SPEC / PRE_IMPLEMENTATION_CHECKPOINT / HUMAN_AUTHORIZED_NOT_STARTED
+RECORD / CHECKPOINT_COMMIT_AUTHORIZED / READY_FOR_RECORD
 
 Planned scope:
 
@@ -950,11 +950,11 @@ Planned scope:
 
 Acceptance and risks:
 
-Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.1.
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.3.
 
 Next action:
 
-Begin bounded implementation under revision 1.1. Implementation has not started.
+Create the authorized scoped implementation/record commit; mission close remains separate.
 
 ---
 
@@ -1009,15 +1009,27 @@ RULE-008:
 
 from:
 
-ROADMAP v4.17
+ROADMAP v4.19
 
 to:
 
-ROADMAP v4.18
+ROADMAP v4.20
 
 reason:
 
-Current checkpoint — CR-SCANNER-GEOMETRY-001 implementation authorization (v4.17 to v4.18):
+Current checkpoint — CR-SCANNER-GEOMETRY-001 checkpoint commit authorization (v4.19 to v4.20):
+
+* recorded explicit authorization for the scoped implementation/record commit under revision 1.3;
+* preserved verified implementation, acceptance disposition, review result and residual risks;
+* retained mission close as a separate lifecycle action.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 implementation review record (v4.18 to v4.19):
+
+* recorded implementation, focused verification and review as complete;
+* recorded `READY_FOR_RECORD` and retained manual reference validation as a residual non-blocking risk;
+* routed the next action to an explicitly authorized scoped commit.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 implementation authorization (v4.17 to v4.18):
 
 * recorded revision 1.1 as human-authorized for bounded implementation;
 * preserved implementation as not started and retained the approved scope and acceptance criteria.

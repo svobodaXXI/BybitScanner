@@ -25,6 +25,125 @@ Version 1:
 """
 
 
+DIRECTIONAL_BOUNDARY_ROLES = {
+    "Falling Wedge": {
+        "upper": "STRICT",
+        "lower": "EXCURSION"
+    },
+    "Rising Wedge": {
+        "upper": "EXCURSION",
+        "lower": "STRICT"
+    },
+    "Triangle Compression": {
+        "upper": "STRICT",
+        "lower": "STRICT"
+    }
+}
+
+
+def directional_boundary_roles(pattern):
+    """Return Wedge-owned boundary roles after pattern determination."""
+
+    roles = DIRECTIONAL_BOUNDARY_ROLES.get(
+        pattern,
+        {}
+    )
+
+    return dict(roles)
+
+
+def evaluate_directional_envelope(
+    geometry,
+    pattern
+):
+    """Interpret existing pivot-envelope metrics without rejecting or scoring."""
+
+    roles = directional_boundary_roles(
+        pattern
+    )
+
+    envelope_metrics = (
+        geometry.get(
+            "envelope_metrics"
+        )
+        or {}
+        if isinstance(geometry, dict)
+        else {}
+    )
+
+    boundaries = {}
+    strict_outside_count = 0
+    excursion_outside_count = 0
+
+    for side in (
+        "upper",
+        "lower"
+    ):
+        metrics = (
+            envelope_metrics.get(side)
+            or {}
+        )
+        role = roles.get(
+            side,
+            "UNASSIGNED"
+        )
+        outside_count = int(
+            metrics.get(
+                "outside_count",
+                0
+            )
+            or 0
+        )
+
+        boundaries[side] = {
+            "role": role,
+            "metrics": metrics
+        }
+
+        if role == "STRICT":
+            strict_outside_count += outside_count
+        elif role == "EXCURSION":
+            excursion_outside_count += outside_count
+
+    warnings = []
+
+    if strict_outside_count:
+        warnings.append(
+            "Strict boundary has pivot-envelope excursions"
+        )
+
+    if excursion_outside_count:
+        warnings.append(
+            "Excursion boundary has pivot-envelope excursions"
+        )
+
+    return {
+        "status": (
+            "DIAGNOSTIC"
+            if roles
+            else "UNAVAILABLE"
+        ),
+        "evaluation_mode": "DIAGNOSTIC_SOFT",
+        "pattern": pattern,
+        "boundaries": boundaries,
+        "strict_sides": [
+            side
+            for side, role in roles.items()
+            if role == "STRICT"
+        ],
+        "excursion_sides": [
+            side
+            for side, role in roles.items()
+            if role == "EXCURSION"
+        ],
+        "strict_outside_count": strict_outside_count,
+        "excursion_outside_count": excursion_outside_count,
+        "hard_rejection": False,
+        "score_effect": 0.0,
+        "warnings": warnings
+    }
+
+
 def _clamp(
     value,
     minimum=0.0,

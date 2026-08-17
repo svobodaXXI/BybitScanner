@@ -247,62 +247,6 @@ def evaluate_candidate_pair(
             "early_multicandle_boundary_excursion"
         )
 
-    evaluated_count = candle_containment.get(
-        "evaluated_count",
-        0
-    )
-
-    strict_outside_count = 0
-
-    if anchor_family == "rising":
-        strict_outside_count = (
-            candle_containment.get(
-                "upper_outside_count",
-                0
-            )
-        )
-
-    elif anchor_family == "falling":
-        strict_outside_count = (
-            candle_containment.get(
-                "lower_outside_count",
-                0
-            )
-        )
-
-    strict_outside_ratio = (
-        strict_outside_count
-        / evaluated_count
-        if evaluated_count
-        else 0.0
-    )
-
-    if (
-        geometry_mode == "CANONICAL"
-        and anchor_family in (
-            "rising",
-            "falling"
-        )
-        and strict_outside_ratio > 0.20
-    ):
-        geometry_mode = "EXPLORATORY"
-
-        pair_metrics[
-            "geometry_mode"
-        ] = geometry_mode
-
-        pair_metrics[
-            "canonical_downgrade_reason"
-        ] = (
-            "strict_boundary_outside_ratio"
-        )
-
-        pair_metrics[
-            "strict_outside_ratio"
-        ] = float(
-            strict_outside_ratio
-        )
-
     upper_envelope = (
         envelope_metrics.get("upper", {})
         if envelope_metrics

@@ -28,6 +28,9 @@ Score
 """
 
 
+from .integrity import evaluate_directional_envelope
+
+
 def _normalize_geometry(
     geometry
 ):
@@ -247,6 +250,14 @@ def detect_structure(
         pattern = "Unknown"
 
 
+    directional_envelope = (
+        evaluate_directional_envelope(
+            geometry,
+            pattern
+        )
+    )
+
+
 
     #
     # Directional Candle Containment
@@ -290,7 +301,14 @@ def detect_structure(
     # ????????? ???????? ????? ?? ??????? ???????.
     max_strict_severe_run = 2
 
-    if pattern == "Falling Wedge":
+    strict_sides = tuple(
+        directional_envelope.get(
+            "strict_sides",
+            []
+        )
+    )
+
+    if strict_sides == ("upper",):
 
         strict_side = "upper"
 
@@ -303,7 +321,7 @@ def detect_structure(
             <= max_strict_severe_run
         )
 
-    elif pattern == "Rising Wedge":
+    elif strict_sides == ("lower",):
 
         strict_side = "lower"
 
@@ -316,7 +334,10 @@ def detect_structure(
             <= max_strict_severe_run
         )
 
-    elif pattern == "Triangle Compression":
+    elif set(strict_sides) == {
+        "upper",
+        "lower"
+    }:
 
         strict_side = "both"
 
@@ -446,7 +467,11 @@ def detect_structure(
 
         "containment_lower_run":
 
-            lower_severe_run
+            lower_severe_run,
+
+        "directional_envelope":
+
+            directional_envelope
 
     }
     structure_points = sum(
@@ -499,7 +524,12 @@ def detect_structure(
 
             "features":
 
-                features
+                features,
+
+
+            "directional_envelope":
+
+                directional_envelope
 
         }
 
@@ -527,6 +557,11 @@ def detect_structure(
 
         "features":
 
-            features
+            features,
+
+
+        "directional_envelope":
+
+            directional_envelope
 
     }
