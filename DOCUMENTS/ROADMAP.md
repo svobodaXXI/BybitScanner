@@ -2,7 +2,7 @@
 
 Version:
 
-4.6
+4.7
 
 Date:
 
@@ -853,6 +853,81 @@ Automatic deletion запрещено
 
 ---
 
+# CR-DOC-AI-CONTEXT-001
+
+Title:
+
+Documentation and AI Context Workflow Modernization
+
+Lifecycle state:
+
+SPEC_APPROVED / PRE_IMPLEMENTATION_CHECKPOINT
+
+Implementation status:
+
+NOT_STARTED
+
+Objective:
+
+Introduce `TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD` with compact task-scoped recovery,
+durable ChangeRequests for substantial work, disposable ContextDumps and enforceable LegacyWarnings.
+
+Approved scope:
+
+* authoritative documentation and compact tracked `AGENTS.md`;
+* ChangeRequest, ContextDump and LegacyWarning contracts/infrastructure;
+* narrow read-only context generation and validation;
+* staged recovery, authority reconciliation and Codex CLI workflow integration;
+* focused tests and measured context-budget verification.
+
+Non-goals:
+
+* production scanner or analytical behavior changes;
+* redesign of the complete Project Sync pipeline;
+* permanent ChangeRequests for trivial work;
+* ContextDump as authority or permanent history;
+* automatic deletion of legacy artifacts;
+* GitHub templates before the local workflow is stable;
+* broad documentation rewrite or PROJECT_TREE redesign in Phase 0.
+
+Migration phases:
+
+0. Recovery checkpoint — persist contracts, decision, roadmap and compact state.
+1. Canonical agent entry and authority reconciliation.
+2. ChangeRequest and LegacyWarning schema/storage/validation design.
+3. Minimal ContextDump generator targeting ignored `runtime/context/`.
+4. Staleness and LegacyWarning enforcement.
+5. Codex workflow integration.
+6. Measured context-cost reduction and safe documentation deduplication.
+
+Acceptance criteria:
+
+* tracked compact `AGENTS.md` becomes the routine entry point;
+* local checkout precedence and Git/GitHub responsibilities are deterministic;
+* substantial and lightweight task tiers are supported without unnecessary bureaucracy;
+* ContextDump is reproducible, scoped, non-authoritative, ignored by default and stale-detectable;
+* blocking LegacyWarnings fail machine validation and block agent workflow;
+* routine ContextDump generation does not run the full Project Sync migration pipeline;
+* interruption recovery works from repository state alone at every lifecycle stage;
+* Git owns detailed implementation history without parallel duplication;
+* approved initial context-budget targets are demonstrated while deep recovery remains available;
+* production scanner behavior and existing analytical contracts remain unchanged.
+
+Rollback and commit boundary:
+
+Each phase requires scoped verification and a separate revertible commit.
+Phase 0 is documentation-only and does not authorize later implementation.
+
+Current next phase:
+
+PHASE_1_CANONICAL_AGENT_ENTRY_AND_AUTHORITY_RECONCILIATION
+
+Phase 1 authorization state:
+
+AWAITING_SEPARATE_AUTHORIZATION
+
+---
+
 # ROADMAP_UPDATE_RULES
 
 RULE-001:
@@ -904,15 +979,21 @@ RULE-008:
 
 from:
 
-ROADMAP v4.5
+ROADMAP v4.6
 
 to:
 
-ROADMAP v4.6
+ROADMAP v4.7
 
 reason:
 
-Current checkpoint — Signal Admission Implementation (v4.5 to v4.6):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 0 (v4.6 to v4.7):
+
+* recorded the approved phased modernization plan, scope, non-goals and acceptance;
+* recorded SPEC_APPROVED / PRE_IMPLEMENTATION_CHECKPOINT with implementation NOT_STARTED;
+* set Phase 1 as the next separately authorized action.
+
+Previous checkpoint preserved — Signal Admission Implementation (v4.5 to v4.6):
 
 * Priority 1 implementation and focused verification recorded as complete;
 * acceptance status recorded as satisfied;

@@ -2,7 +2,7 @@
 
 Version:
 
-3.5
+3.6
 
 Date:
 
@@ -1824,6 +1824,149 @@ string
 
 ---
 
+# CONTRACT-DEVELOPMENT-LIFECYCLE-001
+
+type:
+
+WORKFLOW_CONTRACT
+
+status:
+
+ACTIVE
+
+stages:
+
+TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD
+
+invariants:
+
+* TASK establishes objective, constraints and initial scope;
+* SPEC establishes approved behavior, scope, non-goals and acceptance;
+* CONTEXT derives task-scoped context from the current local checkout;
+* IMPLEMENT requires the applicable approval and valid context;
+* VERIFY evaluates approved acceptance and regression requirements;
+* RECORD stores current authoritative state and a scoped Git checkpoint;
+* interruption recovery resumes from the latest persisted completed stage;
+* material scope or contract changes return work to SPEC and require approval.
+
+authority_boundary:
+
+* current local filesystem and local Git state define current working reality;
+* owning authoritative local documents define normative project meaning;
+* Git owns detailed implementation history and deltas;
+* GitHub is a remote collaboration/review layer and does not override a newer local checkout;
+* generated context, reports, snapshots, backups and historical copies are non-authoritative.
+
+---
+
+# CONTRACT-CHANGE-REQUEST-001
+
+type:
+
+WORKFLOW_CONTRACT
+
+status:
+
+ACTIVE_V1
+
+purpose:
+
+Preserve the approved boundary between substantial work and implementation.
+
+policy:
+
+* durable ChangeRequest is mandatory for substantial, risky, architectural or multi-session work;
+* lightweight Task/Spec is sufficient for small routine work unless risk or scope grows;
+* future durable ChangeRequests are tracked as one Markdown file per request under `DOCUMENTS/CHANGE_REQUESTS/` after storage support is implemented;
+* Phase 0 does not create the storage directory or ChangeRequest file.
+
+minimum_semantics:
+
+* identity, title, objective and non-goals;
+* approved and prohibited scope;
+* authoritative references, approved and unresolved decisions;
+* acceptance and regression requirements;
+* risk, rollback, lifecycle and implementation status;
+* related commits or pull requests when applicable.
+
+invariants:
+
+* implementation requires an approved request revision when a durable request is mandatory;
+* material scope, behavior, risk or acceptance changes require an approved amendment;
+* Git commits and GitHub issues/PRs may reference but cannot replace the ChangeRequest;
+* detailed schema and validation may be refined in Phase 2 without violating this contract.
+
+---
+
+# CONTRACT-CONTEXT-DUMP-001
+
+type:
+
+DERIVED_CONTEXT_CONTRACT
+
+status:
+
+ACTIVE_V1
+
+purpose:
+
+Provide small, reproducible AI context for one approved task.
+
+invariants:
+
+* generated only from authoritative local sources and current local Git/filesystem state;
+* non-authoritative, disposable and rebuildable;
+* Markdown is primary; JSON is optional where structured validation requires it;
+* default output target is ignored/untracked `runtime/context/`;
+* routine generation does not require the complete Project Sync migration pipeline;
+* includes only task-relevant scope, acceptance, references, excerpts, paths, tests, Git state, unresolved decisions and LegacyWarnings;
+* excludes entire authoritative documents, secrets and unrelated dirty work by default.
+
+stale_context_principle:
+
+A ContextDump cannot authorize implementation when its bound task revision,
+branch, HEAD, scoped content, relevant authority or LegacyWarning state no longer matches the current local checkout.
+It must be validated and regenerated before use.
+
+initial_context_budget:
+
+* mandatory routine startup: 10 KB or approximately 2,000 tokens;
+* standard ContextDump: 30 KB or approximately 8,000 tokens;
+* targets may be revised using measured workflow results.
+
+Detailed schema, fingerprints and validator behavior remain Phase 2 design work.
+
+---
+
+# CONTRACT-LEGACY-WARNING-001
+
+type:
+
+METADATA_CONTRACT
+
+status:
+
+ACTIVE_V1
+
+minimum_semantics:
+
+* LEGACY or DEPRECATED classification;
+* ADVISORY or BLOCKING severity;
+* affected paths or symbols and canonical replacement where available;
+* new-usage prohibition, reason and compatibility boundary;
+* retention/removal policy and useful validation/revision metadata.
+
+invariants:
+
+* relevant warnings are surfaced in ContextDump;
+* blocking warnings prohibit new usage without approved amendment;
+* blocking warnings are enforced by both machine validation and agent workflow policy;
+* legacy classification never authorizes automatic deletion;
+* retirement requires verified replacement/compatibility and explicit authoritative update;
+* detailed schema, inheritance and validator behavior may be refined in Phase 2 without violating this contract.
+
+---
+
 # CONTRACT-DEPENDENCY_RULES
 
 ## RULE-CONTRACT-001
@@ -2388,15 +2531,21 @@ Migration Lifecycle.
 
 from:
 
-PROJECT_CONTRACTS v3.4
+PROJECT_CONTRACTS v3.5
 
 to:
 
-PROJECT_CONTRACTS v3.5
+PROJECT_CONTRACTS v3.6
 
 reason:
 
-Current checkpoint — Signal Admission Implementation (v3.4 to v3.5):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 0 (v3.5 to v3.6):
+
+* established normative v1 lifecycle, ChangeRequest, ContextDump and LegacyWarning semantics;
+* recorded local authority, Git/GitHub boundaries and stale-context invariants;
+* preserved detailed schema and validator design for Phase 2.
+
+Previous checkpoint preserved — Signal Admission Implementation (v3.4 to v3.5):
 
 * implementation status recorded as IMPLEMENTED_VERIFIED;
 * implementation conformance recorded without changing normative contract semantics;

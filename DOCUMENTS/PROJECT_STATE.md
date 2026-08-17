@@ -2,7 +2,7 @@
 
 Version:
 
-7.11
+7.12
 
 Date:
 
@@ -857,6 +857,44 @@ Development principle:
 целесообразно расширять
 интеллектуальный и функциональный
 контур.
+
+---
+
+# AI_CONTEXT_WORKFLOW_STATE
+
+Active mission:
+
+CR-DOC-AI-CONTEXT-001 — Documentation and AI Context Workflow Modernization
+
+Lifecycle state:
+
+SPEC_APPROVED
+
+Checkpoint:
+
+PRE_IMPLEMENTATION_CHECKPOINT
+
+Implementation status:
+
+NOT_STARTED
+
+Owning references:
+
+* normative semantics: `DOCUMENTS/PROJECT_CONTRACTS.md`;
+* architectural rationale: `DOCUMENTS/DECISION_LOG.md` / `DECISION-007`;
+* phases, scope and acceptance: `DOCUMENTS/ROADMAP.md` / `CR-DOC-AI-CONTEXT-001`.
+
+Current authorization:
+
+Phase 0 documentation recovery checkpoint only.
+
+Next authorized action after checkpoint approval:
+
+PHASE_1_CANONICAL_AGENT_ENTRY_AND_AUTHORITY_RECONCILIATION
+
+Important:
+
+Phase 1 requires separate authorization. No modernization implementation has started.
 
 ---
 
@@ -4418,15 +4456,21 @@ Important:
 
 from:
 
-PROJECT_STATE v7.10
+PROJECT_STATE v7.11
 
 to:
 
-PROJECT_STATE v7.11
+PROJECT_STATE v7.12
 
 reason:
 
-Current checkpoint — Signal Admission Implementation (v7.10 to v7.11):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 0 (v7.11 to v7.12):
+
+* recorded SPEC_APPROVED / PRE_IMPLEMENTATION_CHECKPOINT;
+* recorded implementation status NOT_STARTED and Phase 1 as the next separately authorized action;
+* linked the owning contract, decision and roadmap records without duplicating the SPEC.
+
+Previous checkpoint preserved — Signal Admission Implementation (v7.10 to v7.11):
 
 * Signal admission implementation recorded as IMPLEMENTED_VERIFIED;
 * four documented mismatches recorded as resolved;

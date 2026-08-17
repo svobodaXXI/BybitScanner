@@ -2,7 +2,7 @@
 
 Version:
 
-1.1
+1.2
 
 Date:
 
@@ -341,3 +341,58 @@ consequences:
 
 * DOCUMENTATION_RULES.md обновлён до v1.5
   (добавлены DOC-013.canonical_owner,
+
+---
+
+## DECISION-007
+
+title:
+
+Task-Scoped AI Context Workflow Modernization
+
+date:
+
+2026-08-17
+
+status:
+
+ACCEPTED
+
+category:
+
+Documentation / AI Context Workflow
+
+change_request:
+
+CR-DOC-AI-CONTEXT-001
+
+context:
+
+Routine recovery requires multiple large documents, authority and workflow rules are duplicated,
+manual inventories and generated context can become stale, and GitHub First wording conflicts
+with a newer current local checkout.
+
+decision:
+
+* adopt `TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD`;
+* use lightweight Task/Spec for routine work and durable ChangeRequests for substantial, risky, architectural or multi-session work;
+* store future durable ChangeRequests as tracked Markdown under `DOCUMENTS/CHANGE_REQUESTS/` after storage support is implemented;
+* use disposable non-authoritative ContextDumps under ignored `runtime/context/`, with Markdown primary and optional JSON;
+* use machine-readable advisory/blocking LegacyWarnings and enforce blocking warnings through validation and agent policy;
+* treat the current local checkout as current-state authority; GitHub remains collaboration/review and cannot override newer local state;
+* let Git own detailed implementation history and deltas;
+* make tracked compact `AGENTS.md` the future agent entry point and replace unconditional full recovery with staged/task-scoped recovery;
+* retain PROJECT_TREE authority for important logical paths while reducing its future role as a manual filesystem mirror;
+* defer GitHub Issue/PR templates until the local workflow is stable.
+
+rationale:
+
+This reduces routine AI context cost and stale-context risk while preserving authoritative contracts,
+deep recovery, human approval boundaries and existing Project Sync responsibilities.
+
+consequences:
+
+* initial targets are 10 KB / approximately 2,000 tokens for routine startup and 30 KB / approximately 8,000 tokens for a standard ContextDump;
+* migration proceeds through independently verified and revertible phases;
+* no production scanner behavior or Project Sync migration implementation is authorized by this decision;
+* Phase 0 records the design only; implementation remains NOT_STARTED.
