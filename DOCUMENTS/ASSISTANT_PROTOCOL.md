@@ -2,7 +2,7 @@
 
 Версия:
 
-4.2
+4.4
 
 Дата:
 
@@ -276,6 +276,24 @@ Remote content становится local working truth
 
 ---
 
+## 5.1 ASSISTANT_CREATED_ARTIFACT_CORRECTION_RULE
+
+Before creating a user, reference, or training artifact, the assistant must verify every available identity-bearing value that determines its canonical identity: symbol or identifier, destination path, artifact role/type, and canonical name. When exchange or UI badges/prefixes are semantically uncertain, they must not be assumed to be part of a canonical market symbol or filesystem identifier.
+
+If an assistant-created artifact has an incorrect name, path, identifier, metadata, or other identity-bearing value, creating the corrected artifact alone does not complete the correction. In the same bounded correction workflow, the assistant must safely replace/rename or remove the verified erroneous artifact and address its downstream tails, including wrong directories or filenames, duplicate reference examples, incorrect metadata, and generated install/archive copies where relevant. If an incorrect copy may already be installed locally, cleanup of its exact incorrect path must be included proactively in the user instructions.
+
+An assistant-created erroneous artifact must not be retained as legacy/history merely because it existed. Retention requires an independent explicit project, audit, training, or user requirement. Cleanup must verify exact ownership and identity first and must never delete unrelated user work or merely similar names. Prefer one scoped replacement/cleanup operation that leaves zero avoidable garbage tails.
+
+## 5.2 TRAINING_REFERENCE_ARCHIVE_DELIVERY_RULE
+
+For a standard BybitScanner training/reference ZIP, delivery normally consists of:
+
+1. a direct archive download link;
+2. one exact PowerShell command invoking `tools/training/install_reference_archive.ps1` with the downloaded ZIP path.
+
+Do not require the user to open or manually extract the ZIP when the canonical installer can consume it directly. Provide an archive-opening command only when inspection or exceptional manual recovery is genuinely required. Archive identity, case placement, byte-preservation, replacement and cleanup semantics are owned by `PROJECT_RULES.md` / `REFERENCE_PATTERN_STORAGE_RULES`; do not duplicate them in delivery instructions. When a correction archive declares authorized superseded artifacts, the installation command must perform their verified scoped cleanup rather than leaving the user to discover old tails later.
+
+---
 # 6. CONTINUATION_COMMAND_RULE
 
 Команда:
@@ -1122,17 +1140,31 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.1
+ASSISTANT_PROTOCOL v4.3
 
 to:
 
-ASSISTANT_PROTOCOL v4.2
+ASSISTANT_PROTOCOL v4.4
 
 date:
 
 2026-08-17
 
 reason:
+
+* added `TRAINING_REFERENCE_ARCHIVE_DELIVERY_RULE`;
+* standardized delivery as a direct ZIP link plus one exact canonical installer command;
+* removed routine manual ZIP opening/extraction from the normal workflow;
+* referenced the owning archive/storage rules instead of duplicating their contract.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.2 to v4.3:
+
+* added `ASSISTANT_CREATED_ARTIFACT_CORRECTION_RULE`;
+* required verification of canonical artifact identity before creation;
+* made verified cleanup/replacement of erroneous assistant-created artifacts part of the same correction workflow;
+* prohibited avoidable stale, duplicate, installed, generated, or misidentified artifact tails while preserving unrelated user work.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.1 to v4.2:
 
 * добавлен USER_ACTION_EXPLICITNESS_RULE;
 * обязательное действие пользователя теперь должно вводиться формулировкой «Сейчас сделай:» и сопровождаться точной командой, текстом, путём, кнопкой или последовательностью действий;

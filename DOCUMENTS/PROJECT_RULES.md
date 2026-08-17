@@ -2,7 +2,7 @@
 
 Version:
 
-5.7
+5.9
 
 Date:
 
@@ -982,6 +982,16 @@ C:\BybitScanner\DOCUMENTS\ASSISTANT_PROTOCOL.md
 
 ---
 
+### 20.2.1 Canonical Artifact Hygiene
+
+Before a user, reference, or training artifact is created, all identity-bearing values available from the source must be verified: symbol/identifier, destination path, artifact role/type, and canonical naming. An uncertain UI or exchange badge/prefix must not be treated as part of a canonical market symbol or filesystem identifier without verification.
+
+Correction of a wrongly named, placed, identified, or described artifact is complete only when the verified erroneous artifact is removed or safely replaced/renamed in the same bounded workflow. The correction must cover relevant tails: wrong directories and filenames, duplicate reference examples, incorrect identifier metadata, and generated install/archive artifacts. A potentially installed incorrect copy requires explicit cleanup of its exact incorrect path.
+
+Erroneous artifacts created by the current workflow are not legacy/history by default; retain them only under an independent explicit project, audit, training, or user requirement. Cleanup must verify the exact erroneous target and must not delete unrelated user work or similarly named artifacts. Prefer one scoped replacement/cleanup operation that leaves zero avoidable garbage tails.
+
+---
+
 ## 20.3 Sequential Delivery
 
 Если пользователь запросил несколько
@@ -1518,6 +1528,39 @@ manual.png и annotation.json должны
 не означает автоматическое включение
 паттерна в production detection.
 
+### Reference Archive Manifest And Installation
+
+Standard training/reference archives use this deterministic root layout:
+
+```text
+reference-archive.json
+payload/
+  <declared files only>
+```
+
+Manifest schema `1.0` requires `archive_type=BYBITSCANNER_TRAINING_REFERENCE`, `canonical_symbol`, stable `case_id`, `reference_type`, exact `canonical_destination`, and an allowlist of files with source, destination, role, SHA-256 and install policy. Each independent example owns a stable case directory:
+
+```text
+training/reference_patterns/<SYMBOL>/<CASE_ID>/
+```
+
+`case_id` must be a human-readable stable identity such as `pattern_timeframe_date_sequence-or-short-id`. A new independent setup receives a new case ID. Continuations/outcomes of the same setup reuse its case ID and add distinct declared or versioned files. New examples for one symbol coexist; a newer example never supersedes an older case implicitly.
+
+The canonical installer is `tools/training/install_reference_archive.ps1`. It consumes the ZIP directly, performs complete structure/path/schema/hash/conflict/cleanup preflight before destination mutation, installs only declared payload files, verifies final hashes, removes temporary extraction, retains the downloaded ZIP, and returns documented machine-visible exit codes `0` through `5`.
+
+An `original_source_image` with `preserve_exact_bytes=true` must be copied byte-for-byte without resize, recompression, crop, drawing, conversion or metadata rewrite. Canonical renaming is permitted only when bytes and SHA-256 remain identical.
+
+Installation operations are explicit: `CREATE`, `IDENTICAL_NOOP`, `ADD_TO_EXISTING_CASE`, or `AUTHORIZED_REPLACE`. Existing identical files are idempotent no-ops. Existing different files are never overwritten unless replacement authorization includes the exact current SHA-256. Superseded cleanup requires exact path/hash, `created_by=assistant_workflow`, `cleanup_authorized=true`, and a reason. Only explicitly listed empty directories associated with authorized cleanup may be removed. Unknown, mismatched, similarly named or unrelated user artifacts must remain untouched.
+
+Installer exit codes:
+
+* `0` — installed and verified;
+* `1` — invalid arguments/archive;
+* `2` — manifest/schema failure;
+* `3` — unsafe path/archive entry;
+* `4` — destination conflict or unauthorized cleanup;
+* `5` — installation, verification, temporary-cleanup or rollback failure.
+
 ### Assistant Workflow Rule
 
 Когда пользователь показывает график,
@@ -1575,13 +1618,31 @@ DOCUMENTS/SNAPSHOT.md
 
 from:
 
-PROJECT_RULES v5.6
+PROJECT_RULES v5.8
 
 to:
 
-PROJECT_RULES v5.7
+PROJECT_RULES v5.9
 
 reason:
+
+Current checkpoint — Training Reference Archive Workflow:
+
+* established manifest v1, stable per-symbol case identity and canonical archive layout;
+* registered the reusable safe installer, operation classes and deterministic exit codes;
+* required byte-exact original-image preservation, full preflight and transactional scoped cleanup;
+* preserved independent prior cases, unrelated user work, downloaded ZIP files and `training/storage.py` ownership.
+
+Previous checkpoint preserved — PROJECT_RULES v5.8:
+
+Current checkpoint — Canonical Artifact Hygiene:
+
+* required identity verification before user/reference/training artifact creation;
+* made removal or safe replacement of verified erroneous artifacts part of correction completion;
+* prohibited avoidable stale, duplicate, metadata, installed and generated artifact tails;
+* preserved explicit retention requirements and scoped protection of unrelated user work.
+
+Previous checkpoint preserved — PROJECT_RULES v5.7:
 
 Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 1:
 
