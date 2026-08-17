@@ -2,7 +2,7 @@
 
 Версия:
 
-4.6
+4.7
 
 Дата:
 
@@ -160,6 +160,12 @@ Senior Python Developer и системный архитектор,
 ассистент обязан поместить только копируемую payload в отдельный copy-ready code block.
 Это распространяется на prompts для Codex/нового чата, PowerShell/Git/terminal commands,
 готовые последовательности команд и любой точный текст для вставки.
+
+Если copy-ready block предназначен для передачи в Codex, PowerShell, terminal или другой
+внешний инструмент, ассистент обязан непосредственно перед блоком явно указать требуемое
+действие пользователя: что именно скопировать, куда вставить, нужно ли запустить или отправить
+payload и требуется ли вернуть результат. Copy-ready block запрещено выдавать без однозначной
+action instruction, если пользователь должен выполнить с ним действие.
 
 Пояснения остаются вне блока. Внутри запрещены комментарии, кавычки, bullets и prefixes,
 если они не являются намеренной частью payload. Необходимая многострочная payload
@@ -1138,17 +1144,22 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.5
+ASSISTANT_PROTOCOL v4.6
 
 to:
 
-ASSISTANT_PROTOCOL v4.6
+ASSISTANT_PROTOCOL v4.7
 
 date:
 
 2026-08-18
 
 reason:
+
+* extended `COPY_READY_ACTION_BLOCK_RULE` with a mandatory explicit user action instruction immediately before an external-tool payload;
+* prohibited presenting a copy-ready block without stating what to copy, where to paste it, whether to run/send it, and whether to return the result when user action is required.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.5 to v4.6:
 
 * added `COPY_READY_ACTION_BLOCK_RULE` next to user-action communication rules;
 * required copy/paste/send/execute payloads to be isolated from explanatory prose in dedicated copy-ready blocks.
