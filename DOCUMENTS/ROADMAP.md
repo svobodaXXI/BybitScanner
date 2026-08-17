@@ -2,11 +2,11 @@
 
 Version:
 
-4.11
+4.12
 
 Date:
 
-2026-08-17
+2026-08-18
 
 Document Type:
 
@@ -861,11 +861,11 @@ Documentation and AI Context Workflow Modernization
 
 Lifecycle state:
 
-SPEC_APPROVED / PHASE_4_COMPLETED
+SPEC_APPROVED / PHASE_5_PRE_IMPLEMENTATION_CHECKPOINT
 
 Implementation status:
 
-PHASE_4_IMPLEMENTED_VERIFIED
+PHASE_5_NOT_STARTED
 
 Objective:
 
@@ -924,7 +924,10 @@ PHASE_5_CODEX_WORKFLOW_INTEGRATION
 
 Phase 5 authorization state:
 
-AWAITING_SEPARATE_AUTHORIZATION
+HUMAN_AUTHORIZED / PRE_IMPLEMENTATION_CHECKPOINT
+
+Phase 5 bounded scope and acceptance are owned by ChangeRequest revision 1.5.
+Implementation has not started. Phase 6 remains separately unauthorized.
 
 ---
 
@@ -979,15 +982,21 @@ RULE-008:
 
 from:
 
-ROADMAP v4.10
+ROADMAP v4.11
 
 to:
 
-ROADMAP v4.11
+ROADMAP v4.12
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 4 implementation (v4.10 to v4.11):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 5 authorization (v4.11 to v4.12):
+
+* recorded Phase 5 as human-authorized at PRE_IMPLEMENTATION_CHECKPOINT;
+* routed bounded scope and acceptance to ChangeRequest revision 1.5 without duplication;
+* recorded implementation as NOT_STARTED and Phase 6 as unauthorized.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 4 implementation (v4.10 to v4.11):
 
 * recorded Phase 4 staleness validation and scoped warning enforcement as IMPLEMENTED_VERIFIED;
 * recorded focused regression and standalone validation completion;
