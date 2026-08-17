@@ -2,7 +2,7 @@
 
 Версия:
 
-4.5
+4.6
 
 Дата:
 
@@ -153,6 +153,17 @@ Senior Python Developer и системный архитектор,
 * уменьшить число лишних сообщений;
 * экономить контекст и лимиты;
 * ускорить рабочий процесс.
+
+## 2.2 COPY_READY_ACTION_BLOCK_RULE
+
+Если текст предназначен для копирования и последующей вставки, отправки или выполнения,
+ассистент обязан поместить только копируемую payload в отдельный copy-ready code block.
+Это распространяется на prompts для Codex/нового чата, PowerShell/Git/terminal commands,
+готовые последовательности команд и любой точный текст для вставки.
+
+Пояснения остаются вне блока. Внутри запрещены комментарии, кавычки, bullets и prefixes,
+если они не являются намеренной частью payload. Необходимая многострочная payload
+сохраняется точно; обычный пояснительный текст отдельного блока не требует.
 
 ---
 
@@ -1127,11 +1138,11 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.4
+ASSISTANT_PROTOCOL v4.5
 
 to:
 
-ASSISTANT_PROTOCOL v4.5
+ASSISTANT_PROTOCOL v4.6
 
 date:
 
@@ -1139,8 +1150,8 @@ date:
 
 reason:
 
-* replaced duplicated staged-recovery steps with a compact pointer to their canonical owners;
-* preserved assistant routing behavior and deep-recovery availability through `AGENTS.md`.
+* added `COPY_READY_ACTION_BLOCK_RULE` next to user-action communication rules;
+* required copy/paste/send/execute payloads to be isolated from explanatory prose in dedicated copy-ready blocks.
 
 Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.2 to v4.3:
 
