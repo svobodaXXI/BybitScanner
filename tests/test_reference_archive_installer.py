@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -73,24 +74,25 @@ class ReferenceArchiveInstallerTests(unittest.TestCase):
                 archive.writestr(name, data)
         return self.archive
 
-    def run_installer(self, archive=None):
+    def run_installer(self, archive=None, *, installer=INSTALLER, project_root=True):
         archive = self.archive if archive is None else archive
         environment = os.environ.copy()
         environment["TEMP"] = str(self.process_temp)
         environment["TMP"] = str(self.process_temp)
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(installer),
+            "-ArchivePath",
+            str(archive),
+        ]
+        if project_root:
+            command.extend(["-ProjectRoot", str(self.root)])
         return subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(INSTALLER),
-                "-ArchivePath",
-                str(archive),
-                "-ProjectRoot",
-                str(self.root),
-            ],
+            command,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -113,7 +115,7 @@ class ReferenceArchiveInstallerTests(unittest.TestCase):
         tails = list(self.process_temp.glob("BybitScannerReferenceInstall-*"))
         self.assertEqual([], tails)
 
-    def test_valid_install_preserves_original_bytes_and_zip(self):
+    def test_fast_path_create_preserves_original_bytes_and_zip(self):
         self.write_archive()
         result = self.run_installer()
         installed = self.case_root() / "manual.png"
@@ -124,7 +126,7 @@ class ReferenceArchiveInstallerTests(unittest.TestCase):
         self.assertTrue(self.archive.exists())
         self.assert_temp_clean()
 
-    def test_identical_repeat_is_noop(self):
+    def test_fast_path_identical_repeat_is_noop(self):
         self.write_archive()
         self.assertEqual(0, self.run_installer().returncode)
         before = self.reference_snapshot()
@@ -132,6 +134,20 @@ class ReferenceArchiveInstallerTests(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("IDENTICAL_NOOP:", result.stdout)
         self.assertEqual(before, self.reference_snapshot())
+
+    def test_default_project_root_resolves_from_file_invocation(self):
+        installed_script = self.root / "tools/training/install_reference_archive.ps1"
+        installed_script.parent.mkdir(parents=True)
+        shutil.copyfile(INSTALLER, installed_script)
+        self.write_archive()
+
+        result = self.run_installer(
+            installer=installed_script,
+            project_root=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(IMAGE_BYTES, (self.case_root() / "manual.png").read_bytes())
 
     def test_add_to_existing_case_without_overwriting_prior_example(self):
         case = self.case_root()

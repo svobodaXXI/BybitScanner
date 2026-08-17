@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true, Position = 0)]
     [string]$ArchivePath,
 
-    [string]$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+    [string]$ProjectRoot
 )
 
 <#
@@ -90,6 +90,11 @@ $backups = [System.Collections.Generic.List[object]]::new()
 $createdDirectories = [System.Collections.Generic.List[string]]::new()
 
 try {
+    if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+        # Parameter default expressions are evaluated before $PSScriptRoot is
+        # reliably populated when Windows PowerShell invokes a script via -File.
+        $ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+    }
     try {
         $archiveFull = (Resolve-Path -LiteralPath $ArchivePath -ErrorAction Stop).Path
         $projectFull = (Resolve-Path -LiteralPath $ProjectRoot -ErrorAction Stop).Path
@@ -375,16 +380,17 @@ try {
         }
     }
 
-    # Revalidate mutable targets at the preflight/mutation boundary.
+    # Revalidate only targets that this invocation may mutate. IDENTICAL_NOOP
+    # targets were already hashed and are never written by this installer.
     foreach ($operation in $operations) {
-        $existsNow = [System.IO.File]::Exists($operation.Destination)
-        if ($null -eq $operation.PreflightCurrentHash) {
-            if ($existsNow) {
+        if ($operation.Operation -in @("CREATE", "ADD_TO_EXISTING_CASE")) {
+            if ([System.IO.File]::Exists($operation.Destination)) {
                 Stop-Install "Destination changed after preflight: $($operation.Destination)" 4
             }
         }
-        elseif (-not $existsNow -or
-            (Get-Sha256 $operation.Destination) -ne $operation.PreflightCurrentHash) {
+        elseif ($operation.Operation -eq "AUTHORIZED_REPLACE" -and
+            (-not [System.IO.File]::Exists($operation.Destination) -or
+            (Get-Sha256 $operation.Destination) -ne $operation.PreflightCurrentHash)) {
             Stop-Install "Destination changed after preflight: $($operation.Destination)" 4
         }
     }
@@ -397,8 +403,13 @@ try {
 
     # All validation and conflict/cleanup preflight is complete before this point.
     $mutationsStarted = $true
-    $backupRoot = Join-Path $temporaryRoot "transaction-backup"
-    [void][System.IO.Directory]::CreateDirectory($backupRoot)
+    $requiresBackup = $cleanupOperations.Count -gt 0 -or
+        @($operations | Where-Object { $_.Operation -eq "AUTHORIZED_REPLACE" }).Count -gt 0
+    $backupRoot = $null
+    if ($requiresBackup) {
+        $backupRoot = Join-Path $temporaryRoot "transaction-backup"
+        [void][System.IO.Directory]::CreateDirectory($backupRoot)
+    }
 
     foreach ($operation in $operations) {
         Write-Output "$($operation.Operation): $($operation.Destination)"
@@ -439,17 +450,10 @@ try {
     }
 
     foreach ($operation in $operations) {
+        if ($operation.Operation -eq "IDENTICAL_NOOP") { continue }
         if (-not [System.IO.File]::Exists($operation.Destination) -or
             (Get-Sha256 $operation.Destination) -ne $operation.ExpectedHash) {
             Stop-Install "Final installation verification failed: $($operation.Destination)" 5
-        }
-        if ($operation.Role -eq "original_source_image") {
-            $sourceBytes = [System.IO.File]::ReadAllBytes($operation.Source)
-            $destinationBytes = [System.IO.File]::ReadAllBytes($operation.Destination)
-            if ([Convert]::ToBase64String($sourceBytes) -cne
-                [Convert]::ToBase64String($destinationBytes)) {
-                Stop-Install "Original image bytes changed during installation." 5
-            }
         }
     }
 
