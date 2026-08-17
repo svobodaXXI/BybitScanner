@@ -2,7 +2,7 @@
 
 Version:
 
-4.7
+4.8
 
 Date:
 
@@ -861,11 +861,11 @@ Documentation and AI Context Workflow Modernization
 
 Lifecycle state:
 
-SPEC_APPROVED / PRE_IMPLEMENTATION_CHECKPOINT
+SPEC_APPROVED / PHASE_2_COMPLETED
 
 Implementation status:
 
-NOT_STARTED
+PHASE_2_IMPLEMENTED_VERIFIED
 
 Objective:
 
@@ -892,9 +892,9 @@ Non-goals:
 
 Migration phases:
 
-0. Recovery checkpoint — persist contracts, decision, roadmap and compact state.
-1. Canonical agent entry and authority reconciliation.
-2. ChangeRequest and LegacyWarning schema/storage/validation design.
+0. Recovery checkpoint — COMPLETED.
+1. Canonical agent entry and authority reconciliation — IMPLEMENTED_VERIFIED.
+2. ChangeRequest and LegacyWarning schema/storage/validation — IMPLEMENTED_VERIFIED.
 3. Minimal ContextDump generator targeting ignored `runtime/context/`.
 4. Staleness and LegacyWarning enforcement.
 5. Codex workflow integration.
@@ -920,9 +920,9 @@ Phase 0 is documentation-only and does not authorize later implementation.
 
 Current next phase:
 
-PHASE_1_CANONICAL_AGENT_ENTRY_AND_AUTHORITY_RECONCILIATION
+PHASE_3_MINIMAL_CONTEXT_DUMP_GENERATOR
 
-Phase 1 authorization state:
+Phase 3 authorization state:
 
 AWAITING_SEPARATE_AUTHORIZATION
 
@@ -979,15 +979,21 @@ RULE-008:
 
 from:
 
-ROADMAP v4.6
+ROADMAP v4.7
 
 to:
 
-ROADMAP v4.7
+ROADMAP v4.8
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 0 (v4.6 to v4.7):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 2 (v4.7 to v4.8):
+
+* recorded Phase 1 and Phase 2 as IMPLEMENTED_VERIFIED;
+* recorded durable ChangeRequest and LegacyWarning infrastructure completion;
+* set Phase 3 as the next separately authorized phase.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 0 (v4.6 to v4.7):
 
 * recorded the approved phased modernization plan, scope, non-goals and acceptance;
 * recorded SPEC_APPROVED / PRE_IMPLEMENTATION_CHECKPOINT with implementation NOT_STARTED;

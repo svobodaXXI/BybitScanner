@@ -28,7 +28,7 @@ Generated ContextDumps, reports, snapshots, caches, backups, historical copies, 
 
 ## Task and change routing
 
-Use lightweight Task/Spec for small routine work. Substantial, risky, architectural, or multi-session work requires the approved durable ChangeRequest defined by `CONTRACT-CHANGE-REQUEST-001`. Material scope or contract changes require an approved amendment before implementation continues.
+Use lightweight Task/Spec for small routine work. Substantial, risky, architectural, or multi-session work resolves its approved record under `DOCUMENTS/CHANGE_REQUESTS/` as defined by `CONTRACT-CHANGE-REQUEST-001`. Material scope or contract changes require an approved amendment before implementation continues. Applicable BLOCKING LegacyWarnings must not be bypassed.
 
 ## Change safety
 

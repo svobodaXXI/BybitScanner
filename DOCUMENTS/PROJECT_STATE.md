@@ -2,7 +2,7 @@
 
 Version:
 
-7.13
+7.14
 
 Date:
 
@@ -870,29 +870,30 @@ SPEC_APPROVED
 
 Checkpoint:
 
-PHASE_1_COMPLETED
+PHASE_2_COMPLETED
 
 Implementation status:
 
-PHASE_1_IMPLEMENTED_VERIFIED
+PHASE_2_IMPLEMENTED_VERIFIED
 
 Owning references:
 
 * normative semantics: `DOCUMENTS/PROJECT_CONTRACTS.md`;
 * architectural rationale: `DOCUMENTS/DECISION_LOG.md` / `DECISION-007`;
-* phases, scope and acceptance: `DOCUMENTS/ROADMAP.md` / `CR-DOC-AI-CONTEXT-001`.
+* phases, scope and acceptance: `DOCUMENTS/ROADMAP.md` / `CR-DOC-AI-CONTEXT-001`;
+* durable task record: `DOCUMENTS/CHANGE_REQUESTS/CR-DOC-AI-CONTEXT-001.md`.
 
 Current authorization:
 
-Phase 1 canonical agent entry and authority reconciliation only.
+Phase 2 ChangeRequest and LegacyWarning schema/storage/validation only.
 
 Next phase:
 
-PHASE_2_CHANGE_REQUEST_AND_LEGACY_WARNING_SCHEMA_STORAGE_VALIDATION
+PHASE_3_MINIMAL_CONTEXT_DUMP_GENERATOR
 
 Important:
 
-Phase 1 is complete. Phase 2 requires separate authorization and has not started.
+Phase 2 is complete. Phase 3 requires separate authorization and has not started.
 
 ---
 
@@ -4452,15 +4453,21 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.12
+PROJECT_STATE v7.13
 
 to:
 
-PROJECT_STATE v7.13
+PROJECT_STATE v7.14
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 1 (v7.12 to v7.13):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 2 (v7.13 to v7.14):
+
+* recorded PHASE_2_COMPLETED / PHASE_2_IMPLEMENTED_VERIFIED;
+* linked the durable ChangeRequest recovery record;
+* recorded Phase 3 as the next separately authorized phase.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 1 (v7.12 to v7.13):
 
 * established AGENTS.md as routine entry and staged/task-scoped recovery;
 * retained deep recovery for exceptional scope;

@@ -2,7 +2,7 @@
 
 Version:
 
-3.6
+3.7
 
 Date:
 
@@ -1877,8 +1877,8 @@ policy:
 
 * durable ChangeRequest is mandatory for substantial, risky, architectural or multi-session work;
 * lightweight Task/Spec is sufficient for small routine work unless risk or scope grows;
-* future durable ChangeRequests are tracked as one Markdown file per request under `DOCUMENTS/CHANGE_REQUESTS/` after storage support is implemented;
-* Phase 0 does not create the storage directory or ChangeRequest file.
+* durable ChangeRequests are tracked as one Markdown file per request under `DOCUMENTS/CHANGE_REQUESTS/`;
+* task-specific ChangeRequest state does not replace owning project authority.
 
 minimum_semantics:
 
@@ -1894,7 +1894,8 @@ invariants:
 * implementation requires an approved request revision when a durable request is mandatory;
 * material scope, behavior, risk or acceptance changes require an approved amendment;
 * Git commits and GitHub issues/PRs may reference but cannot replace the ChangeRequest;
-* detailed schema and validation may be refined in Phase 2 without violating this contract.
+* stable metadata is embedded as JSON in human-readable Markdown;
+* standalone read-only validation is provided by `tools/project_sync/governance/change_request.py` without invoking the migration pipeline.
 
 ---
 
@@ -1934,7 +1935,7 @@ initial_context_budget:
 * standard ContextDump: 30 KB or approximately 8,000 tokens;
 * targets may be revised using measured workflow results.
 
-Detailed schema, fingerprints and validator behavior remain Phase 2 design work.
+ContextDump schema/generation remains Phase 3 work; full stale-context enforcement remains Phase 4 work.
 
 ---
 
@@ -1963,7 +1964,9 @@ invariants:
 * blocking warnings are enforced by both machine validation and agent workflow policy;
 * legacy classification never authorizes automatic deletion;
 * retirement requires verified replacement/compatibility and explicit authoritative update;
-* detailed schema, inheritance and validator behavior may be refined in Phase 2 without violating this contract.
+* canonical records are stored in `DOCUMENTS/LEGACY_WARNINGS.json`;
+* standalone record validation and read-only path/symbol query are provided by `tools/project_sync/governance/legacy_warning.py`;
+* full dependency/scoped enforcement remains Phase 4 work.
 
 ---
 
@@ -2531,15 +2534,21 @@ Migration Lifecycle.
 
 from:
 
-PROJECT_CONTRACTS v3.5
+PROJECT_CONTRACTS v3.6
 
 to:
 
-PROJECT_CONTRACTS v3.6
+PROJECT_CONTRACTS v3.7
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 0 (v3.5 to v3.6):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 2 (v3.6 to v3.7):
+
+* registered durable Markdown ChangeRequest storage and standalone validation;
+* registered canonical LegacyWarning JSON storage and read-only validation/query interface;
+* retained ContextDump generation for Phase 3 and full warning enforcement for Phase 4.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 0 (v3.5 to v3.6):
 
 * established normative v1 lifecycle, ChangeRequest, ContextDump and LegacyWarning semantics;
 * recorded local authority, Git/GitHub boundaries and stale-context invariants;

@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "registry_id": "BS-LEGACY-WARNINGS-001",
+  "authority": "DOCUMENTS/PROJECT_CONTRACTS.md#CONTRACT-LEGACY-WARNING-001",
+  "warnings": [
+    {
+      "warning_id": "LW-WEDGE-LEGACY-001",
+      "status": "DEPRECATED",
+      "severity": "BLOCKING",
+      "affected_paths": [
+        "wedge_legacy.py",
+        "wedge_legacy_root.py"
+      ],
+      "affected_symbols": [],
+      "replacement_available": true,
+      "canonical_replacement": "wedge/",
+      "new_usage_prohibited": true,
+      "reason": "Legacy root Wedge implementations must not become dependencies of new production work.",
+      "compatibility_boundary": "Retained only for historical/reference compatibility; current production ownership belongs to the wedge package.",
+      "retention_policy": "Preserve until a separately approved removal or archival decision.",
+      "introduced_revision": "2f503db280572cf5733ab130017ff0b6bba97644",
+      "last_validated_revision": "2f503db280572cf5733ab130017ff0b6bba97644",
+      "owner": "Wedge / Architecture Governance",
+      "retirement_conditions": "Verify no supported dependency requires either legacy module and approve removal or archival explicitly."
+    },
+    {
+      "warning_id": "LW-SNAPSHOT-HISTORICAL-001",
+      "status": "LEGACY",
+      "severity": "ADVISORY",
+      "affected_paths": [
+        "SNAPSHOT.md"
+      ],
+      "affected_symbols": [],
+      "replacement_available": true,
+      "canonical_replacement": "DOCUMENTS/PROJECT_STATE.md",
+      "new_usage_prohibited": false,
+      "reason": "The root snapshot is historical/generated context and is not current project-state authority.",
+      "compatibility_boundary": "May be consulted as historical evidence only; current state must be resolved from PROJECT_STATE and current local Git/filesystem state.",
+      "retention_policy": "Keep as ignored historical material unless an explicit retention decision changes this policy.",
+      "introduced_revision": "2f503db280572cf5733ab130017ff0b6bba97644",
+      "last_validated_revision": "2f503db280572cf5733ab130017ff0b6bba97644",
+      "owner": "Documentation Governance",
+      "retirement_conditions": "Retire only after historical retention requirements are reviewed and an authoritative replacement remains available."
+    }
+  ]
+}
