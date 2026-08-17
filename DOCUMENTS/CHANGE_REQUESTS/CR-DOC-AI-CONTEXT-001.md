@@ -7,8 +7,8 @@
   "id": "CR-DOC-AI-CONTEXT-001",
   "title": "Documentation and AI Context Workflow Modernization",
   "status": "IN_PROGRESS",
-  "revision": "1.6",
-  "lifecycle_stage": "RECORD",
+  "revision": "1.7",
+  "lifecycle_stage": "SPEC",
   "objective": "Implement a compact TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD workflow with durable task recovery and explicit legacy-risk handling.",
   "non_goals": [
     "Change production scanner or analytical behavior",
@@ -23,11 +23,12 @@
     "LegacyWarning registry, validation, and read-only query",
     "Minimal Phase 3 task-scoped ContextDump generator targeting runtime/context/",
     "Phase 4 standalone ContextDump staleness validation and scoped LegacyWarning enforcement",
-    "Phase 5 Codex workflow integration through the existing governance components"
+    "Phase 5 Codex workflow integration through the existing governance components",
+    "Phase 6 measured context-budget reduction and safe documentation deduplication"
   ],
   "prohibited_scope": [
     "Production scanner, Geometry, Wedge, Signal, confirmation, market-data, Telegram, charting, or trading logic",
-    "Phase 6 context-budget reduction or documentation deduplication",
+    "Unmeasured broad documentation rewrite or deletion of intentional authority overlap",
     "Full-repository dependency graph or broad static-analysis framework",
     "Broad Project Sync pipeline behavior",
     "Automatic legacy-artifact deletion, migration, rename, or rewrite"
@@ -148,6 +149,75 @@
     "Standalone ChangeRequest and generated ContextDump validation passed",
     "git diff --check and scoped implementation allowlist review passed"
   ],
+  "phase_6_authorization": "HUMAN_APPROVED_2026-08-18",
+  "phase_6_objective": "Measure actual staged-recovery context cost, identify material canonical documentation duplication by ownership, and make only evidence-backed reductions that preserve workflow safety and fresh-agent recovery.",
+  "phase_6_initial_baseline": {
+    "agents_bytes": 4425,
+    "agents_lines": 48,
+    "durable_change_request_bytes": 15876,
+    "agents_plus_change_request_bytes": 20301,
+    "existing_context_dump_bytes": 11880,
+    "canonical_document_aggregate_bytes_not_routine_load": 273310
+  },
+  "phase_6_measured_baseline_plan": [
+    "Measure bytes, characters and lines for AGENTS.md, the active State pointer, durable ChangeRequest, selected owning sections and generated ContextDump",
+    "Measure lightweight direct recovery as AGENTS.md plus only the task-specific authority actually required, not the complete documentation set",
+    "Measure durable recovery as AGENTS.md plus the durable ChangeRequest and only referenced owning sections actually loaded",
+    "Classify repeated normalized paragraphs as normative owner text, intentional safety pointer, task-specific recovery state, historical record or removable duplication",
+    "Record before/after measurements for every modified document and rerun fresh-agent lightweight, durable and interrupted recovery simulations"
+  ],
+  "phase_6_implementation_scope": [
+    "Add one small read-only context-budget measurement utility and focused tests without creating a new registry or report authority",
+    "Measure current lightweight, durable and ContextDump paths before editing canonical prose",
+    "Reduce only confirmed duplication in AGENTS, active AI workflow State/Roadmap/ChangeRequest content, PROJECT_RULES and ASSISTANT_PROTOCOL while preserving each document owner",
+    "Keep PROJECT_CONTRACTS and DECISION_LOG normative/rationale content unchanged unless a separately approved owner conflict is proven",
+    "Register only a genuinely new measurement utility/test path and record verified Phase 6 state in existing owners"
+  ],
+  "phase_6_expected_files": [
+    "AGENTS.md",
+    "DOCUMENTS/CHANGE_REQUESTS/CR-DOC-AI-CONTEXT-001.md",
+    "DOCUMENTS/PROJECT_STATE.md",
+    "DOCUMENTS/ROADMAP.md",
+    "DOCUMENTS/PROJECT_RULES.md",
+    "DOCUMENTS/ASSISTANT_PROTOCOL.md",
+    "DOCUMENTS/PROJECT_TREE.md",
+    "tools/project_sync/governance/context_budget.py",
+    "tests/test_context_budget_governance.py"
+  ],
+  "phase_6_prohibited_scope": [
+    "Production scanner, Geometry, Wedge, Signal, confirmation, market-data, Telegram, charting, training/reference or trading behavior",
+    "ContextDump authority, new parallel workflow/registry/history store, or automatic legacy-artifact deletion",
+    "Normative contract weakening or removal based only on textual similarity",
+    "Full Project Sync execution/redesign, GitHub templates, PROJECT_TREE redesign or unrelated documentation cleanup",
+    "Modification of unrelated dirty work, backups, generated runtime context or historical artifacts"
+  ],
+  "phase_6_deduplication_safety_rules": [
+    "Assign each normative fact to one owning authority and retain short routing or safety pointers where independent usability requires them",
+    "Do not remove text until its owner, consumers and recovery consequence are identified",
+    "Do not count intentional owner-to-router references as duplication merely because wording overlaps",
+    "Do not move normative or durable state into ContextDump, generated reports, Git history alone or other non-authoritative artifacts",
+    "Preserve ChangeRequest authorization, acceptance, unresolved decisions, current phase, rollback and interruption-recovery sufficiency",
+    "Preserve staged recovery, direct lightweight fallback, LegacyWarning enforcement, stale-context blocking and deep recovery availability",
+    "Use scoped before/after measurements and regression tests for every accepted reduction"
+  ],
+  "phase_6_acceptance_criteria": [
+    "A reproducible read-only measurement reports routine AGENTS, lightweight direct, durable recovery and ContextDump footprints without running full Project Sync",
+    "AGENTS.md remains below 10 KB and retains deterministic routing and safety boundaries",
+    "Generated ContextDump remains below 30 KB, non-authoritative, scoped and stale-detectable",
+    "AGENTS.md plus the durable ChangeRequest is reduced from the 20301-byte baseline by at least 15 percent without losing task recovery semantics",
+    "Every removed passage has a documented surviving owner or is verified historical duplication owned by Git",
+    "Fresh-agent lightweight, durable and interruption recovery remain deterministic with applicable ADVISORY/BLOCKING behavior unchanged",
+    "No production behavior, governance schema semantics, unrelated dirty work or full Project Sync pipeline changes"
+  ],
+  "phase_6_verification_requirements": [
+    "Focused measurement tests validate deterministic counts, scoped section selection, duplicate classification inputs and missing-source failure",
+    "Existing ChangeRequest, ContextDump, LegacyWarning and Codex workflow governance tests pass",
+    "Before/after byte, character and line counts are reported for every reduced document and recovery path",
+    "Standalone ChangeRequest, ContextDump freshness and Codex workflow PASS/ADVISORY/BLOCKING gates remain valid",
+    "Artifact-free compile, git diff --check, encoding checks for PROJECT_TREE and scoped allowlist review pass",
+    "Fresh-agent recovery simulation succeeds without full five-document recovery"
+  ],
+  "phase_6_rollback_boundary": "One separately revertible Phase 6 implementation commit; rollback restores documentation text and measurement tooling without affecting Phase 1-5 governance or production behavior.",
   "phase_5_rollback_boundary": "One separately revertible scoped Phase 5 implementation commit; reverting it leaves Phase 1-4 governance and all production scanner behavior intact.",
   "approved_decisions": [
     "Current local checkout represents current working reality",
@@ -200,12 +270,13 @@
     {"id": "PHASE_3", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_4", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "PHASE_5", "status": "IMPLEMENTED_VERIFIED"},
-    {"id": "PHASE_6", "status": "NOT_STARTED"}
+    {"id": "PHASE_6", "status": "AUTHORIZED_NOT_STARTED"},
+    {"id": "MISSION_CLOSE", "status": "NOT_STARTED"}
   ],
-  "current_phase": "PHASE_5",
-  "current_checkpoint": "PHASE_5_COMPLETED",
-  "implementation_status": "PHASE_5_IMPLEMENTED_VERIFIED",
-  "next_phase": "PHASE_6",
+  "current_phase": "PHASE_6",
+  "current_checkpoint": "PHASE_6_PRE_IMPLEMENTATION_CHECKPOINT",
+  "implementation_status": "PHASE_6_NOT_STARTED",
+  "next_phase": "MISSION_CLOSE",
   "next_phase_authorization": "NOT_AUTHORIZED",
   "related_commits": [
     {"phase": "PHASE_0", "commit": "24005986bc127f3d7da2bad19f528063280a0b6a"},
@@ -244,6 +315,11 @@
       "revision": "1.6",
       "reason": "Phase 5 Codex workflow orchestration implemented and verified; Phase 6 remains separately unauthorized",
       "date": "2026-08-18"
+    },
+    {
+      "revision": "1.7",
+      "reason": "Human authorization and bounded pre-implementation specification for Phase 6 measured context reduction and safe deduplication",
+      "date": "2026-08-18"
     }
   ]
 }
@@ -255,7 +331,8 @@
 The approved architecture and rationale remain owned by the referenced contracts and `DECISION-007`.
 This file is the durable task-specific authorization and recovery record, not a replacement for project authority.
 
-Phase 0 through Phase 5 are complete and verified. Phase 6 is not authorized.
+Phase 0 through Phase 5 are complete and verified. Phase 6 is human-authorized at its
+pre-implementation checkpoint; Phase 6 implementation has not started.
 
 ## Amendment rule
 

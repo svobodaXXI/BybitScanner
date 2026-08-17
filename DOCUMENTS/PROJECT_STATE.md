@@ -2,7 +2,7 @@
 
 Version:
 
-7.19
+7.20
 
 Date:
 
@@ -870,11 +870,11 @@ SPEC_APPROVED
 
 Checkpoint:
 
-PHASE_5_COMPLETED
+PHASE_6_PRE_IMPLEMENTATION_CHECKPOINT
 
 Implementation status:
 
-PHASE_5_IMPLEMENTED_VERIFIED
+PHASE_6_NOT_STARTED
 
 Owning references:
 
@@ -885,15 +885,15 @@ Owning references:
 
 Current authorization:
 
-Phase 5 Codex workflow orchestration is implemented and verified under ChangeRequest revision 1.6.
+Phase 6 measured context reduction and safe documentation deduplication is human-authorized with bounded scope recorded in ChangeRequest revision 1.7. Implementation has not started.
 
 Next phase:
 
-PHASE_6_CONTEXT_BUDGET_AND_DOCUMENTATION_DEDUPLICATION
+PHASE_6_CONTEXT_BUDGET_AND_DOCUMENTATION_DEDUPLICATION_IMPLEMENTATION
 
 Important:
 
-Phase 5 is complete and verified. Phase 6 requires separate human authorization and has not started.
+Phase 5 is complete and verified. The next authorized action is bounded Phase 6 implementation after this checkpoint is reviewed and committed.
 
 ---
 
@@ -4453,15 +4453,21 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.18
+PROJECT_STATE v7.19
 
 to:
 
-PROJECT_STATE v7.19
+PROJECT_STATE v7.20
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 5 implementation (v7.18 to v7.19):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 6 authorization (v7.19 to v7.20):
+
+* recorded PHASE_6_PRE_IMPLEMENTATION_CHECKPOINT / PHASE_6_NOT_STARTED;
+* linked measured-baseline, deduplication safety and acceptance to ChangeRequest revision 1.7;
+* recorded bounded Phase 6 implementation as the next authorized action.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 5 implementation (v7.18 to v7.19):
 
 * recorded PHASE_5_COMPLETED / PHASE_5_IMPLEMENTED_VERIFIED;
 * recorded focused orchestration and governance verification;

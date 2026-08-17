@@ -2,7 +2,7 @@
 
 Version:
 
-4.13
+4.14
 
 Date:
 
@@ -861,11 +861,11 @@ Documentation and AI Context Workflow Modernization
 
 Lifecycle state:
 
-SPEC_APPROVED / PHASE_5_COMPLETED
+SPEC_APPROVED / PHASE_6_PRE_IMPLEMENTATION_CHECKPOINT
 
 Implementation status:
 
-PHASE_5_IMPLEMENTED_VERIFIED
+PHASE_6_NOT_STARTED
 
 Objective:
 
@@ -898,7 +898,7 @@ Migration phases:
 3. Minimal ContextDump generator targeting ignored `runtime/context/` — IMPLEMENTED_VERIFIED.
 4. Staleness and scoped LegacyWarning enforcement — IMPLEMENTED_VERIFIED.
 5. Codex workflow integration — IMPLEMENTED_VERIFIED.
-6. Measured context-cost reduction and safe documentation deduplication.
+6. Measured context-cost reduction and safe documentation deduplication — AUTHORIZED_NOT_STARTED.
 
 Acceptance criteria:
 
@@ -920,14 +920,14 @@ Phase 0 is documentation-only and does not authorize later implementation.
 
 Current next phase:
 
-PHASE_5_CODEX_WORKFLOW_INTEGRATION
+PHASE_6_CONTEXT_BUDGET_AND_DOCUMENTATION_DEDUPLICATION
 
-Phase 5 authorization state:
+Phase 6 authorization state:
 
-COMPLETED / IMPLEMENTED_VERIFIED
+HUMAN_AUTHORIZED / PRE_IMPLEMENTATION_CHECKPOINT
 
-Phase 5 implementation evidence is owned by ChangeRequest revision 1.6.
-Phase 6 remains separately unauthorized and has not started.
+Phase 6 bounded scope, measurement plan and acceptance are owned by ChangeRequest revision 1.7.
+Implementation has not started.
 
 ---
 
@@ -982,15 +982,21 @@ RULE-008:
 
 from:
 
-ROADMAP v4.12
+ROADMAP v4.13
 
 to:
 
-ROADMAP v4.13
+ROADMAP v4.14
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 5 implementation (v4.12 to v4.13):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 6 authorization (v4.13 to v4.14):
+
+* recorded Phase 6 as human-authorized at PRE_IMPLEMENTATION_CHECKPOINT;
+* routed measured baseline, safe deduplication scope and acceptance to ChangeRequest revision 1.7;
+* recorded Phase 6 implementation as NOT_STARTED.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 5 implementation (v4.12 to v4.13):
 
 * recorded Codex workflow integration as IMPLEMENTED_VERIFIED;
 * recorded focused orchestration and governance verification;
