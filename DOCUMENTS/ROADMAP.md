@@ -2,7 +2,7 @@
 
 Version:
 
-4.20
+4.21
 
 Date:
 
@@ -939,7 +939,7 @@ Consolidate Directional Envelope Ownership in Wedge Layer
 
 Status:
 
-RECORD / CHECKPOINT_COMMIT_AUTHORIZED / READY_FOR_RECORD
+MISSION_CLOSED / MISSION_CLOSE_COMPLETED / IMPLEMENTED_VERIFIED
 
 Planned scope:
 
@@ -950,11 +950,11 @@ Planned scope:
 
 Acceptance and risks:
 
-Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.3.
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.4.
 
 Next action:
 
-Create the authorized scoped implementation/record commit; mission close remains separate.
+SCANNER_GEOMETRY_TASK_SELECTION. No next implementation task is selected or authorized.
 
 ---
 
@@ -1009,15 +1009,21 @@ RULE-008:
 
 from:
 
-ROADMAP v4.19
+ROADMAP v4.20
 
 to:
 
-ROADMAP v4.20
+ROADMAP v4.21
 
 reason:
 
-Current checkpoint — CR-SCANNER-GEOMETRY-001 checkpoint commit authorization (v4.19 to v4.20):
+Current checkpoint — CR-SCANNER-GEOMETRY-001 mission close (v4.20 to v4.21):
+
+* recorded the verified implementation commit and synchronized push;
+* closed revision 1.4 while preserving criterion 13 and residual non-blocking risks;
+* returned planning to `SCANNER_GEOMETRY_TASK_SELECTION` without authorizing new implementation.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 checkpoint commit authorization (v4.19 to v4.20):
 
 * recorded explicit authorization for the scoped implementation/record commit under revision 1.3;
 * preserved verified implementation, acceptance disposition, review result and residual risks;

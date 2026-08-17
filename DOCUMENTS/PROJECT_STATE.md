@@ -2,7 +2,7 @@
 
 Version:
 
-7.26
+7.27
 
 Date:
 
@@ -901,7 +901,7 @@ The authoritative project priority remains `SCANNER_GEOMETRY`. No next implement
 
 ---
 
-# ACTIVE_TASK_STATE
+# COMPLETED_TASK_STATE
 
 Task:
 
@@ -909,23 +909,23 @@ CR-SCANNER-GEOMETRY-001 — Consolidate Directional Envelope Ownership in Wedge 
 
 Lifecycle:
 
-RECORD / CHECKPOINT_COMMIT_AUTHORIZED
+MISSION_CLOSED / MISSION_CLOSE_COMPLETED
 
 Implementation status:
 
-IMPLEMENTED_VERIFIED_REVIEWED
+IMPLEMENTED_VERIFIED
 
-Review verdict:
+Final status:
 
-READY_FOR_RECORD
+CLOSED
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.3
+`DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.4
 
 Next action:
 
-Create the human-authorized scoped implementation/record commit; mission close remains separate.
+SCANNER_GEOMETRY_TASK_SELECTION
 
 ---
 
@@ -4485,15 +4485,22 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.25
+PROJECT_STATE v7.26
 
 to:
 
-PROJECT_STATE v7.26
+PROJECT_STATE v7.27
 
 reason:
 
-Current checkpoint — CR-SCANNER-GEOMETRY-001 checkpoint commit authorization (v7.25 to v7.26):
+Current checkpoint — CR-SCANNER-GEOMETRY-001 mission close (v7.26 to v7.27):
+
+* recorded commit `405aaf1bf6889fd51d07c478cf064c29c5620d41` and synchronized `main` / `origin/main`;
+* closed ChangeRequest revision 1.4 after verified implementation and review;
+* preserved criterion 13 disposition, residual risks and non-blocking follow-ups;
+* returned next task selection to the authoritative `SCANNER_GEOMETRY` priority.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 checkpoint commit authorization (v7.25 to v7.26):
 
 * recorded ChangeRequest revision 1.3 and explicit human authorization for the scoped checkpoint commit;
 * preserved verified implementation, review verdict, acceptance disposition and residual risks;

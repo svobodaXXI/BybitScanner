@@ -6,8 +6,8 @@
   "schema_version": "1.0",
   "id": "CR-SCANNER-GEOMETRY-001",
   "title": "Consolidate Directional Envelope Ownership in Wedge Layer",
-  "status": "VERIFIED",
-  "revision": "1.3",
+  "status": "CLOSED",
+  "revision": "1.4",
   "lifecycle_stage": "RECORD",
   "objective": "Apply directional envelope semantics in the Wedge Layer after operational pattern determination and remove the premature opposite-side interpretation from the Geometry Layer.",
   "non_goals": [
@@ -130,6 +130,13 @@
     "Known valid Falling/Rising examples still require separately authorized manual or automated reference validation",
     "The pre-existing tests.test_wedge_pipeline fixture remains unable to reach Wedge detection"
   ],
+  "mission_outcome": [
+    "Directional envelope ownership is consolidated in the Wedge Layer after operational pattern determination",
+    "Geometry remains direction-neutral and the obsolete opposite-side 0.20 downgrade is removed",
+    "STRICT/EXCURSION semantics and focused directional regression coverage are implemented and verified",
+    "Acceptance is satisfied with manual reference validation deferred as recorded by criterion 13",
+    "Production checkpoint commit 405aaf1bf6889fd51d07c478cf064c29c5620d41 was pushed with local main synchronized to origin/main"
+  ],
   "rollback_boundaries": [
     "Implementation must be one scoped, independently revertible mission commit after verification",
     "Rollback restores the previous Geometry evaluation and Wedge integrity/detector behavior without changing GeometryModel or unrelated subsystems"
@@ -139,22 +146,32 @@
     {"id": "IMPLEMENT", "status": "COMPLETED"},
     {"id": "VERIFY", "status": "IMPLEMENTED_VERIFIED"},
     {"id": "RECORD", "status": "REVIEW_COMPLETED"},
-    {"id": "CHECKPOINT_COMMIT", "status": "HUMAN_AUTHORIZED"}
+    {"id": "CHECKPOINT_COMMIT", "status": "COMPLETED"},
+    {"id": "MISSION_CLOSE", "status": "COMPLETED"},
+    {"id": "NO_NEXT_PHASE", "status": "NOT_APPLICABLE"}
   ],
-  "current_phase": "RECORD",
-  "current_checkpoint": "CHECKPOINT_COMMIT_AUTHORIZED",
-  "implementation_status": "IMPLEMENTED_VERIFIED_REVIEWED",
-  "next_phase": "CHECKPOINT_COMMIT",
-  "next_phase_authorization": "HUMAN_AUTHORIZED_2026-08-18",
+  "current_phase": "MISSION_CLOSE",
+  "current_checkpoint": "MISSION_CLOSE_COMPLETED",
+  "implementation_status": "IMPLEMENTED_VERIFIED",
+  "next_phase": "NO_NEXT_PHASE",
+  "next_phase_authorization": "NOT_APPLICABLE",
   "related_commits": [
     {"phase": "BASELINE", "commit": "6a1ee60908a95721db0367ccc6b2b0ff217af039"},
-    {"phase": "PRE_IMPLEMENTATION_CHECKPOINT", "commit": "3fcbf8160ffc4eb4c41940560cbea76514d661e4"}
+    {"phase": "PRE_IMPLEMENTATION_CHECKPOINT", "commit": "3fcbf8160ffc4eb4c41940560cbea76514d661e4"},
+    {"phase": "IMPLEMENT_VERIFY_RECORD", "commit": "405aaf1bf6889fd51d07c478cf064c29c5620d41"}
   ],
+  "repository_sync": {
+    "branch": "main",
+    "local_head": "405aaf1bf6889fd51d07c478cf064c29c5620d41",
+    "origin_main": "405aaf1bf6889fd51d07c478cf064c29c5620d41",
+    "status": "SYNCHRONIZED"
+  },
   "amendment_history": [
     {"revision": "1.0", "reason": "Pre-implementation directional envelope ownership Task/Spec", "date": "2026-08-18"},
     {"revision": "1.1", "reason": "Human-authorized implementation without scope or acceptance changes", "date": "2026-08-18"},
     {"revision": "1.2", "reason": "Implementation, verification and independent review recorded as ready for scoped commit", "date": "2026-08-18"},
-    {"revision": "1.3", "reason": "Human-authorized scoped checkpoint commit without implementation or acceptance changes", "date": "2026-08-18"}
+    {"revision": "1.3", "reason": "Human-authorized scoped checkpoint commit without implementation or acceptance changes", "date": "2026-08-18"},
+    {"revision": "1.4", "reason": "Human-authorized mission close after verified checkpoint commit and push synchronization", "date": "2026-08-18"}
   ]
 }
 ```
@@ -167,7 +184,8 @@ Scoped reconnaissance confirmed that Geometry ranking is correctly direction-neu
 operational Wedge pattern is known. Existing strict-side candle containment in `wedge/detector.py`
 already follows the approved Falling/Rising/Triangle mapping.
 
-Implementation and focused verification are complete. Independent review found no BLOCKING or
-IMPORTANT issue and returned `READY_FOR_RECORD`. Revision 1.3 authorizes the scoped checkpoint commit while
-criterion 13 remains `NO_DEGRADATION_EVIDENCE_FOUND / MANUAL_REFERENCE_VALIDATION_DEFERRED`.
-The next action is the authorized scoped implementation/record commit; mission close remains separate.
+Implementation, focused verification, independent review and checkpoint commit are complete.
+Revision 1.4 closes the mission after commit `405aaf1bf6889fd51d07c478cf064c29c5620d41`
+was pushed and local `main` synchronized with `origin/main`. Criterion 13 remains
+`NO_DEGRADATION_EVIDENCE_FOUND / MANUAL_REFERENCE_VALIDATION_DEFERRED`; residual risks and
+non-blocking review findings remain recorded. No later phase exists.
