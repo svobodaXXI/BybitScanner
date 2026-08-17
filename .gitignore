@@ -18,6 +18,7 @@ debug/
 debug.txt
 
 charts/
+runtime/context/
 
 signals_history.json
 

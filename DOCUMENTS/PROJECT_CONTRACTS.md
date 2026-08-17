@@ -2,7 +2,7 @@
 
 Version:
 
-3.7
+3.8
 
 Date:
 
@@ -1935,7 +1935,15 @@ initial_context_budget:
 * standard ContextDump: 30 KB or approximately 8,000 tokens;
 * targets may be revised using measured workflow results.
 
-ContextDump schema/generation remains Phase 3 work; full stale-context enforcement remains Phase 4 work.
+implementation_v1:
+
+* standalone generator: `tools/project_sync/governance/context_dump.py`;
+* durable ChangeRequest declares affected paths, focused tests and selected anchored authority excerpts;
+* Markdown output includes task revision, branch, HEAD, dirty-state digest, authority-source hashes and relevant LegacyWarnings;
+* deterministic ordering is required; generation time is intentionally variable provenance;
+* missing required scope, source or authority section fails generation clearly.
+
+Phase 3 generation is IMPLEMENTED_VERIFIED. Full stale-context and dependency-aware LegacyWarning enforcement remains Phase 4 work.
 
 ---
 
@@ -2534,15 +2542,21 @@ Migration Lifecycle.
 
 from:
 
-PROJECT_CONTRACTS v3.6
+PROJECT_CONTRACTS v3.7
 
 to:
 
-PROJECT_CONTRACTS v3.7
+PROJECT_CONTRACTS v3.8
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 2 (v3.6 to v3.7):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 3 (v3.7 to v3.8):
+
+* registered the minimal standalone ContextDump generator and its task-scoped inputs;
+* recorded deterministic derived output and provenance behavior;
+* retained full staleness and dependency-aware warning enforcement for Phase 4.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 2 (v3.6 to v3.7):
 
 * registered durable Markdown ChangeRequest storage and standalone validation;
 * registered canonical LegacyWarning JSON storage and read-only validation/query interface;

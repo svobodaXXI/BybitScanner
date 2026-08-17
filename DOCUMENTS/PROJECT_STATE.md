@@ -2,7 +2,7 @@
 
 Version:
 
-7.14
+7.15
 
 Date:
 
@@ -870,11 +870,11 @@ SPEC_APPROVED
 
 Checkpoint:
 
-PHASE_2_COMPLETED
+PHASE_3_COMPLETED
 
 Implementation status:
 
-PHASE_2_IMPLEMENTED_VERIFIED
+PHASE_3_IMPLEMENTED_VERIFIED
 
 Owning references:
 
@@ -885,15 +885,15 @@ Owning references:
 
 Current authorization:
 
-Phase 2 ChangeRequest and LegacyWarning schema/storage/validation only.
+Phase 3 Minimal ContextDump generator completed and verified.
 
 Next phase:
 
-PHASE_3_MINIMAL_CONTEXT_DUMP_GENERATOR
+PHASE_4_STALENESS_AND_LEGACY_WARNING_ENFORCEMENT
 
 Important:
 
-Phase 2 is complete. Phase 3 requires separate authorization and has not started.
+Phase 3 is complete. Phase 4 requires separate authorization and has not started.
 
 ---
 
@@ -4453,15 +4453,21 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.13
+PROJECT_STATE v7.14
 
 to:
 
-PROJECT_STATE v7.14
+PROJECT_STATE v7.15
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 2 (v7.13 to v7.14):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 3 (v7.14 to v7.15):
+
+* recorded PHASE_3_COMPLETED / PHASE_3_IMPLEMENTED_VERIFIED;
+* registered the generated ContextDump as disposable non-authoritative runtime context;
+* recorded Phase 4 as the next separately authorized phase.
+
+Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 2 (v7.13 to v7.14):
 
 * recorded PHASE_2_COMPLETED / PHASE_2_IMPLEMENTED_VERIFIED;
 * linked the durable ChangeRequest recovery record;
