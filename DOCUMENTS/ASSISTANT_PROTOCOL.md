@@ -2,7 +2,7 @@
 
 Версия:
 
-4.4
+4.5
 
 Дата:
 
@@ -851,22 +851,9 @@ Architecture Hygiene subsystem.
 
 # 28. STAGED_CONTEXT_RECOVERY_PROTOCOL
 
-Primary entry:
-
-```text
-AGENTS.md
-```
-
-Ассистент должен:
-
-1. проверить local branch, HEAD, index/working tree и current task;
-2. получить active mission pointer из PROJECT_STATE или применимый Task/ChangeRequest;
-3. прочитать только owning sections, необходимые для task scope;
-4. расширить review до PROJECT_STATE, PROJECT_TREE, PROJECT_RULES, ARCHITECTURE и ASSISTANT_PROTOCOL только при неизвестном scope, authority conflict, severe interruption или architecture-wide работе.
-
-Routine scoped work не требует полного deep-recovery set.
-Authority/recovery rules принадлежат PROJECT_RULES.md;
-current mission state принадлежит PROJECT_STATE.md.
+Ассистент начинает с root `AGENTS.md` и следует его staged-recovery routing.
+Нормативные authority/recovery rules принадлежат `PROJECT_RULES.md` и workflow contracts;
+current mission state — `PROJECT_STATE.md` и применимому Task/ChangeRequest.
 
 ---
 
@@ -1140,22 +1127,20 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.3
+ASSISTANT_PROTOCOL v4.4
 
 to:
 
-ASSISTANT_PROTOCOL v4.4
+ASSISTANT_PROTOCOL v4.5
 
 date:
 
-2026-08-17
+2026-08-18
 
 reason:
 
-* added `TRAINING_REFERENCE_ARCHIVE_DELIVERY_RULE`;
-* standardized delivery as a direct ZIP link plus one exact canonical installer command;
-* removed routine manual ZIP opening/extraction from the normal workflow;
-* referenced the owning archive/storage rules instead of duplicating their contract.
+* replaced duplicated staged-recovery steps with a compact pointer to their canonical owners;
+* preserved assistant routing behavior and deep-recovery availability through `AGENTS.md`.
 
 Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.2 to v4.3:
 

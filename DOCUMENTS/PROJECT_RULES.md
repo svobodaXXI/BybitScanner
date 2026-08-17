@@ -2,7 +2,7 @@
 
 Version:
 
-5.9
+5.10
 
 Date:
 
@@ -1145,15 +1145,8 @@ dirty code не переопределяет contract автоматически
 при реальном риске его нехватки
 или по прямому запросу пользователя.
 
-Routine recovery начинается с root `AGENTS.md`,
-local Git state и active Task/ChangeRequest.
-Затем читаются только task-relevant owning sections.
-
-Полный review PROJECT_STATE, PROJECT_TREE,
-PROJECT_RULES, ARCHITECTURE и ASSISTANT_PROTOCOL
-выполняется только при неизвестном scope,
-authority conflict, severe interruption
-или architecture-wide задаче.
+Recovery scope и deep-recovery conditions определяет root `AGENTS.md`;
+нормативный lifecycle принадлежит workflow contracts.
 
 ## 20.12 Remote Collaboration / Minimal Artifact Transfer
 
@@ -1618,20 +1611,16 @@ DOCUMENTS/SNAPSHOT.md
 
 from:
 
-PROJECT_RULES v5.8
+PROJECT_RULES v5.9
 
 to:
 
-PROJECT_RULES v5.9
+PROJECT_RULES v5.10
 
 reason:
 
-Current checkpoint — Training Reference Archive Workflow:
-
-* established manifest v1, stable per-symbol case identity and canonical archive layout;
-* registered the reusable safe installer, operation classes and deterministic exit codes;
-* required byte-exact original-image preservation, full preflight and transactional scoped cleanup;
-* preserved independent prior cases, unrelated user work, downloaded ZIP files and `training/storage.py` ownership.
+* removed duplicated staged-recovery procedure;
+* retained context-efficiency policy here and routed recovery mechanics to `AGENTS.md` and workflow contracts.
 
 Previous checkpoint preserved — PROJECT_RULES v5.8:
 

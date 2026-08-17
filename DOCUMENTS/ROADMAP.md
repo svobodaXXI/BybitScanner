@@ -2,7 +2,7 @@
 
 Version:
 
-4.14
+4.15
 
 Date:
 
@@ -861,11 +861,11 @@ Documentation and AI Context Workflow Modernization
 
 Lifecycle state:
 
-SPEC_APPROVED / PHASE_6_PRE_IMPLEMENTATION_CHECKPOINT
+SPEC_APPROVED / PHASE_6_COMPLETED
 
 Implementation status:
 
-PHASE_6_NOT_STARTED
+PHASE_6_IMPLEMENTED_VERIFIED
 
 Objective:
 
@@ -898,7 +898,7 @@ Migration phases:
 3. Minimal ContextDump generator targeting ignored `runtime/context/` — IMPLEMENTED_VERIFIED.
 4. Staleness and scoped LegacyWarning enforcement — IMPLEMENTED_VERIFIED.
 5. Codex workflow integration — IMPLEMENTED_VERIFIED.
-6. Measured context-cost reduction and safe documentation deduplication — AUTHORIZED_NOT_STARTED.
+6. Measured context-cost reduction and safe documentation deduplication — IMPLEMENTED_VERIFIED.
 
 Acceptance criteria:
 
@@ -920,14 +920,14 @@ Phase 0 is documentation-only and does not authorize later implementation.
 
 Current next phase:
 
-PHASE_6_CONTEXT_BUDGET_AND_DOCUMENTATION_DEDUPLICATION
+MISSION_CLOSE_REVIEW
 
-Phase 6 authorization state:
+Mission-close authorization state:
 
-HUMAN_AUTHORIZED / PRE_IMPLEMENTATION_CHECKPOINT
+NOT_AUTHORIZED
 
-Phase 6 bounded scope, measurement plan and acceptance are owned by ChangeRequest revision 1.7.
-Implementation has not started.
+Phase 6 measurements, classification and verification are owned by ChangeRequest revision 1.8.
+Detailed implementation history is owned by Git.
 
 ---
 
@@ -982,61 +982,20 @@ RULE-008:
 
 from:
 
-ROADMAP v4.13
+ROADMAP v4.14
 
 to:
 
-ROADMAP v4.14
+ROADMAP v4.15
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 6 authorization (v4.13 to v4.14):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 6 implementation (v4.14 to v4.15):
 
-* recorded Phase 6 as human-authorized at PRE_IMPLEMENTATION_CHECKPOINT;
-* routed measured baseline, safe deduplication scope and acceptance to ChangeRequest revision 1.7;
-* recorded Phase 6 implementation as NOT_STARTED.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 5 implementation (v4.12 to v4.13):
-
-* recorded Codex workflow integration as IMPLEMENTED_VERIFIED;
-* recorded focused orchestration and governance verification;
-* preserved Phase 6 as separately unauthorized.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 5 authorization (v4.11 to v4.12):
-
-* recorded Phase 5 as human-authorized at PRE_IMPLEMENTATION_CHECKPOINT;
-* routed bounded scope and acceptance to ChangeRequest revision 1.5 without duplication;
-* recorded implementation as NOT_STARTED and Phase 6 as unauthorized.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 4 implementation (v4.10 to v4.11):
-
-* recorded Phase 4 staleness validation and scoped warning enforcement as IMPLEMENTED_VERIFIED;
-* recorded focused regression and standalone validation completion;
-* preserved Phase 5 as separately unauthorized.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 4 authorization (v4.9 to v4.10):
-
-* recorded bounded Phase 4 scope, acceptance and rollback ownership in ChangeRequest revision 1.3;
-* recorded Phase 4 as authorized but not implemented;
-* preserved Phase 5 as separately unauthorized.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 3 (v4.8 to v4.9):
-
-* recorded the minimal ContextDump generator as IMPLEMENTED_VERIFIED;
-* preserved Phase 4 staleness/LegacyWarning enforcement as separately unauthorized;
-* retained the approved phase boundaries and context-budget acceptance.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 2 (v4.7 to v4.8):
-
-* recorded Phase 1 and Phase 2 as IMPLEMENTED_VERIFIED;
-* recorded durable ChangeRequest and LegacyWarning infrastructure completion;
-* set Phase 3 as the next separately authorized phase.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 0 (v4.6 to v4.7):
-
-* recorded the approved phased modernization plan, scope, non-goals and acceptance;
-* recorded SPEC_APPROVED / PRE_IMPLEMENTATION_CHECKPOINT with implementation NOT_STARTED;
-* set Phase 1 as the next separately authorized action.
+* recorded measured context reduction as IMPLEMENTED_VERIFIED;
+* routed evidence and current recovery state to ChangeRequest revision 1.8;
+* removed completed Phase 0–5 checkpoint narration now owned by Git;
+* retained mission close as a separately unauthorized action.
 
 Previous checkpoint preserved — Signal Admission Implementation (v4.5 to v4.6):
 

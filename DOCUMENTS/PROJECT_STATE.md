@@ -2,7 +2,7 @@
 
 Version:
 
-7.20
+7.21
 
 Date:
 
@@ -870,11 +870,11 @@ SPEC_APPROVED
 
 Checkpoint:
 
-PHASE_6_PRE_IMPLEMENTATION_CHECKPOINT
+PHASE_6_COMPLETED
 
 Implementation status:
 
-PHASE_6_NOT_STARTED
+PHASE_6_IMPLEMENTED_VERIFIED
 
 Owning references:
 
@@ -885,15 +885,15 @@ Owning references:
 
 Current authorization:
 
-Phase 6 measured context reduction and safe documentation deduplication is human-authorized with bounded scope recorded in ChangeRequest revision 1.7. Implementation has not started.
+Phase 6 measured context reduction and safe documentation deduplication is implemented and verified in ChangeRequest revision 1.8.
 
 Next phase:
 
-PHASE_6_CONTEXT_BUDGET_AND_DOCUMENTATION_DEDUPLICATION_IMPLEMENTATION
+MISSION_CLOSE_REVIEW
 
 Important:
 
-Phase 5 is complete and verified. The next authorized action is bounded Phase 6 implementation after this checkpoint is reviewed and committed.
+Phase 0 through Phase 6 are complete and verified. Mission close requires separate authorization.
 
 ---
 
@@ -4453,68 +4453,20 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.19
+PROJECT_STATE v7.20
 
 to:
 
-PROJECT_STATE v7.20
+PROJECT_STATE v7.21
 
 reason:
 
-Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 6 authorization (v7.19 to v7.20):
+Current checkpoint — CR-DOC-AI-CONTEXT-001 Phase 6 implementation (v7.20 to v7.21):
 
-* recorded PHASE_6_PRE_IMPLEMENTATION_CHECKPOINT / PHASE_6_NOT_STARTED;
-* linked measured-baseline, deduplication safety and acceptance to ChangeRequest revision 1.7;
-* recorded bounded Phase 6 implementation as the next authorized action.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 5 implementation (v7.18 to v7.19):
-
-* recorded PHASE_5_COMPLETED / PHASE_5_IMPLEMENTED_VERIFIED;
-* recorded focused orchestration and governance verification;
-* recorded Phase 6 as the next separately unauthorized phase.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 5 authorization (v7.17 to v7.18):
-
-* recorded PHASE_5_PRE_IMPLEMENTATION_CHECKPOINT / PHASE_5_NOT_STARTED;
-* linked bounded Phase 5 scope to ChangeRequest revision 1.5;
-* recorded Phase 5 implementation as the next authorized action and Phase 6 as unauthorized.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 4 implementation (v7.16 to v7.17):
-
-* recorded PHASE_4_COMPLETED / PHASE_4_IMPLEMENTED_VERIFIED;
-* recorded focused validation evidence and standalone PASS on the real durable task;
-* recorded Phase 5 as the next separately authorized phase.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 4 authorization (v7.15 to v7.16):
-
-* recorded the bounded Phase 4 authorization and pre-implementation checkpoint;
-* recorded implementation as NOT_STARTED and Phase 5 as unauthorized;
-* retained Phase 3 as completed and verified.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 3 (v7.14 to v7.15):
-
-* recorded PHASE_3_COMPLETED / PHASE_3_IMPLEMENTED_VERIFIED;
-* registered the generated ContextDump as disposable non-authoritative runtime context;
-* recorded Phase 4 as the next separately authorized phase.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 2 (v7.13 to v7.14):
-
-* recorded PHASE_2_COMPLETED / PHASE_2_IMPLEMENTED_VERIFIED;
-* linked the durable ChangeRequest recovery record;
-* recorded Phase 3 as the next separately authorized phase.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 1 (v7.12 to v7.13):
-
-* established AGENTS.md as routine entry and staged/task-scoped recovery;
-* retained deep recovery for exceptional scope;
-* recorded PHASE_1_COMPLETED / PHASE_1_IMPLEMENTED_VERIFIED;
-* recorded Phase 2 as the next separately authorized phase.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 Phase 0 (v7.11 to v7.12):
-
-* recorded SPEC_APPROVED / PRE_IMPLEMENTATION_CHECKPOINT;
-* recorded implementation status NOT_STARTED and Phase 1 as the next separately authorized action;
-* linked the owning contract, decision and roadmap records without duplicating the SPEC.
+* recorded PHASE_6_COMPLETED / PHASE_6_IMPLEMENTED_VERIFIED;
+* routed measured results and recovery evidence to ChangeRequest revision 1.8;
+* removed superseded Phase 0–5 checkpoint narration now owned by Git;
+* recorded mission-close review as separately unauthorized.
 
 Previous checkpoint preserved — Signal Admission Implementation (v7.10 to v7.11):
 
