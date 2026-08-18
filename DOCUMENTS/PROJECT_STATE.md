@@ -2,7 +2,7 @@
 
 Version:
 
-7.27
+7.28
 
 Date:
 
@@ -855,6 +855,64 @@ Development principle:
 целесообразно расширять
 интеллектуальный и функциональный
 контур.
+
+---
+
+# TRADING_INTELLIGENCE_PAPER_TRADER_RESEARCH_STATE
+
+Active mission:
+
+CR-TRADING-INTELLIGENCE-001 — Trading Intelligence and Paper Trader Roadmap Research
+
+Governance type:
+
+DURABLE_PLANNING_RESEARCH_CHANGE_REQUEST
+
+Lifecycle state:
+
+IN_PROGRESS / CONTEXT / RESEARCH_ACTIVE
+
+Checkpoint:
+
+DURABLE_PLANNING_RESEARCH_CHECKPOINT
+
+ChangeRequest revision:
+
+1.0
+
+Implementation status:
+
+IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED
+
+Roadmap state:
+
+HYPOTHESIS_NOT_FINAL
+
+Architecture decision state:
+
+PARTIALLY_HUMAN_APPROVED / ADDITIONAL_RESEARCH_REQUIRED
+
+Owning record:
+
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.0
+
+Current authorized action:
+
+TARGETED_EXTERNAL_RESEARCH_AND_ROADMAP_SPECIFICATION
+
+Next phase:
+
+ROADMAP_SPEC — NOT_AUTHORIZED_PENDING_RESEARCH_AND_HUMAN_APPROVAL
+
+Implementation authorization:
+
+NONE
+
+Important:
+
+This user-initiated research mission temporarily owns active planning before further implementation
+selection. The underlying post-research implementation routing remains subject to explicit human
+approval; `SCANNER_GEOMETRY_TASK_SELECTION` does not authorize implementation while this mission is active.
 
 ---
 
@@ -4485,15 +4543,22 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.26
+PROJECT_STATE v7.27
 
 to:
 
-PROJECT_STATE v7.27
+PROJECT_STATE v7.28
 
 reason:
 
-Current checkpoint — CR-SCANNER-GEOMETRY-001 mission close (v7.26 to v7.27):
+Current checkpoint — CR-TRADING-INTELLIGENCE-001 durable planning/research start (v7.27 to v7.28):
+
+* activated the human-authorized Trading Intelligence and Paper Trader roadmap research mission;
+* recorded ChangeRequest revision 1.0 at the durable planning/research checkpoint;
+* preserved implementation as not started and not authorized;
+* routed the next work to targeted external research and a non-final roadmap specification.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 mission close (v7.26 to v7.27):
 
 * recorded commit `405aaf1bf6889fd51d07c478cf064c29c5620d41` and synchronized `main` / `origin/main`;
 * closed ChangeRequest revision 1.4 after verified implementation and review;

@@ -2,7 +2,7 @@
 
 Version:
 
-4.21
+4.22
 
 Date:
 
@@ -958,6 +958,86 @@ SCANNER_GEOMETRY_TASK_SELECTION. No next implementation task is selected or auth
 
 ---
 
+# CR-TRADING-INTELLIGENCE-001
+
+Title:
+
+Trading Intelligence and Paper Trader Roadmap Research
+
+Governance type:
+
+DURABLE_PLANNING_RESEARCH_CHANGE_REQUEST
+
+Status:
+
+IN_PROGRESS / CONTEXT / RESEARCH_ACTIVE
+
+Implementation status:
+
+IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED
+
+Roadmap status:
+
+HYPOTHESIS_NOT_FINAL / ADDITIONAL_RESEARCH_REQUIRED
+
+Objective:
+
+Prepare an evidence-based, dependency-aware proposed roadmap from the current Scanner to broader
+Trading Intelligence and an event-driven Paper Trader while preserving approved human decisions,
+open questions, performance constraints and the normalized boundary between analytics and execution.
+
+Planning tracks:
+
+* Track A — Scanner / Trading Intelligence: Wedge refinement, Flag, HS/IHS, Double Top/Bottom,
+  Candlestick Formation Evidence, common PatternObservation and pre-breakout corridor setups;
+* Track B — Trading Foundation: normalized contracts, instrument precision, clock/time semantics,
+  strategy/risk, order/fill/position/account, ExecutionPort, PaperExecution, fees/PnL/margin and recovery;
+* Track C — Market Microstructure / Simulation: Bybit public trades, full L2 incremental local book,
+  selective active-symbol subscriptions, LiquidityObservation, liquidity-aware management and later replay.
+
+Approved product boundaries:
+
+* new pattern families are not automatically placed in wedge/;
+* candlestick formations initially provide evidence/confirmation/context rather than a primary engine;
+* mild LONG preference belongs to later Strategy/Decision policy and does not alter detector validity or Geometry score;
+* PRE_BREAKOUT_CORRIDOR_SETUP and BREAKOUT_SETUP remain distinct setup types;
+* Paper Trader v1 uses ONE_WAY, ISOLATED, USDT_ONLY, one open position per symbol and NO_SCALE_IN policies;
+* new entries use CLOSED candles and preserve distinct source, signal, order and fill times;
+* realtime execution and position management are event-driven over public trades and full L2 order-book data;
+* PaperExecution and later LiveBybitExecution share normalized Strategy/Risk and ExecutionPort contracts;
+* hot/cold path separation and measured CPU/RAM/network budgets protect Scanner throughput.
+
+Research required before roadmap approval:
+
+* detector-family and PatternObservation contracts;
+* corridor maturity, confidence, entry, target, SL, invalidation, risk and apex limits;
+* exact LONG bias measurement and candlestick taxonomy, including canonical meaning of «Восходящая звезда»;
+* order/fill/account/risk/persistence/reconciliation and replay semantics;
+* dynamic target-corridor book depth and selective subscription strategy;
+* tape-aware liquidity-barrier evidence and position-management policy;
+* comparison of high-quality open-source architectures without blind copying;
+* performance budgets, profiling and benchmark gates.
+
+Dependency hypothesis:
+
+Tracks A, B and C may develop in parallel but join only through normalized contracts. Paper Trader
+starts behind PatternObservation and normalized TradingSignal; execution simulation follows domain
+order/fill contracts and does not depend directly on Wedge, Telegram or scanner signal-memory formats.
+
+Acceptance, risks, approved decisions and unresolved decisions:
+
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.0.
+
+Current action:
+
+TARGETED_EXTERNAL_RESEARCH_AND_ROADMAP_SPECIFICATION.
+
+Implementation authorization:
+
+NONE. No production or test implementation may begin from this planning entry.
+
+---
+
 # ROADMAP_UPDATE_RULES
 
 RULE-001:
@@ -1009,15 +1089,22 @@ RULE-008:
 
 from:
 
-ROADMAP v4.20
+ROADMAP v4.21
 
 to:
 
-ROADMAP v4.21
+ROADMAP v4.22
 
 reason:
 
-Current checkpoint — CR-SCANNER-GEOMETRY-001 mission close (v4.20 to v4.21):
+Current checkpoint — CR-TRADING-INTELLIGENCE-001 durable planning/research start (v4.21 to v4.22):
+
+* added the non-final three-track roadmap hypothesis for Trading Intelligence, Trading Foundation and Market Microstructure;
+* preserved approved Paper Trader v1, strategy, realtime execution, liquidity and performance directions;
+* routed unresolved design choices to targeted external research;
+* explicitly retained implementation as not started and not authorized.
+
+Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 mission close (v4.20 to v4.21):
 
 * recorded the verified implementation commit and synchronized push;
 * closed revision 1.4 while preserving criterion 13 and residual non-blocking risks;
