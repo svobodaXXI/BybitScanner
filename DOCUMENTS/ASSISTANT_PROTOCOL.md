@@ -2,7 +2,7 @@
 
 Версия:
 
-4.7
+4.8
 
 Дата:
 
@@ -170,6 +170,28 @@ action instruction, если пользователь должен выполн�
 Пояснения остаются вне блока. Внутри запрещены комментарии, кавычки, bullets и prefixes,
 если они не являются намеренной частью payload. Необходимая многострочная payload
 сохраняется точно; обычный пояснительный текст отдельного блока не требует.
+
+DEPENDENT_COMMAND_SEQUENCE_RULE:
+
+Если два или более действия или команды зависят друг от друга
+и между ними требуется или желательно проверить состояние или результат,
+ассистент обязан:
+
+1. выдать только первый текущий шаг;
+2. поместить его в отдельный copy-ready block;
+3. непосредственно перед блоком явно обозначить порядок действия,
+   например: «СНАЧАЛА выполни эту команду...»;
+4. указать конкретный ожидаемый результат или checkpoint;
+5. не включать следующую зависимую команду в тот же copy-ready payload;
+6. выдать следующую команду отдельным шагом только после подтверждения
+   или наблюдения результата предыдущего шага.
+
+Правило особенно применяется к PowerShell, Git, Codex,
+installation и migration commands, destructive или state-changing operations
+и любому workflow, где следующий шаг зависит от результата предыдущего.
+
+Независимые команды, безопасные для совместного выполнения,
+не требуется искусственно разделять.
 
 ---
 
@@ -682,6 +704,26 @@ Implementation -> Validation -> Git checkpoint.
 Полный Project Sync / Migration workflow
 используется только при соответствующем масштабе риска.
 
+## 20.1 IMMEDIATE_WORKFLOW_RULE_RECORDING
+
+Если в ходе работы пользователь и ассистент обнаружили и явно утвердили
+новое постоянное правило сопровождения BybitScanner,
+которое должно действовать в будущих сессиях,
+его фиксацию запрещено откладывать формулировками
+«зафиксируем потом», «внесём позже» или аналогичными.
+
+Ассистент обязан:
+
+1. остановиться на безопасном checkpoint текущего workflow;
+2. сразу инициировать минимальное изменение authoritative protocol или document,
+   которому принадлежит правило;
+3. проверить и зафиксировать правило согласно applicable governance;
+4. только после этого продолжить основную миссию с прежней точки.
+
+Если немедленная остановка небезопасна или может повредить
+выполняющийся процесс, ассистент сначала дожидается ближайшего
+безопасного checkpoint, затем фиксирует правило до продолжения основной работы.
+
 ---
 # 21. ARCHITECTURAL_PRIORITY
 
@@ -1144,17 +1186,22 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.6
+ASSISTANT_PROTOCOL v4.7
 
 to:
 
-ASSISTANT_PROTOCOL v4.7
+ASSISTANT_PROTOCOL v4.8
 
 date:
 
 2026-08-18
 
 reason:
+
+* extended `COPY_READY_ACTION_BLOCK_RULE` with `DEPENDENT_COMMAND_SEQUENCE_RULE`, requiring dependent commands to be issued and verified one step at a time;
+* added `IMMEDIATE_WORKFLOW_RULE_RECORDING` under Change Management, requiring approved permanent workflow rules to be recorded at the nearest safe checkpoint before the primary mission continues.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.6 to v4.7:
 
 * extended `COPY_READY_ACTION_BLOCK_RULE` with a mandatory explicit user action instruction immediately before an external-tool payload;
 * prohibited presenting a copy-ready block without stating what to copy, where to paste it, whether to run/send it, and whether to return the result when user action is required.
