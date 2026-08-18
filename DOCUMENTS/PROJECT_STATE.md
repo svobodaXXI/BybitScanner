@@ -2,7 +2,7 @@
 
 Version:
 
-7.28
+7.29
 
 Date:
 
@@ -874,11 +874,11 @@ IN_PROGRESS / CONTEXT / RESEARCH_ACTIVE
 
 Checkpoint:
 
-DURABLE_PLANNING_RESEARCH_CHECKPOINT
+MICROSTRUCTURE_RESEARCH_RECORDED
 
 ChangeRequest revision:
 
-1.0
+1.1
 
 Implementation status:
 
@@ -894,11 +894,27 @@ PARTIALLY_HUMAN_APPROVED / ADDITIONAL_RESEARCH_REQUIRED
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.0
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.1
 
 Current authorized action:
 
-TARGETED_EXTERNAL_RESEARCH_AND_ROADMAP_SPECIFICATION
+TRADING_INTELLIGENCE_DETECTOR_FAMILY_RESEARCH
+
+Microstructure research disposition:
+
+SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN / IMPLEMENTATION_SPEC_NOT_READY
+
+Microstructure open state:
+
+EXACT_FORMULAS_THRESHOLDS_SCHEMAS_AND_PERFORMANCE_BUDGETS_OPEN
+
+Next external research focus:
+
+* Flag;
+* Head and Shoulders / Inverse Head and Shoulders;
+* Double Top / Double Bottom;
+* Candlestick Formation Evidence;
+* PRE_BREAKOUT_CORRIDOR_SETUP.
 
 Next phase:
 
@@ -4543,15 +4559,23 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.27
+PROJECT_STATE v7.28
 
 to:
 
-PROJECT_STATE v7.28
+PROJECT_STATE v7.29
 
 reason:
 
-Current checkpoint — CR-TRADING-INTELLIGENCE-001 durable planning/research start (v7.27 to v7.28):
+Current checkpoint — CR-TRADING-INTELLIGENCE-001 microstructure research record (v7.28 to v7.29):
+
+* advanced the durable ChangeRequest to revision 1.1 and checkpoint `MICROSTRUCTURE_RESEARCH_RECORDED`;
+* recorded microstructure research as sufficient for roadmap-level design but not an implementation specification;
+* preserved exact formulas, thresholds, schemas, queue/latency policies and performance budgets as open;
+* routed the next external research focus to detector families and PRE_BREAKOUT_CORRIDOR_SETUP;
+* kept ROADMAP_SPEC and IMPLEMENT not authorized.
+
+Previous checkpoint preserved — CR-TRADING-INTELLIGENCE-001 durable planning/research start (v7.27 to v7.28):
 
 * activated the human-authorized Trading Intelligence and Paper Trader roadmap research mission;
 * recorded ChangeRequest revision 1.0 at the durable planning/research checkpoint;

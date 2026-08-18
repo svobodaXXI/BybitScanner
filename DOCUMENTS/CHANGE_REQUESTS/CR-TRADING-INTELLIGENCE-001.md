@@ -7,7 +7,7 @@
   "id": "CR-TRADING-INTELLIGENCE-001",
   "title": "Trading Intelligence and Paper Trader Roadmap Research",
   "status": "IN_PROGRESS",
-  "revision": "1.0",
+  "revision": "1.1",
   "lifecycle_stage": "CONTEXT",
   "objective": "Research and record the evidence, architecture boundaries, dependencies and non-final roadmap hypothesis required to evolve the current Scanner into broader Trading Intelligence and a safe event-driven Paper Trader without authorizing implementation.",
   "non_goals": [
@@ -111,7 +111,30 @@
     "Scanner and pattern subsystems do not know whether a normalized signal is executed on paper or live",
     "Future PaperExecution and LiveBybitExecution share the same Strategy/Risk boundary through ExecutionPort",
     "Tracks A, B and C may proceed in parallel and join through normalized contracts",
-    "New trading and microstructure layers must not materially degrade Scanner throughput"
+    "New trading and microstructure layers must not materially degrade Scanner throughput",
+    "Public Bybit L2 is sufficient as the v1 baseline microstructure model, but it provides aggregated price-level liquidity rather than L3/MBO order identity or exact virtual queue position",
+    "Order-book and public-trade streams remain separate but correlatable using exchange/event and local receive timestamps without assuming zero latency",
+    "LocalOrderBook is initialized or replaced from snapshots, maintained incrementally from validated deltas and requires explicit resnapshot/recovery semantics",
+    "Adaptive depth follows MINIMUM_DEPTH_THAT_COVERS_TRADE_HORIZON from executable market area through target/potential plus safety buffer, with later lifecycle-controlled downgrade or unsubscribe",
+    "Selective microstructure activation follows ordinary symbol through forming/interesting setup, SYMBOL_IN_PLAY, approved/open trade, lifecycle end, cooldown and downgrade/unsubscribe",
+    "The per-delta hot path performs decode, sequence validation, incremental book update and cheap aggregates; heavy analysis and Strategy wakeups use filtered or coalesced meaningful changes",
+    "Incremental liquidity aggregates may cover near-spread, distance and trade-target corridors without approving exact bucket boundaries",
+    "Liquidity analysis supports price-local LiquidityZone clusters rather than equating one large level with a wall",
+    "Liquidity evidence is relative to local instrument/book context and may use robust baselines, but normalization formulas and thresholds remain open",
+    "Order-book imbalance supports multiple horizons such as NEAR, MEDIUM and TRADE_HORIZON rather than one global value",
+    "LiquidityZone preserves temporal evidence including first_seen, last_seen, age, peak and current size/notional",
+    "Book reduction plus nearby aggressive tape supports consumption evidence; reduction without corresponding tape supports pull/cancel evidence without claiming proven causality",
+    "Replenishment/absorption and price progress relative to aggressive flow are separate evidence families and do not directly command an exit",
+    "Public L2 observations use neutral labels such as LIQUIDITY_PULL, LIQUIDITY_MIGRATION and TRANSIENT_LIQUIDITY; SPOOF_LIKE_BEHAVIOR is heuristic and non-authoritative",
+    "LiquidityBarrier or LiquidityZone lifecycle is research-supported conceptually as DETECTED, PERSISTING, APPROACHED and TESTED with possible consuming, absorbing, broken, rejecting, pulled or migrated outcomes",
+    "LiquidityEngine publishes LiquidityObservation to Strategy or PositionManager and never opens or closes a Position directly",
+    "Liquidity-aware actions HOLD, MOVE_TP, PARTIAL_EXIT and EXIT_BEFORE_BARRIER remain future independently testable policy choices rather than automatic rules",
+    "Paper Trader v1 market execution walks available executable L2 levels into simulated fills and VWAP with fees, slippage and account effects instead of fill equals last price",
+    "Public L2 volume remains an imperfect simulation because latency and concurrent real-market consumption can alter liquidity",
+    "Exact realistic LIMIT execution is excluded from v1 pending an explicit conservative, probabilistic or other documented queue approximation",
+    "Touching a limit price does not imply a definite virtual fill",
+    "Architecture records exchange/event and local receive timestamps so later measured or simulated latency is possible without making HFT queue simulation a v1 requirement",
+    "A forming eligible pattern may activate SYMBOL_IN_PLAY and microstructure monitoring before breakout while exact geometry maturity and entry thresholds remain open"
   ],
   "unresolved_decisions": [
     "Canonical English identity and exact semantics of the user term Восходящая звезда",
@@ -130,7 +153,52 @@
     "Historical replay policy for SL/TP collisions, lower-timeframe resolution and WORST_CASE fallback",
     "Persistence technology, deterministic replay clock and reconciliation approach",
     "Measured CPU, RAM, network and latency budgets for selective realtime monitoring",
-    "Final dependencies, phase boundaries and roadmap authorization"
+    "Final dependencies, phase boundaries and roadmap authorization",
+    "Exact Bybit sequence/update validation, gap detection and resnapshot rules",
+    "Exact SYMBOL_IN_PLAY activation, cooldown, downgrade and unsubscribe policy",
+    "Liquidity aggregate bucket boundaries, relative normalization formulas and multi-window imbalance thresholds",
+    "LiquidityZone and LiquidityBarrier exact schema, lifecycle state names, transitions and confidence thresholds",
+    "Consumption, pull, replenishment, absorption and price-response correlation windows",
+    "Market-order simulation latency, concurrency haircut, depth exhaustion and insufficient-liquidity policy",
+    "Future limit-order queue model, if limit orders enter a later scope",
+    "Measured limits for network bandwidth, message rate, CPU, RAM, book-update latency, observation latency and concurrent deep-monitored symbols"
+  ],
+  "microstructure_research_disposition": {
+    "status": "SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN",
+    "implementation_spec_status": "NOT_READY",
+    "exact_formulas_thresholds_and_schemas": "OPEN",
+    "roadmap_status": "HYPOTHESIS_NOT_FINAL_ADDITIONAL_RESEARCH_REQUIRED",
+    "next_external_research_focus": [
+      "Flag",
+      "Head and Shoulders / Inverse Head and Shoulders",
+      "Double Top / Double Bottom",
+      "Candlestick Formation Evidence",
+      "PRE_BREAKOUT_CORRIDOR_SETUP"
+    ]
+  },
+  "microstructure_evidence_families": [
+    "Relative and clustered liquidity",
+    "Multi-window order-book imbalance",
+    "Persistence",
+    "Consumption",
+    "Pull and migration",
+    "Replenishment and absorption",
+    "Price response relative to aggressive trade flow"
+  ],
+  "microstructure_later_research": [
+    "L3/MBO reconstruction",
+    "Exact queue position",
+    "Sophisticated iceberg reconstruction",
+    "Machine-learning wall prediction",
+    "Authoritative spoofing classification",
+    "Full HFT latency simulation"
+  ],
+  "external_reference_conclusions": [
+    "Bybit public WebSocket semantics support separate public trade and L2 snapshot/delta sources with exchange-defined update and recovery handling",
+    "NautilusTrader supports event-driven separation of data, execution and fill ownership and reinforces the distinction between L2 and L3 semantics",
+    "hftbacktest illustrates why queue and latency modelling are explicit approximations under market-by-price data",
+    "Microstructure-oriented open-source implementations support treating imbalance, absorption, pulls, sweeps and trade-flow context as independent evidence rather than one wall-size threshold",
+    "External projects are architectural references only and are not normative BybitScanner dependencies"
   ],
   "gap_analysis_baseline": [
     "The trading bounded context is absent from the current repository",
@@ -243,21 +311,24 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "RESEARCH",
-  "current_checkpoint": "DURABLE_PLANNING_RESEARCH_CHECKPOINT",
+  "current_checkpoint": "MICROSTRUCTURE_RESEARCH_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "ROADMAP_SPEC",
   "next_phase_authorization": "NOT_AUTHORIZED_PENDING_RESEARCH_AND_HUMAN_APPROVAL",
   "related_commits": [
-    {"phase": "BASELINE", "commit": "ce747f8a0223306a2128e413ae259df955f5a085"}
+    {"phase": "BASELINE", "commit": "ce747f8a0223306a2128e413ae259df955f5a085"},
+    {"phase": "DURABLE_PLANNING_RESEARCH_CHECKPOINT", "commit": "9d8a9c5752dafaad60ecf9676ba8d7b19ab0ce97"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "ce747f8a0223306a2128e413ae259df955f5a085",
     "baseline_origin_main": "ce747f8a0223306a2128e413ae259df955f5a085",
-    "status": "SYNCHRONIZED_BASELINE"
+    "latest_saved_checkpoint": "9d8a9c5752dafaad60ecf9676ba8d7b19ab0ce97",
+    "status": "SYNCHRONIZED_AT_LATEST_SAVED_CHECKPOINT"
   },
   "amendment_history": [
-    {"revision": "1.0", "reason": "Human-authorized durable planning and research checkpoint; implementation explicitly not authorized", "date": "2026-08-18"}
+    {"revision": "1.0", "reason": "Human-authorized durable planning and research checkpoint; implementation explicitly not authorized", "date": "2026-08-18"},
+    {"revision": "1.1", "reason": "Recorded accumulated market-microstructure research as sufficient for roadmap-level design while preserving open formulas, non-final roadmap and no implementation authorization", "date": "2026-08-18"}
   ]
 }
 ```
@@ -271,10 +342,11 @@ context and its signal dictionaries are not executable intents. This mission res
 normalized boundary, the remaining desired Trading Intelligence families, Paper Trader foundations
 and realtime market-microstructure architecture before a final roadmap is proposed.
 
-Research and planning are active. Implementation has not started and is not authorized. The next
-phase is a proposed roadmap specification only after targeted external research, dependency analysis
-and explicit separation of approved decisions from unresolved questions. Any later implementation
-requires a separately approved ChangeRequest revision or successor implementation request.
+Microstructure research is now `SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN`, but it is not an implementation
+specification. Exact schemas, formulas, thresholds, queue approximations, latency policies and
+performance budgets remain open. Research and planning remain active; the next external focus is the
+Trading Intelligence detector families and pre-breakout corridor setup. The roadmap remains non-final,
+ROADMAP_SPEC remains unauthorized, and any later implementation requires explicit human approval.
 
 ## Amendment rule
 

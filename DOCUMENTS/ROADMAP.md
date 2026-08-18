@@ -2,7 +2,7 @@
 
 Version:
 
-4.22
+4.23
 
 Date:
 
@@ -1018,6 +1018,38 @@ Research required before roadmap approval:
 * comparison of high-quality open-source architectures without blind copying;
 * performance budgets, profiling and benchmark gates.
 
+Microstructure research checkpoint:
+
+SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN / IMPLEMENTATION_SPEC_NOT_READY.
+
+Recorded roadmap-level findings:
+
+* Paper Trader remains event-driven over separate, correlatable public-trade and public-L2 streams;
+* public L2 is the v1 baseline for aggregated price-level liquidity, not L3/MBO identity or exact queue reconstruction;
+* LocalOrderBook follows snapshot plus validated incremental delta and explicit resnapshot/recovery semantics;
+* adaptive depth follows `MINIMUM_DEPTH_THAT_COVERS_TRADE_HORIZON` rather than a universal fixed level count;
+* deep processing is lifecycle-activated for `SYMBOL_IN_PLAY`, approved setups and open positions, then cooled down and downgraded;
+* hot-path delta application and cheap aggregates remain separate from coalesced LiquidityObservation and heavy analysis;
+* initial evidence families are clustered/relative liquidity, multi-window imbalance, persistence, consumption,
+  pull/migration, replenishment/absorption and price response relative to aggressive flow;
+* LiquidityEngine publishes observations but does not directly execute position changes;
+* v1 market simulation walks executable L2 levels into fills/VWAP while retaining explicit latency and concurrency limitations;
+* realistic limit-order fills remain later work pending an explicitly documented queue approximation;
+* performance budgets are required before broad deep-monitoring activation.
+
+Microstructure items remaining open:
+
+* exact schemas, formulas, thresholds, buckets, windows and lifecycle transitions;
+* Bybit gap detection, resnapshot and recovery details;
+* SYMBOL_IN_PLAY activation/cooldown policy and adaptive-depth algorithm;
+* market-fill latency, concurrency haircut and insufficient-liquidity policy;
+* future limit queue approximation;
+* measurable network, message-rate, CPU, RAM and latency budgets.
+
+Next external research focus:
+
+Flag, HS/IHS, Double Top/Bottom, Candlestick Formation Evidence and PRE_BREAKOUT_CORRIDOR_SETUP.
+
 Dependency hypothesis:
 
 Tracks A, B and C may develop in parallel but join only through normalized contracts. Paper Trader
@@ -1026,11 +1058,11 @@ order/fill contracts and does not depend directly on Wedge, Telegram or scanner 
 
 Acceptance, risks, approved decisions and unresolved decisions:
 
-Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.0.
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.1.
 
 Current action:
 
-TARGETED_EXTERNAL_RESEARCH_AND_ROADMAP_SPECIFICATION.
+TRADING_INTELLIGENCE_DETECTOR_FAMILY_RESEARCH.
 
 Implementation authorization:
 
@@ -1089,15 +1121,23 @@ RULE-008:
 
 from:
 
-ROADMAP v4.21
+ROADMAP v4.22
 
 to:
 
-ROADMAP v4.22
+ROADMAP v4.23
 
 reason:
 
-Current checkpoint — CR-TRADING-INTELLIGENCE-001 durable planning/research start (v4.21 to v4.22):
+Current checkpoint — CR-TRADING-INTELLIGENCE-001 microstructure research record (v4.22 to v4.23):
+
+* recorded realtime L2/tape, incremental book, adaptive depth and selective activation conclusions;
+* recorded LiquidityZone/LiquidityObservation evidence boundaries and market-execution simulation direction;
+* classified microstructure research as sufficient for roadmap-level design while retaining implementation details as open;
+* routed the next research focus to Trading Intelligence detector families;
+* preserved the roadmap as non-final and kept ROADMAP_SPEC and IMPLEMENT unauthorized.
+
+Previous checkpoint preserved — CR-TRADING-INTELLIGENCE-001 durable planning/research start (v4.21 to v4.22):
 
 * added the non-final three-track roadmap hypothesis for Trading Intelligence, Trading Foundation and Market Microstructure;
 * preserved approved Paper Trader v1, strategy, realtime execution, liquidity and performance directions;
