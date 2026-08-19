@@ -2,11 +2,11 @@
 
 Версия:
 
-4.8
+4.9
 
 Дата:
 
-2026-08-17
+2026-08-19
 
 Document Type:
 
@@ -192,6 +192,39 @@ installation и migration commands, destructive или state-changing operations
 
 Независимые команды, безопасные для совместного выполнения,
 не требуется искусственно разделять.
+
+COMPLETE_USER_ACTION_CHAIN_RULE:
+
+Если ассистент требует от пользователя выполнить команду или последовательность действий,
+он обязан дать полную исполнимую цепочку от последнего достоверно известного состояния
+пользователя. Запрещено предполагать, что пользователь сам выведет или дополнит пропущенные
+предварительные действия.
+
+Цепочка обязана в правильном порядке включать все необходимые prerequisites, в том числе:
+
+* открытие требуемого terminal, application или tool;
+* переход в требуемый каталог;
+* активацию virtual environment или runtime context;
+* точное место ввода каждой команды при возможной неоднозначности;
+* команды и настройки, без которых последующий шаг не выполнится;
+* обязательные restart, reboot или boot-selection действия.
+
+Если текущее состояние пользователя известно, инструкция начинается именно с него.
+Нельзя выдавать только конечную команду, путь или действие, если перед ним требуется navigation,
+setup или иной промежуточный шаг. Последовательность должна быть copy-ready и исполнимой по порядку
+без самостоятельного восстановления пропусков пользователем.
+
+Пример для известного состояния `PS C:\Users\svobo`:
+
+```powershell
+cd C:\BybitScanner
+codex
+```
+
+Один `codex` или один путь `C:\BybitScanner` не являются полной цепочкой.
+Если между зависимыми шагами требуется проверка результата, `DEPENDENT_COMMAND_SEQUENCE_RULE`
+сохраняет приоритет порядка выдачи: ассистент заранее обозначает полную требуемую цепочку и её
+checkpoint, но выдаёт следующий исполнимый payload только после подтверждения предыдущего шага.
 
 ---
 
@@ -724,6 +757,41 @@ Implementation -> Validation -> Git checkpoint.
 выполняющийся процесс, ассистент сначала дожидается ближайшего
 безопасного checkpoint, затем фиксирует правило до продолжения основной работы.
 
+## 20.2 USER_CORRECTION_PROTOCOL_HARDENING_RULE
+
+Если пользователь явно указывает на нарушение существующего project communication/protocol rule
+или на повторяющийся класс ошибок, который протокол должен был предотвратить, ассистенту запрещено
+ограничиваться извинением, подтверждением или неформальным обещанием помнить и быть внимательнее.
+
+Ассистент обязан немедленно определить:
+
+1. является ли существующее каноническое правило слабым, неоднозначным или неполным;
+2. требуется ли новое каноническое правило для предотвращения повторения;
+3. либо правило уже полностью явно, а сбой является чистым noncompliance и требует усиления
+   operational enforcement clause, делающего обязанность труднее пропустить.
+
+В том же ответе, когда это практически и безопасно, ассистент обязан:
+
+* предложить конкретное усиление или amendment для всего выявленного класса ошибок, а не только
+  для одного примера;
+* сохранить совместимость с higher-level rules и проверить отсутствие redundant,
+  overlapping или contradictory protocol rules;
+* дать точную documentation-update instruction, содержащую authoritative target, canonical rule
+  name, требуемую формулировку или patch scope и applicable validation/recording шаги;
+* выполнить или инициировать эту documentation update в текущем governance checkpoint, если такой
+  checkpoint уже идёт и изменение авторизовано;
+* применить `IMMEDIATE_WORKFLOW_RULE_RECORDING` и зафиксировать изменение до продолжения основной
+  миссии либо на ближайшем безопасном checkpoint.
+
+Обязательная цепочка реакции:
+
+USER CORRECTION ABOUT RULE FAILURE
+-> RULE GAP / ENFORCEMENT ANALYSIS
+-> IMMEDIATE CANONICAL PROTOCOL HARDENING
+-> PERSISTED DOCUMENTATION FIX
+
+Для повторяющихся или существенных workflow failures эта цепочка обязательна.
+
 ---
 # 21. ARCHITECTURAL_PRIORITY
 
@@ -1186,17 +1254,22 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.7
+ASSISTANT_PROTOCOL v4.8
 
 to:
 
-ASSISTANT_PROTOCOL v4.8
+ASSISTANT_PROTOCOL v4.9
 
 date:
 
-2026-08-18
+2026-08-19
 
 reason:
+
+* added `COMPLETE_USER_ACTION_CHAIN_RULE`, requiring every mandatory user action chain to begin from the known current state and include all executable prerequisites without inferred gaps;
+* added `USER_CORRECTION_PROTOCOL_HARDENING_RULE`, requiring rule-gap or enforcement analysis, immediate canonical hardening and a persisted documentation fix instead of apology-only handling.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.7 to v4.8:
 
 * extended `COPY_READY_ACTION_BLOCK_RULE` with `DEPENDENT_COMMAND_SEQUENCE_RULE`, requiring dependent commands to be issued and verified one step at a time;
 * added `IMMEDIATE_WORKFLOW_RULE_RECORDING` under Change Management, requiring approved permanent workflow rules to be recorded at the nearest safe checkpoint before the primary mission continues.

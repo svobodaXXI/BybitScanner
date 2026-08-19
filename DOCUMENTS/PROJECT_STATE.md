@@ -2,7 +2,7 @@
 
 Version:
 
-7.30
+7.31
 
 Date:
 
@@ -878,7 +878,7 @@ FLAG_DETECTOR_FAMILY_RESEARCH_RECORDED
 
 ChangeRequest revision:
 
-1.2
+1.3
 
 Implementation status:
 
@@ -894,7 +894,7 @@ PARTIALLY_HUMAN_APPROVED / ADDITIONAL_RESEARCH_REQUIRED
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.2
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.3
 
 Current authorized action:
 
@@ -4574,15 +4574,22 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.29
+PROJECT_STATE v7.30
 
 to:
 
-PROJECT_STATE v7.30
+PROJECT_STATE v7.31
 
 reason:
 
-Current checkpoint — CR-TRADING-INTELLIGENCE-001 Flag detector-family research record (v7.29 to v7.30):
+Current checkpoint — CR-TRADING-INTELLIGENCE-001 Flag research protocol-strengthening amendment (v7.30 to v7.31):
+
+* advanced the durable ChangeRequest to revision 1.3 without changing checkpoint `FLAG_DETECTOR_FAMILY_RESEARCH_RECORDED`;
+* included Assistant Protocol v4.9 `COMPLETE_USER_ACTION_CHAIN_RULE` and `USER_CORRECTION_PROTOCOL_HARDENING_RULE` in the authorized documentation checkpoint;
+* preserved lifecycle CONTEXT / RESEARCH, the non-final roadmap hypothesis and no implementation authorization;
+* kept the next detector-family research not started.
+
+Previous checkpoint preserved — CR-TRADING-INTELLIGENCE-001 Flag detector-family research record (v7.29 to v7.30):
 
 * advanced the durable ChangeRequest to revision 1.2 and checkpoint `FLAG_DETECTOR_FAMILY_RESEARCH_RECORDED`;
 * recorded Flag detector-family research as sufficient for roadmap-level design but not an implementation specification;

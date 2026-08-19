@@ -7,7 +7,7 @@
   "id": "CR-TRADING-INTELLIGENCE-001",
   "title": "Trading Intelligence and Paper Trader Roadmap Research",
   "status": "IN_PROGRESS",
-  "revision": "1.2",
+  "revision": "1.3",
   "lifecycle_stage": "CONTEXT",
   "objective": "Research and record the evidence, architecture boundaries, dependencies and non-final roadmap hypothesis required to evolve the current Scanner into broader Trading Intelligence and a safe event-driven Paper Trader without authorizing implementation.",
   "non_goals": [
@@ -48,6 +48,7 @@
   ],
   "context_scope_paths": [
     "DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md",
+    "DOCUMENTS/ASSISTANT_PROTOCOL.md",
     "DOCUMENTS/PROJECT_STATE.md",
     "DOCUMENTS/ROADMAP.md",
     "DOCUMENTS/PROJECT_CONTRACTS.md",
@@ -107,6 +108,7 @@
     "INVALIDATED and EXPIRED are distinct: invalidation contradicts continued structural identity, while expiration removes relevance without requiring one destructive event; possible invalidation evidence includes excessive retracement, adverse boundary break and channel collapse",
     "DirectionalExpansion can remain relevant after one Flag candidate terminates and may be reused while structurally relevant, but a newer more directly relevant expansion supersedes older antecedent context; exact decay policy remains open",
     "Confirmed breakout terminates Flag formation or detection lifecycle; continuation, retest, failure and potential or target realization belong to later PatternOutcome and/or Strategy analysis rather than geometric validity",
+    "The Flag research documentation checkpoint includes Assistant Protocol v4.9 strengthening for complete user action chains and mandatory canonical hardening after user-reported protocol failures",
     "Head and Shoulders and Inverse Head and Shoulders are an extrema-sequence plus neckline family",
     "Double Bottom and Double Top require topology/extrema or shared reversal-family research rather than automatic reuse of Wedge GeometryModel",
     "Candlestick formations initially provide evidence, confirmation and context for chart-pattern Trading Intelligence",
@@ -371,7 +373,8 @@
   "amendment_history": [
     {"revision": "1.0", "reason": "Human-authorized durable planning and research checkpoint; implementation explicitly not authorized", "date": "2026-08-18"},
     {"revision": "1.1", "reason": "Recorded accumulated market-microstructure research as sufficient for roadmap-level design while preserving open formulas, non-final roadmap and no implementation authorization", "date": "2026-08-18"},
-    {"revision": "1.2", "reason": "Recorded Flag detector-family research as sufficient for roadmap-level design while preserving open schemas and thresholds, a non-final roadmap and no implementation authorization", "date": "2026-08-19"}
+    {"revision": "1.2", "reason": "Recorded Flag detector-family research as sufficient for roadmap-level design while preserving open schemas and thresholds, a non-final roadmap and no implementation authorization", "date": "2026-08-19"},
+    {"revision": "1.3", "reason": "Included the authorized Assistant Protocol v4.9 enforcement strengthening in the Flag research documentation checkpoint without changing research lifecycle or implementation authorization", "date": "2026-08-19"}
   ]
 }
 ```
