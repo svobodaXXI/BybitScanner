@@ -2,11 +2,11 @@
 
 Version:
 
-7.29
+7.30
 
 Date:
 
-2026-08-18
+2026-08-19
 
 Document Type:
 
@@ -874,11 +874,11 @@ IN_PROGRESS / CONTEXT / RESEARCH_ACTIVE
 
 Checkpoint:
 
-MICROSTRUCTURE_RESEARCH_RECORDED
+FLAG_DETECTOR_FAMILY_RESEARCH_RECORDED
 
 ChangeRequest revision:
 
-1.1
+1.2
 
 Implementation status:
 
@@ -894,11 +894,11 @@ PARTIALLY_HUMAN_APPROVED / ADDITIONAL_RESEARCH_REQUIRED
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.1
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.2
 
 Current authorized action:
 
-TRADING_INTELLIGENCE_DETECTOR_FAMILY_RESEARCH
+NEXT_DETECTOR_FAMILY_RESEARCH_NOT_STARTED
 
 Microstructure research disposition:
 
@@ -908,13 +908,28 @@ Microstructure open state:
 
 EXACT_FORMULAS_THRESHOLDS_SCHEMAS_AND_PERFORMANCE_BUDGETS_OPEN
 
+Flag detector-family research disposition:
+
+SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN / IMPLEMENTATION_SPEC_NOT_READY
+
+Flag implementation authorization:
+
+NONE
+
+Flag open state:
+
+EXACT_SCHEMAS_FORMULAS_THRESHOLDS_WEIGHTS_ASSOCIATION_ARBITRATION_AND_LIFECYCLE_POLICIES_OPEN
+
 Next external research focus:
 
-* Flag;
 * Head and Shoulders / Inverse Head and Shoulders;
 * Double Top / Double Bottom;
 * Candlestick Formation Evidence;
 * PRE_BREAKOUT_CORRIDOR_SETUP.
+
+Next detector-family research status:
+
+NOT_STARTED
 
 Next phase:
 
@@ -4559,15 +4574,24 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.28
+PROJECT_STATE v7.29
 
 to:
 
-PROJECT_STATE v7.29
+PROJECT_STATE v7.30
 
 reason:
 
-Current checkpoint — CR-TRADING-INTELLIGENCE-001 microstructure research record (v7.28 to v7.29):
+Current checkpoint — CR-TRADING-INTELLIGENCE-001 Flag detector-family research record (v7.29 to v7.30):
+
+* advanced the durable ChangeRequest to revision 1.2 and checkpoint `FLAG_DETECTOR_FAMILY_RESEARCH_RECORDED`;
+* recorded Flag detector-family research as sufficient for roadmap-level design but not an implementation specification;
+* preserved the independent Flag family boundary, shared-primitives boundary, persistent identity/lifecycle and future arbitration concepts;
+* preserved exact schemas, formulas, thresholds, weights, association, arbitration, breakout and expiration policies as open;
+* recorded that the next detector-family research has not started;
+* kept the roadmap hypothesis non-final and ROADMAP_SPEC and IMPLEMENT not authorized.
+
+Previous checkpoint preserved — CR-TRADING-INTELLIGENCE-001 microstructure research record (v7.28 to v7.29):
 
 * advanced the durable ChangeRequest to revision 1.1 and checkpoint `MICROSTRUCTURE_RESEARCH_RECORDED`;
 * recorded microstructure research as sufficient for roadmap-level design but not an implementation specification;

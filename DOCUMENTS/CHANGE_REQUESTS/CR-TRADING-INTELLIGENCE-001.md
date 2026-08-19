@@ -7,7 +7,7 @@
   "id": "CR-TRADING-INTELLIGENCE-001",
   "title": "Trading Intelligence and Paper Trader Roadmap Research",
   "status": "IN_PROGRESS",
-  "revision": "1.1",
+  "revision": "1.2",
   "lifecycle_stage": "CONTEXT",
   "objective": "Research and record the evidence, architecture boundaries, dependencies and non-final roadmap hypothesis required to evolve the current Scanner into broader Trading Intelligence and a safe event-driven Paper Trader without authorizing implementation.",
   "non_goals": [
@@ -85,6 +85,28 @@
     "New detector families are not automatically placed in wedge/",
     "Shared pivots and geometry primitives feed detector families that publish a common PatternObservation and normalized signal boundary",
     "Flag is an impulse plus consolidation/channel family",
+    "Flag is an independent detector family compositionally defined by DirectionalExpansion followed by post-impulse consolidation in an approximately parallel bounded channel; it is not a Wedge subtype and is not automatically placed in wedge/",
+    "Flag may reuse shared pivots, boundary fitting, touch measurement, containment and volatility-context primitives, while shared mathematics remains below detector-family semantics and excludes Wedge convergence, apex and Wedge-specific compression semantics",
+    "DirectionalExpansion is a roadmap-level shared concept with identity independent of Flag; candidate attributes include direction, origin/end, displacement, duration, velocity, directional efficiency and volatility-normalized magnitude, but no exact schema is approved",
+    "Flag pole/body segmentation prefers a confirmed EXPANDING to POTENTIAL_CONSOLIDATION to FLAG_FORMING regime transition rather than one magic candle, fixed candle count or definition-level fixed pivot count; the terminal extreme may move while expansion continues",
+    "A FlagCandidate conceptually composes impulse evidence and consolidation evidence rather than using one monolithic scan rule",
+    "Flag consolidation requires bounded structure, approximate parallelism, structural integrity or containment and acceptable retracement; countertrend drift supports quality but is not mandatory because approximately horizontal flags are valid candidates",
+    "BoundaryRelationship is supported as a shared concept below detector semantics with conceptual PARALLEL, CONVERGING, DIVERGING and UNCERTAIN states, while its exact enum and schema remain open",
+    "DirectionalExpansion plus parallel consolidation supports Flag interpretation; expansion plus converging consolidation supports Pennant interpretation; converging geometry without required post-impulse context may support Wedge or Triangle interpretation",
+    "Detector-family evidence is separable from final classification; future Pattern Arbitration may resolve competing interpretations on comparable structural horizons, while UNCLASSIFIED and AMBIGUOUS are valid outcomes and nested structures on different horizons are not conflicts",
+    "Detector-specific raw scores are not universal probabilities, and Strategy does not determine geometric pattern identity",
+    "Flag hard identity conceptually requires valid antecedent directional expansion, post-impulse consolidation, bounded channel structure, approximate parallelism, acceptable retracement and structural integrity, while validity remains separate from quality",
+    "Flag quality evidence may include ImpulseQuality, ChannelQuality, ParallelismQuality, RetracementQuality, ContainmentQuality, ConsolidationQuality and VolumeEvidence, without approving exact names, schemas, weights or thresholds",
+    "Volume contraction is supporting or contextual evidence and is neither a hard Flag existence requirement nor silently part of geometry validity",
+    "Breakout is not required for Flag existence; pre-breakout observations are supported, and boundary interaction, breakout candidate, confirmation and failure are later lifecycle or event evidence with exact policy still open",
+    "Flag detection owns neither BUY or SELL decisions nor entry, SL, TP, sizing, directional preference, liquidity policy, portfolio exposure or execution; the boundary remains pattern detection to PatternObservation or normalized boundary to Strategy, Risk and Execution",
+    "PatternInstance represents persistent structural identity and lifecycle while PatternObservation represents scanner knowledge at a particular time; evolving pivots, boundaries or quality do not automatically create a new Flag",
+    "Preferred roadmap-level candidate processing is Detect, Associate, Update existing or Create new, Observation, Lifecycle transition and Arbitration, using structural continuity rather than an exact geometry hash",
+    "Candidate association may consider shared impulse, temporal or consolidation overlap, direction and compatible boundary evolution, with exact thresholds open",
+    "Overlapping and nested structures are permitted; arbitration addresses genuine competition on comparable structural horizons rather than suppressing all overlap",
+    "INVALIDATED and EXPIRED are distinct: invalidation contradicts continued structural identity, while expiration removes relevance without requiring one destructive event; possible invalidation evidence includes excessive retracement, adverse boundary break and channel collapse",
+    "DirectionalExpansion can remain relevant after one Flag candidate terminates and may be reused while structurally relevant, but a newer more directly relevant expansion supersedes older antecedent context; exact decay policy remains open",
+    "Confirmed breakout terminates Flag formation or detection lifecycle; continuation, retest, failure and potential or target realization belong to later PatternOutcome and/or Strategy analysis rather than geometric validity",
     "Head and Shoulders and Inverse Head and Shoulders are an extrema-sequence plus neckline family",
     "Double Bottom and Double Top require topology/extrema or shared reversal-family research rather than automatic reuse of Wedge GeometryModel",
     "Candlestick formations initially provide evidence, confirmation and context for chart-pattern Trading Intelligence",
@@ -142,7 +164,16 @@
   "unresolved_decisions": [
     "Canonical English identity and exact semantics of the user term Восходящая звезда",
     "Exact initial candlestick formation catalog and evidence/scoring policy",
-    "Flag, HS/IHS and Double Top/Bottom detector contracts and shared primitive boundary",
+    "Head and Shoulders / Inverse Head and Shoulders and Double Top / Double Bottom detector contracts and shared primitive boundary",
+    "Minimum DirectionalExpansion strength and ATR or volatility normalization formula",
+    "Flag minimum pivot or touch requirements, parallelism tolerance and acceptable retracement thresholds",
+    "Flag minimum and maximum consolidation duration, expiration rules and FORMING to MATURE transition criteria",
+    "Flag breakout confirmation policy and failed-breakout semantics",
+    "Flag candidate-association thresholds and structural-horizon representation",
+    "Pattern Arbitration confidence and normalization model",
+    "Detector-quality normalization, weights and volume weighting",
+    "Exact DirectionalExpansion reuse, relevance and decay policy",
+    "Exact schemas for DirectionalExpansion, ConsolidationObservation, PatternInstance and PatternObservation",
     "Minimum pre-breakout geometry maturity, boundary confidence and touch semantics",
     "Corridor distance/potential threshold, entry trigger, target, SL, risk and invalidation",
     "Apex-proximity cutoff and criteria separating a tradeable corridor from accidental lines",
@@ -178,6 +209,14 @@
       "Candlestick Formation Evidence",
       "PRE_BREAKOUT_CORRIDOR_SETUP"
     ]
+  },
+  "flag_detector_family_research_disposition": {
+    "status": "SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN",
+    "implementation_spec_status": "NOT_READY",
+    "implementation": "NOT_AUTHORIZED",
+    "exact_schemas_formulas_thresholds_weights_and_lifecycle_policies": "OPEN",
+    "roadmap_status": "HYPOTHESIS_NOT_FINAL_ADDITIONAL_RESEARCH_REQUIRED",
+    "next_detector_family_research": "NOT_STARTED"
   },
   "microstructure_evidence_families": [
     "Relative and clustered liquidity",
@@ -314,7 +353,7 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "RESEARCH",
-  "current_checkpoint": "MICROSTRUCTURE_RESEARCH_RECORDED",
+  "current_checkpoint": "FLAG_DETECTOR_FAMILY_RESEARCH_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "ROADMAP_SPEC",
   "next_phase_authorization": "NOT_AUTHORIZED_PENDING_RESEARCH_AND_HUMAN_APPROVAL",
@@ -331,7 +370,8 @@
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Human-authorized durable planning and research checkpoint; implementation explicitly not authorized", "date": "2026-08-18"},
-    {"revision": "1.1", "reason": "Recorded accumulated market-microstructure research as sufficient for roadmap-level design while preserving open formulas, non-final roadmap and no implementation authorization", "date": "2026-08-18"}
+    {"revision": "1.1", "reason": "Recorded accumulated market-microstructure research as sufficient for roadmap-level design while preserving open formulas, non-final roadmap and no implementation authorization", "date": "2026-08-18"},
+    {"revision": "1.2", "reason": "Recorded Flag detector-family research as sufficient for roadmap-level design while preserving open schemas and thresholds, a non-final roadmap and no implementation authorization", "date": "2026-08-19"}
   ]
 }
 ```
@@ -345,11 +385,13 @@ context and its signal dictionaries are not executable intents. This mission res
 normalized boundary, the remaining desired Trading Intelligence families, Paper Trader foundations
 and realtime market-microstructure architecture before a final roadmap is proposed.
 
-Microstructure research is now `SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN`, but it is not an implementation
-specification. Exact schemas, formulas, thresholds, queue approximations, latency policies and
-performance budgets remain open. Research and planning remain active; the next external focus is the
-Trading Intelligence detector families and pre-breakout corridor setup. The roadmap remains non-final,
-ROADMAP_SPEC remains unauthorized, and any later implementation requires explicit human approval.
+Microstructure and Flag detector-family research are now `SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN`, but
+neither is an implementation specification. Flag is recorded as an independent impulse-plus-parallel-
+consolidation family with shared primitives below detector semantics, persistent instance/observation
+identity, lifecycle separation, and future arbitration across comparable horizons. Exact schemas,
+formulas, thresholds, association, arbitration, breakout and expiration policies remain open. Research
+and planning remain active; the next detector-family research has not started. The roadmap remains
+non-final, ROADMAP_SPEC remains unauthorized, and any later implementation requires explicit human approval.
 
 ## Amendment rule
 
