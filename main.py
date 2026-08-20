@@ -29,6 +29,7 @@ from telegram_bot import send_message
 
 def main():
     scan_started_at = time.perf_counter()
+    approved_pattern_count = 0
 
     symbols = get_symbols()
 
@@ -100,6 +101,8 @@ def main():
                 )
                 continue
 
+            approved_pattern_count += 1
+
             signal = prepare_signal(
                 symbol,
                 analysis
@@ -156,6 +159,8 @@ def main():
                 f"{symbol:<15} "
                 f"ERROR: {error_text}"
             )
+
+    print(f"Найдено паттернов: {approved_pattern_count}")
 
     elapsed_seconds = (
         time.perf_counter()

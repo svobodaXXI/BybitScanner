@@ -1,4 +1,6 @@
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from unittest.mock import MagicMock, patch
 
 import analyzer.core as analyzer_core
@@ -252,6 +254,55 @@ class MainAdmissionGateTests(unittest.TestCase):
         self.assertTrue(send_mock.call_args.kwargs["test_mode"])
         payload = send_mock.call_args.args[0]
         self.assertFalse(payload["signal"]["approved"])
+
+    def test_scan_summary_counts_only_admission_approved_results(self):
+        def analysis_result(symbol):
+            return {
+                "result": {
+                    "pattern": "Falling Wedge",
+                    "final_score": 80,
+                    "signal": {
+                        "approved": symbol != "REJECTED",
+                        "reason": "test",
+                    },
+                }
+            }
+
+        output = StringIO()
+
+        with patch.object(
+            main,
+            "get_symbols",
+            return_value=["APPROVED", "REJECTED"],
+        ), patch.object(
+            main,
+            "analyze_symbol",
+            side_effect=analysis_result,
+        ), patch.object(
+            main,
+            "prepare_signal",
+            return_value={"score": 80},
+        ), patch.object(
+            main,
+            "update_signal",
+            return_value="NEW",
+        ), patch.object(
+            main,
+            "send_signal",
+            return_value=False,
+        ), patch.object(
+            main,
+            "send_message",
+            side_effect=RuntimeError("telegram unavailable"),
+        ), patch.object(
+            main.config,
+            "TELEGRAM_TEST_MODE",
+            False,
+        ), redirect_stdout(output):
+            main.main()
+
+        summary = "Найдено паттернов: 1"
+        self.assertEqual(output.getvalue().count(summary), 1)
 
 
 if __name__ == "__main__":
