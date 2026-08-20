@@ -2,7 +2,7 @@
 
 Version:
 
-7.32
+7.33
 
 Date:
 
@@ -663,17 +663,23 @@ ACTIVE
 
 Current work priority:
 
-SCANNER_GEOMETRY
+TRADING_TERMINAL_TRADING_WORKSPACE
 
 Current work domain:
 
-Trading Intelligence / Geometry Engine
+Trading Foundation / Trading Workspace
 
 Current project phase:
 
-SCANNER_GEOMETRY_DEVELOPMENT
+TRADING_TERMINAL_TASK_DEFINITION
 
 Primary objective:
+
+Prepare the separately governed Trading Terminal / Trading Workspace development mission from the
+recorded domain, safety, Paper Trader and operator-surface research. Terminal implementation has not
+started and is not authorized by this checkpoint.
+
+Previous primary objective:
 
 Довести геометрию сканера
 до приемлемого рабочего состояния,
@@ -776,12 +782,13 @@ DEFERRED
 
 Current decision:
 
-CURRENT PRIORITY = SCANNER_GEOMETRY
+CURRENT PRIORITY = TRADING_TERMINAL_TRADING_WORKSPACE
 
 Important:
 
-Текущий приоритет направлен
-на практическое улучшение сканера.
+The current priority selects Trading Terminal / Trading Workspace task definition. It does not authorize
+terminal implementation. Scanner Geometry remains active with the GRVTUSDT wick-aware observation
+retained for later research.
 
 Documentation Automation временно
 не является блокирующим направлением.
@@ -792,7 +799,7 @@ Documentation Automation временно
 
 Priority:
 
-SCANNER_GEOMETRY
+TRADING_TERMINAL_TRADING_WORKSPACE
 
 Priority level:
 
@@ -800,23 +807,26 @@ HIGHEST
 
 Primary subsystem:
 
-geometry/
+NOT_SELECTED_PENDING_SEPARATE_CHANGE_REQUEST
 
 Secondary subsystem:
 
-wedge/
+NONE_SELECTED
 
 Related subsystems:
 
-* analyzer/;
-* structures/;
-* signal/;
-* signals/;
-* charts/;
-* reports/;
-* tradingview/.
+* Scanner normalized signal boundary;
+* Paper Trader and ExecutionPort;
+* order, fill, position, account and journal domains;
+* Bybit market-data and later execution adapters;
+* chart workspace and Telegram Mini App access.
 
 Primary objective:
+
+Define and authorize a separate durable Trading Terminal / Trading Workspace implementation mission.
+This checkpoint selects focus only; implementation remains not started.
+
+Previous geometry objective:
 
 Повысить точность,
 стабильность
@@ -825,25 +835,21 @@ Primary objective:
 
 Current development direction:
 
-Geometry Accuracy
+Separate durable terminal ChangeRequest
 
 ↓
 
-Wedge Detection Quality
+Approved contracts and safety foundation
 
 ↓
 
-Scanner Reliability
+Paper Trader and journal
 
 ↓
 
-Acceptable Scanner Operation
+Trading Workspace MVP
 
-↓
-
-Further Trading Intelligence
-
-Development principle:
+Previous geometry development principle:
 
 Сначала сканер должен начать
 приемлемо работать на реальных
@@ -874,11 +880,11 @@ IN_PROGRESS / CONTEXT / RESEARCH_ACTIVE
 
 Checkpoint:
 
-TRADING_WORKSPACE_REQUIREMENTS_AND_ROADMAP_RECORDED
+HS_IHS_RESEARCH_CLOSED_AND_TRADING_TERMINAL_FOCUS_SELECTED
 
 ChangeRequest revision:
 
-1.4
+1.5
 
 Implementation status:
 
@@ -894,11 +900,23 @@ PARTIALLY_HUMAN_APPROVED / ADDITIONAL_RESEARCH_REQUIRED
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.4
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.5
 
 Current authorized action:
 
-NEXT_DETECTOR_FAMILY_RESEARCH_NOT_STARTED
+DEFINE_SEPARATE_TRADING_TERMINAL_CHANGE_REQUEST
+
+HS/IHS detector-family research disposition:
+
+COMPLETED / SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN / IMPLEMENTATION_SPEC_NOT_READY
+
+HS/IHS implementation authorization:
+
+NONE / NOT_STARTED
+
+Wedge boundary research observation:
+
+GRVTUSDT_ROBUST_WICK_AWARE_BOUNDARY_FITTING_HYPOTHESIS_RECORDED / NOT_IMPLEMENTED
 
 Trading Workspace research disposition:
 
@@ -930,14 +948,13 @@ EXACT_SCHEMAS_FORMULAS_THRESHOLDS_WEIGHTS_ASSOCIATION_ARBITRATION_AND_LIFECYCLE_
 
 Next external research focus:
 
-* Head and Shoulders / Inverse Head and Shoulders;
 * Double Top / Double Bottom;
 * Candlestick Formation Evidence;
 * PRE_BREAKOUT_CORRIDOR_SETUP.
 
 Next detector-family research status:
 
-NOT_STARTED
+DEFERRED_BY_TRADING_TERMINAL_FOCUS
 
 Next phase:
 
@@ -946,6 +963,10 @@ ROADMAP_SPEC — NOT_AUTHORIZED_PENDING_RESEARCH_AND_HUMAN_APPROVAL
 Implementation authorization:
 
 NONE
+
+Trading Terminal implementation status:
+
+NOT_STARTED_NOT_AUTHORIZED / SEPARATE_CHANGE_REQUEST_REQUIRED
 
 Important:
 
@@ -994,7 +1015,8 @@ SCANNER_GEOMETRY_TASK_SELECTION
 
 Important:
 
-The authoritative project priority remains `SCANNER_GEOMETRY`. No next implementation task is selected or authorized by this mission closure.
+This historical mission closure does not override the newer authoritative priority
+`TRADING_TERMINAL_TRADING_WORKSPACE`. No implementation is authorized by that focus selection.
 
 ---
 

@@ -7,7 +7,7 @@
   "id": "CR-TRADING-INTELLIGENCE-001",
   "title": "Trading Intelligence and Paper Trader Roadmap Research",
   "status": "IN_PROGRESS",
-  "revision": "1.4",
+  "revision": "1.5",
   "lifecycle_stage": "CONTEXT",
   "objective": "Research and record the evidence, architecture boundaries, dependencies and non-final roadmap hypothesis required to evolve the current Scanner into broader Trading Intelligence and a safe event-driven Paper Trader without authorizing implementation.",
   "non_goals": [
@@ -109,7 +109,18 @@
     "DirectionalExpansion can remain relevant after one Flag candidate terminates and may be reused while structurally relevant, but a newer more directly relevant expansion supersedes older antecedent context; exact decay policy remains open",
     "Confirmed breakout terminates Flag formation or detection lifecycle; continuation, retest, failure and potential or target realization belong to later PatternOutcome and/or Strategy analysis rather than geometric validity",
     "The Flag research documentation checkpoint includes Assistant Protocol v4.9 strengthening for complete user action chains and mandatory canonical hardening after user-reported protocol failures",
-    "Head and Shoulders and Inverse Head and Shoulders are an extrema-sequence plus neckline family",
+    "Head and Shoulders and Inverse Head and Shoulders are one mirror-symmetric extrema-sequence plus neckline detector family",
+    "HS/IHS hard geometry is five sequential pivots LS, N1, HEAD, N2 and RS; HS requires the head above both shoulders and IHS mirrors this below both shoulders",
+    "HS/IHS neckline is defined through N1 and N2 and may be horizontal, rising or falling",
+    "HS/IHS separates hard geometry, quality/scoring, market context, confirmation and signal admission",
+    "Perfect shoulder symmetry is not a hard requirement; natural asymmetry belongs to quality/scoring",
+    "Prior trend is market context rather than base pivot geometry, and volume is confirmation/confidence evidence rather than a hard geometry gate",
+    "HS/IHS candidate lifecycle is conceptually FORMING to STRUCTURALLY_VALID to CONFIRMED or INVALIDATED, and FORMING may be observed before Right Shoulder or neckline-breakout confirmation",
+    "Early or right-shoulder, neckline breakout and neckline retest are future trading events separate from detector geometry",
+    "HS/IHS profitability is not assumed and requires future historical evaluation and Paper Trader evidence",
+    "HS/IHS numeric tolerances remain open for calibration on Bybit perpetual data",
+    "The GRVTUSDT falling-wedge example records a future robust wick-aware boundary-fitting hypothesis: representative boundaries should consider significant extrema, near-touches, violation magnitude, tolerated outliers and volatility-normalized tolerance rather than only two anchors",
+    "Wick-aware fitting applies symmetrically to upper high-wicks and lower low-wicks, permits limited small outliers and is not asserted to be an already proven optimal algorithm",
     "Double Bottom and Double Top require topology/extrema or shared reversal-family research rather than automatic reuse of Wedge GeometryModel",
     "Candlestick formations initially provide evidence, confirmation and context for chart-pattern Trading Intelligence",
     "Candlestick scoring is not mixed into geometry detector responsibilities without a separate design decision",
@@ -166,7 +177,9 @@
   "unresolved_decisions": [
     "Canonical English identity and exact semantics of the user term Восходящая звезда",
     "Exact initial candlestick formation catalog and evidence/scoring policy",
-    "Head and Shoulders / Inverse Head and Shoulders and Double Top / Double Bottom detector contracts and shared primitive boundary",
+    "Double Top / Double Bottom detector contracts and shared primitive boundary",
+    "HS/IHS exact pivot, symmetry, neckline, lifecycle, confirmation and invalidation thresholds calibrated on Bybit perpetual data",
+    "Robust wick-aware wedge boundary-fitting objective, volatility normalization, outlier policy and validation dataset",
     "Minimum DirectionalExpansion strength and ATR or volatility normalization formula",
     "Flag minimum pivot or touch requirements, parallelism tolerance and acceptable retracement thresholds",
     "Flag minimum and maximum consolidation duration, expiration rules and FORMING to MATURE transition criteria",
@@ -219,6 +232,14 @@
     "exact_schemas_formulas_thresholds_weights_and_lifecycle_policies": "OPEN",
     "roadmap_status": "HYPOTHESIS_NOT_FINAL_ADDITIONAL_RESEARCH_REQUIRED",
     "next_detector_family_research": "NOT_STARTED"
+  },
+  "hs_ihs_detector_family_research_disposition": {
+    "status": "SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN",
+    "research_stage": "COMPLETED",
+    "implementation_spec_status": "NOT_READY",
+    "implementation": "NOT_STARTED_NOT_AUTHORIZED",
+    "exact_thresholds_tolerances_and_data_calibration": "OPEN",
+    "next_project_focus": "TRADING_TERMINAL_TRADING_WORKSPACE"
   },
   "microstructure_evidence_families": [
     "Relative and clustered liquidity",
@@ -355,7 +376,7 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "RESEARCH",
-  "current_checkpoint": "TRADING_WORKSPACE_REQUIREMENTS_AND_ROADMAP_RECORDED",
+  "current_checkpoint": "HS_IHS_RESEARCH_CLOSED_AND_TRADING_TERMINAL_FOCUS_SELECTED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "ROADMAP_SPEC",
   "next_phase_authorization": "NOT_AUTHORIZED_PENDING_RESEARCH_AND_HUMAN_APPROVAL",
@@ -375,7 +396,8 @@
     {"revision": "1.1", "reason": "Recorded accumulated market-microstructure research as sufficient for roadmap-level design while preserving open formulas, non-final roadmap and no implementation authorization", "date": "2026-08-18"},
     {"revision": "1.2", "reason": "Recorded Flag detector-family research as sufficient for roadmap-level design while preserving open schemas and thresholds, a non-final roadmap and no implementation authorization", "date": "2026-08-19"},
     {"revision": "1.3", "reason": "Included the authorized Assistant Protocol v4.9 enforcement strengthening in the Flag research documentation checkpoint without changing research lifecycle or implementation authorization", "date": "2026-08-19"},
-    {"revision": "1.4", "reason": "Recorded the human-authorized Trading Workspace and Telegram Mini App requirements, safety architecture, external references, gap analysis and dependency-aware roadmap while preserving research-only lifecycle and no implementation authorization", "date": "2026-08-20"}
+    {"revision": "1.4", "reason": "Recorded the human-authorized Trading Workspace and Telegram Mini App requirements, safety architecture, external references, gap analysis and dependency-aware roadmap while preserving research-only lifecycle and no implementation authorization", "date": "2026-08-20"},
+    {"revision": "1.5", "reason": "Closed HS/IHS roadmap-level research, recorded the robust wick-aware wedge boundary-fitting observation and selected Trading Terminal / Trading Workspace as the next active development focus without authorizing implementation", "date": "2026-08-20"}
   ]
 }
 ```
@@ -394,8 +416,41 @@ neither is an implementation specification. Flag is recorded as an independent i
 consolidation family with shared primitives below detector semantics, persistent instance/observation
 identity, lifecycle separation, and future arbitration across comparable horizons. Exact schemas,
 formulas, thresholds, association, arbitration, breakout and expiration policies remain open. Research
-and planning remain active; the next detector-family research has not started. The roadmap remains
+and planning remain active. HS/IHS research is complete at roadmap-design level; remaining detector
+research is deferred by the Trading Terminal focus. The roadmap remains
 non-final, ROADMAP_SPEC remains unauthorized, and any later implementation requires explicit human approval.
+
+## HS / Inverse HS detector-family research closure
+
+HS and IHS are one mirror-symmetric detector family built from five sequential pivots:
+`LS — N1 — HEAD — N2 — RS`. In HS the Head is above both shoulders; IHS mirrors this below them.
+The neckline passes through N1 and N2 and may be horizontal, rising or falling. Horizontal neckline is
+not a validity requirement.
+
+Hard geometry remains separate from quality/scoring, market context, confirmation and signal admission.
+Perfect shoulder symmetry is not required; natural price/time asymmetry is quality evidence. Prior trend
+is context rather than base pivot geometry. Volume may affect confirmation/confidence but is not a hard
+geometry gate.
+
+The conceptual lifecycle is `FORMING — STRUCTURALLY_VALID — CONFIRMED` or `INVALIDATED`. A forming
+candidate may be observable before Right Shoulder completion or neckline-breakout confirmation. Early/
+right-shoulder, neckline-breakout and neckline-retest events belong to later trading policy, not detector
+geometry. Profitability is not assumed and must later be evaluated historically and through Paper Trader.
+No numeric tolerance is approved; pivot, symmetry, neckline, confirmation and invalidation thresholds
+require calibration on Bybit perpetual data. Research is complete at roadmap-level architecture only;
+production implementation is `NOT_STARTED_NOT_AUTHORIZED`.
+
+## Geometry research observation — robust wick-aware wedge boundaries
+
+The user-reviewed GRVTUSDT falling-wedge example suggests that an upper boundary fitted mainly through
+two anchors may leave a systematic number of meaningful high-wicks outside the structure. Future Geometry
+Engine research should evaluate a representative, tolerance-aware fit using valid touches/near-touches,
+extrema-to-line distance, violation magnitude, permitted outliers and structure-scale or volatility
+normalization such as ATR. The mirrored principle applies to lower boundaries and low-wicks.
+
+The goal is a geometrically representative boundary supported by the largest meaningful contact set,
+not forced containment of every wick. Several small outliers may be valid. This is a research hypothesis
+and validation requirement, not a proven optimum, algorithm change or implementation authorization.
 
 ## Trading Workspace research checkpoint
 
@@ -479,7 +534,8 @@ dictionaries, chart helpers and REST helpers must not acquire trading truth or U
 
 This moves idempotency, reconciliation, recovery and manual override ahead of the chart MVP. Tracks A
 (Trading Intelligence), B (Trading Foundation) and C (Microstructure) can proceed independently; Track D
-(Workspace/operator surface) joins only through normalized contracts. HS/IHS remains not started.
+(Workspace/operator surface) joins only through normalized contracts. HS/IHS implementation remains
+not started and not authorized.
 
 ### Unresolved Workspace decisions
 

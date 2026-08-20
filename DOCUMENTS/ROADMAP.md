@@ -2,7 +2,7 @@
 
 Version:
 
-4.24
+4.25
 
 Date:
 
@@ -1046,9 +1046,26 @@ Microstructure items remaining open:
 * future limit queue approximation;
 * measurable network, message-rate, CPU, RAM and latency budgets.
 
-Next external research focus:
+HS / IHS research checkpoint:
 
-Flag, HS/IHS, Double Top/Bottom, Candlestick Formation Evidence and PRE_BREAKOUT_CORRIDOR_SETUP.
+COMPLETED / SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN / IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED.
+The family uses mirrored five-pivot `LS — N1 — HEAD — N2 — RS` geometry and an N1/N2 neckline that
+may be horizontal, rising or falling. Hard geometry is separated from quality, context, confirmation
+and admission; perfect shoulder symmetry, prior trend and volume are not hard pivot-geometry gates.
+The conceptual lifecycle supports FORMING before Right Shoulder or breakout confirmation, then
+STRUCTURALLY_VALID, CONFIRMED or INVALIDATED. Thresholds remain open for Bybit perpetual calibration;
+profitability requires later historical and Paper Trader evidence.
+
+Geometry research observation:
+
+GRVTUSDT suggests future validation of robust wick-aware Wedge boundary fitting. Candidate objectives
+include meaningful touches/near-touches, distance and violation magnitude, limited outliers, and
+structure-scale or volatility-normalized tolerance for upper high-wicks and mirrored lower low-wicks.
+This is an unproven research hypothesis, not an algorithm change or implementation authorization.
+
+Deferred detector research:
+
+Double Top/Bottom, Candlestick Formation Evidence and PRE_BREAKOUT_CORRIDOR_SETUP.
 
 Track D — Trading Workspace / Telegram Mini App:
 
@@ -1076,11 +1093,18 @@ No chart engine or dependency is selected.
 
 Acceptance, risks, approved decisions and unresolved decisions:
 
-Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.4.
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.5.
+
+Active development focus:
+
+TRADING_TERMINAL / TRADING_WORKSPACE.
 
 Current action:
 
-TRADING_INTELLIGENCE_DETECTOR_FAMILY_RESEARCH.
+DEFINE_SEPARATE_DURABLE_TRADING_TERMINAL_CHANGE_REQUEST. Future scope may include Workspace, Paper
+Trader, real Bybit market data, order/position lifecycle, virtual balance/equity, fees/slippage, TP/SL,
+chart trading and overlays, persistence/journal, Telegram Mini App access and preparation for robot
+execution. No terminal implementation is started or authorized by this checkpoint.
 
 Implementation authorization:
 
