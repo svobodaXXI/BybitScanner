@@ -7,7 +7,7 @@
   "id": "CR-TRADING-INTELLIGENCE-001",
   "title": "Trading Intelligence and Paper Trader Roadmap Research",
   "status": "IN_PROGRESS",
-  "revision": "1.3",
+  "revision": "1.4",
   "lifecycle_stage": "CONTEXT",
   "objective": "Research and record the evidence, architecture boundaries, dependencies and non-final roadmap hypothesis required to evolve the current Scanner into broader Trading Intelligence and a safe event-driven Paper Trader without authorizing implementation.",
   "non_goals": [
@@ -355,7 +355,7 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "RESEARCH",
-  "current_checkpoint": "FLAG_DETECTOR_FAMILY_RESEARCH_RECORDED",
+  "current_checkpoint": "TRADING_WORKSPACE_REQUIREMENTS_AND_ROADMAP_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "ROADMAP_SPEC",
   "next_phase_authorization": "NOT_AUTHORIZED_PENDING_RESEARCH_AND_HUMAN_APPROVAL",
@@ -374,7 +374,8 @@
     {"revision": "1.0", "reason": "Human-authorized durable planning and research checkpoint; implementation explicitly not authorized", "date": "2026-08-18"},
     {"revision": "1.1", "reason": "Recorded accumulated market-microstructure research as sufficient for roadmap-level design while preserving open formulas, non-final roadmap and no implementation authorization", "date": "2026-08-18"},
     {"revision": "1.2", "reason": "Recorded Flag detector-family research as sufficient for roadmap-level design while preserving open schemas and thresholds, a non-final roadmap and no implementation authorization", "date": "2026-08-19"},
-    {"revision": "1.3", "reason": "Included the authorized Assistant Protocol v4.9 enforcement strengthening in the Flag research documentation checkpoint without changing research lifecycle or implementation authorization", "date": "2026-08-19"}
+    {"revision": "1.3", "reason": "Included the authorized Assistant Protocol v4.9 enforcement strengthening in the Flag research documentation checkpoint without changing research lifecycle or implementation authorization", "date": "2026-08-19"},
+    {"revision": "1.4", "reason": "Recorded the human-authorized Trading Workspace and Telegram Mini App requirements, safety architecture, external references, gap analysis and dependency-aware roadmap while preserving research-only lifecycle and no implementation authorization", "date": "2026-08-20"}
   ]
 }
 ```
@@ -395,6 +396,98 @@ identity, lifecycle separation, and future arbitration across comparable horizon
 formulas, thresholds, association, arbitration, breakout and expiration policies remain open. Research
 and planning remain active; the next detector-family research has not started. The roadmap remains
 non-final, ROADMAP_SPEC remains unauthorized, and any later implementation requires explicit human approval.
+
+## Trading Workspace research checkpoint
+
+The preferred future mobile operator surface is a Telegram Mini App, provisionally named the
+BybitScanner Trading Workspace. A Scanner signal may navigate to the exact-symbol workspace, but a
+new signal never implies that no position or order already exists. Before any position-changing
+operation, normalized domain state must expose mode (`PAPER`, `DEMO`, `LIVE`), origin where known
+(`ROBOT`, `TERMINAL`, `PAPER`, `EXTERNAL`, `UNKNOWN`), side, size, entry, mark price, leverage, live
+PnL/ROE and active order/protection state. Intent is explicit (`OPEN/ADD LONG`, `OPEN/ADD SHORT`,
+`REDUCE`, `CLOSE`); adding exposure shows current, requested and resulting exposure.
+
+The Workspace scope includes symbol selection, live/current candles, Scanner geometry, market-coordinate
+drawings, entry/exit and position overlays, Market and Limit commands, TP/SL, partial/full close, Open
+Positions, history and live robot reasoning context (`strategy`, `setup`, `pattern`, `signal_id`,
+`timeframe`, `entry_reason`, `robot_decision`, confidence/evidence). Scanner, User and Trading layers
+remain independently toggleable. Limit, TP and SL lines drag locally and submit only after drag end,
+validation and required confirmation; numeric input remains available. Individual close requires
+confirmation. Mode-specific Close All Paper/Demo/Live requires two independent confirmation stages.
+
+The UI owns neither execution truth nor mode-specific trading logic. Strategy owns neither exchange
+transport nor pattern identity. Paper, later Demo and later Live share `ExecutionPort`. For real modes
+Bybit is authoritative; REST/UI acknowledgement is not proof of execution. Reconciliation compares
+expected state with actual positions, orders and executions. Outcomes cover match; external close,
+partial close, add or reverse; missing/unknown order; mismatches; and unknown/ambiguous. Dangerous
+uncertainty stops new automatic entries, reconciles and informs without blindly restoring state.
+
+External trading through Bybit, MetaScalp or other interfaces is supported. Unlinked activity is
+`EXTERNAL` or `UNKNOWN`. Manual takeover sets a durable override and blocks robot reassertion until an
+explicit safe return to AUTO. Manual, emergency or external close creates a persistent re-entry lock
+for the old signal lifecycle. Logical commands require durable identity, trade/signal linkage and
+idempotency, including future `orderLinkId` mapping. Timeout after submit is `UNKNOWN` pending
+reconciliation, not automatically failed and not blindly retried.
+
+Startup begins with AUTO disabled, fetches actual state and reconciles before automation resumes after
+crash, shutdown, power/network loss or private-stream disconnect. Critical protection should reside
+exchange-side where supported, separate from smart management. An independent heartbeat/watchdog is a
+later requirement because a failed host cannot reliably report its own failure. Presentation feedback
+remains replaceable and independent of safety logic; third-party media is not project-owned content.
+
+Persistent history is researched as Trade plus append-only TradeEvent evidence for signals, submissions,
+fills, amendments, TP/SL, partial/external/manual changes, reconciliation, close and errors. Exact event
+and order-state taxonomies remain open; candidate draft through terminal/unknown states are not final.
+
+### External implementation references
+
+Future research retains Freqtrade (lifecycle, dry-run, persistence, locks and recovery), Hummingbot
+(connectors, tracking, user streams and retries), OpenAlgo Charts (chart trading and drawings),
+TradeCanvas (execution abstraction and chart integration), and official Bybit V5 documentation as
+authoritative for order, execution, position, `orderLinkId`, limits, Demo and TP/SL behavior. Adoption
+requires current maintenance, license, compatibility, architecture fit and dependency-risk review;
+none is an approved dependency.
+
+### Current repository gap analysis
+
+* `EXISTS`: Scanner candle ingestion, Wedge/Triangle analytics, shared geometry/pivots, public Bybit
+  access and Telegram-oriented notifications; these remain upstream evidence capabilities.
+* `PARTIAL`: signal identity/memory, chart rendering, realtime data and Paper/replay research; none is
+  authoritative trading state or a unified workspace.
+* `ABSENT`: trade/order/fill/position/account implementations, event journal, idempotent command store,
+  reconciliation, override/re-entry locks, recovery coordinator, private-stream authority, execution
+  modes, Mini App/Workspace and watchdog.
+* `PLANNED / RESEARCHED ONLY`: Paper/L2 simulation, liquidity observations, Workspace, chart selection,
+  Demo/Live and all safety/recovery mechanisms above.
+
+Detector geometry and normalized observations are reusable upstream; detector internals, signal-memory
+dictionaries, chart helpers and REST helpers must not acquire trading truth or UI responsibility.
+
+### Dependency-aware roadmap hypothesis
+
+1. Durable requirements, repository gap and architecture checkpoint (this record).
+2. Core domain contracts: identity, mode/source/intent, order/fill/position/account, ExecutionPort,
+   journal events, idempotency, manual override and re-entry locks.
+3. Persistence, deterministic Paper execution and append-only journal, with conservative Limit policy.
+4. Reconciliation, startup recovery and uncertain-command safety validated in Paper.
+5. Chart-engine decision/prototype comparing OpenAlgo Charts, TradeCanvas and TradingView Lightweight
+   Charts plus required custom functionality; no selection or implementation occurs here.
+6. Telegram Mini App Paper Workspace MVP after normalized state and safety foundations exist.
+7. Bybit Demo after verified Paper lifecycle, recovery and reconciliation.
+8. Bybit Live only after explicit safety evidence and separate human authorization.
+9. Later observability, drawings, override refinement, watchdog, analytics/replay and presentation.
+
+This moves idempotency, reconciliation, recovery and manual override ahead of the chart MVP. Tracks A
+(Trading Intelligence), B (Trading Foundation) and C (Microstructure) can proceed independently; Track D
+(Workspace/operator surface) joins only through normalized contracts. HS/IHS remains not started.
+
+### Unresolved Workspace decisions
+
+Exact schemas/states; Demo/Live differences; Bybit private-stream recovery; source linking and
+`orderLinkId` policy; Paper Limit approximation; Telegram security, deployment and degraded UX;
+watchdog boundary; and chart-engine selection remain open. The chart comparison covers license,
+maintenance, mobile touch, Telegram fit, realtime candles, draggable lines, drawings/saved state,
+Scanner overlays, performance, integration complexity and dependency risk.
 
 ## Amendment rule
 

@@ -2,11 +2,11 @@
 
 Version:
 
-4.23
+4.24
 
 Date:
 
-2026-08-18
+2026-08-20
 
 Document Type:
 
@@ -1050,15 +1050,33 @@ Next external research focus:
 
 Flag, HS/IHS, Double Top/Bottom, Candlestick Formation Evidence and PRE_BREAKOUT_CORRIDOR_SETUP.
 
+Track D — Trading Workspace / Telegram Mini App:
+
+Normalized operator-control surface for Scanner, Paper, later Demo/Live, manual control, robot
+observability, chart layers, positions and history. It consumes normalized state and never detector
+internals. Before a UI MVP, Track B defines trade-domain identity/lifecycle, ExecutionPort, persistent
+journal, idempotent commands, manual override, re-entry locks and reconciliation/restart safety.
+
 Dependency hypothesis:
 
 Tracks A, B and C may develop in parallel but join only through normalized contracts. Paper Trader
 starts behind PatternObservation and normalized TradingSignal; execution simulation follows domain
 order/fill contracts and does not depend directly on Wedge, Telegram or scanner signal-memory formats.
 
+Track D sequence is requirements/gap checkpoint; domain contracts; Paper plus journal;
+reconciliation/recovery; chart-engine comparison/prototype; Telegram Paper MVP; verified Demo; then
+separately authorized Live. This supersedes hypotheses that place safety foundations after UI work.
+
+Chart-engine decision checkpoint:
+
+OPEN / RESEARCH_NOT_STARTED. Compare OpenAlgo Charts, TradeCanvas and TradingView Lightweight Charts
+plus custom functionality for license, activity, touch/Telegram fit, realtime candles, draggable trading
+lines, drawings/saved state, Scanner overlays, performance, integration complexity and dependency risk.
+No chart engine or dependency is selected.
+
 Acceptance, risks, approved decisions and unresolved decisions:
 
-Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.1.
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.4.
 
 Current action:
 
