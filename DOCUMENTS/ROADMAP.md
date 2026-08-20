@@ -2,7 +2,7 @@
 
 Version:
 
-4.25
+4.26
 
 Date:
 
@@ -1109,6 +1109,55 @@ execution. No terminal implementation is started or authorized by this checkpoin
 Implementation authorization:
 
 NONE. No production or test implementation may begin from this planning entry.
+
+---
+
+# CR-TRADING-WORKSPACE-001
+
+Title:
+
+Trading Workspace v1 / Manual Live Trading
+
+Status:
+
+IN_PROGRESS / SPEC_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+
+Implementation status:
+
+NOT_STARTED_NOT_AUTHORIZED
+
+Current checkpoint:
+
+MANUAL_LIVE_TRADING_V1_SPEC_APPROVED_RECORDED
+
+First implementation priority:
+
+Usable manual live trading on the user's real Bybit account. Terminal is independent from Scanner and
+Robot, works while Scanner is stopped, starts locally and preserves a deployment-neutral path to VPS.
+Paper-first and autonomous Robot implementation are not the v1 priority.
+
+Specification boundary:
+
+* durable Telegram signal deep links and SignalSnapshot history;
+* shared Terminal/Signal Editor chart engine;
+* explicit historical signal versus current market presentation;
+* Working Volume equal to 5% of own equity before leverage;
+* exchange-confirmed market, Limit, SL/TP, fill, cancel, modification and full-close cleanup lifecycles;
+* Bybit reconciliation before active/closed success presentation;
+* chart overlays, fill markers and confirmed-event feedback;
+* future MANUAL/ROBOT ownership compatibility without robot implementation.
+
+Owning record:
+
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.0.
+
+Current action:
+
+DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED.
+
+Next phase:
+
+CONTEXT — NOT_STARTED_NOT_AUTHORIZED.
 
 ---
 

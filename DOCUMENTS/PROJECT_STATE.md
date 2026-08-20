@@ -2,7 +2,7 @@
 
 Version:
 
-7.33
+7.34
 
 Date:
 
@@ -671,7 +671,7 @@ Trading Foundation / Trading Workspace
 
 Current project phase:
 
-TRADING_TERMINAL_TASK_DEFINITION
+TRADING_TERMINAL_SPEC_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
 
 Primary objective:
 
@@ -807,7 +807,7 @@ HIGHEST
 
 Primary subsystem:
 
-NOT_SELECTED_PENDING_SEPARATE_CHANGE_REQUEST
+TRADING_WORKSPACE_BOUNDARY / IMPLEMENTATION_PATHS_NOT_SELECTED
 
 Secondary subsystem:
 
@@ -824,7 +824,8 @@ Related subsystems:
 Primary objective:
 
 Define and authorize a separate durable Trading Terminal / Trading Workspace implementation mission.
-This checkpoint selects focus only; implementation remains not started.
+The durable specification now exists as `CR-TRADING-WORKSPACE-001` revision 1.0 and awaits explicit
+human approval. Implementation remains not started and not authorized.
 
 Previous geometry objective:
 
@@ -861,6 +862,64 @@ Previous geometry development principle:
 целесообразно расширять
 интеллектуальный и функциональный
 контур.
+
+---
+
+# TRADING_WORKSPACE_MANUAL_LIVE_TRADING_STATE
+
+Active mission:
+
+CR-TRADING-WORKSPACE-001 — Trading Workspace v1 / Manual Live Trading
+
+Governance type:
+
+DURABLE_TASK_SPEC_CHANGE_REQUEST
+
+Lifecycle state:
+
+IN_PROGRESS / SPEC_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+
+Checkpoint:
+
+MANUAL_LIVE_TRADING_V1_SPEC_APPROVED_RECORDED
+
+ChangeRequest revision:
+
+1.0
+
+Owning record:
+
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.0
+
+Product priority:
+
+MANUAL_LIVE_TRADING_ON_REAL_BYBIT_ACCOUNT
+
+Subsystem boundary:
+
+BYBITSCANNER / TRADING_TERMINAL / TRADING_ROBOT — INDEPENDENT_TOP_LEVEL_SUBSYSTEMS
+
+Deployment direction:
+
+LOCAL_FIRST / DEPLOYMENT_NEUTRAL / FUTURE_VPS_COMPATIBLE
+
+Implementation status:
+
+NOT_STARTED_NOT_AUTHORIZED
+
+Current authorized action:
+
+DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED
+
+Next phase:
+
+CONTEXT — NOT_STARTED_NOT_AUTHORIZED
+
+Important:
+
+No production code, runtime behavior, test implementation, dependency, Bybit order or account mutation
+is authorized by this specification checkpoint. `CR-TRADING-INTELLIGENCE-001` remains the owning research
+record; it is not the implementation authority for Trading Workspace v1.
 
 ---
 
