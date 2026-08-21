@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / THRESHOLD_RECENTER_POLICY_RECORDED
+IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_RECORDED
 
 Implementation status:
 
@@ -1308,7 +1308,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED
+MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED
 
 First implementation priority:
 
@@ -1344,11 +1344,11 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.10.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.11.
 
 Current action:
 
-INTERMEDIATE_THRESHOLD_RECENTER_POLICY_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_10.
+INTERMEDIATE_MANUAL_EXECUTION_PROTECTION_LOCAL_CHECKPOINT_REVISION_1_11.
 
 Approved intermediate CONTEXT architecture directions from revision 1.5:
 
@@ -1474,15 +1474,23 @@ RULE-008:
 
 from:
 
-ROADMAP v4.36
+ROADMAP v4.37
 
 to:
 
-ROADMAP v4.37
+ROADMAP v4.38
 
 reason:
 
-Current checkpoint — Trading Workspace threshold-based DOM recenter policy (v4.36 to v4.37):
+Current checkpoint — Trading Workspace Manual Market / Limit / SL-TP execution and protection (v4.37 to v4.38):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.11 and recorded checkpoint `MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED`;
+* recorded held-side fast DOM execution, quick-volume and anti-bounce semantics, fail-closed submission and distinct Market/Limit partial-fill behavior;
+* recorded Market-to-FLAT behavior, the narrow Manual-Limit opposite-remainder exception, all-origin Limit visibility and confirmed DOM/chart order lifecycle;
+* preserved Bybit authority, reconciliation locks, close cleanup with external-order safeguards and future-capable non-priority automatic preset SL/TP;
+* preserved active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT.
+
+Previous checkpoint preserved — Trading Workspace threshold-based DOM recenter policy (v4.36 to v4.37):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.10 and recorded checkpoint `MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED`;
 * superseded only the approximately 23-second periodic timing with an approximately five-second configurable check that recenters only beyond a central-deviation threshold;

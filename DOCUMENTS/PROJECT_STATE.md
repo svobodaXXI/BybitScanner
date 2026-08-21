@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / THRESHOLD_RECENTER_POLICY_RECORDED
+IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_RECORDED
 
 Checkpoint:
 
-MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED
+MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED
 
 ChangeRequest revision:
 
-1.10
+1.11
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.10
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.11
 
 Product priority:
 
@@ -912,7 +912,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-INTERMEDIATE_THRESHOLD_RECENTER_POLICY_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_10
+INTERMEDIATE_MANUAL_EXECUTION_PROTECTION_LOCAL_CHECKPOINT_REVISION_1_11
 
 Next phase:
 
@@ -4667,15 +4667,24 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.43
+PROJECT_STATE v7.44
 
 to:
 
-PROJECT_STATE v7.44
+PROJECT_STATE v7.45
 
 reason:
 
-Current checkpoint — Trading Workspace threshold-based DOM recenter policy (v7.43 to v7.44):
+Current checkpoint — Trading Workspace Manual Market / Limit / SL-TP execution and protection (v7.44 to v7.45):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.11 and checkpoint `MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED`;
+* recorded fast held-side DOM Market/Limit commands, one-WV quick default, double-tap dollar-volume adjustment and 300-ms anti-bounce behavior;
+* recorded fail-closed uncertainty, Market and Limit partial-fill semantics, Market-to-FLAT behavior and the narrow Manual-Limit opposite-remainder exception;
+* recorded all-origin active-Limit visibility, Bybit authority, startup/reconnect execution locks, confirmed DOM/chart Limit lifecycle and symbol cleanup under existing external-order safeguards;
+* retained automatic preset SL/TP as future-capable but non-priority and retained external-system research as non-adopted reference;
+* kept CONTEXT active and incomplete, Robot implementation out of scope and IMPLEMENT not started or authorized.
+
+Previous checkpoint preserved — Trading Workspace threshold-based DOM recenter policy (v7.43 to v7.44):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.10 and checkpoint `MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED`;
 * superseded only the revision 1.9 approximately 23-second periodic recenter direction with an approximately five-second configurable eligibility check plus central-deviation threshold;
