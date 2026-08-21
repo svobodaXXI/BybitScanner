@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.3",
+  "revision": "1.4",
   "lifecycle_stage": "SPEC",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -96,6 +96,12 @@
     ,"Run Scanner crosses a Scanner Control command boundary such as RUN_SCAN; Scanner owns execution and Telegram does not couple to main.py internals"
     ,"Scanner Control prevents incompatible duplicate concurrent runs and reports accepted or started, already running, completed and failed outcomes"
     ,"Telegram menu, deep-link and command knowledge never grants trading or Scanner-control authority without the researched authorization boundary"
+    ,"Terminal provides account-profile management and clearly identifies the active Bybit trading account and its current USDT deposit or equity value"
+    ,"Trading state, reconciliation, analytics and future Robot state are isolated by trading account; account switching disables mutations until selected-account loading and reconciliation complete"
+    ,"One Working Volume is account-scoped, leverage-independent and equals five percent of the applicable USDT deposit or equity rounded down to the nearest ten USDT"
+    ,"Future Robot-controlled aggregate exposure is limited to nineteen Working Volumes per trading account, excluding MANUAL-controlled exposure unless a later approved policy changes that boundary"
+    ,"Trading Results reports selected-period realized PnL in both USDT and percentage of a defined period deposit or equity reference without treating external cash flows as trading performance"
+    ,"Trading credentials belong only to the Terminal backend security boundary; API Secret is never returned to the frontend or stored in Scanner, chart, Telegram or frontend-readable durable state"
   ],
   "unresolved_decisions": [
     "Frontend, backend, chart library and persistence technology selection",
@@ -116,6 +122,11 @@
     ,"Exact Telegram Menu button layout and Bot API, Mini App or command mechanism"
     ,"Scanner Control IPC/API/process transport, command identity, concurrency lock and completion correlation"
     ,"Exact Telegram allowlist, session and authorization checks for Terminal, AUTOPILOT and Scanner control"
+    ,"Encrypted credential-storage, key rotation, validation diagnostics and trading-account profile lifecycle design"
+    ,"Authoritative USDT deposit or equity definition, refresh timing and account-switch reconciliation state machine"
+    ,"Working Volume behavior below the ten-USDT rounding quantum and its interaction with exchange minimum quantity and insufficient balance"
+    ,"Concurrency and exposure reservation semantics for simultaneous future Robot commands and ownership handoffs near the nineteen-WV limit"
+    ,"Selected-period percentage-PnL accounting for deposits, withdrawals, transfers, equity changes, period boundaries and timezone"
   ],
   "acceptance_criteria": [
     "All Manual Live Trading v1 product and safety requirements are recorded in one owning durable ChangeRequest",
@@ -129,6 +140,10 @@
     "Immutable entry provenance is separated from current controller and remains stable across ownership transfers",
     "Working Volume details, AUTOPILOT results navigation, period metrics, interactive breakdowns and durable analytics requirements are explicit",
     "Unified Scanner bot navigation, independent Terminal entry, analytics/AUTOPILOT routing and concurrency-safe Scanner Control requirements are explicit",
+    "Trading-account management, active-account identification, account isolation and reconciled switching requirements are explicit",
+    "Account-scoped rounded-down Working Volume, future per-account Robot exposure limit and account-aware analytics requirements are explicit",
+    "Selected-period USDT and percentage PnL requirements and deferred external-cash-flow accounting decisions are explicit",
+    "Trading credential custody and frontend, Scanner, chart and Telegram secret-exclusion boundaries are explicit",
     "Implementation remains not started and not authorized",
     "Only authoritative documentation changes in this checkpoint"
   ],
@@ -162,14 +177,14 @@
   ],
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
-    {"id": "SPEC", "status": "REVISION_1_3_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
+    {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
     {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "SPEC",
-  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_TELEGRAM_SCANNER_MENU_SPEC_APPROVED_RECORDED",
+  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_ACCOUNT_MANAGEMENT_AND_RISK_ANALYTICS_SPEC_APPROVED_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "CONTEXT",
   "next_phase_authorization": "CONTEXT_RESEARCH_AUTHORIZED_IN_PROGRESS_IMPLEMENT_NOT_AUTHORIZED",
@@ -178,19 +193,21 @@
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
     {"phase": "SPEC_REVISION_1_1_DOCUMENTATION_CHECKPOINT", "commit": "5e38b8a6df64e822e664de665701a53e76163fdd"},
     {"phase": "SPEC_REVISION_1_2_DOCUMENTATION_CHECKPOINT", "commit": "f8d0932afd9589998d09027477c67eb8ab7aa1a0"}
+    ,{"phase": "SPEC_REVISION_1_3_DOCUMENTATION_CHECKPOINT", "commit": "3d0ba01895db0cd9c4fcd1670b06e46671d645a0"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
-    "latest_saved_checkpoint": "f8d0932afd9589998d09027477c67eb8ab7aa1a0",
+    "latest_saved_checkpoint": "3d0ba01895db0cd9c4fcd1670b06e46671d645a0",
     "status": "DOCUMENTATION_CHECKPOINT_APPROVED_FOR_COMMIT"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
     {"revision": "1.1", "reason": "Human-approved documentation checkpoint recording leverage-independent Working Volume, immutable entry provenance, exclusive position ownership, future AUTOPILOT handoff, human takeover and ownership-scoped active-position operations without authorizing CONTEXT, external research or implementation", "date": "2026-08-21"},
     {"revision": "1.2", "reason": "Human-approved documentation checkpoint recording Working Volume detail interaction and AUTOPILOT trading-results, period metrics, provenance breakdown and durable analytics requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
-    {"revision": "1.3", "reason": "Human-approved documentation checkpoint recording unified Scanner Telegram bot navigation and authorization-aware, concurrency-safe Scanner Control requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
+    {"revision": "1.3", "reason": "Human-approved documentation checkpoint recording unified Scanner Telegram bot navigation and authorization-aware, concurrency-safe Scanner Control requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
+    {"revision": "1.4", "reason": "Human-approved documentation checkpoint recording account management and isolation, refined account-scoped Working Volume, future per-account Robot exposure limit, percentage PnL and credential-security boundaries while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
   ]
 }
 ```
@@ -442,9 +459,56 @@ Exact allowlist, session and authentication mechanism remains a CONTEXT decision
 Scanner, Terminal and Robot remain independent. The Scanner bot is only a navigation/control integration
 surface and owns no Terminal trading state, Robot state, exchange orders/positions or trading analytics.
 
-## 12. Authorization boundary
+## 12. Trading accounts, account-scoped Working Volume and analytics
 
-Revision 1.3 is a human-approved documentation-only SPEC checkpoint. Production
+Terminal provides a compact trading-account control, conceptually `🔑`, which opens Trading Accounts.
+The user can add a Bybit account profile, assign a human-readable name, submit API Key and API Secret,
+validate credentials and connectivity, view sufficient non-secret validated key/account diagnostics,
+switch saved accounts and remove a profile. Exact credential storage is deferred to CONTEXT/security
+architecture. The active account is clearly visible using the consistent product convention
+`🔑 Основной = 2 000 USDT`, where the value is the relevant current USDT deposit/equity under the final
+CONTEXT accounting definition.
+
+Every wallet/equity, Working Volume, position, order, execution, trade, protection, journal,
+reconciliation, analytics and future Robot/AUTOPILOT state object belongs to one trading-account context.
+State from different accounts must never be mixed. During account switching, trading mutations are
+disabled; the selected account state is loaded and reconciled with Bybit before LIVE controls are enabled.
+Exact switching state-machine names remain a CONTEXT decision.
+
+Working Volume remains independent of leverage and is calculated separately for the relevant account:
+
+`raw_1_WV = USDT_deposit × 5%`
+
+`1_WV = floor(raw_1_WV / 10) × 10 USDT`
+
+Thus deposits of 2,000, 2,150, 3,780 and 9,999 USDT yield respectively 100, 100, 180 and 490 USDT per
+WV. Leverage never multiplies or otherwise alters WV. The authoritative meaning of the calculation-base
+USDT deposit/equity remains a CONTEXT/accounting decision. The approved `⚔ N.N` position display and its
+popover remain: actual engaged USDT volume, current/reference 1-WV value and displayed WV count. Its
+one-decimal rounding is presentation-only and never accounting truth.
+
+Future Robot/AUTOPILOT has a per-account risk invariant:
+`ROBOT_EXPOSURE_LIMIT = 19 WV per trading account`. Aggregate actual exposure across ROBOT-controlled
+positions must not knowingly exceed that limit. If 17.5 WV is already controlled, no more than 1.5 WV
+may be added. MANUAL-controlled positions are excluded unless a later approved risk policy changes that
+rule. Handoff and takeover preserve exposure accounting; simultaneous-command reservation semantics are
+deferred to future architecture/Robot design. Robot implementation remains outside Manual Live Trading v1.
+
+For DAY, WEEK, MONTH and YEAR, Trading Results reports realized PnL in USDT and as a percentage of a
+defined deposit/equity reference appropriate to the selected period, conceptually the period-opening
+account deposit/equity. The percentage is never derived from rounded WV display. CONTEXT must define
+deposit, withdrawal, transfer, equity-change, period-boundary and timezone accounting so external cash
+flows do not appear as trading PnL; this SPEC does not invent a mid-period cash-flow formula.
+
+Analytics is account-aware: one account's statistics never silently include another account. Future
+cross-account portfolio analytics must be explicit. API Secret is not exposed back to the frontend after
+submission; Mini App/frontend is not a durable secret store; Scanner, chart state and Telegram messages
+never own trading credentials. Credentials belong to the Terminal backend/security boundary, with exact
+encrypted storage deferred to CONTEXT.
+
+## 13. Authorization boundary
+
+Revision 1.4 is a human-approved documentation-only SPEC checkpoint. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any
 claim that its findings are durably recorded, verified or complete. IMPLEMENT

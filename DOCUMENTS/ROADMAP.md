@@ -2,7 +2,7 @@
 
 Version:
 
-4.29
+4.30
 
 Date:
 
@@ -1120,7 +1120,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / SPEC_REVISION_1_3_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+IN_PROGRESS / SPEC_REVISION_1_4_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
 
 Implementation status:
 
@@ -1128,7 +1128,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_TELEGRAM_SCANNER_MENU_SPEC_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_ACCOUNT_MANAGEMENT_AND_RISK_ANALYTICS_SPEC_APPROVED_RECORDED
 
 First implementation priority:
 
@@ -1156,14 +1156,19 @@ Specification boundary:
 * unified Scanner bot Menu routing to Terminal, Trading Results, AUTOPILOT and Run Scanner;
 * independent Manual Terminal entry without SignalSnapshot while retaining signal deep links;
 * authorization-aware Scanner Control with duplicate-run prevention and lifecycle feedback.
+* named Bybit trading-account profiles, active-account display, isolated account state and reconciled switching;
+* account-scoped leverage-independent WV calculated as five percent and rounded down to the nearest 10 USDT;
+* future Robot aggregate exposure capped at 19 WV per account without including MANUAL exposure;
+* account-aware DAY/WEEK/MONTH/YEAR realized PnL in USDT and percentage with cash-flow semantics deferred;
+* Terminal-backend credential custody with API Secret excluded from frontend, Scanner, chart and Telegram state.
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.3.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.4.
 
 Current action:
 
-DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_3.
+DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_4.
 
 Next phase:
 
