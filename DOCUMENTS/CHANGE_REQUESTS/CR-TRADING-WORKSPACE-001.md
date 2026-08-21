@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.9",
+  "revision": "1.10",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -154,7 +154,7 @@
     ,"Final working/calculation depth beyond the preferred orderbook.50 starting candidate, exact sequence-gap rules, correlation window, confidence thresholds and same-sequence multi-message treatment"
     ,"PROBABLE sweep visualization and reliable trade-to-L2 correlation under ambiguous cancellation-versus-execution evidence"
     ,"Responsive adjustment around the preferred 20 asks plus 20 bids viewport, exact row height, DOM percentile/window/hysteresis, print-scaling window, update batching, render frequency, bounded tape retention and mobile Telegram Mini App performance limits"
-    ,"Exact recenter timing and inactivity timeout, sweep-follow animation, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, book-walk depth source, third-party vendoring policy and future historical heatmap requirement"
+    ,"Exact threshold-based recenter check interval beyond the preferred initial five seconds, deviation threshold, central dead-zone size and inactivity timeout, sweep-follow animation, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, book-walk depth source, third-party vendoring policy and future historical heatmap requirement"
   ],
   "researched_architecture_directions": [
     "Authenticated Bybit V5 REST commands are correlated with private order, execution, position and wallet events; REST acceptance alone is not final state confirmation",
@@ -258,13 +258,13 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_THRESHOLD_RECENTER_POLICY_RECORDED"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED",
+  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
   "next_phase_authorization": "IMPLEMENT_NOT_STARTED_NOT_AUTHORIZED_CONTEXT_RESEARCH_IN_PROGRESS",
@@ -284,7 +284,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "5fa3bba7b347739fb73e57f25306ec8a677643e4",
-    "status": "INTERMEDIATE_CONTEXT_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_APPROVED_FOR_REVIEW"
+    "status": "INTERMEDIATE_CONTEXT_THRESHOLD_RECENTER_POLICY_APPROVED_FOR_REVIEW"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -296,7 +296,8 @@
     {"revision": "1.6", "reason": "Human-approved intermediate durable CONTEXT checkpoint refining Bybit position mode, asynchronous confirmation, execution deduplication, close and recovery reconciliation, command correlation, preferred WV walletBalance base and exchange quantity/price normalization while CONTEXT remains incomplete and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
     {"revision": "1.7", "reason": "Human-approved intermediate durable CONTEXT checkpoint recording the formal TradingCommand, Order, Execution, Position, reconciliation, exposure-gate, crash-recovery and transaction-atomicity model while preserving unresolved human decisions, active CONTEXT research and unauthorized IMPLEMENT", "date": "2026-08-21"},
     {"revision": "1.8", "reason": "Human-approved intermediate durable CONTEXT checkpoint binding active-account USDT walletBalance WV authority, One-Way Mode, no automatic mode switching, external-state adoption, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative-correlation policy without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-21"},
-    {"revision": "1.9", "reason": "Human-approved intermediate durable CONTEXT checkpoint recording the minimal upper Terminal workspace, one normalized public market-data owner, collapsible DOM and execution-print panel, preferred 20+20 viewport over deeper working data, interaction-safe recenter and STRONG-sweep follow, confidence and resync safety, reusable Manual book walk, bounded Canvas2D-oriented rendering and third-party license constraints without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-21"}
+    {"revision": "1.9", "reason": "Human-approved intermediate durable CONTEXT checkpoint recording the minimal upper Terminal workspace, one normalized public market-data owner, collapsible DOM and execution-print panel, preferred 20+20 viewport over deeper working data, interaction-safe recenter and STRONG-sweep follow, confidence and resync safety, reusable Manual book walk, bounded Canvas2D-oriented rendering and third-party license constraints without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-21"},
+    {"revision": "1.10", "reason": "Human-approved CONTEXT amendment superseding only the revision 1.9 fixed-period recenter direction with an approximately five-second configurable eligibility check and central-deviation threshold, while preserving immediate CENTER, higher-priority STRONG-sweep follow, manual-inspection suppression, incomplete CONTEXT and unauthorized IMPLEMENT", "date": "2026-08-22"}
   ]
 }
 ```
@@ -1267,9 +1268,34 @@ This amendment records checkpoint
 `MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED`. CONTEXT remains active, incomplete and
 not verified; no implementation plan or production work is authorized.
 
-## 18. Authorization boundary
+## 18. Threshold-based DOM recenter amendment
 
-Revision 1.9 is a human-approved intermediate durable CONTEXT research checkpoint. Approved
+Revision 1.10 supersedes only the revision 1.9 periodic recenter timing direction. The former approximately
+23-second periodic recenter value is historical and no longer governs product behavior. The DOM must not move
+mechanically on a fixed interval. Preferred prototype behavior checks approximately every five seconds whether
+recenter is needed. Five seconds is an initial configurable minimum/check interval, not a permanent hard-coded
+constant. If spread remains sufficiently close to the central viewport zone, the DOM does not move; it recenters only
+when spread deviation exceeds the configured central dead zone. This periodic eligibility check plus deviation
+threshold is intended to avoid unnecessary visual movement.
+
+The approved CENTER control remains immediate and does not wait for the periodic check. Trustworthy active `STRONG`
+sweep follow remains higher priority and moves the viewport immediately when the last trustworthy consumed level
+would otherwise be outside the visible window. Manual scroll, pan or inspection continues to suppress automatic
+recenter/follow under the approved interaction policy so automation does not take the viewport from the user.
+
+Exact check interval, deviation threshold, central dead-zone size, recenter animation or snap and inactivity timeout
+remain configurable and unresolved until hands-on DOM prototype testing. The architecture must allow these values to
+be tuned without redesigning normalized market-data infrastructure. Revision 1.9 remains otherwise intact, including
+the preferred 20+20 viewport, `orderbook.50` working-depth candidate, separation of display, working and calculation
+depth, STRONG-only stretched ellipse, confidence and resync rules, Canvas2D direction, optional deferred x1/x10/x100
+compression, normalized market-data ownership, lower trading panel, Scanner boundary and Robot exclusion.
+
+This amendment records checkpoint `MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED`. CONTEXT remains
+active and incomplete, and no implementation plan or production work is authorized.
+
+## 19. Authorization boundary
+
+Revision 1.10 is a human-approved intermediate durable CONTEXT research checkpoint. Approved
 SPEC revision 1.4 remains intact. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any

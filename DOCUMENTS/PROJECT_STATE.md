@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED
+IN_PROGRESS / THRESHOLD_RECENTER_POLICY_RECORDED
 
 Checkpoint:
 
-MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED
+MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED
 
 ChangeRequest revision:
 
-1.9
+1.10
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.9
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.10
 
 Product priority:
 
@@ -912,7 +912,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-INTERMEDIATE_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_9
+INTERMEDIATE_THRESHOLD_RECENTER_POLICY_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_10
 
 Next phase:
 
@@ -4667,15 +4667,23 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.42
+PROJECT_STATE v7.43
 
 to:
 
-PROJECT_STATE v7.43
+PROJECT_STATE v7.44
 
 reason:
 
-Current checkpoint — Trading Workspace upper workspace / DOM / prints direction (v7.42 to v7.43):
+Current checkpoint — Trading Workspace threshold-based DOM recenter policy (v7.43 to v7.44):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.10 and checkpoint `MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED`;
+* superseded only the revision 1.9 approximately 23-second periodic recenter direction with an approximately five-second configurable eligibility check plus central-deviation threshold;
+* preserved immediate CENTER, higher-priority STRONG-sweep follow, manual-inspection suppression and all other revision 1.9 DOM/prints decisions;
+* kept exact interval, threshold, dead-zone, motion and inactivity values configurable and unresolved through prototype testing;
+* kept CONTEXT active and incomplete, Robot implementation out of scope and IMPLEMENT not started or authorized.
+
+Previous checkpoint preserved — Trading Workspace upper workspace / DOM / prints direction (v7.42 to v7.43):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.9 and checkpoint `MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED`;
 * recorded the minimal chart-left and collapsible DOM/prints-right upper composition, one normalized public market-data owner, confidence-gated sweep safety, reusable Manual book walk, compact position indicator and Canvas2D-oriented bounded rendering direction;

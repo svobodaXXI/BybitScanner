@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED
+IN_PROGRESS / THRESHOLD_RECENTER_POLICY_RECORDED
 
 Implementation status:
 
@@ -1308,7 +1308,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED
+MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED
 
 First implementation priority:
 
@@ -1344,11 +1344,11 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.9.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.10.
 
 Current action:
 
-INTERMEDIATE_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_9.
+INTERMEDIATE_THRESHOLD_RECENTER_POLICY_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_10.
 
 Approved intermediate CONTEXT architecture directions from revision 1.5:
 
@@ -1474,15 +1474,23 @@ RULE-008:
 
 from:
 
-ROADMAP v4.35
+ROADMAP v4.36
 
 to:
 
-ROADMAP v4.36
+ROADMAP v4.37
 
 reason:
 
-Current checkpoint — Trading Workspace upper workspace / DOM / prints direction (v4.35 to v4.36):
+Current checkpoint — Trading Workspace threshold-based DOM recenter policy (v4.36 to v4.37):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.10 and recorded checkpoint `MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED`;
+* superseded only the approximately 23-second periodic timing with an approximately five-second configurable check that recenters only beyond a central-deviation threshold;
+* preserved immediate CENTER, higher-priority STRONG-sweep follow, manual-inspection suppression and every other revision 1.9 DOM/prints decision;
+* retained exact interval, deviation threshold, dead-zone, motion and inactivity behavior as prototype-tunable research;
+* preserved active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT.
+
+Previous checkpoint preserved — Trading Workspace upper workspace / DOM / prints direction (v4.35 to v4.36):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.9 and recorded the approved minimal upper-workspace composition;
 * recorded the normalized public-market-data owner, confidence-gated sweep and resync semantics, reusable Manual book walk, compact position indication and Canvas2D-oriented bounded rendering direction;
