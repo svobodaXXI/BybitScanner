@@ -7,8 +7,8 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.4",
-  "lifecycle_stage": "SPEC",
+  "revision": "1.5",
+  "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
     "Implement production code, tests, dependencies or runtime behavior in this checkpoint",
@@ -52,6 +52,18 @@
     "DOCUMENTS/ROADMAP.md",
     "DOCUMENTS/PROJECT_CONTRACTS.md",
     "DOCUMENTS/ASSISTANT_PROTOCOL.md"
+    ,"main.py"
+    ,"bybit_api.py"
+    ,"telegram_bot.py"
+    ,"notification.py"
+    ,"signal_adapter.py"
+    ,"signal_memory.py"
+    ,"contracts/signal_contract.py"
+    ,"analyzer/core.py"
+    ,"analyzer/charts.py"
+    ,"chart.py"
+    ,"chart_clean.py"
+    ,"requirements.txt"
   ],
   "context_test_paths": [
     "tests/test_change_request_governance.py",
@@ -104,7 +116,7 @@
     ,"Trading credentials belong only to the Terminal backend security boundary; API Secret is never returned to the frontend or stored in Scanner, chart, Telegram or frontend-readable durable state"
   ],
   "unresolved_decisions": [
-    "Frontend, backend, chart library and persistence technology selection",
+    "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
     "Authentication, authorization, Bybit credential custody and Telegram Mini App session security",
     "Bybit account mode, position mode, product/category and supported order capability boundaries",
     "Exact exchange reconciliation state machines, timeout policies, idempotency identifiers and orderLinkId mapping",
@@ -127,6 +139,44 @@
     ,"Working Volume behavior below the ten-USDT rounding quantum and its interaction with exchange minimum quantity and insufficient balance"
     ,"Concurrency and exposure reservation semantics for simultaneous future Robot commands and ownership handoffs near the nineteen-WV limit"
     ,"Selected-period percentage-PnL accounting for deposits, withdrawals, transfers, equity changes, period boundaries and timezone"
+  ],
+  "researched_architecture_directions": [
+    "Authenticated Bybit V5 REST commands are correlated with private order, execution, position and wallet events; REST acceptance alone is not final state confirmation",
+    "Uncertain commands, startup, reconnect and full-close workflows reconcile authoritative exchange state instead of blind retry",
+    "Telegram Mini App deep-link references identify durable SignalSnapshot records but authorization requires backend validation of raw initData, freshness and allowed numeric Telegram user identity",
+    "SignalSnapshot is immutable versioned historical Scanner evidence and never owns trading, protection, PnL, controller or Robot state",
+    "KLineChart is the preferred researched v1 interactive renderer behind a shared chart contract and adapter; current Matplotlib/mplfinance remains the separate static Scanner report path",
+    "Python with FastAPI is the preferred Terminal HTTP and WebSocket application boundary; frontend and Telegram Mini App are clients, never trading-state authority",
+    "SQLite in WAL mode is the preferred local-first v1 persistence direction behind a replaceable storage boundary",
+    "Durable exchange and backend event journal evidence remains distinct from mutable operational projections",
+    "Trading mutations remain locked through startup, reconnect, account switch and uncertainty until credentials, streams, REST snapshots, commands, ownership and exchange state reconcile",
+    "CredentialStore abstracts protected local Windows credential storage such as DPAPI or Credential Manager so later VPS deployment can replace the implementation without changing domain contracts",
+    "Percentage return requires cash-flow-adjusted or time-weighted direction and sufficient valuation and cash-flow history; exact formula and fee, funding, transfer and timezone policy remain open",
+    "Scanner Control is a single-flight application boundary around RUN_SCAN and may reuse the existing approved-pattern count without coupling Telegram to main.py internals",
+    "Local-first deployment still requires an HTTPS-reachable Mini App boundary; raw public exposure of a development FastAPI port is not the intended architecture"
+  ],
+  "repository_confirmed_reuse": [
+    "bybit_api.py and analyzer candle loading provide reusable public USDT-linear instrument and OHLCV access only behind a market-data boundary; they are not authenticated trading infrastructure",
+    "CONTRACT-SIGNAL-001 and signal.filter own final approved admission, while main.py already counts approved_pattern_count independently of Telegram delivery",
+    "telegram_bot.py provides outbound text, photo and inline-keyboard transport that may be reused without owning authentication, Scanner control or trading state",
+    "contracts/signal_contract.py, analyzer results and geometry output provide source evidence from which a future versioned SignalSnapshot mapper may be designed, but current signal_memory.py is mutable symbol-keyed history and is not SignalSnapshot persistence",
+    "chart.py, chart_clean.py and analyzer/charts.py form the existing static Matplotlib/mplfinance PNG report path and remain separate from the interactive Terminal renderer",
+    "Current requirements include pybit and websocket-client but no authenticated Terminal client, FastAPI application, KLineChart frontend or SQLite trading store is implemented",
+    "No current order, execution, position, protection, TradingCommand, ExchangeEventJournal, account-isolation or reconciliation domain implementation exists"
+  ],
+  "context_decisions_required_before_implementation_plan": [
+    "Bybit account and position mode, supported category/order capabilities, TP/SL compatibility, identifier rules and authoritative reconciliation matrices",
+    "Command, order, execution, position, protection and ownership lifecycle schemas including duplicate, race, gap and uncertain-result handling",
+    "Versioned SignalSnapshot schema, immutable retention, migrations, target metadata and deep-link resolution",
+    "Telegram backend authentication validation, freshness window, allowlist, session lifetime and authorization matrix",
+    "Shared chart contract and KLineChart feasibility prototype criteria without coupling domain state to renderer APIs",
+    "Terminal backend process topology, backend-to-frontend event protocol and local HTTPS ingress decision",
+    "SQLite/WAL schema, transaction boundaries, journal/projection rebuild rules, backup and later storage migration boundary",
+    "CredentialStore threat model, protected Windows implementation choice, secret rotation/removal and VPS replacement contract",
+    "Working Volume base-equity source, refresh timing, sub-ten-USDT behavior and exchange precision/minimum constraints",
+    "Cash-flow-adjusted return, fees, funding, valuation snapshots, period boundaries and timezone accounting",
+    "Scanner Control command identity, single-flight ownership, process boundary, status correlation and safe errors",
+    "Implementation phase decomposition, acceptance tests, dependency approvals and explicit human IMPLEMENT authorization"
   ],
   "acceptance_criteria": [
     "All Manual Live Trading v1 product and safety requirements are recorded in one owning durable ChangeRequest",
@@ -178,36 +228,38 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
-  "current_phase": "SPEC",
-  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_ACCOUNT_MANAGEMENT_AND_RISK_ANALYTICS_SPEC_APPROVED_RECORDED",
+  "current_phase": "CONTEXT",
+  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
-  "next_phase": "CONTEXT",
-  "next_phase_authorization": "CONTEXT_RESEARCH_AUTHORIZED_IN_PROGRESS_IMPLEMENT_NOT_AUTHORIZED",
+  "next_phase": "IMPLEMENT",
+  "next_phase_authorization": "IMPLEMENT_NOT_STARTED_NOT_AUTHORIZED_CONTEXT_RESEARCH_IN_PROGRESS",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
     {"phase": "SPEC_REVISION_1_1_DOCUMENTATION_CHECKPOINT", "commit": "5e38b8a6df64e822e664de665701a53e76163fdd"},
     {"phase": "SPEC_REVISION_1_2_DOCUMENTATION_CHECKPOINT", "commit": "f8d0932afd9589998d09027477c67eb8ab7aa1a0"}
     ,{"phase": "SPEC_REVISION_1_3_DOCUMENTATION_CHECKPOINT", "commit": "3d0ba01895db0cd9c4fcd1670b06e46671d645a0"}
+    ,{"phase": "SPEC_REVISION_1_4_DOCUMENTATION_CHECKPOINT", "commit": "aba84eeab539d329fc693728dc70bb38f7dee0cc"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
-    "latest_saved_checkpoint": "3d0ba01895db0cd9c4fcd1670b06e46671d645a0",
-    "status": "DOCUMENTATION_CHECKPOINT_APPROVED_FOR_COMMIT"
+    "latest_saved_checkpoint": "aba84eeab539d329fc693728dc70bb38f7dee0cc",
+    "status": "INTERMEDIATE_CONTEXT_RESEARCH_DOCUMENTATION_CHECKPOINT_APPROVED_FOR_COMMIT"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
     {"revision": "1.1", "reason": "Human-approved documentation checkpoint recording leverage-independent Working Volume, immutable entry provenance, exclusive position ownership, future AUTOPILOT handoff, human takeover and ownership-scoped active-position operations without authorizing CONTEXT, external research or implementation", "date": "2026-08-21"},
     {"revision": "1.2", "reason": "Human-approved documentation checkpoint recording Working Volume detail interaction and AUTOPILOT trading-results, period metrics, provenance breakdown and durable analytics requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
     {"revision": "1.3", "reason": "Human-approved documentation checkpoint recording unified Scanner Telegram bot navigation and authorization-aware, concurrency-safe Scanner Control requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
-    {"revision": "1.4", "reason": "Human-approved documentation checkpoint recording account management and isolation, refined account-scoped Working Volume, future per-account Robot exposure limit, percentage PnL and credential-security boundaries while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
+    {"revision": "1.4", "reason": "Human-approved documentation checkpoint recording account management and isolation, refined account-scoped Working Volume, future per-account Robot exposure limit, percentage PnL and credential-security boundaries while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
+    {"revision": "1.5", "reason": "Human-approved intermediate durable CONTEXT architecture research checkpoint reconciling Bybit, Telegram, SignalSnapshot, chart, backend, persistence, recovery, security, analytics, Scanner Control and deployment directions with current repository boundaries; CONTEXT remains incomplete and in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
   ]
 }
 ```
@@ -506,10 +558,159 @@ submission; Mini App/frontend is not a durable secret store; Scanner, chart stat
 never own trading credentials. Credentials belong to the Terminal backend/security boundary, with exact
 encrypted storage deferred to CONTEXT.
 
-## 13. Authorization boundary
+## 13. CONTEXT architecture research record
 
-Revision 1.4 is a human-approved documentation-only SPEC checkpoint. Production
+### A. Approved SPEC requirements preserved
+
+Revision 1.4 remains the approved product authority. Working Volume is account-scoped and independent
+of leverage: `raw_1_WV = USDT_deposit × 5%`, then
+`1_WV = floor(raw_1_WV / 10) × 10 USDT`. Leverage never multiplies WV; `⚔ N.N` is one-decimal
+presentation only and actual USDT state is authoritative. Account isolation, immutable entry provenance,
+exclusive MANUAL/ROBOT control, human close override, the future 19-WV per-account Robot limit and the
+current exclusion of MANUAL exposure from that Robot-specific limit are unchanged. Robot remains out of
+scope. Scanner, Terminal and Robot remain independent, and Terminal works with or without `signal_id`.
+
+### B. Researched architecture directions
+
+#### Bybit execution and recovery
+
+Terminal uses authenticated Bybit V5 REST together with private order, execution, position and
+wallet/account streams. REST create, amend or cancel acceptance is not final trading-state confirmation.
+One order may produce multiple fills; duplicates, races and event ordering cannot be assumed away.
+Commands require client correlation and idempotency, using an identity such as `orderLinkId` where the
+final supported Bybit contract permits. An uncertain submit, amend or cancel result enters reconciliation,
+not blind retry. Startup, reconnect, uncertain commands and Close Position all require REST snapshots and
+reconciliation against exchange state.
+
+Exchange execution events drive confirmed fill semantics, notifications and sounds. Exchange-side
+full-position TP/SL is the preferred v1 protection direction where final Bybit capability and account-mode
+constraints permit. Full close is a workflow whose success invariant is position zero, required remaining
+symbol orders removed, required SL/TP/protection removed, and local/exchange state reconciled. REST
+acceptance alone cannot claim this invariant.
+
+The operational gate is conceptually `STARTING → credential/account validation → connectivity → private
+stream → REST wallet/order/position snapshots → uncertain-command recovery → ownership/state verification
+→ SYNCHRONIZED → TRADING_ENABLED`. If authoritative state cannot be established, state is
+`TRADING_LOCKED`; mutations remain disabled during critical uncertainty or incomplete reconciliation.
+Exact state names remain design-level. Loss of Terminal connectivity must not intentionally remove
+exchange-side protective SL/TP.
+
+#### Telegram, SignalSnapshot and authorization
+
+Scanner signal messages may open Terminal using a Telegram Mini App deep link whose start parameter
+references a durable signal. That reference is not authorization. Terminal backend validates raw Telegram
+WebApp `initData`, checks freshness and enforces an allowed numeric Telegram user identity; mutable
+username and untrusted frontend or `initDataUnsafe` data are not authentication authority. Knowing a bot,
+menu or deep link grants no trading or Scanner-control authority. API credentials never enter Telegram
+messages or Scanner state.
+
+`SignalSnapshot` is immutable, durable, stably identified and schema-versioned historical evidence. An old
+message resolves its original snapshot rather than recomputing current Scanner state. A future schema may
+retain symbol, timeframe, pattern, direction, score, geometry, target, original potential, creation time
+and required rendering/evidence metadata; exact fields and migrations remain open. SignalSnapshot owns no
+position, order, execution, SL/TP, PnL, controller/ownership or Robot state. Trade may optionally reference
+a snapshot. Terminal does not call detector internals at runtime and also opens without `signal_id`.
+
+#### Interactive chart and Terminal application boundary
+
+KLineChart is the researched preferred v1 interactive renderer because its direction covers realtime
+candles and volume, mobile and scale interaction, overlays, horizontal/trend/Fibonacci tools, magnet,
+persistent market-coordinate points, selection/drag and locked/read-only objects. Terminal and Signal
+Editor share a renderer-neutral Chart Contract/Adapter, with a KLineChart adapter below it. Domain and
+trading logic must not depend directly on KLineChart APIs. Existing Matplotlib/mplfinance remains the
+separate static Scanner/Telegram/report renderer and is not replaced by this direction.
+
+The preferred Terminal boundary is a Python backend with FastAPI for HTTP/WebSocket application access:
+REST carries commands and snapshots; backend-to-frontend WebSocket carries realtime state/events. The
+Telegram Mini App/browser is a client, and frontend/chart state is never trading truth. These are
+researched directions, not installed dependencies or implementation completion.
+
+#### Persistence, credentials and deployment
+
+SQLite with WAL mode is the preferred v1 local-first, single-user/single-backend persistence direction,
+behind a storage abstraction that permits later migration. Durable responsibilities remain conceptually
+separate: SignalSnapshot, TradingAccount metadata, Trade, Order, Execution, Position projections,
+Protection/SL-TP state, TradingCommand, ExchangeEventJournal, closed-trade analytics/history and required
+account valuation/cash-flow history. Journal is durable evidence of exchange/backend events; projection is
+derived current operational state. They must not collapse into one mutable record.
+
+Terminal backend owns credentials. Frontend/Mini App does not durably store API Secret and never receives
+it back after submission; Scanner does not own it. A `CredentialStore` abstraction fronts protected local
+Windows storage such as DPAPI or Credential Manager equivalent without coupling domain/application logic
+to Windows APIs. Exact library/API and encrypted-storage design remain open; VPS replaces the
+CredentialStore implementation without changing account/domain contracts.
+
+The current target is local-first, but Telegram Mini App normally requires an HTTPS-reachable application
+boundary. A raw development FastAPI port exposed directly to the public Internet is not the intended
+architecture. Exact local HTTPS ingress/tunnel/provider remains a deployment decision. VPS migration
+should primarily change deployment, ingress/TLS, supervision, credential store, backup/operations and
+optional Bybit IP binding, not Scanner/Terminal domain contracts.
+
+#### Analytics, Robot compatibility and Scanner Control
+
+Trading Results retains DAY/WEEK/MONTH/YEAR realized USDT PnL, return percentage, win/loss counts,
+pattern plus entry-reason breakdown, account isolation and Robot-versus-MANUAL_ENTRY provenance. Simple
+period PnL divided by current deposit is insufficient when external cash flows occur. The preferred
+direction is cash-flow-adjusted or time-weighted return semantics supported by durable valuation,
+timestamp, transfer/cash-flow, realized result and required fee/funding inputs. Exact transfers,
+deposits, withdrawals, fees, funding, boundaries and timezone formula remains unresolved.
+
+Robot compatibility preserves MANUAL/ROBOT ownership, immutable origin/reason, `MANUAL_ENTRY` /
+`Ручной вход`, handoff/takeover, read-only Robot live view, human Close Position override and the approved
+19-WV per-account Robot exposure invariant. No Robot behavior is implemented or authorized.
+
+Telegram Menu retains Terminal, Trading Results, AUTOPILOT and Run Scanner. Run Scanner crosses
+`Telegram/UI → Scanner Control → Scanner application/pipeline` with conceptual `RUN_SCAN` and results
+`STARTED`, `ALREADY_RUNNING`, `COMPLETED` with `approved_pattern_count` when available, and `FAILED` with
+safe error information. Scanner Control owns single-flight/duplicate prevention; Telegram never invokes
+or owns `main.py` internals. Redis, Celery or brokers are not justified for current single-user local-first
+v1 without later evidence.
+
+### C. Repository-confirmed reuse and boundaries
+
+* `bybit_api.py` and the analyzer candle path provide public USDT-linear instrument/OHLCV access reusable
+  behind a market-data boundary; the current unauthenticated HTTP session is not a trading adapter.
+* `CONTRACT-SIGNAL-001` and `signal/filter.py` own final admission. `main.py` already increments
+  `approved_pattern_count` only after final `approved`, before Telegram delivery, so Scanner Control can
+  later expose that run result through an application boundary without duplicating admission policy.
+* `telegram_bot.py` is a reusable outbound text/photo/inline-keyboard transport. It currently owns no
+  inbound Mini App authentication, Scanner Control, Terminal state or trading authority.
+* `contracts/signal_contract.py` plus analyzer/geometry output contain useful source evidence for a future
+  SignalSnapshot mapper. `signal_memory.py` is mutable, symbol-keyed JSON history with limited fields and
+  cannot serve as immutable versioned SignalSnapshot persistence.
+* `chart.py`, `chart_clean.py` and `analyzer/charts.py` are the static Matplotlib/mplfinance PNG path. They
+  remain useful for Scanner/Telegram reports but are not an interactive chart engine.
+* Current dependencies include `pybit` and `websocket-client`; repository inspection finds no authenticated
+  trading/private-stream service, FastAPI app, KLineChart frontend, SQLite trading store, or order,
+  execution, position, protection, command, journal, account-isolation and reconciliation domain model.
+* Existing authority forbids Geometry from trading decisions/execution and makes final Signal admission the
+  sole normal persistence/notification gate. The researched architecture conforms by consuming normalized
+  evidence and state rather than detector internals.
+
+### D. Unresolved CONTEXT decisions
+
+Before an implementation plan, CONTEXT must still resolve Bybit account/position modes and supported
+capabilities; command and reconciliation schemas; SignalSnapshot versioning and retention; Telegram auth
+freshness/session/allowlist policy; shared chart contract and KLineChart feasibility evidence; backend
+event protocol and HTTPS ingress; SQLite transactions, journal projection/rebuild, backup and migration;
+CredentialStore threat model and implementation; WV equity source/refresh/minimum behavior; return,
+cash-flow, fee, funding, boundary and timezone accounting; and Scanner Control process/single-flight/error
+contracts. Preferred technology directions are not implementation selections or dependency approvals.
+
+### E. Required before an implementation plan
+
+The next planning gate requires a reviewed domain contract set for account identity, commands, orders,
+fills, positions, protection, ownership and reconciliation; explicit Bybit capability and failure matrices;
+versioned SignalSnapshot and frontend event contracts; security and credential threat model; persistence
+and recovery design; analytics accounting decision; chart adapter acceptance/prototype criteria; deployment
+and Scanner Control boundaries; dependency review; verification strategy; and separate human IMPLEMENT
+authorization. CONTEXT remains open until these are resolved or explicitly deferred through governance.
+
+## 14. Authorization boundary
+
+Revision 1.5 is a human-approved intermediate durable CONTEXT architecture research checkpoint. Approved
+SPEC revision 1.4 remains intact. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any
-claim that its findings are durably recorded, verified or complete. IMPLEMENT
+claim that CONTEXT is complete, fully finalized or verified. IMPLEMENT
 requires separate later approval and valid context.

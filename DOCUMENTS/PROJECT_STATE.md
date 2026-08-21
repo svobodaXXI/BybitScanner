@@ -2,7 +2,7 @@
 
 Version:
 
-7.38
+7.39
 
 Date:
 
@@ -671,7 +671,7 @@ Trading Foundation / Trading Workspace
 
 Current project phase:
 
-TRADING_TERMINAL_SPEC_REVISION_1_4_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+TRADING_TERMINAL_CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 Primary objective:
 
@@ -824,9 +824,11 @@ Related subsystems:
 Primary objective:
 
 Define and authorize a separate durable Trading Terminal / Trading Workspace implementation mission.
-The durable specification has human-approved `CR-TRADING-WORKSPACE-001` revision 1.4 for account management,
-account-scoped Working Volume, future Robot exposure and percentage-PnL analytics. CONTEXT research is authorized and in progress; its detailed findings are
-not yet durably recorded, verified or complete. Implementation is not authorized.
+Approved SPEC revision 1.4 remains authoritative. Human-approved `CR-TRADING-WORKSPACE-001` revision 1.5
+records repository-reconciled CONTEXT directions for Bybit execution, Telegram auth, SignalSnapshot,
+interactive charting, backend, persistence, recovery, credentials, analytics, Scanner Control and
+deployment. This is an intermediate durable checkpoint; CONTEXT remains in progress and is not complete or verified.
+Implementation is not authorized.
 
 Previous geometry objective:
 
@@ -878,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / SPEC_REVISION_1_4_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+IN_PROGRESS / CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 Checkpoint:
 
-MANUAL_LIVE_TRADING_V1_ACCOUNT_MANAGEMENT_AND_RISK_ANALYTICS_SPEC_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 ChangeRequest revision:
 
-1.4
+1.5
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.4
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.5
 
 Product priority:
 
@@ -910,17 +912,18 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_4
+INTERMEDIATE_CONTEXT_RESEARCH_DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_5
 
 Next phase:
 
-CONTEXT / RESEARCH — AUTHORIZED_IN_PROGRESS / IMPLEMENT_NOT_AUTHORIZED
+CONTEXT / RESEARCH — AUTHORIZED_IN_PROGRESS_INTERMEDIATE_CHECKPOINT_RECORDED_NOT_COMPLETE / IMPLEMENT_NOT_AUTHORIZED
 
 Important:
 
 No production code, runtime behavior, test implementation, dependency, Bybit order or account mutation
-is authorized by this specification checkpoint. `CR-TRADING-INTELLIGENCE-001` remains the owning research
-record; it is not the implementation authority for Trading Workspace v1.
+is authorized. Approved SPEC requirements remain unchanged; the proposed architecture record does not
+complete CONTEXT or authorize an implementation plan. `CR-TRADING-INTELLIGENCE-001` remains its own
+broader research authority and is not the implementation authority for Trading Workspace v1.
 
 ---
 

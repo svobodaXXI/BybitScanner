@@ -2,7 +2,7 @@
 
 Version:
 
-4.30
+4.31
 
 Date:
 
@@ -1086,10 +1086,11 @@ separately authorized Live. This supersedes hypotheses that place safety foundat
 
 Chart-engine decision checkpoint:
 
-OPEN / RESEARCH_NOT_STARTED. Compare OpenAlgo Charts, TradeCanvas and TradingView Lightweight Charts
-plus custom functionality for license, activity, touch/Telegram fit, realtime candles, draggable trading
-lines, drawings/saved state, Scanner overlays, performance, integration complexity and dependency risk.
-No chart engine or dependency is selected.
+RESEARCH_IN_PROGRESS / PREFERRED_DIRECTION_IDENTIFIED / IMPLEMENTATION_DECISION_NOT_FINALIZED.
+Repository-reconciled Trading Workspace CONTEXT research identifies KLineChart as the preferred v1
+interactive renderer behind a shared renderer-neutral Chart Contract/Adapter. Static Matplotlib/mplfinance
+remains the Scanner report path. Dependency approval, version choice and implementation remain open and
+require later feasibility/prototype and implementation-plan review.
 
 Acceptance, risks, approved decisions and unresolved decisions:
 
@@ -1120,7 +1121,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / SPEC_REVISION_1_4_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+IN_PROGRESS / CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 Implementation status:
 
@@ -1128,7 +1129,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_ACCOUNT_MANAGEMENT_AND_RISK_ANALYTICS_SPEC_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 First implementation priority:
 
@@ -1164,15 +1165,32 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.4.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.5.
 
 Current action:
 
-DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_4.
+INTERMEDIATE_CONTEXT_RESEARCH_DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_5.
+
+CONTEXT architecture directions under review:
+
+* Bybit V5 authenticated REST plus private order/execution/position/wallet events, with reconciliation
+  for startup, reconnect, uncertain commands and full-close invariants;
+* backend-validated Telegram Mini App initData, freshness and numeric-user allowlist;
+* immutable versioned SignalSnapshot separated from trading state and detector runtime;
+* KLineChart behind a shared chart adapter, with Matplotlib/mplfinance retained for static reports;
+* Python/FastAPI REST plus backend WebSocket boundary and SQLite/WAL journal plus projections;
+* reconciliation-gated trading, account-isolated state and replaceable CredentialStore;
+* cash-flow-adjusted return direction, single-flight Scanner Control and deployment-neutral HTTPS ingress.
+
+Repository-confirmed boundary:
+
+Current public OHLCV, final admission/count, outbound Telegram, signal evidence and static chart paths may
+be reused behind normalized boundaries. Authenticated trading/private streams, SignalSnapshot persistence,
+Terminal UI/backend, interactive charting, trading-domain state, reconciliation and journal are absent.
 
 Next phase:
 
-CONTEXT / RESEARCH — AUTHORIZED_IN_PROGRESS, NOT_RECORDED_VERIFIED_OR_COMPLETE;
+CONTEXT / RESEARCH — AUTHORIZED_IN_PROGRESS, INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED, NOT_COMPLETE_OR_VERIFIED;
 IMPLEMENT — NOT_STARTED_NOT_AUTHORIZED.
 
 ---
