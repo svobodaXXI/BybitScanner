@@ -224,6 +224,26 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
 
 
 class ScanFinishedDeliveryTests(unittest.TestCase):
+    def test_scan_finished_message_reports_zero_approved_signals(self):
+        message = main.build_scan_finished_message(
+            0,
+            1,
+            2,
+        )
+
+        self.assertIn("Сканирование завершено", message)
+        self.assertIn("Найдено сигналов: 0", message)
+
+    def test_scan_finished_message_reports_three_approved_signals(self):
+        message = main.build_scan_finished_message(
+            3,
+            1,
+            2,
+        )
+
+        self.assertIn("Сканирование завершено", message)
+        self.assertIn("Найдено сигналов: 3", message)
+
     def test_scan_finished_is_sent_to_all_recipients(self):
         with patch.object(main, "get_symbols", return_value=[]), patch.object(
             notification.config,
@@ -242,7 +262,8 @@ class ScanFinishedDeliveryTests(unittest.TestCase):
             ["owner", "friend"],
         )
         for item in message_mock.call_args_list:
-            self.assertIn("SCAN FINISHED", item.args[2])
+            self.assertIn("Сканирование завершено", item.args[2])
+            self.assertIn("Найдено сигналов: 0", item.args[2])
 
 
 if __name__ == "__main__":

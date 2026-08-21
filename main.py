@@ -29,6 +29,22 @@ from notification import (
 )
 
 
+def build_scan_finished_message(
+    approved_pattern_count,
+    elapsed_minutes,
+    elapsed_remainder,
+):
+    """Build the final Scanner notification from the admission-owned count."""
+
+    return (
+        "Сканирование завершено\n"
+        f"Найдено сигналов: {approved_pattern_count}\n"
+        f"Elapsed: "
+        f"{elapsed_minutes:02d}:"
+        f"{elapsed_remainder:02d}"
+    )
+
+
 def main():
     scan_started_at = time.perf_counter()
     approved_pattern_count = 0
@@ -189,11 +205,10 @@ def main():
 
     try:
         send_message(
-            (
-                "SCAN FINISHED\n"
-                f"Elapsed: "
-                f"{elapsed_minutes:02d}:"
-                f"{elapsed_remainder:02d}"
+            build_scan_finished_message(
+                approved_pattern_count,
+                elapsed_minutes,
+                elapsed_remainder,
             )
         )
     except Exception as e:
