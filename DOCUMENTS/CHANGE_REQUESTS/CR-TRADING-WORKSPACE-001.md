@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.1",
+  "revision": "1.2",
   "lifecycle_stage": "SPEC",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -83,6 +83,13 @@
     ,"Immutable entry origin and entry reason are distinct from mutable current controller ownership"
     ,"Human-opened trades retain MANUAL origin and MANUAL_ENTRY or Ручной вход reason through any AUTOPILOT handoff or human takeover; Terminal and Robot do not infer a different human motive after entry"
     ,"Future Robot-opened trades use ROBOT origin and may preserve a structured Robot entry reason defined by later Strategy or Robot design"
+    ,"The compact engaged Working Volume indicator provides desktop hover and touch interaction details for actual USDT volume, reference one-WV value and displayed WV count without becoming accounting truth"
+    ,"AUTOPILOT live workspace exposes a Trading Results page with back navigation that does not mutate ownership or trading state"
+    ,"AUTOPILOT results support DAY, WEEK, MONTH and YEAR periods and durable closed-trade analytics"
+    ,"Selected-period results include closed, profitable and losing trade counts, realized USDT PnL, current equity, current open AUTOPILOT position count and aggregate actual AUTOPILOT USDT position volume"
+    ,"Profitable and losing counts expose a pattern plus entry-reason breakdown sorted by trade count descending"
+    ,"Analytics distinguishes Robot entries from manual entries later managed by AUTOPILOT while preserving immutable entry provenance"
+    ,"Presentation analytics derive from durable authoritative trading and account data, never rounded WV display, Telegram messages, chart objects or current Scanner state"
   ],
   "unresolved_decisions": [
     "Frontend, backend, chart library and persistence technology selection",
@@ -97,6 +104,9 @@
     "Local deployment topology and later VPS migration boundary"
     ,"Final names and transition rules for MANUAL_CONTROLLED, ROBOT_CONTROLLED, TAKEOVER_PENDING, CLOSING and RECONCILING conceptual states"
     ,"Exact persisted field names and schema for immutable entry origin and entry reason"
+    ,"DAY, WEEK, MONTH and YEAR calendar boundaries and timezone semantics"
+    ,"Closed-trade analytics schema, ownership-history representation and aggregation strategy"
+    ,"Whether initial analytics UI exposes optional provenance filters for all AUTOPILOT-managed, Robot-entry and manual-entry-handoff trades"
   ],
   "acceptance_criteria": [
     "All Manual Live Trading v1 product and safety requirements are recorded in one owning durable ChangeRequest",
@@ -108,6 +118,7 @@
     "Working Volume leverage independence, fractional display and active-position indicator semantics are explicit",
     "Exclusive controller ownership, AUTOPILOT handoff, human takeover and ownership-scoped close behavior are explicit",
     "Immutable entry provenance is separated from current controller and remains stable across ownership transfers",
+    "Working Volume details, AUTOPILOT results navigation, period metrics, interactive breakdowns and durable analytics requirements are explicit",
     "Implementation remains not started and not authorized",
     "Only authoritative documentation changes in this checkpoint"
   ],
@@ -141,31 +152,33 @@
   ],
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
-    {"id": "SPEC", "status": "REVISION_1_1_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
+    {"id": "SPEC", "status": "REVISION_1_2_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "SPEC",
-  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_OWNERSHIP_AND_WORKING_VOLUME_SPEC_APPROVED_RECORDED",
+  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_AUTOPILOT_ANALYTICS_SPEC_APPROVED_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "CONTEXT",
-  "next_phase_authorization": "NOT_AUTHORIZED_PENDING_HUMAN_SPEC_APPROVAL",
+  "next_phase_authorization": "CONTEXT_RESEARCH_AUTHORIZED_IN_PROGRESS_IMPLEMENT_NOT_AUTHORIZED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
-    {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"}
+    {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
+    {"phase": "SPEC_REVISION_1_1_DOCUMENTATION_CHECKPOINT", "commit": "5e38b8a6df64e822e664de665701a53e76163fdd"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
-    "latest_saved_checkpoint": "52f719351574d32aeb765fa833a27cc1e1bbbd25",
+    "latest_saved_checkpoint": "5e38b8a6df64e822e664de665701a53e76163fdd",
     "status": "DOCUMENTATION_CHECKPOINT_APPROVED_FOR_COMMIT"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
-    {"revision": "1.1", "reason": "Human-approved documentation checkpoint recording leverage-independent Working Volume, immutable entry provenance, exclusive position ownership, future AUTOPILOT handoff, human takeover and ownership-scoped active-position operations without authorizing CONTEXT, external research or implementation", "date": "2026-08-21"}
+    {"revision": "1.1", "reason": "Human-approved documentation checkpoint recording leverage-independent Working Volume, immutable entry provenance, exclusive position ownership, future AUTOPILOT handoff, human takeover and ownership-scoped active-position operations without authorizing CONTEXT, external research or implementation", "date": "2026-08-21"},
+    {"revision": "1.2", "reason": "Human-approved documentation checkpoint recording Working Volume detail interaction and AUTOPILOT trading-results, period metrics, provenance breakdown and durable analytics requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
   ]
 }
 ```
@@ -217,6 +230,9 @@ BUY/SELL and new Limits use one editable Working Volume.
 Terminal displays a Working Volume indicator under or near the chart, conceptually crossed swords plus
 a number such as `⚔ 2.4`. It represents WV actually engaged in the current position. Fractional WV is
 displayed to one decimal place; underlying trading and accounting state is never rounded by this UI rule.
+The compact indicator exposes details by hover on desktop and tap or equivalent touch interaction in a
+Mini App. At minimum the detail shows actual engaged USDT position volume, current/reference value of
+one WV in USDT and displayed WV count, for example `⚔ 2.4`, `Engaged: 120 USDT`, `1 WV: 50 USDT`.
 
 BUY immediately submits a real market LONG; SELL submits a real market SHORT. Fill confirmation comes
 from Bybit state, not button press. `Close position by market` closes 100% for the current ticker.
@@ -341,9 +357,49 @@ Conceptual states sufficient for later design include `MANUAL_CONTROLLED`, `ROBO
 `TAKEOVER_PENDING`, `CLOSING` and `RECONCILING`. Names and transitions may be refined during later
 authorized CONTEXT/architecture work; this revision does not implement a state machine.
 
-## 10. Authorization boundary
+## 10. AUTOPILOT trading results and durable analytics
 
-This revision records the human-approved revision 1.1 TASK/SPEC documentation checkpoint only. Production
+AUTOPILOT live workspace provides a visible `Trading Results` / `Результаты торговли` navigation control,
+preferably in the lower screen area. It opens a dedicated analytics page with normal back navigation to
+the previous AUTOPILOT/live screen. Navigation must not change position ownership or trading state.
+
+The results page supports at least `DAY`, `WEEK`, `MONTH` and `YEAR`. Period selection changes historical
+metrics for that interval; exact calendar and timezone semantics are deferred to CONTEXT/architecture.
+For the selected period it shows at least:
+
+* total closed trades;
+* profitable and losing trade counts;
+* realized trading PnL in USDT;
+* current total account deposit/equity;
+* current open AUTOPILOT-controlled position count;
+* current aggregate actual USDT position volume in AUTOPILOT-controlled positions.
+
+Aggregate actual USDT volume is not replaced by Working Volume count. Profitable and losing counts are
+interactive: desktop hover and touch/Mini App tap expose a breakdown by `pattern + entry_reason`, sorted
+by trade count descending. The final Robot entry-reason taxonomy remains outside this amendment.
+
+Analytics preserves immutable provenance. A human-created trade handed to AUTOPILOT remains
+`entry_origin = MANUAL` and `entry_reason = MANUAL_ENTRY` / `Ручной вход`; AUTOPILOT management does not
+rewrite it. The data model distinguishes Robot-entered trades from manual entries later managed by
+AUTOPILOT. Future optional filters may expose all AUTOPILOT-managed trades, Robot entries and manual
+entries handed to Robot, but the initial UI is not required to expose this filter.
+
+Closed-trade history is durable across restart and retains enough information to reproduce period results:
+symbol, direction, entry/close timestamps, entry origin/reason, applicable pattern, controller/ownership
+history sufficient to establish AUTOPILOT management, realized USDT PnL, actual position volume and WV
+context. Exact schema, tables and aggregation remain CONTEXT/architecture decisions.
+
+Presentation derives from durable authoritative trading/account data. Rounded `⚔ N.N` is never an
+accounting input. Historical results are never reconstructed from Telegram messages, chart objects or
+current Scanner state.
+
+Robot/autonomous trading remains out of scope. This section defines only Terminal/AUTOPILOT UX,
+historical analytics and future-compatible data requirements.
+
+## 11. Authorization boundary
+
+Revision 1.2 is a human-approved documentation-only SPEC checkpoint. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
-`NOT_STARTED_NOT_AUTHORIZED`. CONTEXT has not started and is not authorized. Separate later approval and
-valid CONTEXT are required before IMPLEMENT.
+`NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any
+claim that its findings are durably recorded, verified or complete. IMPLEMENT
+requires separate later approval and valid context.

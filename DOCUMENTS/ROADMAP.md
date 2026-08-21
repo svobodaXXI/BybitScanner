@@ -2,7 +2,7 @@
 
 Version:
 
-4.27
+4.28
 
 Date:
 
@@ -1120,7 +1120,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / SPEC_REVISION_1_1_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+IN_PROGRESS / SPEC_REVISION_1_2_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
 
 Implementation status:
 
@@ -1128,7 +1128,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_OWNERSHIP_AND_WORKING_VOLUME_SPEC_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_AUTOPILOT_ANALYTICS_SPEC_APPROVED_RECORDED
 
 First implementation priority:
 
@@ -1149,18 +1149,23 @@ Specification boundary:
 * future MANUAL/ROBOT ownership compatibility without robot implementation.
 * exclusive MANUAL/ROBOT controller authority, future AUTOPILOT handoff and reconciled human takeover;
 * independent MANUAL and AUTOPILOT active-position groups and ownership-scoped Close All operations.
+* interactive Working Volume details without using rounded display as accounting truth;
+* AUTOPILOT DAY/WEEK/MONTH/YEAR results with realized PnL, account and open-exposure metrics;
+* interactive pattern plus entry-reason profitable/losing breakdowns;
+* restart-durable closed-trade analytics with immutable provenance and ownership history.
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.1.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.2.
 
 Current action:
 
-DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_1.
+DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_2.
 
 Next phase:
 
-CONTEXT — NOT_STARTED_NOT_AUTHORIZED.
+CONTEXT / RESEARCH — AUTHORIZED_IN_PROGRESS, NOT_RECORDED_VERIFIED_OR_COMPLETE;
+IMPLEMENT — NOT_STARTED_NOT_AUTHORIZED.
 
 ---
 
