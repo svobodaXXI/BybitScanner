@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.2",
+  "revision": "1.3",
   "lifecycle_stage": "SPEC",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -90,6 +90,12 @@
     ,"Profitable and losing counts expose a pattern plus entry-reason breakdown sorted by trade count descending"
     ,"Analytics distinguishes Robot entries from manual entries later managed by AUTOPILOT while preserving immutable entry provenance"
     ,"Presentation analytics derive from durable authoritative trading and account data, never rounded WV display, Telegram messages, chart objects or current Scanner state"
+    ,"The Scanner Telegram bot provides a visible unified Menu entry for Terminal, Trading Results, AUTOPILOT and Run Scanner navigation"
+    ,"Menu Terminal entry opens an independently usable Manual Terminal without requiring signal_id or SignalSnapshot while preserving signal-specific deep links"
+    ,"Menu Trading Results and AUTOPILOT entries route to their approved workspaces without transferring state ownership to the bot"
+    ,"Run Scanner crosses a Scanner Control command boundary such as RUN_SCAN; Scanner owns execution and Telegram does not couple to main.py internals"
+    ,"Scanner Control prevents incompatible duplicate concurrent runs and reports accepted or started, already running, completed and failed outcomes"
+    ,"Telegram menu, deep-link and command knowledge never grants trading or Scanner-control authority without the researched authorization boundary"
   ],
   "unresolved_decisions": [
     "Frontend, backend, chart library and persistence technology selection",
@@ -107,6 +113,9 @@
     ,"DAY, WEEK, MONTH and YEAR calendar boundaries and timezone semantics"
     ,"Closed-trade analytics schema, ownership-history representation and aggregation strategy"
     ,"Whether initial analytics UI exposes optional provenance filters for all AUTOPILOT-managed, Robot-entry and manual-entry-handoff trades"
+    ,"Exact Telegram Menu button layout and Bot API, Mini App or command mechanism"
+    ,"Scanner Control IPC/API/process transport, command identity, concurrency lock and completion correlation"
+    ,"Exact Telegram allowlist, session and authorization checks for Terminal, AUTOPILOT and Scanner control"
   ],
   "acceptance_criteria": [
     "All Manual Live Trading v1 product and safety requirements are recorded in one owning durable ChangeRequest",
@@ -119,6 +128,7 @@
     "Exclusive controller ownership, AUTOPILOT handoff, human takeover and ownership-scoped close behavior are explicit",
     "Immutable entry provenance is separated from current controller and remains stable across ownership transfers",
     "Working Volume details, AUTOPILOT results navigation, period metrics, interactive breakdowns and durable analytics requirements are explicit",
+    "Unified Scanner bot navigation, independent Terminal entry, analytics/AUTOPILOT routing and concurrency-safe Scanner Control requirements are explicit",
     "Implementation remains not started and not authorized",
     "Only authoritative documentation changes in this checkpoint"
   ],
@@ -152,33 +162,35 @@
   ],
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
-    {"id": "SPEC", "status": "REVISION_1_2_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
+    {"id": "SPEC", "status": "REVISION_1_3_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
     {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "SPEC",
-  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_AUTOPILOT_ANALYTICS_SPEC_APPROVED_RECORDED",
+  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_TELEGRAM_SCANNER_MENU_SPEC_APPROVED_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "CONTEXT",
   "next_phase_authorization": "CONTEXT_RESEARCH_AUTHORIZED_IN_PROGRESS_IMPLEMENT_NOT_AUTHORIZED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
-    {"phase": "SPEC_REVISION_1_1_DOCUMENTATION_CHECKPOINT", "commit": "5e38b8a6df64e822e664de665701a53e76163fdd"}
+    {"phase": "SPEC_REVISION_1_1_DOCUMENTATION_CHECKPOINT", "commit": "5e38b8a6df64e822e664de665701a53e76163fdd"},
+    {"phase": "SPEC_REVISION_1_2_DOCUMENTATION_CHECKPOINT", "commit": "f8d0932afd9589998d09027477c67eb8ab7aa1a0"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
-    "latest_saved_checkpoint": "5e38b8a6df64e822e664de665701a53e76163fdd",
+    "latest_saved_checkpoint": "f8d0932afd9589998d09027477c67eb8ab7aa1a0",
     "status": "DOCUMENTATION_CHECKPOINT_APPROVED_FOR_COMMIT"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
     {"revision": "1.1", "reason": "Human-approved documentation checkpoint recording leverage-independent Working Volume, immutable entry provenance, exclusive position ownership, future AUTOPILOT handoff, human takeover and ownership-scoped active-position operations without authorizing CONTEXT, external research or implementation", "date": "2026-08-21"},
-    {"revision": "1.2", "reason": "Human-approved documentation checkpoint recording Working Volume detail interaction and AUTOPILOT trading-results, period metrics, provenance breakdown and durable analytics requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
+    {"revision": "1.2", "reason": "Human-approved documentation checkpoint recording Working Volume detail interaction and AUTOPILOT trading-results, period metrics, provenance breakdown and durable analytics requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
+    {"revision": "1.3", "reason": "Human-approved documentation checkpoint recording unified Scanner Telegram bot navigation and authorization-aware, concurrency-safe Scanner Control requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
   ]
 }
 ```
@@ -396,9 +408,43 @@ current Scanner state.
 Robot/autonomous trading remains out of scope. This section defines only Terminal/AUTOPILOT UX,
 historical analytics and future-compatible data requirements.
 
-## 11. Authorization boundary
+## 11. Unified Scanner Telegram bot menu and Scanner Control
 
-Revision 1.2 is a human-approved documentation-only SPEC checkpoint. Production
+The existing Scanner Telegram bot exposes a visible `Меню` / `Menu` navigation entry with at least:
+
+* `Терминал` / `Terminal`;
+* `Статистика` / `Trading Results`;
+* `Автопилот` / `AUTOPILOT`;
+* `Запустить сканер` / `Run Scanner`.
+
+Exact layout and Telegram UI mechanism are deferred to CONTEXT/UI design. Terminal entry opens Manual
+Terminal without requiring a SignalSnapshot or `signal_id`, so Terminal remains independently usable
+from Scanner signals and can later select a symbol, active position or other supported view. This does
+not replace immutable signal deep links, which continue opening signal-specific Terminal context.
+
+Statistics routes to the approved trading-results/analytics workspace and preserves period and analytics
+contracts. AUTOPILOT routes to its workspace or controlled-positions view. Navigation may remain visible
+in v1 while unsupported Robot actions are disabled; Robot implementation remains out of scope.
+
+`Run Scanner` requests a new scan through a Scanner Control boundary, conceptually `RUN_SCAN`. Telegram
+does not own Scanner internals or couple to `main.py`; Scanner owns execution. Exact IPC, API and process
+transport are deferred to CONTEXT/architecture.
+
+Scanner Control prevents accidental incompatible concurrent duplicate runs from repeated requests and
+can report at least accepted/started, already running, completed and failed. A repeated command while a
+scan is active must not silently start another scan. Telegram provides concise user feedback for these
+outcomes; completed feedback includes approved/found pattern count when available.
+
+Terminal, AUTOPILOT and Run Scanner entry points obey the researched Telegram/Terminal authorization
+boundary. Possession of a menu or deep link alone grants neither trading nor Scanner-control authority.
+Exact allowlist, session and authentication mechanism remains a CONTEXT decision.
+
+Scanner, Terminal and Robot remain independent. The Scanner bot is only a navigation/control integration
+surface and owns no Terminal trading state, Robot state, exchange orders/positions or trading analytics.
+
+## 12. Authorization boundary
+
+Revision 1.3 is a human-approved documentation-only SPEC checkpoint. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any
 claim that its findings are durably recorded, verified or complete. IMPLEMENT

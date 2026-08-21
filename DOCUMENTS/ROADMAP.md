@@ -2,7 +2,7 @@
 
 Version:
 
-4.28
+4.29
 
 Date:
 
@@ -1120,7 +1120,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / SPEC_REVISION_1_2_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+IN_PROGRESS / SPEC_REVISION_1_3_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
 
 Implementation status:
 
@@ -1128,7 +1128,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_AUTOPILOT_ANALYTICS_SPEC_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_TELEGRAM_SCANNER_MENU_SPEC_APPROVED_RECORDED
 
 First implementation priority:
 
@@ -1153,14 +1153,17 @@ Specification boundary:
 * AUTOPILOT DAY/WEEK/MONTH/YEAR results with realized PnL, account and open-exposure metrics;
 * interactive pattern plus entry-reason profitable/losing breakdowns;
 * restart-durable closed-trade analytics with immutable provenance and ownership history.
+* unified Scanner bot Menu routing to Terminal, Trading Results, AUTOPILOT and Run Scanner;
+* independent Manual Terminal entry without SignalSnapshot while retaining signal deep links;
+* authorization-aware Scanner Control with duplicate-run prevention and lifecycle feedback.
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.2.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.3.
 
 Current action:
 
-DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_2.
+DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_3.
 
 Next phase:
 

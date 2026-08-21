@@ -2,7 +2,7 @@
 
 Version:
 
-7.36
+7.37
 
 Date:
 
@@ -671,7 +671,7 @@ Trading Foundation / Trading Workspace
 
 Current project phase:
 
-TRADING_TERMINAL_SPEC_REVISION_1_2_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+TRADING_TERMINAL_SPEC_REVISION_1_3_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
 
 Primary objective:
 
@@ -824,8 +824,8 @@ Related subsystems:
 Primary objective:
 
 Define and authorize a separate durable Trading Terminal / Trading Workspace implementation mission.
-The durable specification has human-approved `CR-TRADING-WORKSPACE-001` revision 1.2 for Working Volume
-detail and AUTOPILOT analytics. CONTEXT research is authorized and in progress; its detailed findings are
+The durable specification has human-approved `CR-TRADING-WORKSPACE-001` revision 1.3 for unified Scanner bot
+navigation and Scanner Control. CONTEXT research is authorized and in progress; its detailed findings are
 not yet durably recorded, verified or complete. Implementation is not authorized.
 
 Previous geometry objective:
@@ -878,19 +878,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / SPEC_REVISION_1_2_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+IN_PROGRESS / SPEC_REVISION_1_3_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
 
 Checkpoint:
 
-MANUAL_LIVE_TRADING_V1_AUTOPILOT_ANALYTICS_SPEC_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_TELEGRAM_SCANNER_MENU_SPEC_APPROVED_RECORDED
 
 ChangeRequest revision:
 
-1.2
+1.3
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.2
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.3
 
 Product priority:
 
@@ -910,7 +910,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_2
+DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_3
 
 Next phase:
 
