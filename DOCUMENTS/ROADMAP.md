@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_RECORDED
+IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE
 
 Implementation status:
 
@@ -1308,7 +1308,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED
+MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING
 
 First implementation priority:
 
@@ -1344,11 +1344,11 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.11.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.12.
 
 Current action:
 
-INTERMEDIATE_MANUAL_EXECUTION_PROTECTION_LOCAL_CHECKPOINT_REVISION_1_11.
+MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE_IMPLEMENT_PLANNING_NOT_AUTHORIZED_REVISION_1_12.
 
 Approved intermediate CONTEXT architecture directions from revision 1.5:
 
@@ -1474,15 +1474,23 @@ RULE-008:
 
 from:
 
-ROADMAP v4.37
+ROADMAP v4.38
 
 to:
 
-ROADMAP v4.38
+ROADMAP v4.39
 
 reason:
 
-Current checkpoint — Trading Workspace Manual Market / Limit / SL-TP execution and protection (v4.37 to v4.38):
+Current checkpoint — Manual execution/protection CONTEXT completion (v4.38 to v4.39):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.12 and recorded checkpoint `MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING`;
+* completed fast-input versus uncertainty locks, degraded-state risk gates, Market/Limit reversal distinction and realtime reconciliation requirements;
+* recorded origin-independent current-symbol ordinary-Limit cleanup after confirmed FLAT, without extending it to other symbols or conditional protection;
+* recorded the final conceptual execution-state matrix and assessed this bounded CONTEXT block as sufficiently researched with no blocker before separately authorized IMPLEMENT planning;
+* preserved overall active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT planning and IMPLEMENT.
+
+Previous checkpoint preserved — Trading Workspace Manual Market / Limit / SL-TP execution and protection (v4.37 to v4.38):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.11 and recorded checkpoint `MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED`;
 * recorded held-side fast DOM execution, quick-volume and anti-bounce semantics, fail-closed submission and distinct Market/Limit partial-fill behavior;

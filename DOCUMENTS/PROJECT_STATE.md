@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_RECORDED
+IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE
 
 Checkpoint:
 
-MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED
+MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING
 
 ChangeRequest revision:
 
-1.11
+1.12
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.11
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.12
 
 Product priority:
 
@@ -912,7 +912,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-INTERMEDIATE_MANUAL_EXECUTION_PROTECTION_LOCAL_CHECKPOINT_REVISION_1_11
+MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE_IMPLEMENT_PLANNING_NOT_AUTHORIZED_REVISION_1_12
 
 Next phase:
 
@@ -4667,15 +4667,24 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.44
+PROJECT_STATE v7.45
 
 to:
 
-PROJECT_STATE v7.45
+PROJECT_STATE v7.46
 
 reason:
 
-Current checkpoint — Trading Workspace Manual Market / Limit / SL-TP execution and protection (v7.44 to v7.45):
+Current checkpoint — Manual execution/protection CONTEXT completion (v7.45 to v7.46):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.12 and checkpoint `MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING`;
+* separated 300-ms input anti-bounce from durable UNKNOWN/RECONCILING command locks and completed fail-closed degraded-state risk gates;
+* recorded Market-to-FLAT and Manual-Limit opposite-remainder policies, all-origin realtime account truth and startup/reconnect reconciliation inputs;
+* superseded only the prior external-order confirmation exception for automatic current-symbol ordinary-Limit cleanup after confirmed FLAT, preserving conditional/protection separation and fill/cancel race truth;
+* recorded the ONLINE/DEGRADED/UNKNOWN/RECONCILING/OFFLINE execution-state matrix and assessed this bounded block as sufficiently researched with no blocker before separately authorized IMPLEMENT planning;
+* kept overall CONTEXT active and incomplete, Robot implementation out of scope, IMPLEMENT planning unauthorized and IMPLEMENT not started or authorized.
+
+Previous checkpoint preserved — Trading Workspace Manual Market / Limit / SL-TP execution and protection (v7.44 to v7.45):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.11 and checkpoint `MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED`;
 * recorded fast held-side DOM Market/Limit commands, one-WV quick default, double-tap dollar-volume adjustment and 300-ms anti-bounce behavior;

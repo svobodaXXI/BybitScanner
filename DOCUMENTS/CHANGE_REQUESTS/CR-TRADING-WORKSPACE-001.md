@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.11",
+  "revision": "1.12",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -130,6 +130,9 @@
     ,"Quick DOM execution uses held BUY ORDER or SELL ORDER plus a second price-level tap, defaults to one Working Volume and suppresses repeated execution taps inside 300 milliseconds"
     ,"Manual Market opposite-side volume is capped at the current position remainder to reach FLAT without reversal, while a Manual Limit may close current exposure and leave an opposite-side remainder"
     ,"All active Limit orders for the selected account and symbol are visible regardless of Terminal or external origin, with confirmed exchange state controlling DOM and chart indicators"
+    ,"Execution anti-bounce expires after 300 milliseconds but never overrides an UNKNOWN or RECONCILING command lock"
+    ,"Degraded, unknown and reconciling state blocks new exposure while preserving only safely bounded risk reduction and cancellation"
+    ,"After confirmed FLAT caused by Market, SL or TP, all remaining ordinary active Limits for that selected account and symbol enter automatic cancellation regardless of origin, without extending this rule to other symbols or conditional protection"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -262,13 +265,13 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_MANUAL_EXECUTION_PROTECTION_RECORDED"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED",
+  "current_checkpoint": "MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
   "next_phase_authorization": "IMPLEMENT_NOT_STARTED_NOT_AUTHORIZED_CONTEXT_RESEARCH_IN_PROGRESS",
@@ -288,7 +291,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "5fa3bba7b347739fb73e57f25306ec8a677643e4",
-    "status": "INTERMEDIATE_CONTEXT_MANUAL_EXECUTION_PROTECTION_APPROVED_FOR_LOCAL_CHECKPOINT"
+    "status": "MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE_IMPLEMENT_PLANNING_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -302,7 +305,8 @@
     {"revision": "1.8", "reason": "Human-approved intermediate durable CONTEXT checkpoint binding active-account USDT walletBalance WV authority, One-Way Mode, no automatic mode switching, external-state adoption, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative-correlation policy without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-21"},
     {"revision": "1.9", "reason": "Human-approved intermediate durable CONTEXT checkpoint recording the minimal upper Terminal workspace, one normalized public market-data owner, collapsible DOM and execution-print panel, preferred 20+20 viewport over deeper working data, interaction-safe recenter and STRONG-sweep follow, confidence and resync safety, reusable Manual book walk, bounded Canvas2D-oriented rendering and third-party license constraints without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-21"},
     {"revision": "1.10", "reason": "Human-approved CONTEXT amendment superseding only the revision 1.9 fixed-period recenter direction with an approximately five-second configurable eligibility check and central-deviation threshold, while preserving immediate CENTER, higher-priority STRONG-sweep follow, manual-inspection suppression, incomplete CONTEXT and unauthorized IMPLEMENT", "date": "2026-08-22"},
-    {"revision": "1.11", "reason": "Human-approved intermediate CONTEXT checkpoint recording Manual Market, Limit and SL/TP execution/protection semantics, fast two-touch DOM commands, fail-closed uncertainty, partial fills, order visibility and overlays, symbol cleanup and the narrow Manual-Limit reversal exception without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-22"}
+    {"revision": "1.11", "reason": "Human-approved intermediate CONTEXT checkpoint recording Manual Market, Limit and SL/TP execution/protection semantics, fast two-touch DOM commands, fail-closed uncertainty, partial fills, order visibility and overlays, symbol cleanup and the narrow Manual-Limit reversal exception without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-22"},
+    {"revision": "1.12", "reason": "Human-approved CONTEXT checkpoint completing the Manual Market, Limit and SL/TP execution/protection research block with anti-bounce versus uncertainty locks, fail-closed degraded-state gates, Market and Limit reversal policies, account-wide realtime truth, origin-independent ordinary-Limit cleanup after confirmed FLAT and a final execution-state matrix while leaving overall CONTEXT active and IMPLEMENT planning and implementation unauthorized", "date": "2026-08-22"}
   ]
 }
 ```
@@ -1380,9 +1384,98 @@ an implementation dependency by this checkpoint.
 This amendment records checkpoint `MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED`. CONTEXT remains active,
 incomplete and not verified; implementation is not started or authorized.
 
-## 20. Authorization boundary
+## 20. Manual execution/protection completion decisions
 
-Revision 1.11 is a human-approved intermediate durable CONTEXT research checkpoint. Approved
+Revision 1.12 completes the approved product and safety model for the Manual Market, Limit and SL/TP
+execution/protection CONTEXT block. It refines revision 1.11 without starting implementation or selecting concrete
+classes, endpoints, storage schema or UI framework.
+
+### 20.1 Fast-input safety and command uncertainty
+
+The execution anti-bounce interval is 300 ms. After an accepted execution tap, additional execution taps inside that
+interval are ignored. Anti-bounce is only local fast-input suppression; execution uncertainty is a separate durable
+safety lock. Expiry of 300 ms never permits a potentially duplicate command while the preceding execution command is
+`UNKNOWN` or `RECONCILING`.
+
+Every execution command has a unique durable identity and uses an appropriate Bybit client/order correlation identity,
+such as `orderLinkId` where the final current API design supports it. Timeout, lost response, unstable transport or
+ambiguous evidence transitions to `UNKNOWN/RECONCILING`, never blind retry. Potentially conflicting or duplicate
+exposure remains blocked until actual Bybit Order, Execution and Position evidence reconciles the command. The safety
+preference is an intentionally missed trade over duplicate or unintended exposure. A partial Market execution is not
+automatically chased with another Market command.
+
+### 20.2 Degraded-state risk gate and Market/Limit reversal
+
+When trading state is degraded, unknown or reconciling, new entries, scale-in, exposure increases, new
+exposure-increasing Limits and blind retries are blocked. Risk reduction may remain available only when current side,
+size and state are sufficiently confirmed to guarantee bounded behavior: emergency Market Close, reduction of an
+existing Position and cancellation of active Orders. Emergency Market Close is capped or reduce-only against the
+confirmed remainder and cannot create reversal. If an earlier emergency close is `UNKNOWN`, another blind close is
+blocked until reconciliation. OFFLINE never simulates successful execution or closure when Bybit confirmation is
+unavailable.
+
+Market opposite-side quantity is capped at the confirmed Position remainder and may reduce only to FLAT; requested
+excess is discarded rather than opening reversal. A separate user action after confirmed FLAT may create opposite
+exposure. Manual Limit semantics intentionally differ: a Manual Limit may close existing exposure and its remaining
+quantity may open the opposite Position under the recorded One-Way policy.
+
+### 20.3 Realtime account truth and reconciliation
+
+Terminal displays every active Limit for the selected Bybit account and current symbol regardless of origin: Terminal,
+Bybit UI/API, MetaScalp or another external client. Origin and ownership remain audit/reconciliation metadata and never
+hide actual account Orders. Position or active-Order changes made externally while Terminal runs are adopted from
+exchange state and update normal realtime UI/state without requiring manual Refresh.
+
+WebSocket supplies realtime updates. Startup and reconnect reconciliation restore and compare at least Position, Open
+Orders, relevant TP/SL or conditional state and Executions needed to resolve ambiguity. A Position WebSocket message is
+not automatically evidence of a size change without comparison to factual state. Available Bybit identities and
+sequencing are used for correlation where applicable. Terminal returns ONLINE only when authoritative state is
+non-contradictory; otherwise new-exposure locks remain active.
+
+### 20.4 Confirmed-FLAT ordinary-Limit cleanup
+
+When the Manual Position for the current symbol is authoritatively confirmed FLAT because of Market close, Stop Loss
+or Take Profit, Terminal automatically initiates cancellation of all remaining ordinary active Limit Orders for that
+symbol on the selected account. The closing execution may originate from Terminal, Bybit, MetaScalp or another
+external execution interface. This revision supersedes the revision 1.11 OWNER-confirmation exception only for this
+confirmed-FLAT ordinary-Limit cleanup: ordinary Limits of every origin are included automatically.
+
+Cleanup is symbol-scoped and never touches Orders for other symbols. It does not silently generalize ordinary-Limit
+cleanup to TP/SL or conditional Orders; those require their separately recorded protection rules. Cancel acknowledgement
+is not final cancellation. Exchange state confirms disappearance. If a Limit fills during the race between FLAT and
+cancel, its Execution and resulting Position are accepted as factual Bybit state, surfaced and reconciled rather than
+hidden by the cleanup workflow.
+
+### 20.5 Final conceptual execution-state matrix
+
+| Trading state | New entry / scale-in | Reduce / close | Cancel | New Limit / retry | Exit condition |
+| --- | --- | --- | --- | --- | --- |
+| `ONLINE` | Allowed | Allowed | Allowed | New Limit allowed | Remains ONLINE while required state is trustworthy |
+| `DEGRADED` | Blocked | Allowed only when safely bounded | Allowed | Exposure-increasing Limit blocked; blind retry blocked | Authoritative evidence restores consistency |
+| `UNKNOWN EXECUTION` | Duplicate or conflicting exposure blocked | Safe risk reduction may remain available from confirmed state | May remain available | Blind retry blocked | Command reconciliation resolves actual outcome |
+| `RECONCILING` | Blocked | Risk reduction only when safely bounded | Allowed when safe | New exposure blocked | Authoritative reconciliation is complete and non-contradictory |
+| `OFFLINE` | No execution may be represented as successfully completed | No close may be represented as successful without exchange confirmation | No cancellation may be represented as final without exchange confirmation | No optimistic success | Connectivity plus required reconciliation restores ONLINE |
+
+The matrix does not weaken the separate Command, Order, Execution and Position meanings, immutable execution dedup,
+acknowledgement-not-fill invariant or startup/reconnect exposure gates.
+
+### 20.6 Completion assessment
+
+The Manual Market / Limit / SL-TP Execution and Protection CONTEXT block is `SUFFICIENTLY_RESEARCHED` and complete for
+transition to a future IMPLEMENT planning step. No concrete blocker remains before planning this block: the required
+product behavior, authority, uncertainty policy, reconciliation inputs, state gates, cleanup, partial-fill and reversal
+semantics are recorded. Concrete API calls, internal names, persistence layout, tunable timing and acceptance-test
+decomposition belong to separately authorized IMPLEMENT planning and verification, not to additional product research.
+
+This completion applies only to this CONTEXT block. The overall Trading Workspace CR remains `IN_PROGRESS` in
+`CONTEXT / RESEARCH` because other documented context areas remain open. IMPLEMENT planning is not authorized by this
+checkpoint, IMPLEMENT is `NOT_STARTED_NOT_AUTHORIZED`, and Robot remains out of scope.
+
+This amendment records checkpoint `MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING`.
+
+## 21. Authorization boundary
+
+Revision 1.12 is a human-approved CONTEXT completion checkpoint for one bounded research block. Approved
 SPEC revision 1.4 remains intact. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any
