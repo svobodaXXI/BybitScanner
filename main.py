@@ -23,8 +23,10 @@ from config import MODE, MIN_SCORE, MAX_SYMBOLS
 
 from signal_adapter import prepare_signal
 from signal_memory import update_signal
-from notification import send_signal
-from telegram_bot import send_message
+from notification import (
+    send_message_to_recipients as send_message,
+    send_signal,
+)
 
 
 def main():
@@ -187,14 +189,12 @@ def main():
 
     try:
         send_message(
-            config.TELEGRAM_TOKEN,
-            config.TELEGRAM_CHAT_ID,
-        (
-            "SCAN FINISHED\n"
-            f"Elapsed: "
-            f"{elapsed_minutes:02d}:"
-            f"{elapsed_remainder:02d}"
-        )
+            (
+                "SCAN FINISHED\n"
+                f"Elapsed: "
+                f"{elapsed_minutes:02d}:"
+                f"{elapsed_remainder:02d}"
+            )
         )
     except Exception as e:
         print(

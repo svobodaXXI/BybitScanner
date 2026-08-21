@@ -74,7 +74,16 @@ TELEGRAM_ENABLED = True
 
 # Никогда не публикуйте реальные значения.
 TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-TELEGRAM_CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+
+# Legacy single-recipient setting. It is used when TELEGRAM_CHAT_IDS contains
+# no non-empty recipients.
+TELEGRAM_CHAT_ID = ""
+
+# Preferred multi-recipient setting. Add only approved numeric chat/user IDs.
+TELEGRAM_CHAT_IDS = (
+    TELEGRAM_CHAT_ID,
+    # "SECOND_CHAT_ID",
+)
 
 TELEGRAM_TEST_MODE = False
 

@@ -35,6 +35,90 @@ import config
 CHARTS_DIR = "charts"
 
 
+def get_telegram_chat_ids():
+    """Return configured Telegram recipients in stable, deduplicated order."""
+
+    configured = getattr(
+        config,
+        "TELEGRAM_CHAT_IDS",
+        None
+    )
+
+    if isinstance(configured, (str, int)):
+        configured = (configured,)
+
+    recipients = []
+    seen = set()
+
+    for value in configured or ():
+        if value is None:
+            continue
+
+        chat_id = str(value).strip()
+
+        if not chat_id or chat_id in seen:
+            continue
+
+        seen.add(chat_id)
+        recipients.append(chat_id)
+
+    if recipients:
+        return tuple(recipients)
+
+    legacy_chat_id = str(
+        getattr(config, "TELEGRAM_CHAT_ID", "")
+    ).strip()
+
+    if legacy_chat_id:
+        return (legacy_chat_id,)
+
+    return ()
+
+
+def _telegram_delivery_ok(response):
+    return bool(
+        isinstance(response, dict)
+        and response.get("ok", False)
+    )
+
+
+def send_message_to_recipients(text, reply_markup=None):
+    """Send one message to every configured recipient without fail-fast."""
+
+    recipients = get_telegram_chat_ids()
+
+    if not recipients:
+        print("[TELEGRAM ERROR] No recipients configured")
+        return False
+
+    all_delivered = True
+
+    for chat_id in recipients:
+        try:
+            response = send_message(
+                config.TELEGRAM_TOKEN,
+                chat_id,
+                text,
+                reply_markup=reply_markup
+            )
+
+            if not _telegram_delivery_ok(response):
+                all_delivered = False
+                print(
+                    f"[TELEGRAM MESSAGE ERROR] "
+                    f"chat_id={chat_id} response={response}"
+                )
+
+        except Exception as error:
+            all_delivered = False
+            print(
+                f"[TELEGRAM MESSAGE ERROR] "
+                f"chat_id={chat_id} error={error}"
+            )
+
+    return all_delivered
+
+
 def format_signal(
     result,
     test_mode=False
@@ -212,9 +296,7 @@ def send_signal(
     if not message:
         return False
 
-    send_message(
-        config.TELEGRAM_TOKEN,
-        config.TELEGRAM_CHAT_ID,
+    all_delivered = send_message_to_recipients(
         message
     )
 
@@ -223,7 +305,7 @@ def send_signal(
     )
 
     if not symbol:
-        return True
+        return all_delivered
 
     timeframe = str(
         result.get(
@@ -248,7 +330,7 @@ def send_signal(
             f"[TELEGRAM] Chart not found: "
             f"{chart_path}"
         )
-        return True
+        return all_delivered
 
     reply_markup = (
         build_tradingview_keyboard(
@@ -257,32 +339,27 @@ def send_signal(
         )
     )
 
-    try:
+    for chat_id in get_telegram_chat_ids():
+        try:
+            response = send_photo(
+                config.TELEGRAM_TOKEN,
+                chat_id,
+                chart_path,
+                reply_markup=reply_markup
+            )
 
-        response = send_photo(
-            config.TELEGRAM_TOKEN,
-            config.TELEGRAM_CHAT_ID,
-            chart_path,
-            reply_markup=reply_markup
-        )
+            if not _telegram_delivery_ok(response):
+                all_delivered = False
+                print(
+                    f"[TELEGRAM PHOTO ERROR] "
+                    f"chat_id={chat_id} response={response}"
+                )
 
-        if not response.get(
-            "ok",
-            False
-        ):
+        except Exception as error:
+            all_delivered = False
             print(
                 f"[TELEGRAM PHOTO ERROR] "
-                f"{response}"
+                f"chat_id={chat_id} error={error}"
             )
-            return False
 
-        return True
-
-    except Exception as error:
-
-        print(
-            f"[TELEGRAM PHOTO ERROR] "
-            f"{error}"
-        )
-
-        return False
+    return all_delivered
