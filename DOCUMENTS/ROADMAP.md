@@ -2,7 +2,7 @@
 
 Version:
 
-4.34
+4.35
 
 Date:
 
@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / EXECUTION_RECONCILIATION_MODEL_RECORDED
+IN_PROGRESS / HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
 
 Implementation status:
 
@@ -1308,7 +1308,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_EXECUTION_RECONCILIATION_MODEL_RECORDED
+MANUAL_LIVE_TRADING_V1_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
 
 First implementation priority:
 
@@ -1344,11 +1344,11 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.7.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.8.
 
 Current action:
 
-INTERMEDIATE_EXECUTION_RECONCILIATION_MODEL_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_7.
+INTERMEDIATE_HUMAN_EXECUTION_AND_RISK_DECISIONS_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_8.
 
 Approved intermediate CONTEXT architecture directions from revision 1.5:
 
@@ -1361,7 +1361,7 @@ Approved intermediate CONTEXT architecture directions from revision 1.5:
 * reconciliation-gated trading, account-isolated state and replaceable CredentialStore;
 * cash-flow-adjusted return direction, single-flight Scanner Control and deployment-neutral HTTPS ingress.
 
-Human-approved intermediate revision 1.6 refinements:
+Human-approved intermediate revision 1.6 refinements, superseded where revision 1.8 binds a later decision:
 
 * position-mode-aware USDT Linear Perpetual scope with preferred Hedge Mode and explicit side/positionIdx;
 * ACK-to-pending-to-event/reconciliation confirmation and execId-deduplicated fills;
@@ -1383,8 +1383,21 @@ Human-approved intermediate revision 1.7 execution/reconciliation model:
   execution-state owner with scope-appropriate new-exposure locks and a separate reduce-risk gate;
 * crash/replay-safe atomic ingestion covers journal, execution deduplication, immutable execution, projections
   and reconciliation state, while Full Close converges only at zero plus required cleanup and final reconciliation;
-* exact WV authority, binding position mode, external interaction, Manual takeover, emergency close, negative
-  search horizon, automatic mode switching and ambiguous external-order cleanup remain human decisions.
+* revision 1.8 resolves the previously open WV authority, binding position mode, external interaction, Manual
+  takeover, emergency-close, negative-correlation, automatic mode-switching and external-order cleanup policies.
+
+Human-approved intermediate revision 1.8 execution/risk decisions:
+
+* active-account USDT walletBalance is the binding leverage-independent WV base, with existing five-percent
+  calculation and downward tens-of-USDT rounding; totalAvailableBalance, totalEquity and non-USDT value are excluded;
+* Manual v1 requires One-Way Mode and positionIdx zero, prohibits simultaneous opposite exposure and hidden
+  reversal, and never switches Bybit position mode automatically;
+* external exchange state is displayed, included in risk and reconciled/adopted without rewriting origin or
+  sending compensating orders; OWNER takeover changes controller only after reconciliation;
+* Emergency Close remains a separate auditable reduce-risk workflow with no blind retry and CLOSED_RECONCILED
+  completion, while Full Close never silently cancels potentially dangerous external orders;
+* negative lookup uses bounded repeated multi-source correlation, but exhausted horizon retains explicit
+  unresolved state; exact refresh, timeout, interval, backoff and horizon parameters remain later work.
 
 Repository-confirmed boundary:
 
@@ -1450,15 +1463,22 @@ RULE-008:
 
 from:
 
-ROADMAP v4.33
+ROADMAP v4.34
 
 to:
 
-ROADMAP v4.34
+ROADMAP v4.35
 
 reason:
 
-Current checkpoint — Trading Workspace execution/reconciliation model record (v4.33 to v4.34):
+Current checkpoint — Trading Workspace human execution/risk decisions record (v4.34 to v4.35):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.8 and recorded the approved execution/risk decisions;
+* bound walletBalance WV, One-Way Mode, reconcile-and-adopt external state, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative correlation;
+* retained numeric refresh/cache/retry/backoff/search-horizon parameters as later configurable research/design work;
+* preserved active incomplete CONTEXT, future-only Robot constraints and unauthorized IMPLEMENT.
+
+Previous checkpoint preserved — Trading Workspace execution/reconciliation model record (v4.33 to v4.34):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.7 and recorded the formal execution/reconciliation model;
 * retained REST/WS acknowledgements as non-fill evidence, immutable deduplicated executions, non-regressive order/position projections and external-origin separation;

@@ -2,7 +2,7 @@
 
 Version:
 
-7.41
+7.42
 
 Date:
 
@@ -671,7 +671,7 @@ Trading Foundation / Trading Workspace
 
 Current project phase:
 
-TRADING_TERMINAL_EXECUTION_RECONCILIATION_MODEL_RECORDED
+TRADING_TERMINAL_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
 
 Primary objective:
 
@@ -824,10 +824,11 @@ Related subsystems:
 Primary objective:
 
 Define and authorize a separate durable Trading Terminal / Trading Workspace implementation mission.
-Approved SPEC revision 1.4 remains authoritative. Human-approved intermediate CONTEXT revision 1.7 records
-the formal command, order, immutable execution, position projection, L1-L4 reconciliation, exposure-gate,
-crash-recovery and transaction-atomicity model. Binding position mode, WV authority and external/takeover/
-emergency policies remain unresolved. CONTEXT remains incomplete/in progress and IMPLEMENT remains unauthorized.
+Approved SPEC revision 1.4 and execution/reconciliation model revision 1.7 remain authoritative. Human-approved
+intermediate CONTEXT revision 1.8 binds active-account USDT walletBalance WV authority, One-Way Mode, no
+automatic mode switching, reconcile-and-adopt external state, Manual takeover, Emergency Close,
+external-order-aware Full Close and conservative negative correlation. CONTEXT remains incomplete/in progress
+and IMPLEMENT remains unauthorized.
 
 Previous geometry objective:
 
@@ -879,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / EXECUTION_RECONCILIATION_MODEL_RECORDED
+IN_PROGRESS / HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
 
 Checkpoint:
 
-MANUAL_LIVE_TRADING_V1_EXECUTION_RECONCILIATION_MODEL_RECORDED
+MANUAL_LIVE_TRADING_V1_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
 
 ChangeRequest revision:
 
-1.7
+1.8
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.7
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.8
 
 Product priority:
 
@@ -911,7 +912,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-INTERMEDIATE_EXECUTION_RECONCILIATION_MODEL_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_7
+INTERMEDIATE_HUMAN_EXECUTION_AND_RISK_DECISIONS_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_8
 
 Next phase:
 
@@ -4666,15 +4667,22 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.40
+PROJECT_STATE v7.41
 
 to:
 
-PROJECT_STATE v7.41
+PROJECT_STATE v7.42
 
 reason:
 
-Current checkpoint — Trading Workspace execution/reconciliation model record (v7.40 to v7.41):
+Current checkpoint — Trading Workspace human execution/risk decisions record (v7.41 to v7.42):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.8 and checkpoint `MANUAL_LIVE_TRADING_V1_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED`;
+* bound USDT walletBalance WV authority, One-Way Mode, no automatic mode switching, external-state adoption, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative correlation;
+* preserved exact refresh/cache and numeric retry/backoff/search-horizon parameters as later research/design work;
+* kept CONTEXT active and incomplete, Robot implementation out of scope and IMPLEMENT not started or authorized.
+
+Previous checkpoint preserved — Trading Workspace execution/reconciliation model record (v7.40 to v7.41):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.7 and recorded checkpoint `MANUAL_LIVE_TRADING_V1_EXECUTION_RECONCILIATION_MODEL_RECORDED`;
 * recorded immutable execution identity, normalized order/position semantics, L1-L4 reconciliation, exposure gates, crash idempotency, transaction atomicity and Full Close convergence;
