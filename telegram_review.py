@@ -292,6 +292,24 @@ def _process_callback(
     if parsed is None:
         return
 
+    owner_id = str(
+        getattr(config, "TELEGRAM_CHAT_ID", "")
+    ).strip()
+
+    callback_user_id = str(
+        (
+            callback_query.get("from")
+            or {}
+        ).get("id", "")
+    ).strip()
+
+    if not owner_id or callback_user_id != owner_id:
+        _answer_callback(
+            callback_query.get("id"),
+            "Недостаточно прав"
+        )
+        return
+
     try:
         case_dir = _save_review(
             callback_query,

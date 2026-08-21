@@ -75,11 +75,30 @@ def get_telegram_chat_ids():
     return ()
 
 
+def get_telegram_owner_chat_id():
+    """Return the legacy single-recipient ID used as Scanner OWNER."""
+
+    return str(
+        getattr(config, "TELEGRAM_CHAT_ID", "")
+    ).strip()
+
+
 def _telegram_delivery_ok(response):
     return bool(
         isinstance(response, dict)
         and response.get("ok", False)
     )
+
+
+def format_symbol_for_telegram(symbol):
+    """Format a symbol for the Telegram card without changing its identity."""
+
+    symbol = str(symbol)
+
+    if symbol.endswith("USDT"):
+        return symbol[:-4]
+
+    return symbol
 
 
 def send_message_to_recipients(text, reply_markup=None):
@@ -160,6 +179,10 @@ def format_signal(
         "UNKNOWN"
     )
 
+    display_symbol = format_symbol_for_telegram(
+        symbol
+    )
+
     confirmed = (
         result.get(
             "confirmation",
@@ -190,7 +213,7 @@ def format_signal(
 {status}
 
 📌 Symbol:
-{symbol}
+{display_symbol}
 
 📐 Pattern:
 {pattern}
@@ -207,7 +230,8 @@ def format_signal(
 
 def build_tradingview_keyboard(
     symbol,
-    timeframe
+    timeframe,
+    include_review_actions=True
 ):
     """
     Telegram inline keyboard:
@@ -224,17 +248,21 @@ def build_tradingview_keyboard(
     symbol = str(symbol)
     timeframe = str(timeframe)
 
-    return {
-        "inline_keyboard": [
-            [
-                {
-                    "text":
-                        "\U0001F4C8 Open TradingView",
+    keyboard = [
+        [
+            {
+                "text":
+                    "\U0001F4C8 Open TradingView",
 
-                    "url":
-                        tradingview_url
-                }
-            ],
+                "url":
+                    tradingview_url
+            }
+        ]
+    ]
+
+    if include_review_actions:
+        keyboard.extend(
+            [
             [
                 {
                     "text":
@@ -267,7 +295,11 @@ def build_tradingview_keyboard(
                         f"review:anchor:{symbol}:{timeframe}"
                 }
             ]
-        ]
+            ]
+        )
+
+    return {
+        "inline_keyboard": keyboard
     }
 
 
@@ -332,15 +364,21 @@ def send_signal(
         )
         return all_delivered
 
-    reply_markup = (
-        build_tradingview_keyboard(
-            symbol,
-            timeframe
-        )
-    )
+    owner_chat_id = get_telegram_owner_chat_id()
 
     for chat_id in get_telegram_chat_ids():
         try:
+            reply_markup = (
+                build_tradingview_keyboard(
+                    symbol,
+                    timeframe,
+                    include_review_actions=(
+                        bool(owner_chat_id)
+                        and chat_id == owner_chat_id
+                    )
+                )
+            )
+
             response = send_photo(
                 config.TELEGRAM_TOKEN,
                 chat_id,

@@ -7,6 +7,43 @@ import main
 import notification
 
 
+class TelegramSignalFormattingTests(unittest.TestCase):
+    def test_terminal_usdt_suffix_is_removed_from_display(self):
+        message = notification.format_signal(
+            {"symbol": "CROUSDT"}
+        )
+
+        self.assertIn("📌 Symbol:\nCRO\n", message)
+        self.assertNotIn("CROUSDT", message)
+
+    def test_numeric_prefixed_symbol_keeps_its_base_name(self):
+        message = notification.format_signal(
+            {"symbol": "1000RATSUSDT"}
+        )
+
+        self.assertIn("📌 Symbol:\n1000RATS\n", message)
+        self.assertNotIn("1000RATSUSDT", message)
+
+    def test_symbol_without_terminal_usdt_is_unchanged(self):
+        message = notification.format_signal(
+            {"symbol": "USDTDOM"}
+        )
+
+        self.assertIn("📌 Symbol:\nUSDTDOM\n", message)
+
+    def test_tradingview_url_keeps_authoritative_full_symbol(self):
+        keyboard = notification.build_tradingview_keyboard(
+            "CROUSDT",
+            "5",
+            include_review_actions=False,
+        )
+
+        tradingview_url = keyboard[
+            "inline_keyboard"
+        ][0][0]["url"]
+        self.assertIn("CROUSDT", tradingview_url)
+
+
 class TelegramRecipientNormalizationTests(unittest.TestCase):
     def test_legacy_chat_id_fallback(self):
         with patch.object(notification.config, "TELEGRAM_CHAT_IDS", ()), \
@@ -50,6 +87,10 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
                 "TELEGRAM_CHAT_IDS",
                 ("owner", "friend"),
             ), patch.object(
+                notification.config,
+                "TELEGRAM_CHAT_ID",
+                "owner",
+            ), patch.object(
                 notification,
                 "CHARTS_DIR",
                 directory,
@@ -73,6 +114,73 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             [item.args[1] for item in photo_mock.call_args_list],
             ["owner", "friend"],
         )
+
+        owner_keyboard = (
+            photo_mock.call_args_list[0]
+            .kwargs["reply_markup"]["inline_keyboard"]
+        )
+        friend_keyboard = (
+            photo_mock.call_args_list[1]
+            .kwargs["reply_markup"]["inline_keyboard"]
+        )
+
+        self.assertEqual(len(owner_keyboard), 3)
+        self.assertEqual(
+            [button["text"] for row in owner_keyboard for button in row],
+            [
+                "📈 Open TradingView",
+                "📌 В разбор",
+                "✅ Хороший",
+                "❌ Геометрия",
+                "⚓ Anchor/START",
+            ],
+        )
+        self.assertEqual(len(friend_keyboard), 1)
+        self.assertEqual(
+            [button["text"] for button in friend_keyboard[0]],
+            ["📈 Open TradingView"],
+        )
+
+    def test_two_non_owner_recipients_receive_only_tradingview(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chart = Path(directory) / "BTCUSDT_analysis.png"
+            chart.write_bytes(b"test-image")
+
+            with patch.object(
+                notification.config,
+                "TELEGRAM_CHAT_IDS",
+                ("owner", "friend-one", "friend-two"),
+            ), patch.object(
+                notification.config,
+                "TELEGRAM_CHAT_ID",
+                "owner",
+            ), patch.object(
+                notification,
+                "CHARTS_DIR",
+                directory,
+            ), patch.object(
+                notification,
+                "send_message",
+                return_value={"ok": True},
+            ), patch.object(
+                notification,
+                "send_photo",
+                return_value={"ok": True},
+            ) as photo_mock:
+                delivered = notification.send_signal(self.signal())
+
+        self.assertTrue(delivered)
+        self.assertEqual(photo_mock.call_count, 3)
+
+        for photo_call in photo_mock.call_args_list[1:]:
+            keyboard = photo_call.kwargs[
+                "reply_markup"
+            ]["inline_keyboard"]
+            self.assertEqual(len(keyboard), 1)
+            self.assertEqual(
+                [button["text"] for button in keyboard[0]],
+                ["📈 Open TradingView"],
+            )
 
     def test_first_recipient_failure_does_not_block_second(self):
         with patch.object(
