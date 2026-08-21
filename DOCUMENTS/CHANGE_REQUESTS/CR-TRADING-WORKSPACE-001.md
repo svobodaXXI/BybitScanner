@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.8",
+  "revision": "1.9",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -122,6 +122,10 @@
     ,"Emergency Close is a distinct auditable reduce-risk workflow that cannot intentionally reverse exposure, never blindly retries an uncertain close and completes only through CLOSED_RECONCILED semantics"
     ,"Full Close cleans Terminal-owned orders and protection but never silently cancels external orders; potentially exposure-reopening external orders require warning and separate OWNER confirmation before cancellation"
     ,"One negative exchange lookup never proves that an uncertain mutation did not exist; bounded repeated multi-source correlation ends in explicit unresolved reconciliation state rather than automatic not-submitted inference"
+    ,"The Manual v1 upper workspace is intentionally minimal: the primary live chart occupies the left side and a narrow collapsible DOM plus execution-prints panel occupies the right side, while existing trading controls remain below"
+    ,"DOM resting liquidity is represented by price, size and a stable visually scaled depth fill; execution prints represent aggressive trades rather than resting orders and encode aggressor side and execution volume"
+    ,"A multi-level sweep ellipse may span only a reliably reconstructed consumed price range; ambiguous trade and order-book correlation falls back to a non-sweep print and never invents consumption"
+    ,"The upper market-depth area permits only a compact reconciled position direction and PnL indicator and does not add a separate position card or other analytics widgets"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -147,6 +151,10 @@
     ,"Working Volume behavior below the ten-USDT rounding quantum and its interaction with exchange minimum quantity and insufficient balance"
     ,"Concurrency and exposure reservation semantics for simultaneous future Robot commands and ownership handoffs near the nineteen-WV limit"
     ,"Selected-period percentage-PnL accounting for deposits, withdrawals, transfers, equity changes, period boundaries and timezone"
+    ,"Final working/calculation depth beyond the preferred orderbook.50 starting candidate, exact sequence-gap rules, correlation window, confidence thresholds and same-sequence multi-message treatment"
+    ,"PROBABLE sweep visualization and reliable trade-to-L2 correlation under ambiguous cancellation-versus-execution evidence"
+    ,"Responsive adjustment around the preferred 20 asks plus 20 bids viewport, exact row height, DOM percentile/window/hysteresis, print-scaling window, update batching, render frequency, bounded tape retention and mobile Telegram Mini App performance limits"
+    ,"Exact recenter timing and inactivity timeout, sweep-follow animation, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, book-walk depth source, third-party vendoring policy and future historical heatmap requirement"
   ],
   "researched_architecture_directions": [
     "Authenticated Bybit V5 REST commands are correlated with private order, execution, position and wallet events; REST acceptance alone is not final state confirmation",
@@ -174,6 +182,8 @@
     ,"Insufficient normalized volume is a pre-submit business rejection REJECTED_INSUFFICIENT_VOLUME with user feedback Недостаточный объём; Terminal and future Robot never auto-increase exposure to satisfy exchange minima"
     ,"Limit and protection draft prices use authoritative tickSize normalization visible before confirmation; safe rounding direction remains order-specific design work"
     ,"Market WV is sizing intent rather than guaranteed fill size; actual engaged USDT and fractional WV display derive from confirmed executions and reconciled position state"
+    ,"One normalized market-data source should serve DOM, execution-print visualization and any active manual pre-trade liquidity use rather than creating duplicate order-book subscriptions"
+    ,"Trustworthy sweep visualization requires sequenced L2 state immediately before executions, public trade evidence, resulting book state and explicit fallback when consumption cannot be proved"
   ],
   "repository_confirmed_reuse": [
     "bybit_api.py and analyzer candle loading provide reusable public USDT-linear instrument and OHLCV access only behind a market-data boundary; they are not authenticated trading infrastructure",
@@ -248,13 +258,13 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED",
+  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
   "next_phase_authorization": "IMPLEMENT_NOT_STARTED_NOT_AUTHORIZED_CONTEXT_RESEARCH_IN_PROGRESS",
@@ -274,7 +284,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "5fa3bba7b347739fb73e57f25306ec8a677643e4",
-    "status": "INTERMEDIATE_CONTEXT_HUMAN_EXECUTION_AND_RISK_DECISIONS_APPROVED_FOR_REVIEW"
+    "status": "INTERMEDIATE_CONTEXT_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_APPROVED_FOR_REVIEW"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -285,7 +295,8 @@
     {"revision": "1.5", "reason": "Human-approved intermediate durable CONTEXT architecture research checkpoint reconciling Bybit, Telegram, SignalSnapshot, chart, backend, persistence, recovery, security, analytics, Scanner Control and deployment directions with current repository boundaries; CONTEXT remains incomplete and in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
     {"revision": "1.6", "reason": "Human-approved intermediate durable CONTEXT checkpoint refining Bybit position mode, asynchronous confirmation, execution deduplication, close and recovery reconciliation, command correlation, preferred WV walletBalance base and exchange quantity/price normalization while CONTEXT remains incomplete and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
     {"revision": "1.7", "reason": "Human-approved intermediate durable CONTEXT checkpoint recording the formal TradingCommand, Order, Execution, Position, reconciliation, exposure-gate, crash-recovery and transaction-atomicity model while preserving unresolved human decisions, active CONTEXT research and unauthorized IMPLEMENT", "date": "2026-08-21"},
-    {"revision": "1.8", "reason": "Human-approved intermediate durable CONTEXT checkpoint binding active-account USDT walletBalance WV authority, One-Way Mode, no automatic mode switching, external-state adoption, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative-correlation policy without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-21"}
+    {"revision": "1.8", "reason": "Human-approved intermediate durable CONTEXT checkpoint binding active-account USDT walletBalance WV authority, One-Way Mode, no automatic mode switching, external-state adoption, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative-correlation policy without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-21"},
+    {"revision": "1.9", "reason": "Human-approved intermediate durable CONTEXT checkpoint recording the minimal upper Terminal workspace, one normalized public market-data owner, collapsible DOM and execution-print panel, preferred 20+20 viewport over deeper working data, interaction-safe recenter and STRONG-sweep follow, confidence and resync safety, reusable Manual book walk, bounded Canvas2D-oriented rendering and third-party license constraints without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-21"}
   ]
 }
 ```
@@ -1053,9 +1064,212 @@ This amendment records checkpoint
 `MANUAL_LIVE_TRADING_V1_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED`. CONTEXT remains active, incomplete and
 not verified; no implementation plan or production work is authorized.
 
-## 17. Authorization boundary
+## 17. Approved upper workspace, DOM and execution-print direction
 
-Revision 1.8 is a human-approved intermediate durable CONTEXT research checkpoint. Approved
+Revision 1.9 records the approved visual and product direction for the upper Manual Live Trading v1 workspace.
+It preserves revision 1.8 and the existing lower trading panel requirements. The upper workspace is deliberately
+minimal: the primary live chart is on the left and a narrow collapsible market-depth panel is on the right. The
+right panel contains DOM/order-book levels and a realtime execution-print visualization. Trading controls, active
+Limit orders, SL/TP and the other already approved Manual controls remain below and are not redesigned here. No
+additional cards, execution tables, analytics widgets, large controls or Robot UI belong above the trading panel.
+
+### 17.1 Collapse and shared market-data lifecycle
+
+A small unobtrusive arrow control between chart and panel collapses the panel to the right and restores it on a
+second activation. While closed, the chart expands into the released width. Hidden DOM and prints must not keep
+performing expensive rendering. Their visual subscription or processing may suspend when no other active Terminal
+function needs the data. When order-book data is also required for active sizing or liquidity checks, one normalized
+market-data source is shared rather than duplicated. Exact frontend animation, state and subscription mechanics are
+implementation details.
+
+### 17.2 DOM semantics
+
+The DOM presents bounded price levels around the spread. The approved preferred prototype viewport is approximately
+twenty ASK levels above the spread and twenty BID levels below it. This is a UI viewport default, not the full local
+book, and may adjust responsively on very small screens so that rows remain readable. Every visible level contains at
+least price, resting limit liquidity/size and a proportional visual depth fill. Small, medium and large liquidity must
+remain visually distinct; one extreme level must not destroy the useful scale of the remaining levels. Exact row
+height, responsive adjustment and normalization parameters remain feasibility and UX details.
+
+### 17.3 Execution prints and sweep evidence
+
+A print represents an actual aggressive exchange execution, not a resting limit order. Buyer-initiated executions
+are green and seller-initiated executions are red. New prints appear near their execution price while older prints
+move left to preserve a short bounded visual history. Each print is a circle or vertically elongated ellipse, displays
+an understandable execution volume, preferably USDT/USD-equivalent for USDT Linear, and uses a clamped size scale
+that keeps small prints visible and prevents extreme prints from covering the workspace. Exact linear, nonlinear or
+logarithmic scaling is not yet binding.
+
+When sufficiently trustworthy evidence shows an aggressive flow consuming several resting levels, a sweep ellipse
+may span the consumed price range: from the pre-execution best bid down to the final consumed bid for a sell, or from
+the pre-execution best ask up to the final consumed ask for a buy. An exchange public-trade event is not assumed to
+equal one original market order. Exchange executions remain distinct from a locally reconstructed aggressor-sweep
+episode. Reconstruction requires sequenced L2 state immediately before executions, public trade evidence, consumed
+levels and resulting book state, including reconnect and resync handling. Multiple trades, concurrent cancellations,
+drops or ordering ambiguity can make the path unprovable. In that case the UI must show an ordinary volume-sized
+print at the factual execution price, or another clearly non-sweep representation, and must never invent consumed
+levels.
+
+### 17.4 Compact position indicator
+
+The upper market-depth area may contain only a compact indicator for an open Manual position. LONG uses an obvious
+upward direction arrow; SHORT uses an obvious downward direction arrow, with the approved reference showing the
+SHORT arrow in red. Positive PnL is green and negative PnL is red, for example an arrow with `+1.5%`. There is no
+large position card in the upper area.
+The indicator reuses authoritative reconciled position/account state; this revision does not define or replace the
+PnL formula.
+
+### 17.5 Performance constraints and unresolved research
+
+The mobile Telegram Mini App and future web runtime require bounded DOM depth, bounded print retention, no unbounded
+in-memory tape, incremental updates where practical, trustworthy reconnect/resync, usage-aware subscriptions, no
+unnecessary hidden-panel rendering and responsive chart interaction. DOM depth, depth-fill scaling, print scaling,
+sweep correlation/aggregation window, cancellation-versus-execution ambiguity, update batching, rendering frequency,
+hidden-panel subscription lifecycle and mobile feasibility remain research-required. Research must also determine the
+exact depth, gap-detection and correlation rules, confidence thresholds and whether real-world feed behavior supports
+reliable multi-level sweep reconstruction at acceptable Mini App performance.
+
+The unresolved research set is explicitly: responsive visible depth around the preferred 20+20 starting viewport;
+final working and calculation depth beyond the preferred `orderbook.50` candidate; usefulness of 200/1000 depth;
+exact gap-detection rules; sweep correlation window and confidence thresholds; treatment of same-sequence
+multi-message trades; a possible distinct PROBABLE visualization; exact recenter interval and inactivity timeout;
+sweep-follow animation; DOM percentile/window/hysteresis; print-scaling window; bounded tape retention; UI update
+batching and render frequency; hidden-panel unsubscribe/grace behavior; book-walk depth source; x10/x100 compression
+implementation and performance; third-party vendoring policy; historical heatmap need; and mobile Telegram Mini App
+performance measurements.
+
+### 17.6 Normalized public market-data boundary
+
+The preferred architecture is a Bybit public market-data adapter feeding one normalized market-data owner per active
+symbol/session. That owner reconstructs a trustworthy L2 book and retains bounded public trades, then supplies the
+DOM renderer, execution tape, sweep reconstruction and Manual pre-trade book-walk/market-impact preview. DOM, tape
+and other UI components must not open independent exchange subscriptions or connections. The UI does not parse raw
+Bybit payloads, apply book deltas, determine sequence integrity, classify sweep confidence, perform book walk or own
+exchange subscription lifecycle.
+
+`bybit_api.py` remains the Scanner-oriented public OHLCV/instrument boundary and does not become the owner of the
+Terminal live-L2 lifecycle. Scanner signal contracts are not live DOM/trade contracts, and the shared immutable
+Scanner-to-Terminal SignalSnapshot remains separate. Public market executions are not private account executions:
+the ExecutionEngine remains the trading/account-state owner, while normalized public market data is reusable
+Terminal infrastructure consumed by DOM, tape, sweep and book-walk functions.
+
+### 17.7 Bybit evidence, sweep confidence and resynchronization
+
+Bybit V5 public L2 and `publicTrade` provide sufficient evidence for confidence-graded reconstruction through book
+snapshot/delta data, update identifier `u`, cross sequence `seq`, book timestamp `cts`, public-trade timestamp `T`,
+taker side `S`, price, volume, trade identity and trade sequence. A public L2 delete/update cannot by itself prove
+fill rather than cancellation. A reconstructed sweep therefore remains evidence-based reconstruction and never a
+guaranteed identity of one originating market order.
+
+Conceptual confidence classes are `STRONG`, `PROBABLE`, `AMBIGUOUS` and `INVALID/GAP`. Only `STRONG` public evidence
+permits the approved stretched MetaScalp-like ellipse in the v1 direction, and even that does not prove that all
+executions belonged to one original market order. `PROBABLE` does not draw a stretched ellipse by default; a future
+distinct representation requires separate approval. `AMBIGUOUS` renders an ordinary volume-sized print at the
+factual execution price. `INVALID/GAP` disables sweep reconstruction.
+
+On a sequence gap, reconnect or resnapshot, pending correlation windows are invalidated, trusted sweep rendering
+stops, and local L2 is restored from a new authoritative snapshot. Reconstruction resumes only after trustworthy
+state is re-established, and no sweep episode crosses a resynchronization boundary.
+
+No exact or near-exact open-source implementation of the approved pre-event-BBO-to-last-consumed-level stretched
+execution ellipse was confirmed in the researched projects. Sweep reconstruction consequently remains
+BybitScanner-specific Terminal functionality over normalized L2 and public-trade evidence.
+
+### 17.8 Reusable Manual book walk and visual scaling directions
+
+The preferred Manual BUY/SELL preview walks the opposing sorted book level by level for the requested USDT notional,
+allows a partial final level, and returns estimated filled quantity, VWAP/average fill, worst fill price, estimated
+slippage, levels consumed and available/insufficient-depth status. This is an estimate, not an execution guarantee.
+The independently adapted direction is informed by OpenBook and must use Bybit semantics, `qtyStep`, instrument
+limits, Decimal-safe arithmetic, snapshot freshness/sequence and applicable exchange constraints. It does not design
+or authorize Robot behavior.
+
+The preferred non-binding DOM scale uses a rolling/recent high-percentile liquidity reference, normalization of
+visible levels, a `0..1` clamp and an optional mild gamma or square-root visual transform. One extreme level must not
+make the other rows visually empty. Bids and asks are not normalized independently without an explicit reason,
+because separate scales can hide real imbalance. Exact percentile, window and hysteresis remain unresolved.
+
+For prints, visual area should be approximately proportional to USDT notional, giving a base circle radius roughly
+proportional to its square root, with rolling-percentile normalization, a minimum visible size and a maximum clamp.
+Exact notional remains visible numerically. A stretched sweep ellipse uses width for execution/notional magnitude
+and height for the trustworthy consumed price span; height must not simultaneously encode volume.
+
+### 17.9 Rendering, bounded state and external reuse policy
+
+The preferred v1 rendering direction is Canvas2D for DOM and prints/tape, with HTML/CSS/React for low-frequency
+semantic UI. High-frequency market state stays in mutable bounded stores or references outside React render state,
+and feed events are coalesced to at most one visual repaint per animation frame. This amendment selects no frontend
+library. WebGL is not a v1 foundation; it remains an upgrade path for a future historical-liquidity heatmap or large
+retained time-price surface only if performance evidence requires it.
+
+Visible DOM, trade/print history and correlation windows are bounded; no unbounded historical accumulation is
+permitted. Rendering lifecycle is separate from feed lifecycle, so hiding the panel stops expensive rendering while
+the shared feed may remain active for another consumer. External projects' retention defaults are not adopted
+automatically.
+
+External research established: Flowsurface is GPL-3.0 and defaults to reference-only use; FlowMap is Apache-2.0 and
+may be adapted only with required attribution, NOTICE/license and change obligations; eTape is MIT and may be
+adapted with its required notice; OpenBook is MIT and its book-walk algorithm is a strong independent-adaptation
+candidate; OrderFlowMap is MIT and small scaling/rendering ideas may be adapted. No external source is vendored or
+copied by this amendment. Any later reused or adapted third-party code must retain a provenance and license inventory.
+
+### 17.10 DOM viewport, working depth and navigation
+
+Visible depth, local working depth and calculation depth are separate concerns. The Canvas renderer draws the
+approximately 20 asks plus spread plus 20 bids viewport and only minimal transition context. The normalized
+market-data owner may keep a deeper reconstructed book. Bybit `orderbook.50`, providing up to 50 asks and 50 bids,
+is the preferred starting candidate: off-screen levels form an immediately available working margin when price or a
+sweep moves beyond the viewport. This is not yet the final binding feed-depth choice, and local 50+50 availability
+does not require rendering all one hundred rows.
+
+Manual book-walk and market-impact calculations are not limited to the visible 20+20 levels. They may use 50, 200,
+1000 or another suitable trustworthy Bybit depth source when a reliable estimate needs it, while the UI continues to
+show the narrow viewport. Exact calculation depth remains unresolved pending feasibility evidence.
+
+The DOM seeks to keep the spread near the central viewport area without recentering on every tick. Approximately
+23 seconds is an approved preferred initial configurable UX value for periodic recentering when the user is not
+interacting, no higher-priority sweep-follow behavior is active and market data is trustworthy. It is not a permanent
+hard-coded constant. A small unobtrusive CENTER/recenter control immediately returns the current spread to the central
+area; exact icon and motion remain UI details.
+
+Manual scroll or pan temporarily suspends automatic recenter/follow so the viewport is not taken from the user. Auto
+behavior may resume after configurable inactivity, or the user may restore it immediately with CENTER. Exact inactivity
+timeout remains UX research. If a trustworthy active `STRONG` sweep extends beyond the current viewport, the DOM
+immediately follows far enough in the sweep direction to show its continuation and last trustworthy consumed level.
+After the sweep, normal spread-centering may return later. Exact snap or animation behavior remains unresolved.
+
+The conceptual viewport priority is: explicit user interaction/manual inspection; trustworthy active `STRONG` sweep
+follow; explicit CENTER command; periodic spread recenter. This preserves product intent rather than defining a final
+frontend state machine: automation must neither interrupt inspection nor hide a meaningful sweep.
+
+### 17.11 Optional presentation compression and prototype tuning
+
+Price-scale controls `x1`, `x10` and `x100` are an optional deferred capability, not a requirement for the first usable
+Terminal build. `x1` is normal exchange price-step presentation. `x10` and `x100` conceptually aggregate about ten or
+one hundred adjacent price ticks into one visual bucket, combining bucket liquidity and projecting prints and sweeps
+onto that scale. Compression is presentation over the same authoritative normalized L2, not another order book or
+WebSocket connection, and must not degrade underlying state. Bucket price representation, rounding, print/sweep
+projection, performance and UX remain unresolved. The first usable build may ship only `x1` while preserving a clean
+future extension point.
+
+Hands-on evaluation with a working DOM prototype is required for the 20+20 viewport, row height, approximately
+23-second recenter value, recenter motion, interaction suspension, sweep follow, `orderbook.50` working candidate,
+need for deeper calculation data and x10/x100 usefulness. These must remain configurable or replaceable without
+redesigning the normalized market-data core. Existing bounded state, incremental updates, maximum one repaint per
+animation frame and no-duplicate-subscription constraints remain binding directions.
+
+This direction does not select chart or DOM libraries, redesign the chart or lower controls, implement frontend or
+runtime behavior, create Robot contracts, expand AUTOPILOT, or change Scanner behavior. It remains compatible with
+One-Way Mode, WV authority, reconcile-and-adopt, external-state visibility, Manual takeover, Full Close, Emergency
+Close, draggable Limit/SL/TP lines and exchange-confirmation visual states.
+
+This amendment records checkpoint
+`MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED`. CONTEXT remains active, incomplete and
+not verified; no implementation plan or production work is authorized.
+
+## 18. Authorization boundary
+
+Revision 1.9 is a human-approved intermediate durable CONTEXT research checkpoint. Approved
 SPEC revision 1.4 remains intact. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any

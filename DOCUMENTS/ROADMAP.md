@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
+IN_PROGRESS / UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED
 
 Implementation status:
 
@@ -1308,7 +1308,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
+MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED
 
 First implementation priority:
 
@@ -1344,11 +1344,11 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.8.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.9.
 
 Current action:
 
-INTERMEDIATE_HUMAN_EXECUTION_AND_RISK_DECISIONS_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_8.
+INTERMEDIATE_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_9.
 
 Approved intermediate CONTEXT architecture directions from revision 1.5:
 
@@ -1398,6 +1398,17 @@ Human-approved intermediate revision 1.8 execution/risk decisions:
   completion, while Full Close never silently cancels potentially dangerous external orders;
 * negative lookup uses bounded repeated multi-source correlation, but exhausted horizon retains explicit
   unresolved state; exact refresh, timeout, interval, backoff and horizon parameters remain later work.
+
+Human-approved intermediate revision 1.9 upper-workspace direction:
+
+* the upper Manual Terminal workspace remains minimal with the primary live chart on the left and a narrow
+  collapsible DOM plus execution-prints panel on the right; the existing trading controls remain below;
+* DOM levels combine price, resting size and stable proportional depth fill, while aggressive executions use
+  buyer/seller color, clamped volume sizing and bounded realtime history;
+* a multi-level sweep ellipse is allowed only when sequenced L2 and trade evidence support the consumed range;
+  ambiguous correlation falls back to a factual non-sweep print;
+* one normalized market-data source is shared with active liquidity consumers, hidden rendering is suspended,
+  and depth, scaling, batching, subscription lifecycle and mobile feasibility remain unresolved research.
 
 Repository-confirmed boundary:
 
@@ -1463,15 +1474,24 @@ RULE-008:
 
 from:
 
-ROADMAP v4.34
+ROADMAP v4.35
 
 to:
 
-ROADMAP v4.35
+ROADMAP v4.36
 
 reason:
 
-Current checkpoint — Trading Workspace human execution/risk decisions record (v4.34 to v4.35):
+Current checkpoint — Trading Workspace upper workspace / DOM / prints direction (v4.35 to v4.36):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.9 and recorded the approved minimal upper-workspace composition;
+* recorded the normalized public-market-data owner, confidence-gated sweep and resync semantics, reusable Manual book walk, compact position indication and Canvas2D-oriented bounded rendering direction;
+* recorded non-binding DOM/print scaling and external license/provenance constraints without vendoring source;
+* recorded a preferred 20+20 viewport over an `orderbook.50` working-depth candidate, configurable recenter, interaction-safe STRONG-sweep follow and optional deferred x10/x100 presentation compression;
+* retained responsive/calculation depth, exact timing/animation, compression feasibility, gap/correlation/confidence rules, scaling windows, retention, lifecycle, vendoring, heatmap and mobile feasibility as later research;
+* preserved active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT.
+
+Previous checkpoint preserved — Trading Workspace human execution/risk decisions record (v4.34 to v4.35):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.8 and recorded the approved execution/risk decisions;
 * bound walletBalance WV, One-Way Mode, reconcile-and-adopt external state, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative correlation;

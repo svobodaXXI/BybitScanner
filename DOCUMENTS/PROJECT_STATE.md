@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
+IN_PROGRESS / UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED
 
 Checkpoint:
 
-MANUAL_LIVE_TRADING_V1_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
+MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED
 
 ChangeRequest revision:
 
-1.8
+1.9
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.8
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.9
 
 Product priority:
 
@@ -912,7 +912,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-INTERMEDIATE_HUMAN_EXECUTION_AND_RISK_DECISIONS_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_8
+INTERMEDIATE_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_CHECKPOINT_PREPARED_FOR_REVIEW_REVISION_1_9
 
 Next phase:
 
@@ -4667,15 +4667,24 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.41
+PROJECT_STATE v7.42
 
 to:
 
-PROJECT_STATE v7.42
+PROJECT_STATE v7.43
 
 reason:
 
-Current checkpoint — Trading Workspace human execution/risk decisions record (v7.41 to v7.42):
+Current checkpoint — Trading Workspace upper workspace / DOM / prints direction (v7.42 to v7.43):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.9 and checkpoint `MANUAL_LIVE_TRADING_V1_UPPER_WORKSPACE_DOM_PRINTS_DIRECTION_RECORDED`;
+* recorded the minimal chart-left and collapsible DOM/prints-right upper composition, one normalized public market-data owner, confidence-gated sweep safety, reusable Manual book walk, compact position indicator and Canvas2D-oriented bounded rendering direction;
+* recorded Bybit public-data limits, resync invalidation, non-binding percentile/square-root scaling directions and third-party license/provenance constraints;
+* recorded a preferred 20+20 visible viewport over an `orderbook.50` working-depth candidate, configurable periodic/manual recenter, interaction priority, STRONG-sweep follow and deferred x10/x100 presentation compression;
+* retained responsive/calculation depth, exact timing, inactivity, animation, compression, gap/correlation/confidence thresholds, scaling windows, retention, lifecycle, vendoring, heatmap and Mini App performance as unresolved research;
+* kept CONTEXT active and incomplete, Robot implementation out of scope and IMPLEMENT not started or authorized.
+
+Previous checkpoint preserved — Trading Workspace human execution/risk decisions record (v7.41 to v7.42):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.8 and checkpoint `MANUAL_LIVE_TRADING_V1_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED`;
 * bound USDT walletBalance WV authority, One-Way Mode, no automatic mode switching, external-state adoption, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative correlation;
