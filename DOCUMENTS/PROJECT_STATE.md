@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE
+IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED
 
 Checkpoint:
 
-MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING
+MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED
 
 ChangeRequest revision:
 
-1.12
+1.13
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.12
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.13
 
 Product priority:
 
@@ -912,7 +912,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE_IMPLEMENT_PLANNING_NOT_AUTHORIZED_REVISION_1_12
+MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_COMPLETE_IMPLEMENT_NOT_AUTHORIZED_REVISION_1_13
 
 Next phase:
 
@@ -4667,15 +4667,24 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.45
+PROJECT_STATE v7.46
 
 to:
 
-PROJECT_STATE v7.46
+PROJECT_STATE v7.47
 
 reason:
 
-Current checkpoint — Manual execution/protection CONTEXT completion (v7.45 to v7.46):
+Current checkpoint — Manual execution/protection IMPLEMENT planning (v7.46 to v7.47):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.13 and checkpoint `MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED`;
+* planned one modular local `terminal/` subsystem with pure domain contracts, one ExecutionEngine, Bybit adapter, reconciliation coordinator, controlled SQLite/WAL store and normalized API/projection boundary;
+* recorded Bybit V5 REST/private-WS responsibilities, explicit execution and connectivity states, fast-DOM and Market/Limit algorithms, confirmed-FLAT cleanup and restart/reconnect persistence requirements;
+* decomposed implementation into nine small verifiable stages with acceptance, test and rollback boundaries and recorded the complete adversarial test matrix;
+* marked the bounded plan ready for explicit human IMPLEMENT authorization only after its stated pre-implementation gates, without granting authorization;
+* kept overall CONTEXT active and incomplete, Robot out of scope and IMPLEMENT not started or authorized.
+
+Previous checkpoint preserved — Manual execution/protection CONTEXT completion (v7.45 to v7.46):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.12 and checkpoint `MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING`;
 * separated 300-ms input anti-bounce from durable UNKNOWN/RECONCILING command locks and completed fail-closed degraded-state risk gates;

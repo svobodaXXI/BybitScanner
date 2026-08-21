@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE
+IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED
 
 Implementation status:
 
@@ -1308,7 +1308,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING
+MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED
 
 First implementation priority:
 
@@ -1344,11 +1344,11 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.12.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.13.
 
 Current action:
 
-MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE_IMPLEMENT_PLANNING_NOT_AUTHORIZED_REVISION_1_12.
+MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_COMPLETE_IMPLEMENT_NOT_AUTHORIZED_REVISION_1_13.
 
 Approved intermediate CONTEXT architecture directions from revision 1.5:
 
@@ -1474,15 +1474,23 @@ RULE-008:
 
 from:
 
-ROADMAP v4.38
+ROADMAP v4.39
 
 to:
 
-ROADMAP v4.39
+ROADMAP v4.40
 
 reason:
 
-Current checkpoint — Manual execution/protection CONTEXT completion (v4.38 to v4.39):
+Current checkpoint — Manual execution/protection IMPLEMENT planning (v4.39 to v4.40):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.13 and checkpoint `MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED`;
+* recorded modular Terminal boundaries, Bybit adapter responsibilities, explicit execution/connectivity states, persistence/recovery and DOM/chart projection contracts;
+* decomposed the bounded implementation into nine reviewable stages with acceptance, rollback and a complete safety/regression test matrix;
+* assessed the plan as ready for explicit human authorization after recorded pre-implementation gates, without authorizing or starting IMPLEMENT;
+* preserved overall active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT.
+
+Previous checkpoint preserved — Manual execution/protection CONTEXT completion (v4.38 to v4.39):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.12 and recorded checkpoint `MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING`;
 * completed fast-input versus uncertainty locks, degraded-state risk gates, Market/Limit reversal distinction and realtime reconciliation requirements;

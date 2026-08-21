@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.12",
+  "revision": "1.13",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -265,13 +265,13 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING",
+  "current_checkpoint": "MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
   "next_phase_authorization": "IMPLEMENT_NOT_STARTED_NOT_AUTHORIZED_CONTEXT_RESEARCH_IN_PROGRESS",
@@ -291,7 +291,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "5fa3bba7b347739fb73e57f25306ec8a677643e4",
-    "status": "MANUAL_EXECUTION_PROTECTION_CONTEXT_COMPLETE_IMPLEMENT_PLANNING_NOT_AUTHORIZED"
+    "status": "MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_COMPLETE_IMPLEMENT_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -306,7 +306,8 @@
     {"revision": "1.9", "reason": "Human-approved intermediate durable CONTEXT checkpoint recording the minimal upper Terminal workspace, one normalized public market-data owner, collapsible DOM and execution-print panel, preferred 20+20 viewport over deeper working data, interaction-safe recenter and STRONG-sweep follow, confidence and resync safety, reusable Manual book walk, bounded Canvas2D-oriented rendering and third-party license constraints without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-21"},
     {"revision": "1.10", "reason": "Human-approved CONTEXT amendment superseding only the revision 1.9 fixed-period recenter direction with an approximately five-second configurable eligibility check and central-deviation threshold, while preserving immediate CENTER, higher-priority STRONG-sweep follow, manual-inspection suppression, incomplete CONTEXT and unauthorized IMPLEMENT", "date": "2026-08-22"},
     {"revision": "1.11", "reason": "Human-approved intermediate CONTEXT checkpoint recording Manual Market, Limit and SL/TP execution/protection semantics, fast two-touch DOM commands, fail-closed uncertainty, partial fills, order visibility and overlays, symbol cleanup and the narrow Manual-Limit reversal exception without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-22"},
-    {"revision": "1.12", "reason": "Human-approved CONTEXT checkpoint completing the Manual Market, Limit and SL/TP execution/protection research block with anti-bounce versus uncertainty locks, fail-closed degraded-state gates, Market and Limit reversal policies, account-wide realtime truth, origin-independent ordinary-Limit cleanup after confirmed FLAT and a final execution-state matrix while leaving overall CONTEXT active and IMPLEMENT planning and implementation unauthorized", "date": "2026-08-22"}
+    {"revision": "1.12", "reason": "Human-approved CONTEXT checkpoint completing the Manual Market, Limit and SL/TP execution/protection research block with anti-bounce versus uncertainty locks, fail-closed degraded-state gates, Market and Limit reversal policies, account-wide realtime truth, origin-independent ordinary-Limit cleanup after confirmed FLAT and a final execution-state matrix while leaving overall CONTEXT active and IMPLEMENT planning and implementation unauthorized", "date": "2026-08-22"},
+    {"revision": "1.13", "reason": "Documentation-only IMPLEMENT planning checkpoint decomposing the completed Manual Market, Limit and SL/TP execution/protection block into modular Terminal domain, Bybit adapter, execution-engine, reconciliation, persistence, projection, API and fast-DOM increments with explicit acceptance and test gates while leaving overall CONTEXT active and IMPLEMENT not started or authorized", "date": "2026-08-22"}
   ]
 }
 ```
@@ -1473,9 +1474,223 @@ checkpoint, IMPLEMENT is `NOT_STARTED_NOT_AUTHORIZED`, and Robot remains out of 
 
 This amendment records checkpoint `MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING`.
 
-## 21. Authorization boundary
+## 21. Manual execution/protection IMPLEMENT plan
 
-Revision 1.12 is a human-approved CONTEXT completion checkpoint for one bounded research block. Approved
+Revision 1.13 is planning only for the bounded Manual Market, Limit and SL/TP execution/protection block completed in
+revision 1.12. It preserves all approved product semantics and does not authorize or begin production implementation.
+
+### 21.1 Architectural and package boundaries
+
+The minimum clean direction is one local `terminal/` Python package inside the existing repository and one backend
+process boundary for the Terminal application. No microservices, broker or external queue are required for v1. Likely
+module boundaries, subject to final naming review at authorization, are:
+
+* `terminal/domain/`: pure versioned command, order, execution, position, protection, connectivity and projection
+  contracts; identifiers; states; transition invariants; quantity/price policies; no pybit, HTTP, database or UI;
+* `terminal/application/trading_application.py`: command entry boundary used by REST/UI; validates ownership and routes
+  admitted intent through PreTradeGuard into the single execution-state owner;
+* `terminal/application/execution_engine.py`: sole owner of command/order/execution/position/protection business-state
+  transitions from REST acknowledgements, normalized private events and reconciliation;
+* `terminal/application/pretrade_guard.py`: synchronized-account, instrument, WV, mode, exposure and uncertainty gates;
+* `terminal/application/reconciliation.py`: L1-L4 orchestration that queries exchange evidence and submits normalized
+  evidence back through ExecutionEngine rather than mutating projections independently;
+* `terminal/application/projections.py`: normalized account/symbol DOM/chart/API projections derived from engine state;
+* `terminal/exchange/bybit_v5_adapter.py`: authenticated REST/private-WS transport, payload normalization and transport
+  errors only; no business projection ownership;
+* `terminal/exchange/public_market_data.py`: interface to the separately planned normalized L2/tape owner used by
+  preview and DOM; it must not turn Scanner `bybit_api.py` into a Terminal live-market-data lifecycle owner;
+* `terminal/persistence/sqlite_store.py` plus schema/migration definitions: one controlled SQLite/WAL transaction
+  boundary for command attempts, raw evidence, immutable executions, projections and reconciliation state;
+* `terminal/api/`: REST command/snapshot and backend WebSocket event boundary; handlers never mutate trading state
+  directly and expose normalized vocabulary rather than raw Bybit status;
+* a future Terminal client workspace consumes those API/projection contracts. Its exact frontend filesystem/toolchain
+  path is selected by the broader frontend checkpoint; no UI framework dependency is authorized here.
+
+Existing `bybit_api.py` remains Scanner public OHLCV/instrument support and is not reused for authenticated execution.
+Existing `contracts/signal_contract.py` remains Scanner signal evidence and is not a live order contract. Current
+`chart.py`, `chart_clean.py` and `analyzer/charts.py` remain static Scanner rendering. `pybit==5.17.0` may be used behind
+the adapter after method-shape verification; no other current module safely owns execution state or trading persistence.
+
+Responsibility stays explicit: UI creates intent; TradingApplication admits a durable command; Bybit owns exchange
+Orders and Executions; immutable Execution evidence updates Position through ExecutionEngine; reconciliation feeds the
+same owner; ConnectivityGate controls permissions; DOM/chart projections are read models only.
+
+### 21.2 Bybit V5 adapter plan and verification gate
+
+Before implementation, current official Bybit V5 documentation and installed pybit signatures must be revalidated.
+The presently verified USDT Linear direction is:
+
+* create Market/Limit: `POST /v5/order/create`, `category=linear`, One-Way `positionIdx=0`, unique persisted
+  `orderLinkId` (maximum 36 supported characters), with Market `slippageToleranceType` `TickSize` or `Percent` and
+  separately approved/configured tolerance; acknowledgement is asynchronous;
+* amend/cancel: `/v5/order/amend` and `/v5/order/cancel`, correlated by `orderId` or `orderLinkId`, with WebSocket or
+  reconciliation confirmation; symbol-scoped cleanup first inventories ordinary orders and cancels only that set,
+  rather than using an unfiltered cancel-all that could mix conditional protection;
+* read recovery: `/v5/order/realtime` for paginated active/recent Orders, `/v5/order/history` when required,
+  `/v5/position/list` for Position, `/v5/execution/list` for missed Executions and
+  `/v5/market/instruments-info` for status, `tickSize`, `qtyStep`, `minOrderQty`, `minNotionalValue`,
+  `maxOrderQty` and `maxMktOrderQty`;
+* private realtime: category-specific `order.linear`, `execution.linear` and `position.linear` topics normalized into
+  internal events. Position messages are snapshots/updates, not fill evidence; executions use `execId` deduplication;
+* protection: `/v5/position/trading-stop`, `positionIdx=0`, planned full-position exchange-side TP/SL where applicable;
+  Full mode supports Market TP/SL and system orders track position size, but one-sided modification can break paired
+  binding and therefore requires snapshot/reconciliation handling;
+* emergency close: opposite side, quantity capped to confirmed remainder, `reduceOnly=true`, with no duplicate submit
+  after unknown outcome. Exact close parameter combination and current exchange maximum behavior are verified before
+  implementation rather than inferred;
+* startup/reconnect: establish private connectivity, query Position/Open Orders/protection and required execution
+  history, correlate local uncertain commands, then unlock only a non-contradictory account/symbol state.
+
+Market preview consumes the normalized public book and remains informational. Exchange-side slippage tolerance is the
+execution protection boundary; its type/value is explicit configuration/human approval, never a hidden magic number.
+
+### 21.3 Explicit execution-state model
+
+The implementation separates command lifecycle from exchange-order projection but exposes this normalized combined
+planning vocabulary:
+
+| Current | Evidence/event | Next | Authority/invariant |
+| --- | --- | --- | --- |
+| `LOCAL_INTENT` | PreTradeGuard admits and durable identity is committed | `ADMITTED` | Local durable transaction |
+| `ADMITTED` | Submission-attempt record committed immediately before I/O | `SUBMITTING` | ExecutionEngine/store |
+| `SUBMITTING` | REST accepts request and returns identifiers | `ACKNOWLEDGED` | REST acceptance only; never fill |
+| `SUBMITTING` | Positive known rejection/no submission evidence | `REJECTED/FAILED` | Guard, transport proof or exchange rejection |
+| `SUBMITTING` | Timeout/lost response/ambiguous crash | `UNKNOWN` | No retry; reconciliation required |
+| `ACKNOWLEDGED` | Order event/snapshot shows active Limit | `OPEN` | Private Order event or REST reconciliation |
+| `ACKNOWLEDGED` or `OPEN` | New deduplicated fill with leaves | `PARTIALLY_FILLED` | Execution evidence; Position updates once |
+| `ACKNOWLEDGED`, `OPEN` or `PARTIALLY_FILLED` | Filled quantity complete | `FILLED` | Deduplicated executions plus Order evidence |
+| `OPEN` or `PARTIALLY_FILLED` | Cancel intent durably admitted | `CANCEL_PENDING` | Local intent; UI remains pending |
+| `CANCEL_PENDING` | Confirmed exchange cancellation | `CANCELLED` | Order event or REST reconciliation |
+| Any non-final submitted state | Contradictory/gapped evidence | `RECONCILING` | Reconciliation coordinator via engine |
+| `UNKNOWN` | Correlated Order/Execution/Position evidence | Confirmed applicable state or `RECONCILING` | Bybit evidence, non-regressive |
+| `RECONCILING` | Complete non-contradictory evidence committed | Applicable confirmed state | Atomic convergence/unlock |
+
+`FAILED` is reserved for known local/pre-submit failure; `REJECTED` is authoritative exchange rejection. Market
+partial fill followed by exchange cancellation preserves the Execution and terminal Order outcome without retry.
+Final states never erase fills, and late weaker events cannot regress stronger confirmed state.
+
+### 21.4 Connectivity and risk gate
+
+ConnectivityGate is an account/symbol-aware application policy, not a UI boolean:
+
+* `ONLINE`: synchronized state; new entry, scale-in, reduce/close, cancel and new Limit may pass other guards;
+* `DEGRADED`: new exposure and exposure-increasing Limits blocked; safely bounded reduce/cancel may pass;
+* `UNKNOWN_EXECUTION`: conflicting exposure and retry blocked; reconcile original command; bounded risk reduction only
+  from confirmed state;
+* `RECONCILING`: new exposure blocked; bounded reduction/cancel only; ONLINE requires committed convergence;
+* `OFFLINE`: no mutation is represented as successful; new submissions are blocked and reconnect triggers recovery.
+
+Emergency close uses confirmed side/size and cannot cross FLAT. UNKNOWN emergency outcome blocks another close until
+reconciled. Permission checks execute server-side immediately before mutation, independently of client button state.
+
+### 21.5 Fast DOM input and projection contract
+
+The client gesture controller owns only transient hold/tap/double-tap and 300-ms debounce state. Holding BUY ORDER then
+tapping BID emits BUY LIMIT intent; tapping ASK emits immediate MARKET BUY intent. Holding SELL ORDER then tapping ASK
+emits SELL LIMIT intent; tapping BID emits immediate MARKET SELL intent. The second tap is confirmation; there is no
+modal. Default quick intent is one WV. Double-tap on a side control edits that side's dollar/WV setting. Server admission
+and UNKNOWN locks remain authoritative after debounce expires. Automatic preset Manual SL/TP stays an extension point,
+not a mandatory v1 stage.
+
+DOM projection joins normalized active Orders to the current symbol book by normalized price. Every active ordinary
+Limit, including external orders, has direction color, large left dot, remaining dollar volume, right-shifted depth and
+farther-right price; the same Order projects a chart Limit-line. Dot tap emits immediate cancel intent. `CANCEL_PENDING`
+keeps a pending indicator/line until confirmed cancellation; rejection/unknown remains visible and truthful.
+
+### 21.6 Market, Limit, normalization and cleanup algorithms
+
+Market planning sequence: capture non-blocking fresh DOM preview; resolve configured one-WV/dollar intent; fetch or
+revalidate instrument/account/position inputs; floor quantity to `qtyStep`; reject zero, sub-`minOrderQty` or
+sub-`minNotionalValue`, or above allowed maximum; for opposite-side Market cap quantity to confirmed remainder; persist
+command and `orderLinkId`; submit once with approved slippage protection; apply deduplicated fills; never chase a
+partial remainder. A separate action is required after confirmed FLAT.
+
+Limit planning sequence: normalize price to `tickSize` according to separately reviewed safe side semantics, compute
+and floor quantity without increasing requested exposure, validate current metadata/minimums/maximums, persist identity
+and submit. Partial fills update Position while remaining quantity stays active. Manual Limit may cross FLAT and open
+opposite residual exactly as approved. Instrument metadata and wallet/position/gate inputs are revalidated at execution
+time; no numeric exchange limits are hard-coded.
+
+Confirmed-FLAT cleanup sequence is:
+
+1. ExecutionEngine confirms Position transition to zero caused by Market, SL or TP.
+2. Start a durable symbol/account cleanup record and snapshot all ordinary active Limits, regardless of origin.
+3. Issue idempotently tracked cancel intents only for that ordinary symbol set; do not touch other symbols or silently
+   include conditional/protection Orders.
+4. Keep DOM/chart objects pending until Order events or REST reconciliation confirm each final state.
+5. Ingest any fill racing cancellation through normal execution dedup; if exposure reopens, project factual Position,
+   stop claiming FLAT completion and reconcile.
+6. Complete cleanup only when Position and ordinary-order state are authoritative and non-contradictory; protection
+   cleanup converges through its separate approved workflow.
+
+### 21.7 Persistence and recovery boundary
+
+Persist before submission: account/category/symbol, immutable command identity/type/side, requested WV/dollar intent,
+normalized price/qty, position mode/index, `orderLinkId`, origin/controller, admission evidence and attempt state.
+Persist as evidence: raw normalized exchange-event journal, `orderId` correlation, immutable executions keyed by
+`(trading_account_id, category, execId)`, order/protection projections, position projection, connectivity/gate state,
+cleanup and reconciliation records. One SQLite/WAL writer/transaction boundary atomically deduplicates an execution and
+updates economic projections. No local projection overrides factual Bybit state.
+
+Startup loads uncertain/local state, starts private streams without declaring ONLINE, snapshots instrument/account,
+Position, ordinary/conditional Orders and protection, retrieves executions across the recovery horizon, correlates
+identifiers, replays only unseen executions through ExecutionEngine, resolves cleanup/unknown commands, commits
+convergence and then unlocks. Reconnect marks affected scope DEGRADED/RECONCILING, buffers or journals normalized events,
+performs the same gap recovery and never treats WebSocket reconnection alone as synchronization. Offline executions are
+recovered from REST and applied once.
+
+### 21.8 Staged implementation sequence
+
+| Stage | Scope and likely files | Acceptance and minimal tests | Rollback/safety boundary |
+| --- | --- | --- | --- |
+| 0. Contracts | New `terminal/domain/{models,states,events,policies}.py`; contract tests | Decimal-safe identifiers, states, transition table, PositionKey and exec dedup key are pure/deterministic | No network, DB or runtime wiring |
+| 1. Store | New `terminal/persistence/{sqlite_store,schema}.py`; migration/store tests | WAL setup, command-before-submit, atomic exec dedup/projection and restart reload pass | Isolated local DB; schema versioned and disposable in tests |
+| 2. Bybit reads/events | New `terminal/exchange/{bybit_v5_adapter,normalization}.py`; fixture/contract tests | Instrument, position, order, execution and protection snapshots plus order/execution/position event normalization | Read-only/testnet fixtures; no create/cancel enabled |
+| 3. Engine/reconciliation | New `terminal/application/{execution_engine,reconciliation,projections}.py`; state/replay tests | REST/WS/recovery converge through one owner; duplicates and late evidence are non-regressive | No mutation adapter exposed |
+| 4. Guard/identity | New `terminal/application/{pretrade_guard,trading_application}.py`; policy tests | WV normalization, unique persisted orderLinkId, ONLINE/degraded permissions and Market-to-FLAT cap pass | Submission port remains fake |
+| 5. Market/Limit/cancel | Adapter mutation methods plus application handlers; mocked/testnet contract tests | Submit once, ACK pending, partial fills, active Limit, cancel pending/final and unknown timeout reconcile correctly | Feature/config kill switch defaults trading disabled; no production credential test |
+| 6. Protection/cleanup | Protection application service and cleanup records/tests | Manual SL/TP confirmed lifecycle; FLAT ordinary-Limit cleanup, conditional separation and fill/cancel race converge | Cleanup scoped by account+symbol and ordinary-order inventory |
+| 7. API/projections | `terminal/api/` routes/events plus authorization/serialization tests | UI receives normalized snapshots/pending states; handlers cannot bypass guard/engine | Backend remains local/test mode, no frontend dependency required |
+| 8. DOM client slice | Approved future client path: gesture controller, DOM/Limit/chart projection tests | Exact hold/tap mapping, no modal, one-WV default, double-tap config, 300-ms debounce and truthful cancel projection | Client cannot submit outside authenticated application API |
+| 9. Recovery integration | Startup/reconnect orchestration and end-to-end fake/testnet scenarios | Offline fills, external mutations, unknown submits and cleanup recover without duplicate economic effects | Real-money enablement remains off pending separate authorization/verification |
+
+Each stage is independently reviewable and must preserve Scanner tests and subsystem separation. Stage 8 depends on the
+broader approved frontend shell/toolchain boundary but does not require revisiting execution/protection product research.
+
+### 21.9 Required test matrix
+
+The bounded implementation verification suite must cover: successful Market and Limit; Market partial fill without
+retry; Limit partial fill with active remainder; cancel of partial Limit; duplicate tap inside 300 ms; legitimate tap
+after 300 ms when no uncertainty lock exists; post-300-ms tap blocked by UNKNOWN; timeout after submit; unknown outcome
+reconciliation and no blind retry; reconnect with fills during outage; external Limit appearance/disappearance;
+external Position modification; Market reduction capped at FLAT; separate post-FLAT action opening opposite exposure;
+Limit crossing FLAT into opposite exposure; Market/SL/TP confirmed FLAT triggering ordinary-Limit cleanup; fill/cancel
+race; cancellation ACK versus final cancellation; DEGRADED exposure block; safely bounded emergency reduction; unknown
+emergency close blocking duplicate; OFFLINE never reporting success; duplicate WS/REST execution; restart after
+command-before-submit and during execution transaction; and account/symbol isolation.
+
+Tests progress from pure unit/state/property-style cases, through adapter payload fixtures and in-memory/temp SQLite,
+to fake-exchange integration and explicitly authorized Bybit test/demo environment checks. No real-account mutation is
+part of ordinary automated validation.
+
+### 21.10 Acceptance and authorization boundary
+
+Before IMPLEMENT may be authorized, human review must approve this bounded plan and exact file scope; the frontend
+shell/path and dependencies needed by the authorized stages must be selected; current official Bybit V5 endpoint,
+parameter, rate-limit and pybit method shapes must be reverified; test/demo credentials and a default-off trading kill
+switch must be defined; migration/rollback and credential boundaries must be approved; and stage-specific acceptance
+tests must be agreed. Real-money enablement requires later VERIFY evidence and separate authority.
+
+The plan is implementable and ready for explicit human IMPLEMENT authorization after those pre-implementation gates
+are satisfied or included in the authorized first planning stage. This document does not satisfy that authorization by
+itself. Overall Trading Workspace CONTEXT remains active for other bounded blocks; IMPLEMENT remains
+`NOT_STARTED_NOT_AUTHORIZED`, no dependencies are approved, and Robot remains out of scope.
+
+This amendment records checkpoint `MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED`.
+
+## 22. Authorization boundary
+
+Revision 1.13 is a documentation-only IMPLEMENT planning checkpoint for one bounded completed CONTEXT block. Approved
 SPEC revision 1.4 remains intact. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any
