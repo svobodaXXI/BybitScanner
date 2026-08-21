@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.0",
+  "revision": "1.1",
   "lifecycle_stage": "SPEC",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -75,6 +75,14 @@
     "Full position close includes confirmed market close, ticker-wide order and protection cleanup, and reconciliation before success",
     "Semi-transparent means not confirmed by Bybit in the displayed state; opaque means exchange-confirmed",
     "Future MANUAL versus ROBOT ownership and TAKE_MANUAL_CONTROL compatibility is reserved but robot behavior is excluded from v1"
+    ,"Working Volume is independent of leverage: one WV is exactly five percent of real USDT equity and leverage never multiplies the intended WV-based position size"
+    ,"Position ownership is explicit as MANUAL or ROBOT and only one controller has normal mutation authority at a time"
+    ,"AUTOPILOT conceptually transfers one eligible position from MANUAL to ROBOT ownership while preserving human observation and Close Position override"
+    ,"Human takeover transfers ROBOT ownership back to MANUAL only after robot mutation is stopped and current Bybit state is reconciled"
+    ,"Active Positions has separate MANUAL and AUTOPILOT sections with ownership-scoped individual and bulk close operations"
+    ,"Immutable entry origin and entry reason are distinct from mutable current controller ownership"
+    ,"Human-opened trades retain MANUAL origin and MANUAL_ENTRY or Ручной вход reason through any AUTOPILOT handoff or human takeover; Terminal and Robot do not infer a different human motive after entry"
+    ,"Future Robot-opened trades use ROBOT origin and may preserve a structured Robot entry reason defined by later Strategy or Robot design"
   ],
   "unresolved_decisions": [
     "Frontend, backend, chart library and persistence technology selection",
@@ -87,6 +95,8 @@
     "Shared chart-engine selection and saved drawing schema",
     "Sound assets, delivery mechanism and user configuration",
     "Local deployment topology and later VPS migration boundary"
+    ,"Final names and transition rules for MANUAL_CONTROLLED, ROBOT_CONTROLLED, TAKEOVER_PENDING, CLOSING and RECONCILING conceptual states"
+    ,"Exact persisted field names and schema for immutable entry origin and entry reason"
   ],
   "acceptance_criteria": [
     "All Manual Live Trading v1 product and safety requirements are recorded in one owning durable ChangeRequest",
@@ -95,6 +105,9 @@
     "Working Volume, market entry, Limit, SL/TP, close cleanup, overlays, fills and feedback semantics are explicit",
     "Exchange authority and reconciliation requirements prevent optimistic success claims",
     "Robot integration is reserved without entering v1 implementation scope",
+    "Working Volume leverage independence, fractional display and active-position indicator semantics are explicit",
+    "Exclusive controller ownership, AUTOPILOT handoff, human takeover and ownership-scoped close behavior are explicit",
+    "Immutable entry provenance is separated from current controller and remains stable across ownership transfers",
     "Implementation remains not started and not authorized",
     "Only authoritative documentation changes in this checkpoint"
   ],
@@ -128,29 +141,31 @@
   ],
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
-    {"id": "SPEC", "status": "APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
+    {"id": "SPEC", "status": "REVISION_1_1_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
     {"id": "CONTEXT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "SPEC",
-  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_SPEC_APPROVED_RECORDED",
+  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_OWNERSHIP_AND_WORKING_VOLUME_SPEC_APPROVED_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "CONTEXT",
   "next_phase_authorization": "NOT_AUTHORIZED_PENDING_HUMAN_SPEC_APPROVAL",
   "related_commits": [
-    {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"}
+    {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
+    {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
-    "latest_saved_checkpoint": null,
-    "status": "UNCOMMITTED_SPEC_CHECKPOINT"
+    "latest_saved_checkpoint": "52f719351574d32aeb765fa833a27cc1e1bbbd25",
+    "status": "DOCUMENTATION_CHECKPOINT_APPROVED_FOR_COMMIT"
   },
   "amendment_history": [
-    {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"}
+    {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
+    {"revision": "1.1", "reason": "Human-approved documentation checkpoint recording leverage-independent Working Volume, immutable entry provenance, exclusive position ownership, future AUTOPILOT handoff, human takeover and ownership-scoped active-position operations without authorizing CONTEXT, external research or implementation", "date": "2026-08-21"}
   ]
 }
 ```
@@ -194,8 +209,14 @@ and disabled v1 AUTOPILOT. Symbol changes occur inside Terminal. All other tradi
 ## 4. Working Volume and market actions
 
 Canonical label is `Рабочий объём` / `Working Volume`: exactly 5% (1/20) of own account equity/deposit
-before leverage. Leverage acts separately; 5% is never reinterpreted as leveraged notional. Default
+before leverage. One WV is independent of leverage: leverage must not multiply Working Volume or the
+intended WV-based position size. With 1,000 USDT real equity, 1 WV is 50 USDT, 2 WV is 100 USDT and
+3 WV is 150 USDT. Future exchange/API leverage handling cannot redefine this product rule. Default
 BUY/SELL and new Limits use one editable Working Volume.
+
+Terminal displays a Working Volume indicator under or near the chart, conceptually crossed swords plus
+a number such as `⚔ 2.4`. It represents WV actually engaged in the current position. Fractional WV is
+displayed to one decimal place; underlying trading and accounting state is never rounded by this UI rule.
 
 BUY immediately submits a real market LONG; SELL submits a real market SHORT. Fill confirmation comes
 from Bybit state, not button press. `Close position by market` closes 100% for the current ticker.
@@ -257,9 +278,72 @@ event log, and may support safe `TAKE_MANUAL_CONTROL`. Ownership must be able to
 and `ROBOT`; after takeover Robot must stop modifying that position. These are compatibility constraints,
 not v1 robot implementation scope.
 
+### 9.1 Exclusive position ownership and AUTOPILOT handoff
+
+Every active trade/position has conceptual `MANUAL` or `ROBOT` ownership. Scanner, Terminal and Robot
+remain independent, and only one controller may have normal mutation authority for a position at a time.
+
+Every trade also preserves immutable entry provenance, conceptually `entry_origin`, separately from the
+mutable current controller. Exact field naming belongs to later CONTEXT/architecture work. A human-opened
+trade has origin `MANUAL` and entry reason `MANUAL_ENTRY` / `Ручной вход`. Terminal and Robot must not
+retroactively infer or guess the human's real trading motive.
+
+If that trade later transfers to AUTOPILOT, origin remains `MANUAL` and reason remains `MANUAL_ENTRY`;
+only current controller becomes `ROBOT`. If the human later takes control back, controller returns to
+`MANUAL` while origin remains unchanged. A Robot live view therefore may show:
+
+* Entry origin: `MANUAL`;
+* Entry reason: `Ручной вход`;
+* Current controller: `ROBOT` / `AUTOPILOT`.
+
+Future trades opened directly by Robot have origin `ROBOT` and may store a structured Robot reason such
+as `BREAKOUT` or `RETEST`. The complete Robot reason taxonomy is deferred to future Strategy/Robot design.
+
+For a future eligible trade, AUTOPILOT means `MANUAL → ROBOT`: the future Robot takes management control
+of that specific trade. While ROBOT owns it, Terminal remains a live observation surface. Manual BUY,
+SELL and order-management controls are hidden or disabled; Limit, SL and TP remain visible but cannot be
+clicked or dragged. Human `Close Position` remains available. Live detail includes controller, symbol,
+LONG/SHORT, pattern, entry reason such as BREAKOUT/RETEST, entry price, size, Working Volume indicator,
+SL, TP and available state/PnL.
+
+Robot implementation and autonomous decision logic remain outside Manual Live Trading v1. This contract
+only prevents v1 architecture and UI state from making later ownership and observation impossible.
+
+### 9.2 Human takeover and close arbitration
+
+The inverse transition is `ROBOT → MANUAL`. Before manual controls return, Robot mutation authority must
+stop and reconciliation must establish current exchange state. Ownership change alone must not recreate
+existing exchange orders or protection. Architecture must prevent simultaneous Robot and human mutation.
+
+Human Close Position is an override while ROBOT owns the trade. It must first fence Robot mutations/new
+commands for the affected position, then execute the existing close, cleanup and reconciliation workflow
+without racing Robot management.
+
+### 9.3 Active trades / positions workspace
+
+A navigation control available from Manual Terminal and AUTOPILOT live view opens Active Positions with
+two independent collapsible sections:
+
+* `MANUAL` — active MANUAL-owned positions;
+* `AUTOPILOT` — active ROBOT-owned positions.
+
+Each entry shows at least symbol, LONG/SHORT, entry price, current size, Working Volume display, live
+state/PnL and applicable SL/TP. Selecting it opens its live Terminal/chart view. Every entry supports
+individual Close Position.
+
+Each section also owns a separate bulk action. `Close All MANUAL` affects only MANUAL positions;
+`Close All AUTOPILOT` affects only ROBOT positions. Groups are never implicitly mixed. ROBOT-owned bulk
+close first fences Robot mutation/new commands for affected positions. Every individual or bulk full
+close retains ticker cleanup and reconciliation invariants: required Limits/SL/TP are removed and the
+intended terminal state is proven before success.
+
+Conceptual states sufficient for later design include `MANUAL_CONTROLLED`, `ROBOT_CONTROLLED`,
+`TAKEOVER_PENDING`, `CLOSING` and `RECONCILING`. Names and transitions may be refined during later
+authorized CONTEXT/architecture work; this revision does not implement a state machine.
+
 ## 10. Authorization boundary
 
-This revision records the human-approved TASK/SPEC documentation checkpoint only. Production
+This revision records the human-approved revision 1.1 TASK/SPEC documentation checkpoint only. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT has not started and is not authorized. Separate later approval and
 valid CONTEXT are required before IMPLEMENT.

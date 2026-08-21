@@ -2,7 +2,7 @@
 
 Version:
 
-4.26
+4.27
 
 Date:
 
@@ -1120,7 +1120,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / SPEC_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
+IN_PROGRESS / SPEC_REVISION_1_1_APPROVED_DOCUMENTATION_CHECKPOINT_ONLY
 
 Implementation status:
 
@@ -1128,7 +1128,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_SPEC_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_OWNERSHIP_AND_WORKING_VOLUME_SPEC_APPROVED_RECORDED
 
 First implementation priority:
 
@@ -1142,18 +1142,21 @@ Specification boundary:
 * shared Terminal/Signal Editor chart engine;
 * explicit historical signal versus current market presentation;
 * Working Volume equal to 5% of own equity before leverage;
+* leverage-independent WV sizing and one-decimal display-only engaged-WV indicator;
 * exchange-confirmed market, Limit, SL/TP, fill, cancel, modification and full-close cleanup lifecycles;
 * Bybit reconciliation before active/closed success presentation;
 * chart overlays, fill markers and confirmed-event feedback;
 * future MANUAL/ROBOT ownership compatibility without robot implementation.
+* exclusive MANUAL/ROBOT controller authority, future AUTOPILOT handoff and reconciled human takeover;
+* independent MANUAL and AUTOPILOT active-position groups and ownership-scoped Close All operations.
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.0.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.1.
 
 Current action:
 
-DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED.
+DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_1.
 
 Next phase:
 
