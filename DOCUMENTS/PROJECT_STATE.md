@@ -2,7 +2,7 @@
 
 Version:
 
-7.40
+7.41
 
 Date:
 
@@ -671,7 +671,7 @@ Trading Foundation / Trading Workspace
 
 Current project phase:
 
-TRADING_TERMINAL_BYBIT_EXECUTION_AND_WV_CONTEXT_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+TRADING_TERMINAL_EXECUTION_RECONCILIATION_MODEL_RECORDED
 
 Primary objective:
 
@@ -824,11 +824,10 @@ Related subsystems:
 Primary objective:
 
 Define and authorize a separate durable Trading Terminal / Trading Workspace implementation mission.
-Approved SPEC revision 1.4 remains authoritative. Human-approved intermediate CONTEXT revision 1.6 refines
-Bybit Hedge Mode preference, async confirmation,
-execution deduplication, position projection, close/recovery reconciliation, command correlation,
-preferred USDT walletBalance WV base and exchange quantity/price normalization. CONTEXT remains
-incomplete/in progress and IMPLEMENT remains unauthorized.
+Approved SPEC revision 1.4 remains authoritative. Human-approved intermediate CONTEXT revision 1.7 records
+the formal command, order, immutable execution, position projection, L1-L4 reconciliation, exposure-gate,
+crash-recovery and transaction-atomicity model. Binding position mode, WV authority and external/takeover/
+emergency policies remain unresolved. CONTEXT remains incomplete/in progress and IMPLEMENT remains unauthorized.
 
 Previous geometry objective:
 
@@ -880,19 +879,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / BYBIT_EXECUTION_AND_WV_CONTEXT_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+IN_PROGRESS / EXECUTION_RECONCILIATION_MODEL_RECORDED
 
 Checkpoint:
 
-MANUAL_LIVE_TRADING_V1_BYBIT_EXECUTION_RECONCILIATION_AND_WV_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_EXECUTION_RECONCILIATION_MODEL_RECORDED
 
 ChangeRequest revision:
 
-1.6
+1.7
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.6
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.7
 
 Product priority:
 
@@ -912,7 +911,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-INTERMEDIATE_BYBIT_EXECUTION_AND_WV_CONTEXT_RESEARCH_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_6
+INTERMEDIATE_EXECUTION_RECONCILIATION_MODEL_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_7
 
 Next phase:
 
@@ -4667,15 +4666,22 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.30
+PROJECT_STATE v7.40
 
 to:
 
-PROJECT_STATE v7.31
+PROJECT_STATE v7.41
 
 reason:
 
-Current checkpoint — CR-TRADING-INTELLIGENCE-001 Flag research protocol-strengthening amendment (v7.30 to v7.31):
+Current checkpoint — Trading Workspace execution/reconciliation model record (v7.40 to v7.41):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.7 and recorded checkpoint `MANUAL_LIVE_TRADING_V1_EXECUTION_RECONCILIATION_MODEL_RECORDED`;
+* recorded immutable execution identity, normalized order/position semantics, L1-L4 reconciliation, exposure gates, crash idempotency, transaction atomicity and Full Close convergence;
+* preserved exact WV authority, binding position mode, external interaction, takeover, emergency-close, search-horizon, automatic mode-switching and external-order cleanup as unresolved human decisions;
+* kept CONTEXT active and incomplete and IMPLEMENT not started or authorized.
+
+Previous checkpoint preserved — CR-TRADING-INTELLIGENCE-001 Flag research protocol-strengthening amendment (v7.30 to v7.31):
 
 * advanced the durable ChangeRequest to revision 1.3 without changing checkpoint `FLAG_DETECTOR_FAMILY_RESEARCH_RECORDED`;
 * included Assistant Protocol v4.9 `COMPLETE_USER_ACTION_CHAIN_RULE` and `USER_CORRECTION_PROTOCOL_HARDENING_RULE` in the authorized documentation checkpoint;

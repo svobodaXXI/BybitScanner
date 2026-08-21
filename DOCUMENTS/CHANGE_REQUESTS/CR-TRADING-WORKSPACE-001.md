@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.6",
+  "revision": "1.7",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -240,13 +240,13 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_BYBIT_EXECUTION_AND_WV_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_EXECUTION_RECONCILIATION_MODEL_RECORDED"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_BYBIT_EXECUTION_RECONCILIATION_AND_WV_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED",
+  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_EXECUTION_RECONCILIATION_MODEL_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
   "next_phase_authorization": "IMPLEMENT_NOT_STARTED_NOT_AUTHORIZED_CONTEXT_RESEARCH_IN_PROGRESS",
@@ -258,13 +258,14 @@
     ,{"phase": "SPEC_REVISION_1_3_DOCUMENTATION_CHECKPOINT", "commit": "3d0ba01895db0cd9c4fcd1670b06e46671d645a0"}
     ,{"phase": "SPEC_REVISION_1_4_DOCUMENTATION_CHECKPOINT", "commit": "aba84eeab539d329fc693728dc70bb38f7dee0cc"}
     ,{"phase": "CONTEXT_REVISION_1_5_INTERMEDIATE_RESEARCH_CHECKPOINT", "commit": "a70c99b1fb4a5e84847aab90d3d9dd3931340b29"}
+    ,{"phase": "CONTEXT_REVISION_1_6_BYBIT_EXECUTION_AND_WV_RESEARCH_CHECKPOINT", "commit": "d82ad7803f9a21f21f12ce9e4975ae71fdbfbdc8"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
-    "latest_saved_checkpoint": "a70c99b1fb4a5e84847aab90d3d9dd3931340b29",
-    "status": "INTERMEDIATE_CONTEXT_BYBIT_EXECUTION_AND_WV_RESEARCH_CHECKPOINT_APPROVED_FOR_COMMIT"
+    "latest_saved_checkpoint": "d82ad7803f9a21f21f12ce9e4975ae71fdbfbdc8",
+    "status": "INTERMEDIATE_CONTEXT_EXECUTION_RECONCILIATION_MODEL_APPROVED_FOR_COMMIT"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -273,7 +274,8 @@
     {"revision": "1.3", "reason": "Human-approved documentation checkpoint recording unified Scanner Telegram bot navigation and authorization-aware, concurrency-safe Scanner Control requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
     {"revision": "1.4", "reason": "Human-approved documentation checkpoint recording account management and isolation, refined account-scoped Working Volume, future per-account Robot exposure limit, percentage PnL and credential-security boundaries while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
     {"revision": "1.5", "reason": "Human-approved intermediate durable CONTEXT architecture research checkpoint reconciling Bybit, Telegram, SignalSnapshot, chart, backend, persistence, recovery, security, analytics, Scanner Control and deployment directions with current repository boundaries; CONTEXT remains incomplete and in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
-    {"revision": "1.6", "reason": "Human-approved intermediate durable CONTEXT checkpoint refining Bybit position mode, asynchronous confirmation, execution deduplication, close and recovery reconciliation, command correlation, preferred WV walletBalance base and exchange quantity/price normalization while CONTEXT remains incomplete and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
+    {"revision": "1.6", "reason": "Human-approved intermediate durable CONTEXT checkpoint refining Bybit position mode, asynchronous confirmation, execution deduplication, close and recovery reconciliation, command correlation, preferred WV walletBalance base and exchange quantity/price normalization while CONTEXT remains incomplete and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
+    {"revision": "1.7", "reason": "Human-approved intermediate durable CONTEXT checkpoint recording the formal TradingCommand, Order, Execution, Position, reconciliation, exposure-gate, crash-recovery and transaction-atomicity model while preserving unresolved human decisions, active CONTEXT research and unauthorized IMPLEMENT", "date": "2026-08-21"}
   ]
 }
 ```
@@ -827,9 +829,139 @@ model; cash-flow, fees, funding, period and timezone analytics; Scanner Control 
 dependency approval, verification strategy and future implementation decomposition. Preferred directions
 do not remove these decisions.
 
-## 15. Authorization boundary
+## 15. Formal execution and reconciliation model
 
-Revision 1.6 is a human-approved intermediate durable CONTEXT research checkpoint. Approved
+This revision records the human-approved intermediate CONTEXT model for USDT Linear Perpetual manual
+trading. Names below describe normalized semantics and invariants, not final class, API, enum or storage
+design. REST and WebSocket trade acknowledgements prove request acceptance only; they never prove a fill,
+position change or completed cancellation/amendment. A command advances from durable creation and
+submission attempt through pending confirmation to private-event or REST-reconciliation confirmation.
+Any missing acknowledgement, timeout, transport loss, crash or contradictory evidence after submission
+produces an uncertain/reconciliation state rather than an exposure-increasing retry.
+
+### A. TradingCommand and order correlation
+
+Every exposure-affecting command has a durable local `TradingCommand` identity. Create commands also have
+a unique Terminal-generated `orderLinkId`, persisted with account, symbol, side, `positionIdx`, immutable
+intent and normalized request data before network submission. `orderId` is exchange-assigned evidence
+learned later from an acknowledgement, private event or REST recovery. A reused `orderLinkId` never
+represents a new economic command.
+
+The normalized order lifecycle distinguishes unknown/reconciling, pending confirmation, open, partially
+filled and open, cancel pending, amend pending, filled, cancelled and rejected. Pending-trigger exists only
+for applicable conditional orders. Cancelled derivatives orders may retain executions; cancellation never
+deletes fill evidence. `Filled`, `Cancelled` and `Rejected` are terminal order states, while cancel-pending
+and amend-pending are not. Late or replayed weaker evidence cannot regress a stronger confirmed state,
+decrease cumulative filled quantity or invalidate an accepted execution. An execution arriving before an
+order event creates or links an unknown/reconciling order projection and is still applied exactly once.
+
+### B. Immutable execution evidence and projections
+
+An exchange execution is immutable economic evidence. Its conceptual durable deduplication identity is:
+
+`(trading_account_id, category, execId)`.
+
+Only a newly accepted execution may change quantity, average entry, realized PnL, fee, engaged Working
+Volume, analytics, sounds or chart markers. The same execution received again through WebSocket, REST,
+replay or restart is a business no-op. Orders may have multiple executions, and executions discovered late,
+after local cancellation or for unknown/external orders remain valid account evidence.
+
+The operational position identity is:
+
+`(trading_account_id, category, symbol, position_idx)`.
+
+For USDT Linear, `position_idx=0` represents the One-Way leg, while Hedge Mode uses the independent long
+and short legs represented by `position_idx=1` and `position_idx=2`. Side is validated normalized data but
+does not replace the position index in identity. Position projections distinguish unsynchronized, synchronized
+empty, synchronized open, reconciliation-required and ownership-conflict semantics. A private position event
+is current-state input and is never execution evidence; a position message may exist without an economic
+quantity change. Projection convergence combines deduplicated executions, current position snapshots,
+order state and ownership metadata through the same execution-state owner.
+
+### C. Origin, controller and external exchange state
+
+Immutable origin/provenance and mutable current controller are separate concepts. Terminal Manual,
+external clients and future Robot activity may provide different origins; Manual, future Robot, external,
+none or unknown control are separate current-authority states. Exchange orders, executions or positions
+without durable Terminal command correlation are never silently claimed as Terminal-origin. External state
+still participates in truthful account projections. An unexplained active mixed exposure, reversal or
+controller ambiguity creates an ownership conflict and blocks ordinary mutations until reconciled or
+resolved by an approved policy. External closure to zero may converge without a continuing ownership
+conflict after executions, orders and protection are reconciled.
+
+### D. Reconciliation levels and exposure gates
+
+Reconciliation is normal operation and has four composable levels:
+
+* L1 command/order reconciliation correlates `TradingCommand`, submission attempt, `orderLinkId`, `orderId`,
+  order records and executions after timeout, missing acknowledgement or ambiguous command outcome;
+* L2 symbol/leg reconciliation rebuilds the affected orders, executions, position and ownership state after
+  partial fills, cancel/fill races, event gaps, contradictory projections or external symbol mutation;
+* L3 account reconciliation establishes account mode, wallet/Working-Volume input, positions, open orders
+  and unsafe symbol conflicts after account-wide staleness, mode change or broad stream loss;
+* L4 startup/reconnect reconciliation combines durable uncertain local state with REST account, wallet,
+  position, order and execution evidence before private streams resume synchronized operation.
+
+Locks are no broader than safe evidence permits: a bounded L1 may lock one command; unknown economic
+impact locks at least its symbol/leg; account mode, wallet authority or broad execution gaps lock the account;
+startup initially locks the backend and narrows only after inventory. New exposure requires synchronized
+relevant account, symbol and leg, fresh required wallet/instrument evidence, known position mode and no
+uncertain command or ownership conflict. Reduce-only and emergency risk reduction are evaluated separately
+from new exposure, but are allowed only when current side, size and `positionIdx` are established sufficiently
+to prevent reversal, duplicated close or accidental exposure increase.
+
+### E. Crash safety, atomicity and Full Close
+
+Network I/O is outside the storage transaction, so persisted command/attempt state records whether submission
+was ready, started, accepted or uncertain. Restart never assumes that absence of a locally saved acknowledgement
+means non-submission; it recovers the original `orderLinkId` through order, execution and position evidence.
+
+Applying a normalized execution atomically journals the evidence, enforces its deduplication identity,
+persists a new immutable execution, advances order and position projections, applies fee/PnL/WV effects and
+updates reconciliation progress. Either all economic effects commit once or none commit. Duplicate evidence
+may be journaled diagnostically but cannot repeat business effects. Reconciliation atomically applies missing
+executions through the same path, updates projections and origin/controller conflicts, records convergence and
+unlocks the scope; unlock cannot precede committed converged state. REST, WebSocket and recovery handlers do
+not independently mutate competing business projections.
+
+Full Close is a reducing workflow rather than one acknowledgement. It converges only when authoritative
+evidence proves position zero, required remaining symbol orders and SL/TP/protection are removed, all relevant
+executions are ingested and final REST reconciliation succeeds. An acknowledgement, one fill, a zero-looking UI
+or one position event cannot claim `CLOSED_RECONCILED`.
+
+### F. Formal invariants
+
+1. No blind retry follows an uncertain create, amend, cancel or close submission.
+2. Each execution identity changes economic state at most once, including after crash or replay.
+3. An acknowledgement is not fill evidence and a position event is not execution evidence.
+4. New exposure requires synchronized relevant scope; reduce-risk uses a separate safety gate.
+5. `TradingCommand` and unique `orderLinkId` are durable before submission.
+6. External state is never silently claimed as Terminal origin, and origin never substitutes for controller.
+7. Realtime and reconciliation evidence converge through the same execution-state owner.
+8. Order terminal state cannot erase executions; confirmed cumulative fill never decreases.
+9. Late weaker evidence cannot regress stronger confirmed evidence or durable terminal state.
+10. WebSocket reconnect alone does not restore synchronization; required REST gap recovery remains mandatory.
+11. Unlock and converged projection/reconciliation state commit atomically.
+12. Full Close succeeds only at zero position plus required order/protection cleanup and final reconciliation.
+13. “Known not submitted” requires positive evidence; missing acknowledgement or search miss alone is insufficient.
+14. Any automatic reducing action must be incapable of reversing or increasing exposure in the active position mode.
+
+### G. Decisions preserved as unresolved
+
+The exact Working Volume authority remains a human decision; active-account USDT `walletBalance` remains a
+preferred research direction, not a silent SPEC replacement. Binding One-Way versus Hedge Mode prerequisites,
+external-position interaction, Manual takeover, emergency-close behavior, sufficient negative correlation/search
+horizon, automatic position-mode switching and handling of external orders during ticker-wide Full Close remain
+`UNRESOLVED / HUMAN_DECISION`. Terminal should not silently switch position mode. Until policies are approved,
+unsafe ambiguity remains locked rather than resolved optimistically.
+
+This model is `MANUAL_LIVE_TRADING_V1_EXECUTION_RECONCILIATION_MODEL_RECORDED`, an intermediate CONTEXT
+checkpoint. It does not complete CONTEXT, select implementation decomposition, install dependencies, authorize
+production work or begin IMPLEMENT.
+
+## 16. Authorization boundary
+
+Revision 1.7 is a human-approved intermediate durable CONTEXT research checkpoint. Approved
 SPEC revision 1.4 remains intact. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any

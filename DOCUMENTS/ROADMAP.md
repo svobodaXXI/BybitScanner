@@ -2,7 +2,7 @@
 
 Version:
 
-4.33
+4.34
 
 Date:
 
@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / BYBIT_EXECUTION_AND_WV_CONTEXT_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+IN_PROGRESS / EXECUTION_RECONCILIATION_MODEL_RECORDED
 
 Implementation status:
 
@@ -1308,7 +1308,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_BYBIT_EXECUTION_RECONCILIATION_AND_WV_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_EXECUTION_RECONCILIATION_MODEL_RECORDED
 
 First implementation priority:
 
@@ -1344,11 +1344,11 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.6.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.7.
 
 Current action:
 
-INTERMEDIATE_BYBIT_EXECUTION_AND_WV_CONTEXT_RESEARCH_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_6.
+INTERMEDIATE_EXECUTION_RECONCILIATION_MODEL_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_7.
 
 Approved intermediate CONTEXT architecture directions from revision 1.5:
 
@@ -1370,6 +1370,21 @@ Human-approved intermediate revision 1.6 refinements:
 * preferred WV base of active-account USDT walletBalance without leverage or unrealized-PnL expansion;
 * downward instrument qty normalization, pre-submit insufficient-volume rejection and visible tickSize price normalization;
 * actual fractional WV derived from confirmed execution and reconciled position state.
+
+Human-approved intermediate revision 1.7 execution/reconciliation model:
+
+* acknowledgements are acceptance evidence, while immutable executions deduplicated by account/category/execId
+  are the only fill evidence and cannot apply quantity, PnL, fee or WV effects twice;
+* TradingCommand and unique orderLinkId are durable before submission, uncertain outcomes prohibit blind retry,
+  and normalized order/position evidence never regresses stronger confirmed state;
+* PositionKey is account/category/symbol/position_idx, position events are operational state rather than fills,
+  and external origin is never silently claimed as Terminal origin or conflated with current controller;
+* L1 command/order, L2 symbol/leg, L3 account and L4 startup/reconnect reconciliation converge through one
+  execution-state owner with scope-appropriate new-exposure locks and a separate reduce-risk gate;
+* crash/replay-safe atomic ingestion covers journal, execution deduplication, immutable execution, projections
+  and reconciliation state, while Full Close converges only at zero plus required cleanup and final reconciliation;
+* exact WV authority, binding position mode, external interaction, Manual takeover, emergency close, negative
+  search horizon, automatic mode switching and ambiguous external-order cleanup remain human decisions.
 
 Repository-confirmed boundary:
 
@@ -1435,15 +1450,22 @@ RULE-008:
 
 from:
 
-ROADMAP v4.32
+ROADMAP v4.33
 
 to:
 
-ROADMAP v4.33
+ROADMAP v4.34
 
 reason:
 
-Current checkpoint — ANCHOR_QUALITY_LEARNING future research mission record (v4.32 to v4.33):
+Current checkpoint — Trading Workspace execution/reconciliation model record (v4.33 to v4.34):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.7 and recorded the formal execution/reconciliation model;
+* retained REST/WS acknowledgements as non-fill evidence, immutable deduplicated executions, non-regressive order/position projections and external-origin separation;
+* recorded L1-L4 reconciliation, scoped exposure gates, crash/replay atomicity and reconciled Full Close invariants;
+* preserved the enumerated human decisions as unresolved, kept CONTEXT active and incomplete, and left IMPLEMENT not started or authorized.
+
+Previous checkpoint preserved — ANCHOR_QUALITY_LEARNING future research mission record (v4.32 to v4.33):
 
 * recorded historical multi-candidate Anchor/START quality learning as a future Scanner / Geometry mission;
 * prohibited look-ahead leakage and separated immutable live evidence from hindsight outcome evaluation;
