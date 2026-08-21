@@ -2,11 +2,11 @@
 
 Version:
 
-4.32
+4.33
 
 Date:
 
-2026-08-20
+2026-08-21
 
 Document Type:
 
@@ -1063,6 +1063,185 @@ include meaningful touches/near-touches, distance and violation magnitude, limit
 structure-scale or volatility-normalized tolerance for upper high-wicks and mirrored lower low-wicks.
 This is an unproven research hypothesis, not an algorithm change or implementation authorization.
 
+## FUTURE_MISSION_ANCHOR_QUALITY_LEARNING
+
+Mission ID:
+
+ANCHOR_QUALITY_LEARNING
+
+Working title:
+
+Historical Anchor Quality Learning
+
+Domain:
+
+Scanner / Geometry Engine
+
+Status:
+
+FUTURE_RESEARCH_MISSION_RECORDED / NOT_SELECTED / NOT_STARTED / NOT_AUTHORIZED
+
+Authority classification:
+
+ROADMAP_BACKLOG_RESEARCH_DIRECTION / NO_IMPLEMENTATION_CONTRACT
+
+Problem:
+
+One pattern episode may admit several formally serious geometric variants with different historical
+Anchor/START pivots. Current geometry may not have enough evidence to rank which plausible historical
+pivot is the best structural start. Choosing an earlier or later anchor changes base height, structural
+duration, geometry and expected potential even when several candidates appear visually and formally valid.
+
+Goal:
+
+Research a future historical self-calibration and ranking mechanism that learns from completed pattern
+episodes and gives better Anchor/START candidates a measured prior during later live detection. This is
+not authorization for ML, a model, a dataset schema or any Geometry Engine production change.
+
+Live-time evidence invariant:
+
+* live detection uses only candles and evidence available at the detection timestamp;
+* several serious Anchor Candidates may be retained with their immutable detection-time geometry,
+  features and scores;
+* the candidate selected by the historical live decision is retained explicitly;
+* future candles and outcome fields never enter the live feature set;
+* hindsight evaluation never rewrites or relabels the historical live decision as if future information
+  had been available then.
+
+Post-outcome research direction:
+
+After a pattern episode is resolved, a separately defined Pattern Outcome may describe what the structure
+actually did. Historical candidates from that same episode may then be compared and assigned hindsight
+Anchor Quality evidence. That evidence may train or calibrate ranking only for future pattern episodes.
+Outcome evaluation and training evidence must remain reproducible, versioned and separated from immutable
+features-at-detection-time.
+
+Look-ahead leakage prohibition:
+
+LOOK_AHEAD_LEAKAGE_FORBIDDEN. Future candles, realized outcome and hindsight labels must never change a
+historical live decision retroactively and must never be included in the feature set presented to live
+detection. Dataset construction, feature provenance and evaluation splits must demonstrate this boundary.
+
+Potential / pattern-height hypothesis:
+
+The realized magnitude of a completed pattern may be one important hindsight feature for judging whether
+the assumed base height or start scale of an Anchor Candidate corresponded to the structure that actually
+resolved. A research metric may examine a relation conceptually similar to:
+
+```text
+potential_error = abs(expected_potential - realized_move) / realized_move
+```
+
+This formula is not approved. Realized potential must not be the sole criterion, edge cases such as zero
+or ambiguous realized move require methodology, and definitions, normalization, windows and thresholds
+must be researched before any implementation decision.
+
+Anchor Quality versus trade result:
+
+Geometric or structural Anchor correctness is distinct from trade usefulness and realized trading outcome.
+A structurally sound pattern need not reach its full target. An unfavorable trade result alone does not
+prove that its anchor was geometrically wrong, and a favorable result alone does not prove that an anchor
+was structurally best.
+
+Possible hindsight features:
+
+The following are research candidates, not an approved formula:
+
+* correspondence between pattern height / expected potential and realized move;
+* quality and number of boundary touches;
+* boundary violations and their magnitude;
+* compression quality;
+* pivot significance;
+* structural duration;
+* geometry stability as new candles became available;
+* symmetry or asymmetry where applicable;
+* start location relative to a meaningful impulse or extreme;
+* other existing Scanner geometry features whose live-time provenance can be demonstrated.
+
+Candidate-ranking direction:
+
+The future evidence design must not retain only the winner. It should support several candidates from one
+episode and comparable evaluations, conceptually for example `Anchor A = 0.91`, `Anchor B = 0.66` and
+`Anchor C = 0.38`. A later live-ranking hypothesis may combine:
+
+```text
+base_geometry_score + learned_anchor_prior
+```
+
+No formula or weight is approved. A learned prior must not override hard geometry validity constraints
+without control, and disabling the prior must reproduce baseline geometry behavior.
+
+Conceptual durable entities:
+
+Future architecture research may evaluate entities equivalent to:
+
+* `AnchorCandidateSnapshot`;
+* `PatternOutcome`;
+* `AnchorEvaluation`;
+* `AnchorPreferenceModel`.
+
+These names are conceptual and are not implementation contracts. Research must define immutable
+detection-time fields, outcome fields, versioning, retention, reproducibility, leakage prevention,
+dataset-quality controls, and the relationship between manual labels and automatically derived labels.
+
+Existing manual Anchor/START review:
+
+The existing Scanner Anchor/START review workflow may later provide high-quality supervision or evaluation
+evidence. A manual click is not automatically absolute ground truth; reviewer identity, context, agreement,
+label intent and methodology require separate treatment before labels are used for training or scoring.
+
+Reference cases:
+
+The user provided two visual examples of alternative Anchor/START markup for one class of wedge/converging
+structure. The recorded meaning is limited to the following: several anchors may look visually and formally
+plausible; an earlier anchor changes base height, duration and expected potential; a later anchor produces
+a different geometry and scale; and historical outcome should eventually support comparison of those
+candidates. No additional image content is inferred.
+
+If separately authorized after symbol and case identity are verified, the existing durable reference layout
+should be used rather than a new store:
+
+```text
+training/reference_patterns/<SYMBOL>/<CASE_ID>/
+```
+
+A candidate stable case ID may follow `anchor-quality-<timeframe>-<date>-<sequence>`, with exact original
+source images preserved under manifest control and an `annotation.json` describing candidate relationships.
+No image is copied, generated or registered by this roadmap record.
+
+Future acceptance direction:
+
+Any later approved mission must demonstrate at minimum:
+
+* no look-ahead information in live detection or its feature set;
+* reproducible historical outcome evaluation;
+* deterministic candidate snapshots;
+* comparison of multiple anchors from the same pattern episode;
+* measurable anchor-ranking improvement on holdout history;
+* no degradation of hard geometry validity;
+* focused and regression tests;
+* an off switch that reproduces baseline geometry behavior without the learned prior.
+
+Unresolved research questions:
+
+* What defines one pattern episode and its candidate-comparison set?
+* When and by which deterministic rules is a Pattern Outcome considered resolved?
+* How are expected potential, realized move, censoring and ambiguous outcomes defined?
+* Which Anchor Quality components measure structural correctness versus trade usefulness?
+* How are candidate snapshots versioned when geometry algorithms evolve?
+* What dataset retention, class balance, split, holdout and leakage controls are required?
+* How are manual review labels weighted, audited and reconciled with automatic evidence?
+* Which model family, calibration method or non-ML ranking method is justified by evidence?
+* How large must improvement be, and on which metrics, before a learned prior may affect live ranking?
+
+Scope separation and routing:
+
+`ANCHOR_QUALITY_LEARNING` is a separate future Scanner / Geometry mission. It is not part of Manual Live
+Trading Terminal, Trading Workspace, Robot execution or the Bybit trading backend. Recording it does not
+select the mission, create an implementation-authorized ChangeRequest, start CONTEXT or IMPLEMENT, or alter
+any Geometry production behavior. Current primary work remains `TRADING WORKSPACE v1 — CONTEXT / RESEARCH`
+with `CR-TRADING-WORKSPACE-001` still IN_PROGRESS and IMPLEMENT not started or authorized.
+
 Deferred detector research:
 
 Double Top/Bottom, Candlestick Formation Evidence and PRE_BREAKOUT_CORRIDOR_SETUP.
@@ -1256,15 +1435,24 @@ RULE-008:
 
 from:
 
-ROADMAP v4.22
+ROADMAP v4.32
 
 to:
 
-ROADMAP v4.23
+ROADMAP v4.33
 
 reason:
 
-Current checkpoint — CR-TRADING-INTELLIGENCE-001 microstructure research record (v4.22 to v4.23):
+Current checkpoint — ANCHOR_QUALITY_LEARNING future research mission record (v4.32 to v4.33):
+
+* recorded historical multi-candidate Anchor/START quality learning as a future Scanner / Geometry mission;
+* prohibited look-ahead leakage and separated immutable live evidence from hindsight outcome evaluation;
+* recorded potential/height correspondence as an unapproved research feature rather than a formula;
+* preserved hard geometry constraints, baseline behavior, manual-review uncertainty and holdout acceptance;
+* retained Trading Workspace v1 CONTEXT / RESEARCH as current primary work without lifecycle change;
+* did not authorize a ChangeRequest, CONTEXT, IMPLEMENT, ML work or production Geometry change.
+
+Previous checkpoint preserved — CR-TRADING-INTELLIGENCE-001 microstructure research record (v4.22 to v4.23):
 
 * recorded realtime L2/tape, incremental book, adaptive depth and selective activation conclusions;
 * recorded LiquidityZone/LiquidityObservation evidence boundaries and market-execution simulation direction;
