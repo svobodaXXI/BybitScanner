@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.5",
+  "revision": "1.6",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -118,9 +118,9 @@
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
     "Authentication, authorization, Bybit credential custody and Telegram Mini App session security",
-    "Bybit account mode, position mode, product/category and supported order capability boundaries",
+    "Exact supported-account and position-mode compatibility and setup prerequisites for the preferred Hedge Mode direction within USDT Linear Perpetual scope",
     "Exact exchange reconciliation state machines, timeout policies, idempotency identifiers and orderLinkId mapping",
-    "Exact Working Volume equity source, refresh timing, rounding, minimum quantity and insufficient-balance behavior",
+    "Human-approved finalization of USDT walletBalance as the WV base, plus refresh timing, sub-ten-USDT behavior and insufficient-volume handling",
     "Exact active-order modification interaction and amend versus cancel-replace policy",
     "SignalSnapshot schema, target-method taxonomy, retention, migrations and deep-link routing",
     "Shared chart-engine selection and saved drawing schema",
@@ -154,6 +154,18 @@
     "Percentage return requires cash-flow-adjusted or time-weighted direction and sufficient valuation and cash-flow history; exact formula and fee, funding, transfer and timezone policy remain open",
     "Scanner Control is a single-flight application boundary around RUN_SCAN and may reuse the existing approved-pattern count without coupling Telegram to main.py internals",
     "Local-first deployment still requires an HTTPS-reachable Mini App boundary; raw public exposure of a development FastAPI port is not the intended architecture"
+    ,"Terminal v1 remains scoped to Bybit USDT Linear Perpetual and is position-mode aware; Hedge Mode is preferred because independent LONG and SHORT operations may coexist, while Terminal never silently changes exchange position mode"
+    ,"Asynchronous mutations follow command, REST acknowledgement, pending, private-event or reconciliation confirmation; semi-transparent remains unconfirmed and opaque remains exchange-confirmed"
+    ,"Confirmed fills are deduplicated by durable execution identity such as execId and correlated through orderId or orderLinkId so duplicate, late or racing events cannot double-count quantity, PnL, analytics, sounds or markers"
+    ,"Current position projection is keyed by trading account, symbol and relevant side or positionIdx identity; a position stream event is reconciled state input, not proof of a distinct economic trade"
+    ,"Close Position is a multi-step reducing, observation, cleanup and REST-reconciliation workflow ending only at position zero with required symbol orders and protection removed"
+    ,"Private WebSocket is realtime transport rather than durable truth; startup, reconnect and uncertain mutations use required REST positions, open orders, histories, executions and wallet/account state before streams resume synchronization"
+    ,"A durable local TradingCommand correlation identity is persisted before or transactionally with submission; timeout-after-submit reconciles the original order before any exposure-increasing retry"
+    ,"USDT walletBalance is the preferred researched WV base because it represents the account's own USDT funds without leverage, available-balance buying power, non-USDT valuation or direct unrealized-PnL expansion; approved SPEC change requires separate human authority if needed"
+    ,"WV sizing converts selected WV to target USDT and then floors instrument quantity to authoritative qtyStep while validating minOrderQty, minNotionalValue and maximum constraints without increasing requested exposure"
+    ,"Insufficient normalized volume is a pre-submit business rejection REJECTED_INSUFFICIENT_VOLUME with user feedback Недостаточный объём; Terminal and future Robot never auto-increase exposure to satisfy exchange minima"
+    ,"Limit and protection draft prices use authoritative tickSize normalization visible before confirmation; safe rounding direction remains order-specific design work"
+    ,"Market WV is sizing intent rather than guaranteed fill size; actual engaged USDT and fractional WV display derive from confirmed executions and reconciled position state"
   ],
   "repository_confirmed_reuse": [
     "bybit_api.py and analyzer candle loading provide reusable public USDT-linear instrument and OHLCV access only behind a market-data boundary; they are not authenticated trading infrastructure",
@@ -165,7 +177,7 @@
     "No current order, execution, position, protection, TradingCommand, ExchangeEventJournal, account-isolation or reconciliation domain implementation exists"
   ],
   "context_decisions_required_before_implementation_plan": [
-    "Bybit account and position mode, supported category/order capabilities, TP/SL compatibility, identifier rules and authoritative reconciliation matrices",
+    "Exact Hedge Mode and supported-account prerequisites, positionIdx handling, category/order capabilities, full-position TP/SL compatibility, identifier rules and authoritative reconciliation matrices",
     "Command, order, execution, position, protection and ownership lifecycle schemas including duplicate, race, gap and uncertain-result handling",
     "Versioned SignalSnapshot schema, immutable retention, migrations, target metadata and deep-link resolution",
     "Telegram backend authentication validation, freshness window, allowlist, session lifetime and authorization matrix",
@@ -173,7 +185,7 @@
     "Terminal backend process topology, backend-to-frontend event protocol and local HTTPS ingress decision",
     "SQLite/WAL schema, transaction boundaries, journal/projection rebuild rules, backup and later storage migration boundary",
     "CredentialStore threat model, protected Windows implementation choice, secret rotation/removal and VPS replacement contract",
-    "Working Volume base-equity source, refresh timing, sub-ten-USDT behavior and exchange precision/minimum constraints",
+    "Human-approved final WV-base decision after the preferred USDT walletBalance finding, refresh timing, Market versus Limit sizing-price semantics, sub-ten-USDT behavior and exchange precision/minimum constraints",
     "Cash-flow-adjusted return, fees, funding, valuation snapshots, period boundaries and timezone accounting",
     "Scanner Control command identity, single-flight ownership, process boundary, status correlation and safe errors",
     "Implementation phase decomposition, acceptance tests, dependency approvals and explicit human IMPLEMENT authorization"
@@ -228,13 +240,13 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_BYBIT_EXECUTION_AND_WV_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED"},
     {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED",
+  "current_checkpoint": "MANUAL_LIVE_TRADING_V1_BYBIT_EXECUTION_RECONCILIATION_AND_WV_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
   "next_phase_authorization": "IMPLEMENT_NOT_STARTED_NOT_AUTHORIZED_CONTEXT_RESEARCH_IN_PROGRESS",
@@ -245,13 +257,14 @@
     {"phase": "SPEC_REVISION_1_2_DOCUMENTATION_CHECKPOINT", "commit": "f8d0932afd9589998d09027477c67eb8ab7aa1a0"}
     ,{"phase": "SPEC_REVISION_1_3_DOCUMENTATION_CHECKPOINT", "commit": "3d0ba01895db0cd9c4fcd1670b06e46671d645a0"}
     ,{"phase": "SPEC_REVISION_1_4_DOCUMENTATION_CHECKPOINT", "commit": "aba84eeab539d329fc693728dc70bb38f7dee0cc"}
+    ,{"phase": "CONTEXT_REVISION_1_5_INTERMEDIATE_RESEARCH_CHECKPOINT", "commit": "a70c99b1fb4a5e84847aab90d3d9dd3931340b29"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
-    "latest_saved_checkpoint": "aba84eeab539d329fc693728dc70bb38f7dee0cc",
-    "status": "INTERMEDIATE_CONTEXT_RESEARCH_DOCUMENTATION_CHECKPOINT_APPROVED_FOR_COMMIT"
+    "latest_saved_checkpoint": "a70c99b1fb4a5e84847aab90d3d9dd3931340b29",
+    "status": "INTERMEDIATE_CONTEXT_BYBIT_EXECUTION_AND_WV_RESEARCH_CHECKPOINT_APPROVED_FOR_COMMIT"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -259,7 +272,8 @@
     {"revision": "1.2", "reason": "Human-approved documentation checkpoint recording Working Volume detail interaction and AUTOPILOT trading-results, period metrics, provenance breakdown and durable analytics requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
     {"revision": "1.3", "reason": "Human-approved documentation checkpoint recording unified Scanner Telegram bot navigation and authorization-aware, concurrency-safe Scanner Control requirements while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
     {"revision": "1.4", "reason": "Human-approved documentation checkpoint recording account management and isolation, refined account-scoped Working Volume, future per-account Robot exposure limit, percentage PnL and credential-security boundaries while CONTEXT research remains in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
-    {"revision": "1.5", "reason": "Human-approved intermediate durable CONTEXT architecture research checkpoint reconciling Bybit, Telegram, SignalSnapshot, chart, backend, persistence, recovery, security, analytics, Scanner Control and deployment directions with current repository boundaries; CONTEXT remains incomplete and in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
+    {"revision": "1.5", "reason": "Human-approved intermediate durable CONTEXT architecture research checkpoint reconciling Bybit, Telegram, SignalSnapshot, chart, backend, persistence, recovery, security, analytics, Scanner Control and deployment directions with current repository boundaries; CONTEXT remains incomplete and in progress and IMPLEMENT remains unauthorized", "date": "2026-08-21"},
+    {"revision": "1.6", "reason": "Human-approved intermediate durable CONTEXT checkpoint refining Bybit position mode, asynchronous confirmation, execution deduplication, close and recovery reconciliation, command correlation, preferred WV walletBalance base and exchange quantity/price normalization while CONTEXT remains incomplete and IMPLEMENT remains unauthorized", "date": "2026-08-21"}
   ]
 }
 ```
@@ -706,9 +720,116 @@ and recovery design; analytics accounting decision; chart adapter acceptance/pro
 and Scanner Control boundaries; dependency review; verification strategy; and separate human IMPLEMENT
 authorization. CONTEXT remains open until these are resolved or explicitly deferred through governance.
 
-## 14. Authorization boundary
+## 14. Refined Bybit execution, reconciliation and Working Volume research
 
-Revision 1.5 is a human-approved intermediate durable CONTEXT architecture research checkpoint. Approved
+### A. Approved SPEC requirements preserved
+
+Approved SPEC revision 1.4 remains authoritative: USDT Linear Perpetual is the product direction;
+semi-transparent means requested/local but not exchange-confirmed and opaque means exchange-confirmed;
+full close removes all remaining ticker Limit orders and SL/TP/protection and reconciles; leverage never
+participates in WV; `⚔ N.N` is display-only; normalization must never silently increase selected exposure.
+This CONTEXT amendment does not silently replace the approved deposit/equity wording with a new binding
+SPEC definition.
+
+### B. Researched and preferred directions
+
+Terminal is position-mode aware. Hedge Mode is the preferred researched v1 direction because independent
+LONG and SHORT operations may require simultaneous opposite-side positions. Relevant side identity and
+`positionIdx` are explicit where required, keyed with trading account and symbol. Terminal inspects actual
+account/symbol position state and never silently changes the user's Bybit position mode during startup.
+Exact compatible account modes and setup prerequisites must be explicit before implementation.
+
+For Working Volume, the preferred researched interpretation is:
+
+`WV_BASE = active trading account USDT walletBalance`
+
+`raw_1_WV = USDT walletBalance × 5%`
+
+`1_WV = floor(raw_1_WV / 10) × 10 USDT`
+
+This intentionally excludes cross-asset `totalEquity`, `totalAvailableBalance`, leverage-adjusted buying
+power and direct unrealized-PnL expansion. It best matches own real USDT funds, but remains a researched
+interpretation pending any required SPEC refinement. Leverage remains irrelevant in every case.
+
+Full-position exchange-side TP/SL remains the preferred v1 protection direction where final Bybit,
+account and position-mode compatibility permits. Protection should survive loss of Terminal/frontend
+connectivity. Exchange automatic adjustment or cancellation is useful but never replaces Terminal
+verification of final protection, order and position state after close or recovery.
+
+### C. Newly refined CONTEXT findings
+
+Asynchronous mutations follow the invariant:
+
+`Command → REST request/acknowledgement → PENDING → private exchange event or reconciliation → CONFIRMED`.
+
+REST acceptance alone never makes create, amend, cancel, protection or other asynchronous state visually
+or operationally confirmed. Timeout or connection loss enters an uncertain/reconciliation path rather
+than blind resubmission.
+
+Fills are execution-driven. One order may yield multiple executions. A durable execution identity such as
+`execId` is deduplicated, with `orderId` and preferred client `orderLinkId` correlation, so duplicate,
+late or racing order/execution events cannot double-count filled quantity, position, PnL, analytics,
+execution sounds or chart markers. Newly accepted confirmed executions, not REST ACK or generic order
+status, emit `▲ LONG`, `▼ SHORT` markers and execution feedback. Duplicate-looking terminal order states
+are not independent fills.
+
+A private position event does not prove that economic quantity changed. Current authoritative projection
+is reconciled by trading account, symbol and relevant side/`positionIdx`; position messages are state
+inputs rather than one-to-one trade events.
+
+Close Position is a reconciled workflow:
+
+`CLOSE_REQUESTED → determine current side/size/position identity → submit reducing close → observe
+executions/position → verify zero → remove approved remaining ticker orders → verify/clean SL/TP/protection
+→ final REST reconciliation → CLOSED_RECONCILED`.
+
+These labels are conceptual. The exact safe Bybit sequence and filters remain state-machine design. No
+single button press or ACK claims success before the approved terminal invariant is proven.
+
+Private WebSocket provides realtime transport, not durable truth. Startup, reconnect and uncertain
+mutations reconcile required positions, current/open orders, order history when necessary, execution
+history and wallet/account state through authoritative REST sources. Wallet stream is not assumed to be a
+complete initial snapshot. Private streams continue realtime synchronization only after reconciliation.
+
+Every create-order command receives durable client correlation identity; `orderLinkId` is preferred where
+applicable. Local `TradingCommand` identity is persisted before or transactionally with submission under
+the final storage design. After timeout, the original command/order is reconciled before any new
+exposure-increasing retry. Blind BUY/SELL retry after an uncertain result is prohibited.
+
+Working Volume is a USDT sizing intent. The command pipeline is conceptually:
+
+`selected_WV_count → target_USDT → raw instrument quantity using sizing price → floor to qtyStep →
+validate minOrderQty → validate minNotionalValue → validate maximum quantity/notional → exchange_qty`.
+
+All constraints come from authoritative instrument metadata and are not hardcoded. Quantity rounds down,
+never up. Market versus Limit sizing-price semantics remain open. If normalization cannot produce a valid
+order, the command is rejected before exchange creation as normal business outcome
+`REJECTED_INSUFFICIENT_VOLUME`, shown as `Недостаточный объём`. Terminal does not auto-increase to the
+minimum. UI can show selected WV/USDT, current one-WV value and determinable exchange minimum. Future
+Robot follows the same no-increase rule.
+
+Limit/SL/TP prices use authoritative `tickSize`. Draft price is normalized and shown before confirmation,
+so the chart does not knowingly display one confirmed price while submitting a materially different one.
+Safe rounding direction remains specific to order/protection semantics and is not generalized here.
+
+Market BUY/SELL requests target exposure but does not guarantee exact filled exposure. Partial or other
+exchange outcomes are possible. Actual engaged USDT and `⚔ N.N` derive from confirmed executions and
+reconciled position state, so one selected WV may result in a displayed value such as `⚔ 0.8`.
+
+### D. Decisions still unresolved
+
+CONTEXT still requires exact command/order/execution/position state machines and per-command reconciliation
+matrices; Market sizing-price/slippage policy; full-position TP/SL behavior under the chosen position mode;
+account/mode prerequisites; transactional boundary across TradingCommand, journal and projections;
+SignalSnapshot schema/versioning/retention; Telegram auth/session policy; Chart Adapter feasibility;
+backend realtime protocol and HTTPS ingress; SQLite rebuild, backup and migrations; CredentialStore threat
+model; cash-flow, fees, funding, period and timezone analytics; Scanner Control transport/correlation;
+dependency approval, verification strategy and future implementation decomposition. Preferred directions
+do not remove these decisions.
+
+## 15. Authorization boundary
+
+Revision 1.6 is a human-approved intermediate durable CONTEXT research checkpoint. Approved
 SPEC revision 1.4 remains intact. Production
 implementation, tests, dependencies, Bybit credentials, orders and runtime changes are
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any

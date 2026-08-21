@@ -2,7 +2,7 @@
 
 Version:
 
-7.39
+7.40
 
 Date:
 
@@ -671,7 +671,7 @@ Trading Foundation / Trading Workspace
 
 Current project phase:
 
-TRADING_TERMINAL_CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+TRADING_TERMINAL_BYBIT_EXECUTION_AND_WV_CONTEXT_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 Primary objective:
 
@@ -824,11 +824,11 @@ Related subsystems:
 Primary objective:
 
 Define and authorize a separate durable Trading Terminal / Trading Workspace implementation mission.
-Approved SPEC revision 1.4 remains authoritative. Human-approved `CR-TRADING-WORKSPACE-001` revision 1.5
-records repository-reconciled CONTEXT directions for Bybit execution, Telegram auth, SignalSnapshot,
-interactive charting, backend, persistence, recovery, credentials, analytics, Scanner Control and
-deployment. This is an intermediate durable checkpoint; CONTEXT remains in progress and is not complete or verified.
-Implementation is not authorized.
+Approved SPEC revision 1.4 remains authoritative. Human-approved intermediate CONTEXT revision 1.6 refines
+Bybit Hedge Mode preference, async confirmation,
+execution deduplication, position projection, close/recovery reconciliation, command correlation,
+preferred USDT walletBalance WV base and exchange quantity/price normalization. CONTEXT remains
+incomplete/in progress and IMPLEMENT remains unauthorized.
 
 Previous geometry objective:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+IN_PROGRESS / BYBIT_EXECUTION_AND_WV_CONTEXT_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 Checkpoint:
 
-MANUAL_LIVE_TRADING_V1_CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_BYBIT_EXECUTION_RECONCILIATION_AND_WV_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 ChangeRequest revision:
 
-1.5
+1.6
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.5
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.6
 
 Product priority:
 
@@ -912,7 +912,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-INTERMEDIATE_CONTEXT_RESEARCH_DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_5
+INTERMEDIATE_BYBIT_EXECUTION_AND_WV_CONTEXT_RESEARCH_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_6
 
 Next phase:
 

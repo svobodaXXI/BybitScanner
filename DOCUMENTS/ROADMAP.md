@@ -2,7 +2,7 @@
 
 Version:
 
-4.31
+4.32
 
 Date:
 
@@ -1121,7 +1121,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+IN_PROGRESS / BYBIT_EXECUTION_AND_WV_CONTEXT_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 Implementation status:
 
@@ -1129,7 +1129,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_LIVE_TRADING_V1_CONTEXT_ARCHITECTURE_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
+MANUAL_LIVE_TRADING_V1_BYBIT_EXECUTION_RECONCILIATION_AND_WV_RESEARCH_INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED
 
 First implementation priority:
 
@@ -1165,13 +1165,13 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.5.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.6.
 
 Current action:
 
-INTERMEDIATE_CONTEXT_RESEARCH_DOCUMENTATION_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_5.
+INTERMEDIATE_BYBIT_EXECUTION_AND_WV_CONTEXT_RESEARCH_CHECKPOINT_COMMIT_AUTHORIZED_FOR_REVISION_1_6.
 
-CONTEXT architecture directions under review:
+Approved intermediate CONTEXT architecture directions from revision 1.5:
 
 * Bybit V5 authenticated REST plus private order/execution/position/wallet events, with reconciliation
   for startup, reconnect, uncertain commands and full-close invariants;
@@ -1181,6 +1181,16 @@ CONTEXT architecture directions under review:
 * Python/FastAPI REST plus backend WebSocket boundary and SQLite/WAL journal plus projections;
 * reconciliation-gated trading, account-isolated state and replaceable CredentialStore;
 * cash-flow-adjusted return direction, single-flight Scanner Control and deployment-neutral HTTPS ingress.
+
+Human-approved intermediate revision 1.6 refinements:
+
+* position-mode-aware USDT Linear Perpetual scope with preferred Hedge Mode and explicit side/positionIdx;
+* ACK-to-pending-to-event/reconciliation confirmation and execId-deduplicated fills;
+* account/symbol/side position projections, reconciled close workflow and REST recovery sources;
+* durable TradingCommand/orderLinkId correlation and no blind retry after uncertain exposure commands;
+* preferred WV base of active-account USDT walletBalance without leverage or unrealized-PnL expansion;
+* downward instrument qty normalization, pre-submit insufficient-volume rejection and visible tickSize price normalization;
+* actual fractional WV derived from confirmed execution and reconciled position state.
 
 Repository-confirmed boundary:
 
