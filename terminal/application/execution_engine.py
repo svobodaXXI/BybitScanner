@@ -33,7 +33,9 @@ from terminal.persistence.sqlite_store import (
     PositionProjectionRecord,
     PositionProjectionUpdate,
     SQLiteStore,
+    ProtectionProjectionRecord,
 )
+from terminal.application.models import ProtectionEvidence, ProtectionState
 
 
 _ACTIVE_ORDER_STATES = frozenset(
@@ -111,6 +113,56 @@ class ExecutionEngine:
                 "cancel ACK awaits confirmed order evidence", order_id,
             )
         return acknowledged
+
+    def ingest_protection_evidence(
+        self, evidence: ProtectionEvidence,
+    ) -> ProtectionProjectionRecord:
+        """Project only Bybit protection facts and resolve a matching pending intent."""
+
+        current = self._store.get_protection_projection(evidence.position_key)
+        pending_id = current.pending_command_id if current is not None else None
+        state = (
+            ProtectionState.CONFIRMED_ACTIVE
+            if any(value is not None and value != 0 for value in (
+                evidence.take_profit, evidence.stop_loss, evidence.trailing_stop
+            ))
+            else ProtectionState.NO_PROTECTION_CONFIGURED
+        )
+        if pending_id is not None:
+            intent = self._store.get_protection_intent(pending_id)
+            command = self._store.get_command(pending_id)
+            matches = intent is not None and (
+                (intent.take_profit or Decimal("0")) == (evidence.take_profit or Decimal("0"))
+                and (intent.stop_loss or Decimal("0")) == (evidence.stop_loss or Decimal("0"))
+            )
+            if matches and command is not None and command.current_state is CommandState.ACKNOWLEDGED:
+                self._transition(
+                    command, CommandState.AMENDED, evidence.evidence_at_ms,
+                    "Bybit protection evidence confirmed desired state", None,
+                )
+                self._store.update_protection_intent_status(
+                    pending_id, status=state.value, updated_at_ms=evidence.evidence_at_ms,
+                )
+                pending_id = None
+            elif not matches:
+                state = ProtectionState.UNKNOWN
+                if command is not None and command.current_state is CommandState.ACKNOWLEDGED:
+                    self._transition(
+                        command, CommandState.UNKNOWN, evidence.evidence_at_ms,
+                        "Bybit protection evidence does not confirm desired state", None,
+                    )
+                if intent is not None:
+                    self._store.update_protection_intent_status(
+                        pending_id, status=state.value, updated_at_ms=evidence.evidence_at_ms,
+                    )
+        record = ProtectionProjectionRecord(
+            evidence.position_key, state.value, evidence.take_profit, evidence.stop_loss,
+            evidence.trailing_stop, pending_id,
+            current.version if current else 1, evidence.evidence_at_ms, evidence.evidence_at_ms,
+        )
+        return self._store.upsert_protection_projection(
+            record, expected_version=current.version if current else None,
+        )
 
     def apply_execution(self, event: ExecutionEvent) -> ExecutionApplyResult:
         """Apply one immutable economic fact at most once."""
@@ -418,6 +470,12 @@ def _correlated_order_id(orders, executions):
 def _command_target(command, orders, executions):
     if orders:
         latest = max(orders, key=lambda item: item.updated_at_ms)
+        if command.command_kind == "cancel":
+            if latest.status is NormalizedOrderStatus.CANCELLED:
+                return CommandState.CANCELLED
+            if latest.status is NormalizedOrderStatus.FILLED:
+                return CommandState.FILLED
+            return None
         if (
             command.command_kind == "amend"
             and latest.updated_at_ms >= command.created_at_ms

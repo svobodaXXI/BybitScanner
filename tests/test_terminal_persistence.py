@@ -25,7 +25,10 @@ from terminal.domain.models import (
     TradingAccountId,
 )
 from terminal.domain.states import CommandState
-from terminal.persistence.schema import SCHEMA_V1_STATEMENTS, SCHEMA_VERSION
+from terminal.persistence.schema import (
+    SCHEMA_V1_STATEMENTS, SCHEMA_V2_MIGRATION_STATEMENTS,
+    SCHEMA_V3_MIGRATION_STATEMENTS, SCHEMA_VERSION,
+)
 from terminal.persistence.sqlite_store import (
     CommandRecord,
     ConcurrentUpdate,
@@ -88,6 +91,14 @@ class TerminalPersistenceTests(unittest.TestCase):
             )
             """
         )
+        connection.commit()
+        connection.close()
+
+    def create_v2_database(self):
+        connection = sqlite3.connect(self.database_path)
+        for statement in SCHEMA_V1_STATEMENTS + SCHEMA_V2_MIGRATION_STATEMENTS:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version = 2")
         connection.commit()
         connection.close()
 
@@ -189,7 +200,7 @@ class TerminalPersistenceTests(unittest.TestCase):
         self.create_v1_database()
 
         with self.open_store() as store:
-            self.assertEqual(store.settings().schema_version, 2)
+            self.assertEqual(store.settings().schema_version, 3)
             self.assertEqual(store.get_command(CommandId("command-1")).order_link_id, "link-1")
             self.assertEqual(
                 store.get_execution(
@@ -235,6 +246,37 @@ class TerminalPersistenceTests(unittest.TestCase):
                 "SELECT name FROM sqlite_master WHERE name='reconciliation_checkpoints'"
             ).fetchone()
         )
+        connection.close()
+
+    def test_v2_to_v3_migration_is_transactional_and_creates_stage6_tables(self):
+        self.create_v2_database()
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, 3)
+        connection = sqlite3.connect(self.database_path)
+        tables = {
+            row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        connection.close()
+        self.assertTrue({
+            "cleanup_runs", "cleanup_items", "protection_intents",
+            "protection_projections",
+        }.issubset(tables))
+
+    def test_v2_to_v3_migration_failure_rolls_back_all_new_tables(self):
+        self.create_v2_database()
+        invalid = (SCHEMA_V3_MIGRATION_STATEMENTS[0], "NOT VALID SQLITE")
+        with mock.patch(
+            "terminal.persistence.sqlite_store.SCHEMA_V3_MIGRATION_STATEMENTS", invalid,
+        ):
+            with self.assertRaises(SchemaError):
+                self.open_store()
+        connection = sqlite3.connect(self.database_path)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 2)
+        self.assertIsNone(connection.execute(
+            "SELECT name FROM sqlite_master WHERE name='cleanup_runs'"
+        ).fetchone())
         connection.close()
 
     def test_incompatible_schema_fails_closed_without_recreate(self):

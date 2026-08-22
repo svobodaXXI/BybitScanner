@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Callable
 
-from terminal.application.command_identity import CommandIdentityFactory
+from terminal.application.command_identity import CommandIdentityCandidate, CommandIdentityFactory
 from terminal.application.execution_engine import ExecutionEngine
 from terminal.application.normalization import floor_to_step, normalize_limit_price
 from terminal.application.pretrade_guard import (
@@ -26,6 +26,11 @@ from terminal.domain.states import CommandState
 from terminal.exchange.bybit_v5_mutation_adapter import BybitV5MutationAdapter, MutationOutcome
 from terminal.exchange.events import InstrumentSnapshot, OrderEvent
 from terminal.persistence.sqlite_store import CommandRecord, SQLiteStore
+from terminal.persistence.sqlite_store import ProtectionIntentRecord, ProtectionProjectionRecord
+from terminal.application.models import ProtectionState
+from terminal.application.protection import (
+    ManualProtectionIntent, ProtectionApplicationResult, validate_manual_protection,
+)
 
 
 class ApplicationMutationsDisabled(RuntimeError):
@@ -53,6 +58,7 @@ class CancelIntent:
     current_order: OrderEvent
     order_id: str | None = None
     order_link_id: str | None = None
+    identity: CommandIdentityCandidate | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,12 +124,98 @@ class TradingApplication:
         )
         return ApplicationResult(None, resolved, outcome)
 
+    def set_protection(
+        self, intent: ManualProtectionIntent,
+    ) -> ProtectionApplicationResult:
+        self._require_enabled()
+        validate_manual_protection(intent)
+        existing_projection = self.store.get_protection_projection(intent.position_key)
+        if (
+            existing_projection is not None
+            and existing_projection.pending_command_id is not None
+            and existing_projection.status in {
+                ProtectionState.SUBMITTING.value,
+                ProtectionState.PENDING_CONFIRMATION.value,
+                ProtectionState.UNKNOWN.value,
+            }
+        ):
+            raise ValueError("unresolved protection mutation requires reconciliation")
+        identity = self.identity_factory.create()
+        now = self.clock_ms()
+        price = intent.take_profit or intent.stop_loss
+        record = CommandRecord(
+            command_id=identity.command_id, order_link_id=identity.order_link_id,
+            trading_account_id=intent.position_key.trading_account_id,
+            category=intent.position_key.category, symbol=intent.position_key.symbol,
+            position_idx=intent.position_key.position_idx, command_kind="protection",
+            side=intent.side, requested_notional=Notional(Decimal("0")),
+            normalized_price=Price(price) if price is not None else None,
+            normalized_quantity=None, origin=Origin.TERMINAL_MANUAL,
+            controller=Controller.MANUAL, current_state=CommandState.ADMITTED,
+            version=1, exchange_order_id=None, created_at_ms=now, updated_at_ms=now,
+        )
+        eligibility = self.store.persist_command_before_submit(record)
+        self.store.persist_protection_intent(ProtectionIntentRecord(
+            identity.command_id, intent.position_key, intent.take_profit, intent.stop_loss,
+            intent.tp_trigger_by, intent.sl_trigger_by, ProtectionState.SUBMITTING.value,
+            now, now,
+        ))
+        submitting = self.store.transition_command_state(
+            eligibility.command_id, CommandState.ADMITTED, CommandState.SUBMITTING,
+            expected_version=eligibility.committed_version,
+            reason="protection mutation attempt durably started", occurred_at_ms=self.clock_ms(),
+        )
+        current_projection = existing_projection
+        projection = self.store.upsert_protection_projection(
+            ProtectionProjectionRecord(
+                intent.position_key, ProtectionState.SUBMITTING.value,
+                intent.position.take_profit, intent.position.stop_loss,
+                intent.position.trailing_stop, identity.command_id,
+                current_projection.version if current_projection else 1,
+                intent.position.updated_at_ms, self.clock_ms(),
+            ),
+            expected_version=current_projection.version if current_projection else None,
+        )
+        outcome = self.adapter.set_trading_stop(
+            symbol=intent.position_key.symbol.value, take_profit=intent.take_profit,
+            stop_loss=intent.stop_loss, tp_trigger_by=intent.tp_trigger_by,
+            sl_trigger_by=intent.sl_trigger_by,
+        )
+        command = self.execution_engine.ingest_mutation_outcome(
+            submitting, outcome, occurred_at_ms=self.clock_ms(),
+        )
+        if command.current_state is CommandState.ACKNOWLEDGED:
+            state = ProtectionState.PENDING_CONFIRMATION
+        elif command.current_state is CommandState.UNKNOWN:
+            state = ProtectionState.UNKNOWN
+        elif any(value is not None and value != 0 for value in (
+            intent.position.take_profit, intent.position.stop_loss,
+            intent.position.trailing_stop,
+        )):
+            state = ProtectionState.UNKNOWN
+        else:
+            state = ProtectionState.FAILED_UNPROTECTED
+        self.store.update_protection_intent_status(
+            identity.command_id, status=state.value, updated_at_ms=self.clock_ms(),
+        )
+        projection = self.store.upsert_protection_projection(
+            ProtectionProjectionRecord(
+                intent.position_key, state.value, projection.take_profit,
+                projection.stop_loss, projection.trailing_stop,
+                identity.command_id if state in {
+                    ProtectionState.PENDING_CONFIRMATION, ProtectionState.UNKNOWN,
+                } else None,
+                projection.version, projection.evidence_at_ms, self.clock_ms(),
+            ), expected_version=projection.version,
+        )
+        return ProtectionApplicationResult(identity.command_id.value, state, projection)
+
     def cancel(self, intent: CancelIntent) -> ApplicationResult:
         self._require_enabled()
         _validate_scope(intent.trading_account_id, intent.symbol, intent.current_order)
         order_id, link_id = _selected_identity(intent.order_id, intent.order_link_id)
         _validate_selected_order_identity(intent.current_order, order_id, link_id)
-        identity = self.identity_factory.create()
+        identity = intent.identity or self.identity_factory.create()
         now = self.clock_ms()
         record = CommandRecord(
             command_id=identity.command_id, order_link_id=identity.order_link_id,

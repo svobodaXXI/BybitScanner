@@ -32,6 +32,9 @@ class FakeClient:
     def cancel_order(self, **payload):
         return self._call("cancel", payload)
 
+    def set_trading_stop(self, **payload):
+        return self._call("protection", payload)
+
 
 class Factory:
     def __init__(self, client):
@@ -116,6 +119,24 @@ class MutationAdapterTests(unittest.TestCase):
         subject.cancel_order(symbol="BTCUSDT", order_link_id="external-link")
         self.assertEqual(client.calls[-1][1]["orderLinkId"], "external-link")
         self.assertFalse(hasattr(subject, "cancel_all_orders"))
+
+    def test_full_position_protection_mapping_and_empty_result_ack(self):
+        client = FakeClient({"retCode": 0, "result": {}})
+        subject, _, factory = adapter(client)
+        outcome = subject.set_trading_stop(
+            symbol="btcusdt", take_profit=Decimal("120.0"),
+            stop_loss=None, tp_trigger_by="MarkPrice", sl_trigger_by="LastPrice",
+        )
+        payload = client.calls[-1][1]
+        self.assertEqual(payload["category"], "linear")
+        self.assertEqual(payload["symbol"], "BTCUSDT")
+        self.assertEqual(payload["tpslMode"], "Full")
+        self.assertEqual(payload["positionIdx"], 0)
+        self.assertEqual(payload["takeProfit"], "120.0")
+        self.assertEqual(payload["stopLoss"], "0")
+        self.assertIs(outcome.disposition, MutationDisposition.ACKNOWLEDGED)
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(factory.calls[0]["max_retries"], 1)
 
     def test_deterministic_reject_and_ambiguous_conditions_do_not_retry(self):
         deterministic = FakeClient({"retCode": 110012, "retMsg": "margin", "result": {}})

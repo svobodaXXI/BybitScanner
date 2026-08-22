@@ -34,6 +34,7 @@ from terminal.domain.states import CommandState, transition_command
 from .schema import (
     SCHEMA_STATEMENTS,
     SCHEMA_V2_MIGRATION_STATEMENTS,
+    SCHEMA_V3_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -216,6 +217,58 @@ class StoreSettings:
     synchronous: int
 
 
+@dataclass(frozen=True, slots=True)
+class CleanupRunRecord:
+    cleanup_id: str
+    position_key: PositionKey
+    cause: str
+    reconciliation_generation: int
+    confirmed_at_ms: int
+    status: str
+    version: int
+    created_at_ms: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class CleanupItemRecord:
+    cleanup_id: str
+    order_id: OrderId
+    order_link_id: str | None
+    cancel_command_id: CommandId
+    cancel_order_link_id: str
+    status: str
+    version: int
+    created_at_ms: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectionIntentRecord:
+    command_id: CommandId
+    position_key: PositionKey
+    take_profit: Decimal | None
+    stop_loss: Decimal | None
+    tp_trigger_by: str
+    sl_trigger_by: str
+    status: str
+    created_at_ms: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectionProjectionRecord:
+    position_key: PositionKey
+    status: str
+    take_profit: Decimal | None
+    stop_loss: Decimal | None
+    trailing_stop: Decimal | None
+    pending_command_id: CommandId | None
+    version: int
+    evidence_at_ms: int
+    updated_at_ms: int
+
+
 def _decimal_text(value: Decimal) -> str:
     if not isinstance(value, Decimal):
         raise TypeError("persistent decimal values must be Decimal")
@@ -285,6 +338,12 @@ class SQLiteStore:
         if version == 1:
             SQLiteStore._validate_required_tables(connection, version=1)
             SQLiteStore._migrate_v1_to_v2(connection)
+            SQLiteStore._migrate_v2_to_v3(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 2:
+            SQLiteStore._validate_required_tables(connection, version=2)
+            SQLiteStore._migrate_v2_to_v3(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version != 0:
@@ -308,6 +367,18 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+
+    @staticmethod
+    def _migrate_v2_to_v3(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V3_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 3")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
         SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
 
     @staticmethod
@@ -316,7 +387,7 @@ class SQLiteStore:
         try:
             for statement in SCHEMA_V2_MIGRATION_STATEMENTS:
                 connection.execute(statement)
-            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            connection.execute("PRAGMA user_version = 2")
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")
@@ -332,6 +403,11 @@ class SQLiteStore:
         }
         if version >= 2:
             required.add("reconciliation_checkpoints")
+        if version >= 3:
+            required.update({
+                "cleanup_runs", "cleanup_items",
+                "protection_intents", "protection_projections",
+            })
         actual = {
             row[0]
             for row in connection.execute(
@@ -879,9 +955,250 @@ class SQLiteStore:
         )
         return tuple(_checkpoint_from_row(row) for row in rows)
 
+    def create_cleanup_run(self, record: CleanupRunRecord) -> CleanupRunRecord:
+        key = record.position_key
+        try:
+            with self._transaction():
+                self._connection.execute(
+                    """
+                    INSERT INTO cleanup_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.cleanup_id, key.trading_account_id.value, key.category.value,
+                        key.symbol.value, key.position_idx, record.cause,
+                        record.reconciliation_generation, record.confirmed_at_ms,
+                        record.status, record.version, record.created_at_ms, record.updated_at_ms,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            existing = self.get_cleanup_run(record.cleanup_id)
+            if existing == record:
+                return existing
+            raise DuplicateIdentity("cleanup identity already exists") from exc
+        return self.get_cleanup_run(record.cleanup_id) or record
+
+    def get_cleanup_run(self, cleanup_id: str) -> CleanupRunRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM cleanup_runs WHERE cleanup_id = ?", (cleanup_id,)
+        ).fetchone()
+        return _cleanup_run_from_row(row) if row else None
+
+    def update_cleanup_run(
+        self, cleanup_id: str, *, expected_version: int, status: str, updated_at_ms: int,
+    ) -> CleanupRunRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE cleanup_runs SET status=?, version=?, updated_at_ms=?
+                   WHERE cleanup_id=? AND version=?""",
+                (status, expected_version + 1, updated_at_ms, cleanup_id, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("cleanup run version no longer matches")
+        result = self.get_cleanup_run(cleanup_id)
+        if result is None:
+            raise PersistenceError("cleanup run disappeared")
+        return result
+
+    def add_cleanup_item(self, record: CleanupItemRecord) -> CleanupItemRecord:
+        try:
+            with self._transaction():
+                self._connection.execute(
+                    "INSERT INTO cleanup_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        record.cleanup_id, record.order_id.value, record.order_link_id,
+                        record.cancel_command_id.value, record.cancel_order_link_id,
+                        record.status, record.version,
+                        record.created_at_ms, record.updated_at_ms,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            existing = self.get_cleanup_item(record.cleanup_id, record.order_id)
+            if existing == record:
+                return existing
+            raise DuplicateIdentity("cleanup item already exists") from exc
+        return self.get_cleanup_item(record.cleanup_id, record.order_id) or record
+
+    def get_cleanup_item(
+        self, cleanup_id: str, order_id: OrderId,
+    ) -> CleanupItemRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM cleanup_items WHERE cleanup_id=? AND order_id=?",
+            (cleanup_id, order_id.value),
+        ).fetchone()
+        return _cleanup_item_from_row(row) if row else None
+
+    def load_cleanup_items(self, cleanup_id: str) -> tuple[CleanupItemRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            "SELECT * FROM cleanup_items WHERE cleanup_id=? ORDER BY order_id", (cleanup_id,)
+        )
+        return tuple(_cleanup_item_from_row(row) for row in rows)
+
+    def update_cleanup_item(
+        self, cleanup_id: str, order_id: OrderId, *, expected_version: int,
+        status: str, updated_at_ms: int,
+    ) -> CleanupItemRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE cleanup_items SET status=?, version=?, updated_at_ms=?
+                   WHERE cleanup_id=? AND order_id=? AND version=?""",
+                (status, expected_version + 1, updated_at_ms, cleanup_id,
+                 order_id.value, expected_version),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("cleanup item version no longer matches")
+        result = self.get_cleanup_item(cleanup_id, order_id)
+        if result is None:
+            raise PersistenceError("cleanup item disappeared")
+        return result
+
+    def persist_protection_intent(self, record: ProtectionIntentRecord) -> None:
+        key = record.position_key
+        with self._transaction():
+            self._connection.execute(
+                "INSERT INTO protection_intents VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    record.command_id.value, key.trading_account_id.value, key.category.value,
+                    key.symbol.value, key.position_idx, _optional_raw_decimal(record.take_profit),
+                    _optional_raw_decimal(record.stop_loss), record.tp_trigger_by,
+                    record.sl_trigger_by, record.status, record.created_at_ms, record.updated_at_ms,
+                ),
+            )
+
+    def get_protection_intent(
+        self, command_id: CommandId,
+    ) -> ProtectionIntentRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM protection_intents WHERE command_id=?", (command_id.value,)
+        ).fetchone()
+        return _protection_intent_from_row(row) if row else None
+
+    def update_protection_intent_status(
+        self, command_id: CommandId, *, status: str, updated_at_ms: int,
+    ) -> ProtectionIntentRecord:
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE protection_intents SET status=?, updated_at_ms=? WHERE command_id=?",
+                (status, updated_at_ms, command_id.value),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("protection intent does not exist")
+        return self.get_protection_intent(command_id)  # type: ignore[return-value]
+
+    def upsert_protection_projection(
+        self, record: ProtectionProjectionRecord, *, expected_version: int | None,
+    ) -> ProtectionProjectionRecord:
+        key = record.position_key
+        with self._transaction():
+            existing = self._connection.execute(
+                """SELECT version FROM protection_projections WHERE trading_account_id=?
+                   AND category=? AND symbol=? AND position_idx=?""",
+                (key.trading_account_id.value, key.category.value, key.symbol.value, key.position_idx),
+            ).fetchone()
+            if existing is None:
+                if expected_version is not None:
+                    raise ConcurrentUpdate("protection projection expected to exist")
+                self._connection.execute(
+                    "INSERT INTO protection_projections VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+                    (
+                        key.trading_account_id.value, key.category.value, key.symbol.value,
+                        key.position_idx, record.status, _optional_raw_decimal(record.take_profit),
+                        _optional_raw_decimal(record.stop_loss),
+                        _optional_raw_decimal(record.trailing_stop),
+                        record.pending_command_id.value if record.pending_command_id else None,
+                        record.evidence_at_ms, record.updated_at_ms,
+                    ),
+                )
+            else:
+                version = int(existing["version"])
+                if expected_version != version:
+                    raise ConcurrentUpdate("protection projection version no longer matches")
+                self._connection.execute(
+                    """UPDATE protection_projections SET status=?, take_profit=?, stop_loss=?,
+                       trailing_stop=?, pending_command_id=?, version=?, evidence_at_ms=?, updated_at_ms=?
+                       WHERE trading_account_id=? AND category=? AND symbol=? AND position_idx=? AND version=?""",
+                    (
+                        record.status, _optional_raw_decimal(record.take_profit),
+                        _optional_raw_decimal(record.stop_loss),
+                        _optional_raw_decimal(record.trailing_stop),
+                        record.pending_command_id.value if record.pending_command_id else None,
+                        version + 1, record.evidence_at_ms, record.updated_at_ms,
+                        key.trading_account_id.value, key.category.value, key.symbol.value,
+                        key.position_idx, version,
+                    ),
+                )
+        result = self.get_protection_projection(key)
+        if result is None:
+            raise PersistenceError("protection projection disappeared")
+        return result
+
+    def get_protection_projection(
+        self, key: PositionKey,
+    ) -> ProtectionProjectionRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT * FROM protection_projections WHERE trading_account_id=?
+               AND category=? AND symbol=? AND position_idx=?""",
+            (key.trading_account_id.value, key.category.value, key.symbol.value, key.position_idx),
+        ).fetchone()
+        return _protection_projection_from_row(row) if row else None
+
 
 def _optional_decimal(value: Price | Quantity | None) -> str | None:
     return None if value is None else _decimal_text(value.value)
+
+
+def _optional_raw_decimal(value: Decimal | None) -> str | None:
+    return None if value is None else _decimal_text(value)
+
+
+def _position_key_from_row(row: sqlite3.Row) -> PositionKey:
+    return PositionKey(
+        TradingAccountId(row["trading_account_id"]), Category(row["category"]),
+        Symbol(row["symbol"]), int(row["position_idx"]),
+    )
+
+
+def _cleanup_run_from_row(row: sqlite3.Row) -> CleanupRunRecord:
+    return CleanupRunRecord(
+        row["cleanup_id"], _position_key_from_row(row), row["cause"],
+        int(row["reconciliation_generation"]), int(row["confirmed_at_ms"]),
+        row["status"], int(row["version"]), int(row["created_at_ms"]),
+        int(row["updated_at_ms"]),
+    )
+
+
+def _cleanup_item_from_row(row: sqlite3.Row) -> CleanupItemRecord:
+    return CleanupItemRecord(
+        row["cleanup_id"], OrderId(row["order_id"]), row["order_link_id"],
+        CommandId(row["cancel_command_id"]), row["cancel_order_link_id"],
+        row["status"], int(row["version"]),
+        int(row["created_at_ms"]), int(row["updated_at_ms"]),
+    )
+
+
+def _protection_intent_from_row(row: sqlite3.Row) -> ProtectionIntentRecord:
+    return ProtectionIntentRecord(
+        CommandId(row["command_id"]), _position_key_from_row(row),
+        _load_decimal(row["take_profit"]) if row["take_profit"] is not None else None,
+        _load_decimal(row["stop_loss"]) if row["stop_loss"] is not None else None,
+        row["tp_trigger_by"], row["sl_trigger_by"], row["status"],
+        int(row["created_at_ms"]), int(row["updated_at_ms"]),
+    )
+
+
+def _protection_projection_from_row(row: sqlite3.Row) -> ProtectionProjectionRecord:
+    return ProtectionProjectionRecord(
+        _position_key_from_row(row), row["status"],
+        _load_decimal(row["take_profit"]) if row["take_profit"] is not None else None,
+        _load_decimal(row["stop_loss"]) if row["stop_loss"] is not None else None,
+        _load_decimal(row["trailing_stop"]) if row["trailing_stop"] is not None else None,
+        CommandId(row["pending_command_id"]) if row["pending_command_id"] else None,
+        int(row["version"]), int(row["evidence_at_ms"]), int(row["updated_at_ms"]),
+    )
 
 
 def _command_from_row(row: sqlite3.Row) -> CommandRecord:

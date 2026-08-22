@@ -52,6 +52,7 @@ class Adapter:
     def create_limit_order(self, **kwargs): return self._outcome(MutationKind.CREATE, kwargs)
     def amend_order(self, **kwargs): return self._outcome(MutationKind.AMEND, kwargs)
     def cancel_order(self, **kwargs): return self._outcome(MutationKind.CANCEL, kwargs)
+    def set_trading_stop(self, **kwargs): return self._outcome(MutationKind.PROTECTION, kwargs)
 
 
 def admitted(kind=OrderKind.MARKET, side=OrderSide.BUY, qty="2", reduce_only=False):

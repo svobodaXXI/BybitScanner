@@ -21,6 +21,7 @@ class MutationKind(str, Enum):
     CREATE = "create"
     AMEND = "amend"
     CANCEL = "cancel"
+    PROTECTION = "protection"
 
 
 class MutationDisposition(str, Enum):
@@ -199,6 +200,22 @@ class BybitV5MutationAdapter:
             symbol=symbol.upper(), **_identity(order_id, order_link_id),
         )
 
+    def set_trading_stop(
+        self, *, symbol: str, take_profit: Decimal | None,
+        stop_loss: Decimal | None, tp_trigger_by: str, sl_trigger_by: str,
+    ) -> MutationOutcome:
+        allowed = {"LastPrice", "MarkPrice", "IndexPrice"}
+        if tp_trigger_by not in allowed or sl_trigger_by not in allowed:
+            raise ValueError("protection trigger type is unsupported")
+        payload: dict[str, Any] = {
+            "category": "linear", "symbol": symbol.upper(), "tpslMode": "Full",
+            "positionIdx": 0, "tpOrderType": "Market", "slOrderType": "Market",
+            "tpTriggerBy": tp_trigger_by, "slTriggerBy": sl_trigger_by,
+            "takeProfit": _non_negative_decimal_text(take_profit),
+            "stopLoss": _non_negative_decimal_text(stop_loss),
+        }
+        return self._call(MutationKind.PROTECTION, "set_trading_stop", **payload)
+
     def _call(self, kind: MutationKind, method_name: str, **payload: Any) -> MutationOutcome:
         self._require_enabled()
         try:
@@ -218,6 +235,14 @@ def _identity(order_id: str | None, order_link_id: str | None) -> dict[str, str]
 def _decimal_text(value: Decimal) -> str:
     if not isinstance(value, Decimal) or not value.is_finite() or value <= 0:
         raise ValueError("mutation Decimal must be finite and positive")
+    return str(value)
+
+
+def _non_negative_decimal_text(value: Decimal | None) -> str:
+    if value is None:
+        return "0"
+    if not isinstance(value, Decimal) or not value.is_finite() or value < 0:
+        raise ValueError("protection Decimal must be finite and non-negative")
     return str(value)
 
 
@@ -244,6 +269,11 @@ def _normalize_response(
     result = response.get("result")
     if not isinstance(result, Mapping):
         return MutationOutcome(kind, MutationDisposition.UNKNOWN, reason="successful response has no result")
+    if kind is MutationKind.PROTECTION:
+        return MutationOutcome(
+            kind, MutationDisposition.ACKNOWLEDGED,
+            reason="exchange accepted protection mutation",
+        )
     order_id = result.get("orderId")
     order_link_id = result.get("orderLinkId") or submitted_link_id
     if not order_id and not order_link_id:

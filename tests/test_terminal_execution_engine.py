@@ -143,7 +143,7 @@ class ExecutionEngineTests(unittest.TestCase):
         self.store.close()
         self.temp.cleanup()
 
-    def command(self, state=CommandState.SUBMITTING):
+    def command(self, state=CommandState.SUBMITTING, kind="create_limit"):
         record = CommandRecord(
             command_id=CommandId("command-1"),
             order_link_id="link-1",
@@ -151,7 +151,7 @@ class ExecutionEngineTests(unittest.TestCase):
             category=Category.LINEAR,
             symbol=Symbol("BTCUSDT"),
             position_idx=0,
-            command_kind="create_limit",
+            command_kind=kind,
             side=OrderSide.BUY,
             requested_notional=Notional(Decimal("0.2")),
             normalized_price=Price(Decimal("100")),
@@ -256,6 +256,22 @@ class ExecutionEngineTests(unittest.TestCase):
             occurred_at_ms=2200,
         )
         self.assertIs(cancelled.current_state, CommandState.CANCELLED)
+
+    def test_cancel_command_does_not_become_open_from_active_target_evidence(self):
+        command = self.command(kind="cancel")
+        pending = self.engine.ingest_mutation_outcome(
+            command,
+            MutationOutcome(
+                MutationKind.CANCEL, MutationDisposition.ACKNOWLEDGED,
+                order_id="order-1", reason="ack",
+            ),
+            occurred_at_ms=1200,
+        )
+        unresolved = self.engine.resolve_command(
+            pending, order_evidence=(order_event(),), execution_evidence=(),
+            occurred_at_ms=2200,
+        )
+        self.assertIs(unresolved.current_state, CommandState.CANCEL_PENDING)
 
     def test_execution_is_exactly_once_for_ws_rest_overlap_and_restart(self):
         event = execution_event()

@@ -277,17 +277,28 @@ def _flat_transition(bundle, previous, position):
         confirmed_position=position,
         confirmed_at_ms=position.updated_at_ms,
         exchange_sequence=position.sequence,
-        cause=_flat_cause(bundle, previous.side),
+        cause=_flat_cause(bundle, previous.side, previous.updated_at_ms, position.updated_at_ms),
     )
 
 
-def _flat_cause(bundle: RecoveryBundle, previous_side: PositionSide) -> FlatCause:
+def _flat_cause(
+    bundle: RecoveryBundle, previous_side: PositionSide,
+    previous_at_ms: int, confirmed_at_ms: int,
+) -> FlatCause:
     closing_side = "Sell" if previous_side is PositionSide.LONG else "Buy"
-    candidates = [
-        order
+    execution_order_ids = {
+        event.order_id for event in bundle.executions + bundle.buffered_executions
+        if previous_at_ms <= event.executed_at_ms <= confirmed_at_ms
+    }
+    candidates_by_id = {
+        order.order_id: order
         for order in bundle.order_history + bundle.buffered_orders
-        if order.status is NormalizedOrderStatus.FILLED and order.side.value == closing_side
-    ]
+        if order.status is NormalizedOrderStatus.FILLED
+        and order.side.value == closing_side
+        and previous_at_ms <= order.updated_at_ms <= confirmed_at_ms
+        and (not execution_order_ids or order.order_id in execution_order_ids)
+    }
+    candidates = tuple(candidates_by_id.values())
     if len(candidates) != 1:
         return FlatCause.UNKNOWN
     order = candidates[0]

@@ -251,9 +251,9 @@ class ReconciliationTests(unittest.TestCase):
 
     def test_flat_transition_market_sl_tp_and_ambiguous_causes(self):
         cases = (
-            (order_event(status=NormalizedOrderStatus.FILLED, order_type=NormalizedOrderType.MARKET, side=OrderSide.SELL, leaves="0"), FlatCause.MARKET),
-            (order_event(status=NormalizedOrderStatus.FILLED, side=OrderSide.SELL, leaves="0", stop_type="StopLoss"), FlatCause.STOP_LOSS),
-            (order_event(status=NormalizedOrderStatus.FILLED, side=OrderSide.SELL, leaves="0", stop_type="TakeProfit"), FlatCause.TAKE_PROFIT),
+            (order_event(status=NormalizedOrderStatus.FILLED, order_type=NormalizedOrderType.MARKET, side=OrderSide.SELL, leaves="0", updated=4500), FlatCause.MARKET),
+            (order_event(status=NormalizedOrderStatus.FILLED, side=OrderSide.SELL, leaves="0", stop_type="StopLoss", updated=4500), FlatCause.STOP_LOSS),
+            (order_event(status=NormalizedOrderStatus.FILLED, side=OrderSide.SELL, leaves="0", stop_type="TakeProfit", updated=4500), FlatCause.TAKE_PROFIT),
             (None, FlatCause.UNKNOWN),
         )
         for index, (closing_order, expected) in enumerate(cases):
@@ -279,6 +279,36 @@ class ReconciliationTests(unittest.TestCase):
                     )
                     self.assertIs(result.flat_transition.cause, expected)
                     self.assertEqual(store.load_executions(), ())
+
+    def test_flat_cause_stale_or_multiple_current_candidates_is_unknown(self):
+        with SQLiteStore.open(Path(self.temp.name) / "cause-hardening.sqlite3") as store:
+            coordinator = ReconciliationCoordinator(ExecutionEngine(store))
+            coordinator.reconcile(
+                self.bundle(position=position_event(size="0.002", updated=3000)),
+                generation=1, started_at_ms=1000, completed_at_ms=3000,
+            )
+            stale = order_event(
+                order_id="stale", status=NormalizedOrderStatus.FILLED,
+                order_type=NormalizedOrderType.MARKET, side=OrderSide.SELL,
+                leaves="0", updated=2000,
+            )
+            current = order_event(
+                order_id="current", status=NormalizedOrderStatus.FILLED,
+                order_type=NormalizedOrderType.MARKET, side=OrderSide.SELL,
+                leaves="0", updated=4500,
+            )
+            second = order_event(
+                order_id="second", status=NormalizedOrderStatus.FILLED,
+                side=OrderSide.SELL, leaves="0", stop_type="StopLoss", updated=4600,
+            )
+            result = coordinator.reconcile(
+                self.bundle(
+                    position=position_event(side=PositionSide.FLAT, size="0", updated=5000),
+                    order_history=(stale, current, second),
+                ),
+                generation=2, started_at_ms=4000, completed_at_ms=5500,
+            )
+            self.assertIs(result.flat_transition.cause, FlatCause.UNKNOWN)
 
     def test_previous_converged_checkpoint_does_not_grant_new_session_online(self):
         self.reconcile(self.bundle())

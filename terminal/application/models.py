@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import Enum
 
 from terminal.domain.models import PositionKey, PositionSide, Quantity
@@ -35,6 +36,31 @@ class FlatCause(str, Enum):
     TAKE_PROFIT = "take_profit"
     EXTERNAL_OTHER = "external_other"
     UNKNOWN = "unknown"
+
+
+class ProtectionState(str, Enum):
+    NO_PROTECTION_CONFIGURED = "no_protection_configured"
+    SUBMITTING = "submitting"
+    PENDING_CONFIRMATION = "pending_confirmation"
+    CONFIRMED_ACTIVE = "confirmed_active"
+    UNKNOWN = "unknown"
+    FAILED_UNPROTECTED = "failed_unprotected"
+
+
+@dataclass(frozen=True, slots=True)
+class ProtectionEvidence:
+    position_key: PositionKey
+    take_profit: Decimal | None
+    stop_loss: Decimal | None
+    trailing_stop: Decimal | None
+    evidence_at_ms: int
+
+    @classmethod
+    def from_position(cls, event: PositionEvent) -> "ProtectionEvidence":
+        return cls(
+            event.position_key, event.take_profit, event.stop_loss,
+            event.trailing_stop, event.updated_at_ms,
+        )
 
 
 @dataclass(frozen=True, slots=True)
