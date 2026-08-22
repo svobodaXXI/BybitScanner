@@ -2,7 +2,7 @@
 
 Version:
 
-4.47
+4.48
 
 Date:
 
@@ -1273,7 +1273,21 @@ require later feasibility/prototype and implementation-plan review.
 
 Acceptance, risks, approved decisions and unresolved decisions:
 
-Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.5.
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.6.
+
+LONG_CONTINUATION / High-Base continuation checkpoint:
+
+* records the roadmap-level sequence `IMPULSE -> RETENTION -> HIGH BASE -> CONTRACTION -> CONTINUATION
+  PRESSURE -> EXECUTION TRIGGER` without requiring textbook geometry;
+* separates volatility/time-normalized impulse, gain retention, high proximity, base quality, continuation
+  pressure and optional volume evidence from separately tracked failure risk;
+* preserves Setup Quality, Failure Risk and Trigger Confidence as distinct semantics and leaves all numeric
+  thresholds, weights, schemas and state machinery open;
+* preserves controlled pullback, resistance compression and breakout-plus-acceptance as future entry modes;
+* keeps Pattern/Strategy setup location separate from future Microstructure/Execution timing based on price
+  response relative to aggressive flow;
+* complements but does not absorb the separately owned Flag family, starts no detector or DOM/Tape
+  implementation and changes no Trading Workspace Stage 8 authorization.
 
 Active development focus:
 

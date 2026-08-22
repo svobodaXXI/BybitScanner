@@ -7,7 +7,7 @@
   "id": "CR-TRADING-INTELLIGENCE-001",
   "title": "Trading Intelligence and Paper Trader Roadmap Research",
   "status": "IN_PROGRESS",
-  "revision": "1.5",
+  "revision": "1.6",
   "lifecycle_stage": "CONTEXT",
   "objective": "Research and record the evidence, architecture boundaries, dependencies and non-final roadmap hypothesis required to evolve the current Scanner into broader Trading Intelligence and a safe event-driven Paper Trader without authorizing implementation.",
   "non_goals": [
@@ -24,6 +24,7 @@
     "Research Flag, Head and Shoulders, Inverse Head and Shoulders, Double Bottom and Double Top detector-family architecture",
     "Research Candlestick Formation Evidence as confirmation/context rather than an independent primary trading engine",
     "Research separate PRE_BREAKOUT_CORRIDOR_SETUP and BREAKOUT_SETUP strategy types",
+    "Record LONG_CONTINUATION / High-Base continuation as a roadmap-level setup family without final thresholds or implementation authorization",
     "Research Paper Trader domain models, lifecycle, risk, execution, portfolio, persistence, reconciliation and replay",
     "Research event-driven Bybit public trades, full L2 order-book reconstruction and liquidity-aware position management",
     "Measure performance and subscription constraints required to protect Scanner throughput",
@@ -172,7 +173,13 @@
     "Exact realistic LIMIT execution is excluded from v1 pending an explicit conservative, probabilistic or other documented queue approximation",
     "Touching a limit price does not imply a definite virtual fill",
     "Architecture records exchange/event and local receive timestamps so later measured or simulated latency is possible without making HFT queue simulation a v1 requirement",
-    "A forming eligible pattern may activate SYMBOL_IN_PLAY and microstructure monitoring before breakout while exact geometry maturity and entry thresholds remain open"
+    "A forming eligible pattern may activate SYMBOL_IN_PLAY and microstructure monitoring before breakout while exact geometry maturity and entry thresholds remain open",
+    "LONG_CONTINUATION is a distinct bullish continuation setup concept defined by impulse, gain retention, high-base contraction, continuation pressure and a later execution trigger; it may include Flag-like geometry but does not absorb the independently owned Flag detector family",
+    "LONG_CONTINUATION evidence separates Setup Quality, Failure Risk and Trigger Confidence rather than collapsing the concept into one binary pattern flag or one universal score",
+    "LONG_CONTINUATION impulse evidence is normalized by volatility and time rather than one fixed percentage across Bybit instruments; volume is supporting evidence and not a mandatory hard filter",
+    "LONG_CONTINUATION negative evidence is tracked separately, and loss of structurally important base support may invalidate the setup rather than merely reduce quality",
+    "LONG_CONTINUATION Pattern or Strategy identifies where a promising continuation develops, while future Microstructure or Execution decides when entry is justified using price response relative to aggressive flow rather than raw buy/sell volume alone",
+    "Controlled lower-base pullback, compression below resistance and breakout-plus-acceptance remain three future LONG_CONTINUATION entry modes without approving execution logic"
   ],
   "unresolved_decisions": [
     "Canonical English identity and exact semantics of the user term Восходящая звезда",
@@ -211,6 +218,8 @@
     "Market-order simulation latency, concurrency haircut, depth exhaustion and insufficient-liquidity policy",
     "Future limit-order queue model, if limit orders enter a later scope",
     "Measured limits for network bandwidth, message rate, CPU, RAM, book-update latency, observation latency and concurrent deep-monitored symbols"
+    ,"LONG_CONTINUATION exact schemas, ATR/volatility normalization, thresholds, weights, quality/risk/trigger calibration, duration, invalidation and lifecycle transitions"
+    ,"LONG_CONTINUATION exact controlled-pullback, resistance-compression and breakout-acceptance entry criteria"
   ],
   "microstructure_research_disposition": {
     "status": "SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN",
@@ -376,7 +385,7 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "RESEARCH",
-  "current_checkpoint": "HS_IHS_RESEARCH_CLOSED_AND_TRADING_TERMINAL_FOCUS_SELECTED",
+  "current_checkpoint": "LONG_CONTINUATION_HIGH_BASE_CONCEPT_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "ROADMAP_SPEC",
   "next_phase_authorization": "NOT_AUTHORIZED_PENDING_RESEARCH_AND_HUMAN_APPROVAL",
@@ -389,7 +398,7 @@
     "baseline_local_head": "ce747f8a0223306a2128e413ae259df955f5a085",
     "baseline_origin_main": "ce747f8a0223306a2128e413ae259df955f5a085",
     "latest_saved_checkpoint": "9d8a9c5752dafaad60ecf9676ba8d7b19ab0ce97",
-    "status": "SYNCHRONIZED_AT_LATEST_SAVED_CHECKPOINT"
+    "status": "LONG_CONTINUATION_HIGH_BASE_CONCEPT_RECORDED_NOT_IMPLEMENTED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Human-authorized durable planning and research checkpoint; implementation explicitly not authorized", "date": "2026-08-18"},
@@ -397,7 +406,8 @@
     {"revision": "1.2", "reason": "Recorded Flag detector-family research as sufficient for roadmap-level design while preserving open schemas and thresholds, a non-final roadmap and no implementation authorization", "date": "2026-08-19"},
     {"revision": "1.3", "reason": "Included the authorized Assistant Protocol v4.9 enforcement strengthening in the Flag research documentation checkpoint without changing research lifecycle or implementation authorization", "date": "2026-08-19"},
     {"revision": "1.4", "reason": "Recorded the human-authorized Trading Workspace and Telegram Mini App requirements, safety architecture, external references, gap analysis and dependency-aware roadmap while preserving research-only lifecycle and no implementation authorization", "date": "2026-08-20"},
-    {"revision": "1.5", "reason": "Closed HS/IHS roadmap-level research, recorded the robust wick-aware wedge boundary-fitting observation and selected Trading Terminal / Trading Workspace as the next active development focus without authorizing implementation", "date": "2026-08-20"}
+    {"revision": "1.5", "reason": "Closed HS/IHS roadmap-level research, recorded the robust wick-aware wedge boundary-fitting observation and selected Trading Terminal / Trading Workspace as the next active development focus without authorizing implementation", "date": "2026-08-20"},
+    {"revision": "1.6", "reason": "Documentation-only roadmap-level checkpoint recording LONG_CONTINUATION / High-Base continuation evidence, anti-evidence, separated quality/failure/trigger semantics, future entry modes and Pattern-versus-Microstructure boundary without final thresholds, detector implementation or change to the active Trading Workspace focus", "date": "2026-08-22"}
   ]
 }
 ```
@@ -517,6 +527,64 @@ none is an approved dependency.
 
 Detector geometry and normalized observations are reusable upstream; detector internals, signal-memory
 dictionaries, chart helpers and REST helpers must not acquire trading truth or UI responsibility.
+
+## LONG_CONTINUATION / High-Base continuation concept
+
+`LONG_CONTINUATION` is a roadmap-level bullish continuation setup family for a strong preceding impulse that
+retains most of its gain and consolidates near the impulse high before possible continuation. Its canonical
+conceptual sequence is:
+
+`IMPULSE -> RETENTION -> HIGH BASE -> CONTRACTION -> CONTINUATION PRESSURE -> EXECUTION TRIGGER`.
+
+Possible geometric manifestations include High Base, High Tight Flag-like structure, Bull Flag, Ascending
+Compression, VCP-like Base and Irregular High Base. Textbook geometry is not required when the underlying
+continuation structure is present. The family complements Wedge/Triangle, Flag, HS/IHS and Double Top/Bottom;
+it does not absorb every Flag or replace the separately owned Flag detector family. Candlestick formations
+remain supporting evidence. The existing moderate LONG preference stays in Strategy/Decision and does not
+alter geometry ownership.
+
+### Measurable positive evidence
+
+* `Impulse Strength`: displacement, speed and directional efficiency of the preceding bullish move,
+  normalized against ATR/recent volatility and elapsed time rather than one universal fixed percentage.
+* `Gain Retention`: the fraction of the impulse preserved during consolidation; deep giveback lowers quality.
+* `High Proximity`: closeness of the base to the impulse high as evidence, never an independent BUY signal.
+* `Base Quality`: duration and structure, pullback depth, possible rising lows, decreasing pullback size and
+  ATR/range contraction.
+* `Continuation Pressure`: repeated resistance approaches, weak seller displacement, rising lows and reduced
+  rejection depth.
+* `Volume`: optional supporting evidence that may contract inside the base and expand near continuation; it is
+  not a mandatory hard filter.
+
+### Anti-evidence and invalidation
+
+Failure Risk tracks Deep Giveback, Falling Highs, Expanding Pullbacks, Repeated Failed Breakouts, Heavy Sell
+Response or strong upper rejection, loss of structural Base Support and Time Decay without progress relative
+to the original impulse. Loss of structurally important base support may invalidate the setup rather than
+merely subtract score.
+
+### Scoring and future entry boundary
+
+The concept preserves three separate outputs: `Setup Quality` for impulse/retention/base structure,
+`Failure Risk` for distribution or failure evidence and `Trigger Confidence` for developing entry evidence.
+Illustrative values such as Quality 88, Failure 14 and Trigger 73 are examples only and do not approve any
+threshold, weight or formula. Conceptual `WATCH`, `READY` and `INVALIDATED` states may be evaluated later, but
+no implementation-specific state machine is selected here.
+
+Future entry research preserves three modes: a controlled pullback/bounce from the lower base, compression
+directly below resistance and breakout plus acceptance or successful retest rather than blind purchase of the
+first breakout candle.
+
+Pattern/Strategy owns “where is a promising continuation setup developing?” Future Execution/Microstructure
+owns “when is the actual entry justified?” Future DOM/Tape evidence may include Ask consumption, aggressive
+Buy prints, weak downward response to selling, seller absorption/replenishment and price progress relative to
+aggressive volume. Disappearing Bid liquidity or aggressive buying without price progress may be negative
+evidence. Raw buy/sell volume alone is insufficient; price response and price progress relative to flow are
+required context. No DOM/Tape execution logic is implemented or authorized by this checkpoint.
+
+Exact numerical thresholds, weights, schemas, calibration, invalidation policy and entry logic remain open.
+`LONG_CONTINUATION` implementation is `NOT_STARTED_NOT_AUTHORIZED`. This checkpoint does not alter the current
+Trading Workspace Stage 8 authorization.
 
 ### Dependency-aware roadmap hypothesis
 
