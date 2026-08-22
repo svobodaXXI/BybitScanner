@@ -22,8 +22,12 @@ button {
 }
 .workspace-shell {
   display: grid;
-  min-height: 100vh;
+  min-height: var(--tg-viewport-stable-height, 100vh);
   grid-template-rows: auto auto 1fr auto;
+  padding-top: var(--tg-content-safe-area-inset-top, 0px);
+  padding-right: var(--tg-content-safe-area-inset-right, 0px);
+  padding-bottom: var(--tg-content-safe-area-inset-bottom, 0px);
+  padding-left: var(--tg-content-safe-area-inset-left, 0px);
   background: #090c10;
 }
 .workspace-header {

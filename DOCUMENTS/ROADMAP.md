@@ -2,7 +2,7 @@
 
 Version:
 
-4.52
+4.54
 
 Date:
 
@@ -1376,13 +1376,23 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.23.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.25.
 
 Current action:
 
-STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED_NEXT_SLICE_REQUIRES_SEPARATE_AUTHORIZATION_REVISION_1_23.
+STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED_PHONE_LAUNCH_USER_STEPS_REMAIN_REVISION_1_25.
 
-Current revision 1.23 records the first runnable prototype: shared state-preserving three-mode shell, SVG
+Current revision 1.25 records that adapter as implemented and verified: the same frontend initializes inside
+Telegram, respects prototype safe areas and stable viewport height, remains locally runnable, accepts a
+temporary `trycloudflare.com` development URL, and exposes an HTTPS-only existing-bot menu configuration tool
+without moving secrets into the client. Installing and launching the temporary tunnel and binding its URL to
+the bot menu remain user-side phone-launch steps; no next implementation slice is authorized.
+
+Previous revision 1.24 authorizes only the smallest Telegram Mini App phone-test adapter around the same
+frontend, basic safe-area/viewport integration, existing-bot menu-button configuration and a temporary HTTPS
+development tunnel while preserving localhost, server-side secrets, Paper/non-live mode and all deferred scope.
+
+Previous revision 1.23 records the first runnable prototype: shared state-preserving three-mode shell, SVG
 candlestick chart, compact non-trading DOM/Tape, CENTER lock/manual movement, same-price Paper fixture order
 visualization and individual cancellation, Paper account menu, responsive layout and a normalized labelled
 deterministic development feed. Four focused interaction/adapter tests, Biome, TypeScript/Vite production

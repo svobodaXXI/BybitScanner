@@ -20,6 +20,22 @@ import json
 import requests
 
 
+def set_workspace_menu_button(token, chat_id, web_app_url, text="Open Workspace"):
+    """Configure one private chat menu button without exposing the token to the frontend."""
+    if not web_app_url.startswith("https://"):
+        raise ValueError("Telegram Mini App URL must use HTTPS")
+    url = f"https://api.telegram.org/bot{token}/setChatMenuButton"
+    data = {
+        "chat_id": str(chat_id),
+        "menu_button": json.dumps({
+            "type": "web_app",
+            "text": text,
+            "web_app": {"url": web_app_url},
+        }),
+    }
+    return requests.post(url, data=data, timeout=10).json()
+
+
 def send_message(
     token,
     chat_id,

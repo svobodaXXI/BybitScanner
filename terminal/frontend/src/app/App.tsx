@@ -6,6 +6,7 @@ import { ModePanel, type WorkspaceMode } from "../components/ModePanel";
 import { TapePanel } from "../components/TapePanel";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
 import { useMarketData } from "../marketData/useMarketData";
+import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 
 export function App() {
   const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
@@ -15,6 +16,7 @@ export function App() {
 
   return (
     <main className="workspace-shell">
+      <TelegramMiniAppBridge />
       <WorkspaceHeader
         accountOpen={accountOpen}
         mode={mode}

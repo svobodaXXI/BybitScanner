@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.23",
+  "revision": "1.25",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Record the implemented and verified smallest runnable Stage 8 Fast DOM client slice while preserving Paper-first safety and all deferred boundaries.",
+  "objective": "Record the implemented and verified smallest Telegram Mini App phone-test integration slice around the existing runnable Workspace while preserving Paper-first safety.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -317,10 +317,10 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED",
-  "implementation_status": "STAGES_0_TO_7_STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED",
+  "current_checkpoint": "STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED",
+  "implementation_status": "FAST_DOM_RUNNABLE_CLIENT_AND_TELEGRAM_MINI_APP_PHONE_TEST_SLICES_IMPLEMENTED_VERIFIED",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "NEXT_STAGE_8_SLICE_NOT_AUTHORIZED_ALL_DEFERRED_SCOPE_REQUIRES_SEPARATE_AUTHORIZATION",
+  "next_phase_authorization": "PHONE_LAUNCH_REQUIRES_USER_TUNNEL_AND_MENU_CONFIGURATION_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -338,7 +338,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED_NEXT_SLICE_NOT_AUTHORIZED"
+    "status": "STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED_PHONE_LAUNCH_USER_STEPS_REMAIN"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -364,7 +364,9 @@
     {"revision": "1.20", "reason": "Documentation-only checkpoint recording the current Fast DOM client-slice baseline: dedicated high-frequency state path, non-trading DOM mouse navigation, preserved CENTER behavior, individual same-price order dots with per-order cancellation and extreme-left aggregate USDT, Bybit V5 depth-50 orderbook plus separate publicTrade baseline, depth-extensible normalized contracts and explicit deferral of order-creation clicks and further trading mouse semantics without starting implementation", "date": "2026-08-22"},
     {"revision": "1.21", "reason": "Documentation-only checkpoint recording one shared 3-in-1 Trading Workspace with Terminal, Autopilot and Editor lower-panel modes, preserved workspace state, non-mutating mode navigation, lower-panel cross-mode buttons, key-icon account access including Paper, prototype-gated responsive header decisions and Fast DOM prototype delivery priority without Robot or Editor design, production implementation or changed Stage 8 authorization", "date": "2026-08-22"},
     {"revision": "1.22", "reason": "Explicit human authorization for only the smallest runnable Stage 8 Fast DOM client slice on the existing React TypeScript Vite foundation: shared three-mode shell, real chart surface, interactive non-trading DOM and Tape, deterministic labelled development market feed behind normalized boundaries, CENTER behavior, own-order fixture rendering, Paper account access location and focused tests; Robot, real credentials, trading execution, complete Editor and all deferred scope remain unauthorized", "date": "2026-08-22"},
-    {"revision": "1.23", "reason": "Recorded the authorized runnable Fast DOM client slice as implemented and verified: shared state-preserving three-mode shell, SVG candlestick chart, compact interactive non-trading DOM and Tape, CENTER lock/manual movement, same-price Paper fixture dots and aggregate cancellation behavior, key-icon Paper account menu, normalized external market-data port with clearly labelled deterministic development feed, responsive layout, four focused tests, clean Biome, successful production build and HTTP 200 local startup smoke check; live Bybit, Robot, real credentials and all trading execution remain deferred", "date": "2026-08-22"}
+    {"revision": "1.23", "reason": "Recorded the authorized runnable Fast DOM client slice as implemented and verified: shared state-preserving three-mode shell, SVG candlestick chart, compact interactive non-trading DOM and Tape, CENTER lock/manual movement, same-price Paper fixture dots and aggregate cancellation behavior, key-icon Paper account menu, normalized external market-data port with clearly labelled deterministic development feed, responsive layout, four focused tests, clean Biome, successful production build and HTTP 200 local startup smoke check; live Bybit, Robot, real credentials and all trading execution remain deferred", "date": "2026-08-22"},
+    {"revision": "1.24", "reason": "Explicit human authorization for only the smallest Telegram Mini App phone-test integration around the existing frontend: Telegram WebApp container adapter, mobile viewport/safe-area handling, local browser preservation, server-side Bot API menu-button configuration using existing Telegram ownership and a temporary development HTTPS tunnel workflow without frontend secrets, permanent hosting, redesign, trading, Robot or credential implementation", "date": "2026-08-22"},
+    {"revision": "1.25", "reason": "Recorded the Telegram Mini App phone-test slice as implemented and verified: the same React/Vite Workspace initializes through a browser-safe Telegram adapter, applies content safe areas and stable viewport sizing, remains locally runnable, accepts temporary trycloudflare development hosts, and configures the existing bot private-chat menu through an HTTPS-only server-side helper using existing local credentials; focused frontend, Python, build, governance and startup-host checks passed, while installation and user launch of the temporary tunnel remain the next user-side steps", "date": "2026-08-22"}
   ]
 }
 ```
@@ -2287,3 +2289,39 @@ No live Bybit connection, Robot logic, Trading Intelligence, strategy, real orde
 credential handling, complete Editor or final quick-volume mechanics were implemented. Every next Stage 8
 slice requires separate authorization. This amendment records
 `STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED`.
+
+## 33. Telegram Mini App phone-test slice authorization
+
+The user explicitly authorizes only the smallest integration needed to open the existing runnable Workspace
+inside Telegram on a phone. Authorized work is a Telegram WebApp container adapter in the same frontend,
+basic viewport/safe-area handling, Vite development-tunnel compatibility, and a server-side Bot API helper
+that configures the existing bot's private-chat menu button using the existing local token/chat configuration.
+
+Development access uses a temporary HTTPS tunnel to the local Vite server; localhost remains supported for
+browser debugging and no permanent hosting is introduced. Tokens and secrets remain server-side and are never
+compiled into frontend code. This authorization excludes redesign, Robot, real trading, real credentials and
+all unrelated functionality. It records `STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_AUTHORIZED`.
+
+## 34. Telegram Mini App phone-test slice implementation result
+
+The existing React/Vite Workspace is now also a Telegram Mini App without creating a second frontend. A
+browser-safe Telegram adapter calls `ready()` and `expand()` when embedded, applies Telegram content safe-area
+insets and stable viewport height, and sets prototype-compatible header/background colors. Outside Telegram
+the adapter is a no-op, so the existing localhost browser path remains supported and the shared
+Terminal/Autopilot/Editor workspace architecture is unchanged.
+
+The Vite development server accepts temporary `trycloudflare.com` tunnel hosts. The existing Telegram
+transport owns an HTTPS-only Bot API menu-button helper, and a bounded configuration tool reuses the existing
+local bot-token and owner-chat configuration. No token, exchange key or other secret is shipped to frontend
+code or committed.
+
+Verification passed: Biome; six focused frontend tests including Telegram browser and embedded behavior;
+strict TypeScript and Vite production build; 37 focused Telegram delivery and governance tests; Python
+compilation; diff checking; and a Vite startup smoke check returning HTTP 200 for both localhost and a
+`trycloudflare.com` Host header before clean shutdown.
+
+Phone launch still requires the user to install and start `cloudflared`, keep the local Vite server running,
+and configure the resulting temporary HTTPS URL on the existing bot menu. This is a development/testing path,
+not permanent hosting. No redesign, Robot logic, real trading, real credential handling or unrelated feature
+was implemented. This amendment records
+`STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED`.
