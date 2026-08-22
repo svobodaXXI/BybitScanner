@@ -2,7 +2,7 @@
 
 Version:
 
-4.44
+4.45
 
 Date:
 
@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED
+IN_PROGRESS / AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED
 
 Implementation status:
 
@@ -1308,7 +1308,7 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED
+AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED
 
 First implementation priority:
 
@@ -1346,14 +1346,31 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.17.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.18.
 
 Current action:
 
-STAGE_8_EXACT_SCOPE_AND_DEPENDENCY_AUTHORIZATION_REQUIRED_PAPER_ENGINE_AND_METASCALP_SEPARATE_BLOCKS_REVISION_1_17.
+STAGE_8_EXACT_SCOPE_AND_DEPENDENCY_AUTHORIZATION_REQUIRED_PAPER_FILL_MODEL_AND_STALENESS_BOUNDED_UNRESOLVED_SECRET_AUDIT_REQUIRED_BEFORE_LIVE_REVISION_1_18.
 
-Current revision 1.17 Paper-first frontend and fast-order decisions, preserving the binding CENTER and
-MetaScalp decisions from revisions 1.15 and 1.16:
+Current revision 1.18 authoritative L2 and Paper execution decisions, preserving Paper-first architecture
+and the prior frontend, fast-order, CENTER and MetaScalp boundaries:
+
+* CENTER mouse double-click is 300 ms and touch double-tap is 350 ms; first activation centers immediately,
+  and CENTER mouse/touch, 500-ms long press and 300-ms trading anti-bounce remain independent domains;
+* same-price own orders aggregate their displayed USDT amount while retaining independently cancellable,
+  deterministic newest-to-left, touch-safe markers with priority over overlapping translucent prints;
+* quick volume resets to one WV when entering or switching symbol, while its tooltip shows the USDT reference
+  and execution remains governed by rounded base-asset quantity;
+* one authoritative normalized Bybit Public WebSocket L2 book, initially depth 50, supplies DOM, Market
+  VWAP/slippage preview and Paper Market execution through explicit readiness and resynchronization state;
+* Market BUY/Paper BUY walk asks and Market SELL/Paper SELL walk bids; resting Paper Limits do not fill fully
+  merely on touch, and their exact queue/liquidity model remains a bounded unresolved design item;
+* stale, unsynchronized or sequence-ambiguous books fail closed; the exact numeric staleness threshold remains
+  unresolved, and a masked bounded SECRET EXPOSURE AUDIT is required but was not executed;
+* Stage 8 remains not started/not authorized, no implementation or dependencies are authorized, and real-money
+  Bybit execution and MetaScalp integration remain outside this checkpoint.
+
+Previous revision 1.17 Paper-first frontend and fast-order decisions:
 
 * the selected frontend stack is one React 19 plus TypeScript plus Vite SPA for desktop and Telegram Mini
   App, with npm/package-lock, Zustand, TanStack Query for REST/server state, a separate WebSocket realtime
@@ -1513,15 +1530,24 @@ RULE-008:
 
 from:
 
-ROADMAP v4.43
+ROADMAP v4.44
 
 to:
 
-ROADMAP v4.44
+ROADMAP v4.45
 
 reason:
 
-Current checkpoint — Paper-first frontend and fast-order decisions (v4.43 to v4.44):
+Current checkpoint — authoritative L2 and Paper execution decisions (v4.44 to v4.45):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.18 and checkpoint `AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED`;
+* approved independent CENTER mouse/touch timings, same-price own-order aggregation and touch-safe identity markers, and symbol-scoped quick-volume reset;
+* bound one authoritative normalized Bybit Public WebSocket L2 book at initial depth 50 for DOM, Market preview and Paper market execution;
+* recorded L2-walk VWAP/slippage, Paper Market liquidity consumption and fail-closed health/resynchronization behavior;
+* preserved resting Paper Limit queue/fill algorithm, marker overflow presentation and numeric staleness threshold as bounded unresolved details;
+* required a future masked SECRET EXPOSURE AUDIT before live credentials, did not execute it, and kept Stage 8 not started/not authorized.
+
+Previous checkpoint preserved — Paper-first frontend and fast-order decisions (v4.43 to v4.44):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.17 and checkpoint `PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED`;
 * selected the React 19/TypeScript/Vite frontend toolchain while leaving the chart/rendering engine unselected;

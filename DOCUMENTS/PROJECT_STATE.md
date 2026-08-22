@@ -2,7 +2,7 @@
 
 Version:
 
-7.51
+7.52
 
 Date:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED
+IN_PROGRESS / AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED
 
 Checkpoint:
 
-PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED
+AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED
 
 ChangeRequest revision:
 
-1.17
+1.18
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.17
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.18
 
 Product priority:
 
@@ -912,20 +912,21 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED_REVISION_1_17
+AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED_REVISION_1_18
 
 Next phase:
 
-STAGE_8_EXACT_SCOPE_AND_DEPENDENCY_AUTHORIZATION_REQUIRED / PAPER_ENGINE_SEPARATE_BOUNDED_IMPLEMENT / METASCALP_SEPARATE_BOUNDED_BLOCK
+STAGE_8_EXACT_SCOPE_AND_DEPENDENCY_AUTHORIZATION_REQUIRED / PAPER_ENGINE_FILL_MODEL_DETAIL_UNRESOLVED / SECRET_EXPOSURE_AUDIT_REQUIRED_BEFORE_LIVE / METASCALP_SEPARATE_BOUNDED_BLOCK
 
 Important:
 
-Stages 0 through 7 are complete. Revision 1.17 selects the frontend stack and supersedes the prior
-real-Bybit-first priority with Paper-first execution, but authorizes no production code, runtime behavior,
-test implementation, dependency, Paper engine, MetaScalp call, Bybit order or account mutation. Stage 8
-remains not started and not authorized pending exact scope and dependency authorization. MetaScalp integration
-is a separate future bounded block. `CR-TRADING-INTELLIGENCE-001` remains broader research authority rather
-than the implementation authority for this Trading Workspace checkpoint.
+Stages 0 through 7 are complete. Revision 1.18 records binding CENTER timing, same-price own-order markers,
+symbol-scoped quick volume, one authoritative normalized Bybit L2 boundary, L2-based Market preview and Paper
+market execution, fail-closed book readiness, a bounded unresolved resting-Limit fill model and the required
+future secret exposure audit. It authorizes no production code, runtime behavior, test implementation,
+dependency, Paper engine, MetaScalp call, Bybit credential, order or account mutation. Stage 8 remains not
+started and not authorized pending exact scope and dependency authorization. The secret audit was recorded
+but not executed. MetaScalp integration remains a separate future bounded block.
 
 ---
 
@@ -4669,15 +4670,25 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.50
+PROJECT_STATE v7.51
 
 to:
 
-PROJECT_STATE v7.51
+PROJECT_STATE v7.52
 
 reason:
 
-Current checkpoint — Paper-first frontend and fast-order decisions (v7.50 to v7.51):
+Current checkpoint — authoritative L2 and Paper execution decisions (v7.51 to v7.52):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.18 and checkpoint `AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED`;
+* approved independent 300-ms mouse and 350-ms touch CENTER windows while preserving immediate first activation, 500-ms long press and independent 300-ms trading anti-bounce;
+* recorded aggregate same-price own-order USDT plus individually cancellable, deterministic, touch-safe markers with own-order priority over prints and bounded overflow detail;
+* reset quick volume to one WV on symbol entry/switch while retaining USDT tooltip reference and base-asset execution quantity authority;
+* bound one authoritative normalized Bybit Public WebSocket L2 book at initial depth 50 for DOM, Market preview and Paper market execution, with health/readiness and fail-closed resynchronization;
+* recorded L2-walk VWAP/slippage and Paper Market fills, preserved the exact resting-Limit fill/queue model and numeric staleness threshold as bounded unresolved details;
+* required a future bounded masked SECRET EXPOSURE AUDIT before live credentials while explicitly not executing it, and kept Stage 8 not started/not authorized.
+
+Previous checkpoint preserved — Paper-first frontend and fast-order decisions (v7.50 to v7.51):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.17 and checkpoint `PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED`;
 * selected React 19, TypeScript, Vite, npm lockfile, Zustand, TanStack Query, separate WebSocket, Tailwind 4, selective shadcn/Radix, Vitest/RTL/Playwright and Biome while leaving chart/rendering selection open;

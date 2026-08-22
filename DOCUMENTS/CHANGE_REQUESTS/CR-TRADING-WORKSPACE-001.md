@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.17",
+  "revision": "1.18",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 whose initial execution backend is a virtual paper account behind a reusable execution abstraction, with real-money Bybit execution deferred and no implementation authorized by this checkpoint.",
   "non_goals": [
@@ -143,12 +143,21 @@
     ,"High-frequency DOM rendering is isolated from the ordinary React render lifecycle; TanStack Query does not own high-frequency L2 updates, and this frontend decision does not select the chart or rendering engine"
     ,"Desktop fast Limit interaction uses side-explicit BUY/BID and SELL/ASK execution columns, left-click Limit placement, specific-order right-click cancellation, selected-order drag for modification, and no implicit Market order or trading double-click on the DOM ladder"
     ,"Holding BUY or SELL with the left mouse button enters the corresponding Limit placement mode so deliberate chart right-clicks may place multiple same-side Limit intents; normal non-marketable fast Limits require no confirmation, while marketable aggressive Limits require explicit confirmation and always remain Limit orders"
-    ,"A single BUY or SELL activation prepares a Market order that requires confirmation with ticker, WV/USDT reference, calculated rounded base quantity, relevant prices, estimated VWAP and estimated L2 slippage; exact normalized L2 boundary remains unresolved"
+    ,"A single BUY or SELL activation prepares a Market order that requires confirmation with ticker, WV/USDT reference, calculated rounded base quantity, relevant prices, estimated VWAP and estimated L2 slippage from the authoritative normalized book"
     ,"BUY, SELL and LIMIT placement gestures use a binding 500-ms long-press threshold; entering LONG_PRESS_ACTIVE suppresses the original short-click action and remains independent from the 300-ms trading anti-bounce"
     ,"Fast order placement is fail-closed with one physical gesture producing at most one uniquely identified intent, no blind resend after ambiguity, client-order-identity reconciliation before recovery, new placement blocked in DEGRADED/OFFLINE/ambiguous state, and success sound only after exchange or execution-engine acknowledgement"
     ,"Cancelling an unconfirmed active-Limit line edit by clicking or tapping outside restores the exact original confirmed price and sends no modify request; only explicit confirmation commits an amend"
     ,"Working Volume remains a USDT accounting and risk unit, while actual execution and position ownership use authoritative base-asset coin quantity; fills and current remaining position quantity, not the original WV notional, govern reduce-only close and residual-tail reconciliation"
     ,"The Paper Trading Engine implements realistic accepted, working, partial/full fill, cancel/reject, position, realized/unrealized PnL and reconciliation-compatible state, may consume real L2 through the later approved market-data boundary, is reusable by the future virtual Robot, and preserves MANUAL versus ROBOT controller ownership"
+    ,"CENTER uses an approved 300-ms desktop mouse double-click window and an approved 350-ms touch double-tap window; the first activation centers immediately, the second activation upgrades to LOCKED CENTERING, and CENTER mouse, CENTER touch, 500-ms long-press and 300-ms trading anti-bounce timers remain independent state domains"
+    ,"Multiple own active orders may coexist at one DOM price; the displayed USDT amount is aggregated while every concrete order retains an independently cancellable identity marker ordered newest-to-left with touch-safe selection and explicit overflow when safe packing is exhausted"
+    ,"Own-order markers have visual and pointer/touch priority over overlapping tape prints, which become partially transparent so the markers remain visible and selectable"
+    ,"Quick volume is symbol-scoped, resets to one WV on every instrument entry or switch and never silently carries a prior symbol's adjustment; its indicator tooltip shows the corresponding USDT reference while execution remains based on rounded base-asset coin quantity"
+    ,"One authoritative Market Data Engine consumes Bybit Public WebSocket L2 orderbook snapshot/delta semantics at an initial target depth of 50, reconstructs a normalized local book with sequence, resynchronization, timing and health state, and prevents frontend and Paper execution consumers from depending on Bybit-specific update mechanics"
+    ,"Trading Workspace DOM, Market VWAP/slippage preview and Paper Trading Engine market execution consume the same authoritative normalized book; Market BUY walks asks and Market SELL walks bids from best outward rather than estimating execution from last price when usable L2 exists"
+    ,"Paper market execution consumes authoritative opposite-side L2 liquidity so larger orders may receive worse average simulated execution, while resting paper Limits are not deemed fully filled merely on price touch"
+    ,"Market-data-dependent execution fails closed unless the authoritative book is ready, sequence-consistent, resynchronized and sufficiently fresh; invalid or ambiguous liquidity is never fabricated for preview or Paper execution"
+    ,"A dedicated bounded SECRET EXPOSURE AUDIT is required before any real Bybit credentials or live execution are introduced, covering tracked files, relevant Git history, configuration, logs, backups, credential patterns, ignore protections and available GitHub scanning posture with masked findings and rotation before any separately controlled history cleanup"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -162,6 +171,9 @@
     "Sound assets, delivery mechanism and user configuration",
     "Local deployment topology and later VPS migration boundary"
     ,"Final names and transition rules for MANUAL_CONTROLLED, ROBOT_CONTROLLED, TAKEOVER_PENDING, CLOSING and RECONCILING conceptual states"
+    ,"Exact compact/overflow presentation when same-price own-order markers no longer fit with unambiguous touch-safe targets"
+    ,"Exact resting Paper Limit queue-position, liquidity and partial-fill algorithm using market trades and L2 evolution"
+    ,"Exact numerical authoritative-book staleness threshold and final READY/STALE/DEGRADED transition parameters"
     ,"Exact persisted field names and schema for immutable entry origin and entry reason"
     ,"DAY, WEEK, MONTH and YEAR calendar boundaries and timezone semantics"
     ,"Closed-trade analytics schema, ownership-history representation and aggregation strategy"
@@ -177,10 +189,8 @@
     ,"Final working/calculation depth beyond the preferred orderbook.50 starting candidate, exact sequence-gap rules, correlation window, confidence thresholds and same-sequence multi-message treatment"
     ,"PROBABLE sweep visualization and reliable trade-to-L2 correlation under ambiguous cancellation-versus-execution evidence"
     ,"Responsive adjustment around the preferred 20 asks plus 20 bids viewport, exact row height, DOM percentile/window/hysteresis, print-scaling window, update batching, render frequency, bounded tape retention and mobile Telegram Mini App performance limits"
-    ,"Exact LOCKED CENTERING follow/recenter thresholds, central dead-zone, motion and sweep-follow interaction, CENTER double-activation timing, border or outline styling, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, book-walk depth source, third-party vendoring policy and future historical heatmap requirement"
+    ,"Exact LOCKED CENTERING follow/recenter thresholds, central dead-zone, motion and sweep-follow interaction, border or outline styling, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, third-party vendoring policy and future historical heatmap requirement"
     ,"Exact chart/rendering engine selection and adapter implementation under the approved React/TypeScript frontend stack"
-    ,"Exact normalized L2/public-market-data owner, freshness and preview boundary for paper fills, Market confirmation VWAP/slippage and DOM rendering"
-    ,"CENTER mouse double-click window currently proposed as 300 ms and touch double-tap window currently proposed as 350 ms; neither timing is binding until separately verified and approved"
     ,"Exact persistence, matching, latency, fee, funding, liquidity and fill-simulation policies for the initial Paper Trading Engine"
     ,"Exact MetaScalp Linking API behavior required to guarantee a new tab and new symbol DOM while preserving existing tabs, including exchange/market selection, Bybit USDT perpetual ticker mapping, not-running behavior and official local-port discovery"
   ],
@@ -286,13 +296,13 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_PAPER_FIRST_FRONTEND_FAST_ORDER_DECISIONS_RECORDED"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED"},
     {"id": "IMPLEMENT", "status": "BOUNDED_STAGES_0_TO_7_COMPLETED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "BOUNDED_STAGES_0_TO_7_VERIFIED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED",
+  "current_checkpoint": "AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED",
   "implementation_status": "STAGES_0_TO_7_COMPLETED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
   "next_phase_authorization": "STAGE_8_NOT_STARTED_NOT_AUTHORIZED_EXACT_SCOPE_AND_DEPENDENCIES_REQUIRE_SEPARATE_AUTHORIZATION_METASCALP_SEPARATE_BLOCK_REQUIRED",
@@ -313,7 +323,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"
+    "status": "AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -333,7 +343,8 @@
     {"revision": "1.14", "reason": "Human-approved corrective checkpoint binding GTC as the ordinary Manual Limit v1 timeInForce, recording truthful terminal AMENDED command completion and the pybit mutation no-retry gate, while Stage 5 remains not started and not authorized", "date": "2026-08-22"},
     {"revision": "1.15", "reason": "Human-approved documentation checkpoint recording default-off persistent AUTO CENTER plus separate one-shot CENTER, one execution gesture state machine with distinct touch and verification-gated mouse mappings, and a separate Telegram-to-MetaScalp new-tab/new-DOM requirement whose official Linking API behavior remains verification-gated; Stage 7 is complete and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
     {"revision": "1.16", "reason": "Human-approved corrective documentation checkpoint replacing the separate AUTO CENTER and one-shot CENTER controls with one CENTER control whose single activation centers once, double activation centers and enables visible-border LOCKED CENTERING, repeated double activation or manual DOM navigation disables the lock, and whose double-activation recognition remains independent of the 300-ms trading anti-bounce; all revision 1.15 MetaScalp and input-device decisions remain unchanged and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
-    {"revision": "1.17", "reason": "Human-approved documentation checkpoint selecting the React 19 TypeScript Vite frontend toolchain, recording desktop DOM/chart Limit and confirmed Market interactions, a 500-ms long press, fail-closed fast-order safety, reversible pending Limit-line edits, coin-quantity position authority and the superseding Paper-first execution architecture; CENTER 300-ms mouse and 350-ms touch windows remain proposals pending verification, chart and L2 boundaries remain unresolved, and Stage 8 remains not started and not authorized", "date": "2026-08-22"}
+    {"revision": "1.17", "reason": "Human-approved documentation checkpoint selecting the React 19 TypeScript Vite frontend toolchain, recording desktop DOM/chart Limit and confirmed Market interactions, a 500-ms long press, fail-closed fast-order safety, reversible pending Limit-line edits, coin-quantity position authority and the superseding Paper-first execution architecture; CENTER 300-ms mouse and 350-ms touch windows remain proposals pending verification, chart and L2 boundaries remain unresolved, and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
+    {"revision": "1.18", "reason": "Human-approved final pre-Stage-8 documentation checkpoint binding CENTER mouse/touch timings, same-price multi-order aggregation and touch-safe identity markers, symbol-scoped quick volume, the authoritative normalized Bybit L2 market-data boundary, L2-based Market preview and Paper market execution, fail-closed book health, a bounded unresolved resting-Limit fill model and a required future secret exposure audit without starting Stage 8, implementing runtime behavior or introducing real credentials", "date": "2026-08-22"}
   ]
 }
 ```
@@ -1970,3 +1981,107 @@ reconcile the execution abstraction with current contracts before runtime use.
 Stage 8 remains `NOT_STARTED_NOT_AUTHORIZED`.
 
 This amendment records checkpoint `PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED`.
+
+## 27. Final pre-Stage-8 market-data and Paper execution decisions
+
+Revision 1.18 is documentation and specification only. It does not start Stage 8, create frontend or
+runtime code, install dependencies, implement the Paper Trading Engine, connect real Bybit credentials,
+submit exchange orders, perform MetaScalp integration or execute the required future secret audit.
+
+### 27.1 Binding CENTER timing domains
+
+Desktop mouse `CENTER` double-click recognition uses 300 ms. Touch `CENTER` double-tap recognition uses
+350 ms. The first click or tap performs one-shot spread centering immediately and is never delayed while
+waiting for a possible second activation. A second activation inside the applicable device window upgrades
+the gesture to LOCKED CENTERING. A repeated double activation disables LOCKED CENTERING. Intentional manual
+DOM scrolling or repositioning also disables it and removes the locked border or outline.
+
+The CENTER mouse timer, CENTER touch timer, `LONG_PRESS_THRESHOLD = 500 ms`, and trading anti-bounce of
+300 ms are independent state and timer domains. Numerical equality never permits implementation coupling.
+
+### 27.2 Same-price own orders, markers and print priority
+
+Multiple own active orders may coexist at one DOM price. The monetary value shown on that price row is the
+sum of all active own-order amounts at that exact price in USDT. Aggregation never removes concrete identity:
+every order has its own marker/dot mapped to its specific order identity or client order identity, and
+cancelling a marker cancels only that order.
+
+The first order creates the first marker. Every newer same-price order creates a marker to the left of the
+previous marker, preserving a deterministic creation/order relationship. Visible dots may be compact, but
+their hit targets should be approximately 44x44 CSS px where feasible and adjacent targets must resolve
+unambiguously. Touch usability takes priority over density. When safe placement is exhausted, the UI must
+use explicit compact/overflow behavior rather than continuously shrinking spacing or hit targets. The exact
+overflow presentation remains a bounded later UI-detail decision.
+
+Tape/trade prints must not hide own-order markers. A print overlapping the marker region becomes partially
+transparent enough to keep the marker clearly visible. The marker has higher visual and pointer/touch
+hit-test priority, so activating the overlapping marker area selects or cancels the concrete order rather
+than selecting the print.
+
+### 27.3 Symbol-scoped quick volume
+
+Quick volume does not persist between symbols. Entering or switching to an instrument resets quick volume
+to `1 WV`; a larger or smaller selection from the previous symbol never carries over silently. The swords
+indicator continues to express engaged/selected WV under the existing contract. Its hover/tap tooltip shows
+the corresponding USDT reference, such as `1 WV = 100 USDT` or `2.5 WV = 250 USDT`. Execution quantity
+remains the already-approved rounded base-asset coin quantity, not the display amount.
+
+### 27.4 Authoritative normalized L2 boundary
+
+The browser/frontend is not the authoritative reconstructor of raw Bybit L2. The target path is:
+
+`Bybit Public WebSocket -> Market Data Engine / Bybit adapter -> authoritative normalized local L2 book -> DOM, Market preview, Paper Trading Engine, and later Robot paper execution`.
+
+The initial source is Bybit Public WebSocket L2 order book with target depth 50. The Market Data Engine owns
+snapshot/delta consumption, local reconstruction, required sequence/update metadata, gap detection,
+reconnect/resubscribe, and valid snapshot resynchronization before usability. It tracks exchange timestamps
+where available, local receive/update timing and explicit health/readiness state. Frontend and Paper Engine
+consume a normalized internal representation and do not depend directly on Bybit-specific snapshot/delta,
+`u` or `seq` mechanics. The adapter can later be replaced or extended without redesigning Workspace
+execution semantics.
+
+DOM display, Market BUY/SELL VWAP/slippage preview and Paper market simulation consume the same authoritative
+normalized book/state rather than reconstructing independent copies. Market BUY walks asks from best outward;
+Market SELL walks bids from best outward until the required quantity/notional is covered. Preview can report
+the relevant best bid/ask, estimated rounded coin quantity, average execution price/VWAP, absolute and
+percentage slippage and useful consumed-depth/level count. When authoritative usable L2 exists, last traded
+price alone is not a valid market-execution estimate.
+
+### 27.5 Paper fills and bounded unresolved resting-Limit model
+
+Paper Market BUY consumes available asks and Paper Market SELL consumes available bids from the authoritative
+normalized book. Larger orders can therefore receive a worse simulated average execution than smaller orders.
+
+A resting Paper Limit is not automatically fully filled merely because market price touched its level. The
+future design must consider market trades, L2 evolution, partial fills and an appropriate queue/liquidity
+model. The exact queue-position and fill algorithm is not approved and must not be invented at this checkpoint;
+it remains an explicit bounded Paper Engine design item.
+
+### 27.6 Fail-closed market-data safety
+
+The book exposes states conceptually equivalent to `NOT_READY`, `SYNCING`, `READY`, and `STALE`/`DEGRADED` as
+appropriate. If sequence integrity is uncertain, reconnect/resync is incomplete, a required snapshot is
+missing, freshness exceeds the later-approved threshold, or authoritative state is otherwise ambiguous, new
+actions requiring reliable current data fail closed. An untrusted book cannot be used as current for a new
+Market preview/execution, fast placement is blocked where validated current context is required, and Paper
+Engine does not fabricate liquidity. Eligibility resumes only after valid resynchronization. The exact numeric
+staleness threshold remains unresolved.
+
+### 27.7 Required future secret exposure audit
+
+Before any real Bybit credentials or live execution are introduced, a separate bounded SECRET EXPOSURE AUDIT
+is required. Its scope includes current tracked files; relevant Git history; `.env` and config files; relevant
+text/log and backup/reference artifacts; Telegram tokens; Bybit API key/secret patterns; private keys and
+password-like credentials; high-confidence/high-entropy indicators; `.gitignore`; and available GitHub secret
+scanning/push-protection posture.
+
+Findings must be masked or fingerprinted and secrets must never be printed in full. A real active secret is
+rotated/revoked before history cleanup. Any history cleanup is a separate explicitly controlled action. This
+audit is recorded here but was not executed by revision 1.18.
+
+Paper-first architecture remains authoritative: the initial execution backend is PAPER, the execution
+contract remains reusable by Manual Workspace and future virtual Robot, and MANUAL versus ROBOT ownership
+remains explicit. Real-money Bybit execution is not re-authorized. Stage 8 remains
+`NOT_STARTED_NOT_AUTHORIZED` and requires separate exact-scope and dependency authorization.
+
+This amendment records checkpoint `AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED`.
