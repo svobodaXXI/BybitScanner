@@ -2,7 +2,7 @@
 
 Version:
 
-7.57
+7.59
 
 Date:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED
+IN_PROGRESS / STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED
 
 Checkpoint:
 
-SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED
+STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED
 
 ChangeRequest revision:
 
-1.21
+1.23
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.21
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.23
 
 Product priority:
 
@@ -908,15 +908,15 @@ LOCAL_FIRST / DEPLOYMENT_NEUTRAL / FUTURE_VPS_COMPATIBLE
 
 Implementation status:
 
-STAGES_0_TO_7_COMPLETED / STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED
+STAGES_0_TO_7_COMPLETED / STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED
 
 Current authorized action:
 
-SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED_REVISION_1_21
+STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED_REVISION_1_23
 
 Next phase:
 
-FAST_DOM_CLIENT_SLICE_IMPLEMENTATION_REQUIRES_SEPARATE_AUTHORIZATION / PAPER_ENGINE_FILL_MODEL_DETAIL_UNRESOLVED / SECRET_EXPOSURE_AUDIT_REQUIRED_BEFORE_LIVE / METASCALP_SEPARATE_BOUNDED_BLOCK
+NEXT_STAGE_8_SLICE_REQUIRES_SEPARATE_AUTHORIZATION / LIVE_BYBIT_ROBOT_REAL_CREDENTIALS_AND_TRADING_EXECUTION_DEFERRED
 
 Important:
 
@@ -933,7 +933,10 @@ depth-extensible normalized contract. Fast DOM implementation was not started an
 authorization-gated; the future secret audit was not executed. Revision 1.21 records one shared 3-in-1
 Terminal/Autopilot/Editor workspace, lower-panel cross-mode navigation, preserved market workspace state,
 non-mutating mode switches, key-icon account access including Paper and real-prototype responsive-header
-tuning. No Robot, Editor, Fast DOM or credential implementation was started or authorized.
+tuning. Revision 1.23 records the runnable Fast DOM client slice as implemented and verified with a shared
+three-mode shell, SVG chart, compact non-trading DOM/Tape, CENTER interactions, Paper own-order fixtures,
+Paper account menu, responsive layout and a normalized deterministic development feed. Live Bybit, Robot,
+real credentials and trading execution remain unimplemented and separately authorization-gated.
 
 ---
 

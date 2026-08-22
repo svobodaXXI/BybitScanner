@@ -4,10 +4,31 @@ export type BookHealth =
   | "READY"
   | "STALE"
   | "DEGRADED";
+export type MarketSide = "BUY" | "SELL";
 
 export interface PriceLevel {
-  price: string;
-  quantity: string;
+  price: number;
+  quantity: number;
+}
+export interface Candle {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+export interface TradePrint {
+  id: string;
+  time: string;
+  price: number;
+  quantity: number;
+  side: MarketSide;
+}
+export interface OwnOrder {
+  id: string;
+  price: number;
+  notionalUsdt: number;
+  side: MarketSide;
 }
 
 export interface NormalizedOrderBook {
@@ -16,6 +37,7 @@ export interface NormalizedOrderBook {
   asks: readonly PriceLevel[];
   health: BookHealth;
   receivedAt: string;
+  availableDepth: number;
 }
 
 /**
@@ -24,4 +46,8 @@ export interface NormalizedOrderBook {
  */
 export interface MarketDataSnapshot {
   book: NormalizedOrderBook;
+  candles: readonly Candle[];
+  trades: readonly TradePrint[];
+  ownOrders: readonly OwnOrder[];
+  source: "DEVELOPMENT" | "LIVE_NORMALIZED";
 }

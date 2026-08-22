@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.21",
+  "revision": "1.23",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Persist the approved single 3-in-1 Trading Workspace mode architecture after the Fast DOM UX checkpoint while preserving Paper-first safety and separately gating implementation.",
+  "objective": "Record the implemented and verified smallest runnable Stage 8 Fast DOM client slice while preserving Paper-first safety and all deferred boundaries.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -37,7 +37,7 @@
     "Trading Robot implementation",
     "AUTOPILOT enablement",
     "Dependencies outside the bounded frontend build, styling, lint and focused-test foundation",
-    "Any Stage 8 Block 2 or later implementation without new explicit authorization"
+    "Any Stage 8 implementation beyond the explicitly authorized first runnable Fast DOM client slice"
   ],
   "authoritative_references": [
     "AGENTS.md#Task-and-change-routing",
@@ -312,15 +312,15 @@
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
     {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
-    {"id": "IMPLEMENT", "status": "BOUNDED_STAGES_0_TO_7_COMPLETED_STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED"},
-    {"id": "VERIFY", "status": "BOUNDED_STAGES_0_TO_7_VERIFIED_STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_VERIFIED"},
+    {"id": "IMPLEMENT", "status": "BOUNDED_STAGES_0_TO_7_COMPLETED_STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED"},
+    {"id": "VERIFY", "status": "BOUNDED_STAGES_0_TO_7_STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_VERIFIED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED",
-  "implementation_status": "STAGES_0_TO_7_COMPLETED_STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED",
+  "current_checkpoint": "STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED",
+  "implementation_status": "STAGES_0_TO_7_STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "FAST_DOM_CLIENT_SLICE_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED_EXACT_SCOPE_REQUIRES_SEPARATE_AUTHORIZATION_METASCALP_SEPARATE_BLOCK_REQUIRED",
+  "next_phase_authorization": "NEXT_STAGE_8_SLICE_NOT_AUTHORIZED_ALL_DEFERRED_SCOPE_REQUIRES_SEPARATE_AUTHORIZATION",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -338,7 +338,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED"
+    "status": "STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED_NEXT_SLICE_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -362,7 +362,9 @@
     {"revision": "1.18", "reason": "Human-approved final pre-Stage-8 documentation checkpoint binding CENTER mouse/touch timings, same-price multi-order aggregation and touch-safe identity markers, symbol-scoped quick volume, the authoritative normalized Bybit L2 market-data boundary, L2-based Market preview and Paper market execution, fail-closed book health, a bounded unresolved resting-Limit fill model and a required future secret exposure audit without starting Stage 8, implementing runtime behavior or introducing real credentials", "date": "2026-08-22"},
     {"revision": "1.19", "reason": "Human-authorized Stage 8 Block 1 only checkpoint implementing and verifying the terminal/frontend React 19 TypeScript Vite foundation, structural PAPER/non-live workspace shell, Tailwind 4 styling, normalized frontend market-data boundary and focused tooling while leaving all functional DOM, L2, Paper Engine, chart, live trading, credential, MetaScalp and later Stage 8 work not implemented and separately authorization-gated", "date": "2026-08-22"},
     {"revision": "1.20", "reason": "Documentation-only checkpoint recording the current Fast DOM client-slice baseline: dedicated high-frequency state path, non-trading DOM mouse navigation, preserved CENTER behavior, individual same-price order dots with per-order cancellation and extreme-left aggregate USDT, Bybit V5 depth-50 orderbook plus separate publicTrade baseline, depth-extensible normalized contracts and explicit deferral of order-creation clicks and further trading mouse semantics without starting implementation", "date": "2026-08-22"},
-    {"revision": "1.21", "reason": "Documentation-only checkpoint recording one shared 3-in-1 Trading Workspace with Terminal, Autopilot and Editor lower-panel modes, preserved workspace state, non-mutating mode navigation, lower-panel cross-mode buttons, key-icon account access including Paper, prototype-gated responsive header decisions and Fast DOM prototype delivery priority without Robot or Editor design, production implementation or changed Stage 8 authorization", "date": "2026-08-22"}
+    {"revision": "1.21", "reason": "Documentation-only checkpoint recording one shared 3-in-1 Trading Workspace with Terminal, Autopilot and Editor lower-panel modes, preserved workspace state, non-mutating mode navigation, lower-panel cross-mode buttons, key-icon account access including Paper, prototype-gated responsive header decisions and Fast DOM prototype delivery priority without Robot or Editor design, production implementation or changed Stage 8 authorization", "date": "2026-08-22"},
+    {"revision": "1.22", "reason": "Explicit human authorization for only the smallest runnable Stage 8 Fast DOM client slice on the existing React TypeScript Vite foundation: shared three-mode shell, real chart surface, interactive non-trading DOM and Tape, deterministic labelled development market feed behind normalized boundaries, CENTER behavior, own-order fixture rendering, Paper account access location and focused tests; Robot, real credentials, trading execution, complete Editor and all deferred scope remain unauthorized", "date": "2026-08-22"},
+    {"revision": "1.23", "reason": "Recorded the authorized runnable Fast DOM client slice as implemented and verified: shared state-preserving three-mode shell, SVG candlestick chart, compact interactive non-trading DOM and Tape, CENTER lock/manual movement, same-price Paper fixture dots and aggregate cancellation behavior, key-icon Paper account menu, normalized external market-data port with clearly labelled deterministic development feed, responsive layout, four focused tests, clean Biome, successful production build and HTTP 200 local startup smoke check; live Bybit, Robot, real credentials and all trading execution remain deferred", "date": "2026-08-22"}
   ]
 }
 ```
@@ -2242,3 +2244,46 @@ continued image/mockup-driven design. This checkpoint does not expand into Robot
 design, starts no production implementation and does not authorize the Fast DOM client slice.
 
 This amendment records checkpoint `SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED`.
+
+## 31. Stage 8 runnable Fast DOM client-slice authorization
+
+The user explicitly authorizes implementation of only the smallest useful locally runnable prototype on the
+existing `terminal/frontend/` foundation. Authorized scope is the shared Terminal/Autopilot/Editor shell with
+preserved workspace state; a stable real chart surface; a compact non-trading DOM and adjacent Tape; CENTER
+single/double/locked/manual-scroll behavior; a normalized deterministic feed clearly labelled development
+data when live backend market data is unavailable; same-price own-order fixture visualization and individual
+fixture cancellation; Paper account access location; responsive prototype usability; and focused tests/build.
+
+This authorization does not include Robot logic, Trading Intelligence, strategy or real execution, DOM-cell
+order creation, complete Editor, final quick-volume mechanics, real credential handling, MetaScalp or
+unrelated Scanner work. Browser code remains outside raw Bybit snapshot/delta reconstruction; live Bybit data
+requires the authoritative adapter/Market Data Engine boundary. This checkpoint records
+`STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTATION_AUTHORIZED`.
+
+## 32. Stage 8 runnable Fast DOM client-slice implementation result
+
+The authorized slice is implemented under `terminal/frontend/`. The application now runs as one shared
+Terminal/Autopilot/Editor workspace; lower-panel mode switching retains chart zoom and the mounted market
+workspace and performs no trading mutation. Autopilot and Editor are explicit non-functional placeholders.
+
+The shared workspace contains a dark graphite SVG candlestick surface with Buy/Bid green and Sell/Ask red,
+an adjacent compact DOM and Tape, right-to-left depth fills, wheel and vertical-drag repositioning, one-shot
+CENTER, double-click locked CENTER with visible outline and manual-movement unlock. Ordinary DOM level clicks
+do not create orders. Clearly labelled Paper development fixtures demonstrate multiple same-price dots,
+extreme-left aggregate USDT and per-dot cancellation of only the selected fixture order.
+
+The key-icon account location opens a Paper / Virtual selection panel and explicitly disables real credentials.
+Market data is not live Bybit in this slice: a deterministic `DEVELOPMENT` snapshot supplies depth 50,
+candles, own-order fixtures and a separate Tape collection behind a normalized `MarketDataPort` consumed via
+an external-store hook. Browser code contains no raw Bybit snapshot/delta or sequence mechanics; a future
+normalized live backend adapter can replace the development port.
+
+Verification passed: Biome check; four focused Vitest/React Testing Library tests covering state-preserving
+mode switching, CENTER locking/unlocking, non-trading DOM clicks, individual fixture cancellation and the
+depth-extensible development adapter; strict TypeScript and Vite production build; and a bounded Vite startup
+smoke check returning HTTP 200 before clean shutdown.
+
+No live Bybit connection, Robot logic, Trading Intelligence, strategy, real order/account mutation, real
+credential handling, complete Editor or final quick-volume mechanics were implemented. Every next Stage 8
+slice requires separate authorization. This amendment records
+`STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED`.

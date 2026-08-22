@@ -2,7 +2,7 @@
 
 Version:
 
-4.50
+4.52
 
 Date:
 
@@ -1376,13 +1376,26 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.21.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.23.
 
 Current action:
 
-SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED_FAST_DOM_IMPLEMENTATION_REQUIRES_SEPARATE_AUTHORIZATION_REVISION_1_21.
+STAGE_8_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED_NEXT_SLICE_REQUIRES_SEPARATE_AUTHORIZATION_REVISION_1_23.
 
-Current revision 1.21 single 3-in-1 Trading Workspace architecture checkpoint:
+Current revision 1.23 records the first runnable prototype: shared state-preserving three-mode shell, SVG
+candlestick chart, compact non-trading DOM/Tape, CENTER lock/manual movement, same-price Paper fixture order
+visualization and individual cancellation, Paper account menu, responsive layout and a normalized labelled
+deterministic development feed. Four focused interaction/adapter tests, Biome, TypeScript/Vite production
+build and HTTP 200 local startup smoke check passed. Live Bybit, Robot, real credentials, execution and every
+next Stage 8 slice remain separately gated.
+
+Previous revision 1.22 authorized only the smallest runnable Fast DOM client slice on the existing frontend
+foundation, with a shared three-mode shell, real chart surface, non-trading DOM/Tape interactions, labelled
+deterministic development feed behind normalized boundaries, CENTER behavior, own-order fixture rendering,
+Paper account access location and focused verification. Robot, live credentials, real execution, complete
+Editor, Trading Intelligence and all other deferred scope remain unauthorized.
+
+Previous revision 1.21 single 3-in-1 Trading Workspace architecture checkpoint:
 
 * defines one shared application/engine with Terminal, Autopilot and Editor modes rather than separate apps
   or chart engines;

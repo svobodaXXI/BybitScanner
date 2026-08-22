@@ -1,25 +1,40 @@
+import { useState } from "react";
+import { AccountMenu } from "../components/AccountMenu";
+import { ChartPanel } from "../components/ChartPanel";
+import { DomPanel } from "../components/DomPanel";
+import { ModePanel, type WorkspaceMode } from "../components/ModePanel";
+import { TapePanel } from "../components/TapePanel";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
-import { WorkspacePanel } from "../components/WorkspacePanel";
+import { useMarketData } from "../marketData/useMarketData";
 
 export function App() {
+  const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
+  const [zoom, setZoom] = useState(1);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const market = useMarketData();
+
   return (
     <main className="workspace-shell">
-      <WorkspaceHeader />
+      <WorkspaceHeader
+        accountOpen={accountOpen}
+        mode={mode}
+        onAccountToggle={() => setAccountOpen((open) => !open)}
+        symbol={market.book.symbol}
+      />
+      {accountOpen ? <AccountMenu /> : null}
       <section className="workspace-grid" aria-label="Trading workspace">
-        <WorkspacePanel className="chart-panel" title="Chart">
-          Interactive chart foundation reserved for a later block.
-        </WorkspacePanel>
-        <WorkspacePanel className="dom-panel" title="DOM / Order book">
-          Normalized market depth will appear here.
-        </WorkspacePanel>
-        <WorkspacePanel className="controls-panel" title="Trading controls">
-          Execution controls are intentionally unavailable in this foundation.
-        </WorkspacePanel>
+        <ChartPanel candles={market.candles} onZoom={setZoom} zoom={zoom} />
+        <aside className="market-sidecar" aria-label="Market depth and tape">
+          <DomPanel book={market.book} ownOrders={market.ownOrders} />
+          <TapePanel trades={market.trades} />
+        </aside>
+        <ModePanel mode={mode} onModeChange={setMode} />
       </section>
       <footer className="status-bar">
         <span className="status-dot" aria-hidden="true" />
-        <span>Market data: not connected</span>
-        <span>Execution: PAPER foundation only</span>
+        <span>Market data: deterministic development feed</span>
+        <span>Book: {market.book.health}</span>
+        <span>Execution: PAPER / non-live</span>
       </footer>
     </main>
   );
