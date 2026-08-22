@@ -20,6 +20,7 @@ class CommandState(str, Enum):
     FILLED = "filled"
     CANCEL_PENDING = "cancel_pending"
     CANCELLED = "cancelled"
+    AMENDED = "amended"
     REJECTED = "rejected"
     FAILED = "failed"
     UNKNOWN = "unknown"
@@ -58,6 +59,7 @@ _COMMAND_TRANSITIONS = {
         CommandState.RECONCILING,
     }),
     CommandState.ACKNOWLEDGED: frozenset({
+        CommandState.AMENDED,
         CommandState.OPEN,
         CommandState.PARTIALLY_FILLED,
         CommandState.FILLED,
@@ -85,6 +87,7 @@ _COMMAND_TRANSITIONS = {
     }),
     CommandState.UNKNOWN: frozenset({CommandState.RECONCILING}),
     CommandState.RECONCILING: frozenset({
+        CommandState.AMENDED,
         CommandState.ACKNOWLEDGED,
         CommandState.OPEN,
         CommandState.PARTIALLY_FILLED,
@@ -97,6 +100,7 @@ _COMMAND_TRANSITIONS = {
     }),
     CommandState.FILLED: frozenset(),
     CommandState.CANCELLED: frozenset(),
+    CommandState.AMENDED: frozenset(),
     CommandState.REJECTED: frozenset(),
     CommandState.FAILED: frozenset(),
 }

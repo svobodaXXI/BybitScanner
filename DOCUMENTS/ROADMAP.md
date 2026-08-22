@@ -1474,15 +1474,24 @@ RULE-008:
 
 from:
 
-ROADMAP v4.39
+ROADMAP v4.40
 
 to:
 
-ROADMAP v4.40
+ROADMAP v4.41
 
 reason:
 
-Current checkpoint — Manual execution/protection IMPLEMENT planning (v4.39 to v4.40):
+Current checkpoint — Manual Limit GTC and amend lifecycle correction (v4.40 to v4.41):
+
+* superseded as the current checkpoint by `CR-TRADING-WORKSPACE-001` revision 1.14 checkpoint
+  `MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED`;
+* bound ordinary Manual Limit v1 orders to GTC until fill, explicit cancellation or approved cleanup;
+* recorded truthful terminal `AMENDED` command completion separately from the still-active exchange order;
+* recorded the Stage 5 pybit mutation no-retry gate and narrow ExecutionEngine outcome-ingestion requirement;
+* preserved Stage 5 as not started and not authorized, overall CONTEXT as active/incomplete and Robot as out of scope.
+
+Previous checkpoint preserved — Manual execution/protection IMPLEMENT planning (v4.39 to v4.40):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.13 and checkpoint `MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED`;
 * recorded modular Terminal boundaries, Bybit adapter responsibilities, explicit execution/connectivity states, persistence/recovery and DOM/chart projection contracts;

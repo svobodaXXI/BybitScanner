@@ -110,6 +110,42 @@ class TerminalStateTransitionTests(unittest.TestCase):
             OrderState.CANCELLED,
         )
 
+    def test_confirmed_amend_has_distinct_terminal_completion(self):
+        state = transition_command(CommandState.LOCAL_INTENT, CommandState.ADMITTED)
+        state = transition_command(state, CommandState.SUBMITTING)
+        acknowledgement = transition_command(state, CommandState.ACKNOWLEDGED)
+        self.assertIs(acknowledgement, CommandState.ACKNOWLEDGED)
+        self.assertIsNot(acknowledgement, CommandState.AMENDED)
+        completed = transition_command(acknowledgement, CommandState.AMENDED)
+        self.assertIs(completed, CommandState.AMENDED)
+        self.assertIsNot(completed, CommandState.FILLED)
+        with self.assertRaises(InvalidStateTransition):
+            transition_command(completed, CommandState.OPEN)
+
+    def test_ambiguous_amend_can_reconcile_to_completion(self):
+        self.assertIs(
+            transition_command(CommandState.SUBMITTING, CommandState.UNKNOWN),
+            CommandState.UNKNOWN,
+        )
+        self.assertIs(
+            transition_command(CommandState.UNKNOWN, CommandState.RECONCILING),
+            CommandState.RECONCILING,
+        )
+        self.assertIs(
+            transition_command(CommandState.RECONCILING, CommandState.AMENDED),
+            CommandState.AMENDED,
+        )
+
+    def test_amend_completion_does_not_change_exchange_order_state(self):
+        self.assertIs(
+            transition_order(OrderState.OPEN, OrderState.AMEND_PENDING),
+            OrderState.AMEND_PENDING,
+        )
+        self.assertIs(
+            transition_order(OrderState.AMEND_PENDING, OrderState.OPEN),
+            OrderState.OPEN,
+        )
+
     def test_terminal_and_regressive_transitions_are_rejected(self):
         with self.assertRaises(InvalidStateTransition):
             transition_command(CommandState.FILLED, CommandState.OPEN)

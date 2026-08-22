@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.13",
+  "revision": "1.14",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -133,6 +133,7 @@
     ,"Execution anti-bounce expires after 300 milliseconds but never overrides an UNKNOWN or RECONCILING command lock"
     ,"Degraded, unknown and reconciling state blocks new exposure while preserving only safely bounded risk reduction and cancellation"
     ,"After confirmed FLAT caused by Market, SL or TP, all remaining ordinary active Limits for that selected account and symbol enter automatic cancellation regardless of origin, without extending this rule to other symbols or conditional protection"
+    ,"Manual Terminal v1 ordinary Limit orders use binding Good-Till-Cancelled timeInForce and remain active until execution, explicit user cancellation or approved Terminal cleanup; IOC, FOK and PostOnly are not the default Manual Limit semantics"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -291,7 +292,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "5fa3bba7b347739fb73e57f25306ec8a677643e4",
-    "status": "MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_COMPLETE_IMPLEMENT_NOT_AUTHORIZED"
+    "status": "MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED_STAGE_5_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -307,7 +308,8 @@
     {"revision": "1.10", "reason": "Human-approved CONTEXT amendment superseding only the revision 1.9 fixed-period recenter direction with an approximately five-second configurable eligibility check and central-deviation threshold, while preserving immediate CENTER, higher-priority STRONG-sweep follow, manual-inspection suppression, incomplete CONTEXT and unauthorized IMPLEMENT", "date": "2026-08-22"},
     {"revision": "1.11", "reason": "Human-approved intermediate CONTEXT checkpoint recording Manual Market, Limit and SL/TP execution/protection semantics, fast two-touch DOM commands, fail-closed uncertainty, partial fills, order visibility and overlays, symbol cleanup and the narrow Manual-Limit reversal exception without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-22"},
     {"revision": "1.12", "reason": "Human-approved CONTEXT checkpoint completing the Manual Market, Limit and SL/TP execution/protection research block with anti-bounce versus uncertainty locks, fail-closed degraded-state gates, Market and Limit reversal policies, account-wide realtime truth, origin-independent ordinary-Limit cleanup after confirmed FLAT and a final execution-state matrix while leaving overall CONTEXT active and IMPLEMENT planning and implementation unauthorized", "date": "2026-08-22"},
-    {"revision": "1.13", "reason": "Documentation-only IMPLEMENT planning checkpoint decomposing the completed Manual Market, Limit and SL/TP execution/protection block into modular Terminal domain, Bybit adapter, execution-engine, reconciliation, persistence, projection, API and fast-DOM increments with explicit acceptance and test gates while leaving overall CONTEXT active and IMPLEMENT not started or authorized", "date": "2026-08-22"}
+    {"revision": "1.13", "reason": "Documentation-only IMPLEMENT planning checkpoint decomposing the completed Manual Market, Limit and SL/TP execution/protection block into modular Terminal domain, Bybit adapter, execution-engine, reconciliation, persistence, projection, API and fast-DOM increments with explicit acceptance and test gates while leaving overall CONTEXT active and IMPLEMENT not started or authorized", "date": "2026-08-22"},
+    {"revision": "1.14", "reason": "Human-approved corrective checkpoint binding GTC as the ordinary Manual Limit v1 timeInForce, recording truthful terminal AMENDED command completion and the pybit mutation no-retry gate, while Stage 5 remains not started and not authorized", "date": "2026-08-22"}
   ]
 }
 ```
@@ -1696,3 +1698,29 @@ implementation, tests, dependencies, Bybit credentials, orders and runtime chang
 `NOT_STARTED_NOT_AUTHORIZED`. CONTEXT/RESEARCH is separately authorized and in progress, without any
 claim that CONTEXT is complete, fully finalized or verified. IMPLEMENT
 requires separate later approval and valid context.
+
+## 23. Manual Limit GTC and pre-Stage 5 corrective checkpoint
+
+Manual Terminal v1 ordinary Limit orders use `GTC` (`Good-Till-Cancelled`) as the binding/default
+`timeInForce`. Such an order remains active until it is filled, explicitly cancelled by the user, or cancelled by an
+approved Terminal cleanup workflow. `IOC`, `FOK` and `PostOnly` are not default ordinary Manual Limit semantics in the
+current v1 scope.
+
+The terminal command lifecycle distinguishes confirmed amend completion from the continuing exchange-order lifecycle.
+REST amend acknowledgement remains intermediate acceptance evidence. Only confirmed modified-order evidence completes
+the amend command as `AMENDED`; this terminal state is final, is not a fill, and does not imply that the exchange order
+is closed. Ambiguous amend outcomes remain `UNKNOWN`/`RECONCILING` and preserve the no-blind-retry invariant.
+
+Before Stage 5 implementation, its exact authorized scope must include a narrow ExecutionEngine mutation-outcome
+ingestion boundary for REST acknowledgement, deterministic rejection, ambiguous/unknown outcome and confirmed amend
+completion. Application code must not bypass ExecutionEngine ownership of command transitions.
+
+Installed `pybit==5.17.0` has internal response-code retry behavior. A future Stage 5 mutation adapter must use
+`force_retry=False`, explicitly disable mutation response retry codes, contain no mutation retry loop, classify
+timeout or ambiguous response as `UNKNOWN`, and never perform blind retry. This is a binding implementation-safety
+gate, not a change to product execution semantics.
+
+Stage 5 remains `NOT_STARTED_NOT_AUTHORIZED`. This correction does not create an exchange mutation adapter, authorize
+Bybit create/amend/cancel calls, complete overall CONTEXT, or expand Robot scope.
+
+This amendment records checkpoint `MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED`.

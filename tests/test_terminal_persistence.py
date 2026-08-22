@@ -319,6 +319,65 @@ class TerminalPersistenceTests(unittest.TestCase):
             self.assertFalse(hasattr(reopened, "submit"))
             self.assertFalse(hasattr(reopened, "resubmit"))
 
+    def test_restart_excludes_amended_and_existing_final_states_only(self):
+        def persist_path(store, suffix, states):
+            command = self.command(
+                command_id=f"command-{suffix}",
+                order_link_id=f"link-{suffix}",
+            )
+            store.persist_command_before_submit(command)
+            current = command
+            for next_state in states:
+                current = store.transition_command_state(
+                    current.command_id,
+                    current.current_state,
+                    next_state,
+                    expected_version=current.version,
+                    reason=f"test transition to {next_state.value}",
+                    occurred_at_ms=current.updated_at_ms + 1,
+                )
+
+        with self.open_store() as store:
+            persist_path(
+                store,
+                "amended",
+                (CommandState.SUBMITTING, CommandState.ACKNOWLEDGED, CommandState.AMENDED),
+            )
+            persist_path(
+                store,
+                "filled",
+                (CommandState.SUBMITTING, CommandState.ACKNOWLEDGED, CommandState.FILLED),
+            )
+            persist_path(
+                store,
+                "cancelled",
+                (
+                    CommandState.SUBMITTING,
+                    CommandState.ACKNOWLEDGED,
+                    CommandState.CANCEL_PENDING,
+                    CommandState.CANCELLED,
+                ),
+            )
+            persist_path(store, "rejected", (CommandState.SUBMITTING, CommandState.REJECTED))
+            persist_path(store, "failed", (CommandState.FAILED,))
+            persist_path(store, "unknown", (CommandState.SUBMITTING, CommandState.UNKNOWN))
+            persist_path(
+                store,
+                "reconciling",
+                (CommandState.SUBMITTING, CommandState.UNKNOWN, CommandState.RECONCILING),
+            )
+
+        with self.open_store() as reopened:
+            unfinished = reopened.load_unfinished_commands()
+            self.assertEqual(
+                {record.current_state for record in unfinished},
+                {CommandState.UNKNOWN, CommandState.RECONCILING},
+            )
+            self.assertNotIn(
+                CommandState.AMENDED,
+                {record.current_state for record in unfinished},
+            )
+
     def test_execution_is_applied_once_across_ws_rest_and_restart(self):
         execution = self.execution()
         with self.open_store() as store:

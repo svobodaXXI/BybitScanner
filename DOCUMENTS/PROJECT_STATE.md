@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED
+IN_PROGRESS / MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED
 
 Checkpoint:
 
-MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED
+MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED
 
 ChangeRequest revision:
 
-1.13
+1.14
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.13
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.14
 
 Product priority:
 
@@ -912,7 +912,7 @@ NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_COMPLETE_IMPLEMENT_NOT_AUTHORIZED_REVISION_1_13
+MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED_STAGE_5_NOT_AUTHORIZED_REVISION_1_14
 
 Next phase:
 
@@ -4667,15 +4667,23 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.46
+PROJECT_STATE v7.47
 
 to:
 
-PROJECT_STATE v7.47
+PROJECT_STATE v7.48
 
 reason:
 
-Current checkpoint — Manual execution/protection IMPLEMENT planning (v7.46 to v7.47):
+Current checkpoint — Manual Limit GTC and amend lifecycle correction (v7.47 to v7.48):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.14 and checkpoint `MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED`;
+* bound GTC as the ordinary Manual Limit v1 timeInForce until fill, explicit cancellation or approved cleanup;
+* recorded terminal `AMENDED` as truthful final amend-command completion without closing the exchange order or creating fill evidence;
+* recorded the mandatory pybit mutation no-retry configuration and narrow Stage 5 ExecutionEngine outcome-ingestion scope;
+* preserved active/incomplete overall CONTEXT, Robot out of scope and Stage 5 not started/not authorized.
+
+Previous checkpoint preserved — Manual execution/protection IMPLEMENT planning (v7.46 to v7.47):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.13 and checkpoint `MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED`;
 * planned one modular local `terminal/` subsystem with pure domain contracts, one ExecutionEngine, Bybit adapter, reconciliation coordinator, controlled SQLite/WAL store and normalized API/projection boundary;
