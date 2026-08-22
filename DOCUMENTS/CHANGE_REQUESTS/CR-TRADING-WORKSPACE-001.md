@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.15",
+  "revision": "1.16",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -134,7 +134,7 @@
     ,"Degraded, unknown and reconciling state blocks new exposure while preserving only safely bounded risk reduction and cancellation"
     ,"After confirmed FLAT caused by Market, SL or TP, all remaining ordinary active Limits for that selected account and symbol enter automatic cancellation regardless of origin, without extending this rule to other symbols or conditional protection"
     ,"Manual Terminal v1 ordinary Limit orders use binding Good-Till-Cancelled timeInForce and remain active until execution, explicit user cancellation or approved Terminal cleanup; IOC, FOK and PostOnly are not the default Manual Limit semantics"
-    ,"Fast DOM persistent AUTO CENTER defaults OFF; deliberate manual scrolling or repositioning switches it OFF, while a separate one-shot CENTER returns current market to the working central area without enabling AUTO CENTER"
+    ,"Fast DOM uses one CENTER control: one deliberate activation performs one-shot centering without locking, a deliberate double activation centers and enables LOCKED CENTERING, a double activation while locked disables it, and manual scrolling or repositioning disables it; active locked mode is shown by a persistent visible border or outline on CENTER"
     ,"Fast DOM uses one execution gesture state machine with device-specific mappings: touch uses a held primary BUY or SELL finger plus a secondary row-selection finger, while desktop uses a held primary mouse action plus a separately deliberate row action whose exact button mapping remains verification-gated; hover never submits a trading command"
     ,"A Scanner Telegram signal may expose a separate Open in MetaScalp action whose binding outcome is a new MetaScalp tab and new DOM for that signal symbol while all existing MetaScalp tabs and order books remain unchanged"
     ,"MetaScalp integration belongs to a separate Scanner/backend integration block and never expands the Fast DOM execution engine or Stage 8 scope"
@@ -167,7 +167,7 @@
     ,"Final working/calculation depth beyond the preferred orderbook.50 starting candidate, exact sequence-gap rules, correlation window, confidence thresholds and same-sequence multi-message treatment"
     ,"PROBABLE sweep visualization and reliable trade-to-L2 correlation under ambiguous cancellation-versus-execution evidence"
     ,"Responsive adjustment around the preferred 20 asks plus 20 bids viewport, exact row height, DOM percentile/window/hysteresis, print-scaling window, update batching, render frequency, bounded tape retention and mobile Telegram Mini App performance limits"
-    ,"Exact AUTO CENTER ON follow/recenter thresholds, central dead-zone, motion and sweep-follow interaction, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, book-walk depth source, third-party vendoring policy and future historical heatmap requirement"
+    ,"Exact LOCKED CENTERING follow/recenter thresholds, central dead-zone, motion and sweep-follow interaction, CENTER double-activation timing, border or outline styling, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, book-walk depth source, third-party vendoring policy and future historical heatmap requirement"
     ,"Exact desktop mouse-button mapping for arming and deliberate DOM row execution before Stage 8 implementation"
     ,"Exact MetaScalp Linking API behavior required to guarantee a new tab and new symbol DOM while preserving existing tabs, including exchange/market selection, Bybit USDT perpetual ticker mapping, not-running behavior and official local-port discovery"
   ],
@@ -279,7 +279,7 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED",
+  "current_checkpoint": "DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED",
   "implementation_status": "STAGES_0_TO_7_COMPLETED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
   "next_phase_authorization": "STAGE_8_NOT_STARTED_NOT_AUTHORIZED_METASCALP_SEPARATE_BOUNDED_BLOCK_REQUIRED",
@@ -300,7 +300,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"
+    "status": "DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -318,7 +318,8 @@
     {"revision": "1.12", "reason": "Human-approved CONTEXT checkpoint completing the Manual Market, Limit and SL/TP execution/protection research block with anti-bounce versus uncertainty locks, fail-closed degraded-state gates, Market and Limit reversal policies, account-wide realtime truth, origin-independent ordinary-Limit cleanup after confirmed FLAT and a final execution-state matrix while leaving overall CONTEXT active and IMPLEMENT planning and implementation unauthorized", "date": "2026-08-22"},
     {"revision": "1.13", "reason": "Documentation-only IMPLEMENT planning checkpoint decomposing the completed Manual Market, Limit and SL/TP execution/protection block into modular Terminal domain, Bybit adapter, execution-engine, reconciliation, persistence, projection, API and fast-DOM increments with explicit acceptance and test gates while leaving overall CONTEXT active and IMPLEMENT not started or authorized", "date": "2026-08-22"},
     {"revision": "1.14", "reason": "Human-approved corrective checkpoint binding GTC as the ordinary Manual Limit v1 timeInForce, recording truthful terminal AMENDED command completion and the pybit mutation no-retry gate, while Stage 5 remains not started and not authorized", "date": "2026-08-22"},
-    {"revision": "1.15", "reason": "Human-approved documentation checkpoint recording default-off persistent AUTO CENTER plus separate one-shot CENTER, one execution gesture state machine with distinct touch and verification-gated mouse mappings, and a separate Telegram-to-MetaScalp new-tab/new-DOM requirement whose official Linking API behavior remains verification-gated; Stage 7 is complete and Stage 8 remains not started and not authorized", "date": "2026-08-22"}
+    {"revision": "1.15", "reason": "Human-approved documentation checkpoint recording default-off persistent AUTO CENTER plus separate one-shot CENTER, one execution gesture state machine with distinct touch and verification-gated mouse mappings, and a separate Telegram-to-MetaScalp new-tab/new-DOM requirement whose official Linking API behavior remains verification-gated; Stage 7 is complete and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
+    {"revision": "1.16", "reason": "Human-approved corrective documentation checkpoint replacing the separate AUTO CENTER and one-shot CENTER controls with one CENTER control whose single activation centers once, double activation centers and enables visible-border LOCKED CENTERING, repeated double activation or manual DOM navigation disables the lock, and whose double-activation recognition remains independent of the 300-ms trading anti-bounce; all revision 1.15 MetaScalp and input-device decisions remain unchanged and Stage 8 remains not started and not authorized", "date": "2026-08-22"}
   ]
 }
 ```
@@ -1740,19 +1741,30 @@ Revision 1.15 is a human-approved documentation checkpoint. It records product d
 not start Stage 8, select a frontend technology, install a dependency, implement Scanner or Telegram
 runtime behavior, or invoke MetaScalp or Bybit.
 
-### 24.1 Default-off AUTO CENTER and one-shot CENTER
+### 24.1 Single CENTER control and LOCKED CENTERING
 
-Persistent Fast DOM automatic centering defaults to `OFF`. The DOM does not automatically return the
-current market price to the center while the operator manually inspects levels. A separate control below
-the Time & Sales / execution-prints area exposes explicit `AUTO CENTER ON` and `AUTO CENTER OFF` states.
-When `ON`, the DOM may follow or recenter relative to the current market according to later approved and
-verified thresholds. Any deliberate manual scrolling or repositioning immediately switches persistent
-AUTO CENTER to `OFF`.
+Fast DOM uses one control below the Time & Sales / execution-prints area: `CENTER`. There is no separate
+persistent AUTO CENTER button. LOCKED CENTERING defaults to disabled, so the DOM does not automatically
+return the current market price to the center while the operator manually inspects levels.
 
-A separate one-shot `CENTER` action returns the current market area to the working central region. It does
-not enable persistent AUTO CENTER. Exact pixels, layout and styling remain frontend design details. This
-decision supersedes any earlier implication that periodic or threshold-based recentering is active by
-default; threshold and follow research applies only while AUTO CENTER is explicitly `ON`.
+One deliberate click or tap on `CENTER` immediately returns the current spread / working market area to
+the central working region. This is one-shot centering only: it does not enable LOCKED CENTERING, and the
+button remains in its normal visual state.
+
+A deliberate double click or tap immediately centers the spread and enables LOCKED CENTERING. While
+locked, the DOM may follow or recenter relative to the market according to later approved and verified
+thresholds so the spread remains in the central working region. The `CENTER` button displays a persistent,
+clearly visible border or outline for the entire active locked mode. Exact border color, thickness and
+style remain frontend details.
+
+A deliberate double click or tap while LOCKED CENTERING is active disables it and removes the border or
+outline. Any deliberate manual DOM scrolling or repositioning also immediately disables LOCKED CENTERING,
+removes the active border or outline and leaves manual navigation in control without automatic return.
+
+Mouse, touch and pen/pointer inputs normalize to the same single- and double-activation semantics. CENTER
+double-activation recognition is independent of the 300-ms trading execution anti-bounce. Its exact timing
+remains a frontend/platform verification and configuration detail. This correction supersedes any earlier
+revision 1.15 implication that persistent centering and one-shot CENTER require two separate controls.
 
 ### 24.2 One state machine, device-specific input mappings
 
@@ -1817,3 +1829,19 @@ does not expand Stage 8 and requires its own later bounded implementation author
 
 This amendment records checkpoint
 `DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED`.
+
+## 25. Corrective single-CENTER checkpoint
+
+Revision 1.16 corrects only the revision 1.15 centering control semantics. The binding interaction is:
+
+* `CENTER` single activation -> one-shot center only;
+* `CENTER` double activation -> center and enable LOCKED CENTERING;
+* `CENTER` double activation while locked -> disable LOCKED CENTERING;
+* deliberate manual DOM scroll/reposition -> disable LOCKED CENTERING;
+* LOCKED CENTERING active -> persistent visible border or outline on `CENTER`.
+
+There is no separate AUTO CENTER control. The 300-ms trading anti-bounce remains independent. All
+MetaScalp, touch/mouse trading execution and lifecycle decisions from revision 1.15 remain unchanged.
+Stage 8 remains `NOT_STARTED_NOT_AUTHORIZED`.
+
+This amendment records checkpoint `DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED`.

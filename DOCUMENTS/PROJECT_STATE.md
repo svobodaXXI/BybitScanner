@@ -2,7 +2,7 @@
 
 Version:
 
-7.49
+7.50
 
 Date:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED
+IN_PROGRESS / DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED
 
 Checkpoint:
 
-DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED
+DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED
 
 ChangeRequest revision:
 
-1.15
+1.16
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.15
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.16
 
 Product priority:
 
@@ -912,7 +912,7 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED_REVISION_1_15
+DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED_REVISION_1_16
 
 Next phase:
 
@@ -4668,18 +4668,27 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.48
+PROJECT_STATE v7.49
 
 to:
 
-PROJECT_STATE v7.49
+PROJECT_STATE v7.50
 
 reason:
 
-Current checkpoint — DOM input and MetaScalp new-tab integration decisions (v7.48 to v7.49):
+Current checkpoint — corrective single-CENTER locked-mode semantics (v7.49 to v7.50):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.16 and checkpoint `DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED`;
+* replaced separate AUTO CENTER and one-shot CENTER controls with one `CENTER` control;
+* bound single activation to one-shot center, double activation to center plus LOCKED CENTERING, and repeated double activation to lock-off;
+* required a persistent visible border or outline while locked and immediate lock-off on manual DOM scroll/reposition;
+* kept CENTER double-activation timing independent from the 300-ms trading anti-bounce;
+* preserved revision 1.15 MetaScalp and trading-input decisions and kept Stage 8 not started/not authorized.
+
+Previous checkpoint preserved — DOM input and MetaScalp new-tab integration decisions (v7.48 to v7.49):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.15 and checkpoint `DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED`;
-* recorded default-off persistent AUTO CENTER, manual-interaction disable and separate one-shot CENTER;
+* recorded the revision 1.15 default-off AUTO CENTER plus separate one-shot CENTER policy, now superseded only by revision 1.16 single-CENTER semantics;
 * recorded one execution state machine with distinct touch and verification-gated desktop mouse mappings, with hover prohibited from trading;
 * recorded the Scanner Telegram `Open in MetaScalp` requirement as new tab plus new symbol DOM while preserving every existing tab;
 * retained `/api/combo` as a verification-gated official Linking API candidate and required an explicit blocker if new-tab preservation cannot be proven;

@@ -2,7 +2,7 @@
 
 Version:
 
-4.42
+4.43
 
 Date:
 
@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED
+IN_PROGRESS / DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED
 
 Implementation status:
 
@@ -1308,7 +1308,7 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED
+DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED
 
 First implementation priority:
 
@@ -1344,16 +1344,19 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.15.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.16.
 
 Current action:
 
-FRONTEND_TECHNOLOGY_DECISION_REQUIRED_BEFORE_STAGE_8_IMPLEMENT_METASCALP_SEPARATE_BLOCK_REVISION_1_15.
+FRONTEND_TECHNOLOGY_DECISION_REQUIRED_BEFORE_STAGE_8_IMPLEMENT_METASCALP_SEPARATE_BLOCK_REVISION_1_16.
 
-Current revision 1.15 product decisions:
+Current revision 1.16 corrective CENTER decision, preserving the other revision 1.15 product decisions:
 
-* Fast DOM persistent AUTO CENTER is explicitly `OFF` by default; deliberate manual scrolling or
-  repositioning switches it `OFF`, and the separate one-shot CENTER action does not enable it;
+* Fast DOM has one `CENTER` control: single activation performs one-shot centering, double activation
+  centers and enables LOCKED CENTERING, repeated double activation disables it, and deliberate manual
+  scrolling or repositioning also disables it;
+* active LOCKED CENTERING is shown by a persistent visible border or outline on `CENTER`; exact styling
+  and double-activation timing remain frontend details independent of the 300-ms trading anti-bounce;
 * touch and desktop share one execution gesture state machine and backend/API semantics, while touch uses
   primary-plus-secondary fingers and desktop uses held mouse arming plus a separately deliberate DOM-row
   action whose exact button mapping must be approved before Stage 8; hover never trades;
@@ -1489,18 +1492,26 @@ RULE-008:
 
 from:
 
-ROADMAP v4.41
+ROADMAP v4.42
 
 to:
 
-ROADMAP v4.42
+ROADMAP v4.43
 
 reason:
 
-Current checkpoint — DOM input and MetaScalp new-tab integration decisions (v4.41 to v4.42):
+Current checkpoint — corrective single-CENTER locked-mode semantics (v4.42 to v4.43):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.16 and checkpoint `DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED`;
+* replaced two centering controls with one `CENTER` control and bound its single/double activation semantics;
+* required visible border/outline state while locked and manual-scroll lock-off;
+* kept CENTER recognition independent from the 300-ms trading anti-bounce;
+* preserved MetaScalp and touch/mouse trading decisions and Stage 8 not started/not authorized.
+
+Previous checkpoint preserved — DOM input and MetaScalp new-tab integration decisions (v4.41 to v4.42):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.15 and checkpoint `DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED`;
-* recorded default-off persistent AUTO CENTER, manual-interaction disable and separate one-shot CENTER;
+* recorded the revision 1.15 default-off AUTO CENTER plus separate one-shot CENTER policy, now superseded only by revision 1.16 single-CENTER semantics;
 * recorded shared execution semantics with distinct touch and verification-gated desktop mouse mappings;
 * recorded the separate Scanner Telegram-to-MetaScalp new-tab/new-DOM requirement and official Linking API verification gate;
 * preserved Stage 7 completion, Stage 8 not started/not authorized and MetaScalp as a separate bounded block.
