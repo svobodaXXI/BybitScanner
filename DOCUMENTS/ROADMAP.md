@@ -2,7 +2,7 @@
 
 Version:
 
-4.48
+4.49
 
 Date:
 
@@ -1273,7 +1273,23 @@ require later feasibility/prototype and implementation-plan review.
 
 Acceptance, risks, approved decisions and unresolved decisions:
 
-Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.6.
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md` revision 1.7.
+
+Trade Candidate fusion and evidence architecture checkpoint:
+
+* separates Structure, Setup, Evidence and unified Decision/Trade Candidate instead of forcing detectors into
+  one exclusive label;
+* fuses overlapping detector observations describing one market opportunity and prevents duplicate signals,
+  while a genuinely new post-invalidation structure receives a new candidate identity;
+* preserves evidence-family provenance and anti-double-counting across geometry, momentum, retention, price
+  structure, volume, candles, market context and future order flow;
+* separates Setup Quality, Failure Risk and Trigger Confidence and permits later structural hard vetoes;
+* separates durable candidates from expiring Tape/DOM triggers and records the conceptual
+  `DETECTED -> WATCH -> READY -> TRIGGERED -> ENTERED` lifecycle plus `INVALIDATED` and `EXPIRED`;
+* requires unique candidate identity and durable evidence/lifecycle/outcome history for later expectancy,
+  MAE/MFE and win-rate calibration;
+* leaves fusion thresholds, evidence weights, hard-veto catalog, TTLs and scoring formulas open, authorizes no
+  implementation and changes no Trading Workspace Stage 8 authority.
 
 LONG_CONTINUATION / High-Base continuation checkpoint:
 

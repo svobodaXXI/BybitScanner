@@ -7,7 +7,7 @@
   "id": "CR-TRADING-INTELLIGENCE-001",
   "title": "Trading Intelligence and Paper Trader Roadmap Research",
   "status": "IN_PROGRESS",
-  "revision": "1.6",
+  "revision": "1.7",
   "lifecycle_stage": "CONTEXT",
   "objective": "Research and record the evidence, architecture boundaries, dependencies and non-final roadmap hypothesis required to evolve the current Scanner into broader Trading Intelligence and a safe event-driven Paper Trader without authorizing implementation.",
   "non_goals": [
@@ -25,6 +25,7 @@
     "Research Candlestick Formation Evidence as confirmation/context rather than an independent primary trading engine",
     "Research separate PRE_BREAKOUT_CORRIDOR_SETUP and BREAKOUT_SETUP strategy types",
     "Record LONG_CONTINUATION / High-Base continuation as a roadmap-level setup family without final thresholds or implementation authorization",
+    "Record the unified Trade Candidate fusion, evidence provenance, guard, trigger-expiry, lifecycle and history architecture without selecting implementation mechanics",
     "Research Paper Trader domain models, lifecycle, risk, execution, portfolio, persistence, reconciliation and replay",
     "Research event-driven Bybit public trades, full L2 order-book reconstruction and liquidity-aware position management",
     "Measure performance and subscription constraints required to protect Scanner throughput",
@@ -179,7 +180,15 @@
     "LONG_CONTINUATION impulse evidence is normalized by volatility and time rather than one fixed percentage across Bybit instruments; volume is supporting evidence and not a mandatory hard filter",
     "LONG_CONTINUATION negative evidence is tracked separately, and loss of structurally important base support may invalidate the setup rather than merely reduce quality",
     "LONG_CONTINUATION Pattern or Strategy identifies where a promising continuation develops, while future Microstructure or Execution decides when entry is justified using price response relative to aggressive flow rather than raw buy/sell volume alone",
-    "Controlled lower-base pullback, compression below resistance and breakout-plus-acceptance remain three future LONG_CONTINUATION entry modes without approving execution logic"
+    "Controlled lower-base pullback, compression below resistance and breakout-plus-acceptance remain three future LONG_CONTINUATION entry modes without approving execution logic",
+    "Structure, Setup, Evidence and Decision or Trade Candidate are separate concepts; overlapping detector observations describing one market opportunity are fused or deduplicated rather than emitted as duplicate independent signals",
+    "Trade Candidate fusion considers symbol, timeframe or market region, structural area and temporal overlap; an INVALIDATED candidate is not resurrected when a genuinely new later structure appears",
+    "Evidence retains family and source provenance, with initial families GEOMETRY, MOMENTUM, RETENTION, PRICE_STRUCTURE, VOLUME, CANDLE_CONFIRMATION, MARKET_CONTEXT and ORDER_FLOW; overlapping observations are not automatically counted as independent full-weight evidence",
+    "Setup Quality, Failure Risk and Trigger Confidence remain separate; structurally decisive negative evidence may hard-veto or invalidate a candidate instead of being numerically overpowered by unrelated positive evidence",
+    "Persistent Trade Candidate state is separate from ephemeral execution triggers; triggers have future TTL or expiry semantics, and trigger expiry does not necessarily invalidate the underlying candidate",
+    "The conceptual Trade Candidate lifecycle is DETECTED to WATCH to READY to TRIGGERED to ENTERED, with terminal non-success states INVALIDATED and EXPIRED",
+    "Each Trade Candidate has a unique candidate_id and preserves lifecycle, structures, setups, evidence fingerprint, quality/failure evolution, trigger history, entry or no-entry reason, invalidation or expiry reason and eventual outcome where applicable",
+    "Final scoring formulas, weights, thresholds, TTLs and calibration constants remain parameterizable and require later paper-trading or backtest evidence"
   ],
   "unresolved_decisions": [
     "Canonical English identity and exact semantics of the user term Восходящая звезда",
@@ -220,6 +229,9 @@
     "Measured limits for network bandwidth, message rate, CPU, RAM, book-update latency, observation latency and concurrent deep-monitored symbols"
     ,"LONG_CONTINUATION exact schemas, ATR/volatility normalization, thresholds, weights, quality/risk/trigger calibration, duration, invalidation and lifecycle transitions"
     ,"LONG_CONTINUATION exact controlled-pullback, resistance-compression and breakout-acceptance entry criteria"
+    ,"Trade Candidate fusion association and deduplication thresholds, structural-region representation and new-candidate boundary after invalidation"
+    ,"Evidence fingerprint schema, within-family overlap policy, cross-family independence policy and later expectancy calibration"
+    ,"Hard-veto catalog, trigger TTL values, lifecycle transition mechanics and final Setup Quality, Failure Risk and Trigger Confidence formulas"
   ],
   "microstructure_research_disposition": {
     "status": "SUFFICIENT_FOR_ROADMAP_LEVEL_DESIGN",
@@ -385,7 +397,7 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "RESEARCH",
-  "current_checkpoint": "LONG_CONTINUATION_HIGH_BASE_CONCEPT_RECORDED",
+  "current_checkpoint": "TRADE_CANDIDATE_FUSION_AND_EVIDENCE_ARCHITECTURE_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "ROADMAP_SPEC",
   "next_phase_authorization": "NOT_AUTHORIZED_PENDING_RESEARCH_AND_HUMAN_APPROVAL",
@@ -398,7 +410,7 @@
     "baseline_local_head": "ce747f8a0223306a2128e413ae259df955f5a085",
     "baseline_origin_main": "ce747f8a0223306a2128e413ae259df955f5a085",
     "latest_saved_checkpoint": "9d8a9c5752dafaad60ecf9676ba8d7b19ab0ce97",
-    "status": "LONG_CONTINUATION_HIGH_BASE_CONCEPT_RECORDED_NOT_IMPLEMENTED"
+    "status": "TRADE_CANDIDATE_FUSION_AND_EVIDENCE_ARCHITECTURE_RECORDED_NOT_IMPLEMENTED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Human-authorized durable planning and research checkpoint; implementation explicitly not authorized", "date": "2026-08-18"},
@@ -407,7 +419,8 @@
     {"revision": "1.3", "reason": "Included the authorized Assistant Protocol v4.9 enforcement strengthening in the Flag research documentation checkpoint without changing research lifecycle or implementation authorization", "date": "2026-08-19"},
     {"revision": "1.4", "reason": "Recorded the human-authorized Trading Workspace and Telegram Mini App requirements, safety architecture, external references, gap analysis and dependency-aware roadmap while preserving research-only lifecycle and no implementation authorization", "date": "2026-08-20"},
     {"revision": "1.5", "reason": "Closed HS/IHS roadmap-level research, recorded the robust wick-aware wedge boundary-fitting observation and selected Trading Terminal / Trading Workspace as the next active development focus without authorizing implementation", "date": "2026-08-20"},
-    {"revision": "1.6", "reason": "Documentation-only roadmap-level checkpoint recording LONG_CONTINUATION / High-Base continuation evidence, anti-evidence, separated quality/failure/trigger semantics, future entry modes and Pattern-versus-Microstructure boundary without final thresholds, detector implementation or change to the active Trading Workspace focus", "date": "2026-08-22"}
+    {"revision": "1.6", "reason": "Documentation-only roadmap-level checkpoint recording LONG_CONTINUATION / High-Base continuation evidence, anti-evidence, separated quality/failure/trigger semantics, future entry modes and Pattern-versus-Microstructure boundary without final thresholds, detector implementation or change to the active Trading Workspace focus", "date": "2026-08-22"},
+    {"revision": "1.7", "reason": "Documentation-only architecture checkpoint recording unified Trade Candidate fusion and deduplication, evidence provenance and anti-double-counting, separate failure guards, ephemeral trigger expiry, conceptual candidate lifecycle and durable history for later evidence-based calibration without final numerical policy, implementation authorization or change to Trading Workspace Stage 8", "date": "2026-08-22"}
   ]
 }
 ```
@@ -612,6 +625,75 @@ Exact schemas/states; Demo/Live differences; Bybit private-stream recovery; sour
 watchdog boundary; and chart-engine selection remain open. The chart comparison covers license,
 maintenance, mobile touch, Telegram fit, realtime candles, draggable lines, drawings/saved state,
 Scanner overlays, performance, integration complexity and dependency risk.
+
+## Trade Candidate fusion and evidence architecture
+
+Independent structure and setup detectors do not compete for one exclusive label. The architecture separates:
+
+* `Structure`: what geometric or structural formation exists, such as Flag, Wedge, Triangle, Double Bottom
+  or Irregular High Base;
+* `Setup`: what trading scenario the structure participates in, such as `LONG_CONTINUATION`, `PRE_BREAKOUT`
+  or `REVERSAL`;
+* `Evidence`: why the candidate is credible or risky;
+* `Decision / Trade Candidate`: the unified actionable opportunity.
+
+One region may therefore be one `LONG_CONTINUATION` candidate with Bull Flag plus Ascending Compression
+structures. Detectors that describe the same opportunity do not emit duplicate independent trade candidates
+or signals. Fusion/deduplication considers symbol, timeframe or market region, structural area and temporal
+overlap. A structurally `INVALIDATED` candidate is not resurrected: a genuinely new later structure creates a
+new candidate.
+
+### Evidence provenance and failure guards
+
+Detectors publish observations/evidence with provenance rather than scores that are naively summed. Initial
+conceptual evidence families are `GEOMETRY`, `MOMENTUM`, `RETENTION`, `PRICE_STRUCTURE`, `VOLUME`,
+`CANDLE_CONFIRMATION`, `MARKET_CONTEXT` and `ORDER_FLOW`. Multiple observations within a family remain
+available for explainability, but overlapping evidence does not automatically receive multiple full weights.
+For example, the same range contraction observed by Bull Flag and `LONG_CONTINUATION` is one underlying
+`GEOMETRY_COMPRESSION` contribution, not two independent contributions. Genuinely independent information
+families may strengthen the candidate.
+
+The evidence fingerprint/provenance is durable so later Paper Trading and backtest analysis can measure which
+combinations produce expectancy. Positive Setup Quality remains separate from Failure Risk. Negative evidence
+may raise Failure Risk, while a structurally decisive condition may act as a hard veto and move the candidate
+to `INVALIDATED`; unrelated positive evidence cannot numerically overpower that structural failure. The exact
+hard-veto catalog is open.
+
+### Persistent candidates and ephemeral triggers
+
+A Trade Candidate may remain valid for an extended period, while an execution trigger is short-lived and
+state/time bounded. Future Tape/DOM confirmation has TTL/expiry semantics and cannot remain actionable after
+its microstructure condition disappears. If a trigger expires without entry, the underlying candidate need
+not die; current market state may return or retain it in `READY` or `WATCH` pending fresh confirmation. Exact
+TTL values are not approved.
+
+The conceptual lifecycle is:
+
+`DETECTED -> WATCH -> READY -> TRIGGERED -> ENTERED`
+
+with terminal non-success states `INVALIDATED` and `EXPIRED`. `DETECTED` is initial recognition; `WATCH` is
+promising but immature; `READY` is mature enough to await execution evidence; `TRIGGERED` owns a currently
+valid ephemeral entry trigger; `ENTERED` records that entry decision/execution occurred; `INVALIDATED` records
+structural or hard-veto failure; and `EXPIRED` records staleness without requiring structural invalidation.
+Implementation mechanics and exact transitions remain open.
+
+### Candidate identity, history and ownership boundaries
+
+Every Trade Candidate has a unique `candidate_id`. Durable history conceptually preserves detection time,
+contributing structures/setups, evidence fingerprint/provenance, quality and failure evolution, triggers
+created or expired, entry/no-entry reason, invalidation/expiry reason and eventual trade outcome where
+applicable. This supports later expectancy, MAE/MFE, win-rate and other outcome analysis instead of arbitrary
+manually invented weights.
+
+`Setup Quality`, `Failure Risk` and `Trigger Confidence` remain separate and parameterizable. No formula,
+weight, threshold, TTL or calibration constant is approved here. Pattern/Structure owns what exists;
+Setup/Strategy owns the trading scenario; Evidence owns credibility and risk; Execution/Microstructure owns
+when entry is justified; and Decision owns whether the unified candidate becomes a trade. Candlestick
+formations remain supporting evidence rather than duplicate candidates. Future DOM/Tape `ORDER_FLOW` evidence
+fits this model without redesign.
+
+This architecture checkpoint is documentation only. Production implementation is
+`NOT_STARTED_NOT_AUTHORIZED`, and Trading Workspace Stage 8 authorization is unchanged.
 
 ## Amendment rule
 
