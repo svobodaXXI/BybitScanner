@@ -2,7 +2,7 @@
 
 Version:
 
-4.43
+4.44
 
 Date:
 
@@ -1300,7 +1300,7 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED
+IN_PROGRESS / PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED
 
 Implementation status:
 
@@ -1308,13 +1308,15 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED
+PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED
 
 First implementation priority:
 
-Usable manual live trading on the user's real Bybit account. Terminal is independent from Scanner and
-Robot, works while Scanner is stopped, starts locally and preserves a deployment-neutral path to VPS.
-Paper-first and autonomous Robot implementation are not the v1 priority.
+Usable manual trading through a virtual paper account and reusable Paper Trading Engine behind a
+backend-neutral execution interface. Real-money Bybit execution is deferred. Terminal remains independent
+from Scanner and Robot, works while Scanner is stopped, starts locally and preserves a deployment-neutral
+path to VPS. The same paper execution contract remains reusable by the future Robot while preserving
+MANUAL versus ROBOT controller ownership.
 
 Specification boundary:
 
@@ -1344,13 +1346,29 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.16.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.17.
 
 Current action:
 
-FRONTEND_TECHNOLOGY_DECISION_REQUIRED_BEFORE_STAGE_8_IMPLEMENT_METASCALP_SEPARATE_BLOCK_REVISION_1_16.
+STAGE_8_EXACT_SCOPE_AND_DEPENDENCY_AUTHORIZATION_REQUIRED_PAPER_ENGINE_AND_METASCALP_SEPARATE_BLOCKS_REVISION_1_17.
 
-Current revision 1.16 corrective CENTER decision, preserving the other revision 1.15 product decisions:
+Current revision 1.17 Paper-first frontend and fast-order decisions, preserving the binding CENTER and
+MetaScalp decisions from revisions 1.15 and 1.16:
+
+* the selected frontend stack is one React 19 plus TypeScript plus Vite SPA for desktop and Telegram Mini
+  App, with npm/package-lock, Zustand, TanStack Query for REST/server state, a separate WebSocket realtime
+  layer, Tailwind 4, selective shadcn/Radix, Vitest/RTL/Playwright and Biome;
+* high-frequency DOM rendering remains isolated from ordinary React rendering, and no chart/rendering
+  engine is selected by this decision;
+* desktop DOM and chart Limit placement is side-explicit, fast placement is fail-closed, normal
+  non-marketable Limits require no confirmation, aggressive marketable Limits require confirmation and
+  remain Limit orders, while Market BUY/SELL preparation always requires the approved preview confirmation;
+* BUY/SELL/LIMIT long press is binding at 500 ms, separate from the 300-ms trading anti-bounce; CENTER
+  mouse 300-ms and touch 350-ms double-activation windows remain pending proposals, not approved timings;
+* pending Limit-line edits roll back to the exact confirmed price without an amend unless explicitly
+  confirmed, and actual filled/remaining base-asset quantity is authoritative after fills and for close;
+* initial execution is Paper-first behind a backend-neutral interface, with real-money Bybit deferred and
+  no Paper engine, frontend dependency or Stage 8 implementation authorized by this checkpoint;
 
 * Fast DOM has one `CENTER` control: single activation performs one-shot centering, double activation
   centers and enables LOCKED CENTERING, repeated double activation disables it, and deliberate manual
@@ -1365,7 +1383,7 @@ Current revision 1.16 corrective CENTER decision, preserving the other revision 
 * official MetaScalp Linking API `/api/combo` remains a verification-gated candidate rather than proof of
   the required new-tab behavior; failure to prove `NEW TAB + NEW DOM + PRESERVE EXISTING TABS` is an explicit
   blocker and cannot be replaced by change-ticker;
-* Stage 7 is complete, Stage 8 is not started or authorized pending frontend technology selection, and
+* Stage 7 is complete, Stage 8 is not started or authorized pending exact scope and dependency authorization, and
   MetaScalp integration remains a separate future bounded implementation block.
 
 Approved intermediate CONTEXT architecture directions from revision 1.5:
@@ -1374,7 +1392,8 @@ Approved intermediate CONTEXT architecture directions from revision 1.5:
   for startup, reconnect, uncertain commands and full-close invariants;
 * backend-validated Telegram Mini App initData, freshness and numeric-user allowlist;
 * immutable versioned SignalSnapshot separated from trading state and detector runtime;
-* KLineChart behind a shared chart adapter, with Matplotlib/mplfinance retained for static reports;
+* a renderer-neutral shared chart adapter, with KLineChart retained as a researched candidate and
+  Matplotlib/mplfinance retained for static reports;
 * Python/FastAPI REST plus backend WebSocket boundary and SQLite/WAL journal plus projections;
 * reconciliation-gated trading, account-isolated state and replaceable CredentialStore;
 * cash-flow-adjusted return direction, single-flight Scanner Control and deployment-neutral HTTPS ingress.
@@ -1431,13 +1450,15 @@ Human-approved intermediate revision 1.9 upper-workspace direction:
 Repository-confirmed boundary:
 
 Current public OHLCV, final admission/count, outbound Telegram, signal evidence and static chart paths may
-be reused behind normalized boundaries. Authenticated trading/private streams, SignalSnapshot persistence,
-Terminal UI/backend, interactive charting, trading-domain state, reconciliation and journal are absent.
+be reused behind normalized boundaries. Bounded Terminal domain, persistence, read/reconciliation,
+pre-trade, mutation, cleanup/protection and framework-neutral API contracts are complete through Stage 7.
+The React frontend, interactive chart renderer, runtime server binding and Paper Trading Engine are absent.
 
 Next phase:
 
-CONTEXT / RESEARCH — AUTHORIZED_IN_PROGRESS, INTERMEDIATE_CHECKPOINT_APPROVED_RECORDED, NOT_COMPLETE_OR_VERIFIED;
-IMPLEMENT — NOT_STARTED_NOT_AUTHORIZED.
+DOCUMENTATION / RESEARCH — REVISION_1_17_APPROVED_RECORDED;
+STAGE_8 IMPLEMENT — NOT_STARTED_NOT_AUTHORIZED;
+PAPER ENGINE IMPLEMENT — NOT_STARTED_NOT_AUTHORIZED.
 
 ---
 
@@ -1492,15 +1513,24 @@ RULE-008:
 
 from:
 
-ROADMAP v4.42
+ROADMAP v4.43
 
 to:
 
-ROADMAP v4.43
+ROADMAP v4.44
 
 reason:
 
-Current checkpoint — corrective single-CENTER locked-mode semantics (v4.42 to v4.43):
+Current checkpoint — Paper-first frontend and fast-order decisions (v4.43 to v4.44):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.17 and checkpoint `PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED`;
+* selected the React 19/TypeScript/Vite frontend toolchain while leaving the chart/rendering engine unselected;
+* recorded desktop Limit placement, confirmed Market preparation, binding 500-ms long press, fail-closed fast-order safety and acknowledgement-gated success sound;
+* recorded pending Limit-line rollback and actual filled base-asset quantity as position and close authority;
+* superseded real-Bybit-first with Paper-first execution behind a reusable backend-neutral interface while deferring real-money Bybit execution;
+* retained CENTER 300-ms mouse and 350-ms touch windows as pending proposals and kept Stage 8 not started/not authorized.
+
+Previous checkpoint preserved — corrective single-CENTER locked-mode semantics (v4.42 to v4.43):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.16 and checkpoint `DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED`;
 * replaced two centering controls with one `CENTER` control and bound its single/double activation semantics;

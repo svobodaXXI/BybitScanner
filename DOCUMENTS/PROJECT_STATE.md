@@ -2,7 +2,7 @@
 
 Version:
 
-7.50
+7.51
 
 Date:
 
@@ -880,23 +880,23 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED
+IN_PROGRESS / PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED
 
 Checkpoint:
 
-DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED
+PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED
 
 ChangeRequest revision:
 
-1.16
+1.17
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.16
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.17
 
 Product priority:
 
-MANUAL_LIVE_TRADING_ON_REAL_BYBIT_ACCOUNT
+PAPER_TRADING_WORKSPACE_FIRST / REAL_MONEY_BYBIT_EXECUTION_DEFERRED
 
 Subsystem boundary:
 
@@ -912,19 +912,20 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED_REVISION_1_16
+PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED_REVISION_1_17
 
 Next phase:
 
-FRONTEND_TECHNOLOGY_DECISION_REQUIRED_BEFORE_STAGE_8_IMPLEMENT / METASCALP_SEPARATE_BOUNDED_BLOCK
+STAGE_8_EXACT_SCOPE_AND_DEPENDENCY_AUTHORIZATION_REQUIRED / PAPER_ENGINE_SEPARATE_BOUNDED_IMPLEMENT / METASCALP_SEPARATE_BOUNDED_BLOCK
 
 Important:
 
-Stages 0 through 7 are complete. This documentation checkpoint authorizes no new production code,
-runtime behavior, test implementation, dependency, MetaScalp call, Bybit order or account mutation.
-Stage 8 remains not started and not authorized pending the frontend technology decision. MetaScalp
-integration is a separate future bounded block. `CR-TRADING-INTELLIGENCE-001` remains its own broader
-research authority and is not the implementation authority for Trading Workspace v1.
+Stages 0 through 7 are complete. Revision 1.17 selects the frontend stack and supersedes the prior
+real-Bybit-first priority with Paper-first execution, but authorizes no production code, runtime behavior,
+test implementation, dependency, Paper engine, MetaScalp call, Bybit order or account mutation. Stage 8
+remains not started and not authorized pending exact scope and dependency authorization. MetaScalp integration
+is a separate future bounded block. `CR-TRADING-INTELLIGENCE-001` remains broader research authority rather
+than the implementation authority for this Trading Workspace checkpoint.
 
 ---
 
@@ -4668,15 +4669,24 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.49
+PROJECT_STATE v7.50
 
 to:
 
-PROJECT_STATE v7.50
+PROJECT_STATE v7.51
 
 reason:
 
-Current checkpoint — corrective single-CENTER locked-mode semantics (v7.49 to v7.50):
+Current checkpoint — Paper-first frontend and fast-order decisions (v7.50 to v7.51):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.17 and checkpoint `PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED`;
+* selected React 19, TypeScript, Vite, npm lockfile, Zustand, TanStack Query, separate WebSocket, Tailwind 4, selective shadcn/Radix, Vitest/RTL/Playwright and Biome while leaving chart/rendering selection open;
+* recorded side-explicit desktop Limit placement/cancel/edit behavior, confirmed Market preparation, 500-ms long press, fail-closed submission and acknowledgement-gated sound;
+* recorded exact Limit-line edit rollback and base-asset coin quantity as authoritative after fills and for reduce-only close;
+* superseded real-Bybit-first with a backend-neutral Paper-first execution architecture reusable by future MANUAL and ROBOT controllers;
+* retained CENTER mouse 300-ms and touch 350-ms windows as pending proposals, preserved Stage 8 not started/not authorized and authorized no dependencies or implementation.
+
+Previous checkpoint preserved — corrective single-CENTER locked-mode semantics (v7.49 to v7.50):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.16 and checkpoint `DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED`;
 * replaced separate AUTO CENTER and one-shot CENTER controls with one `CENTER` control;

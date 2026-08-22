@@ -7,13 +7,13 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.16",
+  "revision": "1.17",
   "lifecycle_stage": "CONTEXT",
-  "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
+  "objective": "Specify a deployment-neutral local-first Trading Workspace v1 whose initial execution backend is a virtual paper account behind a reusable execution abstraction, with real-money Bybit execution deferred and no implementation authorized by this checkpoint.",
   "non_goals": [
     "Implement production code, tests, dependencies or runtime behavior in this checkpoint",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
-    "Make Paper Trader the first implementation priority",
+    "Connect the initial Trading Workspace execution path to a real-money Bybit account",
     "Couple Terminal availability to Scanner runtime",
     "Treat chart, UI acknowledgement or local expected state as authoritative exchange truth",
     "Change Scanner detection, Signal admission, Telegram delivery or trading behavior"
@@ -78,7 +78,7 @@
   ],
   "approved_decisions": [
     "BybitScanner, Trading Terminal and Trading Robot are independent top-level subsystems",
-    "Manual live trading on the user's real Bybit account is the first Trading Workspace implementation priority",
+    "The initial Trading Workspace execution backend is a virtual paper account and Paper Trading Engine behind a reusable execution interface; real-money Bybit execution is deferred",
     "Terminal remains usable when Scanner is stopped and is local-first but deployment-neutral for later VPS operation",
     "Telegram is the primary entry point and old signal deep links resolve durable SignalSnapshot history indefinitely",
     "Terminal and Signal Editor share one reusable chart engine",
@@ -139,6 +139,16 @@
     ,"A Scanner Telegram signal may expose a separate Open in MetaScalp action whose binding outcome is a new MetaScalp tab and new DOM for that signal symbol while all existing MetaScalp tabs and order books remain unchanged"
     ,"MetaScalp integration belongs to a separate Scanner/backend integration block and never expands the Fast DOM execution engine or Stage 8 scope"
     ,"The preferred future MetaScalp boundary is its official Linking API, with /api/combo retained only as the current closest researched candidate until repeated-call new-tab, existing-tab preservation, market mapping, not-running and local-port behavior are explicitly verified"
+    ,"The selected frontend stack is one React 19 plus TypeScript plus Vite SPA for desktop web and Telegram Mini App, using npm with package-lock.json, Zustand for client/UI state, TanStack Query for REST/server state, a separate WebSocket realtime layer, Tailwind 4, selective shadcn/Radix ordinary controls, Vitest plus React Testing Library plus Playwright, and Biome"
+    ,"High-frequency DOM rendering is isolated from the ordinary React render lifecycle; TanStack Query does not own high-frequency L2 updates, and this frontend decision does not select the chart or rendering engine"
+    ,"Desktop fast Limit interaction uses side-explicit BUY/BID and SELL/ASK execution columns, left-click Limit placement, specific-order right-click cancellation, selected-order drag for modification, and no implicit Market order or trading double-click on the DOM ladder"
+    ,"Holding BUY or SELL with the left mouse button enters the corresponding Limit placement mode so deliberate chart right-clicks may place multiple same-side Limit intents; normal non-marketable fast Limits require no confirmation, while marketable aggressive Limits require explicit confirmation and always remain Limit orders"
+    ,"A single BUY or SELL activation prepares a Market order that requires confirmation with ticker, WV/USDT reference, calculated rounded base quantity, relevant prices, estimated VWAP and estimated L2 slippage; exact normalized L2 boundary remains unresolved"
+    ,"BUY, SELL and LIMIT placement gestures use a binding 500-ms long-press threshold; entering LONG_PRESS_ACTIVE suppresses the original short-click action and remains independent from the 300-ms trading anti-bounce"
+    ,"Fast order placement is fail-closed with one physical gesture producing at most one uniquely identified intent, no blind resend after ambiguity, client-order-identity reconciliation before recovery, new placement blocked in DEGRADED/OFFLINE/ambiguous state, and success sound only after exchange or execution-engine acknowledgement"
+    ,"Cancelling an unconfirmed active-Limit line edit by clicking or tapping outside restores the exact original confirmed price and sends no modify request; only explicit confirmation commits an amend"
+    ,"Working Volume remains a USDT accounting and risk unit, while actual execution and position ownership use authoritative base-asset coin quantity; fills and current remaining position quantity, not the original WV notional, govern reduce-only close and residual-tail reconciliation"
+    ,"The Paper Trading Engine implements realistic accepted, working, partial/full fill, cancel/reject, position, realized/unrealized PnL and reconciliation-compatible state, may consume real L2 through the later approved market-data boundary, is reusable by the future virtual Robot, and preserves MANUAL versus ROBOT controller ownership"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -168,7 +178,10 @@
     ,"PROBABLE sweep visualization and reliable trade-to-L2 correlation under ambiguous cancellation-versus-execution evidence"
     ,"Responsive adjustment around the preferred 20 asks plus 20 bids viewport, exact row height, DOM percentile/window/hysteresis, print-scaling window, update batching, render frequency, bounded tape retention and mobile Telegram Mini App performance limits"
     ,"Exact LOCKED CENTERING follow/recenter thresholds, central dead-zone, motion and sweep-follow interaction, CENTER double-activation timing, border or outline styling, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, book-walk depth source, third-party vendoring policy and future historical heatmap requirement"
-    ,"Exact desktop mouse-button mapping for arming and deliberate DOM row execution before Stage 8 implementation"
+    ,"Exact chart/rendering engine selection and adapter implementation under the approved React/TypeScript frontend stack"
+    ,"Exact normalized L2/public-market-data owner, freshness and preview boundary for paper fills, Market confirmation VWAP/slippage and DOM rendering"
+    ,"CENTER mouse double-click window currently proposed as 300 ms and touch double-tap window currently proposed as 350 ms; neither timing is binding until separately verified and approved"
+    ,"Exact persistence, matching, latency, fee, funding, liquidity and fill-simulation policies for the initial Paper Trading Engine"
     ,"Exact MetaScalp Linking API behavior required to guarantee a new tab and new symbol DOM while preserving existing tabs, including exchange/market selection, Bybit USDT perpetual ticker mapping, not-running behavior and official local-port discovery"
   ],
   "researched_architecture_directions": [
@@ -176,7 +189,7 @@
     "Uncertain commands, startup, reconnect and full-close workflows reconcile authoritative exchange state instead of blind retry",
     "Telegram Mini App deep-link references identify durable SignalSnapshot records but authorization requires backend validation of raw initData, freshness and allowed numeric Telegram user identity",
     "SignalSnapshot is immutable versioned historical Scanner evidence and never owns trading, protection, PnL, controller or Robot state",
-    "KLineChart is the preferred researched v1 interactive renderer behind a shared chart contract and adapter; current Matplotlib/mplfinance remains the separate static Scanner report path",
+    "KLineChart remains a researched chart candidate behind a shared chart contract and adapter, but revision 1.17 does not select a chart/rendering engine; current Matplotlib/mplfinance remains the separate static Scanner report path",
     "Python with FastAPI is the preferred Terminal HTTP and WebSocket application boundary; frontend and Telegram Mini App are clients, never trading-state authority",
     "SQLite in WAL mode is the preferred local-first v1 persistence direction behind a replaceable storage boundary",
     "Durable exchange and backend event journal evidence remains distinct from mutable operational projections",
@@ -206,7 +219,7 @@
     "telegram_bot.py provides outbound text, photo and inline-keyboard transport that may be reused without owning authentication, Scanner control or trading state",
     "contracts/signal_contract.py, analyzer results and geometry output provide source evidence from which a future versioned SignalSnapshot mapper may be designed, but current signal_memory.py is mutable symbol-keyed history and is not SignalSnapshot persistence",
     "chart.py, chart_clean.py and analyzer/charts.py form the existing static Matplotlib/mplfinance PNG report path and remain separate from the interactive Terminal renderer",
-    "Current requirements include pybit and websocket-client but no authenticated Terminal client, FastAPI application, KLineChart frontend or SQLite trading store is implemented",
+    "Current requirements include pybit and websocket-client and completed bounded Terminal backend foundations through Stage 7, but no Stage 8 React client, FastAPI runtime, selected chart engine or Paper Trading Engine is implemented",
     "No current order, execution, position, protection, TradingCommand, ExchangeEventJournal, account-isolation or reconciliation domain implementation exists"
   ],
   "context_decisions_required_before_implementation_plan": [
@@ -273,16 +286,16 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_DOM_INPUT_METASCALP_DECISIONS_RECORDED"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_PAPER_FIRST_FRONTEND_FAST_ORDER_DECISIONS_RECORDED"},
     {"id": "IMPLEMENT", "status": "BOUNDED_STAGES_0_TO_7_COMPLETED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "VERIFY", "status": "BOUNDED_STAGES_0_TO_7_VERIFIED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED",
+  "current_checkpoint": "PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED",
   "implementation_status": "STAGES_0_TO_7_COMPLETED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
-  "next_phase_authorization": "STAGE_8_NOT_STARTED_NOT_AUTHORIZED_METASCALP_SEPARATE_BOUNDED_BLOCK_REQUIRED",
+  "next_phase_authorization": "STAGE_8_NOT_STARTED_NOT_AUTHORIZED_EXACT_SCOPE_AND_DEPENDENCIES_REQUIRE_SEPARATE_AUTHORIZATION_METASCALP_SEPARATE_BLOCK_REQUIRED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -300,7 +313,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"
+    "status": "PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -319,7 +332,8 @@
     {"revision": "1.13", "reason": "Documentation-only IMPLEMENT planning checkpoint decomposing the completed Manual Market, Limit and SL/TP execution/protection block into modular Terminal domain, Bybit adapter, execution-engine, reconciliation, persistence, projection, API and fast-DOM increments with explicit acceptance and test gates while leaving overall CONTEXT active and IMPLEMENT not started or authorized", "date": "2026-08-22"},
     {"revision": "1.14", "reason": "Human-approved corrective checkpoint binding GTC as the ordinary Manual Limit v1 timeInForce, recording truthful terminal AMENDED command completion and the pybit mutation no-retry gate, while Stage 5 remains not started and not authorized", "date": "2026-08-22"},
     {"revision": "1.15", "reason": "Human-approved documentation checkpoint recording default-off persistent AUTO CENTER plus separate one-shot CENTER, one execution gesture state machine with distinct touch and verification-gated mouse mappings, and a separate Telegram-to-MetaScalp new-tab/new-DOM requirement whose official Linking API behavior remains verification-gated; Stage 7 is complete and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
-    {"revision": "1.16", "reason": "Human-approved corrective documentation checkpoint replacing the separate AUTO CENTER and one-shot CENTER controls with one CENTER control whose single activation centers once, double activation centers and enables visible-border LOCKED CENTERING, repeated double activation or manual DOM navigation disables the lock, and whose double-activation recognition remains independent of the 300-ms trading anti-bounce; all revision 1.15 MetaScalp and input-device decisions remain unchanged and Stage 8 remains not started and not authorized", "date": "2026-08-22"}
+    {"revision": "1.16", "reason": "Human-approved corrective documentation checkpoint replacing the separate AUTO CENTER and one-shot CENTER controls with one CENTER control whose single activation centers once, double activation centers and enables visible-border LOCKED CENTERING, repeated double activation or manual DOM navigation disables the lock, and whose double-activation recognition remains independent of the 300-ms trading anti-bounce; all revision 1.15 MetaScalp and input-device decisions remain unchanged and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
+    {"revision": "1.17", "reason": "Human-approved documentation checkpoint selecting the React 19 TypeScript Vite frontend toolchain, recording desktop DOM/chart Limit and confirmed Market interactions, a 500-ms long press, fail-closed fast-order safety, reversible pending Limit-line edits, coin-quantity position authority and the superseding Paper-first execution architecture; CENTER 300-ms mouse and 350-ms touch windows remain proposals pending verification, chart and L2 boundaries remain unresolved, and Stage 8 remains not started and not authorized", "date": "2026-08-22"}
   ]
 }
 ```
@@ -334,8 +348,11 @@ must remain deployment-neutral so Scanner, trading backend, persistence, Telegra
 services can later move to a 24/7 VPS. Future Telegram Scanner START/STOP/RESTART/STATUS controls are
 reserved; Terminal availability must not depend on Scanner state.
 
-The first deliverable is usable manual live trading on the user's real Bybit account. Paper Trader and
-autonomous robot execution are later. `AUTOPILOT` is visible near the top market context but disabled in v1.
+The first execution deliverable is a usable manual Trading Workspace connected to a virtual paper account
+and Paper Trading Engine. Real-money Bybit execution and autonomous robot execution are later. `AUTOPILOT`
+is visible near the top market context but disabled in v1. Existing Bybit-oriented Stage 0 through Stage 7
+contracts remain recorded implementation evidence; this product correction authorizes no runtime change and
+requires later planning to route logical commands through the backend-neutral execution abstraction.
 
 ## 2. Telegram deep links and durable signal context
 
@@ -1824,8 +1841,9 @@ callback authorization, port discovery and failure handling belong to a separate
 integration block.
 
 Stage 7 is complete at commit `61520861b6058a585460b3f5f964613d19dcd35b`. Stage 8 remains
-`NOT_STARTED_NOT_AUTHORIZED`; its frontend technology decision remains a prerequisite. MetaScalp integration
-does not expand Stage 8 and requires its own later bounded implementation authorization.
+`NOT_STARTED_NOT_AUTHORIZED`; revision 1.17 selects the frontend stack but does not authorize its dependencies,
+filesystem scope or implementation. MetaScalp integration does not expand Stage 8 and requires its own later
+bounded implementation authorization.
 
 This amendment records checkpoint
 `DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED`.
@@ -1845,3 +1863,110 @@ MetaScalp, touch/mouse trading execution and lifecycle decisions from revision 1
 Stage 8 remains `NOT_STARTED_NOT_AUTHORIZED`.
 
 This amendment records checkpoint `DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED`.
+
+## 26. Paper-first frontend and fast-order decisions
+
+Revision 1.17 records product and technical decisions only. It does not start Stage 8, create a frontend,
+install dependencies, enable a runtime, connect a paper or live account, or submit any exchange mutation.
+
+### 26.1 Selected frontend stack and state boundaries
+
+The selected client is one React 19 + TypeScript + Vite SPA used for both desktop web and Telegram Mini App.
+Package management uses npm with a committed `package-lock.json`. Zustand owns bounded client/UI state.
+TanStack Query owns REST/server-state fetching and caching but not high-frequency L2 updates. Realtime
+presentation events use a separate WebSocket layer and the Stage 7 snapshot-first sequencing contracts.
+
+Tailwind 4 is the styling foundation. shadcn/Radix may be used selectively for ordinary semantic controls;
+they do not own the high-frequency ladder. Tests use Vitest, React Testing Library and Playwright. Biome
+owns frontend formatting and linting. High-frequency DOM state/rendering must remain isolated from ordinary
+React component render lifecycle. This stack decision does not select KLineChart or any other chart/rendering
+engine; chart and high-frequency renderer selection remains separate.
+
+### 26.2 Desktop DOM and chart Limit placement
+
+The desktop DOM exposes side-explicit BUY/BID and SELL/ASK execution columns. A deliberate left click on a
+DOM execution cell submits the corresponding Limit intent at that exact projected price. It never implicitly
+creates a Market order. Double-clicking a trading DOM cell has no trading function. An existing order may be
+selected and dragged into a pending modification interaction. Right-clicking a specific active order submits
+a specific cancel intent; right-click in neutral space remains contextual and does not cancel an order.
+
+Holding BUY with the left mouse button for the approved long-press threshold enters BUY LIMIT placement
+mode. While the hold remains valid, deliberate chart right-clicks may submit multiple separately identified
+Buy Limit intents. SELL is symmetric. A separate LIMIT/BUY ORDER hold-mode below the book may expose the
+same repeated chart-Limit behavior. Each physical placement still creates at most one logical submission.
+
+Normal non-marketable fast Limit placement requires no confirmation. A Buy Limit at or above the current
+Ask, or a Sell Limit at or below the current Bid, is marketable/aggressive and requires explicit confirmation.
+It remains a Limit order and is never silently converted to Market. Successful placement emits its
+characteristic sound only after backend/execution-engine acknowledgement, never on the local pointer action.
+
+### 26.3 Confirmed Market preparation
+
+A single BUY or SELL activation prepares a Market order and requires explicit confirmation. Its preview
+contains the ticker, selected WV and USDT reference, calculated base-asset coin quantity after instrument
+`qtyStep` rounding, relevant market price information, estimated average execution price/VWAP and estimated
+L2 slippage. The preview remains informational; the exact normalized L2 and market-data boundary is unresolved
+and requires a later decision. A DOM ladder click never substitutes for this Market flow.
+
+### 26.4 Long press and independent timing domains
+
+`LONG_PRESS_THRESHOLD = 500 ms` for BUY, SELL and LIMIT placement gestures. Transition from `PRESSED` to
+`LONG_PRESS_ACTIVE` suppresses the original short-click action so one physical interaction cannot both open
+a Market confirmation and enter Limit placement mode. Long-press timing is independent of the existing
+300-ms trading anti-bounce.
+
+The single-CENTER semantics from revision 1.16 remain binding. A 300-ms mouse double-click window and a
+350-ms touch double-tap window are currently proposed values only; repository authority does not yet record
+them as approved binding timings. They remain pending frontend/platform verification and explicit approval.
+CENTER recognition is independent from trading anti-bounce and long-press timing.
+
+### 26.5 Fail-closed fast-order network safety
+
+Fast hold-mode placement is fail-closed: missing an order is preferable to duplicate exposure. Every order
+intent receives a unique client order identity / `orderLinkId`. One physical gesture creates at most one
+logical submission. Timeout, disconnect or ambiguous transport outcome never triggers blind automatic
+resend. The original client identity is reconciled against command, order, execution and position evidence
+before any separately authorized recovery action. New fast placement is blocked while connectivity or
+execution state is `DEGRADED`, `OFFLINE`, `UNKNOWN` or otherwise ambiguous.
+
+### 26.6 Pending Limit-line edit rollback
+
+Dragging an existing active Limit line enters a pending edit state and retains its original authoritative
+confirmed price. Clicking or tapping outside the edited line cancels the pending edit, restores exactly the
+original confirmed price and sends no modify-order request. Only an explicit confirmation action submits the
+changed price. Pending local geometry never becomes exchange truth.
+
+### 26.7 Working Volume and coin-quantity authority
+
+Working Volume remains an accounting/risk unit equal to five percent of account equity/deposit expressed in
+USDT. Entry sizing flows from WV to target USDT notional, calculated base-asset quantity, instrument `qtyStep`
+rounding and actual filled quantity. After execution, authoritative ownership of that position portion is the
+actual filled coin quantity. Partial fills and reconciliation update that factual remaining quantity.
+
+Closing quantity is never recalculated from the original USDT WV amount. Full close uses the current actual
+position size / remaining base-asset quantity with reduce-only semantics and reconciles fills to avoid residual
+tails. Current USDT notional is informational and dynamic; it does not redefine the original engaged-WV count.
+
+### 26.8 Superseding Paper-first execution architecture
+
+The initial Trading Workspace must not connect to the real Bybit trading account for execution. Its first
+execution backend is a virtual paper account and Paper Trading Engine. Real-money Bybit execution is deferred.
+Logical Workspace commands target a backend-neutral execution abstraction, conceptually:
+
+`Trading Workspace -> Execution interface -> PAPER initially / BYBIT_LIVE later`.
+
+The paper backend supports realistic accepted, working, partial/full fill, cancel/reject, position,
+realized/unrealized PnL and reconciliation-compatible state. Where appropriate it consumes real normalized
+market/L2 data for fills and slippage simulation; the exact source, freshness and simulation policy remain
+owned by the later L2 decision. The same Paper Trading Engine and execution contract must be reusable by the
+future virtual Robot. MANUAL versus ROBOT controller/ownership remains explicit even when both use paper
+execution.
+
+This Paper-first decision supersedes the earlier real-Bybit-first priority. It does not delete or silently
+reinterpret completed Stage 0 through Stage 7 implementation history, enable the existing Bybit mutation
+adapter, or authorize a Paper engine implementation. A later bounded planning/implementation checkpoint must
+reconcile the execution abstraction with current contracts before runtime use.
+
+Stage 8 remains `NOT_STARTED_NOT_AUTHORIZED`.
+
+This amendment records checkpoint `PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED`.
