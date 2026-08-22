@@ -1,0 +1,734 @@
+"""Controlled single-writer SQLite/WAL persistence for Terminal state."""
+
+from __future__ import annotations
+
+import sqlite3
+import threading
+from contextlib import contextmanager
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
+from enum import Enum
+from pathlib import Path
+from typing import Iterator
+
+from terminal.domain.models import (
+    Category,
+    CommandId,
+    Controller,
+    Execution,
+    ExecutionDedupKey,
+    ExecutionId,
+    Notional,
+    OrderId,
+    OrderSide,
+    Origin,
+    PositionKey,
+    PositionSide,
+    Price,
+    Quantity,
+    Symbol,
+    TradingAccountId,
+)
+from terminal.domain.states import CommandState, transition_command
+
+from .schema import SCHEMA_STATEMENTS, SCHEMA_VERSION
+
+
+class PersistenceError(RuntimeError):
+    """Base class for fail-closed persistence failures."""
+
+
+class SchemaError(PersistenceError):
+    """Raised for corrupt, unknown or incompatible schema state."""
+
+
+class DuplicateIdentity(PersistenceError):
+    """Raised when a command or correlation identity already exists."""
+
+
+class ConcurrentUpdate(PersistenceError):
+    """Raised when optimistic state no longer matches supplied evidence."""
+
+
+class ImmutableExecutionConflict(PersistenceError):
+    """Raised when one execution identity is reused with different evidence."""
+
+
+class ExecutionApplyResult(str, Enum):
+    APPLIED = "applied"
+    DUPLICATE = "duplicate"
+
+
+@dataclass(frozen=True, slots=True)
+class CommandRecord:
+    command_id: CommandId
+    order_link_id: str
+    trading_account_id: TradingAccountId
+    category: Category
+    symbol: Symbol
+    position_idx: int
+    command_kind: str
+    side: OrderSide
+    requested_notional: Notional
+    normalized_price: Price | None
+    normalized_quantity: Quantity | None
+    origin: Origin
+    controller: Controller
+    current_state: CommandState
+    version: int
+    exchange_order_id: OrderId | None
+    created_at_ms: int
+    updated_at_ms: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.order_link_id, str) or not self.order_link_id.strip():
+            raise ValueError("order_link_id must be a non-empty string")
+        if not isinstance(self.command_kind, str) or not self.command_kind.strip():
+            raise ValueError("command_kind must be a non-empty string")
+        if self.category is not Category.LINEAR or self.position_idx != 0:
+            raise ValueError("Manual v1 command requires linear One-Way position_idx=0")
+        if self.version < 1:
+            raise ValueError("command version must be positive")
+        if self.created_at_ms < 0 or self.updated_at_ms < self.created_at_ms:
+            raise ValueError("command timestamps are invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class SubmitEligibility:
+    """Proof returned only after command identity has durably committed."""
+
+    command_id: CommandId
+    order_link_id: str
+    committed_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class PositionProjectionUpdate:
+    """Engine-supplied operational projection; never exchange authority."""
+
+    position_key: PositionKey
+    side: PositionSide
+    quantity: Quantity
+    average_entry: Price | None
+    realized_pnl: Decimal
+    accumulated_fee: Decimal
+    engaged_notional: Notional
+    sync_state: str
+    expected_version: int | None
+    updated_at_ms: int
+
+    def __post_init__(self) -> None:
+        _decimal_text(self.realized_pnl)
+        _decimal_text(self.accumulated_fee)
+        if not isinstance(self.sync_state, str) or not self.sync_state.strip():
+            raise ValueError("sync_state must be a non-empty string")
+        if self.expected_version is not None and self.expected_version < 1:
+            raise ValueError("expected projection version must be positive")
+        if self.updated_at_ms < 0:
+            raise ValueError("projection timestamp must not be negative")
+        if self.side is PositionSide.FLAT and self.quantity.value != 0:
+            raise ValueError("flat projection must have zero quantity")
+        if self.side is not PositionSide.FLAT and self.quantity.value <= 0:
+            raise ValueError("open projection must have positive quantity")
+
+
+@dataclass(frozen=True, slots=True)
+class PositionProjectionRecord:
+    position_key: PositionKey
+    side: PositionSide
+    quantity: Quantity
+    average_entry: Price | None
+    realized_pnl: Decimal
+    accumulated_fee: Decimal
+    engaged_notional: Notional
+    sync_state: str
+    version: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class CommandStateHistoryRecord:
+    command_id: CommandId
+    previous_state: CommandState | None
+    next_state: CommandState
+    reason: str
+    occurred_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class StoreSettings:
+    schema_version: int
+    journal_mode: str
+    foreign_keys: bool
+    busy_timeout_ms: int
+    synchronous: int
+
+
+def _decimal_text(value: Decimal) -> str:
+    if not isinstance(value, Decimal):
+        raise TypeError("persistent decimal values must be Decimal")
+    if not value.is_finite():
+        raise ValueError("persistent decimal values must be finite")
+    return str(value)
+
+
+def _load_decimal(value: str) -> Decimal:
+    try:
+        result = Decimal(value)
+    except (InvalidOperation, TypeError) as exc:
+        raise SchemaError("invalid persisted Decimal value") from exc
+    if not result.is_finite():
+        raise SchemaError("persisted Decimal value must be finite")
+    return result
+
+
+class SQLiteStore:
+    """Synchronous store owned by one backend thread and writer."""
+
+    def __init__(self, connection: sqlite3.Connection, path: Path, busy_timeout_ms: int):
+        self._connection = connection
+        self.path = path
+        self._busy_timeout_ms = busy_timeout_ms
+        self._owner_thread = threading.get_ident()
+
+    @classmethod
+    def open(cls, path: str | Path, *, busy_timeout_ms: int = 5000) -> "SQLiteStore":
+        database_path = Path(path)
+        if not str(database_path):
+            raise ValueError("an explicit database path is required")
+        if busy_timeout_ms <= 0:
+            raise ValueError("busy_timeout_ms must be positive")
+
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(
+                database_path,
+                timeout=busy_timeout_ms / 1000,
+                isolation_level=None,
+            )
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute(f"PRAGMA busy_timeout = {int(busy_timeout_ms)}")
+            connection.execute("PRAGMA synchronous = FULL")
+            journal_mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+            if str(journal_mode).lower() != "wal":
+                raise SchemaError("database did not enter WAL mode")
+            cls._initialize_or_validate_schema(connection)
+            return cls(connection, database_path, busy_timeout_ms)
+        except (sqlite3.DatabaseError, OSError) as exc:
+            if connection is not None:
+                connection.close()
+            raise SchemaError("Terminal database is unavailable or corrupt") from exc
+        except Exception:
+            if connection is not None:
+                connection.close()
+            raise
+
+    @staticmethod
+    def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection)
+            return
+        if version != 0:
+            raise SchemaError(f"unsupported Terminal schema version: {version}")
+
+        existing = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if existing:
+            raise SchemaError("unversioned database contains unknown tables")
+
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_STATEMENTS:
+                connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        SQLiteStore._validate_required_tables(connection)
+
+    @staticmethod
+    def _validate_required_tables(connection: sqlite3.Connection) -> None:
+        required = {
+            "trading_commands",
+            "command_state_history",
+            "executions",
+            "position_projections",
+        }
+        actual = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if not required.issubset(actual):
+            raise SchemaError("Terminal schema is incomplete")
+
+    def close(self) -> None:
+        self._assert_owner()
+        self._connection.close()
+
+    def __enter__(self) -> "SQLiteStore":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+    def _assert_owner(self) -> None:
+        if threading.get_ident() != self._owner_thread:
+            raise PersistenceError("SQLiteStore must be used by its owning writer thread")
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        self._assert_owner()
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+        except Exception:
+            self._connection.execute("ROLLBACK")
+            raise
+        else:
+            try:
+                self._connection.execute("COMMIT")
+            except Exception:
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
+                raise
+
+    def settings(self) -> StoreSettings:
+        self._assert_owner()
+        return StoreSettings(
+            schema_version=int(self._connection.execute("PRAGMA user_version").fetchone()[0]),
+            journal_mode=str(self._connection.execute("PRAGMA journal_mode").fetchone()[0]).lower(),
+            foreign_keys=bool(self._connection.execute("PRAGMA foreign_keys").fetchone()[0]),
+            busy_timeout_ms=int(self._connection.execute("PRAGMA busy_timeout").fetchone()[0]),
+            synchronous=int(self._connection.execute("PRAGMA synchronous").fetchone()[0]),
+        )
+
+    def persist_command_before_submit(
+        self,
+        record: CommandRecord,
+        *,
+        reason: str = "admitted before exchange submission",
+    ) -> SubmitEligibility:
+        if record.current_state is not CommandState.ADMITTED:
+            raise ValueError("submit eligibility requires an ADMITTED command")
+        if not reason.strip():
+            raise ValueError("command history reason must be non-empty")
+
+        try:
+            with self._transaction():
+                self._connection.execute(
+                    """
+                    INSERT INTO trading_commands (
+                        command_id, order_link_id, trading_account_id, category, symbol,
+                        position_idx, command_kind, side, requested_notional,
+                        normalized_price, normalized_quantity, origin, controller,
+                        current_state, version, exchange_order_id, created_at_ms, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        record.command_id.value,
+                        record.order_link_id,
+                        record.trading_account_id.value,
+                        record.category.value,
+                        record.symbol.value,
+                        record.position_idx,
+                        record.command_kind,
+                        record.side.value,
+                        _decimal_text(record.requested_notional.value),
+                        _optional_decimal(record.normalized_price),
+                        _optional_decimal(record.normalized_quantity),
+                        record.origin.value,
+                        record.controller.value,
+                        record.current_state.value,
+                        record.version,
+                        record.exchange_order_id.value if record.exchange_order_id else None,
+                        record.created_at_ms,
+                        record.updated_at_ms,
+                    ),
+                )
+                self._connection.execute(
+                    """
+                    INSERT INTO command_state_history (
+                        command_id, previous_state, next_state, reason, occurred_at_ms
+                    ) VALUES (?, NULL, ?, ?, ?)
+                    """,
+                    (record.command_id.value, record.current_state.value, reason, record.updated_at_ms),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateIdentity("command_id or order_link_id already exists") from exc
+
+        return SubmitEligibility(record.command_id, record.order_link_id, record.version)
+
+    def transition_command_state(
+        self,
+        command_id: CommandId,
+        expected_state: CommandState,
+        next_state: CommandState,
+        *,
+        expected_version: int,
+        reason: str,
+        occurred_at_ms: int,
+        exchange_order_id: OrderId | None = None,
+    ) -> CommandRecord:
+        transition_command(expected_state, next_state)
+        if not reason.strip():
+            raise ValueError("transition reason must be non-empty")
+
+        with self._transaction():
+            values: list[object] = [
+                next_state.value,
+                expected_version + 1,
+                occurred_at_ms,
+            ]
+            order_sql = ""
+            if exchange_order_id is not None:
+                order_sql = ", exchange_order_id = ?"
+                values.append(exchange_order_id.value)
+            values.extend([command_id.value, expected_state.value, expected_version])
+            cursor = self._connection.execute(
+                f"""
+                UPDATE trading_commands
+                SET current_state = ?, version = ?, updated_at_ms = ?{order_sql}
+                WHERE command_id = ? AND current_state = ? AND version = ?
+                """,
+                values,
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("command state/version no longer matches")
+            self._connection.execute(
+                """
+                INSERT INTO command_state_history (
+                    command_id, previous_state, next_state, reason, occurred_at_ms
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    command_id.value,
+                    expected_state.value,
+                    next_state.value,
+                    reason,
+                    occurred_at_ms,
+                ),
+            )
+        record = self.get_command(command_id)
+        if record is None:
+            raise PersistenceError("committed command disappeared")
+        return record
+
+    def get_command(self, command_id: CommandId) -> CommandRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM trading_commands WHERE command_id = ?",
+            (command_id.value,),
+        ).fetchone()
+        return _command_from_row(row) if row is not None else None
+
+    def load_unfinished_commands(self) -> tuple[CommandRecord, ...]:
+        self._assert_owner()
+        final_states = (
+            CommandState.FILLED.value,
+            CommandState.CANCELLED.value,
+            CommandState.REJECTED.value,
+            CommandState.FAILED.value,
+        )
+        rows = self._connection.execute(
+            """
+            SELECT * FROM trading_commands
+            WHERE current_state NOT IN (?, ?, ?, ?)
+            ORDER BY created_at_ms, command_id
+            """,
+            final_states,
+        )
+        return tuple(_command_from_row(row) for row in rows)
+
+    def load_command_history(
+        self, command_id: CommandId
+    ) -> tuple[CommandStateHistoryRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            """
+            SELECT command_id, previous_state, next_state, reason, occurred_at_ms
+            FROM command_state_history
+            WHERE command_id = ?
+            ORDER BY history_id
+            """,
+            (command_id.value,),
+        )
+        return tuple(
+            CommandStateHistoryRecord(
+                command_id=CommandId(row["command_id"]),
+                previous_state=(
+                    CommandState(row["previous_state"])
+                    if row["previous_state"] is not None
+                    else None
+                ),
+                next_state=CommandState(row["next_state"]),
+                reason=row["reason"],
+                occurred_at_ms=int(row["occurred_at_ms"]),
+            )
+            for row in rows
+        )
+
+    def apply_execution_once(
+        self,
+        execution: Execution,
+        projection: PositionProjectionUpdate,
+        *,
+        command_id: CommandId | None = None,
+    ) -> ExecutionApplyResult:
+        if execution.dedup_key.trading_account_id != projection.position_key.trading_account_id:
+            raise ValueError("execution and projection account differ")
+        if execution.dedup_key.category is not projection.position_key.category:
+            raise ValueError("execution and projection category differ")
+        if execution.symbol != projection.position_key.symbol:
+            raise ValueError("execution and projection symbol differ")
+
+        with self._transaction():
+            existing = self._execution_row(execution.dedup_key)
+            if existing is not None:
+                if _execution_from_row(existing) != execution:
+                    raise ImmutableExecutionConflict(
+                        "execution identity already exists with different immutable evidence"
+                    )
+                if command_id is not None:
+                    self._correlate_command_order(command_id, execution.order_id)
+                return ExecutionApplyResult.DUPLICATE
+
+            self._insert_execution(execution)
+            self._write_projection(projection)
+            if command_id is not None:
+                self._correlate_command_order(command_id, execution.order_id)
+        return ExecutionApplyResult.APPLIED
+
+    def _correlate_command_order(self, command_id: CommandId, order_id: OrderId) -> None:
+        cursor = self._connection.execute(
+            """
+            UPDATE trading_commands
+            SET exchange_order_id = COALESCE(exchange_order_id, ?)
+            WHERE command_id = ?
+              AND (exchange_order_id IS NULL OR exchange_order_id = ?)
+            """,
+            (order_id.value, command_id.value, order_id.value),
+        )
+        if cursor.rowcount != 1:
+            raise ConcurrentUpdate("command/order correlation is missing or contradictory")
+
+    def _insert_execution(self, execution: Execution) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO executions (
+                trading_account_id, category, exec_id, order_id, symbol,
+                side, price, quantity, fee, exchange_timestamp_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                execution.dedup_key.trading_account_id.value,
+                execution.dedup_key.category.value,
+                execution.dedup_key.exec_id.value,
+                execution.order_id.value,
+                execution.symbol.value,
+                execution.side.value,
+                _decimal_text(execution.price.value),
+                _decimal_text(execution.quantity.value),
+                _decimal_text(execution.fee),
+                execution.exchange_timestamp_ms,
+            ),
+        )
+
+    def _write_projection(self, update: PositionProjectionUpdate) -> None:
+        key = update.position_key
+        existing = self._connection.execute(
+            """
+            SELECT version FROM position_projections
+            WHERE trading_account_id = ? AND category = ? AND symbol = ? AND position_idx = ?
+            """,
+            (key.trading_account_id.value, key.category.value, key.symbol.value, key.position_idx),
+        ).fetchone()
+
+        if existing is None:
+            if update.expected_version is not None:
+                raise ConcurrentUpdate("projection expected to exist")
+            new_version = 1
+            self._connection.execute(
+                """
+                INSERT INTO position_projections (
+                    trading_account_id, category, symbol, position_idx, side, quantity,
+                    average_entry, realized_pnl, accumulated_fee, engaged_notional,
+                    sync_state, version, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                _projection_values(update, new_version),
+            )
+            return
+
+        current_version = int(existing["version"])
+        if update.expected_version != current_version:
+            raise ConcurrentUpdate("projection version no longer matches")
+        new_version = current_version + 1
+        cursor = self._connection.execute(
+            """
+            UPDATE position_projections
+            SET side = ?, quantity = ?, average_entry = ?, realized_pnl = ?,
+                accumulated_fee = ?, engaged_notional = ?, sync_state = ?,
+                version = ?, updated_at_ms = ?
+            WHERE trading_account_id = ? AND category = ? AND symbol = ?
+              AND position_idx = ? AND version = ?
+            """,
+            (
+                update.side.value,
+                _decimal_text(update.quantity.value),
+                _optional_decimal(update.average_entry),
+                _decimal_text(update.realized_pnl),
+                _decimal_text(update.accumulated_fee),
+                _decimal_text(update.engaged_notional.value),
+                update.sync_state,
+                new_version,
+                update.updated_at_ms,
+                key.trading_account_id.value,
+                key.category.value,
+                key.symbol.value,
+                key.position_idx,
+                current_version,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise ConcurrentUpdate("projection changed concurrently")
+
+    def _execution_row(self, key: ExecutionDedupKey) -> sqlite3.Row | None:
+        return self._connection.execute(
+            """
+            SELECT * FROM executions
+            WHERE trading_account_id = ? AND category = ? AND exec_id = ?
+            """,
+            (key.trading_account_id.value, key.category.value, key.exec_id.value),
+        ).fetchone()
+
+    def get_execution(self, key: ExecutionDedupKey) -> Execution | None:
+        self._assert_owner()
+        row = self._execution_row(key)
+        return _execution_from_row(row) if row is not None else None
+
+    def load_executions(self) -> tuple[Execution, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            """
+            SELECT * FROM executions
+            ORDER BY exchange_timestamp_ms, trading_account_id, category, exec_id
+            """
+        )
+        return tuple(_execution_from_row(row) for row in rows)
+
+    def get_position_projection(
+        self, key: PositionKey
+    ) -> PositionProjectionRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            """
+            SELECT * FROM position_projections
+            WHERE trading_account_id = ? AND category = ? AND symbol = ? AND position_idx = ?
+            """,
+            (key.trading_account_id.value, key.category.value, key.symbol.value, key.position_idx),
+        ).fetchone()
+        return _projection_from_row(row) if row is not None else None
+
+
+def _optional_decimal(value: Price | Quantity | None) -> str | None:
+    return None if value is None else _decimal_text(value.value)
+
+
+def _command_from_row(row: sqlite3.Row) -> CommandRecord:
+    return CommandRecord(
+        command_id=CommandId(row["command_id"]),
+        order_link_id=row["order_link_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        category=Category(row["category"]),
+        symbol=Symbol(row["symbol"]),
+        position_idx=int(row["position_idx"]),
+        command_kind=row["command_kind"],
+        side=OrderSide(row["side"]),
+        requested_notional=Notional(_load_decimal(row["requested_notional"])),
+        normalized_price=(
+            Price(_load_decimal(row["normalized_price"]))
+            if row["normalized_price"] is not None
+            else None
+        ),
+        normalized_quantity=(
+            Quantity(_load_decimal(row["normalized_quantity"]))
+            if row["normalized_quantity"] is not None
+            else None
+        ),
+        origin=Origin(row["origin"]),
+        controller=Controller(row["controller"]),
+        current_state=CommandState(row["current_state"]),
+        version=int(row["version"]),
+        exchange_order_id=OrderId(row["exchange_order_id"]) if row["exchange_order_id"] else None,
+        created_at_ms=int(row["created_at_ms"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
+def _execution_from_row(row: sqlite3.Row) -> Execution:
+    return Execution(
+        dedup_key=ExecutionDedupKey(
+            TradingAccountId(row["trading_account_id"]),
+            Category(row["category"]),
+            ExecutionId(row["exec_id"]),
+        ),
+        order_id=OrderId(row["order_id"]),
+        symbol=Symbol(row["symbol"]),
+        side=OrderSide(row["side"]),
+        price=Price(_load_decimal(row["price"])),
+        quantity=Quantity(_load_decimal(row["quantity"])),
+        fee=_load_decimal(row["fee"]),
+        exchange_timestamp_ms=int(row["exchange_timestamp_ms"]),
+    )
+
+
+def _projection_values(update: PositionProjectionUpdate, version: int) -> tuple[object, ...]:
+    key = update.position_key
+    return (
+        key.trading_account_id.value,
+        key.category.value,
+        key.symbol.value,
+        key.position_idx,
+        update.side.value,
+        _decimal_text(update.quantity.value),
+        _optional_decimal(update.average_entry),
+        _decimal_text(update.realized_pnl),
+        _decimal_text(update.accumulated_fee),
+        _decimal_text(update.engaged_notional.value),
+        update.sync_state,
+        version,
+        update.updated_at_ms,
+    )
+
+
+def _projection_from_row(row: sqlite3.Row) -> PositionProjectionRecord:
+    return PositionProjectionRecord(
+        position_key=PositionKey(
+            TradingAccountId(row["trading_account_id"]),
+            Category(row["category"]),
+            Symbol(row["symbol"]),
+            int(row["position_idx"]),
+        ),
+        side=PositionSide(row["side"]),
+        quantity=Quantity(_load_decimal(row["quantity"])),
+        average_entry=(
+            Price(_load_decimal(row["average_entry"]))
+            if row["average_entry"] is not None
+            else None
+        ),
+        realized_pnl=_load_decimal(row["realized_pnl"]),
+        accumulated_fee=_load_decimal(row["accumulated_fee"]),
+        engaged_notional=Notional(_load_decimal(row["engaged_notional"])),
+        sync_state=row["sync_state"],
+        version=int(row["version"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
