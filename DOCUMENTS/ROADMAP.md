@@ -2,7 +2,7 @@
 
 Version:
 
-4.49
+4.50
 
 Date:
 
@@ -1376,13 +1376,26 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.18.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.21.
 
 Current action:
 
-STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED_IMPLEMENTATION_REQUIRES_SEPARATE_AUTHORIZATION_REVISION_1_20.
+SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED_FAST_DOM_IMPLEMENTATION_REQUIRES_SEPARATE_AUTHORIZATION_REVISION_1_21.
 
-Current revision 1.20 Fast DOM client-slice UX documentation checkpoint:
+Current revision 1.21 single 3-in-1 Trading Workspace architecture checkpoint:
+
+* defines one shared application/engine with Terminal, Autopilot and Editor modes rather than separate apps
+  or chart engines;
+* switches the lower mode-specific functional panel while retaining symbol, timeframe, chart viewport, market
+  data, DOM/Tape, account and connection state where applicable;
+* provides lower-panel buttons to the other two modes and removes the upper/header Autopilot button;
+* makes mode switching non-mutating and routes account selection through a key-icon area with Paper/Virtual
+  as one configured account choice;
+* defers final DOM-plus-Tape/header responsiveness to the real prototype and retains delivery of the first
+  runnable Fast DOM/Workspace prototype as the active product priority;
+* starts no Robot, Editor, credential or Fast DOM implementation and changes no implementation authority.
+
+Previous revision 1.20 Fast DOM client-slice UX documentation checkpoint:
 
 * preserves React/TypeScript/Vite while requiring a dedicated future-Web-Worker-compatible high-frequency
   data path and efficient/virtualized ladder rendering under backend execution authority;

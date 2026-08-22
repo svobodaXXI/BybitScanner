@@ -2,7 +2,7 @@
 
 Version:
 
-7.56
+7.57
 
 Date:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED
+IN_PROGRESS / SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED
 
 Checkpoint:
 
-STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED
+SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED
 
 ChangeRequest revision:
 
-1.20
+1.21
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.20
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.21
 
 Product priority:
 
@@ -912,7 +912,7 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFI
 
 Current authorized action:
 
-STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED_REVISION_1_20
+SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED_REVISION_1_21
 
 Next phase:
 
@@ -930,7 +930,10 @@ was implemented. Revision 1.20 then records documentation-only Fast DOM decision
 state flow, non-trading mouse navigation, preserved CENTER behavior, individual same-price order dots and
 extreme-left aggregate USDT, plus the Bybit V5 depth-50 orderbook and separate publicTrade baseline behind a
 depth-extensible normalized contract. Fast DOM implementation was not started and remains separately
-authorization-gated; the future secret audit was not executed.
+authorization-gated; the future secret audit was not executed. Revision 1.21 records one shared 3-in-1
+Terminal/Autopilot/Editor workspace, lower-panel cross-mode navigation, preserved market workspace state,
+non-mutating mode switches, key-icon account access including Paper and real-prototype responsive-header
+tuning. No Robot, Editor, Fast DOM or credential implementation was started or authorized.
 
 ---
 

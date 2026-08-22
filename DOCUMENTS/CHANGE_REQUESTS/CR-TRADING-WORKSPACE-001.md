@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.20",
+  "revision": "1.21",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Persist the approved Stage 8 Fast DOM client-slice UX and market-data decisions after Block 1 while preserving Paper-first safety and separately gating implementation.",
+  "objective": "Persist the approved single 3-in-1 Trading Workspace mode architecture after the Fast DOM UX checkpoint while preserving Paper-first safety and separately gating implementation.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -27,7 +27,8 @@
     "Reserve future robot observation and manual-control transfer compatibility without implementing it",
     "Prepare later human review and explicit implementation authorization",
     "Implement the human-authorized Stage 8 Block 1 React 19, TypeScript and Vite frontend foundation under terminal/frontend",
-    "Record the approved documentation-only Fast DOM client-slice interaction, own-order presentation and market-data baseline"
+    "Record the approved documentation-only Fast DOM client-slice interaction, own-order presentation and market-data baseline",
+    "Record the approved documentation-only single-workspace Terminal, Autopilot and Editor mode architecture"
   ],
   "prohibited_scope": [
     "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
@@ -165,6 +166,13 @@
     ,"Multiple distinct own active Limits at one price render as one side-colored dot per concrete order on that row; activating one dot cancels only that order, while the side-colored aggregate USDT notional appears at the extreme left of the same row"
     ,"The market-data baseline is Bybit V5 public WebSocket orderbook depth 50 plus a conceptually separate publicTrade tape stream; the Market Data Engine maintains snapshot-plus-delta local state behind a depth-extensible normalized DOM contract and REST is not the primary live DOM feed"
     ,"High-frequency L2 delivery uses a dedicated state/data path rather than naive full React-state rerendering, remains future-Web-Worker-compatible and supports efficient or virtualized ladder rendering while backend services retain trading and execution authority"
+    ,"Trading Workspace is one application and shared engine with switchable TERMINAL, AUTOPILOT and EDITOR modes rather than three applications or recreated chart engines"
+    ,"Mode switching replaces the lower functional panel and mode-specific overlays or tools while preserving applicable symbol, timeframe, chart viewport, live market data, DOM/Tape, selected account and connection state"
+    ,"Every mode exposes direct lower-panel navigation to the other two modes; the previously planned upper-header AUTOPILOT button is removed"
+    ,"Switching TERMINAL, AUTOPILOT or EDITOR is navigation only and never by itself cancels orders, starts or stops Robot, closes positions, changes account or mutates trading state"
+    ,"A key-icon control opens configured account selection and credential management, including a selectable Paper or Virtual account; real credential handling remains separately authorization-gated"
+    ,"DOM plus Tape expansion must not blindly compress the upper header; final responsive rearrangement is a real-prototype UX decision point rather than a documentation-time invented layout"
+    ,"The current product priority is to deliver the first real runnable Fast DOM and Trading Workspace prototype as soon as practicable and use it for UX tuning rather than image or mockup-driven design"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -309,7 +317,7 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED",
+  "current_checkpoint": "SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED",
   "implementation_status": "STAGES_0_TO_7_COMPLETED_STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED",
   "next_phase": "VERIFY",
   "next_phase_authorization": "FAST_DOM_CLIENT_SLICE_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED_EXACT_SCOPE_REQUIRES_SEPARATE_AUTHORIZATION_METASCALP_SEPARATE_BLOCK_REQUIRED",
@@ -330,7 +338,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED"
+    "status": "SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -353,7 +361,8 @@
     {"revision": "1.17", "reason": "Human-approved documentation checkpoint selecting the React 19 TypeScript Vite frontend toolchain, recording desktop DOM/chart Limit and confirmed Market interactions, a 500-ms long press, fail-closed fast-order safety, reversible pending Limit-line edits, coin-quantity position authority and the superseding Paper-first execution architecture; CENTER 300-ms mouse and 350-ms touch windows remain proposals pending verification, chart and L2 boundaries remain unresolved, and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
     {"revision": "1.18", "reason": "Human-approved final pre-Stage-8 documentation checkpoint binding CENTER mouse/touch timings, same-price multi-order aggregation and touch-safe identity markers, symbol-scoped quick volume, the authoritative normalized Bybit L2 market-data boundary, L2-based Market preview and Paper market execution, fail-closed book health, a bounded unresolved resting-Limit fill model and a required future secret exposure audit without starting Stage 8, implementing runtime behavior or introducing real credentials", "date": "2026-08-22"},
     {"revision": "1.19", "reason": "Human-authorized Stage 8 Block 1 only checkpoint implementing and verifying the terminal/frontend React 19 TypeScript Vite foundation, structural PAPER/non-live workspace shell, Tailwind 4 styling, normalized frontend market-data boundary and focused tooling while leaving all functional DOM, L2, Paper Engine, chart, live trading, credential, MetaScalp and later Stage 8 work not implemented and separately authorization-gated", "date": "2026-08-22"},
-    {"revision": "1.20", "reason": "Documentation-only checkpoint recording the current Fast DOM client-slice baseline: dedicated high-frequency state path, non-trading DOM mouse navigation, preserved CENTER behavior, individual same-price order dots with per-order cancellation and extreme-left aggregate USDT, Bybit V5 depth-50 orderbook plus separate publicTrade baseline, depth-extensible normalized contracts and explicit deferral of order-creation clicks and further trading mouse semantics without starting implementation", "date": "2026-08-22"}
+    {"revision": "1.20", "reason": "Documentation-only checkpoint recording the current Fast DOM client-slice baseline: dedicated high-frequency state path, non-trading DOM mouse navigation, preserved CENTER behavior, individual same-price order dots with per-order cancellation and extreme-left aggregate USDT, Bybit V5 depth-50 orderbook plus separate publicTrade baseline, depth-extensible normalized contracts and explicit deferral of order-creation clicks and further trading mouse semantics without starting implementation", "date": "2026-08-22"},
+    {"revision": "1.21", "reason": "Documentation-only checkpoint recording one shared 3-in-1 Trading Workspace with Terminal, Autopilot and Editor lower-panel modes, preserved workspace state, non-mutating mode navigation, lower-panel cross-mode buttons, key-icon account access including Paper, prototype-gated responsive header decisions and Fast DOM prototype delivery priority without Robot or Editor design, production implementation or changed Stage 8 authorization", "date": "2026-08-22"}
   ]
 }
 ```
@@ -2179,3 +2188,57 @@ own-order dot. No additional trading interaction is implied or authorized.
 Fast DOM client-slice implementation remains `NOT_STARTED_NOT_AUTHORIZED` and requires a separate exact-scope
 authorization. This amendment records checkpoint
 `STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED`.
+
+## 30. Single 3-in-1 Trading Workspace architecture
+
+Revision 1.21 is documentation only. Trading Workspace is one application and one shared underlying engine
+with three switchable operating modes. It is not three separate applications and does not recreate three
+chart engines.
+
+### 30.1 Modes and lower functional panel
+
+* `TERMINAL`: the shared chart and market-data workspace with manual trading controls in the lower panel.
+* `AUTOPILOT`: the same shared chart and market-data workspace for future live Robot observation/control,
+  with the lower manual panel replaced by Autopilot-specific status and controls. Robot logic is neither
+  designed nor implemented here.
+* `EDITOR`: the same shared chart/workspace with the lower trading panel replaced by Editor-specific tools.
+  Complete Editor functionality is neither designed nor implemented here.
+
+Each mode exposes direct buttons to the other two modes in its lower functional panel: Terminal exposes
+`AUTOPILOT | EDITOR`; Autopilot exposes `TERMINAL | EDITOR`; and Editor exposes `TERMINAL | AUTOPILOT`.
+The previously planned upper/header Autopilot button is removed. In Terminal, both mode buttons belong to the
+lower trading/control-panel area. This supersedes only the earlier upper-header Autopilot placement.
+
+### 30.2 Shared and mode-specific state
+
+Mode switching does not recreate or reset the primary workspace. Applicable shared state includes selected
+symbol, timeframe, chart viewport/zoom/position, live market data, DOM/Tape state, selected trading account
+and connection state. For example, BTCUSDT 5m with a particular viewport and open DOM/Tape remains the same
+market workspace when switching Terminal to Autopilot.
+
+Switching primarily replaces the lower functional/control panel and mode-specific controls, overlays or tools.
+Manual, Autopilot and Editor controls remain logically separate despite sharing the workspace and engine.
+
+### 30.3 Non-mutating navigation and account access
+
+Mode switching is not a trading action. It never by itself cancels orders, starts or stops Robot, closes a
+position, changes the selected account or otherwise mutates trading state. Every such mutation requires a
+separate explicit control.
+
+A key-icon control opens the account-selection/credentials area. The account system supports selection among
+configured accounts, including a Paper / Virtual account. This checkpoint does not implement or authorize
+real-account credential handling.
+
+### 30.4 Responsive header decision point and priority
+
+Expanding DOM plus Tape must not merely compress upper/header labels until the interface becomes cramped. The
+final responsive behavior is evaluated with the real working prototype. Later options may move information or
+controls into the lower panel, hide low-priority header information conditionally or remove redundancy; no
+final rearrangement is selected here.
+
+The active product priority remains: get the first real, runnable Fast DOM / Trading Workspace prototype into
+the user's hands as soon as practicable. That prototype becomes the basis for real UX tuning rather than
+continued image/mockup-driven design. This checkpoint does not expand into Robot or Trading Intelligence
+design, starts no production implementation and does not authorize the Fast DOM client slice.
+
+This amendment records checkpoint `SINGLE_3_IN_1_TRADING_WORKSPACE_ARCHITECTURE_RECORDED`.
