@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.26",
+  "revision": "1.27",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Durably record the approved mobile Trading Workspace UX clarifications without starting or authorizing another implementation slice.",
+  "objective": "Durably record the second approved mobile Trading Workspace UX clarification set without starting or authorizing another implementation slice.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -183,6 +183,18 @@
     ,"A single tap on an active Limit line keeps it active and opaque while revealing its right-end price and specific-order cancel cross"
     ,"Dragging an active Limit line makes it transparent and temporarily inactive; release shows proposed price and green confirmation, confirmation commits, and outside activation rolls back to the original active opaque price"
     ,"The current prototype palette is not the target; later visual work follows the previously supplied approved terminal reference without inventing unapproved exact colors"
+    ,"STOP and TAKE begin as transparent pending full-position protection proposals, become active and opaque only after explicit confirmation, and expose confirmed price plus projected loss/profit percentage after initiation"
+    ,"There is exactly one full-position TAKE; partial profit taking uses ordinary Limit orders rather than TP1, TP2 or TP3"
+    ,"Active STOP and TAKE quantities always synchronize to 100 percent of current position size without automatically moving their confirmed prices when position size or average entry changes"
+    ,"Opening from a scanner signal may offer one dismissible pending TAKE proposal per signal unless an active TAKE exists or that signal proposal was explicitly skipped; normal opening never auto-proposes TAKE"
+    ,"With no position the permanent position amount is zero, position PnL is absent and STOP/TAKE are unavailable while entry controls remain available; a confirmed new position transitions the UI automatically"
+    ,"BUY and SELL have independent configured volumes, each used by both that side's Market tap and two-finger fast-Limit gesture"
+    ,"The swords area permanently displays current position USDT and has separate holds for current one-WV value and for average entry plus base-asset quantity"
+    ,"The compact Limit inventory has exactly one BUY-direction and one SELL-direction composite row with count, adaptive expansion and confirmation-gated individual and direction-wide cancellation"
+    ,"Prints-field position PnL is actual live unrealized position-engine percentage with a vertical LONG up or SHORT down arrow and no additional position detail"
+    ,"An open position always has a non-draggable almost-white highlighted average-entry line whose exact price appears at its right end only while the line is held"
+    ,"Active Limits use solid canonical direction colors, STOP/TAKE use distinct muted dashed protection styling, and average entry uses an almost-white highlighted solid line"
+    ,"The reference-derived palette baseline uses graphite surfaces and canonical BUY/Bid #3BC639 plus SELL/Ask #CD0000 consistently across candles, best book, prints and active Limit lines; exact muted STOP/TAKE shades remain unresolved"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -327,10 +339,10 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED",
+  "current_checkpoint": "STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED",
   "implementation_status": "FAST_DOM_RUNNABLE_CLIENT_AND_TELEGRAM_MINI_APP_PHONE_TEST_SLICES_IMPLEMENTED_VERIFIED",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "PHONE_PROTOTYPE_REVIEW_AND_FURTHER_UX_CLARIFICATION_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED",
+  "next_phase_authorization": "FURTHER_MOBILE_UX_CLARIFICATION_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -348,7 +360,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "STAGE_8_MOBILE_UX_DOCUMENTATION_CHECKPOINT_RECORDED_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED"
+    "status": "STAGE_8_MOBILE_UX_DOCUMENTATION_CHECKPOINT_2_RECORDED_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -377,7 +389,8 @@
     {"revision": "1.23", "reason": "Recorded the authorized runnable Fast DOM client slice as implemented and verified: shared state-preserving three-mode shell, SVG candlestick chart, compact interactive non-trading DOM and Tape, CENTER lock/manual movement, same-price Paper fixture dots and aggregate cancellation behavior, key-icon Paper account menu, normalized external market-data port with clearly labelled deterministic development feed, responsive layout, four focused tests, clean Biome, successful production build and HTTP 200 local startup smoke check; live Bybit, Robot, real credentials and all trading execution remain deferred", "date": "2026-08-22"},
     {"revision": "1.24", "reason": "Explicit human authorization for only the smallest Telegram Mini App phone-test integration around the existing frontend: Telegram WebApp container adapter, mobile viewport/safe-area handling, local browser preservation, server-side Bot API menu-button configuration using existing Telegram ownership and a temporary development HTTPS tunnel workflow without frontend secrets, permanent hosting, redesign, trading, Robot or credential implementation", "date": "2026-08-22"},
     {"revision": "1.25", "reason": "Recorded the Telegram Mini App phone-test slice as implemented and verified: the same React/Vite Workspace initializes through a browser-safe Telegram adapter, applies content safe areas and stable viewport sizing, remains locally runnable, accepts temporary trycloudflare development hosts, and configures the existing bot private-chat menu through an HTTPS-only server-side helper using existing local credentials; focused frontend, Python, build, governance and startup-host checks passed, while installation and user launch of the temporary tunnel remain the next user-side steps", "date": "2026-08-22"},
-    {"revision": "1.26", "reason": "Documentation-only checkpoint preserving approved mobile Trading Workspace UX clarifications for compact chart chrome/tools, aligned collapsible prints-plus-DOM geometry, position PnL placement, lower-panel layout and collapse, non-reversing Market taps, two-finger chart Limit placement, active Limit reveal/cancel and confirmed move rollback semantics, and reference-led color direction; overall mobile design remains incomplete and no implementation slice is started or authorized", "date": "2026-08-22"}
+    {"revision": "1.26", "reason": "Documentation-only checkpoint preserving approved mobile Trading Workspace UX clarifications for compact chart chrome/tools, aligned collapsible prints-plus-DOM geometry, position PnL placement, lower-panel layout and collapse, non-reversing Market taps, two-finger chart Limit placement, active Limit reveal/cancel and confirmed move rollback semantics, and reference-led color direction; overall mobile design remains incomplete and no implementation slice is started or authorized", "date": "2026-08-22"},
+    {"revision": "1.27", "reason": "Second documentation-only mobile UX checkpoint recording pending and full-position STOP/TAKE workflows, quantity and average-entry invariants, scanner-signal TAKE proposal suppression, no-position state, independent BUY/SELL volumes, permanent position-USDT and distinct hold details, two-row Limit inventory, actual live unrealized PnL indicator, average-entry line, order-line classes and the sampled graphite plus canonical #3BC639/#CD0000 palette; contradictory earlier mobile wording is superseded, design remains incomplete and no new implementation is started or authorized", "date": "2026-08-23"}
   ]
 }
 ```
@@ -2444,3 +2457,155 @@ reconciliation and fail-closed safety remain unchanged unless explicitly superse
 
 This amendment records checkpoint
 `STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED`. No next implementation slice is authorized.
+
+## 36. Mobile Trading Workspace UX clarification checkpoint 2
+
+Revision 1.27 is documentation/context preservation only. It changes no UI, frontend, backend or runtime
+behavior and starts or authorizes no additional implementation. Revision 1.26 remains binding except where
+this section explicitly supersedes its wording. The overall mobile UX design remains incomplete.
+
+### 36.1 STOP and TAKE creation
+
+Tapping STOP creates a transparent, inactive pending STOP line. Its proposed initial trigger price derives
+from a configurable percentage distance from the relevant current/position price under existing order
+semantics. The current LONG design example is `-2%`; this is not a permanently hard-coded constant. The user
+may confirm the initial proposal immediately or move it and then confirm. Only successful confirmation makes
+the STOP active and opaque. Once its workflow is initiated/established, the STOP button shows trigger price
+and projected loss percentage beneath `STOP`.
+
+Tapping TAKE similarly creates a transparent, inactive pending TAKE line. Its preferred initial target is the
+calculated pattern target/potential when available. Otherwise it uses a configurable fallback currently
+intended around `+3%` to `+4%`; the exact fallback remains unresolved. The user may confirm immediately or
+move and confirm. Only successful confirmation makes it active and opaque. Once initiated/established, the
+TAKE button shows target/execution price and projected profit percentage beneath `TAKE`.
+
+Before the user initiates a STOP or TAKE, those buttons show no speculative price or percentage. The sole
+exception is the signal-entry pending TAKE proposal in section 36.4.
+
+### 36.2 One full-position TAKE and protection editing
+
+There is exactly one primary TAKE PROFIT for the position. It protects/exits the full position; the UI does
+not introduce TP1, TP2 or TP3. Partial profit-taking uses ordinary Limit orders.
+
+A single tap on an active STOP or TAKE keeps its line active and opaque and reveals its price plus a
+delete/cancel control. Deleting either STOP or TAKE requires explicit confirmation. Dragging an active
+protection line makes it transparent and pending while repositioning. Release shows the proposed price and a
+green circular confirmation checkmark. Activating the checkmark confirms the modification; activating
+outside instead cancels the pending move and restores the original active price and opaque state.
+
+### 36.3 Full-position quantity and average-entry invariants
+
+Active STOP quantity and active TAKE quantity each always equal 100% of the current position size. Position
+increases automatically increase both quantities; decreases and partial exits reduce them to the actual
+remainder. Full close invokes the established post-close protection cleanup. Quantity synchronization alone
+never changes a confirmed STOP or TAKE price.
+
+Additional fills may change average entry. That recalculates displayed STOP loss percentage and TAKE profit
+percentage and synchronizes both quantities to the full current position, but never automatically moves
+either confirmed protection price. Moving a confirmed price always requires explicit user editing.
+
+### 36.4 Scanner-signal TAKE proposal
+
+Opening Trading Workspace from a scanner signal immediately offers a transparent pending TAKE proposal. It
+uses the signal target/potential when available, otherwise the configured fallback. This is never an active
+order automatically: the user may move it, and the green check submits/confirms it. Activating anywhere
+outside the pending line and its confirmation control means SKIP: dismiss the proposal and submit nothing.
+
+For the same signal, no new proposal appears if an active TAKE already exists or if the user explicitly
+skipped that signal's proposal on an earlier open. Manual TAKE remains available later. Opening Workspace
+without signal context never automatically proposes TAKE and only restores actual current position, order
+and protection state.
+
+### 36.5 No-position and open-position UI states
+
+With no open position, the swords engaged-WV indicator is in zero state and its permanent position amount is
+`0 USDT`. STOP and TAKE remain visible but inactive/unavailable because nothing exists to protect. BUY, SELL,
+their volume controls and entry Limit orders remain available. The Prints-field position direction/PnL
+indicator is absent.
+
+When a Market fill or filled Limit creates a position, the UI automatically enters open-position state,
+updates swords/WV and position USDT, shows the direction/PnL indicator and enables STOP/TAKE.
+
+### 36.6 Independent side volumes and swords information
+
+BUY and SELL volumes are independently configurable. A small dropdown arrow/control directly beneath BUY
+sets BUY volume; the equivalent control beneath SELL sets SELL volume. BUY volume applies to both short-tap
+BUY Market and the two-finger BUY fast Limit. SELL volume applies to both corresponding SELL actions. The
+gesture chooses order type; the configured volume for that side chooses quantity.
+
+The first row remains left-starting `crossed swords → BUY → SELL`. Current position amount in USDT is always
+visible beneath the swords/engaged-WV indicator and follows the position's visual direction color. Two
+distinct hold targets provide different information:
+
+* holding swords shows the compact conceptual tooltip `1 РО = 100 USDT`, using the current one-WV value in
+  whole USDT without cents;
+* holding the permanent position-USDT amount shows current average entry price and current base-asset/coin
+  quantity.
+
+### 36.7 Two-row Limit-order inventory
+
+The compact inventory contains exactly two primary rows: active BUY/LONG-direction Limits and active
+SELL/SHORT-direction Limits. Each collapsed row shows the active count, a separate square expand-arrow
+segment and a rightmost cancel-all cross. The direction row has rounded left corners; the final cross forms
+the rounded right edge; row, arrow and cross read as one compact composite control.
+
+The arrow expands all active Limits for that direction downward when space permits and upward otherwise.
+Every individual item has its own cancel cross and individual cancellation requires confirmation. The
+collapsed row's rightmost cross cancels all active Limits of that direction and also requires confirmation.
+
+### 36.8 Live position PnL and average-entry line
+
+The minimal Prints-field indicator uses actual live unrealized position PnL percentage from the authoritative
+position/trading engine, never raw price distance from average entry. LONG remains lower-left and shows a
+vertical up arrow, for example `↑ +1.5%`; SHORT remains upper-left and shows a vertical down arrow, for
+example `↓ -1.5%`. Arrows are vertical, not diagonal. This indicator contains no position USDT, average
+entry, coin quantity or additional detail.
+
+While a position is open, the chart always shows a horizontal average-entry-price line. It automatically
+moves when actual average entry changes and is never manually draggable. It is light gray/almost white with
+a subtle visible highlight/glow, not direction-colored. Its numeric price is normally hidden. Holding the
+line shows the exact price at its right end immediately before the chart price scale; release hides it again.
+The position-USDT hold tooltip remains the alternate access path when chart lines are crowded.
+
+### 36.9 Order-line classes and reference-derived palette
+
+Active BUY/SELL Limit lines are solid and use the same canonical directional colors as their prints and best
+Bid/Ask. STOP and TAKE are dashed and use distinct, less-bright/more-muted protection shades, remaining
+visually distinct from Limits and average entry. Exact muted STOP/TAKE codes are not finalized. Average entry
+is the almost-white highlighted solid line described above.
+
+The supplied terminal screenshot is an implementation design reference, not an image-generation request.
+Its sampled baseline is:
+
+* primary graphite `RGB 69,69,69 / #454545`;
+* lighter panel/surface `RGB 88,88,88 / #585858`;
+* secondary dark graphite `RGB 67,67,67 / #434343`;
+* canonical bright BUY/best Bid `RGB 59,198,57 / #3BC639`;
+* secondary green `RGB 79,168,74 / #4FA84A`;
+* canonical bright SELL/best Ask `RGB 205,0,0 / #CD0000`;
+* secondary dark red `RGB 177,22,0 / #B11600`;
+* orange/warning reference `RGB 216,146,75 / #D8924B`.
+
+These are screenshot-derived values subject to nearby compression/antialiasing pixel variants. The current
+canonical implementation direction is BUY/Bid `#3BC639` and SELL/Ask `#CD0000`; they must not be silently
+replaced by unrelated generic green/red values.
+
+Chart and Prints use the same graphite background and read as one continuous surface/color family. Bullish
+candles, best Bid, BUY prints and BUY Limit lines share `#3BC639`. Bearish candles, best Ask, SELL prints and
+SELL Limit lines share `#CD0000`. This is one directional language across candles, best book, prints and
+active Limit lines.
+
+### 36.10 Precedence reconciliation and design status
+
+For mobile UX, this section supersedes any older wording that implies one shared BUY/SELL volume, hides
+position USDT behind the swords hold, derives Prints PnL from raw price distance, introduces partial TP
+controls, automatically moves confirmed STOP/TAKE prices after size or average-entry changes, permanently
+labels average-entry price on the chart, uses a different Limit-list representation, or leaves the palette at
+generic/prototype colors. Section 35's `selected Working Volume` means the independently configured volume
+for the activated side. Its Prints PnL wording means actual engine unrealized PnL, and its color deferral is
+superseded by the sampled baseline here except that exact muted STOP/TAKE shades remain unresolved.
+
+All unrelated desktop mappings, backend/execution authority, protection cleanup, reconciliation, unique
+identity and fail-closed safety contracts remain unchanged. The mobile design is still not finished and more
+clarification will follow. This amendment records
+`STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED`; it authorizes no implementation.

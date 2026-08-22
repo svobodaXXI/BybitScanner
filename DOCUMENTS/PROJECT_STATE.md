@@ -2,11 +2,11 @@
 
 Version:
 
-7.62
+7.63
 
 Date:
 
-2026-08-22
+2026-08-23
 
 Document Type:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED
+IN_PROGRESS / STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED
 
 Checkpoint:
 
-STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED
+STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED
 
 ChangeRequest revision:
 
-1.26
+1.27
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.26
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.27
 
 Product priority:
 
@@ -912,11 +912,11 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMP
 
 Current authorized action:
 
-STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED_REVISION_1_26
+STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED_REVISION_1_27
 
 Next phase:
 
-PHONE_PROTOTYPE_REVIEW_AND_FURTHER_UX_CLARIFICATION / NEXT_IMPLEMENTATION_SLICE_REQUIRES_SEPARATE_AUTHORIZATION
+FURTHER_MOBILE_UX_CLARIFICATION / NEXT_IMPLEMENTATION_SLICE_REQUIRES_SEPARATE_AUTHORIZATION
 
 Important:
 
@@ -940,6 +940,9 @@ real credentials and trading execution remain unimplemented and separately autho
 Revision 1.26 records the approved mobile chart, aligned Prints/DOM, panel geometry, lower trading controls,
 non-reversing Market tap, two-finger fast Limit and existing Limit-line interaction clarifications only.
 The mobile design remains incomplete; no runtime change or next implementation authorization was introduced.
+Revision 1.27 records the second approved mobile UX set: full-position STOP/TAKE proposals and invariants,
+signal TAKE behavior, no-position state, independent side volumes, position details, two-row Limit inventory,
+engine-derived PnL, average-entry line, line classes and reference-derived palette. It is documentation only.
 
 ---
 

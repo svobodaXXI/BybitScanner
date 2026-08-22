@@ -2,11 +2,11 @@
 
 Version:
 
-4.55
+4.56
 
 Date:
 
-2026-08-22
+2026-08-23
 
 Document Type:
 
@@ -1376,13 +1376,19 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.26.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.27.
 
 Current action:
 
-STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED_REVISION_1_26.
+STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED_REVISION_1_27.
 
-Current revision 1.26 is documentation only and records the approved mobile chart core, geometry-preserving
+Current revision 1.27 is documentation only and records full-position STOP/TAKE creation, editing, sizing and
+average-entry invariants; signal TAKE proposals; no-position behavior; independent BUY/SELL volume; swords and
+position details; the two-row Limit inventory; authoritative live position PnL; average-entry line behavior;
+order-line classes; and the sampled graphite/#3BC639/#CD0000 palette. Mobile UX remains incomplete and no
+implementation is started or authorized.
+
+Previous revision 1.26 is documentation only and records the approved mobile chart core, geometry-preserving
 collapsible Prints/DOM panel, position/PnL placement, lower trading-panel layout and collapse, non-reversing
 Market taps, two-finger chart Limit gesture, existing Limit reveal/cancel and confirmed-move rollback, and
 reference-led visual direction. Mobile UX remains incomplete and no implementation is started or authorized.
