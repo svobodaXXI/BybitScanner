@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.25",
+  "revision": "1.26",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Record the implemented and verified smallest Telegram Mini App phone-test integration slice around the existing runnable Workspace while preserving Paper-first safety.",
+  "objective": "Durably record the approved mobile Trading Workspace UX clarifications without starting or authorizing another implementation slice.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -173,6 +173,16 @@
     ,"A key-icon control opens configured account selection and credential management, including a selectable Paper or Virtual account; real credential handling remains separately authorization-gated"
     ,"DOM plus Tape expansion must not blindly compress the upper header; final responsive rearrangement is a real-prototype UX decision point rather than a documentation-time invented layout"
     ,"The current product priority is to deliver the first real runnable Fast DOM and Trading Workspace prototype as soon as practicable and use it for UX tuning rather than image or mockup-driven design"
+    ,"Mobile chart chrome is compact and retains right price and bottom time scales, current-price marker, ticker-timeframe-price ordering and compact access to the approved drawing tools"
+    ,"The mobile right panel is a collapsible aligned PRINTS FIELD plus DOM with a persistent handle; opening it translates the chart and its price scale left without changing chart geometry, scale or candle-to-scale distance"
+    ,"The prints field visualizes executed market trades by aligned price level and includes a mirrored LONG or SHORT direction arrow with live green-profit or red-loss PnL percentage"
+    ,"The lower mobile trading panel begins at left with engaged-WV swords, BUY and SELL, places Limits below on the left, vertically stacks STOP over TAKE PROFIT at right, and has one compact bottom-row key/account/deposit button beside AUTOPILOT and EDITOR"
+    ,"The entire lower panel can collapse downward behind a persistent restore handle; this vertical collapse expands chart, prints and DOM into the freed height, unlike right-panel opening which never rescales the chart"
+    ,"A normal mobile BUY or SELL short tap performs the ordinary Market action at selected working volume, with opposite-side execution capped at the confirmed remaining position so it reaches zero without crossing into reversal"
+    ,"The mobile fast Limit gesture holds BUY or SELL with finger one and positions a chart-price preview with finger two; releasing finger two first submits without extra confirmation, while releasing the held side first cancels without submission"
+    ,"A single tap on an active Limit line keeps it active and opaque while revealing its right-end price and specific-order cancel cross"
+    ,"Dragging an active Limit line makes it transparent and temporarily inactive; release shows proposed price and green confirmation, confirmation commits, and outside activation rolls back to the original active opaque price"
+    ,"The current prototype palette is not the target; later visual work follows the previously supplied approved terminal reference without inventing unapproved exact colors"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -317,10 +327,10 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED",
+  "current_checkpoint": "STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED",
   "implementation_status": "FAST_DOM_RUNNABLE_CLIENT_AND_TELEGRAM_MINI_APP_PHONE_TEST_SLICES_IMPLEMENTED_VERIFIED",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "PHONE_LAUNCH_REQUIRES_USER_TUNNEL_AND_MENU_CONFIGURATION_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED",
+  "next_phase_authorization": "PHONE_PROTOTYPE_REVIEW_AND_FURTHER_UX_CLARIFICATION_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -338,7 +348,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED_PHONE_LAUNCH_USER_STEPS_REMAIN"
+    "status": "STAGE_8_MOBILE_UX_DOCUMENTATION_CHECKPOINT_RECORDED_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -366,7 +376,8 @@
     {"revision": "1.22", "reason": "Explicit human authorization for only the smallest runnable Stage 8 Fast DOM client slice on the existing React TypeScript Vite foundation: shared three-mode shell, real chart surface, interactive non-trading DOM and Tape, deterministic labelled development market feed behind normalized boundaries, CENTER behavior, own-order fixture rendering, Paper account access location and focused tests; Robot, real credentials, trading execution, complete Editor and all deferred scope remain unauthorized", "date": "2026-08-22"},
     {"revision": "1.23", "reason": "Recorded the authorized runnable Fast DOM client slice as implemented and verified: shared state-preserving three-mode shell, SVG candlestick chart, compact interactive non-trading DOM and Tape, CENTER lock/manual movement, same-price Paper fixture dots and aggregate cancellation behavior, key-icon Paper account menu, normalized external market-data port with clearly labelled deterministic development feed, responsive layout, four focused tests, clean Biome, successful production build and HTTP 200 local startup smoke check; live Bybit, Robot, real credentials and all trading execution remain deferred", "date": "2026-08-22"},
     {"revision": "1.24", "reason": "Explicit human authorization for only the smallest Telegram Mini App phone-test integration around the existing frontend: Telegram WebApp container adapter, mobile viewport/safe-area handling, local browser preservation, server-side Bot API menu-button configuration using existing Telegram ownership and a temporary development HTTPS tunnel workflow without frontend secrets, permanent hosting, redesign, trading, Robot or credential implementation", "date": "2026-08-22"},
-    {"revision": "1.25", "reason": "Recorded the Telegram Mini App phone-test slice as implemented and verified: the same React/Vite Workspace initializes through a browser-safe Telegram adapter, applies content safe areas and stable viewport sizing, remains locally runnable, accepts temporary trycloudflare development hosts, and configures the existing bot private-chat menu through an HTTPS-only server-side helper using existing local credentials; focused frontend, Python, build, governance and startup-host checks passed, while installation and user launch of the temporary tunnel remain the next user-side steps", "date": "2026-08-22"}
+    {"revision": "1.25", "reason": "Recorded the Telegram Mini App phone-test slice as implemented and verified: the same React/Vite Workspace initializes through a browser-safe Telegram adapter, applies content safe areas and stable viewport sizing, remains locally runnable, accepts temporary trycloudflare development hosts, and configures the existing bot private-chat menu through an HTTPS-only server-side helper using existing local credentials; focused frontend, Python, build, governance and startup-host checks passed, while installation and user launch of the temporary tunnel remain the next user-side steps", "date": "2026-08-22"},
+    {"revision": "1.26", "reason": "Documentation-only checkpoint preserving approved mobile Trading Workspace UX clarifications for compact chart chrome/tools, aligned collapsible prints-plus-DOM geometry, position PnL placement, lower-panel layout and collapse, non-reversing Market taps, two-finger chart Limit placement, active Limit reveal/cancel and confirmed move rollback semantics, and reference-led color direction; overall mobile design remains incomplete and no implementation slice is started or authorized", "date": "2026-08-22"}
   ]
 }
 ```
@@ -2325,3 +2336,111 @@ and configure the resulting temporary HTTPS URL on the existing bot menu. This i
 not permanent hosting. No redesign, Robot logic, real trading, real credential handling or unrelated feature
 was implemented. This amendment records
 `STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED`.
+
+## 35. Mobile Trading Workspace UX clarification checkpoint
+
+Revision 1.26 is documentation and context preservation only. It changes no frontend or runtime code, starts
+no implementation and authorizes no implementation slice. The earlier implemented prototype and Telegram
+container checkpoints remain historical implementation evidence; overall mobile UX design remains incomplete
+and further clarification is expected.
+
+### 35.1 Compact mobile chart core
+
+The chart retains its price scale on the right, time scale along the bottom and current-price marker on the
+price scale. Its compact top information order is `TICKER → TIMEFRAME SWITCHER → CURRENT ASSET PRICE`, with
+the timeframe switcher immediately after the ticker. Prototype/service labels and explanatory copy that are
+not part of trading operation are removed from the target trading UI.
+
+Chart tools include inclined/trend line, horizontal line, ray, horizontal ray, Fibonacci, ruler and magnet.
+They use a compact chart-tools UI and do not permanently consume a large part of the chart.
+
+### 35.2 Aligned PRINTS FIELD and DOM panel geometry
+
+The standalone Tape table below the chart is removed from the target mobile layout. Executed market trades
+are visualized at their corresponding price levels in a `PRINTS FIELD` immediately left of the DOM rather
+than in a conventional table. Prints and DOM levels align vertically, and the Prints field is approximately
+comparable in area/width to the DOM field.
+
+The expanded horizontal structure is `CHART + its price scale | PRINTS FIELD | DOM | persistent panel handle`.
+The right Prints-plus-DOM panel slides out and hides; the same persistent handle remains visible while open
+and closed so it can close or restore the panel.
+
+Opening this panel never compresses, rescales or zooms the chart. The chart and its own price scale translate
+horizontally to the left as one geometry-preserving unit: chart scale and the distance from current
+price/candles to that price scale remain unchanged. Closing the panel returns that unit to its normal
+horizontal position.
+
+### 35.3 Position direction and live PnL in Prints
+
+The Prints field also shows open-position direction and live PnL percentage. LONG uses the lower-left area;
+SHORT mirrors it in the upper-left area. The indicator includes the directional arrow and percentage. Profit
+is green, for example `+1.5%`; loss is red, for example `-1.5%`.
+
+### 35.4 Lower trading panel layout and collapse
+
+The first row directly below the chart begins at the left edge as
+`crossed-swords engaged-WV indicator → BUY → SELL`; the swords indicator is not right-aligned. The active
+Limit-order list sits below BUY/SELL at the left. At the right edge, STOP is vertically above TAKE PROFIT.
+When the right panel is open, STOP/TP visually occupy the trading-panel area beneath it.
+
+The bottom row is `AUTOPILOT | EDITOR | compact account button`. There is exactly one account control in this
+row and none above the chart. The one compact button contains the key icon, compact/smaller account name
+(`PAPER` in the current prototype) and deposit amount within the same button.
+
+The entire lower trading panel can slide down and hide, leaving a persistent restore handle analogous to the
+right-panel handle. Hiding it expands the chart and the open Prints/DOM panel vertically into the freed space,
+making their rendering visibly larger. This is intentionally distinct from opening the right panel: lower
+panel hiding adds vertical rendering area, whereas right-panel opening only translates the unchanged chart
+geometry horizontally.
+
+### 35.5 BUY/SELL Market behavior and two-finger fast Limit
+
+BUY and SELL remain primary trading controls. A normal short tap performs the ordinary Market action with
+the currently selected Working Volume. An opposite-side Market action reduces or closes an existing position
+first and cannot flip through zero in the same action. If selected volume exceeds the confirmed remaining
+opposite position, execution is capped at that actual remainder and excess volume does not open the reverse
+side.
+
+The approved touch fast-Limit interaction is specifically two-finger:
+
+1. Finger one presses and continues holding BUY or SELL.
+2. Finger two touches the chart, creating a horizontal Limit preview at that chart price, and may move it.
+3. Releasing finger two while finger one still holds the side submits immediately at the selected Working
+   Volume; there is no extra green-check confirmation for this fast gesture.
+4. Releasing finger one before finger two cancels the gesture, removes the preview and submits no order.
+
+Fast-hold safety remains unchanged: placement fails closed under degraded or ambiguous connectivity, every
+intent has a unique client order identity, and reconciliation precedes any recovery that could duplicate or
+make the action unsafe. The order line becomes opaque/active only when the authoritative confirmed order
+state permits it.
+
+### 35.6 Existing active Limit-line interaction
+
+A single tap on an already active Limit line does not deactivate or move it. The line remains opaque and
+active at its existing price; the tap reveals that price at the right end and a cancel cross to the right of
+the price. The cross cancels only that concrete order.
+
+Dragging an active line makes it transparent and temporarily inactive while repositioning. Releasing at the
+proposed price retains the proposed line, shows its new price at the right end and displays a green circular
+checkmark. No amendment is committed until that checkmark is activated. After successful confirmation, the
+line is active and opaque at the new price. If the user instead activates outside the line and its
+confirmation controls, the pending move is cancelled without a separate cancel button and the order returns
+to its original price and active/opaque state.
+
+### 35.7 Visual direction and precedence reconciliation
+
+The current prototype colors are not the accepted target. Future visual work follows the previously supplied
+and approved trading-terminal reference. This checkpoint does not fabricate exact color values that have not
+been finalized.
+
+For mobile/touch UX, this section supersedes earlier wording that placed a standalone Tape below the chart,
+located the account/key control above the chart, treated right-panel expansion as a possible chart
+compression/rearrangement, required confirmation for a normal BUY/SELL Market activation, or mapped the
+second held-side finger exclusively to a DOM row. The approved mobile second finger now selects a chart price
+for a Limit; the order is submitted when that finger releases while the side remains held. The green check is
+only for confirming a moved existing Limit, never for the two-finger fast-Limit gesture. Existing desktop
+input mappings, backend authority, confirmed-state presentation, anti-bounce, unique identity,
+reconciliation and fail-closed safety remain unchanged unless explicitly superseded above.
+
+This amendment records checkpoint
+`STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED`. No next implementation slice is authorized.

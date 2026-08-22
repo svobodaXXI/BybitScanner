@@ -2,7 +2,7 @@
 
 Version:
 
-7.61
+7.62
 
 Date:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED
+IN_PROGRESS / STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED
 
 Checkpoint:
 
-STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED
+STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED
 
 ChangeRequest revision:
 
-1.25
+1.26
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.25
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.26
 
 Product priority:
 
@@ -912,11 +912,11 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMP
 
 Current authorized action:
 
-STAGE_8_TELEGRAM_MINI_APP_PHONE_TEST_SLICE_IMPLEMENTED_VERIFIED_REVISION_1_25
+STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_RECORDED_REVISION_1_26
 
 Next phase:
 
-PHONE_LAUNCH_REQUIRES_USER_TUNNEL_AND_MENU_CONFIGURATION / NEXT_IMPLEMENTATION_SLICE_REQUIRES_SEPARATE_AUTHORIZATION
+PHONE_PROTOTYPE_REVIEW_AND_FURTHER_UX_CLARIFICATION / NEXT_IMPLEMENTATION_SLICE_REQUIRES_SEPARATE_AUTHORIZATION
 
 Important:
 
@@ -937,6 +937,9 @@ tuning. Revision 1.23 records the runnable Fast DOM client slice as implemented 
 three-mode shell, SVG chart, compact non-trading DOM/Tape, CENTER interactions, Paper own-order fixtures,
 Paper account menu, responsive layout and a normalized deterministic development feed. Live Bybit, Robot,
 real credentials and trading execution remain unimplemented and separately authorization-gated.
+Revision 1.26 records the approved mobile chart, aligned Prints/DOM, panel geometry, lower trading controls,
+non-reversing Market tap, two-finger fast Limit and existing Limit-line interaction clarifications only.
+The mobile design remains incomplete; no runtime change or next implementation authorization was introduced.
 
 ---
 
