@@ -2,11 +2,11 @@
 
 Version:
 
-5.10
+5.11
 
 Date:
 
-2026-08-10
+2026-08-22
 
 Document Type:
 
@@ -322,6 +322,22 @@ python -m <package.module>
 Прямой запуск модуля, использующего
 relative imports, не должен считаться
 каноническим способом запуска.
+
+---
+
+## 4.5 Secret And Credential Safety
+
+Реальные credentials, tokens, passwords, API keys, API secrets и private keys
+не должны попадать в tracked files или Git history.
+
+Локальная конфигурация, содержащая secrets, должна оставаться ignored и untracked.
+Версионируемые example/template-конфигурации могут содержать только placeholders и
+не должны содержать рабочие credentials.
+
+Будущие реальные Bybit credentials должны использовать утверждённую границу
+environment/secret/`CredentialStore`, а не tracked source или documentation files.
+При обнаружении реального exposure rotation/revocation имеет приоритет над любой
+последующей отдельно контролируемой очисткой Git history.
 
 ---
 
@@ -1611,13 +1627,22 @@ DOCUMENTS/SNAPSHOT.md
 
 from:
 
-PROJECT_RULES v5.9
+PROJECT_RULES v5.10
 
 to:
 
-PROJECT_RULES v5.10
+PROJECT_RULES v5.11
 
 reason:
+
+Current checkpoint — repository secret-commit hardening:
+
+* prohibited committing real credentials or secrets and required local secret-bearing configuration to remain ignored and untracked;
+* restricted versioned example/template configuration to placeholders;
+* routed future real Bybit credentials through the approved environment/secret/CredentialStore boundary;
+* made rotation/revocation the priority when real exposure is discovered.
+
+Previous checkpoint preserved — PROJECT_RULES v5.10:
 
 * removed duplicated staged-recovery procedure;
 * retained context-efficiency policy here and routed recovery mechanics to `AGENTS.md` and workflow contracts.

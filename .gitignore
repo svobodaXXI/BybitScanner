@@ -14,6 +14,33 @@ Backups/
 
 config.py
 
+# Local credentials and secret-bearing configuration
+.env
+.env.*
+!.env.example
+!.env.template
+
+*.key
+*.pem
+*.p12
+*.pfx
+
+credentials.json
+credentials.yaml
+credentials.yml
+credentials.toml
+secrets.json
+secrets.yaml
+secrets.yml
+secrets.toml
+*.credentials
+*.secrets
+
+!credentials.example.*
+!credentials.template.*
+!secrets.example.*
+!secrets.template.*
+
 debug/
 debug.txt
 
