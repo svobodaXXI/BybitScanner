@@ -31,7 +31,11 @@ from terminal.domain.models import (
 )
 from terminal.domain.states import CommandState, transition_command
 
-from .schema import SCHEMA_STATEMENTS, SCHEMA_VERSION
+from .schema import (
+    SCHEMA_STATEMENTS,
+    SCHEMA_V2_MIGRATION_STATEMENTS,
+    SCHEMA_VERSION,
+)
 
 
 class PersistenceError(RuntimeError):
@@ -147,6 +151,54 @@ class PositionProjectionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ReconciliationCheckpointUpdate:
+    """Application-supplied reconciliation result; persistence adds no semantics."""
+
+    position_key: PositionKey
+    generation: int
+    outcome: str
+    exchange_snapshot_at_ms: int
+    exchange_sequence: int | None
+    started_at_ms: int
+    completed_at_ms: int | None
+    expected_version: int
+    updated_at_ms: int
+
+    def __post_init__(self) -> None:
+        if self.generation < 1:
+            raise ValueError("reconciliation generation must be positive")
+        if not isinstance(self.outcome, str) or not self.outcome.strip():
+            raise ValueError("reconciliation outcome must be non-empty")
+        if self.exchange_snapshot_at_ms < 0:
+            raise ValueError("exchange snapshot timestamp must not be negative")
+        if self.exchange_sequence is not None and self.exchange_sequence < 0:
+            raise ValueError("exchange sequence must not be negative")
+        if self.started_at_ms < 0:
+            raise ValueError("reconciliation start timestamp must not be negative")
+        if self.completed_at_ms is not None and self.completed_at_ms < self.started_at_ms:
+            raise ValueError("reconciliation completion precedes its start")
+        if self.expected_version < 1:
+            raise ValueError("checkpoint expected version must be positive")
+        if self.updated_at_ms < self.started_at_ms:
+            raise ValueError("checkpoint update precedes reconciliation start")
+        if self.completed_at_ms is not None and self.updated_at_ms < self.completed_at_ms:
+            raise ValueError("checkpoint update precedes reconciliation completion")
+
+
+@dataclass(frozen=True, slots=True)
+class ReconciliationCheckpointRecord:
+    position_key: PositionKey
+    generation: int
+    outcome: str
+    exchange_snapshot_at_ms: int
+    exchange_sequence: int | None
+    started_at_ms: int
+    completed_at_ms: int | None
+    version: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class CommandStateHistoryRecord:
     command_id: CommandId
     previous_state: CommandState | None
@@ -228,7 +280,12 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
-            SQLiteStore._validate_required_tables(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 1:
+            SQLiteStore._validate_required_tables(connection, version=1)
+            SQLiteStore._migrate_v1_to_v2(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version != 0:
             raise SchemaError(f"unsupported Terminal schema version: {version}")
@@ -251,16 +308,30 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
-        SQLiteStore._validate_required_tables(connection)
+        SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
 
     @staticmethod
-    def _validate_required_tables(connection: sqlite3.Connection) -> None:
+    def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V2_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _validate_required_tables(connection: sqlite3.Connection, *, version: int) -> None:
         required = {
             "trading_commands",
             "command_state_history",
             "executions",
             "position_projections",
         }
+        if version >= 2:
+            required.add("reconciliation_checkpoints")
         actual = {
             row[0]
             for row in connection.execute(
@@ -638,6 +709,175 @@ class SQLiteStore:
         ).fetchone()
         return _projection_from_row(row) if row is not None else None
 
+    def begin_reconciliation(
+        self,
+        position_key: PositionKey,
+        *,
+        generation: int,
+        exchange_snapshot_at_ms: int,
+        exchange_sequence: int | None,
+        started_at_ms: int,
+        expected_version: int | None,
+        updated_at_ms: int,
+    ) -> ReconciliationCheckpointRecord:
+        """Durably mark a supplied scope/generation as unfinished recovery work."""
+
+        if generation < 1:
+            raise ValueError("reconciliation generation must be positive")
+        if exchange_snapshot_at_ms < 0:
+            raise ValueError("exchange snapshot timestamp must not be negative")
+        if exchange_sequence is not None and exchange_sequence < 0:
+            raise ValueError("exchange sequence must not be negative")
+        if started_at_ms < 0 or updated_at_ms < started_at_ms:
+            raise ValueError("reconciliation timestamps are invalid")
+        if expected_version is not None and expected_version < 1:
+            raise ValueError("checkpoint expected version must be positive")
+
+        key = position_key
+        with self._transaction():
+            existing = self._connection.execute(
+                """
+                SELECT generation, version FROM reconciliation_checkpoints
+                WHERE trading_account_id = ? AND category = ? AND symbol = ?
+                  AND position_idx = ?
+                """,
+                (key.trading_account_id.value, key.category.value, key.symbol.value, key.position_idx),
+            ).fetchone()
+            if existing is None:
+                if expected_version is not None:
+                    raise ConcurrentUpdate("checkpoint expected to exist")
+                self._connection.execute(
+                    """
+                    INSERT INTO reconciliation_checkpoints (
+                        trading_account_id, category, symbol, position_idx,
+                        generation, outcome, exchange_snapshot_at_ms, exchange_sequence,
+                        started_at_ms, completed_at_ms, version, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, NULL, 1, ?)
+                    """,
+                    (
+                        key.trading_account_id.value,
+                        key.category.value,
+                        key.symbol.value,
+                        key.position_idx,
+                        generation,
+                        exchange_snapshot_at_ms,
+                        exchange_sequence,
+                        started_at_ms,
+                        updated_at_ms,
+                    ),
+                )
+            else:
+                current_generation = int(existing["generation"])
+                current_version = int(existing["version"])
+                if expected_version != current_version:
+                    raise ConcurrentUpdate("checkpoint version no longer matches")
+                if generation <= current_generation:
+                    raise ConcurrentUpdate("reconciliation generation is stale")
+                cursor = self._connection.execute(
+                    """
+                    UPDATE reconciliation_checkpoints
+                    SET generation = ?, outcome = 'in_progress',
+                        exchange_snapshot_at_ms = ?, exchange_sequence = ?,
+                        started_at_ms = ?, completed_at_ms = NULL,
+                        version = ?, updated_at_ms = ?
+                    WHERE trading_account_id = ? AND category = ? AND symbol = ?
+                      AND position_idx = ? AND generation = ? AND version = ?
+                    """,
+                    (
+                        generation,
+                        exchange_snapshot_at_ms,
+                        exchange_sequence,
+                        started_at_ms,
+                        current_version + 1,
+                        updated_at_ms,
+                        key.trading_account_id.value,
+                        key.category.value,
+                        key.symbol.value,
+                        key.position_idx,
+                        current_generation,
+                        current_version,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise ConcurrentUpdate("checkpoint changed concurrently")
+
+        record = self.get_reconciliation_checkpoint(position_key)
+        if record is None:
+            raise PersistenceError("committed checkpoint disappeared")
+        return record
+
+    def commit_authoritative_position_snapshot(
+        self,
+        projection: PositionProjectionUpdate,
+        checkpoint: ReconciliationCheckpointUpdate,
+    ) -> tuple[PositionProjectionRecord, ReconciliationCheckpointRecord]:
+        """Atomically persist an application-supplied snapshot and recovery outcome."""
+
+        if projection.position_key != checkpoint.position_key:
+            raise ValueError("projection and reconciliation checkpoint scopes differ")
+        if checkpoint.completed_at_ms is None:
+            raise ValueError("snapshot commit requires a completed reconciliation outcome")
+
+        key = projection.position_key
+        with self._transaction():
+            self._write_projection(projection)
+            cursor = self._connection.execute(
+                """
+                UPDATE reconciliation_checkpoints
+                SET outcome = ?, exchange_snapshot_at_ms = ?, exchange_sequence = ?,
+                    completed_at_ms = ?, version = ?, updated_at_ms = ?
+                WHERE trading_account_id = ? AND category = ? AND symbol = ?
+                  AND position_idx = ? AND generation = ? AND version = ?
+                  AND started_at_ms = ?
+                """,
+                (
+                    checkpoint.outcome.strip(),
+                    checkpoint.exchange_snapshot_at_ms,
+                    checkpoint.exchange_sequence,
+                    checkpoint.completed_at_ms,
+                    checkpoint.expected_version + 1,
+                    checkpoint.updated_at_ms,
+                    key.trading_account_id.value,
+                    key.category.value,
+                    key.symbol.value,
+                    key.position_idx,
+                    checkpoint.generation,
+                    checkpoint.expected_version,
+                    checkpoint.started_at_ms,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("checkpoint generation/version no longer matches")
+
+        projection_record = self.get_position_projection(key)
+        checkpoint_record = self.get_reconciliation_checkpoint(key)
+        if projection_record is None or checkpoint_record is None:
+            raise PersistenceError("committed reconciliation state disappeared")
+        return projection_record, checkpoint_record
+
+    def get_reconciliation_checkpoint(
+        self, key: PositionKey
+    ) -> ReconciliationCheckpointRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            """
+            SELECT * FROM reconciliation_checkpoints
+            WHERE trading_account_id = ? AND category = ? AND symbol = ? AND position_idx = ?
+            """,
+            (key.trading_account_id.value, key.category.value, key.symbol.value, key.position_idx),
+        ).fetchone()
+        return _checkpoint_from_row(row) if row is not None else None
+
+    def load_reconciliation_checkpoints(self) -> tuple[ReconciliationCheckpointRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            """
+            SELECT * FROM reconciliation_checkpoints
+            ORDER BY trading_account_id, category, symbol, position_idx
+            """
+        )
+        return tuple(_checkpoint_from_row(row) for row in rows)
+
 
 def _optional_decimal(value: Price | Quantity | None) -> str | None:
     return None if value is None else _decimal_text(value.value)
@@ -729,6 +969,33 @@ def _projection_from_row(row: sqlite3.Row) -> PositionProjectionRecord:
         accumulated_fee=_load_decimal(row["accumulated_fee"]),
         engaged_notional=Notional(_load_decimal(row["engaged_notional"])),
         sync_state=row["sync_state"],
+        version=int(row["version"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
+def _checkpoint_from_row(row: sqlite3.Row) -> ReconciliationCheckpointRecord:
+    return ReconciliationCheckpointRecord(
+        position_key=PositionKey(
+            TradingAccountId(row["trading_account_id"]),
+            Category(row["category"]),
+            Symbol(row["symbol"]),
+            int(row["position_idx"]),
+        ),
+        generation=int(row["generation"]),
+        outcome=row["outcome"],
+        exchange_snapshot_at_ms=int(row["exchange_snapshot_at_ms"]),
+        exchange_sequence=(
+            int(row["exchange_sequence"])
+            if row["exchange_sequence"] is not None
+            else None
+        ),
+        started_at_ms=int(row["started_at_ms"]),
+        completed_at_ms=(
+            int(row["completed_at_ms"])
+            if row["completed_at_ms"] is not None
+            else None
+        ),
         version=int(row["version"]),
         updated_at_ms=int(row["updated_at_ms"]),
     )

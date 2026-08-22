@@ -2,6 +2,7 @@ import ast
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from decimal import Decimal
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from terminal.domain.models import (
     TradingAccountId,
 )
 from terminal.domain.states import CommandState
-from terminal.persistence.schema import SCHEMA_VERSION
+from terminal.persistence.schema import SCHEMA_V1_STATEMENTS, SCHEMA_VERSION
 from terminal.persistence.sqlite_store import (
     CommandRecord,
     ConcurrentUpdate,
@@ -32,6 +33,7 @@ from terminal.persistence.sqlite_store import (
     ExecutionApplyResult,
     ImmutableExecutionConflict,
     PositionProjectionUpdate,
+    ReconciliationCheckpointUpdate,
     SQLiteStore,
     SchemaError,
 )
@@ -47,6 +49,47 @@ class TerminalPersistenceTests(unittest.TestCase):
 
     def open_store(self):
         return SQLiteStore.open(self.database_path, busy_timeout_ms=2500)
+
+    def create_v1_database(self):
+        connection = sqlite3.connect(self.database_path)
+        for statement in SCHEMA_V1_STATEMENTS:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version = 1")
+        connection.execute(
+            """
+            INSERT INTO trading_commands VALUES (
+                'command-1', 'link-1', 'account-1', 'linear', 'BTCUSDT', 0,
+                'create_market', 'Buy', '123.45', '65000.125', '0.001',
+                'terminal_manual', 'manual', 'admitted', 1, NULL, 1000, 1000
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO command_state_history
+                (command_id, previous_state, next_state, reason, occurred_at_ms)
+            VALUES ('command-1', NULL, 'admitted', 'v1 seed', 1000)
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO executions VALUES (
+                'account-1', 'linear', 'exec-1', 'order-account-1', 'BTCUSDT',
+                'Buy', '65000.125', '0.001', '-0.00005', 2000
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO position_projections VALUES (
+                'account-1', 'linear', 'BTCUSDT', 0, 'Long', '0.001',
+                '65000.125', '0.1', '-0.00005', '65.000125',
+                'reconciliation_required', 1, 2000
+            )
+            """
+        )
+        connection.commit()
+        connection.close()
 
     def command(
         self,
@@ -108,6 +151,29 @@ class TerminalPersistenceTests(unittest.TestCase):
             updated_at_ms=2000,
         )
 
+    def checkpoint_update(
+        self,
+        *,
+        generation=1,
+        outcome="converged",
+        expected_version=1,
+        started_at_ms=1900,
+        exchange_snapshot_at_ms=2100,
+        completed_at_ms=2200,
+        updated_at_ms=2200,
+    ):
+        return ReconciliationCheckpointUpdate(
+            position_key=self.projection().position_key,
+            generation=generation,
+            outcome=outcome,
+            exchange_snapshot_at_ms=exchange_snapshot_at_ms,
+            exchange_sequence=77,
+            started_at_ms=started_at_ms,
+            completed_at_ms=completed_at_ms,
+            expected_version=expected_version,
+            updated_at_ms=updated_at_ms,
+        )
+
     def test_fresh_database_initializes_versioned_wal_schema(self):
         self.assertFalse(self.database_path.exists())
         with self.open_store() as store:
@@ -118,6 +184,58 @@ class TerminalPersistenceTests(unittest.TestCase):
             self.assertEqual(settings.busy_timeout_ms, 2500)
             self.assertEqual(settings.synchronous, 2)  # SQLite FULL
         self.assertTrue(self.database_path.exists())
+
+    def test_v1_migration_preserves_commands_executions_and_projection(self):
+        self.create_v1_database()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, 2)
+            self.assertEqual(store.get_command(CommandId("command-1")).order_link_id, "link-1")
+            self.assertEqual(
+                store.get_execution(
+                    ExecutionDedupKey(
+                        TradingAccountId("account-1"),
+                        Category.LINEAR,
+                        ExecutionId("exec-1"),
+                    )
+                ).fee,
+                Decimal("-0.00005"),
+            )
+            projection = store.get_position_projection(self.projection().position_key)
+            self.assertEqual(projection.quantity.value, Decimal("0.001"))
+            self.assertIsNone(store.get_reconciliation_checkpoint(self.projection().position_key))
+
+    def test_v1_migration_failure_rolls_back_schema_and_preserves_data(self):
+        self.create_v1_database()
+        invalid_migration = (
+            "CREATE TABLE reconciliation_checkpoints(temp_value TEXT)",
+            "NOT VALID SQLITE",
+        )
+
+        with mock.patch(
+            "terminal.persistence.sqlite_store.SCHEMA_V2_MIGRATION_STATEMENTS",
+            invalid_migration,
+        ):
+            with self.assertRaisesRegex(SchemaError, "unavailable or corrupt"):
+                self.open_store()
+
+        connection = sqlite3.connect(self.database_path)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(
+            connection.execute("SELECT order_link_id FROM trading_commands").fetchone()[0],
+            "link-1",
+        )
+        self.assertEqual(connection.execute("SELECT COUNT(*) FROM executions").fetchone()[0], 1)
+        self.assertEqual(
+            connection.execute("SELECT quantity FROM position_projections").fetchone()[0],
+            "0.001",
+        )
+        self.assertIsNone(
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name='reconciliation_checkpoints'"
+            ).fetchone()
+        )
+        connection.close()
 
     def test_incompatible_schema_fails_closed_without_recreate(self):
         connection = sqlite3.connect(self.database_path)
@@ -335,6 +453,195 @@ class TerminalPersistenceTests(unittest.TestCase):
             self.assertEqual(loaded_projection.realized_pnl, projection.realized_pnl)
             self.assertEqual(loaded_projection.accumulated_fee, projection.accumulated_fee)
             self.assertEqual(loaded_projection.engaged_notional, projection.engaged_notional)
+
+    def test_authoritative_snapshot_and_checkpoint_commit_without_execution(self):
+        key = self.projection().position_key
+        with self.open_store() as store:
+            self.assertIsNone(store.get_reconciliation_checkpoint(key))
+            started = store.begin_reconciliation(
+                key,
+                generation=1,
+                exchange_snapshot_at_ms=1900,
+                exchange_sequence=70,
+                started_at_ms=1900,
+                expected_version=None,
+                updated_at_ms=1900,
+            )
+            self.assertEqual(started.outcome, "in_progress")
+            self.assertIsNone(started.completed_at_ms)
+            self.assertIsNone(store.get_position_projection(key))
+            self.assertEqual(store.load_executions(), ())
+
+        with self.open_store() as reopened:
+            unfinished = reopened.get_reconciliation_checkpoint(key)
+            self.assertEqual(unfinished, started)
+            projection, checkpoint = reopened.commit_authoritative_position_snapshot(
+                self.projection(),
+                self.checkpoint_update(),
+            )
+            self.assertEqual(projection.quantity.value, Decimal("0.001"))
+            self.assertEqual(checkpoint.outcome, "converged")
+            self.assertEqual(checkpoint.version, 2)
+            self.assertEqual(reopened.load_executions(), ())
+
+        with self.open_store() as recovered:
+            self.assertEqual(
+                recovered.get_reconciliation_checkpoint(key).outcome,
+                "converged",
+            )
+            self.assertFalse(hasattr(recovered, "online"))
+            self.assertFalse(hasattr(recovered, "submit_eligibility"))
+
+    def test_external_snapshot_can_correct_stale_projection_and_then_flat(self):
+        key = self.projection().position_key
+        with self.open_store() as store:
+            first = store.begin_reconciliation(
+                key,
+                generation=1,
+                exchange_snapshot_at_ms=1900,
+                exchange_sequence=None,
+                started_at_ms=1900,
+                expected_version=None,
+                updated_at_ms=1900,
+            )
+            store.commit_authoritative_position_snapshot(
+                self.projection(quantity="9.123456789012345678"),
+                self.checkpoint_update(),
+            )
+
+            second = store.begin_reconciliation(
+                key,
+                generation=2,
+                exchange_snapshot_at_ms=3000,
+                exchange_sequence=80,
+                started_at_ms=3000,
+                expected_version=first.version + 1,
+                updated_at_ms=3000,
+            )
+            corrected, _ = store.commit_authoritative_position_snapshot(
+                self.projection(expected_version=1, quantity="0.25"),
+                self.checkpoint_update(
+                    generation=2,
+                    expected_version=second.version,
+                    started_at_ms=3000,
+                    exchange_snapshot_at_ms=3100,
+                    completed_at_ms=3200,
+                    updated_at_ms=3200,
+                ),
+            )
+            self.assertEqual(corrected.quantity.value, Decimal("0.25"))
+
+            third = store.begin_reconciliation(
+                key,
+                generation=3,
+                exchange_snapshot_at_ms=4000,
+                exchange_sequence=90,
+                started_at_ms=4000,
+                expected_version=second.version + 1,
+                updated_at_ms=4000,
+            )
+            flat, checkpoint = store.commit_authoritative_position_snapshot(
+                self.projection(expected_version=2, quantity="0"),
+                self.checkpoint_update(
+                    generation=3,
+                    expected_version=third.version,
+                    started_at_ms=4000,
+                    exchange_snapshot_at_ms=4100,
+                    completed_at_ms=4200,
+                    updated_at_ms=4200,
+                ),
+            )
+            self.assertIs(flat.side, PositionSide.FLAT)
+            self.assertEqual(flat.quantity.value, Decimal("0"))
+            self.assertEqual(checkpoint.generation, 3)
+            self.assertEqual(store.load_executions(), ())
+
+    def test_snapshot_checkpoint_transaction_rolls_back_on_checkpoint_conflict(self):
+        key = self.projection().position_key
+        with self.open_store() as store:
+            started = store.begin_reconciliation(
+                key,
+                generation=1,
+                exchange_snapshot_at_ms=1900,
+                exchange_sequence=70,
+                started_at_ms=1900,
+                expected_version=None,
+                updated_at_ms=1900,
+            )
+            with self.assertRaises(ConcurrentUpdate):
+                store.commit_authoritative_position_snapshot(
+                    self.projection(),
+                    self.checkpoint_update(expected_version=99),
+                )
+            self.assertIsNone(store.get_position_projection(key))
+            self.assertEqual(store.get_reconciliation_checkpoint(key), started)
+
+    def test_non_converged_checkpoint_survives_restart_as_recovery_evidence_only(self):
+        key = self.projection().position_key
+        with self.open_store() as store:
+            store.begin_reconciliation(
+                key,
+                generation=1,
+                exchange_snapshot_at_ms=1900,
+                exchange_sequence=None,
+                started_at_ms=1900,
+                expected_version=None,
+                updated_at_ms=1900,
+            )
+            store.commit_authoritative_position_snapshot(
+                self.projection(),
+                self.checkpoint_update(outcome="failed_inconsistent"),
+            )
+
+        with self.open_store() as reopened:
+            checkpoint = reopened.get_reconciliation_checkpoint(key)
+            self.assertEqual(checkpoint.outcome, "failed_inconsistent")
+            self.assertFalse(hasattr(checkpoint, "trading_allowed"))
+            self.assertFalse(hasattr(checkpoint, "online"))
+
+    def test_reconciliation_generation_and_optimistic_versions_reject_stale_writers(self):
+        key = self.projection().position_key
+        with self.open_store() as store:
+            first = store.begin_reconciliation(
+                key,
+                generation=1,
+                exchange_snapshot_at_ms=1000,
+                exchange_sequence=None,
+                started_at_ms=1000,
+                expected_version=None,
+                updated_at_ms=1000,
+            )
+            with self.assertRaises(ConcurrentUpdate):
+                store.begin_reconciliation(
+                    key,
+                    generation=1,
+                    exchange_snapshot_at_ms=1100,
+                    exchange_sequence=None,
+                    started_at_ms=1100,
+                    expected_version=first.version,
+                    updated_at_ms=1100,
+                )
+            with self.assertRaises(ConcurrentUpdate):
+                store.begin_reconciliation(
+                    key,
+                    generation=2,
+                    exchange_snapshot_at_ms=1100,
+                    exchange_sequence=None,
+                    started_at_ms=1100,
+                    expected_version=99,
+                    updated_at_ms=1100,
+                )
+            self.assertEqual(store.get_reconciliation_checkpoint(key), first)
+
+    def test_checkpoint_scope_must_match_projection(self):
+        with self.open_store() as store:
+            other_projection = self.projection(account="account-2")
+            with self.assertRaisesRegex(ValueError, "scopes differ"):
+                store.commit_authoritative_position_snapshot(
+                    other_projection,
+                    self.checkpoint_update(),
+                )
+            self.assertEqual(store.load_reconciliation_checkpoints(), ())
 
 
 class TerminalPersistenceBoundaryTests(unittest.TestCase):

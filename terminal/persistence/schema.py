@@ -1,8 +1,8 @@
-"""Initial SQLite schema for Terminal execution recovery state."""
+"""Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
-SCHEMA_STATEMENTS = (
+SCHEMA_V1_STATEMENTS = (
     """
     CREATE TABLE trading_commands (
         command_id TEXT PRIMARY KEY,
@@ -77,3 +77,36 @@ SCHEMA_STATEMENTS = (
     ) WITHOUT ROWID
     """,
 )
+
+SCHEMA_V2_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE reconciliation_checkpoints (
+        trading_account_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        position_idx INTEGER NOT NULL,
+        generation INTEGER NOT NULL,
+        outcome TEXT NOT NULL,
+        exchange_snapshot_at_ms INTEGER NOT NULL,
+        exchange_sequence INTEGER,
+        started_at_ms INTEGER NOT NULL,
+        completed_at_ms INTEGER,
+        version INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (trading_account_id, category, symbol, position_idx),
+        CHECK (category = 'linear'),
+        CHECK (position_idx = 0),
+        CHECK (generation >= 1),
+        CHECK (version >= 1),
+        CHECK (length(trim(outcome)) > 0),
+        CHECK (exchange_snapshot_at_ms >= 0),
+        CHECK (exchange_sequence IS NULL OR exchange_sequence >= 0),
+        CHECK (started_at_ms >= 0),
+        CHECK (completed_at_ms IS NULL OR completed_at_ms >= started_at_ms),
+        CHECK (completed_at_ms IS NULL OR updated_at_ms >= completed_at_ms),
+        CHECK (updated_at_ms >= started_at_ms)
+    ) WITHOUT ROWID
+    """,
+)
+
+SCHEMA_STATEMENTS = SCHEMA_V1_STATEMENTS + SCHEMA_V2_MIGRATION_STATEMENTS
