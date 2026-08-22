@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.19",
+  "revision": "1.20",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Implement only the production-quality Stage 8 Block 1 Trading Workspace frontend foundation while preserving Paper-first safety and separately gating all later functionality.",
+  "objective": "Persist the approved Stage 8 Fast DOM client-slice UX and market-data decisions after Block 1 while preserving Paper-first safety and separately gating implementation.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -26,7 +26,8 @@
     "Define Working Volume as exactly five percent of own account equity before leverage",
     "Reserve future robot observation and manual-control transfer compatibility without implementing it",
     "Prepare later human review and explicit implementation authorization",
-    "Implement the human-authorized Stage 8 Block 1 React 19, TypeScript and Vite frontend foundation under terminal/frontend"
+    "Implement the human-authorized Stage 8 Block 1 React 19, TypeScript and Vite frontend foundation under terminal/frontend",
+    "Record the approved documentation-only Fast DOM client-slice interaction, own-order presentation and market-data baseline"
   ],
   "prohibited_scope": [
     "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
@@ -159,6 +160,11 @@
     ,"Paper market execution consumes authoritative opposite-side L2 liquidity so larger orders may receive worse average simulated execution, while resting paper Limits are not deemed fully filled merely on price touch"
     ,"Market-data-dependent execution fails closed unless the authoritative book is ready, sequence-consistent, resynchronized and sufficiently fresh; invalid or ambiguous liquidity is never fabricated for preview or Paper execution"
     ,"A dedicated bounded SECRET EXPOSURE AUDIT is required before any real Bybit credentials or live execution are introduced, covering tracked files, relevant Git history, configuration, logs, backups, credential patterns, ignore protections and available GitHub scanning posture with masked findings and rotation before any separately controlled history cleanup"
+    ,"For the current Fast DOM client slice, ordinary Bid, Ask and price-level clicks never create orders; ordinary DOM left/right clicks have no trading action, while vertical mouse drag and wheel reposition the ladder and intentional manual movement disables locked CENTER"
+    ,"The current Fast DOM client slice preserves one-shot CENTER on single click and center-plus-persistent lock on double click, with a clearly visible locked border or outline"
+    ,"Multiple distinct own active Limits at one price render as one side-colored dot per concrete order on that row; activating one dot cancels only that order, while the side-colored aggregate USDT notional appears at the extreme left of the same row"
+    ,"The market-data baseline is Bybit V5 public WebSocket orderbook depth 50 plus a conceptually separate publicTrade tape stream; the Market Data Engine maintains snapshot-plus-delta local state behind a depth-extensible normalized DOM contract and REST is not the primary live DOM feed"
+    ,"High-frequency L2 delivery uses a dedicated state/data path rather than naive full React-state rerendering, remains future-Web-Worker-compatible and supports efficient or virtualized ladder rendering while backend services retain trading and execution authority"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -303,10 +309,10 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED",
+  "current_checkpoint": "STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED",
   "implementation_status": "STAGES_0_TO_7_COMPLETED_STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "NEXT_STAGE_8_BLOCK_NOT_AUTHORIZED_EXACT_SCOPE_AND_DEPENDENCIES_REQUIRE_SEPARATE_AUTHORIZATION_METASCALP_SEPARATE_BLOCK_REQUIRED",
+  "next_phase_authorization": "FAST_DOM_CLIENT_SLICE_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED_EXACT_SCOPE_REQUIRES_SEPARATE_AUTHORIZATION_METASCALP_SEPARATE_BLOCK_REQUIRED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -324,7 +330,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED_NEXT_BLOCK_NOT_AUTHORIZED"
+    "status": "STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -346,7 +352,8 @@
     {"revision": "1.16", "reason": "Human-approved corrective documentation checkpoint replacing the separate AUTO CENTER and one-shot CENTER controls with one CENTER control whose single activation centers once, double activation centers and enables visible-border LOCKED CENTERING, repeated double activation or manual DOM navigation disables the lock, and whose double-activation recognition remains independent of the 300-ms trading anti-bounce; all revision 1.15 MetaScalp and input-device decisions remain unchanged and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
     {"revision": "1.17", "reason": "Human-approved documentation checkpoint selecting the React 19 TypeScript Vite frontend toolchain, recording desktop DOM/chart Limit and confirmed Market interactions, a 500-ms long press, fail-closed fast-order safety, reversible pending Limit-line edits, coin-quantity position authority and the superseding Paper-first execution architecture; CENTER 300-ms mouse and 350-ms touch windows remain proposals pending verification, chart and L2 boundaries remain unresolved, and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
     {"revision": "1.18", "reason": "Human-approved final pre-Stage-8 documentation checkpoint binding CENTER mouse/touch timings, same-price multi-order aggregation and touch-safe identity markers, symbol-scoped quick volume, the authoritative normalized Bybit L2 market-data boundary, L2-based Market preview and Paper market execution, fail-closed book health, a bounded unresolved resting-Limit fill model and a required future secret exposure audit without starting Stage 8, implementing runtime behavior or introducing real credentials", "date": "2026-08-22"},
-    {"revision": "1.19", "reason": "Human-authorized Stage 8 Block 1 only checkpoint implementing and verifying the terminal/frontend React 19 TypeScript Vite foundation, structural PAPER/non-live workspace shell, Tailwind 4 styling, normalized frontend market-data boundary and focused tooling while leaving all functional DOM, L2, Paper Engine, chart, live trading, credential, MetaScalp and later Stage 8 work not implemented and separately authorization-gated", "date": "2026-08-22"}
+    {"revision": "1.19", "reason": "Human-authorized Stage 8 Block 1 only checkpoint implementing and verifying the terminal/frontend React 19 TypeScript Vite foundation, structural PAPER/non-live workspace shell, Tailwind 4 styling, normalized frontend market-data boundary and focused tooling while leaving all functional DOM, L2, Paper Engine, chart, live trading, credential, MetaScalp and later Stage 8 work not implemented and separately authorization-gated", "date": "2026-08-22"},
+    {"revision": "1.20", "reason": "Documentation-only checkpoint recording the current Fast DOM client-slice baseline: dedicated high-frequency state path, non-trading DOM mouse navigation, preserved CENTER behavior, individual same-price order dots with per-order cancellation and extreme-left aggregate USDT, Bybit V5 depth-50 orderbook plus separate publicTrade baseline, depth-extensible normalized contracts and explicit deferral of order-creation clicks and further trading mouse semantics without starting implementation", "date": "2026-08-22"}
   ]
 }
 ```
@@ -2113,3 +2120,62 @@ AUTOPILOT or MetaScalp integration. No real credential was read or used and no e
 occurred. Stage 8 is not complete; every next block requires a new exact-scope authorization.
 
 This amendment records checkpoint `STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED`.
+
+## 29. Stage 8 Fast DOM client-slice UX decisions
+
+Revision 1.20 is documentation only. It does not modify `terminal/frontend/`, install dependencies, connect
+market data, implement the DOM or authorize another Stage 8 implementation block.
+
+### 29.1 Frontend rendering and authority boundary
+
+The client remains React plus TypeScript plus Vite. High-frequency L2 updates must use a dedicated
+market-data/state path and must not drive naive full-tree React-state rerendering. That path remains
+compatible with a future Web Worker boundary. The DOM ladder uses efficient or virtualized rendering where
+appropriate. Backend services remain the sole trading/execution authority; client rendering state is never
+execution truth.
+
+### 29.2 Current-stage mouse navigation and CENTER
+
+For this client slice, clicking Bid, Ask or price cells does not create an order. Ordinary left or right
+click on the DOM has no trading action. The operator may grab and drag the ladder vertically, and the mouse
+wheel scrolls or repositions it. Intentional manual drag, scroll or reposition disables locked CENTER mode.
+
+The existing CENTER contract remains: one click immediately performs one-shot spread centering; a deliberate
+double click centers and enables persistent locked centering; and the locked state has a clearly visible
+button border or outline.
+
+This current-stage rule supersedes only earlier proposals that assigned Limit placement or another trading
+action to ordinary DOM price/Bid/Ask cell clicks. It does not remove the separately approved concrete
+own-order-dot cancellation described below.
+
+### 29.3 Same-price own Limits
+
+The model and UI support multiple distinct active own Limit orders at the same exact price. That DOM row
+shows one dot per concrete order in a horizontal row. Buy dots are green; Sell dots use the selected
+sell-side color. Activating a specific dot cancels only the order represented by that dot. Every other order
+at the same price remains active.
+
+The aggregate notional of all own active Limits at that price is displayed numerically in USDT inside the
+DOM, on the same price row, at its extreme left. Its color matches the order side and dots. For example,
+three Buy orders of 100, 150 and 250 USDT display three green dots and `500 USDT`; activating the 150-USDT
+order's dot cancels only that concrete order.
+
+### 29.4 Market-data baseline
+
+Bybit V5 public WebSocket is the live market-data source. The initial DOM baseline is orderbook depth 50,
+maintained locally from snapshot and delta semantics by the authoritative Market Data Engine. The tape / Time
+& Sales baseline is the separate `publicTrade` stream. REST is not the primary live DOM feed.
+
+The normalized DOM contract must not permanently encode depth 50: deeper books may be introduced later
+without redesigning consumers. Order-book/L2 and trade/tape streams remain conceptually separate, while their
+timestamps may be correlated in a later authorized design.
+
+### 29.5 Explicit deferrals
+
+The current slice defers creating orders by clicking DOM price, Bid or Ask cells; detailed quick-volume
+trading controls; and final trading mouse-button semantics beyond cancellation of the specifically selected
+own-order dot. No additional trading interaction is implied or authorized.
+
+Fast DOM client-slice implementation remains `NOT_STARTED_NOT_AUTHORIZED` and requires a separate exact-scope
+authorization. This amendment records checkpoint
+`STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED`.

@@ -2,7 +2,7 @@
 
 Version:
 
-4.46
+4.47
 
 Date:
 
@@ -1350,9 +1350,23 @@ Owning record:
 
 Current action:
 
-STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED_NEXT_BLOCK_REQUIRES_SEPARATE_AUTHORIZATION_REVISION_1_19.
+STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED_IMPLEMENTATION_REQUIRES_SEPARATE_AUTHORIZATION_REVISION_1_20.
 
-Current revision 1.19 Stage 8 Block 1 frontend foundation checkpoint:
+Current revision 1.20 Fast DOM client-slice UX documentation checkpoint:
+
+* preserves React/TypeScript/Vite while requiring a dedicated future-Web-Worker-compatible high-frequency
+  data path and efficient/virtualized ladder rendering under backend execution authority;
+* makes ordinary DOM Bid/Ask/price left/right clicks non-trading for the current slice, permits vertical drag
+  and wheel repositioning, disables locked CENTER on intentional manual movement and preserves single/double
+  CENTER semantics with a visible locked outline;
+* binds one side-colored dot per distinct own order at a price, per-dot individual cancellation and the
+  side-colored aggregate own-order USDT notional at the extreme left of that same DOM row;
+* binds Bybit V5 public WebSocket depth-50 snapshot/delta orderbook plus conceptually separate `publicTrade`
+  tape as the live baseline, while keeping the normalized DOM contract depth-extensible and REST secondary;
+* explicitly defers DOM-cell order creation, detailed quick-volume controls and all other final trading mouse
+  semantics; implementation remains not started and not authorized.
+
+Previous revision 1.19 Stage 8 Block 1 frontend foundation checkpoint:
 
 * created the bounded `terminal/frontend/` React 19, TypeScript and Vite scaffold with npm lockfile,
   Tailwind 4 styling foundation, Biome checks and one Vitest/React Testing Library shell test;

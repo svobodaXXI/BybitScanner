@@ -2,7 +2,7 @@
 
 Version:
 
-7.53
+7.54
 
 Date:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED
+IN_PROGRESS / STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED
 
 Checkpoint:
 
-STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED
+STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED
 
 ChangeRequest revision:
 
-1.19
+1.20
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.19
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.20
 
 Product priority:
 
@@ -912,11 +912,11 @@ STAGES_0_TO_7_COMPLETED / STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFI
 
 Current authorized action:
 
-STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED_REVISION_1_19
+STAGE_8_FAST_DOM_CLIENT_SLICE_UX_DECISIONS_RECORDED_REVISION_1_20
 
 Next phase:
 
-NEXT_STAGE_8_BLOCK_REQUIRES_SEPARATE_AUTHORIZATION / PAPER_ENGINE_FILL_MODEL_DETAIL_UNRESOLVED / SECRET_EXPOSURE_AUDIT_REQUIRED_BEFORE_LIVE / METASCALP_SEPARATE_BOUNDED_BLOCK
+FAST_DOM_CLIENT_SLICE_IMPLEMENTATION_REQUIRES_SEPARATE_AUTHORIZATION / PAPER_ENGINE_FILL_MODEL_DETAIL_UNRESOLVED / SECRET_EXPOSURE_AUDIT_REQUIRED_BEFORE_LIVE / METASCALP_SEPARATE_BOUNDED_BLOCK
 
 Important:
 
@@ -926,8 +926,11 @@ small shell components, explicit PAPER/non-live status and a frontend-facing nor
 boundary. Biome check, one focused Vitest/RTL test, strict TypeScript compilation and the production Vite
 build passed. No functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine, chart engine,
 trading control, credential use, authenticated Bybit connection, exchange mutation or MetaScalp integration
-was implemented. Every later Stage 8 block remains separately authorization-gated; the future secret audit
-was not executed.
+was implemented. Revision 1.20 then records documentation-only Fast DOM decisions: dedicated high-frequency
+state flow, non-trading mouse navigation, preserved CENTER behavior, individual same-price order dots and
+extreme-left aggregate USDT, plus the Bybit V5 depth-50 orderbook and separate publicTrade baseline behind a
+depth-extensible normalized contract. Fast DOM implementation was not started and remains separately
+authorization-gated; the future secret audit was not executed.
 
 ---
 
