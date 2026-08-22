@@ -2,7 +2,7 @@
 
 Версия:
 
-4.10
+4.11
 
 Дата:
 
@@ -225,6 +225,38 @@ codex
 Если между зависимыми шагами требуется проверка результата, `DEPENDENT_COMMAND_SEQUENCE_RULE`
 сохраняет приоритет порядка выдачи: ассистент заранее обозначает полную требуемую цепочку и её
 checkpoint, но выдаёт следующий исполнимый payload только после подтверждения предыдущего шага.
+
+## 2.3 IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE
+
+For BybitScanner and Trading Workspace work, the assistant must never generate or edit an image, mockup,
+visualization, UI concept image or other image-generation artifact unless the user explicitly requests or
+approves image generation.
+
+Before any image-generation or image-editing action that the user did not explicitly request, the assistant
+must:
+
+1. ask the user for explicit permission;
+2. wait for explicit approval;
+3. perform the image action only after that approval.
+
+Discussion of visual appearance, colors, layout, component placement or behavior is not permission to
+generate or edit an image. Tool availability, potential usefulness or the assistant's preference does not
+replace explicit user intent.
+
+## 2.4 UI_REQUIREMENT_INTERPRETATION_RULE
+
+When the user describes how the Trading Workspace, Terminal, DOM, chart, tape, controls, colors, layout or
+visual elements should look or behave, the assistant must interpret the statement by default as a product or
+UX requirement for the Terminal.
+
+The assistant must not reinterpret such a requirement as a request to generate a picture, mockup,
+visualization or concept image. Statements such as “the chart should use these colors”, “make the DOM
+background darker”, “candles should match Bid/Ask colors” and “this control should be on the left” are
+specification/design requirements unless the user explicitly asks to generate, draw or create an image or
+mockup.
+
+When an actual image-generation request is explicit, `IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE` remains the
+applicable authorization boundary wherever separate approval is required.
 
 ---
 
@@ -1310,17 +1342,22 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.9
+ASSISTANT_PROTOCOL v4.10
 
 to:
 
-ASSISTANT_PROTOCOL v4.10
+ASSISTANT_PROTOCOL v4.11
 
 date:
 
 2026-08-22
 
 reason:
+
+* added `IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE`, prohibiting image generation/editing for BybitScanner and Trading Workspace without an explicit user request or approval;
+* added `UI_REQUIREMENT_INTERPRETATION_RULE`, making Terminal visual and interaction descriptions product/UX requirements by default rather than inferred image-generation requests.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.9 to v4.10:
 
 * added `CHATGPT_AND_CODEX_SESSION_LIFECYCLE_RULE`, separating `ChatGPT New Chat` from `Codex New Session` as independent lifecycle decisions;
 * recorded that Codex may continue across Stage in one related technical mission and does not require a new session after every Stage;
