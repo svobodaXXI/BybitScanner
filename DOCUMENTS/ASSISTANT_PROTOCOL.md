@@ -2,11 +2,11 @@
 
 Версия:
 
-4.9
+4.10
 
 Дата:
 
-2026-08-19
+2026-08-22
 
 Document Type:
 
@@ -158,7 +158,7 @@ Senior Python Developer и системный архитектор,
 
 Если текст предназначен для копирования и последующей вставки, отправки или выполнения,
 ассистент обязан поместить только копируемую payload в отдельный copy-ready code block.
-Это распространяется на prompts для Codex/нового чата, PowerShell/Git/terminal commands,
+Это распространяется на prompts для Codex/нового ChatGPT chat, PowerShell/Git/terminal commands,
 готовые последовательности команд и любой точный текст для вставки.
 
 Если copy-ready block предназначен для передачи в Codex, PowerShell, terminal или другой
@@ -475,6 +475,62 @@ python -m py_compile путь\к\файлу.py
 
 Локальные проверки выполняются только если
 GitHub недостаточен для текущей задачи.
+
+---
+
+## 9.1 CHATGPT_AND_CODEX_SESSION_LIFECYCLE_RULE
+
+`CHATGPT NEW CHAT` и `CODEX NEW SESSION` являются разными и независимыми lifecycle decisions.
+
+### CHATGPT NEW CHAT
+
+После завершения крупной логической миссии или итерации и создания безопасного checkpoint
+рекомендуется перейти в `ChatGPT New Chat` перед следующей крупной миссией. До такого перехода
+текущее состояние проекта и важные результаты должны быть надёжно сохранены в authoritative project
+documentation и repository. Если новому ChatGPT chat недостаточно прямого восстановления из repository,
+ассистент подготавливает точный copy-ready handoff согласно `COPY_READY_ACTION_BLOCK_RULE`.
+
+`ChatGPT New Chat` не требуется автоматически после каждого мелкого действия или каждого Stage.
+
+### CODEX NEW SESSION
+
+Codex не требуется запускать в новой session после каждого Stage. По умолчанию текущая Codex session
+может продолжаться между Stage одной связанной технической миссии.
+
+Новую `Codex session` рекомендуется начинать, когда:
+
+* завершён крупный самостоятельный технический блок;
+* начинается принципиально другая подсистема или миссия;
+* текущая Codex session стала чрезмерно длинной;
+* появились признаки путаницы, stale assumptions или reliance на старый conversational context;
+* требуется deliberately clean recovery from authoritative repository state.
+
+В новой Codex session агент обязан восстановить контекст из authoritative repository и project
+documentation согласно `STAGED_CONTEXT_RECOVERY_PROTOCOL`, а не полагаться на память предыдущей
+Codex session. Это правило не отменяет и не заменяет существующие authority/recovery contracts.
+
+### CRITICAL DISTINCTION
+
+`ChatGPT New Chat recommendation != Codex New Session requirement`.
+
+Рекомендация перейти в новый ChatGPT chat сама по себе не означает, что пользователь должен закрыть
+или перезапустить Codex. Необходимость новой Codex session также не требует автоматически открывать
+новый ChatGPT chat.
+
+Прежнее предположение, что каждый следующий Stage BybitScanner следует начинать в новой Codex session,
+не является правилом проекта. Codex session может продолжаться между Stage одной связанной миссии;
+новая Codex session создаётся только по перечисленным выше причинам.
+
+### SESSION_ACTION_EXPLICITNESS
+
+Если от пользователя требуется открыть `ChatGPT New Chat`, закрыть Codex, запустить новую Codex session
+или продолжить существующую Codex session, ассистент обязан назвать точное действие и точный lifecycle.
+Запрещены неоднозначные указания вроде «переходим в новый контекст», «начинаем новый блок» или «новая
+сессия» без уточнения, относится ли действие к ChatGPT или Codex. Если действие с Codex session не
+требуется, ассистент не должен предписывать её перезапуск без причины.
+
+Любое обязательное действие пользователя в этих lifecycle следует `USER_ACTION_EXPLICITNESS_RULE`.
+Любой handoff или иной текст для копирования следует `COPY_READY_ACTION_BLOCK_RULE`.
 
 ---
 # 10. PROJECT_STATE_MANAGEMENT
@@ -1232,16 +1288,16 @@ delivered_state = true
 надёжно сохранены, ассистент должен напомнить,
 что перед началом следующей миссии
 это подходящая контрольная точка
-для перехода в New chat.
+для перехода в `ChatGPT New Chat`.
 
-Не следует рекомендовать New chat:
+Не следует рекомендовать `ChatGPT New Chat`:
 
 * после отдельных тривиальных действий;
 * пока миссия остаётся незавершённой;
 * до сохранения важных результатов
   и рабочего состояния.
 
-Переход в New chat никогда не заменяет:
+Переход в `ChatGPT New Chat` никогда не заменяет:
 
 * сохранение состояния проекта;
 * сохранение Git state;
@@ -1254,17 +1310,24 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.8
+ASSISTANT_PROTOCOL v4.9
 
 to:
 
-ASSISTANT_PROTOCOL v4.9
+ASSISTANT_PROTOCOL v4.10
 
 date:
 
-2026-08-19
+2026-08-22
 
 reason:
+
+* added `CHATGPT_AND_CODEX_SESSION_LIFECYCLE_RULE`, separating `ChatGPT New Chat` from `Codex New Session` as independent lifecycle decisions;
+* recorded that Codex may continue across Stage in one related technical mission and does not require a new session after every Stage;
+* bound new Codex sessions to authoritative staged recovery rather than previous conversational memory;
+* required explicit naming of ChatGPT-versus-Codex user actions and preserved `USER_ACTION_EXPLICITNESS_RULE` and `COPY_READY_ACTION_BLOCK_RULE`.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.8 to v4.9:
 
 * added `COMPLETE_USER_ACTION_CHAIN_RULE`, requiring every mandatory user action chain to begin from the known current state and include all executable prerequisites without inferred gaps;
 * added `USER_CORRECTION_PROTOCOL_HARDENING_RULE`, requiring rule-gap or enforcement analysis, immediate canonical hardening and a persisted documentation fix instead of apology-only handling.
@@ -1306,8 +1369,8 @@ Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.0 to v4.1:
 * разрешено лёгкое игровое оформление длительных рутинных этапов как миссий, этапов и контрольных точек;
 * закреплено, что юмор и игровое оформление не должны снижать техническую точность, продуктивность, ясность, краткость и инженерную дисциплину;
 * добавлен Mission and Iteration Protocol;
-* добавлено напоминание о New chat только после фактического завершения миссии и надёжного сохранения её важных результатов;
-* закреплено, что New chat не заменяет сохранение Project State, Git state, артефактов и обязательной документации;
+* добавлено напоминание о ChatGPT New Chat только после фактического завершения миссии и надёжного сохранения её важных результатов;
+* закреплено, что ChatGPT New Chat не заменяет сохранение Project State, Git state, артефактов и обязательной документации;
 * полностью сохранены правила и изменения ASSISTANT_PROTOCOL v4.0.
 
 ---
