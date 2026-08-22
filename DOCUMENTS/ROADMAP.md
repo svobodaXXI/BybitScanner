@@ -2,11 +2,11 @@
 
 Version:
 
-4.35
+4.42
 
 Date:
 
-2026-08-21
+2026-08-22
 
 Document Type:
 
@@ -1300,15 +1300,15 @@ Trading Workspace v1 / Manual Live Trading
 
 Status:
 
-IN_PROGRESS / MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED
+IN_PROGRESS / DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED
 
 Implementation status:
 
-NOT_STARTED_NOT_AUTHORIZED
+STAGES_0_TO_7_COMPLETED / STAGE_8_NOT_STARTED_NOT_AUTHORIZED
 
 Current checkpoint:
 
-MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED
+DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED
 
 First implementation priority:
 
@@ -1344,11 +1344,26 @@ Specification boundary:
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.13.
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.15.
 
 Current action:
 
-MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_COMPLETE_IMPLEMENT_NOT_AUTHORIZED_REVISION_1_13.
+FRONTEND_TECHNOLOGY_DECISION_REQUIRED_BEFORE_STAGE_8_IMPLEMENT_METASCALP_SEPARATE_BLOCK_REVISION_1_15.
+
+Current revision 1.15 product decisions:
+
+* Fast DOM persistent AUTO CENTER is explicitly `OFF` by default; deliberate manual scrolling or
+  repositioning switches it `OFF`, and the separate one-shot CENTER action does not enable it;
+* touch and desktop share one execution gesture state machine and backend/API semantics, while touch uses
+  primary-plus-secondary fingers and desktop uses held mouse arming plus a separately deliberate DOM-row
+  action whose exact button mapping must be approved before Stage 8; hover never trades;
+* a future Scanner Telegram signal `Open in MetaScalp` action must open a new MetaScalp tab and new DOM for
+  the signal symbol while preserving all existing tabs and order books;
+* official MetaScalp Linking API `/api/combo` remains a verification-gated candidate rather than proof of
+  the required new-tab behavior; failure to prove `NEW TAB + NEW DOM + PRESERVE EXISTING TABS` is an explicit
+  blocker and cannot be replaced by change-ticker;
+* Stage 7 is complete, Stage 8 is not started or authorized pending frontend technology selection, and
+  MetaScalp integration remains a separate future bounded implementation block.
 
 Approved intermediate CONTEXT architecture directions from revision 1.5:
 
@@ -1474,15 +1489,23 @@ RULE-008:
 
 from:
 
-ROADMAP v4.40
+ROADMAP v4.41
 
 to:
 
-ROADMAP v4.41
+ROADMAP v4.42
 
 reason:
 
-Current checkpoint — Manual Limit GTC and amend lifecycle correction (v4.40 to v4.41):
+Current checkpoint — DOM input and MetaScalp new-tab integration decisions (v4.41 to v4.42):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.15 and checkpoint `DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED`;
+* recorded default-off persistent AUTO CENTER, manual-interaction disable and separate one-shot CENTER;
+* recorded shared execution semantics with distinct touch and verification-gated desktop mouse mappings;
+* recorded the separate Scanner Telegram-to-MetaScalp new-tab/new-DOM requirement and official Linking API verification gate;
+* preserved Stage 7 completion, Stage 8 not started/not authorized and MetaScalp as a separate bounded block.
+
+Previous checkpoint preserved — Manual Limit GTC and amend lifecycle correction (v4.40 to v4.41):
 
 * superseded as the current checkpoint by `CR-TRADING-WORKSPACE-001` revision 1.14 checkpoint
   `MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED`;

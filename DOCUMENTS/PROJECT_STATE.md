@@ -2,11 +2,11 @@
 
 Version:
 
-7.42
+7.49
 
 Date:
 
-2026-08-20
+2026-08-22
 
 Document Type:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED
+IN_PROGRESS / DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED
 
 Checkpoint:
 
-MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED
+DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED
 
 ChangeRequest revision:
 
-1.14
+1.15
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.14
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.15
 
 Product priority:
 
@@ -908,22 +908,23 @@ LOCAL_FIRST / DEPLOYMENT_NEUTRAL / FUTURE_VPS_COMPATIBLE
 
 Implementation status:
 
-NOT_STARTED_NOT_AUTHORIZED
+STAGES_0_TO_7_COMPLETED / STAGE_8_NOT_STARTED_NOT_AUTHORIZED
 
 Current authorized action:
 
-MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED_STAGE_5_NOT_AUTHORIZED_REVISION_1_14
+DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED_REVISION_1_15
 
 Next phase:
 
-CONTEXT / RESEARCH — AUTHORIZED_IN_PROGRESS_INTERMEDIATE_CHECKPOINT_RECORDED_NOT_COMPLETE / IMPLEMENT_NOT_AUTHORIZED
+FRONTEND_TECHNOLOGY_DECISION_REQUIRED_BEFORE_STAGE_8_IMPLEMENT / METASCALP_SEPARATE_BOUNDED_BLOCK
 
 Important:
 
-No production code, runtime behavior, test implementation, dependency, Bybit order or account mutation
-is authorized. Approved SPEC requirements remain unchanged; the proposed architecture record does not
-complete CONTEXT or authorize an implementation plan. `CR-TRADING-INTELLIGENCE-001` remains its own
-broader research authority and is not the implementation authority for Trading Workspace v1.
+Stages 0 through 7 are complete. This documentation checkpoint authorizes no new production code,
+runtime behavior, test implementation, dependency, MetaScalp call, Bybit order or account mutation.
+Stage 8 remains not started and not authorized pending the frontend technology decision. MetaScalp
+integration is a separate future bounded block. `CR-TRADING-INTELLIGENCE-001` remains its own broader
+research authority and is not the implementation authority for Trading Workspace v1.
 
 ---
 
@@ -4667,15 +4668,24 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.47
+PROJECT_STATE v7.48
 
 to:
 
-PROJECT_STATE v7.48
+PROJECT_STATE v7.49
 
 reason:
 
-Current checkpoint — Manual Limit GTC and amend lifecycle correction (v7.47 to v7.48):
+Current checkpoint — DOM input and MetaScalp new-tab integration decisions (v7.48 to v7.49):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.15 and checkpoint `DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED`;
+* recorded default-off persistent AUTO CENTER, manual-interaction disable and separate one-shot CENTER;
+* recorded one execution state machine with distinct touch and verification-gated desktop mouse mappings, with hover prohibited from trading;
+* recorded the Scanner Telegram `Open in MetaScalp` requirement as new tab plus new symbol DOM while preserving every existing tab;
+* retained `/api/combo` as a verification-gated official Linking API candidate and required an explicit blocker if new-tab preservation cannot be proven;
+* recorded Stage 7 complete, Stage 8 not started/not authorized pending frontend technology selection, and MetaScalp integration as a separate bounded block.
+
+Previous checkpoint preserved — Manual Limit GTC and amend lifecycle correction (v7.47 to v7.48):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.14 and checkpoint `MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED`;
 * bound GTC as the ordinary Manual Limit v1 timeInForce until fill, explicit cancellation or approved cleanup;

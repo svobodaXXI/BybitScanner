@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.14",
+  "revision": "1.15",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify a deployment-neutral local-first Trading Workspace v1 for safe manual live trading on the user's real Bybit account without authorizing implementation.",
   "non_goals": [
@@ -134,6 +134,11 @@
     ,"Degraded, unknown and reconciling state blocks new exposure while preserving only safely bounded risk reduction and cancellation"
     ,"After confirmed FLAT caused by Market, SL or TP, all remaining ordinary active Limits for that selected account and symbol enter automatic cancellation regardless of origin, without extending this rule to other symbols or conditional protection"
     ,"Manual Terminal v1 ordinary Limit orders use binding Good-Till-Cancelled timeInForce and remain active until execution, explicit user cancellation or approved Terminal cleanup; IOC, FOK and PostOnly are not the default Manual Limit semantics"
+    ,"Fast DOM persistent AUTO CENTER defaults OFF; deliberate manual scrolling or repositioning switches it OFF, while a separate one-shot CENTER returns current market to the working central area without enabling AUTO CENTER"
+    ,"Fast DOM uses one execution gesture state machine with device-specific mappings: touch uses a held primary BUY or SELL finger plus a secondary row-selection finger, while desktop uses a held primary mouse action plus a separately deliberate row action whose exact button mapping remains verification-gated; hover never submits a trading command"
+    ,"A Scanner Telegram signal may expose a separate Open in MetaScalp action whose binding outcome is a new MetaScalp tab and new DOM for that signal symbol while all existing MetaScalp tabs and order books remain unchanged"
+    ,"MetaScalp integration belongs to a separate Scanner/backend integration block and never expands the Fast DOM execution engine or Stage 8 scope"
+    ,"The preferred future MetaScalp boundary is its official Linking API, with /api/combo retained only as the current closest researched candidate until repeated-call new-tab, existing-tab preservation, market mapping, not-running and local-port behavior are explicitly verified"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -162,7 +167,9 @@
     ,"Final working/calculation depth beyond the preferred orderbook.50 starting candidate, exact sequence-gap rules, correlation window, confidence thresholds and same-sequence multi-message treatment"
     ,"PROBABLE sweep visualization and reliable trade-to-L2 correlation under ambiguous cancellation-versus-execution evidence"
     ,"Responsive adjustment around the preferred 20 asks plus 20 bids viewport, exact row height, DOM percentile/window/hysteresis, print-scaling window, update batching, render frequency, bounded tape retention and mobile Telegram Mini App performance limits"
-    ,"Exact threshold-based recenter check interval beyond the preferred initial five seconds, deviation threshold, central dead-zone size and inactivity timeout, sweep-follow animation, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, book-walk depth source, third-party vendoring policy and future historical heatmap requirement"
+    ,"Exact AUTO CENTER ON follow/recenter thresholds, central dead-zone, motion and sweep-follow interaction, x10/x100 compression implementation, hidden-panel unsubscribe/grace behavior, book-walk depth source, third-party vendoring policy and future historical heatmap requirement"
+    ,"Exact desktop mouse-button mapping for arming and deliberate DOM row execution before Stage 8 implementation"
+    ,"Exact MetaScalp Linking API behavior required to guarantee a new tab and new symbol DOM while preserving existing tabs, including exchange/market selection, Bybit USDT perpetual ticker mapping, not-running behavior and official local-port discovery"
   ],
   "researched_architecture_directions": [
     "Authenticated Bybit V5 REST commands are correlated with private order, execution, position and wallet events; REST acceptance alone is not final state confirmation",
@@ -259,23 +266,23 @@
     "Premature robot coupling or AUTOPILOT exposure"
   ],
   "rollback_boundaries": [
-    "This checkpoint changes only the new ChangeRequest and its Project State and Roadmap pointers",
-    "Rollback removes the uncommitted specification checkpoint without runtime or exchange effects",
-    "No implementation artifact, dependency, migration or account state exists"
+    "This checkpoint changes only the ChangeRequest and its Project State and Roadmap pointers",
+    "Rollback removes only this documentation amendment without runtime or exchange effects",
+    "Existing completed Stage 0 through Stage 7 implementation checkpoints remain unchanged"
   ],
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED"},
-    {"id": "IMPLEMENT", "status": "NOT_STARTED_NOT_AUTHORIZED"},
-    {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_DOM_INPUT_METASCALP_DECISIONS_RECORDED"},
+    {"id": "IMPLEMENT", "status": "BOUNDED_STAGES_0_TO_7_COMPLETED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"},
+    {"id": "VERIFY", "status": "BOUNDED_STAGES_0_TO_7_VERIFIED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED",
-  "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
+  "current_checkpoint": "DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED",
+  "implementation_status": "STAGES_0_TO_7_COMPLETED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "IMPLEMENT",
-  "next_phase_authorization": "IMPLEMENT_NOT_STARTED_NOT_AUTHORIZED_CONTEXT_RESEARCH_IN_PROGRESS",
+  "next_phase_authorization": "STAGE_8_NOT_STARTED_NOT_AUTHORIZED_METASCALP_SEPARATE_BOUNDED_BLOCK_REQUIRED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -286,13 +293,14 @@
     ,{"phase": "CONTEXT_REVISION_1_5_INTERMEDIATE_RESEARCH_CHECKPOINT", "commit": "a70c99b1fb4a5e84847aab90d3d9dd3931340b29"}
     ,{"phase": "CONTEXT_REVISION_1_6_BYBIT_EXECUTION_AND_WV_RESEARCH_CHECKPOINT", "commit": "d82ad7803f9a21f21f12ce9e4975ae71fdbfbdc8"}
     ,{"phase": "CONTEXT_REVISION_1_7_EXECUTION_RECONCILIATION_MODEL_CHECKPOINT", "commit": "5fa3bba7b347739fb73e57f25306ec8a677643e4"}
+    ,{"phase": "IMPLEMENT_STAGE_7_API_PROJECTION_CONTRACTS", "commit": "61520861b6058a585460b3f5f964613d19dcd35b"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
-    "latest_saved_checkpoint": "5fa3bba7b347739fb73e57f25306ec8a677643e4",
-    "status": "MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED_STAGE_5_NOT_AUTHORIZED"
+    "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
+    "status": "DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -309,7 +317,8 @@
     {"revision": "1.11", "reason": "Human-approved intermediate CONTEXT checkpoint recording Manual Market, Limit and SL/TP execution/protection semantics, fast two-touch DOM commands, fail-closed uncertainty, partial fills, order visibility and overlays, symbol cleanup and the narrow Manual-Limit reversal exception without completing CONTEXT or authorizing IMPLEMENT", "date": "2026-08-22"},
     {"revision": "1.12", "reason": "Human-approved CONTEXT checkpoint completing the Manual Market, Limit and SL/TP execution/protection research block with anti-bounce versus uncertainty locks, fail-closed degraded-state gates, Market and Limit reversal policies, account-wide realtime truth, origin-independent ordinary-Limit cleanup after confirmed FLAT and a final execution-state matrix while leaving overall CONTEXT active and IMPLEMENT planning and implementation unauthorized", "date": "2026-08-22"},
     {"revision": "1.13", "reason": "Documentation-only IMPLEMENT planning checkpoint decomposing the completed Manual Market, Limit and SL/TP execution/protection block into modular Terminal domain, Bybit adapter, execution-engine, reconciliation, persistence, projection, API and fast-DOM increments with explicit acceptance and test gates while leaving overall CONTEXT active and IMPLEMENT not started or authorized", "date": "2026-08-22"},
-    {"revision": "1.14", "reason": "Human-approved corrective checkpoint binding GTC as the ordinary Manual Limit v1 timeInForce, recording truthful terminal AMENDED command completion and the pybit mutation no-retry gate, while Stage 5 remains not started and not authorized", "date": "2026-08-22"}
+    {"revision": "1.14", "reason": "Human-approved corrective checkpoint binding GTC as the ordinary Manual Limit v1 timeInForce, recording truthful terminal AMENDED command completion and the pybit mutation no-retry gate, while Stage 5 remains not started and not authorized", "date": "2026-08-22"},
+    {"revision": "1.15", "reason": "Human-approved documentation checkpoint recording default-off persistent AUTO CENTER plus separate one-shot CENTER, one execution gesture state machine with distinct touch and verification-gated mouse mappings, and a separate Telegram-to-MetaScalp new-tab/new-DOM requirement whose official Linking API behavior remains verification-gated; Stage 7 is complete and Stage 8 remains not started and not authorized", "date": "2026-08-22"}
   ]
 }
 ```
@@ -1724,3 +1733,87 @@ Stage 5 remains `NOT_STARTED_NOT_AUTHORIZED`. This correction does not create an
 Bybit create/amend/cancel calls, complete overall CONTEXT, or expand Robot scope.
 
 This amendment records checkpoint `MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED`.
+
+## 24. DOM input and MetaScalp new-tab integration decisions
+
+Revision 1.15 is a human-approved documentation checkpoint. It records product decisions only. It does
+not start Stage 8, select a frontend technology, install a dependency, implement Scanner or Telegram
+runtime behavior, or invoke MetaScalp or Bybit.
+
+### 24.1 Default-off AUTO CENTER and one-shot CENTER
+
+Persistent Fast DOM automatic centering defaults to `OFF`. The DOM does not automatically return the
+current market price to the center while the operator manually inspects levels. A separate control below
+the Time & Sales / execution-prints area exposes explicit `AUTO CENTER ON` and `AUTO CENTER OFF` states.
+When `ON`, the DOM may follow or recenter relative to the current market according to later approved and
+verified thresholds. Any deliberate manual scrolling or repositioning immediately switches persistent
+AUTO CENTER to `OFF`.
+
+A separate one-shot `CENTER` action returns the current market area to the working central region. It does
+not enable persistent AUTO CENTER. Exact pixels, layout and styling remain frontend design details. This
+decision supersedes any earlier implication that periodic or threshold-based recentering is active by
+default; threshold and follow research applies only while AUTO CENTER is explicitly `ON`.
+
+### 24.2 One state machine, device-specific input mappings
+
+Touch and desktop use the same execution gesture state machine, Stage 7 command contracts, 300-ms
+anti-bounce and backend safety semantics, but have distinct device mappings:
+
+* touch: a primary finger holds `BUY ORDER` or `SELL ORDER`; a secondary finger selects the DOM row and
+  action;
+* desktop: a primary mouse hold on `BUY ORDER` or `SELL ORDER` arms the corresponding mode, and a separate
+  deliberate mouse action on a DOM row executes the armed action;
+* exact desktop mouse-button mapping must be verified and human-approved before Stage 8 implementation;
+* hover may provide preview or highlighting only and never creates a trading command.
+
+The 300-ms anti-bounce applies after accepted execution actions regardless of input device. This client
+suppression remains separate from durable command identity and UNKNOWN/RECONCILING locks.
+
+### 24.3 Scanner Telegram signal to MetaScalp
+
+A future Scanner Telegram signal may include a separate `Open in MetaScalp` button. This is a bounded
+Scanner/Telegram-to-MetaScalp integration, not part of the Fast DOM execution engine. Activating the button
+for a specific signal symbol has one binding product outcome:
+
+1. MetaScalp opens a new tab;
+2. that new tab contains a new order book / DOM for the signal symbol;
+3. existing MetaScalp tabs and order books remain unchanged.
+
+For example, activating the button on a `SOLUSDT` signal opens a new MetaScalp tab containing the
+`SOLUSDT` DOM without replacing existing `BTCUSDT` or `ETHUSDT` tabs. A simple change-ticker operation on
+an existing working DOM does not satisfy this requirement.
+
+### 24.4 MetaScalp official API verification gate
+
+The official MetaScalp Linking API is the preferred future integration boundary. Current research
+identifies `/api/combo` as the closest official operation for opening a ticker/combo, but does not yet
+prove that every call creates a new tab while preserving existing tabs. Before implementation, a separate
+authorized verification must establish:
+
+* exact current Linking API behavior;
+* repeated `/api/combo` behavior for different tickers;
+* whether every required call creates a new tab and preserves existing tabs;
+* exchange and market selection semantics;
+* Bybit USDT perpetual ticker mapping;
+* behavior when MetaScalp is not running;
+* official local-port discovery behavior.
+
+If the official API cannot guarantee `NEW TAB + NEW DOM + PRESERVE EXISTING TABS`, implementation must
+return an explicit integration blocker/product gap. It must not silently substitute change-ticker.
+
+### 24.5 Architectural and lifecycle boundary
+
+The intended future flow is:
+
+`Telegram signal -> Telegram callback -> Scanner/backend integration boundary -> local MetaScalp helper/client -> official MetaScalp Linking API -> new MetaScalp tab/DOM`.
+
+The browser or Telegram client never receives direct access to the local MetaScalp API. The local helper,
+callback authorization, port discovery and failure handling belong to a separately authorized bounded
+integration block.
+
+Stage 7 is complete at commit `61520861b6058a585460b3f5f964613d19dcd35b`. Stage 8 remains
+`NOT_STARTED_NOT_AUTHORIZED`; its frontend technology decision remains a prerequisite. MetaScalp integration
+does not expand Stage 8 and requires its own later bounded implementation authorization.
+
+This amendment records checkpoint
+`DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED`.
