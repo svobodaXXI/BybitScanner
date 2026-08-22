@@ -2,7 +2,7 @@
 
 Version:
 
-7.52
+7.53
 
 Date:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED
+IN_PROGRESS / STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED
 
 Checkpoint:
 
-AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED
+STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED
 
 ChangeRequest revision:
 
-1.18
+1.19
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.18
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.19
 
 Product priority:
 
@@ -908,25 +908,26 @@ LOCAL_FIRST / DEPLOYMENT_NEUTRAL / FUTURE_VPS_COMPATIBLE
 
 Implementation status:
 
-STAGES_0_TO_7_COMPLETED / STAGE_8_NOT_STARTED_NOT_AUTHORIZED
+STAGES_0_TO_7_COMPLETED / STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED
 
 Current authorized action:
 
-AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED_REVISION_1_18
+STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED_REVISION_1_19
 
 Next phase:
 
-STAGE_8_EXACT_SCOPE_AND_DEPENDENCY_AUTHORIZATION_REQUIRED / PAPER_ENGINE_FILL_MODEL_DETAIL_UNRESOLVED / SECRET_EXPOSURE_AUDIT_REQUIRED_BEFORE_LIVE / METASCALP_SEPARATE_BOUNDED_BLOCK
+NEXT_STAGE_8_BLOCK_REQUIRES_SEPARATE_AUTHORIZATION / PAPER_ENGINE_FILL_MODEL_DETAIL_UNRESOLVED / SECRET_EXPOSURE_AUDIT_REQUIRED_BEFORE_LIVE / METASCALP_SEPARATE_BOUNDED_BLOCK
 
 Important:
 
-Stages 0 through 7 are complete. Revision 1.18 records binding CENTER timing, same-price own-order markers,
-symbol-scoped quick volume, one authoritative normalized Bybit L2 boundary, L2-based Market preview and Paper
-market execution, fail-closed book readiness, a bounded unresolved resting-Limit fill model and the required
-future secret exposure audit. It authorizes no production code, runtime behavior, test implementation,
-dependency, Paper engine, MetaScalp call, Bybit credential, order or account mutation. Stage 8 remains not
-started and not authorized pending exact scope and dependency authorization. The secret audit was recorded
-but not executed. MetaScalp integration remains a separate future bounded block.
+Stages 0 through 7 are complete. Revision 1.19 records the human-authorized Stage 8 Block 1 only: a
+`terminal/frontend/` React 19, TypeScript and Vite production scaffold with Tailwind 4, Biome, Vitest/RTL,
+small shell components, explicit PAPER/non-live status and a frontend-facing normalized market-data type
+boundary. Biome check, one focused Vitest/RTL test, strict TypeScript compilation and the production Vite
+build passed. No functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine, chart engine,
+trading control, credential use, authenticated Bybit connection, exchange mutation or MetaScalp integration
+was implemented. Every later Stage 8 block remains separately authorization-gated; the future secret audit
+was not executed.
 
 ---
 

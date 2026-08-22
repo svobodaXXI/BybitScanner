@@ -7,11 +7,11 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.18",
-  "lifecycle_stage": "CONTEXT",
-  "objective": "Specify a deployment-neutral local-first Trading Workspace v1 whose initial execution backend is a virtual paper account behind a reusable execution abstraction, with real-money Bybit execution deferred and no implementation authorized by this checkpoint.",
+  "revision": "1.19",
+  "lifecycle_stage": "IMPLEMENT",
+  "objective": "Implement only the production-quality Stage 8 Block 1 Trading Workspace frontend foundation while preserving Paper-first safety and separately gating all later functionality.",
   "non_goals": [
-    "Implement production code, tests, dependencies or runtime behavior in this checkpoint",
+    "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
     "Connect the initial Trading Workspace execution path to a real-money Bybit account",
     "Couple Terminal availability to Scanner runtime",
@@ -25,16 +25,17 @@
     "Define shared chart-engine, market entry, order overlay, SL/TP, close cleanup and reconciliation requirements",
     "Define Working Volume as exactly five percent of own account equity before leverage",
     "Reserve future robot observation and manual-control transfer compatibility without implementing it",
-    "Prepare later human review and explicit implementation authorization"
+    "Prepare later human review and explicit implementation authorization",
+    "Implement the human-authorized Stage 8 Block 1 React 19, TypeScript and Vite frontend foundation under terminal/frontend"
   ],
   "prohibited_scope": [
-    "Production or test implementation",
+    "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
     "Bybit order placement or account mutation",
     "Scanner, detector, Geometry, Signal admission or Telegram runtime changes",
     "Trading Robot implementation",
     "AUTOPILOT enablement",
-    "Speculative dependency installation",
-    "Commit or push before explicit user approval"
+    "Dependencies outside the bounded frontend build, styling, lint and focused-test foundation",
+    "Any Stage 8 Block 2 or later implementation without new explicit authorization"
   ],
   "authoritative_references": [
     "AGENTS.md#Task-and-change-routing",
@@ -296,16 +297,16 @@
   "implementation_phases": [
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
-    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS_AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED"},
-    {"id": "IMPLEMENT", "status": "BOUNDED_STAGES_0_TO_7_COMPLETED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"},
-    {"id": "VERIFY", "status": "BOUNDED_STAGES_0_TO_7_VERIFIED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"},
+    {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
+    {"id": "IMPLEMENT", "status": "BOUNDED_STAGES_0_TO_7_COMPLETED_STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED"},
+    {"id": "VERIFY", "status": "BOUNDED_STAGES_0_TO_7_VERIFIED_STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_VERIFIED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
-  "current_phase": "CONTEXT",
-  "current_checkpoint": "AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED",
-  "implementation_status": "STAGES_0_TO_7_COMPLETED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED",
-  "next_phase": "IMPLEMENT",
-  "next_phase_authorization": "STAGE_8_NOT_STARTED_NOT_AUTHORIZED_EXACT_SCOPE_AND_DEPENDENCIES_REQUIRE_SEPARATE_AUTHORIZATION_METASCALP_SEPARATE_BLOCK_REQUIRED",
+  "current_phase": "IMPLEMENT",
+  "current_checkpoint": "STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED",
+  "implementation_status": "STAGES_0_TO_7_COMPLETED_STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED",
+  "next_phase": "VERIFY",
+  "next_phase_authorization": "NEXT_STAGE_8_BLOCK_NOT_AUTHORIZED_EXACT_SCOPE_AND_DEPENDENCIES_REQUIRE_SEPARATE_AUTHORIZATION_METASCALP_SEPARATE_BLOCK_REQUIRED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -323,7 +324,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED_STAGE_8_NOT_STARTED_NOT_AUTHORIZED"
+    "status": "STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED_NEXT_BLOCK_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -344,7 +345,8 @@
     {"revision": "1.15", "reason": "Human-approved documentation checkpoint recording default-off persistent AUTO CENTER plus separate one-shot CENTER, one execution gesture state machine with distinct touch and verification-gated mouse mappings, and a separate Telegram-to-MetaScalp new-tab/new-DOM requirement whose official Linking API behavior remains verification-gated; Stage 7 is complete and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
     {"revision": "1.16", "reason": "Human-approved corrective documentation checkpoint replacing the separate AUTO CENTER and one-shot CENTER controls with one CENTER control whose single activation centers once, double activation centers and enables visible-border LOCKED CENTERING, repeated double activation or manual DOM navigation disables the lock, and whose double-activation recognition remains independent of the 300-ms trading anti-bounce; all revision 1.15 MetaScalp and input-device decisions remain unchanged and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
     {"revision": "1.17", "reason": "Human-approved documentation checkpoint selecting the React 19 TypeScript Vite frontend toolchain, recording desktop DOM/chart Limit and confirmed Market interactions, a 500-ms long press, fail-closed fast-order safety, reversible pending Limit-line edits, coin-quantity position authority and the superseding Paper-first execution architecture; CENTER 300-ms mouse and 350-ms touch windows remain proposals pending verification, chart and L2 boundaries remain unresolved, and Stage 8 remains not started and not authorized", "date": "2026-08-22"},
-    {"revision": "1.18", "reason": "Human-approved final pre-Stage-8 documentation checkpoint binding CENTER mouse/touch timings, same-price multi-order aggregation and touch-safe identity markers, symbol-scoped quick volume, the authoritative normalized Bybit L2 market-data boundary, L2-based Market preview and Paper market execution, fail-closed book health, a bounded unresolved resting-Limit fill model and a required future secret exposure audit without starting Stage 8, implementing runtime behavior or introducing real credentials", "date": "2026-08-22"}
+    {"revision": "1.18", "reason": "Human-approved final pre-Stage-8 documentation checkpoint binding CENTER mouse/touch timings, same-price multi-order aggregation and touch-safe identity markers, symbol-scoped quick volume, the authoritative normalized Bybit L2 market-data boundary, L2-based Market preview and Paper market execution, fail-closed book health, a bounded unresolved resting-Limit fill model and a required future secret exposure audit without starting Stage 8, implementing runtime behavior or introducing real credentials", "date": "2026-08-22"},
+    {"revision": "1.19", "reason": "Human-authorized Stage 8 Block 1 only checkpoint implementing and verifying the terminal/frontend React 19 TypeScript Vite foundation, structural PAPER/non-live workspace shell, Tailwind 4 styling, normalized frontend market-data boundary and focused tooling while leaving all functional DOM, L2, Paper Engine, chart, live trading, credential, MetaScalp and later Stage 8 work not implemented and separately authorization-gated", "date": "2026-08-22"}
   ]
 }
 ```
@@ -2085,3 +2087,29 @@ remains explicit. Real-money Bybit execution is not re-authorized. Stage 8 remai
 `NOT_STARTED_NOT_AUTHORIZED` and requires separate exact-scope and dependency authorization.
 
 This amendment records checkpoint `AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED`.
+
+## 28. Stage 8 Block 1 frontend foundation implementation
+
+Revision 1.19 records the explicitly authorized Stage 8 Block 1 only. The new client lives at
+`terminal/frontend/`, inside the existing independent Trading Terminal subsystem. It is a React 19,
+TypeScript and Vite SPA foundation with an npm lockfile, Tailwind 4 styling foundation, Biome validation and
+a focused Vitest/React Testing Library test. The application shell is split into small header and panel
+components and establishes instrument/header, chart placeholder, DOM/order-book placeholder, unavailable
+trading-controls placeholder and connection/status regions. The current execution mode is visibly and
+semantically identified as `PAPER` and `NON-LIVE`.
+
+The only integration contract introduced is a frontend-facing normalized market-data snapshot and order-book
+shape. It deliberately contains no raw Bybit WebSocket message, snapshot/delta, `u` or `seq` mechanics. No
+Market Data Engine, realtime connection or backend integration is implemented by this block.
+
+Validation completed for the bounded frontend: dependency audit reported zero vulnerabilities; Biome passed;
+the focused PAPER-only structural-shell test passed; strict TypeScript project compilation passed; and Vite
+produced a production bundle successfully. The generated bundle is excluded from Git.
+
+This block did not implement a functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine,
+market-order simulation, chart engine, working BUY/SELL or any trading control, order gesture or marker,
+authenticated Bybit connection, credential handling, account mutation, Scanner/Telegram change, Robot,
+AUTOPILOT or MetaScalp integration. No real credential was read or used and no exchange order/account mutation
+occurred. Stage 8 is not complete; every next block requires a new exact-scope authorization.
+
+This amendment records checkpoint `STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED`.

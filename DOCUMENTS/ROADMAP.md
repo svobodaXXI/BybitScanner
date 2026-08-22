@@ -2,7 +2,7 @@
 
 Version:
 
-4.45
+4.46
 
 Date:
 
@@ -1350,9 +1350,21 @@ Owning record:
 
 Current action:
 
-STAGE_8_EXACT_SCOPE_AND_DEPENDENCY_AUTHORIZATION_REQUIRED_PAPER_FILL_MODEL_AND_STALENESS_BOUNDED_UNRESOLVED_SECRET_AUDIT_REQUIRED_BEFORE_LIVE_REVISION_1_18.
+STAGE_8_BLOCK_1_FRONTEND_FOUNDATION_IMPLEMENTED_VERIFIED_NEXT_BLOCK_REQUIRES_SEPARATE_AUTHORIZATION_REVISION_1_19.
 
-Current revision 1.18 authoritative L2 and Paper execution decisions, preserving Paper-first architecture
+Current revision 1.19 Stage 8 Block 1 frontend foundation checkpoint:
+
+* created the bounded `terminal/frontend/` React 19, TypeScript and Vite scaffold with npm lockfile,
+  Tailwind 4 styling foundation, Biome checks and one Vitest/React Testing Library shell test;
+* established small shell regions for instrument/header, chart placeholder, DOM/order-book placeholder,
+  unavailable trading controls and connection status, with visible PAPER/non-live execution mode;
+* established only a frontend-facing normalized order-book type boundary, with no raw Bybit snapshot/delta,
+  `u` or `seq` coupling and no Market Data Engine or realtime integration;
+* verified Biome, focused test, strict TypeScript and production build; no charting, functional DOM, L2
+  ingestion, Paper engine, live execution, credentials, MetaScalp or Scanner/Telegram change was introduced;
+* kept all later Stage 8 blocks separately authorization-gated.
+
+Previous revision 1.18 authoritative L2 and Paper execution decisions, preserving Paper-first architecture
 and the prior frontend, fast-order, CENTER and MetaScalp boundaries:
 
 * CENTER mouse double-click is 300 ms and touch double-tap is 350 ms; first activation centers immediately,

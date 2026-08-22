@@ -52,6 +52,11 @@ signals_history.json
 
 *.whl
 
+# Trading Workspace frontend generated output
+terminal/frontend/node_modules/
+terminal/frontend/dist/
+terminal/frontend/*.tsbuildinfo
+
 *_raw.txt
 tree.txt
 structure.txt
