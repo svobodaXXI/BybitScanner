@@ -8,6 +8,7 @@ from terminal.domain.models import (
     CommandId,
     Execution,
     Notional,
+    OrderId,
     OrderSide,
     PositionSide,
     Price,
@@ -20,6 +21,11 @@ from terminal.exchange.events import (
     NormalizedOrderStatus,
     OrderEvent,
     PositionEvent,
+)
+from terminal.exchange.bybit_v5_mutation_adapter import (
+    MutationDisposition,
+    MutationKind,
+    MutationOutcome,
 )
 from terminal.persistence.sqlite_store import (
     CommandRecord,
@@ -69,6 +75,42 @@ class ExecutionEngine:
             self._orders[order.order_id.value] = order
         else:
             self._orders.pop(order.order_id.value, None)
+
+    def ingest_mutation_outcome(
+        self,
+        command: CommandRecord,
+        outcome: MutationOutcome,
+        *,
+        occurred_at_ms: int,
+    ) -> CommandRecord:
+        """Persist one REST mutation outcome without inventing final order facts."""
+
+        current = self._store.get_command(command.command_id)
+        if current is None:
+            raise ValueError("mutation outcome references an unknown command")
+        if current.current_state is not CommandState.SUBMITTING:
+            return current
+        order_id = OrderId(outcome.order_id) if outcome.order_id else None
+        if outcome.disposition is MutationDisposition.REJECTED:
+            return self._transition(
+                current, CommandState.REJECTED, occurred_at_ms,
+                outcome.reason or "deterministic exchange rejection", order_id,
+            )
+        if outcome.disposition is MutationDisposition.UNKNOWN:
+            return self._transition(
+                current, CommandState.UNKNOWN, occurred_at_ms,
+                outcome.reason or "mutation outcome is ambiguous", order_id,
+            )
+        acknowledged = self._transition(
+            current, CommandState.ACKNOWLEDGED, occurred_at_ms,
+            outcome.reason or "exchange acknowledged mutation", order_id,
+        )
+        if outcome.kind is MutationKind.CANCEL:
+            return self._transition(
+                acknowledged, CommandState.CANCEL_PENDING, occurred_at_ms,
+                "cancel ACK awaits confirmed order evidence", order_id,
+            )
+        return acknowledged
 
     def apply_execution(self, event: ExecutionEvent) -> ExecutionApplyResult:
         """Apply one immutable economic fact at most once."""
@@ -376,6 +418,16 @@ def _correlated_order_id(orders, executions):
 def _command_target(command, orders, executions):
     if orders:
         latest = max(orders, key=lambda item: item.updated_at_ms)
+        if (
+            command.command_kind == "amend"
+            and latest.updated_at_ms >= command.created_at_ms
+            and latest.status in {
+                NormalizedOrderStatus.OPEN,
+                NormalizedOrderStatus.PARTIALLY_FILLED_OPEN,
+            }
+            and _matches_amend_evidence(command, latest)
+        ):
+            return CommandState.AMENDED
         mapping = {
             NormalizedOrderStatus.OPEN: CommandState.OPEN,
             NormalizedOrderStatus.PARTIALLY_FILLED_OPEN: CommandState.PARTIALLY_FILLED,
@@ -397,3 +449,15 @@ def _command_target(command, orders, executions):
             return CommandState.FILLED
         return CommandState.PARTIALLY_FILLED
     return None
+
+
+def _matches_amend_evidence(command: CommandRecord, order: OrderEvent) -> bool:
+    price_matches = (
+        command.normalized_price is None
+        or order.price == command.normalized_price.value
+    )
+    quantity_matches = (
+        command.normalized_quantity is None
+        or order.quantity == command.normalized_quantity.value
+    )
+    return price_matches and quantity_matches

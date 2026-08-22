@@ -30,6 +30,11 @@ from terminal.exchange.events import (
     OrderEvent,
     PositionEvent,
 )
+from terminal.exchange.bybit_v5_mutation_adapter import (
+    MutationDisposition,
+    MutationKind,
+    MutationOutcome,
+)
 from terminal.persistence.sqlite_store import (
     CommandRecord,
     ExecutionApplyResult,
@@ -192,6 +197,65 @@ class ExecutionEngineTests(unittest.TestCase):
         self.assertIs(resolved.current_state, CommandState.OPEN)
         self.assertEqual(self.store.load_executions(), ())
         self.assertIsNone(self.store.get_position_projection(KEY))
+
+    def test_mutation_ack_reject_and_unknown_are_ingested_by_engine(self):
+        command = self.command()
+        acknowledged = self.engine.ingest_mutation_outcome(
+            command,
+            MutationOutcome(
+                MutationKind.CREATE, MutationDisposition.ACKNOWLEDGED,
+                order_id="order-1", reason="ack",
+            ),
+            occurred_at_ms=1200,
+        )
+        self.assertIs(acknowledged.current_state, CommandState.ACKNOWLEDGED)
+        self.assertEqual(self.store.load_executions(), ())
+
+        self.store.close()
+        self.path = Path(self.temp.name) / "reject.sqlite3"
+        self.store = SQLiteStore.open(self.path)
+        self.engine = ExecutionEngine(self.store)
+        rejected = self.engine.ingest_mutation_outcome(
+            self.command(),
+            MutationOutcome(
+                MutationKind.CREATE, MutationDisposition.REJECTED,
+                reject_code=110012, reason="deterministic",
+            ),
+            occurred_at_ms=1200,
+        )
+        self.assertIs(rejected.current_state, CommandState.REJECTED)
+
+        self.store.close()
+        self.path = Path(self.temp.name) / "unknown.sqlite3"
+        self.store = SQLiteStore.open(self.path)
+        self.engine = ExecutionEngine(self.store)
+        unknown = self.engine.ingest_mutation_outcome(
+            self.command(),
+            MutationOutcome(
+                MutationKind.AMEND, MutationDisposition.UNKNOWN, reason="timeout",
+            ),
+            occurred_at_ms=1200,
+        )
+        self.assertIs(unknown.current_state, CommandState.UNKNOWN)
+
+    def test_cancel_ack_is_pending_not_cancelled_until_order_evidence(self):
+        command = self.command()
+        pending = self.engine.ingest_mutation_outcome(
+            command,
+            MutationOutcome(
+                MutationKind.CANCEL, MutationDisposition.ACKNOWLEDGED,
+                order_id="order-1", reason="ack",
+            ),
+            occurred_at_ms=1200,
+        )
+        self.assertIs(pending.current_state, CommandState.CANCEL_PENDING)
+        cancelled = self.engine.resolve_command(
+            pending,
+            order_evidence=(order_event(status=NormalizedOrderStatus.CANCELLED, leaves="0"),),
+            execution_evidence=(),
+            occurred_at_ms=2200,
+        )
+        self.assertIs(cancelled.current_state, CommandState.CANCELLED)
 
     def test_execution_is_exactly_once_for_ws_rest_overlap_and_restart(self):
         event = execution_event()
