@@ -9,6 +9,7 @@ from typing import Callable
 
 from terminal.application.command_identity import CommandIdentityCandidate, CommandIdentityFactory
 from terminal.application.execution_engine import ExecutionEngine
+from terminal.application.execution_port import ExecutionPort
 from terminal.application.normalization import floor_to_step, normalize_limit_price
 from terminal.application.pretrade_guard import (
     AdmittedPreTradeRequest,
@@ -19,15 +20,18 @@ from terminal.application.pretrade_guard import (
     PreTradeIntent,
 )
 from terminal.domain.models import (
-    Category, Controller, Notional, OrderSide, Origin, Price, Quantity, Symbol,
+    Category, Controller, ExecutionId, Notional, OrderId, OrderSide, Origin, Price, Quantity, Symbol,
     TradingAccountId,
 )
 from terminal.domain.states import CommandState
-from terminal.exchange.bybit_v5_mutation_adapter import BybitV5MutationAdapter, MutationOutcome
+from terminal.exchange.bybit_v5_mutation_adapter import (
+    MutationDisposition, MutationKind, MutationOutcome,
+)
 from terminal.exchange.events import InstrumentSnapshot, OrderEvent
 from terminal.persistence.sqlite_store import CommandRecord, SQLiteStore
 from terminal.persistence.sqlite_store import ProtectionIntentRecord, ProtectionProjectionRecord
 from terminal.application.models import ProtectionState
+from terminal.paper.executor import PaperMarketExecutor
 from terminal.application.protection import (
     ManualProtectionIntent, ProtectionApplicationResult, validate_manual_protection,
 )
@@ -72,11 +76,12 @@ class ApplicationResult:
 class TradingApplication:
     guard: PreTradeGuard
     store: SQLiteStore
-    adapter: BybitV5MutationAdapter
+    adapter: ExecutionPort
     execution_engine: ExecutionEngine
     mutations_enabled: bool = False
     identity_factory: CommandIdentityFactory = field(default_factory=CommandIdentityFactory)
     clock_ms: Callable[[], int] = field(default=lambda: int(time.time() * 1000))
+    paper_market_executor: PaperMarketExecutor | None = None
 
     def submit(self, intent: PreTradeIntent, context: PreTradeContext) -> ApplicationResult:
         self._require_enabled()
@@ -86,6 +91,34 @@ class TradingApplication:
         request = decision.request
         assert request is not None
         command = self._persist_submitting(self._create_record(request))
+        if self.paper_market_executor is not None and request.order_kind is OrderKind.MARKET:
+            paper = self.paper_market_executor.execute(
+                trading_account_id=request.trading_account_id,
+                symbol=Symbol(request.symbol),
+                side=request.side,
+                quantity=Quantity(request.final_quantity),
+                order_link_id=request.identity.order_link_id,
+                order_id=OrderId(f"paper-order-{request.identity.order_link_id}"),
+                exec_id=ExecutionId(f"paper-exec-{request.identity.order_link_id}"),
+            )
+            outcome = MutationOutcome(
+                MutationKind.CREATE,
+                MutationDisposition.ACKNOWLEDGED,
+                order_id=paper.order_id.value,
+                order_link_id=request.identity.order_link_id,
+                reason="paper market order executed",
+            )
+            acknowledged = self.execution_engine.ingest_mutation_outcome(
+                command, outcome, occurred_at_ms=self.clock_ms()
+            )
+            resolved = self.execution_engine.resolve_command(
+                acknowledged,
+                order_evidence=(),
+                execution_evidence=(paper.execution_event,),
+                occurred_at_ms=self.clock_ms(),
+            )
+            return ApplicationResult(decision, resolved, outcome)
+
         outcome = self._create(request)
         resolved = self.execution_engine.ingest_mutation_outcome(
             command, outcome, occurred_at_ms=self.clock_ms()
