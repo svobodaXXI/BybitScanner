@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    allowedHosts: [".trycloudflare.com", ".pinggy-free.link"],
+    allowedHosts: [".trycloudflare.com", ".pinggy-free.link", ".free.pinggy.net"],
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8765",
