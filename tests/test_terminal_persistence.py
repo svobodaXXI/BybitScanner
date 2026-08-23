@@ -27,7 +27,8 @@ from terminal.domain.models import (
 from terminal.domain.states import CommandState
 from terminal.persistence.schema import (
     SCHEMA_V1_STATEMENTS, SCHEMA_V2_MIGRATION_STATEMENTS,
-    SCHEMA_V3_MIGRATION_STATEMENTS, SCHEMA_VERSION,
+    SCHEMA_V3_MIGRATION_STATEMENTS, SCHEMA_V4_MIGRATION_STATEMENTS,
+    SCHEMA_VERSION,
 )
 from terminal.persistence.sqlite_store import (
     CommandRecord,
@@ -38,6 +39,7 @@ from terminal.persistence.sqlite_store import (
     PositionProjectionUpdate,
     ReconciliationCheckpointUpdate,
     SQLiteStore,
+    PersistenceError,
     SchemaError,
 )
 
@@ -99,6 +101,18 @@ class TerminalPersistenceTests(unittest.TestCase):
         for statement in SCHEMA_V1_STATEMENTS + SCHEMA_V2_MIGRATION_STATEMENTS:
             connection.execute(statement)
         connection.execute("PRAGMA user_version = 2")
+        connection.commit()
+        connection.close()
+
+    def create_v3_database(self):
+        connection = sqlite3.connect(self.database_path)
+        for statement in (
+            SCHEMA_V1_STATEMENTS
+            + SCHEMA_V2_MIGRATION_STATEMENTS
+            + SCHEMA_V3_MIGRATION_STATEMENTS
+        ):
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version = 3")
         connection.commit()
         connection.close()
 
@@ -196,11 +210,58 @@ class TerminalPersistenceTests(unittest.TestCase):
             self.assertEqual(settings.synchronous, 2)  # SQLite FULL
         self.assertTrue(self.database_path.exists())
 
+    def test_paper_account_initialization_is_durable_and_idempotent(self):
+        account_id = TradingAccountId("paper")
+
+        with self.open_store() as store:
+            created = store.initialize_paper_account(
+                account_id,
+                Decimal("5000"),
+                updated_at_ms=1234,
+            )
+            self.assertEqual(created.initial_deposit_usdt, Decimal("5000"))
+            self.assertEqual(created.equity_usdt, Decimal("5000"))
+            self.assertEqual(created.version, 1)
+
+            repeated = store.initialize_paper_account(
+                account_id,
+                Decimal("5000"),
+                updated_at_ms=9999,
+            )
+            self.assertEqual(repeated, created)
+
+        with self.open_store() as reopened:
+            persisted = reopened.get_paper_account(account_id)
+            self.assertIsNotNone(persisted)
+            self.assertEqual(persisted.initial_deposit_usdt, Decimal("5000"))
+            self.assertEqual(persisted.equity_usdt, Decimal("5000"))
+            self.assertEqual(persisted.updated_at_ms, 1234)
+
+    def test_paper_account_initialization_rejects_deposit_mismatch(self):
+        account_id = TradingAccountId("paper")
+
+        with self.open_store() as store:
+            store.initialize_paper_account(
+                account_id,
+                Decimal("5000"),
+                updated_at_ms=1234,
+            )
+            with self.assertRaises(PersistenceError):
+                store.initialize_paper_account(
+                    account_id,
+                    Decimal("6000"),
+                    updated_at_ms=2000,
+                )
+
+            persisted = store.get_paper_account(account_id)
+            self.assertEqual(persisted.initial_deposit_usdt, Decimal("5000"))
+            self.assertEqual(persisted.equity_usdt, Decimal("5000"))
+
     def test_v1_migration_preserves_commands_executions_and_projection(self):
         self.create_v1_database()
 
         with self.open_store() as store:
-            self.assertEqual(store.settings().schema_version, 3)
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
             self.assertEqual(store.get_command(CommandId("command-1")).order_link_id, "link-1")
             self.assertEqual(
                 store.get_execution(
@@ -251,7 +312,7 @@ class TerminalPersistenceTests(unittest.TestCase):
     def test_v2_to_v3_migration_is_transactional_and_creates_stage6_tables(self):
         self.create_v2_database()
         with self.open_store() as store:
-            self.assertEqual(store.settings().schema_version, 3)
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
         connection = sqlite3.connect(self.database_path)
         tables = {
             row[0] for row in connection.execute(
@@ -277,6 +338,40 @@ class TerminalPersistenceTests(unittest.TestCase):
         self.assertIsNone(connection.execute(
             "SELECT name FROM sqlite_master WHERE name='cleanup_runs'"
         ).fetchone())
+        connection.close()
+
+    def test_v3_to_v4_migration_creates_paper_accounts(self):
+        self.create_v3_database()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+
+        connection = sqlite3.connect(self.database_path)
+        self.assertIsNotNone(
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name='paper_accounts'"
+            ).fetchone()
+        )
+        connection.close()
+
+    def test_v3_to_v4_migration_failure_rolls_back_paper_accounts(self):
+        self.create_v3_database()
+        invalid = (SCHEMA_V4_MIGRATION_STATEMENTS[0], "NOT VALID SQLITE")
+
+        with mock.patch(
+            "terminal.persistence.sqlite_store.SCHEMA_V4_MIGRATION_STATEMENTS",
+            invalid,
+        ):
+            with self.assertRaises(SchemaError):
+                self.open_store()
+
+        connection = sqlite3.connect(self.database_path)
+        self.assertEqual(connection.execute("PRAGMA user_version").fetchone()[0], 3)
+        self.assertIsNone(
+            connection.execute(
+                "SELECT name FROM sqlite_master WHERE name='paper_accounts'"
+            ).fetchone()
+        )
         connection.close()
 
     def test_incompatible_schema_fails_closed_without_recreate(self):

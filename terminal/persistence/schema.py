@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -188,8 +188,22 @@ SCHEMA_V3_MIGRATION_STATEMENTS = (
     """,
 )
 
+SCHEMA_V4_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE paper_accounts (
+        trading_account_id TEXT PRIMARY KEY,
+        initial_deposit_usdt TEXT NOT NULL,
+        equity_usdt TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        CHECK (version >= 1)
+    ) WITHOUT ROWID
+    """,
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
     + SCHEMA_V3_MIGRATION_STATEMENTS
+    + SCHEMA_V4_MIGRATION_STATEMENTS
 )

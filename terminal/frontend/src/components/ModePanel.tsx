@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
 type MarketSide = "Buy" | "Sell";
@@ -18,7 +18,38 @@ export function ModePanel({
 }) {
   const [executionStatus, setExecutionStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
+    null,
+  );
   const submissionInFlight = useRef(false);
+
+  const refreshPaperState = useCallback(async () => {
+    try {
+      const response = await fetch("/api/paper-state?symbol=BTCUSDT");
+      if (!response.ok) {
+        setEngagedWorkingVolume(null);
+        return;
+      }
+
+      const state = (await response.json()) as {
+        ok: boolean;
+        engaged_wv: string;
+      };
+
+      const engagedWv = Number(state.engaged_wv);
+      setEngagedWorkingVolume(
+        state.ok && Number.isFinite(engagedWv) ? engagedWv.toFixed(1) : null,
+      );
+    } catch {
+      setEngagedWorkingVolume(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mode === "TERMINAL") {
+      void refreshPaperState();
+    }
+  }, [mode, refreshPaperState]);
 
   const alternatives = (["TERMINAL", "AUTOPILOT", "EDITOR"] as const).filter(
     (candidate) => candidate !== mode,
@@ -52,6 +83,10 @@ export function ModePanel({
           ? `PAPER ${side.toUpperCase()} completed`
           : `PAPER ${side.toUpperCase()} not completed`,
       );
+
+      if (commandResult.status === "completed") {
+        await refreshPaperState();
+      }
     } catch {
       setExecutionStatus("PAPER execution unavailable");
     } finally {
@@ -83,7 +118,7 @@ export function ModePanel({
       {mode === "TERMINAL" ? (
         <div className="paper-market-actions">
           <div className="paper-wv-indicator" aria-label="Engaged working volume">
-            ⚔
+            {"\u2694\uFE0F"} {engagedWorkingVolume ?? "\u2014"}
           </div>
           <button
             onClick={() => submitPaperMarket("Buy")}

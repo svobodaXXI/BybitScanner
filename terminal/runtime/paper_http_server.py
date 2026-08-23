@@ -6,6 +6,7 @@ import json
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from terminal.api.models import (
     ClientActionId,
@@ -36,12 +37,48 @@ VOLUME_FIELDS = {"unit", "amount"}
 
 class PaperHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        if self.path == "/api/health":
+        parsed = urlparse(self.path)
+
+        if parsed.path == "/api/health":
             self._json_response(
                 200,
                 {
                     "ok": True,
                     "mode": "paper",
+                },
+            )
+            return
+
+        if parsed.path == "/api/paper-state":
+            query = parse_qs(parsed.query)
+            symbols = query.get("symbol", [])
+            if len(symbols) != 1:
+                self._json_response(
+                    400,
+                    {
+                        "ok": False,
+                        "error": "symbol_required",
+                    },
+                )
+                return
+
+            try:
+                state = self.server.runtime.paper_state(symbols[0])
+            except Exception:
+                self._json_response(
+                    400,
+                    {
+                        "ok": False,
+                        "error": "invalid_paper_state_request",
+                    },
+                )
+                return
+
+            self._json_response(
+                200,
+                {
+                    "ok": True,
+                    **state,
                 },
             )
             return

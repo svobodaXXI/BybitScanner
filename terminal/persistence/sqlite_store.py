@@ -35,6 +35,7 @@ from .schema import (
     SCHEMA_STATEMENTS,
     SCHEMA_V2_MIGRATION_STATEMENTS,
     SCHEMA_V3_MIGRATION_STATEMENTS,
+    SCHEMA_V4_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -218,6 +219,15 @@ class StoreSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperAccountRecord:
+    trading_account_id: TradingAccountId
+    initial_deposit_usdt: Decimal
+    equity_usdt: Decimal
+    version: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class CleanupRunRecord:
     cleanup_id: str
     position_key: PositionKey
@@ -339,11 +349,18 @@ class SQLiteStore:
             SQLiteStore._validate_required_tables(connection, version=1)
             SQLiteStore._migrate_v1_to_v2(connection)
             SQLiteStore._migrate_v2_to_v3(connection)
+            SQLiteStore._migrate_v3_to_v4(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 2:
             SQLiteStore._validate_required_tables(connection, version=2)
             SQLiteStore._migrate_v2_to_v3(connection)
+            SQLiteStore._migrate_v3_to_v4(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 3:
+            SQLiteStore._validate_required_tables(connection, version=3)
+            SQLiteStore._migrate_v3_to_v4(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version != 0:
@@ -379,7 +396,19 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
-        SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+        SQLiteStore._validate_required_tables(connection, version=3)
+
+    @staticmethod
+    def _migrate_v3_to_v4(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V4_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 4")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -408,6 +437,8 @@ class SQLiteStore:
                 "cleanup_runs", "cleanup_items",
                 "protection_intents", "protection_projections",
             })
+        if version >= 4:
+            required.add("paper_accounts")
         actual = {
             row[0]
             for row in connection.execute(
@@ -456,6 +487,75 @@ class SQLiteStore:
             foreign_keys=bool(self._connection.execute("PRAGMA foreign_keys").fetchone()[0]),
             busy_timeout_ms=int(self._connection.execute("PRAGMA busy_timeout").fetchone()[0]),
             synchronous=int(self._connection.execute("PRAGMA synchronous").fetchone()[0]),
+        )
+
+    def get_paper_account(
+        self,
+        trading_account_id: TradingAccountId,
+    ) -> PaperAccountRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            """
+            SELECT trading_account_id, initial_deposit_usdt, equity_usdt,
+                   version, updated_at_ms
+            FROM paper_accounts
+            WHERE trading_account_id = ?
+            """,
+            (trading_account_id.value,),
+        ).fetchone()
+        if row is None:
+            return None
+        return PaperAccountRecord(
+            trading_account_id=TradingAccountId(row[0]),
+            initial_deposit_usdt=Decimal(row[1]),
+            equity_usdt=Decimal(row[2]),
+            version=int(row[3]),
+            updated_at_ms=int(row[4]),
+        )
+
+    def initialize_paper_account(
+        self,
+        trading_account_id: TradingAccountId,
+        initial_deposit_usdt: Decimal,
+        *,
+        updated_at_ms: int,
+    ) -> PaperAccountRecord:
+        deposit_text = _decimal_text(initial_deposit_usdt)
+        if initial_deposit_usdt <= 0:
+            raise ValueError("paper initial deposit must be positive")
+        if updated_at_ms < 0:
+            raise ValueError("paper account timestamp must not be negative")
+
+        existing = self.get_paper_account(trading_account_id)
+        if existing is not None:
+            if existing.initial_deposit_usdt != initial_deposit_usdt:
+                raise PersistenceError(
+                    "paper account already exists with a different initial deposit"
+                )
+            return existing
+
+        with self._transaction():
+            self._connection.execute(
+                """
+                INSERT INTO paper_accounts (
+                    trading_account_id, initial_deposit_usdt, equity_usdt,
+                    version, updated_at_ms
+                ) VALUES (?, ?, ?, 1, ?)
+                """,
+                (
+                    trading_account_id.value,
+                    deposit_text,
+                    deposit_text,
+                    updated_at_ms,
+                ),
+            )
+
+        return PaperAccountRecord(
+            trading_account_id=trading_account_id,
+            initial_deposit_usdt=initial_deposit_usdt,
+            equity_usdt=initial_deposit_usdt,
+            version=1,
+            updated_at_ms=updated_at_ms,
         )
 
     def persist_command_before_submit(
