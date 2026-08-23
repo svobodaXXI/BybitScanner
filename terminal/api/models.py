@@ -15,6 +15,7 @@ PROTOCOL_VERSION = "1"
 
 class CommandResultStatus(str, Enum):
     ACCEPTED_PENDING = "accepted_pending"
+    COMPLETED = "completed"
     BLOCKED = "blocked"
     REJECTED = "rejected"
     UNKNOWN = "unknown"
@@ -209,3 +210,4 @@ def to_primitive(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, bool)):
         return value
     raise TypeError(f"unsupported API serialization type: {type(value).__name__}")
+

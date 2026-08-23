@@ -153,6 +153,9 @@ def _application_result(action_id: str, result: ApplicationResult) -> CommandRes
     if result.command is not None and result.command.current_state is CommandState.UNKNOWN:
         return _result(action_id, CommandResultStatus.UNKNOWN, "mutation_unknown",
                        "mutation outcome requires reconciliation", command_id, True)
+    if result.command is not None and result.command.current_state is CommandState.FILLED:
+        return _result(action_id, CommandResultStatus.COMPLETED, "completed",
+                       "request completed", command_id)
     return _result(action_id, CommandResultStatus.ACCEPTED_PENDING, "accepted_pending",
                    "request is pending authoritative exchange confirmation", command_id)
 
@@ -189,3 +192,4 @@ def _symbol(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("symbol is required")
     return value.strip().upper()
+
