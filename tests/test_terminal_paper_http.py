@@ -50,3 +50,31 @@ def test_market_post_completes_with_one_durable_execution():
         finally:
             server.server_close()
             runtime.close()
+
+
+def test_health_get_returns_exact_paper_status():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = PaperRuntime(Path(temp) / "paper.sqlite3")
+        server = HTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
+        response = {}
+
+        def get_health():
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/health"
+            ) as result:
+                response["status"] = result.status
+                response["body"] = json.load(result)
+
+        client = threading.Thread(target=get_health)
+        client.start()
+        try:
+            server.handle_request()
+            client.join(timeout=5)
+
+            assert not client.is_alive()
+            assert response["status"] == 200
+            assert response["body"] == {"ok": True, "mode": "paper"}
+        finally:
+            server.server_close()
+            runtime.close()
