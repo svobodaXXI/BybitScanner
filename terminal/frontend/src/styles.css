@@ -382,6 +382,35 @@ button {
   border-color: #5f7487;
   background: #202a34;
 }
+
+.paper-market-buy {
+  min-width: 11rem;
+  padding: 0.8rem 1rem;
+  border: 1px solid #36c477;
+  border-radius: 0.35rem;
+  background: #123322;
+  color: #7ff0ad;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.paper-market-buy:hover:not(:disabled) {
+  background: #18452e;
+  border-color: #56e594;
+}
+
+.paper-market-buy:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.paper-execution-status {
+  margin-top: 0.45rem !important;
+  min-height: 1rem;
+  font-size: 0.7rem !important;
+}
 .status-bar {
   display: flex;
   flex-wrap: wrap;

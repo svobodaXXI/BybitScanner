@@ -71,12 +71,13 @@ export function ModePanel({
                 setIsSubmitting(false);
               }
             }}
+            className="paper-market-buy"
             disabled={isSubmitting}
             type="button"
           >
-            PAPER Market BUY
+            {isSubmitting ? "SENDING..." : "PAPER Market BUY"}
           </button>
-          <p aria-live="polite">{executionStatus}</p>
+          <p className="paper-execution-status" aria-live="polite">{executionStatus}</p>
         </div>
       ) : null}
     </section>
