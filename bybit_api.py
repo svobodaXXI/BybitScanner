@@ -30,13 +30,12 @@ session = HTTP(
     testnet=False
 )
 
-# Не позволяем requests автоматически
-# использовать системные proxy-настройки Windows.
-#
-# Это необходимо, поскольку локальный SOCKS proxy
-# может быть установлен в Windows, но PySocks
-# отсутствовать в текущем virtual environment.
+# Route both requests and DNS resolution through the local Happ SOCKS5 proxy.
 session.client.trust_env = False
+session.client.proxies.update({
+    "http": "socks5h://127.0.0.1:10808",
+    "https": "socks5h://127.0.0.1:10808",
+})
 
 
 # ==================================================
