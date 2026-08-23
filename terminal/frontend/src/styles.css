@@ -402,7 +402,8 @@ button {
 }
 
 .paper-market-sell {
-  width: 3.8rem;`r`n  min-width: 3.8rem;
+  width: 3.8rem;
+  min-width: 3.8rem;
   padding: 0.8rem 0.35rem;
   border: 1px solid #ee5d6c;
   border-radius: 0.35rem;
@@ -424,7 +425,8 @@ button {
   cursor: wait;
 }
 .paper-market-buy {
-  width: 3.8rem;`r`n  min-width: 3.8rem;
+  width: 3.8rem;
+  min-width: 3.8rem;
   padding: 0.8rem 0.35rem;
   border: 1px solid #36c477;
   border-radius: 0.35rem;
