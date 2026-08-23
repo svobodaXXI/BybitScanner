@@ -1,6 +1,8 @@
+import { useRef, useState } from "react";
+
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
 const descriptions: Record<WorkspaceMode, string> = {
-  TERMINAL: "Manual controls remain disabled in this safe prototype.",
+  TERMINAL: "Manual PAPER execution is available for the development instrument.",
   AUTOPILOT: "Robot observation and control are intentionally not implemented.",
   EDITOR: "Editor tools are reserved for a later authorized slice.",
 };
@@ -11,6 +13,9 @@ export function ModePanel({
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
 }) {
+  const [executionStatus, setExecutionStatus] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submissionInFlight = useRef(false);
   const alternatives = (["TERMINAL", "AUTOPILOT", "EDITOR"] as const).filter(
     (candidate) => candidate !== mode,
   );
@@ -32,6 +37,48 @@ export function ModePanel({
           </button>
         ))}
       </nav>
+      {mode === "TERMINAL" ? (
+        <div>
+          <button
+            onClick={async () => {
+              if (submissionInFlight.current) return;
+              submissionInFlight.current = true;
+              setIsSubmitting(true);
+              try {
+                const result = await fetch("/api/market", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    client_action_id: `paper-market-buy-${Date.now()}`,
+                    symbol: "BTCUSDT",
+                    side: "Buy",
+                    volume: { unit: "usdt", amount: "100" },
+                    sizing_reference_price: "64250",
+                    slippage_type: "Percent",
+                    slippage_value: "0.5",
+                  }),
+                });
+                const commandResult = (await result.json()) as { status: string };
+                setExecutionStatus(
+                  commandResult.status === "completed"
+                    ? "PAPER execution completed"
+                    : "PAPER execution not completed",
+                );
+              } catch {
+                setExecutionStatus("PAPER execution unavailable");
+              } finally {
+                submissionInFlight.current = false;
+                setIsSubmitting(false);
+              }
+            }}
+            disabled={isSubmitting}
+            type="button"
+          >
+            PAPER Market BUY
+          </button>
+          <p aria-live="polite">{executionStatus}</p>
+        </div>
+      ) : null}
     </section>
   );
 }
