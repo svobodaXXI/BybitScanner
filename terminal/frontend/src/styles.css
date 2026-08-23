@@ -354,7 +354,7 @@ button {
   justify-content: space-between;
   gap: 1rem;
   min-height: 6.4rem;
-  padding: 0.8rem 1rem;
+  padding: 0.8rem 0.35rem;
 }
 .mode-panel h2 {
   margin: 0.15rem 0;
@@ -383,9 +383,49 @@ button {
   background: #202a34;
 }
 
+
+.paper-market-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.paper-wv-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 3.2rem;
+  font-size: 1rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.paper-market-sell {
+  width: 3.8rem;`r`n  min-width: 3.8rem;
+  padding: 0.8rem 0.35rem;
+  border: 1px solid #ee5d6c;
+  border-radius: 0.35rem;
+  background: #35181d;
+  color: #ff9aa5;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.paper-market-sell:hover:not(:disabled) {
+  background: #492027;
+  border-color: #ff7a88;
+}
+
+.paper-market-sell:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
 .paper-market-buy {
-  min-width: 11rem;
-  padding: 0.8rem 1rem;
+  width: 3.8rem;`r`n  min-width: 3.8rem;
+  padding: 0.8rem 0.35rem;
   border: 1px solid #36c477;
   border-radius: 0.35rem;
   background: #123322;
