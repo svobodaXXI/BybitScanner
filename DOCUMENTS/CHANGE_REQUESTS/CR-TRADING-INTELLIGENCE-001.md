@@ -7,7 +7,7 @@
   "id": "CR-TRADING-INTELLIGENCE-001",
   "title": "Trading Intelligence and Paper Trader Roadmap Research",
   "status": "IN_PROGRESS",
-  "revision": "1.7",
+  "revision": "1.8",
   "lifecycle_stage": "CONTEXT",
   "objective": "Research and record the evidence, architecture boundaries, dependencies and non-final roadmap hypothesis required to evolve the current Scanner into broader Trading Intelligence and a safe event-driven Paper Trader without authorizing implementation.",
   "non_goals": [
@@ -188,7 +188,15 @@
     "Persistent Trade Candidate state is separate from ephemeral execution triggers; triggers have future TTL or expiry semantics, and trigger expiry does not necessarily invalidate the underlying candidate",
     "The conceptual Trade Candidate lifecycle is DETECTED to WATCH to READY to TRIGGERED to ENTERED, with terminal non-success states INVALIDATED and EXPIRED",
     "Each Trade Candidate has a unique candidate_id and preserves lifecycle, structures, setups, evidence fingerprint, quality/failure evolution, trigger history, entry or no-entry reason, invalidation or expiry reason and eventual outcome where applicable",
-    "Final scoring formulas, weights, thresholds, TTLs and calibration constants remain parameterizable and require later paper-trading or backtest evidence"
+    "Final scoring formulas, weights, thresholds, TTLs and calibration constants remain parameterizable and require later paper-trading or backtest evidence",
+    "The primary economic objective of Scanner, Trading Intelligence, Trading Workspace, Paper Robot and the future Trading Robot is sustainable positive expectancy and financial result at acceptable risk after commissions, slippage, actual execution quality and other execution frictions",
+    "Analytical complexity and pattern-detection accuracy are means to the economic objective rather than independent end goals",
+    "Geometry Engine remains a core development area, and geometric features must progressively be evaluated by their real trading usefulness without weakening existing Geometry requirements",
+    "After a Paper Robot exists, Geometry and Signal Intelligence follow a closed evidence-driven loop from hypothesis through paper trades, execution and outcome data, profitability and risk analysis, feature evaluation, refinement and repeated validation",
+    "Primary future Trading Robot evaluation includes realized PnL, expectancy per trade, profit factor, maximum drawdown, robustness across market regimes and survivability through losing streaks without unacceptable risk; win rate and pattern accuracy remain diagnostic",
+    "Paper Robot is the transition from technical-correctness verification to empirical validation of positive expectancy under conditions approximating real execution",
+    "The economic objective is an empirical validation and optimization target, not a promise or guarantee of profit",
+    "This strategic checkpoint does not remove or weaken any existing Geometry, execution or safety requirement"
   ],
   "unresolved_decisions": [
     "Canonical English identity and exact semantics of the user term Восходящая звезда",
@@ -397,7 +405,7 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "RESEARCH",
-  "current_checkpoint": "TRADE_CANDIDATE_FUSION_AND_EVIDENCE_ARCHITECTURE_RECORDED",
+  "current_checkpoint": "PROFITABILITY_DRIVEN_SYSTEM_EVALUATION_PRINCIPLE_RECORDED",
   "implementation_status": "IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "next_phase": "ROADMAP_SPEC",
   "next_phase_authorization": "NOT_AUTHORIZED_PENDING_RESEARCH_AND_HUMAN_APPROVAL",
@@ -410,7 +418,7 @@
     "baseline_local_head": "ce747f8a0223306a2128e413ae259df955f5a085",
     "baseline_origin_main": "ce747f8a0223306a2128e413ae259df955f5a085",
     "latest_saved_checkpoint": "9d8a9c5752dafaad60ecf9676ba8d7b19ab0ce97",
-    "status": "TRADE_CANDIDATE_FUSION_AND_EVIDENCE_ARCHITECTURE_RECORDED_NOT_IMPLEMENTED"
+    "status": "PROFITABILITY_DRIVEN_SYSTEM_EVALUATION_PRINCIPLE_RECORDED_NOT_IMPLEMENTED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Human-authorized durable planning and research checkpoint; implementation explicitly not authorized", "date": "2026-08-18"},
@@ -420,7 +428,8 @@
     {"revision": "1.4", "reason": "Recorded the human-authorized Trading Workspace and Telegram Mini App requirements, safety architecture, external references, gap analysis and dependency-aware roadmap while preserving research-only lifecycle and no implementation authorization", "date": "2026-08-20"},
     {"revision": "1.5", "reason": "Closed HS/IHS roadmap-level research, recorded the robust wick-aware wedge boundary-fitting observation and selected Trading Terminal / Trading Workspace as the next active development focus without authorizing implementation", "date": "2026-08-20"},
     {"revision": "1.6", "reason": "Documentation-only roadmap-level checkpoint recording LONG_CONTINUATION / High-Base continuation evidence, anti-evidence, separated quality/failure/trigger semantics, future entry modes and Pattern-versus-Microstructure boundary without final thresholds, detector implementation or change to the active Trading Workspace focus", "date": "2026-08-22"},
-    {"revision": "1.7", "reason": "Documentation-only architecture checkpoint recording unified Trade Candidate fusion and deduplication, evidence provenance and anti-double-counting, separate failure guards, ephemeral trigger expiry, conceptual candidate lifecycle and durable history for later evidence-based calibration without final numerical policy, implementation authorization or change to Trading Workspace Stage 8", "date": "2026-08-22"}
+    {"revision": "1.7", "reason": "Documentation-only architecture checkpoint recording unified Trade Candidate fusion and deduplication, evidence provenance and anti-double-counting, separate failure guards, ephemeral trigger expiry, conceptual candidate lifecycle and durable history for later evidence-based calibration without final numerical policy, implementation authorization or change to Trading Workspace Stage 8", "date": "2026-08-22"},
+    {"revision": "1.8", "reason": "Documentation-only strategic checkpoint recording profitability after execution frictions and acceptable risk as the primary economic objective, Geometry as a continuing core development area, the future Paper Robot evidence loop and economic Robot success criteria without changing Geometry, execution or safety requirements or implementation authorization", "date": "2026-08-24"}
   ]
 }
 ```
@@ -694,6 +703,50 @@ fits this model without redesign.
 
 This architecture checkpoint is documentation only. Production implementation is
 `NOT_STARTED_NOT_AUTHORIZED`, and Trading Workspace Stage 8 authorization is unchanged.
+
+## Profitability-driven system evaluation principle
+
+### Primary economic objective
+
+The ultimate and primary objective of Scanner, Trading Intelligence, Trading Workspace, Paper Robot and the
+future Trading Robot is sustainable positive expectancy and financial result at acceptable risk after
+commissions, slippage, actual execution quality and other real execution costs and frictions. Their
+analytical and infrastructure components are means to this objective rather than independent end goals.
+High analytical complexity or nominal pattern-detection accuracy alone does not justify added complexity
+unless evidence shows improved trading results or risk management.
+
+This economic objective is an empirical validation and optimization target, not a promise or guarantee of
+profit.
+
+### Geometry remains a core development area
+
+This principle neither ends nor lowers the importance of Geometry Engine improvement. Geometry quality
+directly affects the ability to distinguish potentially tradeable structures from noise and weak setups.
+Geometric features must progressively be evaluated by their real trading usefulness. This strategic
+checkpoint does not remove or weaken any existing Geometry requirement, and any later ranking, admission,
+formula or threshold change remains evidence-dependent and separately governed.
+
+### Profitability feedback loop
+
+After a Paper Robot exists, Geometry and Signal Intelligence must improve through a closed, evidence-driven
+loop rather than visual or expert evaluation alone:
+
+`Geometry / Signal hypothesis -> paper trades -> execution and outcome data -> profitability and risk analysis -> feature evaluation -> refinement -> repeated validation`.
+
+Reproducible evidence that combinations of geometric or signal features produce materially better
+expectancy may justify later refinement, subject to the normal ChangeRequest lifecycle and validation.
+
+### Robot success metrics and Paper Robot role
+
+Primary future Trading Robot quality criteria include realized PnL, expectancy per trade, profit factor,
+maximum drawdown, robustness across market regimes and survivability through losing streaks without
+unacceptable risk. Win rate and pattern accuracy remain useful diagnostics, but they do not replace the
+economic objective.
+
+Paper Robot is the transition from verifying that the system works technically to empirically testing
+whether the integrated trading system can produce positive expectancy under conditions approximating real
+execution. Evaluation must include commissions, slippage, execution quality and other modeled frictions.
+All existing execution and safety requirements remain binding and unchanged.
 
 ## Amendment rule
 
