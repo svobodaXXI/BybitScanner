@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.28",
+  "revision": "1.29",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Durably record the approved narrow WorkingVolumeIntent Market nearest-step sizing amendment without starting or authorizing its implementation.",
+  "objective": "Durably record PAPER runtime validation of the implemented WorkingVolumeIntent Market nearest-step sizing policy while preserving all lifecycle and safety semantics.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -300,7 +300,7 @@
     "Account-scoped rounded-down Working Volume, future per-account Robot exposure limit and account-aware analytics requirements are explicit",
     "Selected-period USDT and percentage PnL requirements and deferred external-cash-flow accounting decisions are explicit",
     "Trading credential custody and frontend, Scanner, chart and Telegram secret-exclusion boundaries are explicit",
-    "Implementation remains not started and not authorized",
+    "WorkingVolumeIntent Market nearest-step sizing is already implemented and PAPER-runtime validated; this documentation checkpoint authorizes no further implementation",
     "Only authoritative documentation changes in this checkpoint"
   ],
   "regression_requirements": [
@@ -327,7 +327,7 @@
     "Premature robot coupling or AUTOPILOT exposure"
   ],
   "rollback_boundaries": [
-    "This checkpoint changes only the ChangeRequest and its Project State and Roadmap pointers",
+    "This checkpoint changes only this ChangeRequest",
     "Rollback removes only this documentation amendment without runtime or exchange effects",
     "Existing completed Stage 0 through Stage 7 implementation checkpoints remain unchanged"
   ],
@@ -340,10 +340,10 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "WORKING_VOLUME_MARKET_NEAREST_STEP_SIZING_AMENDMENT_RECORDED",
-  "implementation_status": "FAST_DOM_RUNNABLE_CLIENT_AND_TELEGRAM_MINI_APP_PHONE_TEST_SLICES_IMPLEMENTED_VERIFIED",
+  "current_checkpoint": "WORKING_VOLUME_MARKET_NEAREST_STEP_PAPER_RUNTIME_VALIDATED",
+  "implementation_status": "WORKING_VOLUME_MARKET_NEAREST_STEP_IMPLEMENTED_PAPER_RUNTIME_VALIDATED",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "WORKING_VOLUME_MARKET_NEAREST_STEP_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
+  "next_phase_authorization": "NO_FURTHER_IMPLEMENTATION_AUTHORIZED_BY_THIS_DOCUMENTATION_CHECKPOINT",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -361,7 +361,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "WORKING_VOLUME_MARKET_NEAREST_STEP_SIZING_AMENDMENT_RECORDED_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED"
+    "status": "WORKING_VOLUME_MARKET_NEAREST_STEP_PAPER_RUNTIME_VALIDATED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -392,7 +392,8 @@
     {"revision": "1.25", "reason": "Recorded the Telegram Mini App phone-test slice as implemented and verified: the same React/Vite Workspace initializes through a browser-safe Telegram adapter, applies content safe areas and stable viewport sizing, remains locally runnable, accepts temporary trycloudflare development hosts, and configures the existing bot private-chat menu through an HTTPS-only server-side helper using existing local credentials; focused frontend, Python, build, governance and startup-host checks passed, while installation and user launch of the temporary tunnel remain the next user-side steps", "date": "2026-08-22"},
     {"revision": "1.26", "reason": "Documentation-only checkpoint preserving approved mobile Trading Workspace UX clarifications for compact chart chrome/tools, aligned collapsible prints-plus-DOM geometry, position PnL placement, lower-panel layout and collapse, non-reversing Market taps, two-finger chart Limit placement, active Limit reveal/cancel and confirmed move rollback semantics, and reference-led color direction; overall mobile design remains incomplete and no implementation slice is started or authorized", "date": "2026-08-22"},
     {"revision": "1.27", "reason": "Second documentation-only mobile UX checkpoint recording pending and full-position STOP/TAKE workflows, quantity and average-entry invariants, scanner-signal TAKE proposal suppression, no-position state, independent BUY/SELL volumes, permanent position-USDT and distinct hold details, two-row Limit inventory, actual live unrealized PnL indicator, average-entry line, order-line classes and the sampled graphite plus canonical #3BC639/#CD0000 palette; contradictory earlier mobile wording is superseded, design remains incomplete and no new implementation is started or authorized", "date": "2026-08-23"},
-    {"revision": "1.28", "reason": "Human-approved documentation-only amendment superseding the general Market floor-to-qtyStep contract only for WorkingVolumeIntent Market sizing: select the mathematically nearest adjacent qtyStep with midpoint ties floored, permit ceil only through a maximum ten-percent reference-notional overshoot gate, otherwise reject fail closed for insufficient sizing precision; NotionalIntent, all Limit sizing, coin-quantity execution, factual engaged-WV projection and existing safety stages remain unchanged, and implementation is not started or authorized", "date": "2026-08-24"}
+    {"revision": "1.28", "reason": "Human-approved documentation-only amendment superseding the general Market floor-to-qtyStep contract only for WorkingVolumeIntent Market sizing: select the mathematically nearest adjacent qtyStep with midpoint ties floored, permit ceil only through a maximum ten-percent reference-notional overshoot gate, otherwise reject fail closed for insufficient sizing precision; NotionalIntent, all Limit sizing, coin-quantity execution, factual engaged-WV projection and existing safety stages remain unchanged, and implementation is not started or authorized", "date": "2026-08-24"},
+    {"revision": "1.29", "reason": "Documentation-only checkpoint recording observed PAPER runtime PASS evidence for implemented WorkingVolumeIntent Market nearest-step sizing, reduce-first behavior, cap-to-remainder, no flip-through-zero and authoritative PAPER-state Working Volume refresh while preserving existing lifecycle and safety semantics and authorizing no further implementation", "date": "2026-08-24"}
   ]
 }
 ```
@@ -2679,3 +2680,43 @@ This narrow amendment records checkpoint
 `WORKING_VOLUME_MARKET_NEAREST_STEP_SIZING_AMENDMENT_RECORDED`. Historical revision 1.13 remains evidence
 of the former general Market floor contract. No runtime, application, frontend or test implementation is
 started or authorized by this checkpoint.
+
+## 38. Working Volume Market PAPER runtime-validation checkpoint
+
+Revision 1.29 records documentation-only runtime validation of the already implemented revision 1.28
+WorkingVolumeIntent Market nearest-step policy. It does not change production code, expand scope, weaken
+any lifecycle or safety gate, or authorize further implementation.
+
+Observed PAPER evidence:
+
+```text
+PAPER equity / one WV        = 5000 USDT / 250 USDT
+initial position             = Long 0.005 BTC / 1.28501 WV
+BUY 1 WV result              = Long 0.009 BTC / 2.313018 WV
+selected increment           = +0.004 BTC nearest-step sizing
+first SELL result            = Long 0.005 BTC
+second SELL result           = Long 0.001 BTC
+third SELL result            = Flat 0 BTC
+UI engaged-WV sequence       = 1.3 -> 2.3 -> 1.3 -> 0.3 -> 0.0
+```
+
+Runtime validation result:
+
+```text
+nearest-step sizing                         PASS
+reduce-first                                PASS
+cap-to-remainder                            PASS
+no-flip-through-zero                        PASS
+authoritative PAPER-state WV refresh        PASS
+```
+
+The BUY observation confirms selection of the `+0.004 BTC` nearest executable step. The successive SELL
+observations confirm reduce-first execution, capping to the factual remaining coin quantity, transition to
+FLAT without reversal, and no flip-through-zero. The UI sequence follows the authoritative PAPER position
+state, including the residual `0.001 BTC` position and final zero state; displayed WV remains a factual
+projection rather than execution authority.
+
+All revision 1.28 safety semantics remain binding, including authoritative instrument metadata, admission
+checks, opposite-side classification, `reduceOnly`, reconciliation, durable identity, idempotency and
+fail-closed uncertain-outcome handling. This amendment records checkpoint
+`WORKING_VOLUME_MARKET_NEAREST_STEP_PAPER_RUNTIME_VALIDATED`.

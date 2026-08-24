@@ -2,7 +2,7 @@
 
 Версия:
 
-4.14
+4.15
 
 Дата:
 
@@ -1028,6 +1028,33 @@ notepad путь\к\файлу
 
 ### CODEX_BUDGET_PROTOCOL
 
+Для каждой задачи Codex обязательным режимом по умолчанию
+является кратчайший минимально достаточный delta-prompt.
+Это не опциональная оптимизация: минимизация tokens и числа
+Codex calls применяется по умолчанию к каждой задаче.
+
+Delta-prompt должен включать только:
+
+* точный target file или scope;
+* требуемое изменение;
+* существенные ограничения;
+* минимально необходимые checks;
+* компактный return format.
+
+Запрещено по умолчанию повторять известный контекст,
+уже прочитанные документы, установленную архитектуру,
+успешные checks или неизменившиеся требования, если
+повтор не требуется для correctness или safety.
+
+Запрещено по умолчанию запрашивать broad research,
+полный status, полный diff, verbose explanations или
+redundant validation.
+
+Расширение Codex prompt допускается только когда этого
+реально требуют uncertainty, safety, governance или
+неразрешённая product/risk semantics. Расширение должно
+оставаться минимальным для устранения конкретной причины.
+
 Если local `HEAD == origin/main`,
 ChatGPT выполняет read-only анализ committed-кода
 через GitHub. Codex не используется для такого
@@ -1451,17 +1478,23 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.13
+ASSISTANT_PROTOCOL v4.14
 
 to:
 
-ASSISTANT_PROTOCOL v4.14
+ASSISTANT_PROTOCOL v4.15
 
 date:
 
 2026-08-24
 
 reason:
+
+* strengthened `CODEX_BUDGET_PROTOCOL` so every Codex task defaults to the shortest minimally sufficient delta-prompt containing only exact scope, required change, essential constraints, minimum checks and compact return format;
+* prohibited repeated known context, already-read documentation, established architecture, unchanged requirements, successful checks, broad research, full status/diff, verbose explanation and redundant validation by default;
+* made token/call minimization mandatory rather than optional, while permitting only minimally necessary expansion for genuine uncertainty, safety, governance or unresolved semantics and preserving all existing fail-closed requirements.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.13 to v4.14:
 
 * extended `CODEX_BUDGET_PROTOCOL` with a default-off Git write policy: Codex does not stage, commit or push unless the user explicitly authorizes Git-write in the specific task;
 * assigned ordinary Git-write operations to user-run PowerShell and aligned the compact default response shape to `STATUS / CHANGED / TESTS / DIFF_CHECK / BLOCKERS`.
