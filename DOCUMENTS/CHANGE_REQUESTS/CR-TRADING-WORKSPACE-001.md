@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.32",
+  "revision": "1.33",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Implement and verify the isolated PAPER Trading Workspace E2E runtime harness.",
+  "objective": "Implement and verify Workflow Acceleration Package 4 contract/consistency automation.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -32,6 +32,7 @@
     ,"Implement the human-authorized Stage 8 independent BUY and SELL USDT-notional amount controls and authoritative engaged position-notional display in ModePanel"
     ,"Implement the approved NotionalIntent Market nearest-step policy with a five-percent ceil-overshoot ceiling, whole-USDT position display and localized failure messages"
     ,"Implement an isolated one-command Playwright E2E harness over the real PAPER backend and frontend with temporary runtime persistence and authoritative backend-state assertions"
+    ,"Implement deterministic fail-closed frontend/backend Trading Workspace contract consistency checks with selective tools.dev.verify routing"
   ],
   "prohibited_scope": [
     "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
@@ -398,7 +399,8 @@
     {"revision": "1.28", "reason": "Human-approved documentation-only amendment superseding the general Market floor-to-qtyStep contract only for WorkingVolumeIntent Market sizing: select the mathematically nearest adjacent qtyStep with midpoint ties floored, permit ceil only through a maximum ten-percent reference-notional overshoot gate, otherwise reject fail closed for insufficient sizing precision; NotionalIntent, all Limit sizing, coin-quantity execution, factual engaged-WV projection and existing safety stages remain unchanged, and implementation is not started or authorized", "date": "2026-08-24"},
     {"revision": "1.29", "reason": "Documentation-only checkpoint recording observed PAPER runtime PASS evidence for implemented WorkingVolumeIntent Market nearest-step sizing, reduce-first behavior, cap-to-remainder, no flip-through-zero and authoritative PAPER-state Working Volume refresh while preserving existing lifecycle and safety semantics and authorizing no further implementation", "date": "2026-08-24"},
     {"revision": "1.30", "reason": "Human-authorized Stage 8 implementation checkpoint adding independent numeric BUY and SELL USDT-notional amounts initialized from authoritative one_wv_usdt, validation against empty or non-positive submission, edit-preserving PAPER refresh and permanent authoritative engaged_notional_usdt display beneath swords while preserving existing execution safety semantics", "date": "2026-08-24"},
-    {"revision": "1.32", "reason": "Human-authorized Workflow Acceleration Package 2 checkpoint implementing an isolated one-command Playwright PAPER E2E harness over the real loopback backend and frontend, temporary SQLite runtime data, backend readiness, authoritative state assertions and unconditional teardown without changing trading semantics", "date": "2026-08-24"}
+    {"revision": "1.32", "reason": "Human-authorized Workflow Acceleration Package 2 checkpoint implementing an isolated one-command Playwright PAPER E2E harness over the real loopback backend and frontend, temporary SQLite runtime data, backend readiness, authoritative state assertions and unconditional teardown without changing trading semantics", "date": "2026-08-24"},
+    {"revision": "1.33", "reason": "Human-authorized Workflow Acceleration Package 4 checkpoint deriving deterministic frontend/backend contract checks from existing Python models, enums and PAPER projections plus a checked frontend contract module, intentional mismatch fixtures and selective tools.dev.verify routing without changing trading semantics", "date": "2026-08-24"}
   ]
 }
 ```
@@ -2783,3 +2785,18 @@ path is enabled. Production defaults remain `paper_runtime.sqlite3` and port `87
 exist only to make the same launch path safely isolatable.
 
 This amendment records checkpoint `ISOLATED_PAPER_WORKSPACE_E2E_IMPLEMENTED_VERIFIED`.
+
+## 42. Workflow Acceleration Package 4 contract-consistency checkpoint
+
+Revision 1.33 records the human-authorized deterministic Trading Workspace contract checker. The one-command
+entry point `python -m tools.dev.contract_consistency` compares the frontend request, response, enum, volume,
+position-side and handled-reason declarations against existing backend dataclasses, enums and the statically
+discoverable PAPER state projection. The frontend consumes its checked declarations directly, preventing a
+separate unused schema copy.
+
+Focused tests inject unsupported sides and units, missing backend response fields, invented handled reason
+codes and request-shape drift and prove fail-closed output. `tools.dev.verify` routes the checker only when
+Terminal API, relevant execution-contract backend paths, the checked frontend contract/consumer, or the
+checker and its tests are in scope. Trading authority, PAPER-only execution, reconciliation, no-flip,
+durable identity and all prior safety semantics are unchanged. This amendment records checkpoint
+`WORKFLOW_ACCELERATION_PACKAGE_4_CONTRACT_CONSISTENCY_IMPLEMENTED_VERIFIED`.

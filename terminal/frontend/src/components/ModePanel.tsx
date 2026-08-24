@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type CommandResult,
+  HANDLED_REASON_CODES,
+  type MarketCommandRequest,
+  type MarketSide,
+  type PaperState,
+} from "../contracts/trading";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
-type MarketSide = "Buy" | "Sell";
 
 const descriptions: Record<WorkspaceMode, string> = {
   TERMINAL: "Manual PAPER execution is available for the development instrument.",
@@ -36,12 +42,7 @@ export function ModePanel({
         return;
       }
 
-      const state = (await response.json()) as {
-        ok: boolean;
-        engaged_wv: string;
-        engaged_notional_usdt: string;
-        one_wv_usdt: string;
-      };
+      const state = (await response.json()) as PaperState;
 
       const engagedWv = Number(state.engaged_wv);
       const engagedNotional = Number(state.engaged_notional_usdt);
@@ -88,29 +89,27 @@ export function ModePanel({
     setIsSubmitting(true);
 
     try {
+      const request: MarketCommandRequest = {
+        client_action_id: `paper-market-${side.toLowerCase()}-${Date.now()}`,
+        symbol: "BTCUSDT",
+        side,
+        volume: { unit: "usdt", amount },
+        sizing_reference_price: "64250",
+        slippage_type: "Percent",
+        slippage_value: "0.5",
+      };
       const result = await fetch("/api/market", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_action_id: `paper-market-${side.toLowerCase()}-${Date.now()}`,
-          symbol: "BTCUSDT",
-          side,
-          volume: { unit: "usdt", amount },
-          sizing_reference_price: "64250",
-          slippage_type: "Percent",
-          slippage_value: "0.5",
-        }),
+        body: JSON.stringify(request),
       });
 
-      const commandResult = (await result.json()) as {
-        status: string;
-        reason_code?: string;
-      };
+      const commandResult = (await result.json()) as CommandResult;
 
       setExecutionStatus(
         commandResult.status === "completed"
           ? `PAPER ${side.toUpperCase()} completed`
-          : commandResult.reason_code === "insufficient_sizing_precision"
+          : commandResult.reason_code === HANDLED_REASON_CODES[0]
             ? "Сумма слишком мала для шага объёма"
             : `${side.toUpperCase()} отменено`,
       );

@@ -40,6 +40,19 @@ def verify(path_values: Sequence[str], *, git: Git | None = None) -> tuple[bool,
             module = test_file[:-3].replace("/", ".")
             name, passed, detail = _run_check(root, label, (sys.executable, "-m", "unittest", module))
             checks.append({"name": name, "status": "PASS" if passed else "FAIL", "detail": detail})
+        contract_prefixes = (
+            "terminal/api/", "terminal/application/pretrade_guard.py",
+            "terminal/domain/models.py",
+            "terminal/runtime/paper_http_server.py", "terminal/runtime/paper_runtime.py",
+            "terminal/frontend/src/contracts/", "terminal/frontend/src/components/ModePanel",
+            "tools/dev/contract_consistency.py", "tests/test_contract_consistency.py",
+        )
+        if any(path.startswith(contract_prefixes) for path in paths):
+            label, passed, detail = _run_check(
+                root, "trading-contract-consistency",
+                (sys.executable, "-m", "tools.dev.contract_consistency"),
+            )
+            checks.append({"name": label, "status": "PASS" if passed else "FAIL", "detail": detail})
         diff = active_git.run("diff", "--check", "--", *paths)
         checks.append({"name": "diff-check", "status": "PASS" if diff.returncode == 0 else "FAIL", "detail": (diff.stderr or diff.stdout).strip()})
         failed = [str(item["name"]) for item in checks if item["status"] != "PASS"]
