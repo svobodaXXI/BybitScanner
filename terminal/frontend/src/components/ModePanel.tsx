@@ -50,7 +50,7 @@ export function ModePanel({
       );
       setEngagedNotionalUsdt(
         state.ok && Number.isFinite(engagedNotional)
-          ? String(Math.max(0, engagedNotional))
+          ? String(Math.round(Math.max(0, engagedNotional)))
           : "0",
       );
       if (state.ok && !buyAmountEdited.current) {
@@ -102,19 +102,24 @@ export function ModePanel({
         }),
       });
 
-      const commandResult = (await result.json()) as { status: string };
+      const commandResult = (await result.json()) as {
+        status: string;
+        reason_code?: string;
+      };
 
       setExecutionStatus(
         commandResult.status === "completed"
           ? `PAPER ${side.toUpperCase()} completed`
-          : `PAPER ${side.toUpperCase()} not completed`,
+          : commandResult.reason_code === "insufficient_sizing_precision"
+            ? "Сумма слишком мала для шага объёма"
+            : `${side.toUpperCase()} отменено`,
       );
 
       if (commandResult.status === "completed") {
         await refreshPaperState();
       }
     } catch {
-      setExecutionStatus("PAPER execution unavailable");
+      setExecutionStatus(`${side.toUpperCase()} отменено`);
     } finally {
       submissionInFlight.current = false;
       setIsSubmitting(false);

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import re
 import uuid
+import unittest
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -178,8 +179,28 @@ def test_working_volume_market_rejects_nearest_ceil_above_overshoot_limit() -> N
     assert decision.request is None
 
 
-def test_notional_market_and_working_volume_limit_keep_floor_semantics() -> None:
+def test_notional_market_uses_nearest_step_with_five_percent_overshoot() -> None:
     notional_market = admitted(market(volume=NotionalIntent(Decimal("250")), price=Decimal("64250")))
+    assert notional_market.normalized_quantity == Decimal("0.004")
+
+
+def test_notional_market_midpoint_tie_uses_floor() -> None:
+    request = admitted(market(volume=NotionalIntent(Decimal("70")), price=Decimal("20000")))
+    assert request.raw_quantity == Decimal("0.0035")
+    assert request.normalized_quantity == Decimal("0.003")
+
+
+def test_notional_market_rejects_nearest_ceil_above_five_percent_overshoot() -> None:
+    decision = enabled_guard().evaluate(
+        market(volume=NotionalIntent(Decimal("19")), price=Decimal("10000")),
+        context(),
+    )
+    assert decision.reason_code is RejectionCode.INSUFFICIENT_SIZING_PRECISION
+    assert decision.reason == "nearest notional quantity exceeds maximum rounding overshoot"
+    assert decision.request is None
+
+
+def test_working_volume_limit_keeps_floor_semantics() -> None:
     working_volume_limit = admitted(PreTradeIntent(
         symbol="BTCUSDT",
         side=OrderSide.BUY,
@@ -188,8 +209,18 @@ def test_notional_market_and_working_volume_limit_keep_floor_semantics() -> None
         sizing_reference_price=Decimal("1"),
         requested_limit_price=Decimal("64250"),
     ))
-    assert notional_market.normalized_quantity == Decimal("0.003")
     assert working_volume_limit.normalized_quantity == Decimal("0.003")
+
+
+class MarketAmountVerifierTests(unittest.TestCase):
+    def test_market_amount_cluster(self) -> None:
+        test_working_volume_market_uses_nearest_step_with_bounded_overshoot()
+        test_working_volume_market_midpoint_tie_uses_floor()
+        test_working_volume_market_rejects_nearest_ceil_above_overshoot_limit()
+        test_notional_market_uses_nearest_step_with_five_percent_overshoot()
+        test_notional_market_midpoint_tie_uses_floor()
+        test_notional_market_rejects_nearest_ceil_above_five_percent_overshoot()
+        test_working_volume_limit_keeps_floor_semantics()
 
 
 def test_opposite_working_volume_market_nearest_step_is_capped_at_flat() -> None:

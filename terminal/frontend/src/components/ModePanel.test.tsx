@@ -24,7 +24,7 @@ describe("ModePanel PAPER Market amounts", () => {
     render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
 
     expect(await screen.findAllByDisplayValue("250")).toHaveLength(2);
-    expect(screen.getByText("312.5 USDT")).toBeInTheDocument();
+    expect(screen.getByText("313 USDT")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("BUY amount"), {
       target: { value: "300" },
     });
@@ -91,5 +91,41 @@ describe("ModePanel PAPER Market amounts", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/market")).toBe(false);
+  });
+
+  it("shows the sizing-precision failure in Russian", async () => {
+    const fetchMock = vi.fn((url: string) => Promise.resolve({
+      ok: true,
+      json: vi.fn().mockResolvedValue(
+        url.startsWith("/api/paper-state")
+          ? paperState()
+          : { status: "blocked", reason_code: "insufficient_sizing_precision" },
+      ),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    await screen.findAllByDisplayValue("250");
+    fireEvent.click(screen.getByRole("button", { name: "BUY" }));
+
+    expect(await screen.findByText("Сумма слишком мала для шага объёма")).toBeInTheDocument();
+  });
+
+  it.each(["BUY", "SELL"])("shows a generic %s cancellation", async (side) => {
+    const fetchMock = vi.fn((url: string) => Promise.resolve({
+      ok: true,
+      json: vi.fn().mockResolvedValue(
+        url.startsWith("/api/paper-state")
+          ? paperState()
+          : { status: "blocked", reason_code: "offline" },
+      ),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    await screen.findAllByDisplayValue("250");
+    fireEvent.click(screen.getByRole("button", { name: side }));
+
+    expect(await screen.findByText(`${side} отменено`)).toBeInTheDocument();
   });
 });

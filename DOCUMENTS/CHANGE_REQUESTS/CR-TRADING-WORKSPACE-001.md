@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.30",
+  "revision": "1.31",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Implement and verify the human-authorized Stage 8 independent BUY and SELL USDT-notional amount controls and authoritative position-notional display.",
+  "objective": "Implement and verify the approved Market-amount sizing, display and user-facing failure cluster.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -30,6 +30,7 @@
     "Record the approved documentation-only Fast DOM client-slice interaction, own-order presentation and market-data baseline",
     "Record the approved documentation-only single-workspace Terminal, Autopilot and Editor mode architecture"
     ,"Implement the human-authorized Stage 8 independent BUY and SELL USDT-notional amount controls and authoritative engaged position-notional display in ModePanel"
+    ,"Implement the approved NotionalIntent Market nearest-step policy with a five-percent ceil-overshoot ceiling, whole-USDT position display and localized failure messages"
   ],
   "prohibited_scope": [
     "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
@@ -2744,3 +2745,22 @@ identity and fail-closed safety behavior remain binding. STOP, TAKE and unrelate
 This amendment records checkpoint
 `STAGE_8_INDEPENDENT_MARKET_NOTIONAL_AMOUNTS_IMPLEMENTED_VERIFIED`. No further implementation is authorized
 by this checkpoint.
+
+## 40. Market-amount sizing and presentation implementation checkpoint
+
+Revision 1.31 records implementation and scoped verification of the approved Market-amount cluster.
+`NotionalIntent` Market sizing now selects the nearest adjacent `qtyStep`; an exact midpoint tie selects
+floor. A ceil candidate is admitted only when its reference-notional overshoot is at most five percent.
+When the nearest candidate requires a larger overshoot, admission fails closed with
+`INSUFFICIENT_SIZING_PRECISION`. The existing `WorkingVolumeIntent` Market nearest-step ceiling remains ten
+percent, and every Limit sizing path retains floor-to-step semantics.
+
+The permanent authoritative position notional beneath swords is presented as whole USDT while the backend
+projection remains exact. The client maps insufficient sizing precision to
+`Сумма слишком мала для шага объёма`; other incomplete BUY and SELL outcomes are shown as `BUY отменено`
+and `SELL отменено` respectively.
+
+All existing opposite-side Market cap-to-confirmed-remainder, `reduceOnly`, no-flip-through-zero,
+protection, connectivity, trust, reconciliation, command identity and fail-closed semantics remain
+unchanged. This amendment records checkpoint
+`MARKET_AMOUNT_CLUSTER_IMPLEMENTED_VERIFIED`.

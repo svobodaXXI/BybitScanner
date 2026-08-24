@@ -14,6 +14,7 @@ from terminal.application.models import ReconciliationResult, TrustState
 from terminal.application.normalization import (
     NormalizationError,
     normalize_limit_price,
+    normalize_notional_market_quantity,
     normalize_quantity,
     normalize_working_volume_market_quantity,
     require_positive_decimal,
@@ -184,6 +185,15 @@ class PreTradeGuard:
                 and intent.order_kind is OrderKind.MARKET
             ):
                 raw_quantity, normalized_quantity = normalize_working_volume_market_quantity(
+                    requested_notional,
+                    reference_price,
+                    context.instrument.quantity_step,
+                )
+            elif (
+                isinstance(intent.volume, NotionalIntent)
+                and intent.order_kind is OrderKind.MARKET
+            ):
+                raw_quantity, normalized_quantity = normalize_notional_market_quantity(
                     requested_notional,
                     reference_price,
                     context.instrument.quantity_step,

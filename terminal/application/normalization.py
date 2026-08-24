@@ -12,7 +12,7 @@ class NormalizationError(ValueError):
 
 
 class WorkingVolumeOvershootError(NormalizationError):
-    """Raised when nearest-step Working Volume sizing exceeds its overshoot limit."""
+    """Raised when nearest-step Market sizing exceeds its overshoot limit."""
 
 
 def require_positive_decimal(value: Decimal, field_name: str) -> Decimal:
@@ -69,6 +69,25 @@ def normalize_working_volume_market_quantity(
             "nearest Working Volume quantity exceeds maximum rounding overshoot"
         )
     return raw_quantity, ceil_candidate
+
+
+def normalize_notional_market_quantity(
+    requested_notional: Decimal,
+    reference_price: Decimal,
+    qty_step: Decimal,
+) -> tuple[Decimal, Decimal]:
+    """Select the nearest Market step, allowing at most five percent overshoot."""
+    try:
+        return normalize_working_volume_market_quantity(
+            requested_notional,
+            reference_price,
+            qty_step,
+            max_overshoot_ratio=Decimal("0.05"),
+        )
+    except WorkingVolumeOvershootError as exc:
+        raise WorkingVolumeOvershootError(
+            "nearest notional quantity exceeds maximum rounding overshoot"
+        ) from exc
 
 
 def normalize_limit_price(price: Decimal, tick_size: Decimal, side: OrderSide) -> Decimal:
