@@ -150,6 +150,64 @@ def test_working_volume_and_notional_intents_are_decimal_exact() -> None:
     assert direct.raw_quantity == Decimal("123.45") / Decimal("20000")
 
 
+def test_working_volume_market_uses_nearest_step_with_bounded_overshoot() -> None:
+    request = admitted(
+        market(volume=WorkingVolumeIntent(Decimal("1"), Decimal("250")), price=Decimal("64250")),
+    )
+    assert request.requested_notional == Decimal("250")
+    assert request.raw_quantity == Decimal("250") / Decimal("64250")
+    assert request.normalized_quantity == Decimal("0.004")
+    assert request.final_quantity == Decimal("0.004")
+
+
+def test_working_volume_market_midpoint_tie_uses_floor() -> None:
+    request = admitted(
+        market(volume=WorkingVolumeIntent(Decimal("1"), Decimal("70")), price=Decimal("20000")),
+    )
+    assert request.raw_quantity == Decimal("0.0035")
+    assert request.normalized_quantity == Decimal("0.003")
+
+
+def test_working_volume_market_rejects_nearest_ceil_above_overshoot_limit() -> None:
+    decision = enabled_guard().evaluate(
+        market(volume=WorkingVolumeIntent(Decimal("1"), Decimal("12")), price=Decimal("20000")),
+        context(),
+    )
+    assert decision.reason_code is RejectionCode.INSUFFICIENT_SIZING_PRECISION
+    assert decision.reason == "nearest Working Volume quantity exceeds maximum rounding overshoot"
+    assert decision.request is None
+
+
+def test_notional_market_and_working_volume_limit_keep_floor_semantics() -> None:
+    notional_market = admitted(market(volume=NotionalIntent(Decimal("250")), price=Decimal("64250")))
+    working_volume_limit = admitted(PreTradeIntent(
+        symbol="BTCUSDT",
+        side=OrderSide.BUY,
+        order_kind=OrderKind.LIMIT,
+        volume=WorkingVolumeIntent(Decimal("1"), Decimal("250")),
+        sizing_reference_price=Decimal("1"),
+        requested_limit_price=Decimal("64250"),
+    ))
+    assert notional_market.normalized_quantity == Decimal("0.003")
+    assert working_volume_limit.normalized_quantity == Decimal("0.003")
+
+
+def test_opposite_working_volume_market_nearest_step_is_capped_at_flat() -> None:
+    ctx = context(position_side=PositionSide.LONG, confirmed_position_quantity=Decimal("0.003"))
+    request = admitted(
+        market(
+            OrderSide.SELL,
+            WorkingVolumeIntent(Decimal("1"), Decimal("250")),
+            price=Decimal("64250"),
+        ),
+        ctx,
+    )
+    assert request.normalized_quantity == Decimal("0.004")
+    assert request.final_quantity == Decimal("0.003")
+    assert request.classification is IntentClassification.CLOSE
+    assert request.capped_at_flat and request.reduce_only
+
+
 def test_float_volume_is_rejected_instead_of_entering_decimal_pipeline() -> None:
     decision = enabled_guard().evaluate(
         market(volume=NotionalIntent(100.0)),  # type: ignore[arg-type]

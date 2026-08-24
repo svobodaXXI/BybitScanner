@@ -15,7 +15,9 @@ from terminal.application.normalization import (
     NormalizationError,
     normalize_limit_price,
     normalize_quantity,
+    normalize_working_volume_market_quantity,
     require_positive_decimal,
+    WorkingVolumeOvershootError,
 )
 from terminal.domain.models import (
     Category,
@@ -59,6 +61,7 @@ class RejectionCode(str, Enum):
     INVALID_REFERENCE_PRICE = "invalid_reference_price"
     INVALID_LIMIT_PRICE = "invalid_limit_price"
     INSUFFICIENT_VOLUME = "insufficient_volume"
+    INSUFFICIENT_SIZING_PRECISION = "insufficient_sizing_precision"
     ABOVE_MAXIMUM_QUANTITY = "above_maximum_quantity"
     INVALID_SLIPPAGE = "invalid_slippage"
     UNTRUSTED_EXECUTION_STATE = "untrusted_execution_state"
@@ -176,11 +179,23 @@ class PreTradeGuard:
             return _blocked(RejectionCode.INVALID_INTENT, str(exc))
         try:
             reference_price, normalized_limit_price = _prices(intent, context.instrument)
-            raw_quantity, normalized_quantity = normalize_quantity(
-                requested_notional,
-                reference_price,
-                context.instrument.quantity_step,
-            )
+            if (
+                isinstance(intent.volume, WorkingVolumeIntent)
+                and intent.order_kind is OrderKind.MARKET
+            ):
+                raw_quantity, normalized_quantity = normalize_working_volume_market_quantity(
+                    requested_notional,
+                    reference_price,
+                    context.instrument.quantity_step,
+                )
+            else:
+                raw_quantity, normalized_quantity = normalize_quantity(
+                    requested_notional,
+                    reference_price,
+                    context.instrument.quantity_step,
+                )
+        except WorkingVolumeOvershootError as exc:
+            return _blocked(RejectionCode.INSUFFICIENT_SIZING_PRECISION, str(exc))
         except NormalizationError as exc:
             code = (
                 RejectionCode.INVALID_LIMIT_PRICE
