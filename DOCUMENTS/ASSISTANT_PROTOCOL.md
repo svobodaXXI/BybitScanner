@@ -2,11 +2,11 @@
 
 Версия:
 
-4.18
+4.19
 
 Дата:
 
-2026-08-24
+2026-08-25
 
 Document Type:
 
@@ -1089,6 +1089,35 @@ decision batch whenever they can be answered safely together.
 Codex must not interrupt implementation with serial micro-questions
 when the decision cluster and its consequences can be presented at once.
 
+### CODEX_DAILY_LIMIT_BUDGET_MODE
+
+Для текущего непрерывного цикла разработки целевой режим —
+не более одного–двух крупных Codex implementation slices в сутки.
+
+Между крупными slices выполняются только:
+
+* короткие исправления;
+* focused verification;
+* пользовательский checkpoint/commit/push workflow;
+* небольшие task-scoped уточнения.
+
+Если доступного task-scoped контекста уже достаточно, запрещено без
+конкретной причины запускать дополнительные research или recovery-проходы,
+повторять выполненные исследования, recovery либо успешные проверки.
+Full context recovery применяется только при реальной необходимости
+согласно root `AGENTS.md`.
+
+Совместимые задачи и связанные решения объединяются batching-правилами
+этого протокола, чтобы уменьшать число отдельных Codex проходов.
+Целевой горизонт режима — поддерживать примерно недельный непрерывный
+цикл разработки при текущих лимитах без снижения качества.
+
+Это правило управляет рабочим процессом и расходом лимитов. Оно никогда
+не ослабляет safety gates, fail-closed behavior, scoped verifier,
+contract checks, обязательный E2E или governance. При конфликте экономии
+лимита с корректностью или safety приоритет всегда имеют корректность,
+safety и обязательные проверки.
+
 Для каждой задачи Codex обязательным режимом по умолчанию
 является кратчайший минимально достаточный delta-prompt.
 Это не опциональная оптимизация: минимизация tokens и числа
@@ -1581,17 +1610,23 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.17
+ASSISTANT_PROTOCOL v4.18
 
 to:
 
-ASSISTANT_PROTOCOL v4.18
+ASSISTANT_PROTOCOL v4.19
 
 date:
 
-2026-08-24
+2026-08-25
 
 reason:
+
+* recorded `CODEX_DAILY_LIMIT_BUDGET_MODE` with a target of one–two large implementation slices per day and only short fixes, focused verification, checkpoint workflow and small task-scoped clarifications between them;
+* prohibited redundant research, recovery and verification when task-scoped context remains sufficient and reinforced task/decision batching for an approximately weekly continuous development horizon;
+* explicitly preserved correctness, safety gates, fail-closed behavior, verifier, contract checks, mandatory E2E and governance over limit economy.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.17 to v4.18:
 
 * added mandatory exact-path `tools.dev.verify` execution and PASS receipt rules;
 * added fail-closed, user-run-only `tools.dev.checkpoint` rules and prohibited automatic Codex invocation;
