@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.27",
+  "revision": "1.28",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Durably record the second approved mobile Trading Workspace UX clarification set without starting or authorizing another implementation slice.",
+  "objective": "Durably record the approved narrow WorkingVolumeIntent Market nearest-step sizing amendment without starting or authorizing its implementation.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -257,6 +257,7 @@
     ,"Insufficient normalized volume is a pre-submit business rejection REJECTED_INSUFFICIENT_VOLUME with user feedback Недостаточный объём; Terminal and future Robot never auto-increase exposure to satisfy exchange minima"
     ,"Limit and protection draft prices use authoritative tickSize normalization visible before confirmation; safe rounding direction remains order-specific design work"
     ,"Market WV is sizing intent rather than guaranteed fill size; actual engaged USDT and fractional WV display derive from confirmed executions and reconciled position state"
+    ,"Only WorkingVolumeIntent Market sizing uses nearest adjacent qtyStep with midpoint ties floored; a ceil candidate is allowed only when reference-notional overshoot is at most ten percent, otherwise admission fails closed for insufficient sizing precision, while NotionalIntent and all Limit sizing retain floor semantics"
     ,"One normalized market-data source should serve DOM, execution-print visualization and any active manual pre-trade liquidity use rather than creating duplicate order-book subscriptions"
     ,"Trustworthy sweep visualization requires sequenced L2 state immediately before executions, public trade evidence, resulting book state and explicit fallback when consumption cannot be proved"
   ],
@@ -339,10 +340,10 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED",
+  "current_checkpoint": "WORKING_VOLUME_MARKET_NEAREST_STEP_SIZING_AMENDMENT_RECORDED",
   "implementation_status": "FAST_DOM_RUNNABLE_CLIENT_AND_TELEGRAM_MINI_APP_PHONE_TEST_SLICES_IMPLEMENTED_VERIFIED",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "FURTHER_MOBILE_UX_CLARIFICATION_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED",
+  "next_phase_authorization": "WORKING_VOLUME_MARKET_NEAREST_STEP_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -360,7 +361,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "STAGE_8_MOBILE_UX_DOCUMENTATION_CHECKPOINT_2_RECORDED_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED"
+    "status": "WORKING_VOLUME_MARKET_NEAREST_STEP_SIZING_AMENDMENT_RECORDED_IMPLEMENTATION_NOT_STARTED_NOT_AUTHORIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -390,7 +391,8 @@
     {"revision": "1.24", "reason": "Explicit human authorization for only the smallest Telegram Mini App phone-test integration around the existing frontend: Telegram WebApp container adapter, mobile viewport/safe-area handling, local browser preservation, server-side Bot API menu-button configuration using existing Telegram ownership and a temporary development HTTPS tunnel workflow without frontend secrets, permanent hosting, redesign, trading, Robot or credential implementation", "date": "2026-08-22"},
     {"revision": "1.25", "reason": "Recorded the Telegram Mini App phone-test slice as implemented and verified: the same React/Vite Workspace initializes through a browser-safe Telegram adapter, applies content safe areas and stable viewport sizing, remains locally runnable, accepts temporary trycloudflare development hosts, and configures the existing bot private-chat menu through an HTTPS-only server-side helper using existing local credentials; focused frontend, Python, build, governance and startup-host checks passed, while installation and user launch of the temporary tunnel remain the next user-side steps", "date": "2026-08-22"},
     {"revision": "1.26", "reason": "Documentation-only checkpoint preserving approved mobile Trading Workspace UX clarifications for compact chart chrome/tools, aligned collapsible prints-plus-DOM geometry, position PnL placement, lower-panel layout and collapse, non-reversing Market taps, two-finger chart Limit placement, active Limit reveal/cancel and confirmed move rollback semantics, and reference-led color direction; overall mobile design remains incomplete and no implementation slice is started or authorized", "date": "2026-08-22"},
-    {"revision": "1.27", "reason": "Second documentation-only mobile UX checkpoint recording pending and full-position STOP/TAKE workflows, quantity and average-entry invariants, scanner-signal TAKE proposal suppression, no-position state, independent BUY/SELL volumes, permanent position-USDT and distinct hold details, two-row Limit inventory, actual live unrealized PnL indicator, average-entry line, order-line classes and the sampled graphite plus canonical #3BC639/#CD0000 palette; contradictory earlier mobile wording is superseded, design remains incomplete and no new implementation is started or authorized", "date": "2026-08-23"}
+    {"revision": "1.27", "reason": "Second documentation-only mobile UX checkpoint recording pending and full-position STOP/TAKE workflows, quantity and average-entry invariants, scanner-signal TAKE proposal suppression, no-position state, independent BUY/SELL volumes, permanent position-USDT and distinct hold details, two-row Limit inventory, actual live unrealized PnL indicator, average-entry line, order-line classes and the sampled graphite plus canonical #3BC639/#CD0000 palette; contradictory earlier mobile wording is superseded, design remains incomplete and no new implementation is started or authorized", "date": "2026-08-23"},
+    {"revision": "1.28", "reason": "Human-approved documentation-only amendment superseding the general Market floor-to-qtyStep contract only for WorkingVolumeIntent Market sizing: select the mathematically nearest adjacent qtyStep with midpoint ties floored, permit ceil only through a maximum ten-percent reference-notional overshoot gate, otherwise reject fail closed for insufficient sizing precision; NotionalIntent, all Limit sizing, coin-quantity execution, factual engaged-WV projection and existing safety stages remain unchanged, and implementation is not started or authorized", "date": "2026-08-24"}
   ]
 }
 ```
@@ -2609,3 +2611,71 @@ All unrelated desktop mappings, backend/execution authority, protection cleanup,
 identity and fail-closed safety contracts remain unchanged. The mobile design is still not finished and more
 clarification will follow. This amendment records
 `STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED`; it authorizes no implementation.
+
+## 37. Working Volume Market nearest-step sizing amendment
+
+Revision 1.28 is a human-approved documentation-only sizing amendment. It supersedes the revision 1.13
+general Market floor-to-`qtyStep` direction only when the volume source is `WorkingVolumeIntent` and the
+order kind is Market. It does not start or authorize implementation.
+
+After authoritative WV-to-USDT sizing, Working Volume Market raw base-asset quantity is compared against
+its adjacent floor and ceil `qtyStep` candidates. The candidate with the smaller absolute quantity error,
+equivalently the smaller absolute reference-notional error at the same sizing reference price, is selected.
+An exact midpoint or other exact tie selects floor.
+
+A nearest ceil candidate is admissible only when its reference-notional overshoot relative to the target
+Working Volume notional satisfies:
+
+```text
+overshoot_ratio =
+    (candidate_reference_notional - target_wv_notional)
+    / target_wv_notional
+
+overshoot_ratio <= 0.10
+```
+
+If nearest selection requires ceil and `overshoot_ratio > 0.10`, admission fails closed with an explicit
+insufficient-sizing-precision / excessive-WV-rounding-overshoot rejection. It must not silently fall back to
+a materially undersized floor candidate and present that quantity as the requested Working Volume. If floor
+is the nearest candidate, floor remains admissible subject to all later checks.
+
+`NotionalIntent` retains its existing floor-to-`qtyStep` safety contract. Every Limit order, including a
+Limit sourced from `WorkingVolumeIntent`, also retains floor-to-`qtyStep` normalization without increasing
+requested exposure.
+
+After quantity selection, all existing safety stages remain binding and unchanged: authoritative instrument
+metadata; minimum and maximum quantity; minimum notional; opposite-side Market reduce/close-first
+classification; cap to actual confirmed remaining position quantity; `reduceOnly`; no flip-through-zero;
+connectivity, trust and reconciliation gates; durable command identity; persistence-before-submit;
+idempotency; deduplicated execution evidence; and fail-closed uncertain-outcome handling.
+
+Execution remains base-asset coin-quantity based. Partial and full close use factual remaining coin quantity,
+never a recalculation from original WV notional. Engaged WV remains derived from the authoritative factual
+position projection and current one-WV context, not from an assumption that a requested `1 WV` was executed
+exactly.
+
+Acceptance example:
+
+```text
+PAPER equity                 = 5000 USDT
+1 WV                         = 250 USDT
+BTCUSDT sizing reference     = 64250 USDT/BTC
+qtyStep                      = 0.001 BTC
+raw quantity                 ≈ 0.00389105 BTC
+floor candidate              = 0.003 BTC
+floor reference notional     = 192.75 USDT
+ceil candidate               = 0.004 BTC
+ceil reference notional      = 257.00 USDT
+ceil overshoot               = (257.00 - 250.00) / 250.00 = 0.028 = 2.8%
+decision                     = 0.004 BTC because 2.8% <= 10%
+```
+
+For a tiny-WV case where the nearest executable ceil candidate exceeds the target reference notional by
+more than ten percent, the request is rejected fail closed. It is not converted into a substantially
+different exposure and does not fall back to a materially undersized floor candidate as if full WV sizing
+precision had been achieved.
+
+This narrow amendment records checkpoint
+`WORKING_VOLUME_MARKET_NEAREST_STEP_SIZING_AMENDMENT_RECORDED`. Historical revision 1.13 remains evidence
+of the former general Market floor contract. No runtime, application, frontend or test implementation is
+started or authorized by this checkpoint.
