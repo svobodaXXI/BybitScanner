@@ -2,7 +2,7 @@
 
 Версия:
 
-4.13
+4.14
 
 Дата:
 
@@ -1082,11 +1082,19 @@ CHANGED
 TESTS
 DIFF_CHECK
 BLOCKERS
-COMMIT
 ```
 
 Длинные логи не включаются без необходимости
 для диагностики.
+
+Git write policy:
+
+Codex по умолчанию не выполняет stage,
+commit или push. Эти операции выполняются
+пользователем через PowerShell.
+
+Codex выполняет Git-write только по явному
+разрешению пользователя в конкретной задаче.
 
 Fail-closed и governance не ослабляются ради
 экономии. Повторные проверки разрешены, когда:
@@ -1443,17 +1451,22 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.12
+ASSISTANT_PROTOCOL v4.13
 
 to:
 
-ASSISTANT_PROTOCOL v4.13
+ASSISTANT_PROTOCOL v4.14
 
 date:
 
 2026-08-24
 
 reason:
+
+* extended `CODEX_BUDGET_PROTOCOL` with a default-off Git write policy: Codex does not stage, commit or push unless the user explicitly authorizes Git-write in the specific task;
+* assigned ordinary Git-write operations to user-run PowerShell and aligned the compact default response shape to `STATUS / CHANGED / TESTS / DIFF_CHECK / BLOCKERS`.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.12 to v4.13:
 
 * added `CODEX_BUDGET_PROTOCOL` under `CODEX_TOKEN_EFFICIENCY_RULE`, routing committed-code analysis to ChatGPT/GitHub when local and remote state match and reserving Codex primarily for local mutations, validation, runtime and Git;
 * established task-delta prompts, GREEN/YELLOW/RED execution modes, scoped status/diff output, non-repeated successful checks and compact default Codex reporting;
