@@ -9,6 +9,33 @@ from typing import Sequence
 from .workflow import Git, compact, fingerprints, read_receipt, repository_root, require_ok
 
 
+def _completed_checkpoint(
+    git: Git, receipt: dict, message: str, files: list[str], current_head: str
+) -> bool:
+    """Recognize only the exact, already-pushed commit described by a receipt."""
+    parent = require_ok(git.run("rev-parse", f"{current_head}^"), "commit parent discovery")
+    if parent != receipt["head"]:
+        return False
+    committed_message = require_ok(
+        git.run("show", "-s", "--format=%B", current_head), "commit message discovery"
+    )
+    if committed_message != message.strip():
+        return False
+    committed_raw = require_ok(
+        git.run("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", current_head),
+        "committed-file discovery",
+    )
+    committed_files = {item for item in committed_raw.split("\0") if item}
+    if committed_files != set(files):
+        return False
+    remote = require_ok(
+        git.run("ls-remote", "origin", f"refs/heads/{receipt['branch']}"),
+        "remote SHA verification",
+    )
+    remote_sha = remote.split()[0] if remote else ""
+    return remote_sha == current_head
+
+
 def checkpoint(message: str, *, git: Git | None = None) -> tuple[bool, str]:
     probe = git or Git(Path.cwd())
     checks: list[str] = []
@@ -26,6 +53,12 @@ def checkpoint(message: str, *, git: Git | None = None) -> tuple[bool, str]:
         if branch != receipt["branch"]:
             raise RuntimeError("verification receipt is stale: branch changed")
         if head != receipt["head"]:
+            if (
+                fingerprints(root, files) == receipt["fingerprints"]
+                and _completed_checkpoint(active_git, receipt, message, files, head)
+            ):
+                checks.extend(("completed-commit", "remote-sha"))
+                return True, compact("PASS", scope, checks, (), ())
             raise RuntimeError("verification receipt is stale: HEAD changed")
         if fingerprints(root, files) != receipt["fingerprints"]:
             raise RuntimeError("verification receipt is stale: task-file content changed")
