@@ -2,7 +2,7 @@
 
 Версия:
 
-4.16
+4.17
 
 Дата:
 
@@ -170,6 +170,20 @@ action instruction, если пользователь должен выполн�
 Пояснения остаются вне блока. Внутри запрещены комментарии, кавычки, bullets и prefixes,
 если они не являются намеренной частью payload. Необходимая многострочная payload
 сохраняется точно; обычный пояснительный текст отдельного блока не требует.
+
+EXACT_USER_RESPONSE_COPY_READY_RULE:
+
+Если ассистент запрашивает от пользователя точный ответ, любой требуемый
+текст, включая короткие слова и обозначения наподобие `готово`, `A`, `да` или
+`разрешаю`, обязан быть введён формулировкой:
+
+```text
+Сейчас сделай:
+```
+
+Сразу после неё точный ответ должен быть помещён в отдельный copy-ready code block.
+Запрещено запрашивать точный текст ответа только в prose, без этой формулировки
+и copy-ready block.
 
 DEPENDENT_COMMAND_SEQUENCE_RULE:
 
@@ -1046,6 +1060,26 @@ project history, known requirements, prior successful
 checks or established context unless repetition is needed
 for correctness, safety, governance or ambiguity resolution.
 
+### CODEX_TASK_BATCHING_RULE
+
+This rule is mandatory.
+
+Approved compatible micro-tasks must be batched
+into one practically minimally sufficient Codex prompt
+when they can be safely implemented and verified together.
+
+Codex must not be invoked after every micro-decision while
+a related decision cluster is still being resolved.
+
+The combined prompt must remain minimal and delta-only.
+
+Micro-tasks must be split only when scope, risk,
+approval or checkpoint requirements, validation needs,
+safety or governance make combined execution inappropriate.
+
+When splitting is necessary, the reason must be explained
+before the prompts are sent.
+
 Для каждой задачи Codex обязательным режимом по умолчанию
 является кратчайший минимально достаточный delta-prompt.
 Это не опциональная оптимизация: минимизация tokens и числа
@@ -1516,17 +1550,24 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.15
+ASSISTANT_PROTOCOL v4.16
 
 to:
 
-ASSISTANT_PROTOCOL v4.16
+ASSISTANT_PROTOCOL v4.17
 
 date:
 
 2026-08-24
 
 reason:
+
+* added mandatory `CODEX_TASK_BATCHING_RULE` requiring approved compatible micro-tasks to be combined into one practically minimally sufficient delta-only Codex prompt when safe implementation and verification can be performed together;
+* prohibited invoking Codex after every micro-decision while a related decision cluster remains unresolved;
+* permitted splitting only for scope, risk, approval/checkpoint, validation, safety or governance reasons, with the reason explained before the prompts are sent;
+* added mandatory `EXACT_USER_RESPONSE_COPY_READY_RULE`, requiring every requested exact user reply, including short replies such as `готово`, `A`, `да` and `разрешаю`, to use `Сейчас сделай:` followed by a copy-ready block and prohibiting exact-text requests only in prose.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.15 to v4.16:
 
 * added mandatory `PRACTICALLY_MINIMALLY_SUFFICIENT_PROMPT_RULE` requiring Codex prompts by default to contain only the task, required files, critical constraints, necessary checks and compact return format;
 * prohibited repeating ChangeRequest content, project history, known requirements, prior successful checks or established context unless needed for correctness, safety, governance or ambiguity resolution;
