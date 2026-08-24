@@ -2,7 +2,7 @@
 
 Версия:
 
-4.12
+4.13
 
 Дата:
 
@@ -1026,6 +1026,80 @@ notepad путь\к\файлу
 минимизировать расход Codex tokens/limits
 без снижения надёжности и governance.
 
+### CODEX_BUDGET_PROTOCOL
+
+Если local `HEAD == origin/main`,
+ChatGPT выполняет read-only анализ committed-кода
+через GitHub. Codex не используется для такого
+анализа без необходимости local state.
+
+Codex используется преимущественно для:
+
+* current local checkout;
+* изменения файлов;
+* локальных tests, build и runtime;
+* операций Git.
+
+Codex получает только task delta.
+Запрещено повторять уже известную историю проекта,
+прочитанные документы, установленные архитектурные
+факты и safety contracts. Вместо повторения
+используется ссылка на authoritative ChangeRequest
+или checkpoint.
+
+Режим задачи определяется так:
+
+* `GREEN` — низкий риск: docs, UI, tests или очевидный scoped patch;
+  inspect, edit, test, commit и push допускаются одним Codex-вызовом;
+* `YELLOW` — execution, risk или core при уже утверждённом решении;
+  implementation и tests выполняются вместе, затем действует один approval barrier перед commit;
+* `RED` — неизвестная product/risk semantics или архитектурное противоречие;
+  сначала выполняется read-only analysis, а после решения — отдельная implementation task.
+
+Для известного dirty tree не выводится полный
+`git status`. Используются scoped status и diff
+только для файлов текущей задачи.
+
+Полный unified diff по умолчанию не выводится.
+Он запрашивается только когда review действительно
+требует конкретные hunks.
+
+Tests и checks не повторяются, если после их
+успешного выполнения соответствующий код не менялся.
+После staging достаточно проверить exact staged
+file list и cached diff-check, когда это требуется.
+
+Если прочитанный код соответствует ожидаемой
+архитектуре, он не пересказывается. Достаточно
+краткого подтверждения; подробности приводятся
+только при contradiction или blocker.
+
+По умолчанию ответ Codex компактен и использует:
+
+```text
+STATUS
+CHANGED
+TESTS
+DIFF_CHECK
+BLOCKERS
+COMMIT
+```
+
+Длинные логи не включаются без необходимости
+для диагностики.
+
+Fail-closed и governance не ослабляются ради
+экономии. Повторные проверки разрешены, когда:
+
+* состояние реально могло измениться;
+* существует safety uncertainty;
+* действует обязательный protocol checkpoint.
+
+Цель:
+
+минимальный расход Codex limits/tokens
+при сохранении той же инженерной надёжности.
+
 ---
 # 26. EFFICIENCY_OPTIMIZATION_PROTOCOL
 
@@ -1369,17 +1443,23 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.11
+ASSISTANT_PROTOCOL v4.12
 
 to:
 
-ASSISTANT_PROTOCOL v4.12
+ASSISTANT_PROTOCOL v4.13
 
 date:
 
 2026-08-24
 
 reason:
+
+* added `CODEX_BUDGET_PROTOCOL` under `CODEX_TOKEN_EFFICIENCY_RULE`, routing committed-code analysis to ChatGPT/GitHub when local and remote state match and reserving Codex primarily for local mutations, validation, runtime and Git;
+* established task-delta prompts, GREEN/YELLOW/RED execution modes, scoped status/diff output, non-repeated successful checks and compact default Codex reporting;
+* preserved fail-closed and governance checks whenever state changed, safety is uncertain or a mandatory checkpoint applies.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.11 to v4.12:
 
 * added `CODEX_TOKEN_EFFICIENCY_RULE`, requiring Codex prompts to reuse reliable continuous-session context and contain only the new task, necessary constraints and unknown data;
 * limited repeated reads, research, checks and commands to changed-state, safety/fail-closed or mandatory Assistant Protocol checkpoint cases;
