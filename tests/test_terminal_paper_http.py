@@ -24,7 +24,7 @@ def test_market_post_completes_with_one_durable_execution():
                         "client_action_id": "http-market-buy-1",
                         "symbol": "BTCUSDT",
                         "side": "Buy",
-                        "volume": {"unit": "usdt", "amount": "100"},
+                        "volume": {"unit": "usdt", "amount": "321"},
                         "sizing_reference_price": "64250",
                         "slippage_type": "Percent",
                         "slippage_value": "0.5",
@@ -78,3 +78,16 @@ def test_health_get_returns_exact_paper_status():
         finally:
             server.server_close()
             runtime.close()
+
+
+import unittest
+
+
+def load_tests(loader, tests, pattern):
+    return unittest.TestSuite(
+        unittest.FunctionTestCase(test)
+        for test in (
+            test_market_post_completes_with_one_durable_execution,
+            test_health_get_returns_exact_paper_status,
+        )
+    )

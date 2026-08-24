@@ -13,6 +13,7 @@ from terminal.api.models import (
     ClientActionId,
     CommandResult,
     CommandResultStatus,
+    FullCloseCommandRequest,
     MarketCommandRequest,
     VolumeRequest,
     VolumeUnit,
@@ -34,6 +35,7 @@ MARKET_FIELDS = {
     "slippage_value",
 }
 VOLUME_FIELDS = {"unit", "amount"}
+FULL_CLOSE_FIELDS = {"client_action_id", "symbol"}
 
 
 class PaperHttpHandler(BaseHTTPRequestHandler):
@@ -93,6 +95,18 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        if self.path == "/api/full-close":
+            try:
+                payload = self._payload(FULL_CLOSE_FIELDS)
+                request = FullCloseCommandRequest(
+                    ClientActionId(payload["client_action_id"]), payload["symbol"]
+                )
+            except Exception:
+                self._json_response(400, to_primitive(_validation_error()))
+                return
+            self._json_response(200, to_primitive(self.server.runtime.api.full_close(request)))
+            return
+
         if self.path != "/api/market":
             self._json_response(404, {"ok": False, "error": "not_found"})
             return
@@ -107,15 +121,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         self._json_response(200, to_primitive(result))
 
     def _market_request(self) -> MarketCommandRequest:
-        content_length = int(self.headers.get("Content-Length", ""))
-        if content_length <= 0:
-            raise ValueError("request body is required")
-        payload = json.loads(
-            self.rfile.read(content_length).decode("utf-8"),
-            parse_float=Decimal,
-        )
-        if not isinstance(payload, dict) or set(payload) != MARKET_FIELDS:
-            raise ValueError("invalid market request fields")
+        payload = self._payload(MARKET_FIELDS)
         volume = payload["volume"]
         if not isinstance(volume, dict) or set(volume) != VOLUME_FIELDS:
             raise ValueError("invalid volume fields")
@@ -128,6 +134,18 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             payload["slippage_type"],
             _decimal(payload["slippage_value"]),
         )
+
+    def _payload(self, fields: set[str]) -> dict:
+        content_length = int(self.headers.get("Content-Length", ""))
+        if content_length <= 0:
+            raise ValueError("request body is required")
+        payload = json.loads(
+            self.rfile.read(content_length).decode("utf-8"),
+            parse_float=Decimal,
+        )
+        if not isinstance(payload, dict) or set(payload) != fields:
+            raise ValueError("invalid request fields")
+        return payload
 
     def _json_response(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")

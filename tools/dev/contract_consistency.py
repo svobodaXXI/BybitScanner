@@ -12,7 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Sequence
 
-from terminal.api.models import CommandResult, MarketCommandRequest, VolumeRequest, VolumeUnit
+from terminal.api.models import CommandResult, FullCloseCommandRequest, MarketCommandRequest, VolumeRequest, VolumeUnit
 from terminal.application.pretrade_guard import RejectionCode, SlippageToleranceType
 from terminal.domain.models import OrderSide, PositionSide
 from terminal.runtime import paper_runtime
@@ -76,6 +76,8 @@ def check_source(source: str) -> tuple[bool, str]:
     try:
         compare("market-request-fields", _type_fields(source, "MarketCommandRequest"),
                 {field.name for field in fields(MarketCommandRequest)}, exact=True)
+        compare("full-close-request-fields", _type_fields(source, "FullCloseCommandRequest"),
+                {field.name for field in fields(FullCloseCommandRequest)}, exact=True)
         compare("volume-request-fields", _type_fields(source, "VolumeRequest"),
                 {field.name for field in fields(VolumeRequest)}, exact=True)
         compare("command-result-fields", _type_fields(source, "CommandResult"),

@@ -9,6 +9,7 @@ type PaperState = {
   position_quantity: string;
   engaged_notional_usdt: string;
   one_wv_usdt: string;
+  engaged_wv: string;
 };
 
 async function paperState(request: APIRequestContext) {
@@ -48,13 +49,21 @@ test("real PAPER workspace preserves edits and enforces authoritative no-flip be
     page.getByText(`${displayedNotional} USDT`, { exact: true }),
   ).toBeVisible();
 
-  await page.getByLabel("SELL amount").fill("1000000");
-  await page.getByRole("button", { name: "SELL", exact: true }).click();
-  await expect(page.getByText("PAPER SELL completed")).toBeVisible();
+  await page.getByRole("button", { name: "Закрыть позицию" }).click();
+  await expect(page.getByText("PAPER позиция закрыта")).toBeVisible();
   const flatState = await paperState(request);
   expect(flatState.position_side).toBe("Flat");
   expect(Number(flatState.position_quantity)).toBe(0);
+  expect(Number(flatState.engaged_notional_usdt)).toBe(0);
+  expect(Number(flatState.engaged_wv)).toBe(0);
   await expect(page.getByText("0 USDT", { exact: true })).toBeVisible();
+  await expect(page.getByText("⚔️ 0.0", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Закрыть позицию" }).click();
+  await expect(page.getByText("PAPER позиция закрыта")).toBeVisible();
+  const repeatedFlatState = await paperState(request);
+  expect(repeatedFlatState.position_side).toBe("Flat");
+  expect(Number(repeatedFlatState.position_quantity)).toBe(0);
 
   await page.getByLabel("BUY amount").fill("40");
   await page.getByRole("button", { name: "BUY", exact: true }).click();

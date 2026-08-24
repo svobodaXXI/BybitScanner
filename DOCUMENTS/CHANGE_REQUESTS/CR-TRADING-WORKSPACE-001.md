@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.33",
+  "revision": "1.34",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Implement and verify Workflow Acceleration Package 4 contract/consistency automation.",
+  "objective": "Implement and verify PAPER Full Close / Close-to-FLAT.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -33,6 +33,7 @@
     ,"Implement the approved NotionalIntent Market nearest-step policy with a five-percent ceil-overshoot ceiling, whole-USDT position display and localized failure messages"
     ,"Implement an isolated one-command Playwright E2E harness over the real PAPER backend and frontend with temporary runtime persistence and authoritative backend-state assertions"
     ,"Implement deterministic fail-closed frontend/backend Trading Workspace contract consistency checks with selective tools.dev.verify routing"
+    ,"Implement the human-authorized PAPER Full Close action using authoritative remaining coin quantity, safe FLAT no-op behavior and authoritative frontend exposure refresh"
   ],
   "prohibited_scope": [
     "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
@@ -400,7 +401,8 @@
     {"revision": "1.29", "reason": "Documentation-only checkpoint recording observed PAPER runtime PASS evidence for implemented WorkingVolumeIntent Market nearest-step sizing, reduce-first behavior, cap-to-remainder, no flip-through-zero and authoritative PAPER-state Working Volume refresh while preserving existing lifecycle and safety semantics and authorizing no further implementation", "date": "2026-08-24"},
     {"revision": "1.30", "reason": "Human-authorized Stage 8 implementation checkpoint adding independent numeric BUY and SELL USDT-notional amounts initialized from authoritative one_wv_usdt, validation against empty or non-positive submission, edit-preserving PAPER refresh and permanent authoritative engaged_notional_usdt display beneath swords while preserving existing execution safety semantics", "date": "2026-08-24"},
     {"revision": "1.32", "reason": "Human-authorized Workflow Acceleration Package 2 checkpoint implementing an isolated one-command Playwright PAPER E2E harness over the real loopback backend and frontend, temporary SQLite runtime data, backend readiness, authoritative state assertions and unconditional teardown without changing trading semantics", "date": "2026-08-24"},
-    {"revision": "1.33", "reason": "Human-authorized Workflow Acceleration Package 4 checkpoint deriving deterministic frontend/backend contract checks from existing Python models, enums and PAPER projections plus a checked frontend contract module, intentional mismatch fixtures and selective tools.dev.verify routing without changing trading semantics", "date": "2026-08-24"}
+    {"revision": "1.33", "reason": "Human-authorized Workflow Acceleration Package 4 checkpoint deriving deterministic frontend/backend contract checks from existing Python models, enums and PAPER projections plus a checked frontend contract module, intentional mismatch fixtures and selective tools.dev.verify routing without changing trading semantics", "date": "2026-08-24"},
+    {"revision": "1.34", "reason": "Human-authorized bounded PAPER Full Close implementation using backend-authoritative remaining coin quantity, opposite-side reduce-only execution, safe already-FLAT no-op, no flip-through-zero, checked frontend/backend request contract, authoritative exposure refresh and real PAPER E2E coverage", "date": "2026-08-25"}
   ]
 }
 ```
@@ -2800,3 +2802,22 @@ Terminal API, relevant execution-contract backend paths, the checked frontend co
 checker and its tests are in scope. Trading authority, PAPER-only execution, reconciliation, no-flip,
 durable identity and all prior safety semantics are unchanged. This amendment records checkpoint
 `WORKFLOW_ACCELERATION_PACKAGE_4_CONTRACT_CONSISTENCY_IMPLEMENTED_VERIFIED`.
+
+## 43. PAPER Full Close / Close-to-FLAT implementation checkpoint
+
+Revision 1.34 records the human-authorized bounded Full Close slice. TERMINAL now exposes
+`Закрыть позицию` through a dedicated checked request contract containing only client action identity and
+symbol. The backend rereads authoritative PAPER position state: LONG closes with SELL and SHORT closes with
+BUY for exactly the factual remaining base-asset quantity. The request is reduce-only and cannot become an
+entry, scale-in or flip-through-zero operation.
+
+Already-FLAT state completes as an idempotent no-op without creating an order or execution. A successful
+close refreshes authoritative PAPER state and the frontend engaged Working Volume and position notional;
+the canonical FLAT projection is zero quantity, `0.0` engaged WV and `0` USDT engaged notional. Focused
+runtime tests cover LONG, SHORT, no flip and repeated FLAT close, while the isolated real PAPER E2E covers
+open position, Full Close, backend FLAT and frontend zero-exposure refresh.
+
+PAPER-only execution, persistence-before-submit, unique command identity, exactly-once execution evidence,
+fail-closed admission and reconciliation locks remain unchanged. DOM, L2, chart trading, Limit, SL/TP,
+AUTOPILOT/Robot and live Bybit execution remain outside this slice. This amendment records checkpoint
+`PAPER_FULL_CLOSE_TO_FLAT_IMPLEMENTED_VERIFIED`.

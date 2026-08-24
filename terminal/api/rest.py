@@ -8,10 +8,11 @@ from typing import Protocol
 
 from terminal.api.models import (
     AmendCommandRequest, CancelCommandRequest, CommandResult, CommandResultStatus,
-    LimitCommandRequest, MarketCommandRequest, ProtectionCommandRequest, VolumeUnit,
+    FullCloseCommandRequest, LimitCommandRequest, MarketCommandRequest,
+    ProtectionCommandRequest, VolumeUnit,
 )
 from terminal.application.pretrade_guard import (
-    NotionalIntent, OrderKind, PreTradeContext, PreTradeIntent, SlippageMetadata,
+    ExactQuantityIntent, NotionalIntent, OrderKind, PreTradeContext, PreTradeIntent, SlippageMetadata,
     SlippageToleranceType, WorkingVolumeIntent,
 )
 from terminal.application.protection import ManualProtectionIntent
@@ -49,6 +50,26 @@ class TerminalCommandApi:
 
     def market(self, request: MarketCommandRequest) -> CommandResult:
         return self._submit(request, OrderKind.MARKET)
+
+    def full_close(self, request: FullCloseCommandRequest) -> CommandResult:
+        action_id = request.client_action_id.value
+        try:
+            symbol = _symbol(request.symbol)
+            context = self._context.context_for(symbol)
+            pretrade = context.pretrade
+            if pretrade.position_side.value == "Flat" and pretrade.confirmed_position_quantity == 0:
+                return _result(action_id, CommandResultStatus.COMPLETED, "already_flat",
+                               "position is already flat")
+            side = OrderSide.SELL if pretrade.position_side.value == "Long" else OrderSide.BUY
+            intent = PreTradeIntent(
+                symbol, side, OrderKind.MARKET,
+                ExactQuantityIntent(pretrade.confirmed_position_quantity),
+                _close_reference_price(context), None,
+                SlippageMetadata(SlippageToleranceType.PERCENT, Decimal("0.5")),
+            )
+            return _application_result(action_id, self._application.submit(intent, pretrade))
+        except Exception as exc:
+            return _safe_error(action_id, exc)
 
     def limit(self, request: LimitCommandRequest) -> CommandResult:
         return self._submit(request, OrderKind.LIMIT)
@@ -192,4 +213,12 @@ def _symbol(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("symbol is required")
     return value.strip().upper()
+
+
+def _close_reference_price(context: ServerCommandContext) -> Decimal:
+    value = context.position.mark_price or context.position.average_entry
+    if value is None or value <= 0:
+        # PAPER development book is authoritative for execution; this reference is sizing-only.
+        return Decimal("64250")
+    return value
 

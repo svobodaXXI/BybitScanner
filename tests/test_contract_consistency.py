@@ -43,6 +43,15 @@ class ContractConsistencyTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("market-request-fields", output)
 
+    def test_full_close_request_shape_drift_fails_closed(self) -> None:
+        changed = SOURCE.replace(
+            "export type FullCloseCommandRequest = {\n  client_action_id: string;",
+            "export type FullCloseCommandRequest = {\n  action_id: string;",
+        )
+        passed, output = check_source(changed)
+        self.assertFalse(passed)
+        self.assertIn("full-close-request-fields", output)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,11 @@ export type MarketCommandRequest = {
   slippage_value: string;
 };
 
+export type FullCloseCommandRequest = {
+  client_action_id: string;
+  symbol: string;
+};
+
 export type CommandResult = {
   client_action_id: string;
   status: string;

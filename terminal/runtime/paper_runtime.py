@@ -145,6 +145,12 @@ class PaperRuntime:
             if projection is not None
             else Decimal("0")
         )
+        position_quantity = (
+            projection.quantity.value if projection is not None else Decimal("0")
+        )
+        if position_quantity == 0:
+            position_quantity = Decimal("0")
+            engaged_notional = Decimal("0")
 
         return {
             "account_id": account.trading_account_id.value,
@@ -156,12 +162,12 @@ class PaperRuntime:
                 projection.side.value if projection is not None else "Flat"
             ),
             "position_quantity": (
-                str(projection.quantity.value)
-                if projection is not None
-                else "0"
+                str(position_quantity)
             ),
             "engaged_notional_usdt": str(engaged_notional),
-            "engaged_wv": str(engaged_notional / one_wv),
+            "engaged_wv": (
+                "0.0" if engaged_notional == 0 else str(engaged_notional / one_wv)
+            ),
         }
 
     def close(self) -> None:

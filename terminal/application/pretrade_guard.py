@@ -82,6 +82,13 @@ class NotionalIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class ExactQuantityIntent:
+    """Authoritative reduce-only quantity; never accepted as an entry intent."""
+
+    quantity: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class SlippageMetadata:
     tolerance_type: SlippageToleranceType
     value: Decimal
@@ -97,7 +104,7 @@ class PreTradeIntent:
     symbol: str
     side: OrderSide
     order_kind: OrderKind
-    volume: WorkingVolumeIntent | NotionalIntent
+    volume: WorkingVolumeIntent | NotionalIntent | ExactQuantityIntent
     sizing_reference_price: Decimal
     requested_limit_price: Decimal | None = None
     slippage: SlippageMetadata | None = None
@@ -175,12 +182,21 @@ class PreTradeGuard:
             return _blocked(RejectionCode.OFFLINE, "offline state cannot admit exchange mutation")
 
         try:
-            requested_notional = _requested_notional(intent.volume)
+            requested_notional = _requested_notional(intent.volume, intent.sizing_reference_price)
         except NormalizationError as exc:
             return _blocked(RejectionCode.INVALID_INTENT, str(exc))
         try:
             reference_price, normalized_limit_price = _prices(intent, context.instrument)
-            if (
+            if isinstance(intent.volume, ExactQuantityIntent):
+                raw_quantity = require_positive_decimal(intent.volume.quantity, "exact quantity")
+                normalized_quantity = normalize_quantity(
+                    raw_quantity * reference_price,
+                    reference_price,
+                    context.instrument.quantity_step,
+                )[1]
+                if normalized_quantity != raw_quantity:
+                    raise NormalizationError("exact quantity is not aligned to quantity step")
+            elif (
                 isinstance(intent.volume, WorkingVolumeIntent)
                 and intent.order_kind is OrderKind.MARKET
             ):
@@ -264,13 +280,21 @@ class PreTradeGuard:
         )
 
 
-def _requested_notional(volume: WorkingVolumeIntent | NotionalIntent) -> Decimal:
+def _requested_notional(
+    volume: WorkingVolumeIntent | NotionalIntent | ExactQuantityIntent,
+    reference_price: Decimal,
+) -> Decimal:
     if isinstance(volume, WorkingVolumeIntent):
         count = require_positive_decimal(volume.wv_count, "WV count")
         one_wv = require_positive_decimal(volume.configured_one_wv_usdt, "configured one WV")
         return count * one_wv
     if isinstance(volume, NotionalIntent):
         return require_positive_decimal(volume.usdt_amount, "notional")
+    if isinstance(volume, ExactQuantityIntent):
+        return (
+            require_positive_decimal(volume.quantity, "exact quantity")
+            * require_positive_decimal(reference_price, "market sizing reference")
+        )
     raise NormalizationError("unsupported volume intent")
 
 
@@ -341,8 +365,12 @@ def _classify_and_cap(intent, context, normalized_quantity):
         side is PositionSide.SHORT and intent.side is OrderSide.SELL
     )
     if side is PositionSide.FLAT:
+        if isinstance(intent.volume, ExactQuantityIntent):
+            return IntentClassification.CLOSE, Decimal("0"), True, True
         return IntentClassification.ENTRY, normalized_quantity, False, False
     if same_direction:
+        if isinstance(intent.volume, ExactQuantityIntent):
+            return IntentClassification.CLOSE, Decimal("0"), True, True
         return IntentClassification.SCALE_IN, normalized_quantity, False, False
     if intent.order_kind is OrderKind.MARKET:
         final = min(normalized_quantity, quantity)

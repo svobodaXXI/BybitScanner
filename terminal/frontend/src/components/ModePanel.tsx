@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type CommandResult,
+  type FullCloseCommandRequest,
   HANDLED_REASON_CODES,
   type MarketCommandRequest,
   type MarketSide,
@@ -125,6 +126,33 @@ export function ModePanel({
     }
   };
 
+  const submitFullClose = async () => {
+    if (submissionInFlight.current) return;
+    submissionInFlight.current = true;
+    setIsSubmitting(true);
+    try {
+      const request: FullCloseCommandRequest = {
+        client_action_id: `paper-full-close-${Date.now()}`,
+        symbol: "BTCUSDT",
+      };
+      const response = await fetch("/api/full-close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      const result = (await response.json()) as CommandResult;
+      setExecutionStatus(
+        result.status === "completed" ? "PAPER позиция закрыта" : "Закрытие отменено",
+      );
+      if (result.status === "completed") await refreshPaperState();
+    } catch {
+      setExecutionStatus("Закрытие отменено");
+    } finally {
+      submissionInFlight.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <section className="mode-panel" aria-label={`${mode} controls`}>
       <div>
@@ -172,6 +200,10 @@ export function ModePanel({
               value={buyAmount}
             />
           </div>
+
+          <button disabled={isSubmitting} onClick={submitFullClose} type="button">
+            Закрыть позицию
+          </button>
 
           <div className="paper-market-side">
             <button

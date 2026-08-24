@@ -109,6 +109,12 @@ class MarketCommandRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class FullCloseCommandRequest:
+    client_action_id: ClientActionId
+    symbol: str
+
+
+@dataclass(frozen=True, slots=True)
 class LimitCommandRequest:
     client_action_id: ClientActionId
     symbol: str

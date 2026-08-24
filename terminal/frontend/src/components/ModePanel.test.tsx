@@ -128,4 +128,40 @@ describe("ModePanel PAPER Market amounts", () => {
 
     expect(await screen.findByText(`${side} отменено`)).toBeInTheDocument();
   });
+
+  it("submits backend-authoritative Full Close and refreshes zero exposure", async () => {
+    let stateReads = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url.startsWith("/api/paper-state")) {
+        stateReads += 1;
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue(paperState({
+            engaged_wv: stateReads === 1 ? "1.2" : "0.0",
+            engaged_notional_usdt: stateReads === 1 ? "300" : "0",
+          })),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ status: "completed", reason_code: "completed" }),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    await screen.findByText("300 USDT");
+    fireEvent.click(screen.getByRole("button", { name: "Закрыть позицию" }));
+
+    expect(await screen.findByText("PAPER позиция закрыта")).toBeInTheDocument();
+    expect(screen.getByText("0 USDT")).toBeInTheDocument();
+    expect(screen.getByText("⚔️ 0.0")).toBeInTheDocument();
+    const [, options] = fetchMock.mock.calls.find(
+      ([requestUrl]) => requestUrl === "/api/full-close",
+    )!;
+    expect(JSON.parse(options!.body as string)).toEqual({
+      client_action_id: expect.stringMatching(/^paper-full-close-\d+$/),
+      symbol: "BTCUSDT",
+    });
+  });
 });
