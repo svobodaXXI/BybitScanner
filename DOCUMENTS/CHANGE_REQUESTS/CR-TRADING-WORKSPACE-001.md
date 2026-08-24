@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.31",
+  "revision": "1.32",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Implement and verify the approved Market-amount sizing, display and user-facing failure cluster.",
+  "objective": "Implement and verify the isolated PAPER Trading Workspace E2E runtime harness.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -31,6 +31,7 @@
     "Record the approved documentation-only single-workspace Terminal, Autopilot and Editor mode architecture"
     ,"Implement the human-authorized Stage 8 independent BUY and SELL USDT-notional amount controls and authoritative engaged position-notional display in ModePanel"
     ,"Implement the approved NotionalIntent Market nearest-step policy with a five-percent ceil-overshoot ceiling, whole-USDT position display and localized failure messages"
+    ,"Implement an isolated one-command Playwright E2E harness over the real PAPER backend and frontend with temporary runtime persistence and authoritative backend-state assertions"
   ],
   "prohibited_scope": [
     "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
@@ -396,7 +397,8 @@
     {"revision": "1.27", "reason": "Second documentation-only mobile UX checkpoint recording pending and full-position STOP/TAKE workflows, quantity and average-entry invariants, scanner-signal TAKE proposal suppression, no-position state, independent BUY/SELL volumes, permanent position-USDT and distinct hold details, two-row Limit inventory, actual live unrealized PnL indicator, average-entry line, order-line classes and the sampled graphite plus canonical #3BC639/#CD0000 palette; contradictory earlier mobile wording is superseded, design remains incomplete and no new implementation is started or authorized", "date": "2026-08-23"},
     {"revision": "1.28", "reason": "Human-approved documentation-only amendment superseding the general Market floor-to-qtyStep contract only for WorkingVolumeIntent Market sizing: select the mathematically nearest adjacent qtyStep with midpoint ties floored, permit ceil only through a maximum ten-percent reference-notional overshoot gate, otherwise reject fail closed for insufficient sizing precision; NotionalIntent, all Limit sizing, coin-quantity execution, factual engaged-WV projection and existing safety stages remain unchanged, and implementation is not started or authorized", "date": "2026-08-24"},
     {"revision": "1.29", "reason": "Documentation-only checkpoint recording observed PAPER runtime PASS evidence for implemented WorkingVolumeIntent Market nearest-step sizing, reduce-first behavior, cap-to-remainder, no flip-through-zero and authoritative PAPER-state Working Volume refresh while preserving existing lifecycle and safety semantics and authorizing no further implementation", "date": "2026-08-24"},
-    {"revision": "1.30", "reason": "Human-authorized Stage 8 implementation checkpoint adding independent numeric BUY and SELL USDT-notional amounts initialized from authoritative one_wv_usdt, validation against empty or non-positive submission, edit-preserving PAPER refresh and permanent authoritative engaged_notional_usdt display beneath swords while preserving existing execution safety semantics", "date": "2026-08-24"}
+    {"revision": "1.30", "reason": "Human-authorized Stage 8 implementation checkpoint adding independent numeric BUY and SELL USDT-notional amounts initialized from authoritative one_wv_usdt, validation against empty or non-positive submission, edit-preserving PAPER refresh and permanent authoritative engaged_notional_usdt display beneath swords while preserving existing execution safety semantics", "date": "2026-08-24"},
+    {"revision": "1.32", "reason": "Human-authorized Workflow Acceleration Package 2 checkpoint implementing an isolated one-command Playwright PAPER E2E harness over the real loopback backend and frontend, temporary SQLite runtime data, backend readiness, authoritative state assertions and unconditional teardown without changing trading semantics", "date": "2026-08-24"}
   ]
 }
 ```
@@ -2764,3 +2766,20 @@ All existing opposite-side Market cap-to-confirmed-remainder, `reduceOnly`, no-f
 protection, connectivity, trust, reconciliation, command identity and fail-closed semantics remain
 unchanged. This amendment records checkpoint
 `MARKET_AMOUNT_CLUSTER_IMPLEMENTED_VERIFIED`.
+
+## 41. Isolated PAPER Workspace E2E runtime harness checkpoint
+
+Revision 1.32 records the human-authorized Workflow Acceleration Package 2 implementation. The canonical
+`cd terminal/frontend && npm run e2e` command allocates isolated loopback ports, starts the existing PAPER
+HTTP runtime against a temporary SQLite database, waits for health, serves the existing Vite frontend,
+drives Chromium through Playwright, asserts both UI behavior and authoritative `/api/paper-state`, and always
+stops spawned processes and removes temporary runtime and test-result data.
+
+The scenario covers initial authoritative PAPER state, edit-preserving BUY amount refresh, Market BUY
+position mutation, backend-derived displayed USDT notional, oversized opposite Market flattening without
+reversal, and the approved insufficient-sizing message with unchanged FLAT backend state. The runtime remains
+PAPER-only through `PaperOnlyAdapter`; no live exchange adapter, credential, real order or external mutation
+path is enabled. Production defaults remain `paper_runtime.sqlite3` and port `8765`; environment overrides
+exist only to make the same launch path safely isolatable.
+
+This amendment records checkpoint `ISOLATED_PAPER_WORKSPACE_E2E_IMPLEMENTED_VERIFIED`.

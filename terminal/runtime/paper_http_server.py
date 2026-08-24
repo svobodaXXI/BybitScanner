@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -142,11 +143,13 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    runtime = PaperRuntime(Path("paper_runtime.sqlite3"))
-    server = HTTPServer((HOST, PORT), PaperHttpHandler)
+    database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
+    port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
+    runtime = PaperRuntime(database_path)
+    server = HTTPServer((HOST, port), PaperHttpHandler)
     server.runtime = runtime
     try:
-        print(f"PAPER HTTP runtime listening on http://{HOST}:{PORT}")
+        print(f"PAPER HTTP runtime listening on http://{HOST}:{port}")
         server.serve_forever()
     finally:
         server.server_close()
