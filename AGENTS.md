@@ -11,6 +11,8 @@ Canonical compact entry point for coding agents. It routes to project authority;
 
 Routine scoped work must not require the complete deep-recovery set. Do not run Project Sync merely to restore context.
 
+Generate a compact disposable bootstrap when useful with `python -m tools.dev.task_context --path EXACT_PATH` (repeat `--path` as needed; optional `--hint`). Its JSON output is derived, non-authoritative context and never replaces repository authority or governance gates.
+
 ## Authority routing
 
 - Current local filesystem: what actually exists now.
