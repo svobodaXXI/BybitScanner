@@ -2,7 +2,7 @@
 
 Версия:
 
-4.15
+4.16
 
 Дата:
 
@@ -1028,6 +1028,24 @@ notepad путь\к\файлу
 
 ### CODEX_BUDGET_PROTOCOL
 
+#### PRACTICALLY_MINIMALLY_SUFFICIENT_PROMPT_RULE
+
+Codex prompts must be practically minimally sufficient
+by default. This rule is mandatory.
+
+Each prompt includes only:
+
+* the task;
+* required files;
+* critical constraints;
+* necessary checks;
+* compact return format.
+
+Codex prompts must not repeat ChangeRequest content,
+project history, known requirements, prior successful
+checks or established context unless repetition is needed
+for correctness, safety, governance or ambiguity resolution.
+
 Для каждой задачи Codex обязательным режимом по умолчанию
 является кратчайший минимально достаточный delta-prompt.
 Это не опциональная оптимизация: минимизация tokens и числа
@@ -1205,6 +1223,26 @@ Architecture Hygiene subsystem.
 Ассистент начинает с root `AGENTS.md` и следует его staged-recovery routing.
 Нормативные authority/recovery rules принадлежат `PROJECT_RULES.md` и workflow contracts;
 current mission state — `PROJECT_STATE.md` и применимому Task/ChangeRequest.
+
+## AUTO_SESSION_BOOTSTRAP_RULE
+
+On the first BybitScanner task in a ChatGPT session,
+the assistant must automatically load root `AGENTS.md`
+and perform task-scoped staged recovery.
+
+The assistant must never require the user to remind it
+to read project documents or paste a bootstrap or handoff
+when repository recovery is sufficient.
+
+Authority already loaded in the current session must be reused.
+It is reread only when the relevant scope or file changed,
+authorities conflict or context is uncertain.
+
+Full deep recovery must be avoided unless `AGENTS.md`
+requires it.
+
+Within the session, known GitHub blob and file state must
+be used to avoid redundant reads.
 
 ---
 
@@ -1478,17 +1516,24 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.14
+ASSISTANT_PROTOCOL v4.15
 
 to:
 
-ASSISTANT_PROTOCOL v4.15
+ASSISTANT_PROTOCOL v4.16
 
 date:
 
 2026-08-24
 
 reason:
+
+* added mandatory `PRACTICALLY_MINIMALLY_SUFFICIENT_PROMPT_RULE` requiring Codex prompts by default to contain only the task, required files, critical constraints, necessary checks and compact return format;
+* prohibited repeating ChangeRequest content, project history, known requirements, prior successful checks or established context unless needed for correctness, safety, governance or ambiguity resolution;
+* added mandatory `AUTO_SESSION_BOOTSTRAP_RULE` requiring automatic task-scoped staged recovery from root `AGENTS.md` on the first BybitScanner task in a ChatGPT session, reuse of loaded authority and known GitHub state, and no user-supplied bootstrap when repository recovery is sufficient;
+* restricted authority rereads to changed relevant scope/files, authority conflicts or uncertain context, and prohibited full deep recovery unless required by `AGENTS.md`.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.14 to v4.15:
 
 * strengthened `CODEX_BUDGET_PROTOCOL` so every Codex task defaults to the shortest minimally sufficient delta-prompt containing only exact scope, required change, essential constraints, minimum checks and compact return format;
 * prohibited repeated known context, already-read documentation, established architecture, unchanged requirements, successful checks, broad research, full status/diff, verbose explanation and redundant validation by default;
