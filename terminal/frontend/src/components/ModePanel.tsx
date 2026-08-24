@@ -95,7 +95,7 @@ export function ModePanel({
           client_action_id: `paper-market-${side.toLowerCase()}-${Date.now()}`,
           symbol: "BTCUSDT",
           side,
-          volume: { unit: "notional", amount },
+          volume: { unit: "usdt", amount },
           sizing_reference_price: "64250",
           slippage_type: "Percent",
           slippage_value: "0.5",

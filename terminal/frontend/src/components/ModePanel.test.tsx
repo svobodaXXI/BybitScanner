@@ -70,7 +70,7 @@ describe("ModePanel PAPER Market amounts", () => {
       client_action_id: expect.stringMatching(/^paper-market-buy-\d+$/),
       symbol: "BTCUSDT",
       side: "Buy",
-      volume: { unit: "notional", amount: "300" },
+      volume: { unit: "usdt", amount: "300" },
       sizing_reference_price: "64250",
       slippage_type: "Percent",
       slippage_value: "0.5",
