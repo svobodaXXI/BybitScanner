@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.29",
+  "revision": "1.30",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Durably record PAPER runtime validation of the implemented WorkingVolumeIntent Market nearest-step sizing policy while preserving all lifecycle and safety semantics.",
+  "objective": "Implement and verify the human-authorized Stage 8 independent BUY and SELL USDT-notional amount controls and authoritative position-notional display.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -29,6 +29,7 @@
     "Implement the human-authorized Stage 8 Block 1 React 19, TypeScript and Vite frontend foundation under terminal/frontend",
     "Record the approved documentation-only Fast DOM client-slice interaction, own-order presentation and market-data baseline",
     "Record the approved documentation-only single-workspace Terminal, Autopilot and Editor mode architecture"
+    ,"Implement the human-authorized Stage 8 independent BUY and SELL USDT-notional amount controls and authoritative engaged position-notional display in ModePanel"
   ],
   "prohibited_scope": [
     "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
@@ -300,11 +301,11 @@
     "Account-scoped rounded-down Working Volume, future per-account Robot exposure limit and account-aware analytics requirements are explicit",
     "Selected-period USDT and percentage PnL requirements and deferred external-cash-flow accounting decisions are explicit",
     "Trading credential custody and frontend, Scanner, chart and Telegram secret-exclusion boundaries are explicit",
-    "WorkingVolumeIntent Market nearest-step sizing is already implemented and PAPER-runtime validated; this documentation checkpoint authorizes no further implementation",
-    "Only authoritative documentation changes in this checkpoint"
+    "WorkingVolumeIntent Market nearest-step sizing remains implemented and PAPER-runtime validated",
+    "ModePanel initializes independent BUY and SELL numeric amounts from authoritative one_wv_usdt, submits valid positive values through NotionalIntent, preserves user edits across execution refresh and displays engaged_notional_usdt beneath swords"
   ],
   "regression_requirements": [
-    "No production or test files change",
+    "Only the authorized ModePanel production, focused test and optional style files change alongside this ChangeRequest",
     "Scanner, Geometry, Signal admission and Telegram runtime semantics remain unchanged",
     "CR-TRADING-INTELLIGENCE-001 remains research authority and is not repurposed as terminal implementation authority",
     "Unrelated dirty and untracked files remain untouched"
@@ -340,10 +341,10 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "WORKING_VOLUME_MARKET_NEAREST_STEP_PAPER_RUNTIME_VALIDATED",
-  "implementation_status": "WORKING_VOLUME_MARKET_NEAREST_STEP_IMPLEMENTED_PAPER_RUNTIME_VALIDATED",
+  "current_checkpoint": "STAGE_8_INDEPENDENT_MARKET_NOTIONAL_AMOUNTS_IMPLEMENTED_VERIFIED",
+  "implementation_status": "STAGE_8_INDEPENDENT_MARKET_NOTIONAL_AMOUNTS_IMPLEMENTED_VERIFIED",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "NO_FURTHER_IMPLEMENTATION_AUTHORIZED_BY_THIS_DOCUMENTATION_CHECKPOINT",
+  "next_phase_authorization": "NO_FURTHER_IMPLEMENTATION_AUTHORIZED_BY_THIS_CHECKPOINT",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -361,7 +362,7 @@
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "WORKING_VOLUME_MARKET_NEAREST_STEP_PAPER_RUNTIME_VALIDATED"
+    "status": "STAGE_8_INDEPENDENT_MARKET_NOTIONAL_AMOUNTS_IMPLEMENTED_VERIFIED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -393,7 +394,8 @@
     {"revision": "1.26", "reason": "Documentation-only checkpoint preserving approved mobile Trading Workspace UX clarifications for compact chart chrome/tools, aligned collapsible prints-plus-DOM geometry, position PnL placement, lower-panel layout and collapse, non-reversing Market taps, two-finger chart Limit placement, active Limit reveal/cancel and confirmed move rollback semantics, and reference-led color direction; overall mobile design remains incomplete and no implementation slice is started or authorized", "date": "2026-08-22"},
     {"revision": "1.27", "reason": "Second documentation-only mobile UX checkpoint recording pending and full-position STOP/TAKE workflows, quantity and average-entry invariants, scanner-signal TAKE proposal suppression, no-position state, independent BUY/SELL volumes, permanent position-USDT and distinct hold details, two-row Limit inventory, actual live unrealized PnL indicator, average-entry line, order-line classes and the sampled graphite plus canonical #3BC639/#CD0000 palette; contradictory earlier mobile wording is superseded, design remains incomplete and no new implementation is started or authorized", "date": "2026-08-23"},
     {"revision": "1.28", "reason": "Human-approved documentation-only amendment superseding the general Market floor-to-qtyStep contract only for WorkingVolumeIntent Market sizing: select the mathematically nearest adjacent qtyStep with midpoint ties floored, permit ceil only through a maximum ten-percent reference-notional overshoot gate, otherwise reject fail closed for insufficient sizing precision; NotionalIntent, all Limit sizing, coin-quantity execution, factual engaged-WV projection and existing safety stages remain unchanged, and implementation is not started or authorized", "date": "2026-08-24"},
-    {"revision": "1.29", "reason": "Documentation-only checkpoint recording observed PAPER runtime PASS evidence for implemented WorkingVolumeIntent Market nearest-step sizing, reduce-first behavior, cap-to-remainder, no flip-through-zero and authoritative PAPER-state Working Volume refresh while preserving existing lifecycle and safety semantics and authorizing no further implementation", "date": "2026-08-24"}
+    {"revision": "1.29", "reason": "Documentation-only checkpoint recording observed PAPER runtime PASS evidence for implemented WorkingVolumeIntent Market nearest-step sizing, reduce-first behavior, cap-to-remainder, no flip-through-zero and authoritative PAPER-state Working Volume refresh while preserving existing lifecycle and safety semantics and authorizing no further implementation", "date": "2026-08-24"},
+    {"revision": "1.30", "reason": "Human-authorized Stage 8 implementation checkpoint adding independent numeric BUY and SELL USDT-notional amounts initialized from authoritative one_wv_usdt, validation against empty or non-positive submission, edit-preserving PAPER refresh and permanent authoritative engaged_notional_usdt display beneath swords while preserving existing execution safety semantics", "date": "2026-08-24"}
   ]
 }
 ```
@@ -2720,3 +2722,25 @@ All revision 1.28 safety semantics remain binding, including authoritative instr
 checks, opposite-side classification, `reduceOnly`, reconciliation, durable identity, idempotency and
 fail-closed uncertain-outcome handling. This amendment records checkpoint
 `WORKING_VOLUME_MARKET_NEAREST_STEP_PAPER_RUNTIME_VALIDATED`.
+
+## 39. Stage 8 independent Market notional amounts implementation checkpoint
+
+Revision 1.30 records the human-authorized implementation and focused verification of independent numeric
+amount fields directly beneath BUY and SELL. On entry to TERMINAL, both fields initialize from authoritative
+`/api/paper-state.one_wv_usdt`; the current PAPER value is `250`. Each field remains independently editable,
+contains only its numeric value and submits a short-tap Market action through the existing USDT
+`NotionalIntent` path without frontend WV conversion. Empty, non-finite and non-positive values do not
+submit.
+
+Successful execution still refreshes authoritative PAPER state. That refresh updates engaged Working Volume
+and the permanent current-position amount beneath swords from `engaged_notional_usdt`, displaying zero when
+flat, but does not overwrite a user-edited side amount. A pristine side may follow a refreshed authoritative
+one-WV value independently of an edited opposite side.
+
+This slice does not change backend execution classification or quantity normalization. Existing reduce-first,
+cap-to-confirmed-remainder, reduce-only, no-flip-through-zero, PAPER authority, reconciliation, command
+identity and fail-closed safety behavior remain binding. STOP, TAKE and unrelated UI are unchanged.
+
+This amendment records checkpoint
+`STAGE_8_INDEPENDENT_MARKET_NOTIONAL_AMOUNTS_IMPLEMENTED_VERIFIED`. No further implementation is authorized
+by this checkpoint.

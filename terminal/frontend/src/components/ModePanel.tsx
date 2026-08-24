@@ -21,6 +21,11 @@ export function ModePanel({
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
     null,
   );
+  const [engagedNotionalUsdt, setEngagedNotionalUsdt] = useState("0");
+  const [buyAmount, setBuyAmount] = useState("");
+  const [sellAmount, setSellAmount] = useState("");
+  const buyAmountEdited = useRef(false);
+  const sellAmountEdited = useRef(false);
   const submissionInFlight = useRef(false);
 
   const refreshPaperState = useCallback(async () => {
@@ -34,19 +39,36 @@ export function ModePanel({
       const state = (await response.json()) as {
         ok: boolean;
         engaged_wv: string;
+        engaged_notional_usdt: string;
+        one_wv_usdt: string;
       };
 
       const engagedWv = Number(state.engaged_wv);
+      const engagedNotional = Number(state.engaged_notional_usdt);
       setEngagedWorkingVolume(
         state.ok && Number.isFinite(engagedWv) ? engagedWv.toFixed(1) : null,
       );
+      setEngagedNotionalUsdt(
+        state.ok && Number.isFinite(engagedNotional)
+          ? String(Math.max(0, engagedNotional))
+          : "0",
+      );
+      if (state.ok && !buyAmountEdited.current) {
+        setBuyAmount(state.one_wv_usdt);
+      }
+      if (state.ok && !sellAmountEdited.current) {
+        setSellAmount(state.one_wv_usdt);
+      }
     } catch {
       setEngagedWorkingVolume(null);
+      setEngagedNotionalUsdt("0");
     }
   }, []);
 
   useEffect(() => {
     if (mode === "TERMINAL") {
+      buyAmountEdited.current = false;
+      sellAmountEdited.current = false;
       void refreshPaperState();
     }
   }, [mode, refreshPaperState]);
@@ -55,8 +77,12 @@ export function ModePanel({
     (candidate) => candidate !== mode,
   );
 
-  const submitPaperMarket = async (side: MarketSide) => {
+  const submitPaperMarket = async (side: MarketSide, amount: string) => {
     if (submissionInFlight.current) return;
+    const numericAmount = Number(amount);
+    if (!amount.trim() || !Number.isFinite(numericAmount) || numericAmount <= 0) {
+      return;
+    }
 
     submissionInFlight.current = true;
     setIsSubmitting(true);
@@ -69,7 +95,7 @@ export function ModePanel({
           client_action_id: `paper-market-${side.toLowerCase()}-${Date.now()}`,
           symbol: "BTCUSDT",
           side,
-          volume: { unit: "working_volume", amount: "1" },
+          volume: { unit: "notional", amount },
           sizing_reference_price: "64250",
           slippage_type: "Percent",
           slippage_value: "0.5",
@@ -118,25 +144,52 @@ export function ModePanel({
       {mode === "TERMINAL" ? (
         <div className="paper-market-actions">
           <div className="paper-wv-indicator" aria-label="Engaged working volume">
-            {"\u2694\uFE0F"} {engagedWorkingVolume ?? "\u2014"}
+            <span>{"\u2694\uFE0F"} {engagedWorkingVolume ?? "\u2014"}</span>
+            <span>{engagedNotionalUsdt} USDT</span>
           </div>
-          <button
-            onClick={() => submitPaperMarket("Buy")}
-            className="paper-market-buy"
-            disabled={isSubmitting}
-            type="button"
-          >
-            {isSubmitting ? "..." : "BUY"}
-          </button>
+          <div className="paper-market-side">
+            <button
+              onClick={() => submitPaperMarket("Buy", buyAmount)}
+              className="paper-market-buy"
+              disabled={isSubmitting}
+              type="button"
+            >
+              {isSubmitting ? "..." : "BUY"}
+            </button>
+            <input
+              aria-label="BUY amount"
+              inputMode="decimal"
+              min="0"
+              onChange={(event) => {
+                buyAmountEdited.current = true;
+                setBuyAmount(event.target.value);
+              }}
+              type="number"
+              value={buyAmount}
+            />
+          </div>
 
-          <button
-            onClick={() => submitPaperMarket("Sell")}
-            className="paper-market-sell"
-            disabled={isSubmitting}
-            type="button"
-          >
-            {isSubmitting ? "..." : "SELL"}
-          </button>
+          <div className="paper-market-side">
+            <button
+              onClick={() => submitPaperMarket("Sell", sellAmount)}
+              className="paper-market-sell"
+              disabled={isSubmitting}
+              type="button"
+            >
+              {isSubmitting ? "..." : "SELL"}
+            </button>
+            <input
+              aria-label="SELL amount"
+              inputMode="decimal"
+              min="0"
+              onChange={(event) => {
+                sellAmountEdited.current = true;
+                setSellAmount(event.target.value);
+              }}
+              type="number"
+              value={sellAmount}
+            />
+          </div>
 
           <p className="paper-execution-status" aria-live="polite">
             {executionStatus}

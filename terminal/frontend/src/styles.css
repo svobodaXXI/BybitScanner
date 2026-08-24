@@ -393,12 +393,35 @@ button {
 
 .paper-wv-indicator {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: flex-start;
   min-width: 3.2rem;
   font-size: 1rem;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.paper-wv-indicator span:last-child {
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.paper-market-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.paper-market-side input {
+  box-sizing: border-box;
+  width: 3.8rem;
+  border: 1px solid #394653;
+  border-radius: 0.25rem;
+  background: #10151b;
+  color: #d7e0e8;
+  font-size: 0.72rem;
+  text-align: center;
 }
 
 .paper-market-sell {
