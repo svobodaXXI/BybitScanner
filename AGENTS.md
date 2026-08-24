@@ -40,8 +40,14 @@ Confirm existing components before adding modules, registries, paths, documents,
 
 ## Verify and record
 
-Validate in proportion to risk: compile affected Python, run focused tests, check relevant integration paths, review the scoped diff, and run broader authoritative validation only when required. Never hide or overstate results.
+After implementation, Codex must run `python -m tools.dev.verify` once with repeated `--path` arguments matching the exact task/changed paths. The verifier routes only the required scoped checks, avoids redundant broad/full tests, remains read-only with respect to Git/index, and writes its PASS receipt under `.git/bybitscanner/`.
+
+`python -m tools.dev.checkpoint --message "..."` is a user-run Git-write command. Codex must never invoke it automatically. It consumes the latest current PASS receipt, stages only its exact paths, checks the cached diff, commits, pushes to `origin`, and verifies the remote SHA; any mismatch or failure stops the workflow without touching unrelated work.
+
+Validate in proportion to risk through the verifier: compile affected Python, run focused tests, check relevant integration paths, review the scoped diff, and run broader authoritative validation only when required. Never hide or overstate results.
 
 Git owns detailed implementation history. Update authoritative documentation only when its owned current state, contract, decision, or planned work changed. Stage and commit only authorized scope; report checks, failures, unresolved risks, and unrelated dirty work.
 
 For role, communication style, and mission/checkpoint behavior, follow `DOCUMENTS/ASSISTANT_PROTOCOL.md`.
+
+Codex Desktop is the default user interface. Do not instruct the user to launch Codex from PowerShell unless explicitly requested. Codex task batching and decision batching remain mandatory.

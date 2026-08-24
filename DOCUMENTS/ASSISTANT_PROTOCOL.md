@@ -2,7 +2,7 @@
 
 Версия:
 
-4.17
+4.18
 
 Дата:
 
@@ -1080,6 +1080,15 @@ safety or governance make combined execution inappropriate.
 When splitting is necessary, the reason must be explained
 before the prompts are sent.
 
+### CODEX_DECISION_BATCHING_RULE
+
+This rule is mandatory.
+
+Related unresolved decisions must be collected into one compact
+decision batch whenever they can be answered safely together.
+Codex must not interrupt implementation with serial micro-questions
+when the decision cluster and its consequences can be presented at once.
+
 Для каждой задачи Codex обязательным режимом по умолчанию
 является кратчайший минимально достаточный delta-prompt.
 Это не опциональная оптимизация: минимизация tokens и числа
@@ -1174,6 +1183,28 @@ commit или push. Эти операции выполняются
 
 Codex выполняет Git-write только по явному
 разрешению пользователя в конкретной задаче.
+
+### SCOPED_VERIFICATION_AND_CHECKPOINT_RULE
+
+After every implementation task, Codex must run
+`python -m tools.dev.verify` with repeated `--path` values
+that exactly match the task/changed paths. The verifier is read-only
+with respect to Git and the index, routes only required scoped checks,
+avoids redundant broad/full tests, and records a PASS receipt under
+`.git/bybitscanner/` containing branch, HEAD, exact paths, content
+fingerprints, and executed check results.
+
+`python -m tools.dev.checkpoint --message "..."` is exclusively a
+user-run Git-write command. Codex must never invoke it automatically.
+It must fail closed for a missing or stale receipt, changed branch/HEAD
+or task content, or unexpected staged files; stage only receipt paths;
+preserve unrelated dirty and untracked work; run cached diff-check;
+commit, push to `origin`, and verify the remote SHA; and stop immediately
+after any failed step.
+
+Codex Desktop is the default Codex user interface. The assistant must
+not instruct the user to launch Codex from PowerShell unless the user
+explicitly requests that workflow.
 
 Fail-closed и governance не ослабляются ради
 экономии. Повторные проверки разрешены, когда:
@@ -1550,17 +1581,24 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.16
+ASSISTANT_PROTOCOL v4.17
 
 to:
 
-ASSISTANT_PROTOCOL v4.17
+ASSISTANT_PROTOCOL v4.18
 
 date:
 
 2026-08-24
 
 reason:
+
+* added mandatory exact-path `tools.dev.verify` execution and PASS receipt rules;
+* added fail-closed, user-run-only `tools.dev.checkpoint` rules and prohibited automatic Codex invocation;
+* made Codex Desktop the default interface and prohibited PowerShell launch instructions unless explicitly requested;
+* made decision batching explicit while preserving mandatory Codex task batching.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.16 to v4.17:
 
 * added mandatory `CODEX_TASK_BATCHING_RULE` requiring approved compatible micro-tasks to be combined into one practically minimally sufficient delta-only Codex prompt when safe implementation and verification can be performed together;
 * prohibited invoking Codex after every micro-decision while a related decision cluster remains unresolved;
