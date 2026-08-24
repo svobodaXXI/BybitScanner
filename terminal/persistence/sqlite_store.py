@@ -36,6 +36,7 @@ from .schema import (
     SCHEMA_V2_MIGRATION_STATEMENTS,
     SCHEMA_V3_MIGRATION_STATEMENTS,
     SCHEMA_V4_MIGRATION_STATEMENTS,
+    SCHEMA_V5_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -228,6 +229,21 @@ class PaperAccountRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperLimitOrderRecord:
+    order_id: OrderId
+    order_link_id: str
+    trading_account_id: TradingAccountId
+    symbol: Symbol
+    side: OrderSide
+    price: Decimal
+    quantity: Decimal
+    time_in_force: str
+    status: str
+    created_at_ms: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class CleanupRunRecord:
     cleanup_id: str
     position_key: PositionKey
@@ -297,6 +313,22 @@ def _load_decimal(value: str) -> Decimal:
     return result
 
 
+def _paper_limit_from_row(row: sqlite3.Row) -> PaperLimitOrderRecord:
+    return PaperLimitOrderRecord(
+        order_id=OrderId(row["order_id"]),
+        order_link_id=row["order_link_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        symbol=Symbol(row["symbol"]),
+        side=OrderSide(row["side"]),
+        price=_load_decimal(row["price"]),
+        quantity=_load_decimal(row["quantity"]),
+        time_in_force=row["time_in_force"],
+        status=row["status"],
+        created_at_ms=int(row["created_at_ms"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
 class SQLiteStore:
     """Synchronous store owned by one backend thread and writer."""
 
@@ -350,17 +382,25 @@ class SQLiteStore:
             SQLiteStore._migrate_v1_to_v2(connection)
             SQLiteStore._migrate_v2_to_v3(connection)
             SQLiteStore._migrate_v3_to_v4(connection)
+            SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 2:
             SQLiteStore._validate_required_tables(connection, version=2)
             SQLiteStore._migrate_v2_to_v3(connection)
             SQLiteStore._migrate_v3_to_v4(connection)
+            SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 3:
             SQLiteStore._validate_required_tables(connection, version=3)
             SQLiteStore._migrate_v3_to_v4(connection)
+            SQLiteStore._migrate_v4_to_v5(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 4:
+            SQLiteStore._validate_required_tables(connection, version=4)
+            SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version != 0:
@@ -411,6 +451,18 @@ class SQLiteStore:
             raise
 
     @staticmethod
+    def _migrate_v4_to_v5(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V5_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 5")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -439,6 +491,8 @@ class SQLiteStore:
             })
         if version >= 4:
             required.add("paper_accounts")
+        if version >= 5:
+            required.update({"paper_limit_orders", "paper_limit_actions"})
         actual = {
             row[0]
             for row in connection.execute(
@@ -557,6 +611,83 @@ class SQLiteStore:
             version=1,
             updated_at_ms=updated_at_ms,
         )
+
+    def create_paper_limit(
+        self, *, client_action_id: str, request_fingerprint: str,
+        order_id: OrderId, order_link_id: str, trading_account_id: TradingAccountId,
+        symbol: Symbol, side: OrderSide, price: Decimal, quantity: Decimal,
+        created_at_ms: int,
+    ) -> tuple[PaperLimitOrderRecord, bool]:
+        self._assert_owner()
+        existing_action = self._connection.execute(
+            "SELECT operation, request_fingerprint, order_id FROM paper_limit_actions WHERE client_action_id = ?",
+            (client_action_id,),
+        ).fetchone()
+        if existing_action is not None:
+            if existing_action[0] != "create" or existing_action[1] != request_fingerprint:
+                raise DuplicateIdentity("client action identity was reused with different intent")
+            existing = self.get_paper_limit(str(existing_action[2]))
+            if existing is None:
+                raise PersistenceError("durable create action references no PAPER limit")
+            return existing, False
+        record = PaperLimitOrderRecord(
+            order_id, order_link_id, trading_account_id, symbol, side, price, quantity,
+            "GTC", "open", created_at_ms, created_at_ms,
+        )
+        with self._transaction():
+            self._connection.execute(
+                """INSERT INTO paper_limit_orders (
+                    order_id, order_link_id, trading_account_id, symbol, side, price,
+                    quantity, time_in_force, status, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'GTC', 'open', ?, ?)""",
+                (order_id.value, order_link_id, trading_account_id.value, symbol.value,
+                 side.value, _decimal_text(price), _decimal_text(quantity),
+                 created_at_ms, created_at_ms),
+            )
+            self._connection.execute(
+                "INSERT INTO paper_limit_actions VALUES (?, 'create', ?, ?, ?)",
+                (client_action_id, request_fingerprint, order_id.value, created_at_ms),
+            )
+        return record, True
+
+    def cancel_paper_limit(
+        self, *, client_action_id: str, request_fingerprint: str,
+        order_id: OrderId, updated_at_ms: int,
+    ) -> tuple[PaperLimitOrderRecord | None, bool]:
+        self._assert_owner()
+        action = self._connection.execute(
+            "SELECT operation, request_fingerprint, order_id FROM paper_limit_actions WHERE client_action_id = ?",
+            (client_action_id,),
+        ).fetchone()
+        if action is not None:
+            if action[0] != "cancel" or action[1] != request_fingerprint:
+                raise DuplicateIdentity("client action identity was reused with different intent")
+            return self.get_paper_limit(order_id.value), False
+        with self._transaction():
+            self._connection.execute(
+                "INSERT INTO paper_limit_actions VALUES (?, 'cancel', ?, NULL, ?)",
+                (client_action_id, request_fingerprint, updated_at_ms),
+            )
+            cursor = self._connection.execute(
+                "UPDATE paper_limit_orders SET status = 'cancelled', updated_at_ms = ? WHERE order_id = ? AND status = 'open'",
+                (updated_at_ms, order_id.value),
+            )
+        return self.get_paper_limit(order_id.value), cursor.rowcount == 1
+
+    def get_paper_limit(self, order_id: str) -> PaperLimitOrderRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM paper_limit_orders WHERE order_id = ?", (order_id,),
+        ).fetchone()
+        return _paper_limit_from_row(row) if row is not None else None
+
+    def load_active_paper_limits(self, symbol: Symbol) -> tuple[PaperLimitOrderRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            "SELECT * FROM paper_limit_orders WHERE symbol = ? AND status = 'open' ORDER BY created_at_ms, order_id",
+            (symbol.value,),
+        )
+        return tuple(_paper_limit_from_row(row) for row in rows)
 
     def persist_command_before_submit(
         self,

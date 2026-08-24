@@ -29,6 +29,10 @@ class VolumeUnit(str, Enum):
     USDT = "usdt"
 
 
+class TimeInForce(str, Enum):
+    GTC = "GTC"
+
+
 class ServiceHealth(str, Enum):
     HEALTHY = "healthy"
     UNAVAILABLE = "unavailable"
@@ -122,6 +126,33 @@ class LimitCommandRequest:
     volume: VolumeRequest
     sizing_reference_price: Decimal
     limit_price: Decimal
+    time_in_force: TimeInForce = TimeInForce.GTC
+
+
+@dataclass(frozen=True, slots=True)
+class PaperLimitCancelRequest:
+    client_action_id: ClientActionId
+    symbol: str
+    order_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaperLimitOrderProjection:
+    order_id: str
+    order_link_id: str
+    symbol: str
+    side: OrderSide
+    price: str
+    quantity: str
+    time_in_force: TimeInForce
+
+
+@dataclass(frozen=True, slots=True)
+class PaperLimitMutationResult:
+    client_action_id: str
+    status: CommandResultStatus
+    reason_code: str
+    order_id: str | None
 
 
 @dataclass(frozen=True, slots=True)

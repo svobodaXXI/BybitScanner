@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import time
+import hashlib
 from decimal import Decimal
 from pathlib import Path
 
 from terminal.api.rest import TerminalCommandApi
+from terminal.api.models import (
+    CommandResultStatus, LimitCommandRequest, PaperLimitCancelRequest,
+    PaperLimitMutationResult, PaperLimitOrderProjection, TimeInForce,
+)
 from terminal.application.execution_engine import ExecutionEngine
 from terminal.application.pretrade_guard import MutationGate, PreTradeGuard
+from terminal.application.pretrade_guard import NotionalIntent, OrderKind, PreTradeIntent
+from terminal.application.pretrade_guard import WorkingVolumeIntent
 from terminal.application.trading_application import TradingApplication
 from terminal.domain.models import Category, Price, Quantity, Symbol, TradingAccountId
+from terminal.domain.models import OrderId
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.paper.executor import PaperMarketExecutor
@@ -126,6 +134,9 @@ class PaperRuntime:
         )
 
         self.api = TerminalCommandApi(application, context_provider)
+        self._guard = application.guard
+        self._context = context_provider
+        self._account_id = account_id
 
     def paper_state(self, symbol: str) -> dict[str, object]:
         normalized_symbol = symbol.strip().upper()
@@ -168,7 +179,88 @@ class PaperRuntime:
             "engaged_wv": (
                 "0.0" if engaged_notional == 0 else str(engaged_notional / one_wv)
             ),
+            "active_limit_orders": [
+                {
+                    "order_id": item.order_id.value,
+                    "order_link_id": item.order_link_id,
+                    "symbol": item.symbol.value,
+                    "side": item.side.value,
+                    "price": str(item.price),
+                    "quantity": str(item.quantity),
+                    "time_in_force": TimeInForce.GTC.value,
+                }
+                for item in self.store.load_active_paper_limits(Symbol(normalized_symbol))
+            ],
         }
+
+    def create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
+        symbol = request.symbol.strip().upper()
+        if request.time_in_force is not TimeInForce.GTC:
+            raise ValueError("PAPER Limit supports GTC only")
+        context = self._context.context_for(symbol)
+        volume = (
+            NotionalIntent(request.volume.amount)
+            if request.volume.unit.value == "usdt"
+            else WorkingVolumeIntent(request.volume.amount, context.one_wv_usdt)
+        )
+        decision = self._guard.evaluate(
+            PreTradeIntent(
+                symbol, request.side, OrderKind.LIMIT, volume,
+                request.sizing_reference_price, request.limit_price,
+            ),
+            context.pretrade,
+        )
+        if not decision.admitted:
+            code = decision.reason_code.value if decision.reason_code else "blocked"
+            return PaperLimitMutationResult(
+                request.client_action_id.value, CommandResultStatus.BLOCKED, code, None,
+            )
+        admitted = decision.request
+        assert admitted is not None and admitted.normalized_limit_price is not None
+        fingerprint = _fingerprint(
+            symbol, request.side.value, str(request.volume.amount), request.volume.unit.value,
+            str(admitted.normalized_limit_price), request.time_in_force.value,
+        )
+        order_id = OrderId(f"paper-limit-{admitted.identity.order_link_id}")
+        order, created = self.store.create_paper_limit(
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=fingerprint,
+            order_id=order_id,
+            order_link_id=admitted.identity.order_link_id,
+            trading_account_id=self._account_id,
+            symbol=Symbol(symbol), side=request.side,
+            price=admitted.normalized_limit_price,
+            quantity=admitted.final_quantity,
+            created_at_ms=int(time.time() * 1000),
+        )
+        return PaperLimitMutationResult(
+            request.client_action_id.value, CommandResultStatus.COMPLETED,
+            "created" if created else "duplicate_action", order.order_id.value,
+        )
+
+    def cancel_limit(self, request: PaperLimitCancelRequest) -> PaperLimitMutationResult:
+        symbol = request.symbol.strip().upper()
+        if symbol != "BTCUSDT":
+            raise ValueError("unsupported PAPER symbol")
+        existing = self.store.get_paper_limit(request.order_id)
+        if existing is not None and existing.symbol.value != symbol:
+            raise ValueError("order symbol does not match")
+        fingerprint = _fingerprint(symbol, request.order_id)
+        order, changed = self.store.cancel_paper_limit(
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=fingerprint,
+            order_id=OrderId(request.order_id),
+            updated_at_ms=int(time.time() * 1000),
+        )
+        return PaperLimitMutationResult(
+            request.client_action_id.value, CommandResultStatus.COMPLETED,
+            "cancelled" if changed and order is not None and order.status == "cancelled" else "already_absent",
+            request.order_id,
+        )
 
     def close(self) -> None:
         self.store.close()
+
+
+def _fingerprint(*values: str) -> str:
+    return hashlib.sha256("\x1f".join(values).encode("utf-8")).hexdigest()

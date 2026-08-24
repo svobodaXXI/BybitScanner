@@ -2,6 +2,7 @@ export const MARKET_SIDES = ["Buy", "Sell"] as const;
 export const VOLUME_UNITS = ["working_volume", "usdt"] as const;
 export const SLIPPAGE_TYPES = ["TickSize", "Percent"] as const;
 export const POSITION_SIDES = ["Flat", "Long", "Short"] as const;
+export const TIME_IN_FORCE_VALUES = ["GTC"] as const;
 export const HANDLED_REASON_CODES = ["insufficient_sizing_precision"] as const;
 
 export type MarketSide = (typeof MARKET_SIDES)[number];
@@ -27,6 +28,39 @@ export type FullCloseCommandRequest = {
   symbol: string;
 };
 
+export type LimitCommandRequest = {
+  client_action_id: string;
+  symbol: string;
+  side: MarketSide;
+  volume: VolumeRequest;
+  sizing_reference_price: string;
+  limit_price: string;
+  time_in_force: (typeof TIME_IN_FORCE_VALUES)[number];
+};
+
+export type PaperLimitCancelRequest = {
+  client_action_id: string;
+  symbol: string;
+  order_id: string;
+};
+
+export type PaperLimitOrder = {
+  order_id: string;
+  order_link_id: string;
+  symbol: string;
+  side: MarketSide;
+  price: string;
+  quantity: string;
+  time_in_force: (typeof TIME_IN_FORCE_VALUES)[number];
+};
+
+export type PaperLimitMutationResult = {
+  client_action_id: string;
+  status: string;
+  reason_code: string;
+  order_id: string | null;
+};
+
 export type CommandResult = {
   client_action_id: string;
   status: string;
@@ -47,4 +81,5 @@ export type PaperState = {
   position_quantity: string;
   engaged_notional_usdt: string;
   engaged_wv: string;
+  active_limit_orders: PaperLimitOrder[];
 };

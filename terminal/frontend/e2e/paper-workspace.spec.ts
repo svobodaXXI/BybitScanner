@@ -10,6 +10,13 @@ type PaperState = {
   engaged_notional_usdt: string;
   one_wv_usdt: string;
   engaged_wv: string;
+  active_limit_orders: Array<{
+    order_id: string;
+    side: "Buy" | "Sell";
+    price: string;
+    quantity: string;
+    time_in_force: "GTC";
+  }>;
 };
 
 async function paperState(request: APIRequestContext) {
@@ -73,4 +80,46 @@ test("real PAPER workspace preserves edits and enforces authoritative no-flip be
   const rejectedState = await paperState(request);
   expect(rejectedState.position_side).toBe("Flat");
   expect(Number(rejectedState.position_quantity)).toBe(0);
+
+  await page.getByLabel("LIMIT side").selectOption("Buy");
+  await page.getByLabel("LIMIT price").fill("64000");
+  await page.getByLabel("LIMIT amount").fill("321");
+  await page.getByRole("button", { name: "Создать LIMIT" }).click();
+  await expect(page.getByText("PAPER LIMIT создан")).toBeVisible();
+  const withLimit = await paperState(request);
+  expect(withLimit.active_limit_orders).toHaveLength(1);
+  expect(withLimit.active_limit_orders[0]).toMatchObject({
+    side: "Buy", price: "64000", time_in_force: "GTC",
+  });
+  const orderId = withLimit.active_limit_orders[0].order_id;
+  await expect(page.getByText(`Buy ${withLimit.active_limit_orders[0].quantity} @ 64000 GTC`)).toBeVisible();
+  await page.getByRole("button", { name: `Отменить ${orderId}` }).click();
+  await expect(page.getByText("PAPER LIMIT отменён")).toBeVisible();
+  expect((await paperState(request)).active_limit_orders).toHaveLength(0);
+
+  const repeatCancel = await request.post(`${backendUrl}/api/limit/cancel`, {
+    data: { client_action_id: "e2e-repeat-cancel", symbol: "BTCUSDT", order_id: orderId },
+  });
+  expect(repeatCancel.ok()).toBeTruthy();
+  expect((await repeatCancel.json()).status).toBe("completed");
+  expect((await paperState(request)).active_limit_orders).toHaveLength(0);
+
+  for (const invalid of [
+    { price: "0", amount: "321" },
+    { price: "64000", amount: "0" },
+  ]) {
+    const response = await request.post(`${backendUrl}/api/limit`, { data: {
+      client_action_id: `e2e-invalid-${invalid.price}-${invalid.amount}`,
+      symbol: "BTCUSDT", side: "Sell",
+      volume: { unit: "usdt", amount: invalid.amount },
+      sizing_reference_price: invalid.price, limit_price: invalid.price,
+      time_in_force: "GTC",
+    } });
+    if (response.status() === 200) {
+      expect((await response.json()).status).toBe("blocked");
+    } else {
+      expect(response.status()).toBe(400);
+    }
+  }
+  expect((await paperState(request)).active_limit_orders).toHaveLength(0);
 });

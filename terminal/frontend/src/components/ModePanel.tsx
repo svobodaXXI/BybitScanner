@@ -3,9 +3,13 @@ import {
   type CommandResult,
   type FullCloseCommandRequest,
   HANDLED_REASON_CODES,
+  type LimitCommandRequest,
   type MarketCommandRequest,
   type MarketSide,
   type PaperState,
+  type PaperLimitCancelRequest,
+  type PaperLimitMutationResult,
+  type PaperLimitOrder,
 } from "../contracts/trading";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
@@ -31,6 +35,10 @@ export function ModePanel({
   const [engagedNotionalUsdt, setEngagedNotionalUsdt] = useState("0");
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
+  const [limitSide, setLimitSide] = useState<MarketSide>("Buy");
+  const [limitPrice, setLimitPrice] = useState("64200");
+  const [limitAmount, setLimitAmount] = useState("250");
+  const [activeLimits, setActiveLimits] = useState<PaperLimitOrder[]>([]);
   const buyAmountEdited = useRef(false);
   const sellAmountEdited = useRef(false);
   const submissionInFlight = useRef(false);
@@ -55,6 +63,7 @@ export function ModePanel({
           ? String(Math.round(Math.max(0, engagedNotional)))
           : "0",
       );
+      setActiveLimits(state.ok ? state.active_limit_orders : []);
       if (state.ok && !buyAmountEdited.current) {
         setBuyAmount(state.one_wv_usdt);
       }
@@ -153,6 +162,50 @@ export function ModePanel({
     }
   };
 
+  const submitLimit = async () => {
+    if (submissionInFlight.current) return;
+    if (!(Number(limitPrice) > 0) || !(Number(limitAmount) > 0)) return;
+    submissionInFlight.current = true;
+    setIsSubmitting(true);
+    try {
+      const request: LimitCommandRequest = {
+        client_action_id: `paper-limit-create-${Date.now()}`,
+        symbol: "BTCUSDT", side: limitSide,
+        volume: { unit: "usdt", amount: limitAmount },
+        sizing_reference_price: limitPrice,
+        limit_price: limitPrice, time_in_force: "GTC",
+      };
+      const response = await fetch("/api/limit", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      const result = (await response.json()) as PaperLimitMutationResult;
+      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT создан" : "LIMIT отменён");
+      if (result.status === "completed") await refreshPaperState();
+    } catch { setExecutionStatus("LIMIT отменён"); }
+    finally { submissionInFlight.current = false; setIsSubmitting(false); }
+  };
+
+  const cancelLimit = async (orderId: string) => {
+    if (submissionInFlight.current) return;
+    submissionInFlight.current = true;
+    setIsSubmitting(true);
+    try {
+      const request: PaperLimitCancelRequest = {
+        client_action_id: `paper-limit-cancel-${Date.now()}`,
+        symbol: "BTCUSDT", order_id: orderId,
+      };
+      const response = await fetch("/api/limit/cancel", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      const result = (await response.json()) as PaperLimitMutationResult;
+      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT отменён" : "Отмена LIMIT не выполнена");
+      if (result.status === "completed") await refreshPaperState();
+    } catch { setExecutionStatus("Отмена LIMIT не выполнена"); }
+    finally { submissionInFlight.current = false; setIsSubmitting(false); }
+  };
+
   return (
     <section className="mode-panel" aria-label={`${mode} controls`}>
       <div>
@@ -200,6 +253,23 @@ export function ModePanel({
               value={buyAmount}
             />
           </div>
+
+          <section aria-label="PAPER Limit controls">
+            <select aria-label="LIMIT side" value={limitSide} onChange={(event) => setLimitSide(event.target.value as MarketSide)}>
+              <option value="Buy">BUY</option><option value="Sell">SELL</option>
+            </select>
+            <input aria-label="LIMIT price" type="number" min="0" value={limitPrice} onChange={(event) => setLimitPrice(event.target.value)} />
+            <input aria-label="LIMIT amount" type="number" min="0" value={limitAmount} onChange={(event) => setLimitAmount(event.target.value)} />
+            <button type="button" disabled={isSubmitting} onClick={submitLimit}>Создать LIMIT</button>
+            <ul aria-label="Active PAPER limits">
+              {activeLimits.map((order) => (
+                <li key={order.order_id}>
+                  <span>{order.side} {order.quantity} @ {order.price} {order.time_in_force}</span>
+                  <button type="button" disabled={isSubmitting} onClick={() => cancelLimit(order.order_id)}>Отменить {order.order_id}</button>
+                </li>
+              ))}
+            </ul>
+          </section>
 
           <button disabled={isSubmitting} onClick={submitFullClose} type="button">
             Закрыть позицию

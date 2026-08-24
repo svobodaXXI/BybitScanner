@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.34",
+  "revision": "1.35",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Implement and verify PAPER Full Close / Close-to-FLAT.",
+  "objective": "Implement and verify PAPER Limit Order Foundation.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -34,6 +34,7 @@
     ,"Implement an isolated one-command Playwright E2E harness over the real PAPER backend and frontend with temporary runtime persistence and authoritative backend-state assertions"
     ,"Implement deterministic fail-closed frontend/backend Trading Workspace contract consistency checks with selective tools.dev.verify routing"
     ,"Implement the human-authorized PAPER Full Close action using authoritative remaining coin quantity, safe FLAT no-op behavior and authoritative frontend exposure refresh"
+    ,"Implement the human-authorized PAPER Limit create, durable idempotency, authoritative active-order projection and safe concrete-order cancel lifecycle with binding GTC"
   ],
   "prohibited_scope": [
     "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
@@ -402,7 +403,8 @@
     {"revision": "1.30", "reason": "Human-authorized Stage 8 implementation checkpoint adding independent numeric BUY and SELL USDT-notional amounts initialized from authoritative one_wv_usdt, validation against empty or non-positive submission, edit-preserving PAPER refresh and permanent authoritative engaged_notional_usdt display beneath swords while preserving existing execution safety semantics", "date": "2026-08-24"},
     {"revision": "1.32", "reason": "Human-authorized Workflow Acceleration Package 2 checkpoint implementing an isolated one-command Playwright PAPER E2E harness over the real loopback backend and frontend, temporary SQLite runtime data, backend readiness, authoritative state assertions and unconditional teardown without changing trading semantics", "date": "2026-08-24"},
     {"revision": "1.33", "reason": "Human-authorized Workflow Acceleration Package 4 checkpoint deriving deterministic frontend/backend contract checks from existing Python models, enums and PAPER projections plus a checked frontend contract module, intentional mismatch fixtures and selective tools.dev.verify routing without changing trading semantics", "date": "2026-08-24"},
-    {"revision": "1.34", "reason": "Human-authorized bounded PAPER Full Close implementation using backend-authoritative remaining coin quantity, opposite-side reduce-only execution, safe already-FLAT no-op, no flip-through-zero, checked frontend/backend request contract, authoritative exposure refresh and real PAPER E2E coverage", "date": "2026-08-25"}
+    {"revision": "1.34", "reason": "Human-authorized bounded PAPER Full Close implementation using backend-authoritative remaining coin quantity, opposite-side reduce-only execution, safe already-FLAT no-op, no flip-through-zero, checked frontend/backend request contract, authoritative exposure refresh and real PAPER E2E coverage", "date": "2026-08-25"},
+    {"revision": "1.35", "reason": "Human-authorized bounded PAPER Limit foundation implementing checked BUY/SELL GTC contracts, shared sizing admission, durable idempotent create/cancel ledger, authoritative SQLite resting-order projection, simple Terminal controls/list and real PAPER lifecycle E2E without matching, partial fills, DOM, L2 or live execution", "date": "2026-08-25"}
   ]
 }
 ```
@@ -2821,3 +2823,24 @@ PAPER-only execution, persistence-before-submit, unique command identity, exactl
 fail-closed admission and reconciliation locks remain unchanged. DOM, L2, chart trading, Limit, SL/TP,
 AUTOPILOT/Robot and live Bybit execution remain outside this slice. This amendment records checkpoint
 `PAPER_FULL_CLOSE_TO_FLAT_IMPLEMENTED_VERIFIED`.
+
+## 44. PAPER Limit Order Foundation implementation checkpoint
+
+Revision 1.35 records the human-authorized bounded PAPER Limit foundation. Checked create and cancel
+contracts support BUY or SELL, existing USDT/Working Volume sizing, positive normalized Limit price and
+binding `GTC`. Admission reuses the existing `PreTradeGuard`; no parallel quantity or price normalization
+was introduced.
+
+SQLite schema v5 adds authoritative resting PAPER Limit orders and a durable client-action ledger. Repeating
+the same create action and payload returns the original order without duplication; reuse with conflicting
+intent fails closed. Concrete-order cancel is durable and idempotent, and cancelling an already cancelled or
+absent identity is a successful no-op that cannot mutate a position. Resting orders do not match or fill in
+this slice.
+
+TERMINAL provides temporary functional side, price and amount controls, authoritative active-order refresh
+and per-order cancel. The real PAPER E2E covers create BUY Limit, authoritative appearance, UI display,
+cancel, authoritative disappearance and safe repeat cancel. Focused tests also cover BUY/SELL, GTC,
+duplicate create, invalid price/amount, contract drift and schema-backed persistence. DOM, L2, chart
+interaction, aggressive-Limit confirmation, SL/TP, partial fills, matching, WebSocket, live execution and
+Robot/AUTOPILOT remain excluded. This amendment records checkpoint
+`PAPER_LIMIT_ORDER_FOUNDATION_IMPLEMENTED_VERIFIED`.

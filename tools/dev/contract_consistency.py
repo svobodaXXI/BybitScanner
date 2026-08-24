@@ -12,7 +12,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Sequence
 
-from terminal.api.models import CommandResult, FullCloseCommandRequest, MarketCommandRequest, VolumeRequest, VolumeUnit
+from terminal.api.models import (
+    CommandResult, FullCloseCommandRequest, LimitCommandRequest, MarketCommandRequest,
+    PaperLimitCancelRequest, PaperLimitMutationResult, PaperLimitOrderProjection,
+    TimeInForce, VolumeRequest, VolumeUnit,
+)
 from terminal.application.pretrade_guard import RejectionCode, SlippageToleranceType
 from terminal.domain.models import OrderSide, PositionSide
 from terminal.runtime import paper_runtime
@@ -78,6 +82,14 @@ def check_source(source: str) -> tuple[bool, str]:
                 {field.name for field in fields(MarketCommandRequest)}, exact=True)
         compare("full-close-request-fields", _type_fields(source, "FullCloseCommandRequest"),
                 {field.name for field in fields(FullCloseCommandRequest)}, exact=True)
+        compare("limit-request-fields", _type_fields(source, "LimitCommandRequest"),
+                {field.name for field in fields(LimitCommandRequest)}, exact=True)
+        compare("limit-cancel-fields", _type_fields(source, "PaperLimitCancelRequest"),
+                {field.name for field in fields(PaperLimitCancelRequest)}, exact=True)
+        compare("limit-result-fields", _type_fields(source, "PaperLimitMutationResult"),
+                {field.name for field in fields(PaperLimitMutationResult)}, exact=True)
+        compare("limit-order-fields", _type_fields(source, "PaperLimitOrder"),
+                {field.name for field in fields(PaperLimitOrderProjection)}, exact=True)
         compare("volume-request-fields", _type_fields(source, "VolumeRequest"),
                 {field.name for field in fields(VolumeRequest)}, exact=True)
         compare("command-result-fields", _type_fields(source, "CommandResult"),
@@ -90,6 +102,8 @@ def check_source(source: str) -> tuple[bool, str]:
                 _enum_values(SlippageToleranceType))
         compare("position-sides", _array(source, "POSITION_SIDES"),
                 _enum_values(PositionSide), exact=True)
+        compare("time-in-force", _array(source, "TIME_IN_FORCE_VALUES"),
+                _enum_values(TimeInForce), exact=True)
         compare("handled-reason-codes", _array(source, "HANDLED_REASON_CODES"), _reason_codes())
     except (OSError, TypeError, ValueError, SyntaxError) as exc:
         return False, compact("FAIL", [str(FRONTEND_CONTRACT)], checks, failed, [str(exc)])

@@ -52,6 +52,14 @@ class ContractConsistencyTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("full-close-request-fields", output)
 
+    def test_limit_contract_and_tif_drift_fail_closed(self) -> None:
+        changed = SOURCE.replace("  time_in_force: (typeof TIME_IN_FORCE_VALUES)[number];", "  tif: string;")
+        changed = changed.replace('["GTC"]', '["GTC", "IOC"]')
+        passed, output = check_source(changed)
+        self.assertFalse(passed)
+        self.assertIn("limit-request-fields", output)
+        self.assertIn("time-in-force:IOC", output)
+
 
 if __name__ == "__main__":
     unittest.main()

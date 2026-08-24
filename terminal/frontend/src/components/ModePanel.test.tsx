@@ -9,6 +9,7 @@ const paperState = (overrides = {}) => ({
   engaged_wv: "0",
   engaged_notional_usdt: "0",
   one_wv_usdt: "250",
+  active_limit_orders: [],
   ...overrides,
 });
 
@@ -23,7 +24,7 @@ describe("ModePanel PAPER Market amounts", () => {
 
     render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
 
-    expect(await screen.findAllByDisplayValue("250")).toHaveLength(2);
+    await waitFor(() => expect(screen.getAllByDisplayValue("250")).toHaveLength(3));
     expect(screen.getByText("313 USDT")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("BUY amount"), {
       target: { value: "300" },
@@ -131,7 +132,7 @@ describe("ModePanel PAPER Market amounts", () => {
 
   it("submits backend-authoritative Full Close and refreshes zero exposure", async () => {
     let stateReads = 0;
-    const fetchMock = vi.fn((url: string) => {
+    const fetchMock = vi.fn((url: string, _options?: RequestInit) => {
       if (url.startsWith("/api/paper-state")) {
         stateReads += 1;
         return Promise.resolve({
@@ -164,4 +165,52 @@ describe("ModePanel PAPER Market amounts", () => {
       symbol: "BTCUSDT",
     });
   });
+
+  it("creates and cancels an authoritative GTC PAPER limit", async () => {
+    let active = false;
+    const fetchMock = vi.fn((url: string, options?: RequestInit) => {
+      if (url.startsWith("/api/paper-state")) return Promise.resolve({
+        ok: true,
+        json: vi.fn().mockResolvedValue(paperState({
+          active_limit_orders: active ? [{
+            order_id: "paper-limit-1", order_link_id: "link-1", symbol: "BTCUSDT",
+            side: "Buy", price: "64000", quantity: "0.005", time_in_force: "GTC",
+          }] : [],
+        })),
+      });
+      if (url === "/api/limit") active = true;
+      if (url === "/api/limit/cancel") active = false;
+      return Promise.resolve({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ status: "completed", reason_code: "completed" }),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    await screen.findAllByDisplayValue("250");
+    fireEvent.change(screen.getByLabelText("LIMIT price"), { target: { value: "64000" } });
+    fireEvent.change(screen.getByLabelText("LIMIT amount"), { target: { value: "321" } });
+    fireEvent.click(screen.getByRole("button", { name: "Создать LIMIT" }));
+    expect(await screen.findByText("Buy 0.005 @ 64000 GTC")).toBeInTheDocument();
+    const createOptions = fetchMock.mock.calls.find(([url]) => url === "/api/limit")![1];
+    expect(JSON.parse(createOptions!.body as string)).toMatchObject({
+      side: "Buy", limit_price: "64000", time_in_force: "GTC",
+      volume: { unit: "usdt", amount: "321" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Отменить paper-limit-1" }));
+    await waitFor(() => expect(screen.queryByText("Buy 0.005 @ 64000 GTC")).not.toBeInTheDocument());
+  });
+
+  it.each([["0", "321"], ["64000", "0"]])(
+    "does not submit invalid LIMIT price %s amount %s", async (price, amount) => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(paperState()) });
+      vi.stubGlobal("fetch", fetchMock);
+      render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+      await screen.findAllByDisplayValue("250");
+      fireEvent.change(screen.getByLabelText("LIMIT price"), { target: { value: price } });
+      fireEvent.change(screen.getByLabelText("LIMIT amount"), { target: { value: amount } });
+      fireEvent.click(screen.getByRole("button", { name: "Создать LIMIT" }));
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/limit")).toBe(false);
+    },
+  );
 });

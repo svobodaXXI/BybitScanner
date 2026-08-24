@@ -14,7 +14,10 @@ from terminal.api.models import (
     CommandResult,
     CommandResultStatus,
     FullCloseCommandRequest,
+    LimitCommandRequest,
     MarketCommandRequest,
+    PaperLimitCancelRequest,
+    TimeInForce,
     VolumeRequest,
     VolumeUnit,
     to_primitive,
@@ -36,6 +39,11 @@ MARKET_FIELDS = {
 }
 VOLUME_FIELDS = {"unit", "amount"}
 FULL_CLOSE_FIELDS = {"client_action_id", "symbol"}
+LIMIT_FIELDS = {
+    "client_action_id", "symbol", "side", "volume", "sizing_reference_price",
+    "limit_price", "time_in_force",
+}
+LIMIT_CANCEL_FIELDS = {"client_action_id", "symbol", "order_id"}
 
 
 class PaperHttpHandler(BaseHTTPRequestHandler):
@@ -95,6 +103,39 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        if self.path == "/api/limit":
+            try:
+                payload = self._payload(LIMIT_FIELDS)
+                volume = payload["volume"]
+                if not isinstance(volume, dict) or set(volume) != VOLUME_FIELDS:
+                    raise ValueError("invalid volume fields")
+                request = LimitCommandRequest(
+                    ClientActionId(payload["client_action_id"]), payload["symbol"],
+                    OrderSide(payload["side"]),
+                    VolumeRequest(VolumeUnit(volume["unit"]), _decimal(volume["amount"])),
+                    _decimal(payload["sizing_reference_price"]),
+                    _decimal(payload["limit_price"]), TimeInForce(payload["time_in_force"]),
+                )
+                result = self.server.runtime.create_limit(request)
+            except Exception:
+                self._json_response(400, to_primitive(_validation_error()))
+                return
+            self._json_response(200, to_primitive(result))
+            return
+
+        if self.path == "/api/limit/cancel":
+            try:
+                payload = self._payload(LIMIT_CANCEL_FIELDS)
+                result = self.server.runtime.cancel_limit(PaperLimitCancelRequest(
+                    ClientActionId(payload["client_action_id"]), payload["symbol"],
+                    payload["order_id"],
+                ))
+            except Exception:
+                self._json_response(400, to_primitive(_validation_error()))
+                return
+            self._json_response(200, to_primitive(result))
+            return
+
         if self.path == "/api/full-close":
             try:
                 payload = self._payload(FULL_CLOSE_FIELDS)
