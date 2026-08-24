@@ -2,11 +2,11 @@
 
 Версия:
 
-4.11
+4.12
 
 Дата:
 
-2026-08-22
+2026-08-24
 
 Document Type:
 
@@ -999,6 +999,33 @@ notepad путь\к\файлу
 * по прямому запросу пользователя;
 * при реальном риске потери рабочего контекста.
 
+## 25.1 CODEX_TOKEN_EFFICIENCY_RULE
+
+Промты для Codex должны быть минимально достаточными.
+
+Не требуется повторное чтение файлов,
+повторные исследования, проверки или команды,
+результат которых уже достоверно установлен
+в текущей непрерывной сессии и не мог измениться.
+
+Ассистент обязан использовать уже установленный
+контекст и передавать только:
+
+* новую задачу;
+* необходимые ограничения;
+* неизвестные данные.
+
+Повтор допускается только если:
+
+* состояние могло измениться;
+* повторная проверка необходима для safety/fail-closed решения;
+* её прямо требует обязательный checkpoint ASSISTANT_PROTOCOL.
+
+Цель правила:
+
+минимизировать расход Codex tokens/limits
+без снижения надёжности и governance.
+
 ---
 # 26. EFFICIENCY_OPTIMIZATION_PROTOCOL
 
@@ -1342,17 +1369,23 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.10
+ASSISTANT_PROTOCOL v4.11
 
 to:
 
-ASSISTANT_PROTOCOL v4.11
+ASSISTANT_PROTOCOL v4.12
 
 date:
 
-2026-08-22
+2026-08-24
 
 reason:
+
+* added `CODEX_TOKEN_EFFICIENCY_RULE`, requiring Codex prompts to reuse reliable continuous-session context and contain only the new task, necessary constraints and unknown data;
+* limited repeated reads, research, checks and commands to changed-state, safety/fail-closed or mandatory Assistant Protocol checkpoint cases;
+* recorded token/limit efficiency as an explicit objective without reducing reliability or governance.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.10 to v4.11:
 
 * added `IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE`, prohibiting image generation/editing for BybitScanner and Trading Workspace without an explicit user request or approval;
 * added `UI_REQUIREMENT_INTERPRETATION_RULE`, making Terminal visual and interaction descriptions product/UX requirements by default rather than inferred image-generation requests.
