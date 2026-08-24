@@ -8,12 +8,25 @@ describe("BUY", () => {
     const firstRequest = new Promise((_, reject) => {
       rejectFirstRequest = reject;
     });
-    const fetchMock = vi
-      .fn()
-      .mockReturnValueOnce(firstRequest)
-      .mockResolvedValueOnce({
+    let marketAttempts = 0;
+    let paperStateReads = 0;
+    const fetchMock = vi.fn((url: string, _options?: RequestInit) => {
+      if (url.startsWith("/api/paper-state")) {
+        paperStateReads += 1;
+        return Promise.resolve({
+          ok: true,
+          json: vi.fn().mockResolvedValue({
+            ok: true,
+            engaged_wv: paperStateReads === 1 ? "0" : "1",
+          }),
+        });
+      }
+      marketAttempts += 1;
+      if (marketAttempts === 1) return firstRequest;
+      return Promise.resolve({
         json: vi.fn().mockResolvedValue({ status: "completed" }),
       });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
@@ -21,7 +34,7 @@ describe("BUY", () => {
     fireEvent.click(buyButton);
     fireEvent.click(buyButton);
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(marketAttempts).toBe(1);
     expect(buyButton).toBeDisabled();
     rejectFirstRequest(new Error("network unavailable"));
     expect(await screen.findByText("PAPER execution unavailable")).toBeInTheDocument();
@@ -30,18 +43,21 @@ describe("BUY", () => {
     fireEvent.click(buyButton);
 
     expect(await screen.findByText("PAPER BUY completed")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    const [url, options] = fetchMock.mock.calls[1];
+    expect(marketAttempts).toBe(2);
+    expect(await screen.findByText("⚔️ 1.0")).toBeInTheDocument();
+    const [url, options] = fetchMock.mock.calls.filter(
+      ([requestUrl]) => requestUrl === "/api/market",
+    )[1];
     expect(url).toBe("/api/market");
     expect(options).toMatchObject({
       method: "POST",
       headers: { "Content-Type": "application/json" },
     });
-    expect(JSON.parse(options.body)).toEqual({
+    expect(JSON.parse(options!.body as string)).toEqual({
       client_action_id: expect.stringMatching(/^paper-market-buy-\d+$/),
       symbol: "BTCUSDT",
       side: "Buy",
-      volume: { unit: "usdt", amount: "100" },
+      volume: { unit: "working_volume", amount: "1" },
       sizing_reference_price: "64250",
       slippage_type: "Percent",
       slippage_value: "0.5",
@@ -49,8 +65,16 @@ describe("BUY", () => {
   });
 
 it("sends PAPER Market SELL with the correct payload", async () => {
-  const fetchMock = vi.fn().mockResolvedValue({
-    json: vi.fn().mockResolvedValue({ status: "completed" }),
+  const fetchMock = vi.fn((url: string, _options?: RequestInit) => {
+    if (url.startsWith("/api/paper-state")) {
+      return Promise.resolve({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ ok: true, engaged_wv: "0" }),
+      });
+    }
+    return Promise.resolve({
+      json: vi.fn().mockResolvedValue({ status: "completed" }),
+    });
   });
   vi.stubGlobal("fetch", fetchMock);
 
@@ -60,16 +84,18 @@ it("sends PAPER Market SELL with the correct payload", async () => {
   fireEvent.click(sellButton);
 
   expect(await screen.findByText("PAPER SELL completed")).toBeInTheDocument();
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock).toHaveBeenCalledWith("/api/paper-state?symbol=BTCUSDT");
 
-  const [url, options] = fetchMock.mock.calls[0];
+  const [url, options] = fetchMock.mock.calls.find(
+    ([requestUrl]) => requestUrl === "/api/market",
+  )!;
   expect(url).toBe("/api/market");
 
-  expect(JSON.parse(options.body)).toEqual({
+  expect(JSON.parse(options!.body as string)).toEqual({
     client_action_id: expect.stringMatching(/^paper-market-sell-\d+$/),
     symbol: "BTCUSDT",
     side: "Sell",
-    volume: { unit: "usdt", amount: "100" },
+    volume: { unit: "working_volume", amount: "1" },
     sizing_reference_price: "64250",
     slippage_type: "Percent",
     slippage_value: "0.5",

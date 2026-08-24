@@ -12,7 +12,9 @@ from terminal.api.models import (
 )
 from terminal.api.rest import ServerCommandContext, TerminalCommandApi
 from terminal.application.models import ProtectionState
-from terminal.application.pretrade_guard import PreTradeDecision, RejectionCode
+from terminal.application.pretrade_guard import (
+    PreTradeDecision, RejectionCode, WorkingVolumeIntent,
+)
 from terminal.application.trading_application import ApplicationResult
 from terminal.domain.models import CommandId, OrderSide
 from terminal.domain.states import CommandState
@@ -88,7 +90,10 @@ class TerminalCommandApiTests(unittest.TestCase):
         self.api = TerminalCommandApi(self.app, self.provider)
 
     def test_market_and_limit_map_only_to_trading_application(self):
-        market_result = self.api.market(market())
+        market_result = self.api.market(replace(
+            market(),
+            volume=VolumeRequest(VolumeUnit.WORKING_VOLUME, Decimal("1")),
+        ))
         limit_result = self.api.limit(LimitCommandRequest(
             ACTION, "BTCUSDT", OrderSide.SELL,
             VolumeRequest(VolumeUnit.WORKING_VOLUME, Decimal("2")),
@@ -98,6 +103,9 @@ class TerminalCommandApiTests(unittest.TestCase):
         self.assertEqual(self.provider.lookups[0], ("context", "BTCUSDT"))
         self.assertEqual(market_result.status, CommandResultStatus.ACCEPTED_PENDING)
         self.assertEqual(limit_result.client_action_id, ACTION.value)
+        self.assertIsInstance(self.app.calls[0][1].volume, WorkingVolumeIntent)
+        self.assertEqual(self.app.calls[0][1].volume.wv_count, Decimal("1"))
+        self.assertEqual(self.app.calls[0][1].volume.configured_one_wv_usdt, Decimal("50"))
         self.assertEqual(self.app.calls[1][1].volume.configured_one_wv_usdt, Decimal("50"))
 
     def test_amend_cancel_and_protection_use_server_owned_facts(self):
