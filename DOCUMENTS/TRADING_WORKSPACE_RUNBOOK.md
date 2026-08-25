@@ -1,186 +1,112 @@
-# Trading Workspace - Local / Pinggy / Telegram Runbook
+# Trading Workspace — development PAPER launch runbook
 
 ## Назначение
 
-Проверенная процедура запуска development PAPER Trading Workspace после перезагрузки Windows, отключения света или завершения временного Pinggy-туннеля.
+Canonical operational runbook для локального development/PAPER запуска Trading Workspace через PAPER backend,
+Vite, Pinggy и Telegram Mini App. Live execution в этой схеме не используется.
 
-Это только DEVELOPMENT / PAPER. Live execution здесь не используется.
+Для рабочей сессии одновременно должны оставаться открытыми три отдельных окна PowerShell: PAPER backend,
+Vite frontend и Pinggy tunnel. Закрытие любого окна ломает соответствующий слой цепочки.
 
 ## 1. PAPER backend
 
-Открыть отдельное окно PowerShell.
+Из `C:\BybitScanner`:
 
-Команды:
+```powershell
+python -m terminal.runtime.paper_http_server
+```
 
-    cd C:\BybitScanner
-    $env:PYTHONPATH="C:\BybitScanner"
-    .\venv\Scripts\python.exe terminal\runtime\paper_http_server.py
+Backend должен слушать `http://127.0.0.1:8765`. В другом окне проверить:
 
-Рабочий признак:
+```powershell
+curl.exe -i "http://127.0.0.1:8765/api/paper-state?symbol=BTCUSDT"
+```
 
-    PAPER HTTP runtime listening on http://127.0.0.1:8765
-
-Окно оставить открытым.
-
-Проверка:
-
-    curl.exe http://127.0.0.1:8765/api/health
-
-Ожидается:
-
-    {"ok":true,"mode":"paper"}
+Ожидается `HTTP 200`. Окно backend оставить открытым.
 
 ## 2. Vite frontend
 
-Открыть второе окно PowerShell.
+Во втором PowerShell:
 
-Команды:
+```powershell
+cd C:\BybitScanner\terminal\frontend
+npm run dev -- --host 127.0.0.1
+```
 
-    cd C:\BybitScanner\terminal\frontend
-    npm run dev -- --host 127.0.0.1
+Frontend должен слушать `http://127.0.0.1:5173`. Проверить frontend и backend через Vite proxy:
 
-Рабочий признак:
+```powershell
+curl.exe -I "http://127.0.0.1:5173/"
+curl.exe -i "http://127.0.0.1:5173/api/paper-state?symbol=BTCUSDT"
+```
 
-    Local: http://127.0.0.1:5173/
-
-Окно оставить открытым.
-
-Проверка:
-
-    curl.exe http://127.0.0.1:5173
-
-Должен вернуться HTML Trading Workspace.
+Оба запроса должны вернуть `HTTP 200`. Окно Vite оставить открытым.
 
 ## 3. Pinggy tunnel
 
-Открыть третье окно PowerShell.
+В третьем PowerShell использовать именно `127.0.0.1`, не `localhost`:
 
-Основная рабочая команда:
+```powershell
+ssh -p 443 -R0:127.0.0.1:5173 a.pinggy.io
+```
 
-    ssh -p 443 -R0:127.0.0.1:5173 a.pinggy.io
+На Windows `localhost` может разрешиться в IPv6 `::1`; тогда tunnel не попадёт в Vite, слушающий
+`127.0.0.1`. Pinggy выдаёт два HTTPS URL. Допустим любой URL, который проходит обе проверки:
 
-Если Pinggy запросит пароль, пройти запрос и дождаться выдачи временных HTTPS URL.
+```powershell
+curl.exe -I "https://PINGGY_URL"
+curl.exe -i "https://PINGGY_URL/api/paper-state?symbol=BTCUSDT"
+```
 
-Обычно выдаются адреса двух типов:
+Оба запроса должны вернуть `HTTP 200`. Окно Pinggy оставить открытым. После завершения tunnel старый URL
+считать недействительным.
 
-    https://xxxxx.run.pinggy-free.link
-    https://xxxxx.free.pinggy.net
+## 4. Telegram Workspace menu button
 
-Окно Pinggy оставить открытым.
+Из `C:\BybitScanner`, подставив проверенный Pinggy URL:
 
-ВАЖНО:
-- Pinggy URL временный.
-- После закрытия SSH, сообщения Time exceeded, перезагрузки или отключения света старый URL считать недействительным.
-- После каждого нового tunnel нужно заново обновлять Telegram Workspace menu button.
+```powershell
+.\venv\Scripts\python.exe -m tools.configure_telegram_workspace "https://PINGGY_URL"
+```
 
-## 4. Какой URL использовать
+Ожидаемое сообщение:
 
-Для Telegram WebView в практической проверке лучше сработал адрес:
+```text
+Telegram Workspace menu button configured for the owner chat.
+```
 
-    https://xxxxx.free.pinggy.net
+После получения нового временного Pinggy URL команду нужно выполнить снова.
 
-Адрес run.pinggy-free.link может показывать промежуточную страницу Enter Site и работать в Telegram нестабильно.
+## 5. Telegram Mini App после смены URL
 
-Перед настройкой Telegram проверить URL с компьютера:
+Telegram Desktop может продолжать использовать старое состояние WebApp/menu button. Если новый URL напрямую
+открывается в Chrome, Pinggy root и `/api/paper-state` возвращают `200`, но Mini App не открывается, полностью
+закрыть Telegram Desktop и запустить его снова. После полного restart Telegram использует новый Workspace URL.
 
-    curl.exe -I https://CURRENT-PINGGY-URL
+## Быстрая диагностика
 
-Нужен финальный ответ:
+Если Workspace не открывается, проверять строго сверху вниз:
 
-    HTTP/1.1 200 OK
+1. PAPER backend на `127.0.0.1:8765`;
+2. Vite frontend на `127.0.0.1:5173`;
+3. `/api/paper-state` через Vite proxy;
+4. Pinggy root URL;
+5. `/api/paper-state` через Pinggy;
+6. прямое открытие Pinggy URL в Chrome;
+7. Telegram Mini App.
 
-Одна строка:
+Не менять Pinggy URL и не перезапускать случайные компоненты, пока не определён broken layer. Если первые
+шесть пунктов работают, проблема относится к Telegram/WebApp state; первое действие — полный restart
+Telegram Desktop.
 
-    HTTP/1.1 200 Connection established
+Рабочая цепочка:
 
-ещё не подтверждает полноценную работу tunnel.
+```text
+Telegram / browser
+→ Pinggy HTTPS
+→ Vite 127.0.0.1:5173
+→ Vite /api proxy
+→ PAPER backend 127.0.0.1:8765
+```
 
-Если появляется:
-
-    Time exceeded
-
-или TLS/SSL handshake error, создать новый Pinggy tunnel.
-
-## 5. Vite allowedHosts
-
-В terminal/frontend/vite.config.ts должны быть разрешены оба suffix:
-
-    .pinggy-free.link
-    .free.pinggy.net
-
-Иначе Vite может показать:
-
-    Blocked request. This host is not allowed.
-
-После изменения vite.config.ts Vite должен автоматически вывести:
-
-    [vite] server restarted
-
-## 6. Обновление Telegram Workspace menu button
-
-После получения нового рабочего Pinggy URL:
-
-    cd C:\BybitScanner
-    .\venv\Scripts\python.exe -m tools.configure_telegram_workspace "https://CURRENT-PINGGY-URL"
-
-Ожидаемый результат:
-
-    Telegram Workspace menu button configured for the owner chat.
-
-Эту команду повторять после каждого нового Pinggy tunnel.
-
-## 7. Проверка телефона
-
-Последовательность:
-
-1. Проверить новый URL через curl на компьютере.
-2. Проверить URL в обычном браузере телефона.
-3. Затем открыть Workspace из Telegram.
-4. Если браузер телефона работает, а Telegram нет, проблема относится к Telegram WebView, menu URL или allowedHosts.
-5. Если Telegram показывает host is not allowed, проверить Vite allowedHosts.
-6. Если Telegram открывает старый tunnel, заново выполнить configure_telegram_workspace с текущим URL.
-
-## 8. PAPER execution check
-
-После открытия Workspace найти:
-
-    PAPER Market BUY
-
-Нажать один раз.
-
-Рабочий результат:
-
-    PAPER execution completed
-
-Это подтверждает путь:
-
-    Telegram / browser
-    -> Pinggy HTTPS
-    -> Vite :5173
-    -> /api proxy
-    -> PAPER HTTP :8765
-    -> TerminalCommandApi
-    -> TradingApplication
-    -> PaperMarketExecutor
-    -> SQLite
-    -> COMPLETED
-    -> frontend
-
-## Быстрое восстановление после перезапуска
-
-1. Запустить PAPER backend.
-2. Запустить Vite.
-3. Запустить Pinggy.
-4. Проверить новый URL через curl -I.
-5. Для Telegram предпочесть .free.pinggy.net.
-6. Обновить Telegram Workspace menu button.
-7. Проверить браузер телефона.
-8. Открыть Workspace в Telegram.
-9. Проверить PAPER Market BUY.
-
-## Важные замечания
-
-- Не использовать старый Pinggy URL после завершения tunnel.
-- Не закрывать три рабочих окна: PAPER backend, Vite, Pinggy.
-- Не добавлять permissive CORS: frontend обращается к /api через Vite same-origin proxy.
-- PAPER HTTP server остаётся loopback-only на 127.0.0.1:8765.
+Checkpoint: `TRADING_WORKSPACE_DEV_LAUNCH_RUNBOOK_RECORDED`.
