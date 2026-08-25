@@ -7,9 +7,9 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.36",
+  "revision": "1.37",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Implement and verify PAPER resting Limit amend/reprice.",
+  "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
     "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
@@ -36,6 +36,8 @@
     ,"Implement the human-authorized PAPER Full Close action using authoritative remaining coin quantity, safe FLAT no-op behavior and authoritative frontend exposure refresh"
     ,"Implement the human-authorized PAPER Limit create, durable idempotency, authoritative active-order projection and safe concrete-order cancel lifecycle with binding GTC"
     ,"Implement the human-authorized PAPER resting Limit price-only amend with durable idempotency and authoritative in-place projection"
+    ,"Run PAPER execution through a dedicated serialized runtime-owner lane with live symbol metadata and live order-book authority"
+    ,"Implement the ONGUSDT live order-book and public-trade streams, cumulative Smart Tape aggregation, x5 DOM projection and a stable fixed price ladder"
   ],
   "prohibited_scope": [
     "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
@@ -406,7 +408,8 @@
     {"revision": "1.33", "reason": "Human-authorized Workflow Acceleration Package 4 checkpoint deriving deterministic frontend/backend contract checks from existing Python models, enums and PAPER projections plus a checked frontend contract module, intentional mismatch fixtures and selective tools.dev.verify routing without changing trading semantics", "date": "2026-08-24"},
     {"revision": "1.34", "reason": "Human-authorized bounded PAPER Full Close implementation using backend-authoritative remaining coin quantity, opposite-side reduce-only execution, safe already-FLAT no-op, no flip-through-zero, checked frontend/backend request contract, authoritative exposure refresh and real PAPER E2E coverage", "date": "2026-08-25"},
     {"revision": "1.35", "reason": "Human-authorized bounded PAPER Limit foundation implementing checked BUY/SELL GTC contracts, shared sizing admission, durable idempotent create/cancel ledger, authoritative SQLite resting-order projection, simple Terminal controls/list and real PAPER lifecycle E2E without matching, partial fills, DOM, L2 or live execution", "date": "2026-08-25"},
-    {"revision": "1.36", "reason": "Human-authorized bounded PAPER resting Limit amend/reprice implementing checked price-only mutation, shared price normalization, durable idempotency, atomic in-place persistence, authoritative UI refresh and real PAPER create-amend-cancel E2E without quantity amend, matching, DOM, L2 or live execution", "date": "2026-08-25"}
+    {"revision": "1.36", "reason": "Human-authorized bounded PAPER resting Limit amend/reprice implementing checked price-only mutation, shared price normalization, durable idempotency, atomic in-place persistence, authoritative UI refresh and real PAPER create-amend-cancel E2E without quantity amend, matching, DOM, L2 or live execution", "date": "2026-08-25"},
+    {"revision": "1.37", "reason": "Checkpoint of serialized owner-thread PAPER execution, live ONGUSDT metadata and order-book authority, noncontiguous newer update-ID acceptance, 50-ms cumulative Smart Tape, x5 DOM compression, stable fixed ladder, canonical trade colors and IPv4 Vite binding while retaining the unresolved Tape-to-DOM spatial projection defect as the first next step", "date": "2026-08-26"}
   ]
 }
 ```
@@ -2865,3 +2868,43 @@ UI price refresh, cancel and disappearance. Quantity amend, fills, partial fills
 cancel-replace, aggressive execution, DOM, L2, chart drag, WebSocket market data, SL/TP, Live Bybit and
 Robot/AUTOPILOT remain excluded. This amendment records checkpoint
 `PAPER_LIMIT_AMEND_REPRICE_IMPLEMENTED_VERIFIED`.
+
+## 46. Live Trading Workspace market-data and PAPER-runtime checkpoint
+
+Revision 1.37 records the current verified implementation checkpoint while the overall ChangeRequest remains
+`IMPLEMENT / IN_PROGRESS`. PAPER execution now owns `SQLiteStore` on a dedicated runtime-owner thread;
+threaded HTTP workers submit serialized Market, state, Limit create/amend/cancel and Full Close operations
+through that lane. `SQLiteStore._assert_owner()` and fail-closed behavior remain binding.
+
+Production PAPER execution is no longer BTC-only. It uses authoritative Bybit instrument metadata and the
+live book provider for `ONGUSDT`; direct PAPER BUY live smoke completed and authoritative PAPER state showed
+a Long position. The public market-data runtime consumes `orderbook.50.ONGUSDT`, exposes the book through
+SSE and accepts every strictly newer update ID while ignoring stale or duplicate IDs; update IDs are not
+required to be contiguous. Live observation remained continuously READY for approximately 30 seconds with
+50 bids and 50 asks and increasing update ID and sequence.
+
+Public trades are aggregated in 50 ms windows, separately by side and across successive same-side
+executions. Each cumulative print preserves authoritative execution-price geometry, total quantity and
+notional, execution range and swept ticks. Its height represents swept price range and its width uses weak
+`log1p` USDT-volume compression. DOM uses a five-native-tick display step (`0.00005` for ONGUSDT), sums
+liquidity with side-aware bucketing, preserves authoritative native best Bid/Ask and renders a continuous
+16-row ladder whose geometry survives missing liquidity and market-data deltas. BUY/Bid/candle styling uses
+`#3BC639`; SELL/Ask/candle styling uses `#CD0000`. Vite explicitly binds `127.0.0.1`, avoiding Windows
+`localhost` resolution to `::1`.
+
+This visual checkpoint is not complete. Live screenshot evidence shows a material Smart Tape spatial
+projection defect: prints near approximately `0.09455-0.09470` were rendered against a fixed DOM spread near
+approximately `0.09520-0.09525`. The first recovery task is to enforce the invariant that an execution at
+price X renders at exactly the same Y coordinate as the DOM row for X. Inspect the shared price-to-row/Y
+projection, obsolete row offsets and CSS top/bottom offsets, Tape versus DOM coordinate origins,
+`ladderCenterPrice`/top price, row height and clipping/container offsets.
+
+Only after exact spatial alignment, verify temporal public-trade versus order-book/SSE synchronization.
+Then further narrow cumulative-print bubbles and replace frontend tick-size inference with authoritative
+read-only tick size in the SSE contract. The later CENTER UX remains: single tap performs one-shot center,
+double tap enables locked auto-centering and manual scroll disables the lock. The stale UI label
+`Market data: deterministic development feed` must also be corrected later to reflect the actual live source.
+
+This amendment records checkpoint `LIVE_TRADING_WORKSPACE_MARKET_DATA_CHECKPOINT_RECORDED`; it does not mark
+Trading Workspace complete and authorizes no new implementation beyond the already completed working-tree
+scope.

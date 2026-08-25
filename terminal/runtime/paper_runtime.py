@@ -18,10 +18,10 @@ from terminal.application.normalization import normalize_limit_price
 from terminal.application.pretrade_guard import NotionalIntent, OrderKind, PreTradeIntent
 from terminal.application.pretrade_guard import WorkingVolumeIntent
 from terminal.application.trading_application import TradingApplication
-from terminal.domain.models import Category, Price, Quantity, Symbol, TradingAccountId
+from terminal.domain.models import Symbol, TradingAccountId
 from terminal.domain.models import OrderId
 from terminal.exchange.events import InstrumentSnapshot
-from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
+from terminal.market_data.book_provider import MarketBookProvider
 from terminal.paper.executor import PaperMarketExecutor
 from terminal.persistence.sqlite_store import SQLiteStore
 from terminal.runtime.paper_context import (
@@ -52,56 +52,16 @@ class PaperOnlyAdapter:
         self._blocked()
 
 
-class DevelopmentBookProvider:
-    """Fresh normalized development book until live Market Data Engine is wired."""
-
-    def get_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
-        if symbol.value != "BTCUSDT":
-            return None
-
-        return NormalizedOrderBook(
-            symbol=symbol,
-            bids=(
-                PriceLevel(Price(Decimal("64249.5")), Quantity(Decimal("0.8"))),
-                PriceLevel(Price(Decimal("64249.0")), Quantity(Decimal("4.2"))),
-                PriceLevel(Price(Decimal("64248.5")), Quantity(Decimal("3.8"))),
-            ),
-            asks=(
-                PriceLevel(Price(Decimal("64250.5")), Quantity(Decimal("3.0"))),
-                PriceLevel(Price(Decimal("64251.0")), Quantity(Decimal("2.6"))),
-                PriceLevel(Price(Decimal("64251.5")), Quantity(Decimal("2.2"))),
-            ),
-            health=BookHealth.READY,
-            received_at_ms=int(time.time() * 1000),
-            available_depth=3,
-        )
-
-
-def instrument() -> InstrumentSnapshot:
-    return InstrumentSnapshot(
-        Category.LINEAR,
-        "BTCUSDT",
-        "LinearPerpetual",
-        "Trading",
-        "BTC",
-        "USDT",
-        "USDT",
-        Decimal("0.5"),
-        Decimal("1000000"),
-        Decimal("0.5"),
-        Decimal("0.001"),
-        Decimal("100"),
-        Decimal("50"),
-        Decimal("0.001"),
-        Decimal("5"),
-    )
-
-
 class PaperRuntime:
-    def __init__(self, database_path: Path) -> None:
+    def __init__(
+        self,
+        database_path: Path,
+        *,
+        book_provider: MarketBookProvider,
+        instrument_snapshot: InstrumentSnapshot,
+    ) -> None:
         self.store = SQLiteStore.open(database_path)
         engine = ExecutionEngine(self.store)
-        book_provider = DevelopmentBookProvider()
 
         paper_executor = PaperMarketExecutor(
             book_provider,
@@ -121,7 +81,7 @@ class PaperRuntime:
         context_provider = PaperCommandContextProvider(
             store=self.store,
             account_id=account_id,
-            instrument=instrument(),
+            instrument=instrument_snapshot,
         )
 
         application = TradingApplication(
@@ -241,7 +201,7 @@ class PaperRuntime:
 
     def cancel_limit(self, request: PaperLimitCancelRequest) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()
-        if symbol != "BTCUSDT":
+        if symbol != self._context.instrument.symbol:
             raise ValueError("unsupported PAPER symbol")
         existing = self.store.get_paper_limit(request.order_id)
         if existing is not None and existing.symbol.value != symbol:

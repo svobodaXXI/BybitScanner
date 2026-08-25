@@ -14,14 +14,45 @@ from terminal.api.models import (
     PaperLimitAmendRequest,
     TimeInForce,
 )
-from terminal.domain.models import OrderSide, Symbol
+from terminal.domain.models import Category, OrderSide, Price, Quantity, Symbol
+from terminal.exchange.events import InstrumentSnapshot
+from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_runtime import PaperRuntime
 from terminal.persistence.sqlite_store import DuplicateIdentity
 
 
+class StaticBookProvider:
+    def get_book(self, symbol: Symbol) -> NormalizedOrderBook:
+        return NormalizedOrderBook(
+            symbol=symbol,
+            bids=(PriceLevel(Price(Decimal("64249.5")), Quantity(Decimal("10"))),),
+            asks=(PriceLevel(Price(Decimal("64250.5")), Quantity(Decimal("10"))),),
+            health=BookHealth.READY,
+            received_at_ms=int(__import__("time").time() * 1000),
+            available_depth=1,
+        )
+
+
+def _instrument() -> InstrumentSnapshot:
+    return InstrumentSnapshot(
+        Category.LINEAR, "BTCUSDT", "LinearPerpetual", "Trading",
+        "BTC", "USDT", "USDT", Decimal("0.5"), Decimal("1000000"),
+        Decimal("0.5"), Decimal("0.001"), Decimal("100"), Decimal("50"),
+        Decimal("0.001"), Decimal("5"),
+    )
+
+
+def _runtime(path: Path) -> PaperRuntime:
+    return PaperRuntime(
+        path,
+        book_provider=StaticBookProvider(),
+        instrument_snapshot=_instrument(),
+    )
+
+
 def test_composed_paper_runtime_market_buy_completes():
     with tempfile.TemporaryDirectory() as temp:
-        runtime = PaperRuntime(Path(temp) / "paper.sqlite3")
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
             result = runtime.api.market(
                 MarketCommandRequest(
@@ -45,7 +76,7 @@ def test_composed_paper_runtime_market_buy_completes():
 
 def test_full_close_uses_authoritative_remaining_quantity_and_flat_repeat_is_noop():
     with tempfile.TemporaryDirectory() as temp:
-        runtime = PaperRuntime(Path(temp) / "paper.sqlite3")
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
             opened = runtime.api.market(
                 MarketCommandRequest(
@@ -81,7 +112,7 @@ def test_full_close_uses_authoritative_remaining_quantity_and_flat_repeat_is_noo
 
 def test_full_close_closes_short_without_flipping_long():
     with tempfile.TemporaryDirectory() as temp:
-        runtime = PaperRuntime(Path(temp) / "paper.sqlite3")
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
             opened = runtime.api.market(
                 MarketCommandRequest(
@@ -103,7 +134,7 @@ def test_full_close_closes_short_without_flipping_long():
 
 def test_paper_limit_create_is_durable_idempotent_and_cancel_is_safe():
     with tempfile.TemporaryDirectory() as temp:
-        runtime = PaperRuntime(Path(temp) / "paper.sqlite3")
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
             request = LimitCommandRequest(
                 ClientActionId("limit-buy-1"), "BTCUSDT", OrderSide.BUY,
@@ -146,7 +177,7 @@ def test_paper_limit_create_is_durable_idempotent_and_cancel_is_safe():
 
 def test_paper_sell_limit_uses_shared_sizing_and_gtc():
     with tempfile.TemporaryDirectory() as temp:
-        runtime = PaperRuntime(Path(temp) / "paper.sqlite3")
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
             result = runtime.create_limit(LimitCommandRequest(
                 ClientActionId("limit-sell-1"), "BTCUSDT", OrderSide.SELL,
@@ -164,7 +195,7 @@ def test_paper_sell_limit_uses_shared_sizing_and_gtc():
 
 def test_paper_limit_amend_reprices_in_place_and_is_durable_idempotent():
     with tempfile.TemporaryDirectory() as temp:
-        runtime = PaperRuntime(Path(temp) / "paper.sqlite3")
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
             created = runtime.create_limit(LimitCommandRequest(
                 ClientActionId("limit-amend-create"), "BTCUSDT", OrderSide.BUY,
@@ -204,7 +235,7 @@ def test_paper_limit_amend_reprices_in_place_and_is_durable_idempotent():
 
 def test_paper_limit_amend_missing_or_inactive_fails_closed():
     with tempfile.TemporaryDirectory() as temp:
-        runtime = PaperRuntime(Path(temp) / "paper.sqlite3")
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
             for order_id in ("missing",):
                 try:

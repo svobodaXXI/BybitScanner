@@ -1,25 +1,69 @@
-import type { TradePrint } from "../contracts/marketData";
-export function TapePanel({ trades }: { trades: readonly TradePrint[] }) {
+import type { CSSProperties } from "react";
+import type { NormalizedOrderBook, TradePrint } from "../contracts/marketData";
+import {
+  DOM_ROW_HEIGHT_REM,
+  displaySweptRows,
+  projectSweepCenterRow,
+} from "../marketData/domProjection";
+
+export const printWidthPx = (notionalUsdt: number) =>
+  Math.min(38, Math.max(18, 18 + 3.25 * Math.log1p(notionalUsdt / 100)));
+
+const formatNotional = (notional: number) => {
+  if (notional >= 1000) {
+    const thousands = notional / 1000;
+    return `${thousands >= 10 ? thousands.toFixed(0) : thousands.toFixed(1)}k`;
+  }
+  return Math.round(notional).toString();
+};
+
+export function TapePanel({
+  book,
+  centerPrice,
+  trades,
+}: {
+  book: NormalizedOrderBook;
+  centerPrice: number | null;
+  trades: readonly TradePrint[];
+}) {
   return (
     <section
-      className="tape-panel workspace-panel"
-      aria-label="Tape time and sales"
+      className="tape-panel prints-panel workspace-panel"
+      aria-label="Live trade prints"
     >
-      <header className="panel-header">
-        <span>Tape</span>
-        <small>Time &amp; Sales</small>
-      </header>
-      <div className="tape-list">
-        {trades.map((trade) => (
-          <div
-            className={`tape-row ${trade.side.toLowerCase()}`}
-            key={trade.id}
-          >
-            <time>{trade.time}</time>
-            <span>{trade.price.toFixed(1)}</span>
-            <strong>{trade.quantity.toFixed(3)}</strong>
-          </div>
-        ))}
+      <div className="prints-field">
+        <div className="prints-stream">
+          {trades.map((trade) => {
+            const width = printWidthPx(trade.totalNotionalUsdt);
+            const height =
+              displaySweptRows(trade.sweptTicks) * DOM_ROW_HEIGHT_REM;
+            const rowOffset =
+              projectSweepCenterRow(
+                book,
+                trade.sweepLowPrice,
+                trade.sweepHighPrice,
+                trade.tickSize,
+                centerPrice,
+              ) ?? 0;
+
+            return (
+              <div
+                className={`trade-print-bubble ${trade.side.toLowerCase()}`}
+                key={trade.id}
+                style={
+                  {
+                    "--print-width": `${width}px`,
+                    "--print-height": `${height}rem`,
+                    "--print-y": `${rowOffset * DOM_ROW_HEIGHT_REM}rem`,
+                  } as CSSProperties
+                }
+                title={`${trade.tradeCount} trades · ${trade.sweptTicks} ticks`}
+              >
+                <span>{formatNotional(trade.totalNotionalUsdt)}</span>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </section>
   );

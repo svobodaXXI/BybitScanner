@@ -19,10 +19,20 @@ export interface Candle {
 }
 export interface TradePrint {
   id: string;
-  time: string;
-  price: number;
-  quantity: number;
   side: MarketSide;
+  startedAtMs: number;
+  endedAtMs: number;
+  tradeCount: number;
+  totalQuantity: number;
+  totalNotionalUsdt: number;
+  firstExecutionPrice: number;
+  lastExecutionPrice: number;
+  sweepLowPrice: number;
+  sweepHighPrice: number;
+  sweptPriceRange: number;
+  sweptTicks: number;
+  tickSize: number;
+  rowOffset: number | null;
 }
 export interface OwnOrder {
   id: string;

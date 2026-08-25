@@ -3,7 +3,6 @@ import {
   type CommandResult,
   type FullCloseCommandRequest,
   HANDLED_REASON_CODES,
-  type LimitCommandRequest,
   type MarketCommandRequest,
   type MarketSide,
   type PaperState,
@@ -30,15 +29,18 @@ export function ModePanel({
 }) {
   const [executionStatus, setExecutionStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
     null,
   );
   const [engagedNotionalUsdt, setEngagedNotionalUsdt] = useState("0");
+  const [oneWvUsdt, setOneWvUsdt] = useState("0");
+  const [positionQuantity, setPositionQuantity] = useState("0");
+  const [positionSide, setPositionSide] = useState<PaperState["position_side"]>("Flat");
+  const [holdTooltip, setHoldTooltip] = useState<string | null>(null);
+  const holdTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
-  const [limitSide, setLimitSide] = useState<MarketSide>("Buy");
-  const [limitPrice, setLimitPrice] = useState("64200");
-  const [limitAmount, setLimitAmount] = useState("250");
   const [activeLimits, setActiveLimits] = useState<PaperLimitOrder[]>([]);
   const [amendPrices, setAmendPrices] = useState<Record<string, string>>({});
   const buyAmountEdited = useRef(false);
@@ -65,6 +67,9 @@ export function ModePanel({
           ? String(Math.round(Math.max(0, engagedNotional)))
           : "0",
       );
+      setPositionSide(state.ok ? state.position_side : "Flat");
+      setOneWvUsdt(state.ok ? state.one_wv_usdt : "0");
+      setPositionQuantity(state.ok ? state.position_quantity : "0");
       const limits = state.ok ? state.active_limit_orders : [];
       setActiveLimits(limits);
       setAmendPrices((current) => Object.fromEntries(
@@ -90,9 +95,28 @@ export function ModePanel({
     }
   }, [mode, refreshPaperState]);
 
-  const alternatives = (["TERMINAL", "AUTOPILOT", "EDITOR"] as const).filter(
+  const alternatives = (["TERMINAL", "AUTOPILOT"] as const).filter(
     (candidate) => candidate !== mode,
   );
+
+  const startHoldTooltip = (message: string) => {
+    if (holdTooltipTimer.current) {
+      clearTimeout(holdTooltipTimer.current);
+    }
+
+    holdTooltipTimer.current = setTimeout(() => {
+      setHoldTooltip(message);
+      holdTooltipTimer.current = null;
+    }, 500);
+  };
+
+  const stopHoldTooltip = () => {
+    if (holdTooltipTimer.current) {
+      clearTimeout(holdTooltipTimer.current);
+      holdTooltipTimer.current = null;
+    }
+    setHoldTooltip(null);
+  };
 
   const submitPaperMarket = async (side: MarketSide, amount: string) => {
     if (submissionInFlight.current) return;
@@ -168,30 +192,6 @@ export function ModePanel({
     }
   };
 
-  const submitLimit = async () => {
-    if (submissionInFlight.current) return;
-    if (!(Number(limitPrice) > 0) || !(Number(limitAmount) > 0)) return;
-    submissionInFlight.current = true;
-    setIsSubmitting(true);
-    try {
-      const request: LimitCommandRequest = {
-        client_action_id: `paper-limit-create-${Date.now()}`,
-        symbol: "BTCUSDT", side: limitSide,
-        volume: { unit: "usdt", amount: limitAmount },
-        sizing_reference_price: limitPrice,
-        limit_price: limitPrice, time_in_force: "GTC",
-      };
-      const response = await fetch("/api/limit", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-      });
-      const result = (await response.json()) as PaperLimitMutationResult;
-      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT создан" : "LIMIT отменён");
-      if (result.status === "completed") await refreshPaperState();
-    } catch { setExecutionStatus("LIMIT отменён"); }
-    finally { submissionInFlight.current = false; setIsSubmitting(false); }
-  };
-
   const cancelLimit = async (orderId: string) => {
     if (submissionInFlight.current) return;
     submissionInFlight.current = true;
@@ -257,10 +257,83 @@ export function ModePanel({
       {mode === "TERMINAL" ? (
         <div className="paper-market-actions">
           <div className="paper-wv-indicator" aria-label="Engaged working volume">
-            <span>{"\u2694\uFE0F"} {engagedWorkingVolume ?? "\u2014"}</span>
-            <span>{engagedNotionalUsdt} USDT</span>
+            <span
+              className="paper-wv-value paper-hold-target"
+              onPointerDown={() =>
+                startHoldTooltip(`1 \u0420\u041E = ${oneWvUsdt} USDT`)
+              }
+              onPointerUp={stopHoldTooltip}
+              onPointerCancel={stopHoldTooltip}
+              onPointerLeave={stopHoldTooltip}
+              onTouchStart={() =>
+                startHoldTooltip(`1 \u0420\u041E = ${oneWvUsdt} USDT`)
+              }
+              onTouchEnd={stopHoldTooltip}
+              onTouchCancel={stopHoldTooltip}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              {"\u2694\uFE0F"} {engagedWorkingVolume ?? "\u2014"}
+            </span>
+
+            <div
+              className={`paper-wv-position ${
+                positionSide === "Long"
+                  ? "long"
+                  : positionSide === "Short"
+                    ? "short"
+                    : "flat"
+              }`}
+            >
+              <span
+                className={`paper-wv-direction ${
+                  positionSide === "Long"
+                    ? "long"
+                    : positionSide === "Short"
+                      ? "short"
+                      : "flat"
+                }`}
+                aria-hidden="true"
+              />
+
+              <span
+                className="paper-position-notional-hold paper-hold-target"
+                onPointerDown={() =>
+                  startHoldTooltip(`${positionQuantity} BTC`)
+                }
+                onPointerUp={stopHoldTooltip}
+                onPointerCancel={stopHoldTooltip}
+                onPointerLeave={stopHoldTooltip}
+                onTouchStart={() =>
+                  startHoldTooltip(`${positionQuantity} BTC`)
+                }
+                onTouchEnd={stopHoldTooltip}
+                onTouchCancel={stopHoldTooltip}
+                onContextMenu={(event) => event.preventDefault()}
+              >
+                <span className="paper-wv-amount">{engagedNotionalUsdt}</span>
+                <span className="paper-wv-currency">USDT</span>
+              </span>
+
+              <button
+                className="paper-wv-close"
+                disabled={isSubmitting || positionSide === "Flat"}
+                onClick={() => setCloseConfirmOpen(true)}
+                type="button"
+                aria-label="??????? ??????? ???????"
+                title="??????? ??????? ???????"
+              >
+                <svg
+                  className="paper-close-icon"
+                  viewBox="0 0 16 16"
+                  aria-hidden="true"
+                >
+                  <line x1="4" y1="4" x2="12" y2="12" />
+                  <line x1="12" y1="4" x2="4" y2="12" />
+                </svg>              </button>
+            </div>
           </div>
-          <div className="paper-market-side">
+
+          <div className="paper-market-side paper-market-buy-side">
             <button
               onClick={() => submitPaperMarket("Buy", buyAmount)}
               className="paper-market-buy"
@@ -282,38 +355,7 @@ export function ModePanel({
             />
           </div>
 
-          <section aria-label="PAPER Limit controls">
-            <select aria-label="LIMIT side" value={limitSide} onChange={(event) => setLimitSide(event.target.value as MarketSide)}>
-              <option value="Buy">BUY</option><option value="Sell">SELL</option>
-            </select>
-            <input aria-label="LIMIT price" type="number" min="0" value={limitPrice} onChange={(event) => setLimitPrice(event.target.value)} />
-            <input aria-label="LIMIT amount" type="number" min="0" value={limitAmount} onChange={(event) => setLimitAmount(event.target.value)} />
-            <button type="button" disabled={isSubmitting} onClick={submitLimit}>Создать LIMIT</button>
-            <ul aria-label="Active PAPER limits">
-              {activeLimits.map((order) => (
-                <li key={order.order_id}>
-                  <span>{order.side} {order.quantity} @ {order.price} {order.time_in_force}</span>
-                  <input
-                    aria-label={`Новая цена ${order.order_id}`}
-                    min="0"
-                    onChange={(event) => setAmendPrices((current) => ({
-                      ...current, [order.order_id]: event.target.value,
-                    }))}
-                    type="number"
-                    value={amendPrices[order.order_id] ?? order.price}
-                  />
-                  <button type="button" disabled={isSubmitting} onClick={() => amendLimit(order.order_id)}>Изменить {order.order_id}</button>
-                  <button type="button" disabled={isSubmitting} onClick={() => cancelLimit(order.order_id)}>Отменить {order.order_id}</button>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <button disabled={isSubmitting} onClick={submitFullClose} type="button">
-            Закрыть позицию
-          </button>
-
-          <div className="paper-market-side">
+          <div className="paper-market-side paper-market-sell-side">
             <button
               onClick={() => submitPaperMarket("Sell", sellAmount)}
               className="paper-market-sell"
@@ -335,9 +377,165 @@ export function ModePanel({
             />
           </div>
 
+          <div className="paper-utility-stack">
+            <button
+              className="paper-position-list-button"
+              type="button"
+              aria-label="?????? ???????? ???????"
+              title="?????? ???????? ???????"
+              onClick={() => setExecutionStatus("?????? ???????: ????????? ????")}
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+
+            <button
+              className="paper-autopilot-button"
+              type="button"
+              aria-label="?????????"
+              title="?????????"
+              onClick={() => onModeChange("AUTOPILOT")}
+            >
+              <svg
+                className="paper-autopilot-wheel-icon"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <circle cx="12" cy="12" r="2.2" />
+
+                <line x1="4.5" y1="9.5" x2="10.2" y2="11.3" />
+                <line x1="19.5" y1="9.5" x2="13.8" y2="11.3" />
+
+                <line x1="12" y1="14.2" x2="12" y2="20.5" />
+
+                <path d="M4.8 9.8 Q12 6.5 19.2 9.8" />
+              </svg>            </button>
+          </div>
+
+          <div className="paper-protection-stack">
+            <button
+              className="paper-stop-button"
+              type="button"
+              onClick={() => setExecutionStatus("STOP: ??????? ??????????")}
+            >
+              STOP
+            </button>
+            <button
+              className="paper-take-button"
+              type="button"
+              onClick={() => setExecutionStatus("TAKE: ??????? ??????????")}
+            >
+              TAKE
+            </button>
+          </div>
+
+          <section className="paper-limit-list" aria-label="Active PAPER limits">
+            <div className="paper-limit-list-header">
+              <span>LIMITS</span>
+              <strong>{activeLimits.length}</strong>
+            </div>
+
+            <ul>
+              {activeLimits.map((order) => (
+                <li key={order.order_id}>
+                  <span className={`paper-limit-summary ${order.side.toLowerCase()}`}>
+                    {order.side} {order.quantity} @ {order.price}
+                  </span>
+                  <input
+                    aria-label={`????? ???? ${order.order_id}`}
+                    min="0"
+                    onChange={(event) => setAmendPrices((current) => ({
+                      ...current,
+                      [order.order_id]: event.target.value,
+                    }))}
+                    type="number"
+                    value={amendPrices[order.order_id] ?? order.price}
+                  />
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => amendLimit(order.order_id)}
+                    aria-label="??????????? ????? ????"
+                  >
+                    ?
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => cancelLimit(order.order_id)}
+                    aria-label="???????? ???????? ?????"
+                  >
+                    ?
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+
           <p className="paper-execution-status" aria-live="polite">
             {executionStatus}
           </p>
+
+          {holdTooltip ? (
+            <div className="paper-hold-tooltip" role="tooltip">
+              {holdTooltip}
+            </div>
+          ) : null}
+
+          {closeConfirmOpen ? (
+            <div
+              className="paper-close-confirm-backdrop"
+              role="presentation"
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setCloseConfirmOpen(false);
+                }
+              }}
+            >
+              <section
+                className="paper-close-confirm"
+                role="dialog"
+                aria-modal="true"
+                aria-label={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e?"}
+              >
+                <strong>{"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e?"}</strong>
+
+                <span>
+                  {positionSide === "Long"
+                    ? "LONG"
+                    : positionSide === "Short"
+                      ? "SHORT"
+                      : "FLAT"}{" "}
+                  {"\u00b7"} {engagedNotionalUsdt} USDT
+                </span>
+
+                <div className="paper-close-confirm-actions">
+                  <button
+                    type="button"
+                    className="paper-close-confirm-accept"
+                    disabled={isSubmitting}
+                    onClick={async () => {
+                      await submitFullClose();
+                      setCloseConfirmOpen(false);
+                    }}
+                  >
+                    {"\u0417\u0410\u041a\u0420\u042b\u0422\u042c \u041f\u041e\u0417\u0418\u0426\u0418\u042e"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="paper-close-confirm-cancel"
+                    disabled={isSubmitting}
+                    onClick={() => setCloseConfirmOpen(false)}
+                  >
+                    {"\u041d\u0415 \u0417\u0410\u041a\u0420\u042b\u0412\u0410\u0422\u042c"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>

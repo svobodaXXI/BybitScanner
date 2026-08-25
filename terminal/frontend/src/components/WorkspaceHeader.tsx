@@ -21,22 +21,21 @@ export function WorkspaceHeader({
         <p className="instrument-note">5m · Development market feed</p>
       </div>
       <div className="header-actions">
-        <div
-          className="mode-badge"
-          role="status"
-          aria-label="Execution mode: paper, non-live"
-        >
-          <span>PAPER</span>
-          <small>NON-LIVE</small>
-        </div>
         <button
           aria-expanded={accountOpen}
           aria-label="Open account selection"
-          className="icon-button"
+          className="account-switch-button"
           onClick={onAccountToggle}
           type="button"
         >
-          🔑
+          <span className="account-switch-key" aria-hidden="true">
+            <span className="account-key-head" />
+            <span className="account-key-shaft" />
+          </span>
+          <span className="account-switch-label">
+            <strong>PAPER</strong>
+            <small>NON-LIVE</small>
+          </span>
         </button>
       </div>
     </header>

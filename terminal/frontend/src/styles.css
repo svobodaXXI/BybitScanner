@@ -1,5 +1,7 @@
 @import "tailwindcss";
 :root {
+  --trade-buy: #3bc639;
+  --trade-sell: #cd0000;
   color: #e4eaf0;
   background: #090c10;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
@@ -169,13 +171,13 @@ button {
 }
 .candle.bullish line,
 .candle.bullish rect {
-  stroke: #36c477;
-  fill: #36c477;
+  stroke: var(--trade-buy);
+  fill: var(--trade-buy);
 }
 .candle.bearish line,
 .candle.bearish rect {
-  stroke: #ee5d6c;
-  fill: #ee5d6c;
+  stroke: var(--trade-sell);
+  fill: var(--trade-sell);
 }
 .zoom-controls {
   display: flex;
@@ -204,6 +206,13 @@ button {
   grid-template-rows: auto 1fr;
   min-height: 0;
 }
+.dom-panel,
+.dom-ladder {
+  overflow: visible;
+}
+.dom-header {
+  justify-content: flex-end;
+}
 .center-button {
   padding: 0.26rem 0.48rem;
   border: 1px solid #394653;
@@ -218,7 +227,6 @@ button {
   color: #f1cd7b;
 }
 .dom-ladder {
-  overflow: hidden;
   user-select: none;
   touch-action: none;
   cursor: grab;
@@ -227,27 +235,31 @@ button {
 .dom-ladder:active {
   cursor: grabbing;
 }
-.dom-columns,
+.dom-unavailable {
+  display: grid;
+  min-height: 4rem;
+  place-items: center;
+  color: #7f8b97;
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+}
 .dom-row {
   display: grid;
-  grid-template-columns: minmax(6.7rem, 1.2fr) 5.4rem minmax(4.8rem, 1fr);
+  grid-template-columns: minmax(7rem, 1fr) min-content;
+  column-gap: 0.25rem;
   align-items: center;
   min-height: 1.55rem;
   padding: 0 0.35rem;
   font-size: 0.69rem;
 }
-.dom-columns {
-  color: #596775;
-  font-size: 0.56rem;
-  text-transform: uppercase;
-}
-.dom-columns span:nth-child(2),
-.dom-price {
-  text-align: right;
-}
-.dom-columns span:last-child,
+.dom-price,
 .dom-size {
   text-align: right;
+}
+.dom-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
 }
 .dom-row {
   position: relative;
@@ -261,19 +273,32 @@ button {
   font-weight: 650;
 }
 .dom-row.buy .dom-price,
-.dom-row.buy .own-orders strong {
-  color: #36c477;
+.dom-row.buy .own-order-total {
+  color: var(--trade-buy);
 }
 .dom-row.sell .dom-price,
-.dom-row.sell .own-orders strong {
-  color: #ee5d6c;
+.dom-row.sell .own-order-total {
+  color: var(--trade-sell);
 }
-.dom-size {
+.dom-row.best .dom-price {
+  font-weight: 800;
+  text-shadow: 0 0 0.42rem currentColor;
+}
+.dom-row.best.buy {
+  background: color-mix(in srgb, var(--trade-buy) 7%, transparent);
+  box-shadow: inset 0 1px color-mix(in srgb, var(--trade-buy) 38%, transparent);
+}
+.dom-row.best.sell {
+  background: color-mix(in srgb, var(--trade-sell) 7%, transparent);
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--trade-sell) 38%, transparent);
+}
+.dom-body {
   position: relative;
   z-index: 0;
-  padding-right: 0.18rem;
+  align-self: stretch;
+  padding: 0 0.18rem;
 }
-.dom-size::before {
+.dom-body::before {
   position: absolute;
   z-index: -1;
   top: 1px;
@@ -283,26 +308,27 @@ button {
   content: "";
   opacity: 0.22;
 }
-.buy .dom-size::before {
+.buy .dom-body::before {
   background: #2d9c61;
 }
-.sell .dom-size::before {
+.sell .dom-body::before {
   background: #c94d5a;
 }
-.own-orders {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 0;
-}
 /* biome-ignore lint/style/noDescendingSpecificity: component-local color selectors intentionally precede shared typography */
-.own-orders strong {
+.own-order-total {
   font-size: 0.6rem;
   white-space: nowrap;
 }
 .order-dots {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: calc(100% + 0.12rem);
   display: flex;
+  justify-content: flex-end;
   gap: 0.15rem;
+  min-width: 0;
+  transform: translateY(-50%);
 }
 .order-dot {
   width: 0.55rem;
@@ -312,10 +338,10 @@ button {
   box-shadow: 0 0 0 2px #10151b;
 }
 .buy .order-dot {
-  background: #36c477;
+  background: var(--trade-buy);
 }
 .sell .order-dot {
-  background: #ee5d6c;
+  background: var(--trade-sell);
 }
 .tape-list {
   overflow: hidden;
@@ -342,10 +368,10 @@ button {
   text-align: right;
 }
 .tape-row.buy span {
-  color: #36c477;
+  color: var(--trade-buy);
 }
 .tape-row.sell span {
-  color: #ee5d6c;
+  color: var(--trade-sell);
 }
 .mode-panel {
   grid-column: 1 / -1;
@@ -382,7 +408,6 @@ button {
   border-color: #5f7487;
   background: #202a34;
 }
-
 
 .paper-market-actions {
   display: flex;
@@ -428,7 +453,7 @@ button {
   width: 3.8rem;
   min-width: 3.8rem;
   padding: 0.8rem 0.35rem;
-  border: 1px solid #ee5d6c;
+  border: 1px solid var(--trade-sell);
   border-radius: 0.35rem;
   background: #35181d;
   color: #ff9aa5;
@@ -451,7 +476,7 @@ button {
   width: 3.8rem;
   min-width: 3.8rem;
   padding: 0.8rem 0.35rem;
-  border: 1px solid #36c477;
+  border: 1px solid var(--trade-buy);
   border-radius: 0.35rem;
   background: #123322;
   color: #7ff0ad;
@@ -530,5 +555,1520 @@ button {
   .account-menu {
     align-items: stretch;
     flex-direction: column;
+  }
+}
+
+@media (max-width: 620px) {
+  .workspace-grid {
+    gap: 0.3rem;
+    padding: 0.25rem;
+  }
+
+  .chart-canvas {
+    min-height: 18rem;
+  }
+
+  .market-sidecar {
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.75fr);
+    gap: 0.3rem;
+    min-height: 24rem;
+  }
+
+  .dom-panel,
+  .tape-panel {
+    min-width: 0;
+    min-height: 24rem;
+  }
+
+  .tape-panel {
+    min-height: 24rem;
+  }
+
+  .mode-panel {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    min-height: 4.6rem;
+    padding: 0.45rem 0.3rem;
+  }
+
+  .mode-panel > div:first-child {
+    display: none;
+  }
+
+  .mode-switcher {
+    display: none;
+  }
+
+  .paper-market-actions {
+    width: 100%;
+    justify-content: center;
+    gap: 0.35rem;
+  }
+
+  .paper-wv-indicator {
+    min-width: 2.8rem;
+    font-size: 0.85rem;
+  }
+
+  .paper-market-buy,
+  .paper-market-sell {
+    width: 3.4rem;
+    min-width: 3.4rem;
+    padding: 0.65rem 0.25rem;
+  }
+
+  .paper-market-side input {
+    width: 3.4rem;
+  }
+
+  .paper-execution-status {
+    display: none;
+  }
+
+  .status-bar {
+    min-height: 1.6rem;
+    padding: 0.25rem 0.45rem;
+    font-size: 0.56rem;
+  }
+}
+
+/* MOBILE TERMINAL BAR CANONICAL V3 */
+@media (max-width: 620px) {
+  .mode-panel {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: 0;
+    min-height: 5rem;
+    padding: 0.35rem 0.18rem 0.3rem 0;
+  }
+
+  .mode-panel > div:first-child,
+  .mode-switcher {
+    display: none;
+  }
+
+  .paper-market-actions {
+    display: grid;
+    grid-template-columns:
+      3.25rem
+      3.25rem
+      minmax(4.8rem, 1fr)
+      2rem
+      3.1rem;
+    grid-template-areas:
+      "buy sell wv positions protection"
+      "limits limits limits limits limits";
+    align-items: start;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    column-gap: 0.24rem;
+    row-gap: 0.3rem;
+  }
+
+  /* BUY / SELL */
+
+  .paper-market-buy-side {
+    grid-area: buy;
+  }
+
+  .paper-market-sell-side {
+    grid-area: sell;
+  }
+
+  .paper-market-side {
+    width: 3.25rem;
+    min-width: 0;
+    gap: 0.18rem;
+  }
+
+  .paper-market-buy,
+  .paper-market-sell {
+    width: 3.25rem;
+    min-width: 3.25rem;
+    height: 2.25rem;
+    padding: 0;
+  }
+
+  .paper-market-side input {
+    box-sizing: border-box;
+    width: 3.25rem;
+    height: 1.25rem;
+    min-width: 0;
+    padding: 0 0.1rem;
+    text-align: center;
+    font-size: 0.62rem;
+  }
+
+  /* WV + CURRENT POSITION */
+
+  .paper-wv-indicator {
+    grid-area: wv;
+    min-width: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0 0.1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    line-height: 1;
+  }
+
+  .paper-wv-value {
+    font-size: 0.82rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .paper-wv-position {
+    width: 100%;
+    min-width: 0;
+    margin-top: 0.34rem;
+    display: flex;
+    align-items: center;
+    gap: 0.14rem;
+    white-space: nowrap;
+  }
+
+  .paper-wv-position.long {
+    color: var(--trade-buy);
+  }
+
+  .paper-wv-position.short {
+    color: var(--trade-sell);
+  }
+
+  .paper-wv-position.flat {
+    color: #7f8b97;
+  }
+
+  .paper-wv-direction {
+    font-size: 0.68rem;
+    font-weight: 800;
+  }
+
+  .paper-wv-amount {
+    min-width: 0;
+    font-size: 0.68rem !important;
+    font-weight: 700 !important;
+  }
+
+  .paper-wv-currency {
+    font-size: 0.48rem !important;
+    font-weight: 600 !important;
+  }
+
+  .paper-wv-close {
+    margin-left: auto;
+    width: 1rem;
+    min-width: 1rem;
+    height: 1rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: currentColor;
+    font-size: 0.9rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .paper-wv-close:disabled {
+    opacity: 0.22;
+  }
+
+  /* POSITIONS LIST */
+
+  .paper-position-list-button {
+    grid-area: positions;
+    justify-self: center;
+    width: 1.8rem;
+    height: 2.25rem;
+    padding: 0.58rem 0.38rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    border: 1px solid #394653;
+    border-radius: 0.28rem;
+    background: #171d24;
+  }
+
+  .paper-position-list-button span {
+    display: block;
+    width: 100%;
+    height: 1px;
+    background: #8d99a5;
+  }
+
+  /* STOP / TAKE */
+
+  .paper-protection-stack {
+    grid-area: protection;
+    width: 3.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.18rem;
+  }
+
+  .paper-stop-button,
+  .paper-take-button {
+    box-sizing: border-box;
+    width: 3.1rem;
+    height: 1.62rem;
+    padding: 0;
+    border-radius: 0.28rem;
+    background: #171d24;
+    font-size: 0.57rem;
+    font-weight: 700;
+  }
+
+  .paper-stop-button {
+    border: 1px dashed #a8555e;
+    color: #d67a82;
+  }
+
+  .paper-take-button {
+    border: 1px dashed #477d62;
+    color: #76b491;
+  }
+
+  /* LIMITS */
+
+  .paper-limit-list {
+    grid-area: limits;
+    min-width: 0;
+    overflow: hidden;
+    padding-top: 0.25rem;
+    border-top: 1px solid #27313b;
+  }
+
+  .paper-limit-list-header {
+    display: flex;
+    align-items: center;
+    gap: 0.28rem;
+    margin-bottom: 0.15rem;
+    color: #7f8b97;
+    font-size: 0.56rem;
+  }
+
+  .paper-limit-list ul {
+    display: flex;
+    gap: 0.3rem;
+    margin: 0;
+    padding: 0;
+    overflow-x: auto;
+    list-style: none;
+  }
+
+  .paper-limit-list li {
+    display: grid;
+    grid-template-columns: auto 4.2rem 1.8rem 1.8rem;
+    align-items: center;
+    gap: 0.2rem;
+    flex: 0 0 auto;
+  }
+
+  .paper-limit-summary {
+    font-size: 0.62rem;
+    white-space: nowrap;
+  }
+
+  .paper-limit-summary.buy {
+    color: var(--trade-buy);
+  }
+
+  .paper-limit-summary.sell {
+    color: var(--trade-sell);
+  }
+
+  .paper-limit-list input {
+    width: 4.2rem;
+    min-width: 0;
+    border: 1px solid #394653;
+    border-radius: 0.25rem;
+    background: #10151b;
+    color: #d7e0e8;
+    font-size: 0.64rem;
+    text-align: center;
+  }
+
+  .paper-limit-list button {
+    width: 1.8rem;
+    height: 1.8rem;
+    padding: 0;
+    border: 1px solid #394653;
+    border-radius: 0.25rem;
+    background: #171d24;
+    font-size: 0.72rem;
+  }
+
+  .paper-execution-status {
+    display: none;
+  }
+}
+
+/* MOBILE UTILITY STACK V1 */
+@media (max-width: 620px) {
+  .paper-utility-stack {
+    grid-area: positions;
+    width: 1.8rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.18rem;
+  }
+
+  .paper-position-list-button {
+    grid-area: unset;
+    justify-self: auto;
+    width: 1.8rem;
+    height: 1.62rem;
+    padding: 0.38rem 0.36rem;
+  }
+
+  .paper-autopilot-button {
+    box-sizing: border-box;
+    width: 1.8rem;
+    height: 1.62rem;
+    padding: 0;
+    border: 1px solid #394653;
+    border-radius: 0.28rem;
+    background: #171d24;
+    color: #aab5bf;
+    font-size: 0.9rem;
+    line-height: 1;
+  }
+}
+
+/* ACCOUNT SWITCH COMPACT V1 */
+.account-switch-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-height: 2.15rem;
+  padding: 0.22rem 0.45rem;
+  border: 1px solid #394653;
+  border-radius: 0.3rem;
+  background: #171d24;
+  color: #d7e0e8;
+}
+
+.account-switch-key {
+  flex: 0 0 auto;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.account-switch-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.05;
+}
+
+.account-switch-label strong {
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.account-switch-label small {
+  margin-top: 0.1rem;
+  color: #758391;
+  font-size: 0.46rem;
+  font-weight: 600;
+}
+
+/* CSS SAFE TERMINAL ICONS V1 */
+
+.account-switch-key {
+  position: relative;
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+}
+
+.account-key-head {
+  position: absolute;
+  left: 0.03rem;
+  top: 0.15rem;
+  width: 0.4rem;
+  height: 0.4rem;
+  box-sizing: border-box;
+  border: 1.5px solid #aab5bf;
+  border-radius: 50%;
+}
+
+.account-key-shaft {
+  position: absolute;
+  left: 0.38rem;
+  top: 0.48rem;
+  width: 0.55rem;
+  height: 1.5px;
+  background: #aab5bf;
+  transform: rotate(-38deg);
+  transform-origin: left center;
+}
+
+.account-key-shaft::before,
+.account-key-shaft::after {
+  content: "";
+  position: absolute;
+  width: 1.5px;
+  height: 0.18rem;
+  background: #aab5bf;
+  right: 0.08rem;
+}
+
+.account-key-shaft::before {
+  top: 0;
+}
+
+.account-key-shaft::after {
+  right: 0.2rem;
+  top: 0;
+}
+
+
+/* steering wheel */
+
+.paper-autopilot-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.autopilot-wheel {
+  position: relative;
+  display: block;
+  width: 0.88rem;
+  height: 0.88rem;
+  box-sizing: border-box;
+  border: 1.4px solid #9aa6b2;
+  border-radius: 50%;
+}
+
+.autopilot-wheel::before,
+.autopilot-wheel::after,
+.autopilot-wheel span {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0.36rem;
+  height: 1px;
+  background: #9aa6b2;
+  transform-origin: 0 50%;
+}
+
+.autopilot-wheel::before {
+  transform: rotate(30deg);
+}
+
+.autopilot-wheel::after {
+  transform: rotate(150deg);
+}
+
+.autopilot-wheel span {
+  transform: rotate(270deg);
+}
+
+.autopilot-wheel span::after {
+  content: "";
+  position: absolute;
+  left: -0.08rem;
+  top: -0.08rem;
+  width: 0.16rem;
+  height: 0.16rem;
+  border-radius: 50%;
+  background: #9aa6b2;
+}
+
+/* TERMINAL ICONS CANONICAL V2 */
+
+/* ---------------------------------------------------------
+   ACCOUNT KEY
+   simple horizontal key: ring + shaft + two teeth
+--------------------------------------------------------- */
+
+.account-switch-key {
+  position: relative;
+  display: inline-block;
+  width: 1.08rem;
+  height: 0.72rem;
+  flex: 0 0 1.08rem;
+}
+
+.account-key-head {
+  position: absolute;
+  left: 0;
+  top: 0.11rem;
+  box-sizing: border-box;
+  width: 0.48rem;
+  height: 0.48rem;
+  border: 1.5px solid #aab5bf;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.account-key-shaft {
+  position: absolute;
+  left: 0.40rem;
+  top: 0.34rem;
+  width: 0.62rem;
+  height: 1.5px;
+  background: #aab5bf;
+  transform: none;
+  transform-origin: initial;
+}
+
+.account-key-shaft::before,
+.account-key-shaft::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 1.5px;
+  background: #aab5bf;
+}
+
+.account-key-shaft::before {
+  right: 0.05rem;
+  height: 0.22rem;
+}
+
+.account-key-shaft::after {
+  right: 0.22rem;
+  height: 0.16rem;
+}
+
+
+/* ---------------------------------------------------------
+   AUTOPILOT STEERING WHEEL
+   circle + horizontal spokes + centre hub + lower spoke
+--------------------------------------------------------- */
+
+.paper-autopilot-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.autopilot-wheel {
+  position: relative;
+  display: block;
+  box-sizing: border-box;
+  width: 0.96rem;
+  height: 0.96rem;
+  border: 1.4px solid #9aa6b2;
+  border-radius: 50%;
+}
+
+/* horizontal left/right spokes */
+.autopilot-wheel::before {
+  content: "";
+  position: absolute;
+  left: 0.13rem;
+  right: 0.13rem;
+  top: 50%;
+  height: 1.3px;
+  background: #9aa6b2;
+  transform: translateY(-50%);
+}
+
+/* lower spoke */
+.autopilot-wheel::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1.3px;
+  height: 0.33rem;
+  background: #9aa6b2;
+  transform: translateX(-50%);
+}
+
+/* centre hub */
+.autopilot-wheel > span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  box-sizing: border-box;
+  width: 0.25rem;
+  height: 0.25rem;
+  border: 1.2px solid #9aa6b2;
+  border-radius: 50%;
+  background: #171d24;
+  transform: translate(-50%, -50%);
+}
+
+.autopilot-wheel > span::after {
+  content: none;
+}
+
+
+/* ---------------------------------------------------------
+   POSITION DIRECTION
+   no Unicode: CSS arrow only
+--------------------------------------------------------- */
+
+@media (max-width: 620px) {
+  .paper-wv-direction {
+    position: relative;
+    display: inline-block;
+    width: 0.48rem;
+    height: 0.66rem;
+    flex: 0 0 0.48rem;
+  }
+
+  .paper-wv-direction.long {
+    color: var(--trade-buy);
+  }
+
+  .paper-wv-direction.short {
+    color: var(--trade-sell);
+  }
+
+  .paper-wv-direction.flat {
+    display: none;
+  }
+
+  /* vertical stem */
+  .paper-wv-direction::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    width: 1.5px;
+    height: 0.42rem;
+    background: currentColor;
+    transform: translateX(-50%);
+  }
+
+  /* arrow head */
+  .paper-wv-direction::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    width: 0;
+    height: 0;
+    transform: translateX(-50%);
+  }
+
+  .paper-wv-direction.long::before {
+    bottom: 0;
+  }
+
+  .paper-wv-direction.long::after {
+    top: 0;
+    border-left: 0.18rem solid transparent;
+    border-right: 0.18rem solid transparent;
+    border-bottom: 0.24rem solid currentColor;
+  }
+
+  .paper-wv-direction.short::before {
+    top: 0;
+  }
+
+  .paper-wv-direction.short::after {
+    bottom: 0;
+    border-left: 0.18rem solid transparent;
+    border-right: 0.18rem solid transparent;
+    border-top: 0.24rem solid currentColor;
+  }
+}
+
+/* TERMINAL CONTROLS FIX V3 */
+
+@media (max-width: 620px) {
+
+  /* =======================================================
+     POSITION ROW
+     Arrow + amount + USDT + close cross must always fit.
+  ======================================================= */
+
+  .paper-wv-indicator {
+    min-width: 5.4rem;
+  }
+
+  .paper-wv-position {
+    display: grid;
+    grid-template-columns: 0.48rem auto auto 1rem;
+    align-items: center;
+    justify-content: start;
+    column-gap: 0.14rem;
+    width: auto;
+    min-width: 5.2rem;
+    overflow: visible;
+  }
+
+  .paper-wv-direction {
+    grid-column: 1;
+  }
+
+  .paper-wv-amount {
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .paper-wv-currency {
+    grid-column: 3;
+  }
+
+  .paper-wv-close {
+    grid-column: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    min-width: 1rem;
+    height: 1rem;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: currentColor;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1;
+    opacity: 1;
+    visibility: visible;
+    overflow: visible;
+  }
+
+  .paper-wv-close:disabled {
+    opacity: 0.35;
+  }
+
+
+  /* =======================================================
+     AUTOPILOT STEERING WHEEL
+  ======================================================= */
+
+  .paper-autopilot-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .autopilot-wheel {
+    position: relative;
+    display: block;
+    box-sizing: border-box;
+    width: 1rem;
+    height: 1rem;
+    border: 1.5px solid #9aa6b2;
+    border-radius: 50%;
+  }
+
+  /* central hub */
+  .autopilot-wheel > span {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 0.26rem;
+    height: 0.26rem;
+    box-sizing: border-box;
+    border: 1.3px solid #9aa6b2;
+    border-radius: 50%;
+    background: #171d24;
+    transform: translate(-50%, -50%);
+    z-index: 2;
+  }
+
+  /* left + right steering spokes */
+  .autopilot-wheel::before {
+    content: "";
+    position: absolute;
+    left: 0.12rem;
+    right: 0.12rem;
+    top: 50%;
+    height: 1.4px;
+    background: #9aa6b2;
+    transform: translateY(-50%);
+  }
+
+  /* lower steering spoke */
+  .autopilot-wheel::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1.4px;
+    height: 0.34rem;
+    background: #9aa6b2;
+    transform: translateX(-50%);
+  }
+
+  .autopilot-wheel > span::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -0.17rem;
+    width: 0.46rem;
+    height: 0.24rem;
+    border-top: 1.3px solid #9aa6b2;
+    border-radius: 50%;
+    transform: translateX(-50%);
+  }
+
+  .autopilot-wheel > span::after {
+    content: none;
+  }
+}
+
+/* TERMINAL SVG ICONS V1 */
+
+.paper-wv-close {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+
+.paper-close-icon {
+  display: block;
+  width: 0.72rem;
+  height: 0.72rem;
+  overflow: visible;
+}
+
+.paper-close-icon line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+
+.paper-autopilot-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.paper-autopilot-wheel-icon {
+  display: block;
+  width: 1.12rem;
+  height: 1.12rem;
+  fill: none;
+  stroke: #9aa6b2;
+  stroke-width: 1.45;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.paper-autopilot-wheel-icon circle:nth-of-type(2) {
+  fill: #171d24;
+}
+
+
+/* Kill previous CSS-drawn steering-wheel pieces */
+.paper-autopilot-button .autopilot-wheel {
+  display: none !important;
+}
+
+/* POSITION CLOSE CONFIRM V1 */
+
+.paper-wv-close {
+  box-sizing: border-box;
+  width: 1.08rem !important;
+  min-width: 1.08rem !important;
+  height: 1.08rem !important;
+  border: 1.3px solid var(--trade-buy) !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  color: var(--trade-buy) !important;
+}
+
+.paper-wv-position.short .paper-wv-close {
+  border-color: var(--trade-sell) !important;
+  color: var(--trade-sell) !important;
+}
+
+.paper-close-icon {
+  width: 0.58rem;
+  height: 0.58rem;
+}
+
+.paper-close-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(5, 8, 11, 0.72);
+}
+
+.paper-close-confirm {
+  width: min(19rem, calc(100vw - 2rem));
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.85rem;
+  border: 1px solid #394653;
+  border-radius: 0.45rem;
+  background: #10151b;
+  color: #d7e0e8;
+}
+
+.paper-close-confirm strong {
+  font-size: 0.9rem;
+}
+
+.paper-close-confirm > span {
+  color: #8996a3;
+  font-size: 0.7rem;
+}
+
+.paper-close-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+  margin-top: 0.25rem;
+}
+
+.paper-close-confirm-actions button {
+  min-height: 2.35rem;
+  border-radius: 0.32rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.paper-close-confirm-cancel {
+  border: 1px solid #394653;
+  background: #171d24;
+  color: #aab5bf;
+}
+
+.paper-close-confirm-accept {
+  border: 1px solid #a8555e;
+  background: #241619;
+  color: var(--trade-sell);
+}
+
+/* PAPER HOLD TOOLTIPS V1 */
+
+.paper-market-actions {
+  position: relative;
+}
+
+.paper-hold-target {
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.paper-position-notional-hold {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.14rem;
+  min-width: 0;
+}
+
+.paper-hold-tooltip {
+  position: absolute;
+  z-index: 50;
+  left: 50%;
+  bottom: calc(100% + 0.45rem);
+  transform: translateX(-50%);
+  max-width: 13rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #394653;
+  border-radius: 0.32rem;
+  background: #171d24;
+  color: #d7e0e8;
+  box-shadow: 0 0.25rem 0.8rem rgba(0, 0, 0, 0.35);
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* POSITION CLOSE CONFIRM V2 */
+
+.paper-close-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+  margin-top: 0.3rem;
+}
+
+.paper-close-confirm-accept {
+  border: 1px solid #a8555e !important;
+  background: #241619 !important;
+  color: var(--trade-sell) !important;
+}
+
+.paper-close-confirm-cancel {
+  border: 1px solid #8c98a4 !important;
+  background: #171d24 !important;
+  color: #d7e0e8 !important;
+}
+
+.paper-close-confirm-actions button {
+  min-height: 2.45rem;
+  padding: 0.3rem 0.45rem;
+  font-size: 0.64rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+/* POSITION CLOSE CONFIRM CANONICAL V3 */
+
+.paper-close-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+}
+
+.paper-close-confirm-accept {
+  border: 1px solid #a8555e !important;
+  background: #241619 !important;
+  color: var(--trade-sell) !important;
+}
+
+.paper-close-confirm-cancel {
+  border: 1px solid #aab5bf !important;
+  background: #171d24 !important;
+  color: #e2e8ee !important;
+}
+
+.paper-close-confirm-actions button {
+  min-height: 2.45rem;
+  padding: 0.3rem 0.35rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+/* PAPER HOLD TOOLTIPS FIX V2 */
+
+@media (max-width: 620px) {
+  .mode-panel {
+    overflow: visible;
+  }
+
+  .paper-market-actions {
+    position: relative;
+    overflow: visible;
+  }
+
+  .paper-hold-target {
+    -webkit-touch-callout: none;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .paper-hold-tooltip {
+    position: absolute;
+    z-index: 500;
+    left: 50%;
+    bottom: calc(100% + 0.5rem);
+    transform: translateX(-50%);
+    display: block;
+    min-width: max-content;
+    max-width: calc(100vw - 1rem);
+    padding: 0.42rem 0.58rem;
+    border: 1px solid #53616e;
+    border-radius: 0.32rem;
+    background: #171d24;
+    color: #e2e8ee;
+    box-shadow: 0 0.3rem 0.9rem rgba(0, 0, 0, 0.45);
+    font-size: 0.66rem;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+}
+
+/* MOBILE POSITION TOUCH TARGET V1 */
+@media (max-width: 620px) {
+  .paper-market-actions {
+    grid-template-columns:
+      3.25rem
+      3.25rem
+      minmax(5.8rem, 1fr)
+      2rem
+      3.1rem;
+  }
+
+  .paper-wv-indicator {
+    min-width: 5.8rem;
+  }
+
+  .paper-wv-position {
+    min-height: 1.55rem;
+    min-width: 5.6rem;
+    column-gap: 0.18rem;
+  }
+
+  .paper-wv-amount {
+    font-size: 0.8rem !important;
+    font-weight: 700 !important;
+  }
+
+  .paper-wv-currency {
+    font-size: 0.56rem !important;
+    font-weight: 700 !important;
+  }
+
+  .paper-wv-direction {
+    width: 0.56rem;
+    height: 0.76rem;
+    flex-basis: 0.56rem;
+  }
+
+  .paper-position-notional-hold {
+    min-height: 1.45rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.08rem 0.08rem;
+  }
+
+  .paper-wv-close {
+    width: 1.3rem !important;
+    min-width: 1.3rem !important;
+    height: 1.3rem !important;
+  }
+
+  .paper-close-icon {
+    width: 0.68rem;
+    height: 0.68rem;
+  }
+}
+
+/* MOBILE DOM TAPE DENSITY V1 */
+@media (max-width: 620px) {
+
+  .market-sidecar {
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 0.68fr);
+    gap: 0.22rem;
+  }
+
+  .dom-panel,
+  .tape-panel {
+    min-width: 0;
+    min-height: 24rem;
+  }
+
+  /* DOM header */
+  .dom-panel .panel-header {
+    min-height: 2rem;
+    padding: 0.28rem 0.3rem;
+  }
+
+  .center-button {
+    min-width: 3rem;
+    padding: 0.22rem 0.3rem;
+    font-size: 0.55rem;
+  }
+
+  /* DOM ladder */
+  .dom-row {
+    grid-template-columns: minmax(3.75rem, 1fr) min-content;
+    column-gap: 0.12rem;
+    min-height: 1.36rem;
+    padding: 0 0.2rem;
+    font-size: 0.66rem;
+  }
+
+  .dom-price {
+    font-size: 0.69rem;
+    font-weight: 700;
+  }
+
+  .dom-size {
+    font-size: 0.63rem;
+  }
+
+  .dom-body {
+    padding: 0 0.12rem;
+  }
+
+  .own-order-total {
+    font-size: 0.54rem;
+  }
+
+  .order-dots {
+    right: calc(100% + 0.08rem);
+    gap: 0.1rem;
+  }
+
+  .order-dot {
+    width: 0.48rem;
+    height: 0.48rem;
+  }
+
+  /* Tape */
+  .tape-panel .panel-header {
+    min-height: 2rem;
+    padding: 0.28rem 0.25rem;
+  }
+
+  .tape-panel .panel-header span {
+    font-size: 0.66rem;
+    font-weight: 700;
+  }
+
+  .tape-panel .panel-header small {
+    font-size: 0.44rem;
+  }
+
+  .tape-row {
+    grid-template-columns: 2.2rem minmax(0, 1fr) minmax(0, 0.78fr);
+    gap: 0.12rem;
+    min-height: 1.34rem;
+    padding: 0 0.2rem;
+    font-size: 0.58rem;
+  }
+
+  .tape-row time {
+    font-size: 0.5rem;
+  }
+
+  .tape-row span {
+    font-size: 0.6rem;
+    font-weight: 650;
+  }
+
+  .tape-row strong {
+    font-size: 0.56rem;
+  }
+}
+
+/* MOBILE LIVE PRINTS FIELD V1 */
+@media (max-width: 620px) {
+
+  /* PRINTS left, DOM right */
+  .market-sidecar {
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.85fr);
+    gap: 0.22rem;
+  }
+
+  .tape-panel {
+    order: 1;
+  }
+
+  .dom-panel {
+    order: 2;
+  }
+
+  /* No table/header in prints field */
+  .prints-panel {
+    position: relative;
+    display: block;
+    min-width: 0;
+    min-height: 24rem;
+    overflow: hidden;
+    background: #10151b;
+  }
+
+  .prints-field {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 24rem;
+    overflow: hidden;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Invisible logical origin aligned with DOM spread */
+  .prints-spread-origin {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    width: 1px;
+    height: 1px;
+    pointer-events: none;
+  }
+
+  /* Individual live print */
+  .flying-print {
+    --print-lane: 0;
+    --print-delay: 0ms;
+
+    position: absolute;
+    z-index: 2;
+    right: 0.18rem;
+    top: calc(50% + (var(--print-lane) * 1.15rem));
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.22rem;
+    min-width: max-content;
+    padding: 0.12rem 0.22rem;
+    border-radius: 0.18rem;
+    background: rgba(16, 21, 27, 0.78);
+    font-size: 0.58rem;
+    line-height: 1;
+    white-space: nowrap;
+    pointer-events: none;
+
+    animation:
+      print-fly-left 2.8s linear var(--print-delay) both,
+      print-fade 2.8s linear var(--print-delay) both;
+  }
+
+  .flying-print span {
+    font-size: 0.61rem;
+    font-weight: 700;
+  }
+
+  .flying-print strong {
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: #c4ced7;
+  }
+
+  .flying-print.buy span {
+    color: var(--trade-buy);
+  }
+
+  .flying-print.sell span {
+    color: var(--trade-sell);
+  }
+
+  @keyframes print-fly-left {
+    from {
+      transform: translateX(0);
+    }
+
+    to {
+      transform: translateX(calc(-100% - 7.5rem));
+    }
+  }
+
+  @keyframes print-fade {
+    0% {
+      opacity: 0;
+    }
+
+    7% {
+      opacity: 1;
+    }
+
+    78% {
+      opacity: 0.92;
+    }
+
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .flying-print {
+      animation: none;
+      right: 0.25rem;
+    }
+  }
+}
+
+/* PRINTS QUEUE CANONICAL V2 */
+@media (max-width: 620px) {
+
+  .prints-panel {
+    position: relative;
+    display: block;
+    min-width: 0;
+    min-height: 24rem;
+    overflow: hidden;
+    background: #10151b;
+  }
+
+  .prints-field {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    min-height: 24rem;
+    overflow: hidden;
+  }
+
+  /*
+    Stream is anchored to the DOM/spread side.
+    New trades are appended on the RIGHT.
+    Existing trades are naturally pushed LEFT.
+  */
+  .prints-stream {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 2rem;
+
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+
+    height: 21.76rem;
+    padding-right: 0.08rem;
+
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .trade-print-bubble {
+    --print-width: 24px;
+    --print-height: 1.36rem;
+    --print-y: 0px;
+
+    position: relative;
+    flex: 0 0 var(--print-width);
+
+    width: var(--print-width);
+    height: var(--print-height);
+
+    margin-left: -0.12rem;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    box-sizing: border-box;
+    border-radius: 999px;
+
+    transform: translateY(var(--print-y));
+
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(0.42rem, calc(var(--print-width) / 4.2), 0.62rem);
+    font-weight: 800;
+    line-height: 1;
+    white-space: nowrap;
+
+    pointer-events: none;
+
+    /* IMPORTANT: no autonomous movement */
+    animation: none !important;
+  }
+
+  .trade-print-bubble.buy {
+    border: 1px solid var(--trade-buy);
+    background: color-mix(in srgb, var(--trade-buy) 90%, transparent);
+    color: #07120c;
+  }
+
+  .trade-print-bubble.sell {
+    border: 1px solid var(--trade-sell);
+    background: color-mix(in srgb, var(--trade-sell) 90%, transparent);
+    color: #160709;
+  }
+
+  .trade-print-bubble span {
+    max-width: 88%;
+    overflow: hidden;
+    text-align: center;
+  }
+
+  /* Old experimental flying-print implementation is disabled. */
+  .flying-print,
+  .prints-spread-origin {
+    display: none !important;
   }
 }

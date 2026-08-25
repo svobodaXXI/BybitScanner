@@ -23,10 +23,20 @@ const candles: Candle[] = Array.from({ length: 24 }, (_, index) => {
 });
 const trades: TradePrint[] = Array.from({ length: 18 }, (_, index) => ({
   id: `trade-${index}`,
-  time: `12:${String(40 + index).padStart(2, "0")}`,
-  price: mid + (index % 2 === 0 ? 1 : -1) * ((index * 3) % 22),
-  quantity: 0.012 + ((index * 13) % 45) / 100,
   side: index % 3 === 0 ? "SELL" : "BUY",
+  startedAtMs: index * 50,
+  endedAtMs: index * 50,
+  tradeCount: 1,
+  totalQuantity: 0.012 + ((index * 13) % 45) / 100,
+  totalNotionalUsdt: 100 + index * 20,
+  firstExecutionPrice: mid,
+  lastExecutionPrice: mid,
+  sweepLowPrice: mid,
+  sweepHighPrice: mid,
+  sweptPriceRange: 0,
+  sweptTicks: 1,
+  tickSize: 0.5,
+  rowOffset: 0,
 }));
 export function createDemoMarketData(): MarketDataSnapshot {
   return {
