@@ -2,7 +2,7 @@
 
 Версия:
 
-4.20
+4.21
 
 Дата:
 
@@ -242,20 +242,23 @@ checkpoint, но выдаёт следующий исполнимый payload т
 
 ## 2.3 IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE
 
-For BybitScanner and Trading Workspace work, the assistant must never generate or edit an image, mockup,
-visualization, UI concept image or other image-generation artifact unless the user explicitly requests or
-approves image generation.
+For BybitScanner and Trading Workspace work, image generation and image editing are prohibited by default.
+The assistant must never invoke an image-generation or image-editing tool unless the user's current message
+contains a separate, direct and unambiguous command specifically to create or edit an image.
 
-Before any image-generation or image-editing action that the user did not explicitly request, the assistant
-must:
+Before every possible image-tool call, the assistant must enforce the hard gate:
 
-1. ask the user for explicit permission;
-2. wait for explicit approval;
-3. perform the image action only after that approval.
+`EXPLICIT_CURRENT_USER_IMAGE_REQUEST == TRUE`
+
+If the condition is false, the image tool is prohibited. Previous messages, earlier image generation, general
+conversation context, attached images, tool availability and inferred usefulness cannot satisfy the gate.
+During ordinary UI work the assistant must not automatically ask for image-generation permission; it must
+continue with the real frontend/CSS/React/layout task.
 
 Discussion of visual appearance, colors, layout, component placement or behavior is not permission to
-generate or edit an image. Tool availability, potential usefulness or the assistant's preference does not
-replace explicit user intent.
+generate or edit an image. Requests including “make it left/right”, “make it prettier”, “improve the design”
+or “show how it will look” in a UI-development context are implementation/design instructions, not image
+requests.
 
 Screenshots and images of the BybitScanner or Trading Workspace interface, Terminal, DOM, chart, prints/tape,
 mobile layout, controls or order lines are design references, implementation references, visual-QA references
@@ -279,10 +282,10 @@ layout, button, order-line or UX discussion is to analyze the real UI and provid
 real frontend, CSS, React and layout code, or give implementation instructions. It is not to produce a
 redesign picture or another image-generation artifact.
 
-Image generation is authorized only by an unambiguous request such as “generate an image”, “create a mockup
-as an image”, “draw this”, “make an image/visualization”, or an equivalent explicit image-generation request.
-If wording is ambiguous in a Trading Workspace development context, it must be treated as an implementation
-or design instruction, not as an image-generation request.
+Image generation is authorized only when the current user message unambiguously requests an action such as
+“generate an image”, “draw an image”, “create a picture”, “create an image mockup” or “edit this specific
+image”. If there is even slight ambiguity between a real frontend change and image generation, the assistant
+must choose the real frontend change and must not invoke an image tool.
 
 When an actual image-generation request is explicit, `IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE` remains the
 applicable authorization boundary wherever separate approval is required.
@@ -1625,17 +1628,23 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.19
+ASSISTANT_PROTOCOL v4.20
 
 to:
 
-ASSISTANT_PROTOCOL v4.20
+ASSISTANT_PROTOCOL v4.21
 
 date:
 
 2026-08-25
 
 reason:
+
+* made image generation and image editing prohibited by default and bound every image-tool call to the hard gate `EXPLICIT_CURRENT_USER_IMAGE_REQUEST == TRUE`;
+* required the explicit image request to appear in the current user message and prohibited prior context, attachments, earlier generations or tool availability from supplying implied authorization;
+* removed automatic permission-seeking during ordinary UI work and required even slightly ambiguous visual requests to route to real frontend/CSS/React/layout implementation, recording checkpoint `STRICT_NO_IMPLICIT_IMAGE_GENERATION_RULE_RECORDED`.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.19 to v4.20:
 
 * strengthened `IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE` so user-provided UI screenshots and images are references or current-state evidence by default and never implicit image-generation requests;
 * strengthened `UI_REQUIREMENT_INTERPRETATION_RULE` so Terminal design and UX discussion defaults to real frontend/CSS/React/layout implementation or instructions;
