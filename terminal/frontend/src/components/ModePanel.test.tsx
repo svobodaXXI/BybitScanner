@@ -168,17 +168,21 @@ describe("ModePanel PAPER Market amounts", () => {
 
   it("creates and cancels an authoritative GTC PAPER limit", async () => {
     let active = false;
+    let price = "64000";
     const fetchMock = vi.fn((url: string, options?: RequestInit) => {
       if (url.startsWith("/api/paper-state")) return Promise.resolve({
         ok: true,
         json: vi.fn().mockResolvedValue(paperState({
           active_limit_orders: active ? [{
             order_id: "paper-limit-1", order_link_id: "link-1", symbol: "BTCUSDT",
-            side: "Buy", price: "64000", quantity: "0.005", time_in_force: "GTC",
+            side: "Buy", price, quantity: "0.005", time_in_force: "GTC",
           }] : [],
         })),
       });
       if (url === "/api/limit") active = true;
+      if (url === "/api/limit/amend") {
+        price = JSON.parse(options!.body as string).limit_price;
+      }
       if (url === "/api/limit/cancel") active = false;
       return Promise.resolve({
         ok: true,
@@ -197,8 +201,15 @@ describe("ModePanel PAPER Market amounts", () => {
       side: "Buy", limit_price: "64000", time_in_force: "GTC",
       volume: { unit: "usdt", amount: "321" },
     });
+    fireEvent.change(screen.getByLabelText("Новая цена paper-limit-1"), { target: { value: "64100" } });
+    fireEvent.click(screen.getByRole("button", { name: "Изменить paper-limit-1" }));
+    expect(await screen.findByText("Buy 0.005 @ 64100 GTC")).toBeInTheDocument();
+    const amendOptions = fetchMock.mock.calls.find(([url]) => url === "/api/limit/amend")![1];
+    expect(JSON.parse(amendOptions!.body as string)).toMatchObject({
+      symbol: "BTCUSDT", order_id: "paper-limit-1", limit_price: "64100",
+    });
     fireEvent.click(screen.getByRole("button", { name: "Отменить paper-limit-1" }));
-    await waitFor(() => expect(screen.queryByText("Buy 0.005 @ 64000 GTC")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Buy 0.005 @ 64100 GTC")).not.toBeInTheDocument());
   });
 
   it.each([["0", "321"], ["64000", "0"]])(

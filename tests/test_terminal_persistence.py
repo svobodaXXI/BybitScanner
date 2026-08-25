@@ -28,6 +28,7 @@ from terminal.domain.states import CommandState
 from terminal.persistence.schema import (
     SCHEMA_V1_STATEMENTS, SCHEMA_V2_MIGRATION_STATEMENTS,
     SCHEMA_V3_MIGRATION_STATEMENTS, SCHEMA_V4_MIGRATION_STATEMENTS,
+    SCHEMA_V5_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 from terminal.persistence.sqlite_store import (
@@ -113,6 +114,28 @@ class TerminalPersistenceTests(unittest.TestCase):
         ):
             connection.execute(statement)
         connection.execute("PRAGMA user_version = 3")
+        connection.commit()
+        connection.close()
+
+    def create_v5_database(self):
+        connection = sqlite3.connect(self.database_path)
+        for statement in (
+            SCHEMA_V1_STATEMENTS
+            + SCHEMA_V2_MIGRATION_STATEMENTS
+            + SCHEMA_V3_MIGRATION_STATEMENTS
+            + SCHEMA_V4_MIGRATION_STATEMENTS
+            + SCHEMA_V5_MIGRATION_STATEMENTS
+        ):
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO paper_limit_orders VALUES (?, ?, ?, ?, ?, ?, ?, 'GTC', 'open', ?, ?)",
+            ("order-1", "link-paper-1", "paper", "BTCUSDT", "Buy", "64000", "0.005", 1000, 1000),
+        )
+        connection.execute(
+            "INSERT INTO paper_limit_actions VALUES (?, 'create', ?, ?, ?)",
+            ("create-1", "fingerprint-1", "order-1", 1000),
+        )
+        connection.execute("PRAGMA user_version = 5")
         connection.commit()
         connection.close()
 
@@ -373,6 +396,23 @@ class TerminalPersistenceTests(unittest.TestCase):
             ).fetchone()
         )
         connection.close()
+
+    def test_v5_to_v6_migration_preserves_limits_and_allows_amend_actions(self):
+        self.create_v5_database()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+            order = store.get_paper_limit("order-1")
+            self.assertIsNotNone(order)
+            amended, changed = store.amend_paper_limit(
+                client_action_id="amend-1",
+                request_fingerprint="fingerprint-amend-1",
+                order_id=OrderId("order-1"),
+                price=Decimal("64100"),
+                updated_at_ms=2000,
+            )
+            self.assertTrue(changed)
+            self.assertEqual(amended.price, Decimal("64100"))
 
     def test_incompatible_schema_fails_closed_without_recreate(self):
         connection = sqlite3.connect(self.database_path)

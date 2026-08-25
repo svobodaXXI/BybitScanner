@@ -37,6 +37,7 @@ from .schema import (
     SCHEMA_V3_MIGRATION_STATEMENTS,
     SCHEMA_V4_MIGRATION_STATEMENTS,
     SCHEMA_V5_MIGRATION_STATEMENTS,
+    SCHEMA_V6_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -383,6 +384,7 @@ class SQLiteStore:
             SQLiteStore._migrate_v2_to_v3(connection)
             SQLiteStore._migrate_v3_to_v4(connection)
             SQLiteStore._migrate_v4_to_v5(connection)
+            SQLiteStore._migrate_v5_to_v6(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 2:
@@ -390,17 +392,25 @@ class SQLiteStore:
             SQLiteStore._migrate_v2_to_v3(connection)
             SQLiteStore._migrate_v3_to_v4(connection)
             SQLiteStore._migrate_v4_to_v5(connection)
+            SQLiteStore._migrate_v5_to_v6(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 3:
             SQLiteStore._validate_required_tables(connection, version=3)
             SQLiteStore._migrate_v3_to_v4(connection)
             SQLiteStore._migrate_v4_to_v5(connection)
+            SQLiteStore._migrate_v5_to_v6(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 4:
             SQLiteStore._validate_required_tables(connection, version=4)
             SQLiteStore._migrate_v4_to_v5(connection)
+            SQLiteStore._migrate_v5_to_v6(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 5:
+            SQLiteStore._validate_required_tables(connection, version=5)
+            SQLiteStore._migrate_v5_to_v6(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version != 0:
@@ -457,6 +467,18 @@ class SQLiteStore:
             for statement in SCHEMA_V5_MIGRATION_STATEMENTS:
                 connection.execute(statement)
             connection.execute("PRAGMA user_version = 5")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _migrate_v5_to_v6(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V6_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 6")
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")
@@ -673,6 +695,39 @@ class SQLiteStore:
                 (updated_at_ms, order_id.value),
             )
         return self.get_paper_limit(order_id.value), cursor.rowcount == 1
+
+    def amend_paper_limit(
+        self, *, client_action_id: str, request_fingerprint: str,
+        order_id: OrderId, price: Decimal, updated_at_ms: int,
+    ) -> tuple[PaperLimitOrderRecord, bool]:
+        self._assert_owner()
+        action = self._connection.execute(
+            "SELECT operation, request_fingerprint, order_id FROM paper_limit_actions WHERE client_action_id = ?",
+            (client_action_id,),
+        ).fetchone()
+        if action is not None:
+            if action[0] != "amend" or action[1] != request_fingerprint or action[2] != order_id.value:
+                raise DuplicateIdentity("client action identity was reused with different intent")
+            existing = self.get_paper_limit(order_id.value)
+            if existing is None:
+                raise PersistenceError("durable amend action references no PAPER limit")
+            return existing, False
+
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE paper_limit_orders SET price = ?, updated_at_ms = ? WHERE order_id = ? AND status = 'open'",
+                (_decimal_text(price), updated_at_ms, order_id.value),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError("PAPER limit is missing or inactive")
+            self._connection.execute(
+                "INSERT INTO paper_limit_actions VALUES (?, 'amend', ?, ?, ?)",
+                (client_action_id, request_fingerprint, order_id.value, updated_at_ms),
+            )
+        amended = self.get_paper_limit(order_id.value)
+        if amended is None:
+            raise PersistenceError("amended PAPER limit is unavailable")
+        return amended, True
 
     def get_paper_limit(self, order_id: str) -> PaperLimitOrderRecord | None:
         self._assert_owner()

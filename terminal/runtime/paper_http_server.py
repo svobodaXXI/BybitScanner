@@ -17,6 +17,7 @@ from terminal.api.models import (
     LimitCommandRequest,
     MarketCommandRequest,
     PaperLimitCancelRequest,
+    PaperLimitAmendRequest,
     TimeInForce,
     VolumeRequest,
     VolumeUnit,
@@ -44,6 +45,7 @@ LIMIT_FIELDS = {
     "limit_price", "time_in_force",
 }
 LIMIT_CANCEL_FIELDS = {"client_action_id", "symbol", "order_id"}
+LIMIT_AMEND_FIELDS = {"client_action_id", "symbol", "order_id", "limit_price"}
 
 
 class PaperHttpHandler(BaseHTTPRequestHandler):
@@ -103,6 +105,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        if self.path == "/api/limit/amend":
+            try:
+                payload = self._payload(LIMIT_AMEND_FIELDS)
+                result = self.server.runtime.amend_limit(PaperLimitAmendRequest(
+                    ClientActionId(payload["client_action_id"]), payload["symbol"],
+                    payload["order_id"], _decimal(payload["limit_price"]),
+                ))
+            except Exception:
+                self._json_response(400, to_primitive(_validation_error()))
+                return
+            self._json_response(200, to_primitive(result))
+            return
+
         if self.path == "/api/limit":
             try:
                 payload = self._payload(LIMIT_FIELDS)

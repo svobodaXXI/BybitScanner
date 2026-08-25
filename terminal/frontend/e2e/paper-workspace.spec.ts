@@ -92,7 +92,18 @@ test("real PAPER workspace preserves edits and enforces authoritative no-flip be
     side: "Buy", price: "64000", time_in_force: "GTC",
   });
   const orderId = withLimit.active_limit_orders[0].order_id;
+  const originalQuantity = withLimit.active_limit_orders[0].quantity;
   await expect(page.getByText(`Buy ${withLimit.active_limit_orders[0].quantity} @ 64000 GTC`)).toBeVisible();
+  await page.getByLabel(`Новая цена ${orderId}`).fill("64100");
+  await page.getByRole("button", { name: `Изменить ${orderId}` }).click();
+  await expect(page.getByText("PAPER LIMIT изменён")).toBeVisible();
+  const amended = await paperState(request);
+  expect(amended.active_limit_orders).toHaveLength(1);
+  expect(amended.active_limit_orders[0]).toMatchObject({
+    order_id: orderId, side: "Buy", price: "64100",
+    quantity: originalQuantity, time_in_force: "GTC",
+  });
+  await expect(page.getByText(`Buy ${originalQuantity} @ 64100 GTC`)).toBeVisible();
   await page.getByRole("button", { name: `Отменить ${orderId}` }).click();
   await expect(page.getByText("PAPER LIMIT отменён")).toBeVisible();
   expect((await paperState(request)).active_limit_orders).toHaveLength(0);

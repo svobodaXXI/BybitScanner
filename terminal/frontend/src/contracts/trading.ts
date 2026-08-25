@@ -44,6 +44,13 @@ export type PaperLimitCancelRequest = {
   order_id: string;
 };
 
+export type PaperLimitAmendRequest = {
+  client_action_id: string;
+  symbol: string;
+  order_id: string;
+  limit_price: string;
+};
+
 export type PaperLimitOrder = {
   order_id: string;
   order_link_id: string;

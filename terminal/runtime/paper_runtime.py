@@ -9,11 +9,12 @@ from pathlib import Path
 
 from terminal.api.rest import TerminalCommandApi
 from terminal.api.models import (
-    CommandResultStatus, LimitCommandRequest, PaperLimitCancelRequest,
+    CommandResultStatus, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
     PaperLimitMutationResult, PaperLimitOrderProjection, TimeInForce,
 )
 from terminal.application.execution_engine import ExecutionEngine
 from terminal.application.pretrade_guard import MutationGate, PreTradeGuard
+from terminal.application.normalization import normalize_limit_price
 from terminal.application.pretrade_guard import NotionalIntent, OrderKind, PreTradeIntent
 from terminal.application.pretrade_guard import WorkingVolumeIntent
 from terminal.application.trading_application import TradingApplication
@@ -256,6 +257,48 @@ class PaperRuntime:
             request.client_action_id.value, CommandResultStatus.COMPLETED,
             "cancelled" if changed and order is not None and order.status == "cancelled" else "already_absent",
             request.order_id,
+        )
+
+    def amend_limit(self, request: PaperLimitAmendRequest) -> PaperLimitMutationResult:
+        symbol = request.symbol.strip().upper()
+        existing = self.store.get_paper_limit(request.order_id)
+        if existing is None or existing.status != "open":
+            raise ValueError("PAPER limit is missing or inactive")
+        if existing.symbol.value != symbol:
+            raise ValueError("order symbol does not match")
+        context = self._context.context_for(symbol)
+        normalized_price = normalize_limit_price(
+            request.limit_price, context.pretrade.instrument.tick_size, existing.side,
+        )
+        decision = self._guard.evaluate(
+            PreTradeIntent(
+                symbol, existing.side, OrderKind.LIMIT,
+                NotionalIntent(existing.quantity * normalized_price), normalized_price,
+                request.limit_price,
+            ),
+            context.pretrade,
+        )
+        if not decision.admitted:
+            code = decision.reason_code.value if decision.reason_code else "blocked"
+            return PaperLimitMutationResult(
+                request.client_action_id.value, CommandResultStatus.BLOCKED, code,
+                existing.order_id.value,
+            )
+        admitted = decision.request
+        assert admitted is not None and admitted.normalized_limit_price is not None
+        fingerprint = _fingerprint(
+            symbol, request.order_id, str(admitted.normalized_limit_price),
+        )
+        amended, changed = self.store.amend_paper_limit(
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=fingerprint,
+            order_id=existing.order_id,
+            price=admitted.normalized_limit_price,
+            updated_at_ms=int(time.time() * 1000),
+        )
+        return PaperLimitMutationResult(
+            request.client_action_id.value, CommandResultStatus.COMPLETED,
+            "amended" if changed else "duplicate_action", amended.order_id.value,
         )
 
     def close(self) -> None:

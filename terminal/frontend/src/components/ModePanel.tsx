@@ -8,6 +8,7 @@ import {
   type MarketSide,
   type PaperState,
   type PaperLimitCancelRequest,
+  type PaperLimitAmendRequest,
   type PaperLimitMutationResult,
   type PaperLimitOrder,
 } from "../contracts/trading";
@@ -39,6 +40,7 @@ export function ModePanel({
   const [limitPrice, setLimitPrice] = useState("64200");
   const [limitAmount, setLimitAmount] = useState("250");
   const [activeLimits, setActiveLimits] = useState<PaperLimitOrder[]>([]);
+  const [amendPrices, setAmendPrices] = useState<Record<string, string>>({});
   const buyAmountEdited = useRef(false);
   const sellAmountEdited = useRef(false);
   const submissionInFlight = useRef(false);
@@ -63,7 +65,11 @@ export function ModePanel({
           ? String(Math.round(Math.max(0, engagedNotional)))
           : "0",
       );
-      setActiveLimits(state.ok ? state.active_limit_orders : []);
+      const limits = state.ok ? state.active_limit_orders : [];
+      setActiveLimits(limits);
+      setAmendPrices((current) => Object.fromEntries(
+        limits.map((order) => [order.order_id, current[order.order_id] ?? order.price]),
+      ));
       if (state.ok && !buyAmountEdited.current) {
         setBuyAmount(state.one_wv_usdt);
       }
@@ -206,6 +212,28 @@ export function ModePanel({
     finally { submissionInFlight.current = false; setIsSubmitting(false); }
   };
 
+  const amendLimit = async (orderId: string) => {
+    if (submissionInFlight.current) return;
+    const price = amendPrices[orderId];
+    if (!(Number(price) > 0)) return;
+    submissionInFlight.current = true;
+    setIsSubmitting(true);
+    try {
+      const request: PaperLimitAmendRequest = {
+        client_action_id: `paper-limit-amend-${Date.now()}`,
+        symbol: "BTCUSDT", order_id: orderId, limit_price: price,
+      };
+      const response = await fetch("/api/limit/amend", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      const result = (await response.json()) as PaperLimitMutationResult;
+      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT изменён" : "Изменение LIMIT не выполнено");
+      if (result.status === "completed") await refreshPaperState();
+    } catch { setExecutionStatus("Изменение LIMIT не выполнено"); }
+    finally { submissionInFlight.current = false; setIsSubmitting(false); }
+  };
+
   return (
     <section className="mode-panel" aria-label={`${mode} controls`}>
       <div>
@@ -265,6 +293,16 @@ export function ModePanel({
               {activeLimits.map((order) => (
                 <li key={order.order_id}>
                   <span>{order.side} {order.quantity} @ {order.price} {order.time_in_force}</span>
+                  <input
+                    aria-label={`Новая цена ${order.order_id}`}
+                    min="0"
+                    onChange={(event) => setAmendPrices((current) => ({
+                      ...current, [order.order_id]: event.target.value,
+                    }))}
+                    type="number"
+                    value={amendPrices[order.order_id] ?? order.price}
+                  />
+                  <button type="button" disabled={isSubmitting} onClick={() => amendLimit(order.order_id)}>Изменить {order.order_id}</button>
                   <button type="button" disabled={isSubmitting} onClick={() => cancelLimit(order.order_id)}>Отменить {order.order_id}</button>
                 </li>
               ))}

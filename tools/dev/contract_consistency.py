@@ -14,7 +14,7 @@ from typing import Sequence
 
 from terminal.api.models import (
     CommandResult, FullCloseCommandRequest, LimitCommandRequest, MarketCommandRequest,
-    PaperLimitCancelRequest, PaperLimitMutationResult, PaperLimitOrderProjection,
+    PaperLimitAmendRequest, PaperLimitCancelRequest, PaperLimitMutationResult, PaperLimitOrderProjection,
     TimeInForce, VolumeRequest, VolumeUnit,
 )
 from terminal.application.pretrade_guard import RejectionCode, SlippageToleranceType
@@ -86,6 +86,8 @@ def check_source(source: str) -> tuple[bool, str]:
                 {field.name for field in fields(LimitCommandRequest)}, exact=True)
         compare("limit-cancel-fields", _type_fields(source, "PaperLimitCancelRequest"),
                 {field.name for field in fields(PaperLimitCancelRequest)}, exact=True)
+        compare("limit-amend-fields", _type_fields(source, "PaperLimitAmendRequest"),
+                {field.name for field in fields(PaperLimitAmendRequest)}, exact=True)
         compare("limit-result-fields", _type_fields(source, "PaperLimitMutationResult"),
                 {field.name for field in fields(PaperLimitMutationResult)}, exact=True)
         compare("limit-order-fields", _type_fields(source, "PaperLimitOrder"),

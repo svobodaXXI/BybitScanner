@@ -137,6 +137,14 @@ class PaperLimitCancelRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperLimitAmendRequest:
+    client_action_id: ClientActionId
+    symbol: str
+    order_id: str
+    limit_price: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class PaperLimitOrderProjection:
     order_id: str
     order_link_id: str
