@@ -1760,4 +1760,34 @@ Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.0 to v4.1:
 
 ---
 
+## STRICT UI IMAGE GENERATION HARD GATE
+
+For BybitScanner / Trading Workspace work, image generation is FORBIDDEN by default.
+
+The assistant MUST NOT invoke image-generation or image-editing tools when the user is:
+- discussing terminal layout;
+- describing button placement;
+- asking to draw or style a UI control;
+- asking to change colors, borders, icons, spacing, dimensions, typography, panels, overlays, dialogs, charts, DOM, tape, order controls, account controls, or any other frontend element;
+- sharing screenshots as implementation references;
+- using UI-design language such as: "нарисовать кнопку, нарисовать круг вокруг крестика, сделать иконку, оформить, покрасить, показать как будет выглядеть", or equivalent wording.
+
+In this project, all such language MUST be interpreted as an instruction to modify the REAL IMPLEMENTATION using React / TypeScript / CSS / SVG or other frontend code.
+
+Image generation is permitted ONLY when the CURRENT USER MESSAGE explicitly and unambiguously requests a generated image, picture, mockup, illustration, render, or visualization as a standalone image artifact.
+
+Required hard gate before any image-generation call:
+
+EXPLICIT_CURRENT_USER_IMAGE_REQUEST == TRUE
+
+If this condition is not clearly true, image generation MUST NOT be used.
+
+Screenshots supplied by the user are IMPLEMENTATION EVIDENCE / DESIGN REFERENCES unless the current user message explicitly requests image editing.
+
+This rule overrides any ambiguous wording that could otherwise be interpreted as an image request.
+
+Violation of this rule is a workflow error.
+
+---
+
 # END_OF_DOCUMENT
