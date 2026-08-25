@@ -2,7 +2,7 @@
 
 Версия:
 
-4.19
+4.20
 
 Дата:
 
@@ -257,6 +257,11 @@ Discussion of visual appearance, colors, layout, component placement or behavior
 generate or edit an image. Tool availability, potential usefulness or the assistant's preference does not
 replace explicit user intent.
 
+Screenshots and images of the BybitScanner or Trading Workspace interface, Terminal, DOM, chart, prints/tape,
+mobile layout, controls or order lines are design references, implementation references, visual-QA references
+or evidence of current UI state by default. Receiving or discussing such an artifact is never by itself an
+image-generation request.
+
 ## 2.4 UI_REQUIREMENT_INTERPRETATION_RULE
 
 When the user describes how the Trading Workspace, Terminal, DOM, chart, tape, controls, colors, layout or
@@ -268,6 +273,16 @@ visualization or concept image. Statements such as “the chart should use these
 background darker”, “candles should match Bid/Ask colors” and “this control should be on the left” are
 specification/design requirements unless the user explicitly asks to generate, draw or create an image or
 mockup.
+
+The default response to Terminal design, visual, color, panel placement, DOM, chart, prints/tape, mobile
+layout, button, order-line or UX discussion is to analyze the real UI and provide or implement changes in the
+real frontend, CSS, React and layout code, or give implementation instructions. It is not to produce a
+redesign picture or another image-generation artifact.
+
+Image generation is authorized only by an unambiguous request such as “generate an image”, “create a mockup
+as an image”, “draw this”, “make an image/visualization”, or an equivalent explicit image-generation request.
+If wording is ambiguous in a Trading Workspace development context, it must be treated as an implementation
+or design instruction, not as an image-generation request.
 
 When an actual image-generation request is explicit, `IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE` remains the
 applicable authorization boundary wherever separate approval is required.
@@ -1610,17 +1625,23 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.18
+ASSISTANT_PROTOCOL v4.19
 
 to:
 
-ASSISTANT_PROTOCOL v4.19
+ASSISTANT_PROTOCOL v4.20
 
 date:
 
 2026-08-25
 
 reason:
+
+* strengthened `IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE` so user-provided UI screenshots and images are references or current-state evidence by default and never implicit image-generation requests;
+* strengthened `UI_REQUIREMENT_INTERPRETATION_RULE` so Terminal design and UX discussion defaults to real frontend/CSS/React/layout implementation or instructions;
+* required ambiguous Trading Workspace visual requests to remain implementation/design instructions unless image generation is unambiguously requested, recording checkpoint `NO_UNREQUESTED_IMAGE_GENERATION_RULE_RECORDED`.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.18 to v4.19:
 
 * recorded `CODEX_DAILY_LIMIT_BUDGET_MODE` with a target of one–two large implementation slices per day and only short fixes, focused verification, checkpoint workflow and small task-scoped clarifications between them;
 * prohibited redundant research, recovery and verification when task-scoped context remains sufficient and reinforced task/decision batching for an approximately weekly continuous development horizon;
