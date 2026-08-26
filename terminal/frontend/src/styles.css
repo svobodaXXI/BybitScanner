@@ -2167,3 +2167,57 @@ button {
     display: none !important;
   }
 }
+
+.prints-position-indicator {
+  position: absolute;
+  top: 0.45rem;
+  left: 0.45rem;
+  z-index: 5;
+  font-size: 1.4rem;
+  font-weight: 800;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.prints-position-indicator.long {
+  color: #39ff88;
+}
+
+.prints-position-indicator.short {
+  color: #ff4d5a;
+}
+
+.dom-panel {
+  position: relative;
+}
+
+.dom-compression-control {
+  position: absolute;
+  top: 0.18rem;
+  right: 0.18rem;
+  z-index: 20;
+}
+
+.dom-compression-button,
+.dom-compression-input {
+  width: 2rem;
+  height: 2rem;
+  box-sizing: border-box;
+  border: 1px solid #46515d;
+  border-radius: 0.28rem;
+  background: #151b21;
+  color: #d8e0e7;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-align: center;
+  padding: 0;
+}
+
+.dom-compression-button {
+  cursor: pointer;
+}
+
+.dom-compression-input {
+  outline: none;
+}

@@ -19,21 +19,27 @@ export function DomPanel({
   centerPrice,
   onCenterPriceChange,
   ownOrders,
+  compression,
+  onCompressionChange,
 }: {
   book: NormalizedOrderBook;
   centerPrice: number | null;
   onCenterPriceChange: (price: number | null) => void;
   ownOrders: readonly OwnOrder[];
+  compression: number;
+  onCompressionChange: (compression: number) => void;
 }) {
   const [offset, setOffset] = useState(0);
   const [locked, setLocked] = useState(false);
   const [visibleOrders, setVisibleOrders] = useState(ownOrders);
+  const [compressionEditing, setCompressionEditing] = useState(false);
+  const [compressionDraft, setCompressionDraft] = useState(String(compression));
   const dragY = useRef<number | null>(null);
   const centerPriceRef = useRef(centerPrice);
   centerPriceRef.current = centerPrice;
   const projection = useMemo(
-    () => projectDomBook(book, centerPrice),
-    [book, centerPrice],
+    () => projectDomBook(book, centerPrice, compression),
+    [book, centerPrice, compression],
   );
   const levels = projection.levels;
   const maxVisibleQuantity = useMemo(
@@ -52,7 +58,7 @@ export function DomPanel({
   };
   const center = () => {
     setOffset(0);
-    const nextCenterPrice = recommendedLadderCenter(book);
+    const nextCenterPrice = recommendedLadderCenter(book, compression);
     centerPriceRef.current = nextCenterPrice;
     onCenterPriceChange(nextCenterPrice);
   };
@@ -61,14 +67,54 @@ export function DomPanel({
     if (!locked) return;
 
     setOffset(0);
-    const nextCenterPrice = recommendedLadderCenter(book);
+    const nextCenterPrice = recommendedLadderCenter(book, compression);
     centerPriceRef.current = nextCenterPrice;
     onCenterPriceChange(nextCenterPrice);
-  }, [book, locked, onCenterPriceChange]);
+  }, [book, compression, locked, onCenterPriceChange]);
 
 
   return (
     <section className="dom-panel workspace-panel" aria-label="DOM order book">
+      <div className="dom-compression-control">
+        {compressionEditing ? (
+          <input
+            autoFocus
+            className="dom-compression-input"
+            inputMode="numeric"
+            value={compressionDraft}
+            onChange={(event) => setCompressionDraft(event.target.value)}
+            onBlur={() => {
+              const next = Number.parseInt(compressionDraft, 10);
+              if (Number.isFinite(next) && next >= 1 && next <= 100) {
+                onCompressionChange(next);
+              } else {
+                setCompressionDraft(String(compression));
+              }
+              setCompressionEditing(false);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") {
+                setCompressionDraft(String(compression));
+                setCompressionEditing(false);
+              }
+            }}
+          />
+        ) : (
+          <button
+            className="dom-compression-button"
+            type="button"
+            onClick={() => {
+              setCompressionDraft(String(compression));
+              setCompressionEditing(true);
+            }}
+          >
+            x{compression}
+          </button>
+        )}
+      </div>
 <div
         className="dom-ladder"
         data-offset={offset}
@@ -104,6 +150,7 @@ export function DomPanel({
                 order.price,
                 order.side,
                 projection.nativeTickSize,
+                compression,
               ) === level.price,
           );
           const side = level.side ?? orders[0]?.side ?? null;
@@ -172,12 +219,3 @@ export function DomPanel({
     </section>
   );
 }
-
-
-
-
-
-
-
-
-

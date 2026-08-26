@@ -12,10 +12,18 @@ import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 export function App() {
   const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
   const [accountOpen, setAccountOpen] = useState(false);
+  const [domCompression, setDomCompression] = useState(3);
+  const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
     null,
   );
   const market = useMarketData();
+  const bestBid = market.book.bids[0]?.price;
+  const bestAsk = market.book.asks[0]?.price;
+  const sizingReferencePrice =
+    bestBid !== undefined && bestAsk !== undefined
+      ? String((bestBid + bestAsk) / 2)
+      : "0";
 
   useEffect(() => {
     if (market.book.health !== "READY") return;
@@ -46,15 +54,26 @@ export function App() {
             centerPrice={ladderCenterPrice}
             onCenterPriceChange={setLadderCenterPrice}
             ownOrders={market.ownOrders}
+            compression={domCompression}
+            onCompressionChange={setDomCompression}
           />
           <TapePanel
             book={market.book}
             centerPrice={ladderCenterPrice}
             trades={market.trades}
+            positionSide={positionSide}
+            compression={domCompression}
           />
         </aside>
-        <ModePanel mode={mode} onModeChange={setMode} />
+        <ModePanel
+          mode={mode}
+          onModeChange={setMode}
+          sizingReferencePrice={sizingReferencePrice}
+          onPositionSideChange={setPositionSide}
+        />
       </section>
     </main>
   );
 }
+
+

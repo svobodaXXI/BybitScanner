@@ -22,7 +22,7 @@ describe("ModePanel PAPER Market amounts", () => {
       ),
     }));
 
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
 
     await waitFor(() => expect(screen.getAllByDisplayValue("250")).toHaveLength(3));
     expect(screen.getByText("313 USDT")).toBeInTheDocument();
@@ -54,7 +54,7 @@ describe("ModePanel PAPER Market amounts", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
     const buyAmount = await screen.findByLabelText("BUY amount");
     fireEvent.change(buyAmount, { target: { value: "300" } });
     fireEvent.click(screen.getByRole("button", { name: "BUY" }));
@@ -85,7 +85,7 @@ describe("ModePanel PAPER Market amounts", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
     const sellAmount = await screen.findByLabelText("SELL amount");
     fireEvent.change(sellAmount, { target: { value: amount } });
     fireEvent.click(screen.getByRole("button", { name: "SELL" }));
@@ -105,7 +105,7 @@ describe("ModePanel PAPER Market amounts", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
     await screen.findAllByDisplayValue("250");
     fireEvent.click(screen.getByRole("button", { name: "BUY" }));
 
@@ -123,7 +123,7 @@ describe("ModePanel PAPER Market amounts", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
     await screen.findAllByDisplayValue("250");
     fireEvent.click(screen.getByRole("button", { name: side }));
 
@@ -150,7 +150,7 @@ describe("ModePanel PAPER Market amounts", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
     await screen.findByText("300 USDT");
     fireEvent.click(screen.getByRole("button", { name: "Закрыть позицию" }));
 
@@ -190,7 +190,7 @@ describe("ModePanel PAPER Market amounts", () => {
       });
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
     await screen.findAllByDisplayValue("250");
     fireEvent.change(screen.getByLabelText("LIMIT price"), { target: { value: "64000" } });
     fireEvent.change(screen.getByLabelText("LIMIT amount"), { target: { value: "321" } });
@@ -216,7 +216,7 @@ describe("ModePanel PAPER Market amounts", () => {
     "does not submit invalid LIMIT price %s amount %s", async (price, amount) => {
       const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(paperState()) });
       vi.stubGlobal("fetch", fetchMock);
-      render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} />);
+      render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
       await screen.findAllByDisplayValue("250");
       fireEvent.change(screen.getByLabelText("LIMIT price"), { target: { value: price } });
       fireEvent.change(screen.getByLabelText("LIMIT amount"), { target: { value: amount } });

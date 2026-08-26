@@ -69,6 +69,7 @@ export function projectPriceToDisplayBucket(
 
 export function recommendedLadderCenter(
   book: NormalizedOrderBook,
+  compression = DOM_COMPRESSION,
 ): number | null {
   const tickSize = inferNativeTickSize(book);
   const bestBid = book.bids[0]?.price;
@@ -76,12 +77,13 @@ export function recommendedLadderCenter(
   if (!(tickSize > 0) || bestBid === undefined || bestAsk === undefined) {
     return null;
   }
-  const bidBucket = projectPriceToDisplayBucket(bestBid, "BUY", tickSize);
-  const askBucket = projectPriceToDisplayBucket(bestAsk, "SELL", tickSize);
-  const step = tickSize * DOM_COMPRESSION;
+  const bidBucket = projectPriceToDisplayBucket(bestBid, "BUY", tickSize, compression);
+  const askBucket = projectPriceToDisplayBucket(bestAsk, "SELL", tickSize, compression);
+  const step = tickSize * compression;
   return normalizedGridPrice(
     Math.round((bidBucket + askBucket) / 2 / step),
     tickSize,
+    compression,
   );
 }
 

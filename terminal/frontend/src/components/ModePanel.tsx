@@ -23,9 +23,13 @@ const descriptions: Record<WorkspaceMode, string> = {
 export function ModePanel({
   mode,
   onModeChange,
+  sizingReferencePrice,
+  onPositionSideChange,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
+  sizingReferencePrice: string;
+  onPositionSideChange: (side: PaperState["position_side"]) => void;
 }) {
   const [executionStatus, setExecutionStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -49,7 +53,7 @@ export function ModePanel({
 
   const refreshPaperState = useCallback(async () => {
     try {
-      const response = await fetch("/api/paper-state?symbol=BTCUSDT");
+      const response = await fetch("/api/paper-state?symbol=ONGUSDT");
       if (!response.ok) {
         setEngagedWorkingVolume(null);
         return;
@@ -68,6 +72,7 @@ export function ModePanel({
           : "0",
       );
       setPositionSide(state.ok ? state.position_side : "Flat");
+      onPositionSideChange(state.ok ? state.position_side : "Flat");
       setOneWvUsdt(state.ok ? state.one_wv_usdt : "0");
       setPositionQuantity(state.ok ? state.position_quantity : "0");
       const limits = state.ok ? state.active_limit_orders : [];
@@ -131,10 +136,10 @@ export function ModePanel({
     try {
       const request: MarketCommandRequest = {
         client_action_id: `paper-market-${side.toLowerCase()}-${Date.now()}`,
-        symbol: "BTCUSDT",
+        symbol: "ONGUSDT",
         side,
         volume: { unit: "usdt", amount },
-        sizing_reference_price: "64250",
+        sizing_reference_price: sizingReferencePrice,
         slippage_type: "Percent",
         slippage_value: "0.5",
       };
@@ -172,7 +177,7 @@ export function ModePanel({
     try {
       const request: FullCloseCommandRequest = {
         client_action_id: `paper-full-close-${Date.now()}`,
-        symbol: "BTCUSDT",
+        symbol: "ONGUSDT",
       };
       const response = await fetch("/api/full-close", {
         method: "POST",
@@ -199,7 +204,7 @@ export function ModePanel({
     try {
       const request: PaperLimitCancelRequest = {
         client_action_id: `paper-limit-cancel-${Date.now()}`,
-        symbol: "BTCUSDT", order_id: orderId,
+        symbol: "ONGUSDT", order_id: orderId,
       };
       const response = await fetch("/api/limit/cancel", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -221,7 +226,7 @@ export function ModePanel({
     try {
       const request: PaperLimitAmendRequest = {
         client_action_id: `paper-limit-amend-${Date.now()}`,
-        symbol: "BTCUSDT", order_id: orderId, limit_price: price,
+        symbol: "ONGUSDT", order_id: orderId, limit_price: price,
       };
       const response = await fetch("/api/limit/amend", {
         method: "POST", headers: { "Content-Type": "application/json" },

@@ -21,10 +21,14 @@ export function TapePanel({
   book: _book,
   centerPrice,
   trades,
+  positionSide,
+  compression,
 }: {
   book: NormalizedOrderBook;
   centerPrice: number | null;
   trades: readonly TradePrint[];
+  positionSide: "Long" | "Short" | "Flat";
+  compression: number;
 }) {
   return (
     <section
@@ -33,17 +37,26 @@ export function TapePanel({
     >
       <div className="panel-header prints-header-spacer" aria-hidden="true" />
       <div className="prints-field">
+        {positionSide !== "Flat" ? (
+          <div
+            className={`prints-position-indicator ${positionSide.toLowerCase()}`}
+            aria-label={`Open ${positionSide} position`}
+          >
+            {positionSide === "Long" ? "\u2191" : "\u2193"}
+          </div>
+        ) : null}
         <div className="prints-stream">
           {trades.map((trade) => {
             const width = printWidthPx(trade.totalNotionalUsdt);
             const height =
-              displaySweptRows(trade.sweptTicks) * DOM_ROW_HEIGHT_REM;
+              displaySweptRows(trade.sweptTicks, compression) * DOM_ROW_HEIGHT_REM;
             const rowOffset =
               executionPriceToLadderRow(
                 trade.lastExecutionPrice,
                 trade.side,
                 trade.tickSize,
                 centerPrice,
+                compression,
               ) ?? 0;
 
             return (

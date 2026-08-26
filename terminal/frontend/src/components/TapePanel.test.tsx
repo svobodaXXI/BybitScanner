@@ -56,6 +56,7 @@ describe("Smart Tape cumulative geometry", () => {
           cumulative("older-buy", "BUY", 76, 1, -1),
           cumulative("newer-sell", "SELL", 1200, 4, 2),
         ]}
+        positionSide="Flat" compression={3}
       />,
     );
 
@@ -96,7 +97,7 @@ describe("Smart Tape cumulative geometry", () => {
     trade.lastExecutionPrice = 1.59478;
     trade.sweepLowPrice = 1.5947;
     trade.sweepHighPrice = 1.5949;
-    render(<TapePanel book={book} centerPrice={1.5948} trades={[trade]} />);
+    render(<TapePanel book={book} centerPrice={1.5948} trades={[trade]} positionSide="Flat" compression={3} />);
 
     const bubble = document.querySelector<HTMLElement>(".trade-print-bubble");
     const expectedRow = executionPriceToLadderRow(
