@@ -278,6 +278,7 @@ button {
   }
 }
 .market-sidecar {
+  --dom-row-height: 1.36rem;
   display: grid;
   grid-template-columns: minmax(15rem, 1.25fr) minmax(9rem, 0.75fr);
   gap: 0.45rem;
@@ -331,7 +332,8 @@ button {
   grid-template-columns: minmax(7rem, 1fr) min-content;
   column-gap: 0.25rem;
   align-items: center;
-  min-height: 1.55rem;
+  min-height: var(--dom-row-height);
+  height: var(--dom-row-height);
   padding: 0 0.35rem;
   font-size: 0.69rem;
 }
@@ -1851,7 +1853,8 @@ button {
   .dom-row {
     grid-template-columns: minmax(3.75rem, 1fr) min-content;
     column-gap: 0.12rem;
-    min-height: 1.36rem;
+    min-height: var(--dom-row-height);
+    height: var(--dom-row-height);
     padding: 0 0.2rem;
     font-size: 0.66rem;
   }
@@ -2074,18 +2077,32 @@ button {
     position: absolute;
     left: 0;
     right: 0;
-    top: 2rem;
+    top: 0;
 
     display: flex;
     flex-direction: row;
     align-items: center;
     justify-content: flex-end;
 
-    height: 21.76rem;
+    height: calc(var(--dom-row-height) * 16);
     padding-right: 0.08rem;
 
     overflow: hidden;
     white-space: nowrap;
+  }
+
+  .prints-header-spacer {
+    visibility: hidden;
+  }
+
+  .dom-panel,
+  .prints-panel {
+    display: grid;
+    grid-template-rows: 2rem minmax(0, 1fr);
+  }
+
+  .prints-field {
+    min-height: 0;
   }
 
   .trade-print-bubble {

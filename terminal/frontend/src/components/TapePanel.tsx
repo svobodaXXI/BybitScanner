@@ -3,7 +3,7 @@ import type { NormalizedOrderBook, TradePrint } from "../contracts/marketData";
 import {
   DOM_ROW_HEIGHT_REM,
   displaySweptRows,
-  projectSweepCenterRow,
+  executionPriceToLadderRow,
 } from "../marketData/domProjection";
 
 export const printWidthPx = (notionalUsdt: number) =>
@@ -18,7 +18,7 @@ const formatNotional = (notional: number) => {
 };
 
 export function TapePanel({
-  book,
+  book: _book,
   centerPrice,
   trades,
 }: {
@@ -31,6 +31,7 @@ export function TapePanel({
       className="tape-panel prints-panel workspace-panel"
       aria-label="Live trade prints"
     >
+      <div className="panel-header prints-header-spacer" aria-hidden="true" />
       <div className="prints-field">
         <div className="prints-stream">
           {trades.map((trade) => {
@@ -38,10 +39,9 @@ export function TapePanel({
             const height =
               displaySweptRows(trade.sweptTicks) * DOM_ROW_HEIGHT_REM;
             const rowOffset =
-              projectSweepCenterRow(
-                book,
-                trade.sweepLowPrice,
-                trade.sweepHighPrice,
+              executionPriceToLadderRow(
+                trade.lastExecutionPrice,
+                trade.side,
                 trade.tickSize,
                 centerPrice,
               ) ?? 0;

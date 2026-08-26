@@ -186,6 +186,32 @@ export function priceToLadderRow(
   return (topPrice - price) / displayStep;
 }
 
+/**
+ * Projects an execution through the exact side-aware display bucket used by
+ * the fixed DOM, then returns its offset from the ladder's visual midpoint.
+ */
+export function executionPriceToLadderRow(
+  executionPrice: number,
+  side: MarketSide,
+  tickSize: number,
+  centerPrice: number | null,
+  compression = DOM_COMPRESSION,
+): number | null {
+  if (centerPrice === null || !(tickSize > 0)) return null;
+  const displayPrice = projectPriceToDisplayBucket(
+    executionPrice,
+    side,
+    tickSize,
+    compression,
+  );
+  const displayStep = tickSize * compression;
+  const topPrice =
+    Math.round(centerPrice / displayStep) * displayStep +
+    DOM_LEVELS_PER_SIDE * displayStep;
+  const row = (topPrice - displayPrice) / displayStep;
+  return Math.round(row) - (DOM_VISIBLE_ROWS - 1) / 2;
+}
+
 export function projectSweepCenterRow(
   book: NormalizedOrderBook,
   lowPrice: number,

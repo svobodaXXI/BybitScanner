@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { NormalizedOrderBook } from "../contracts/marketData";
 import {
   DOM_COMPRESSION,
+  executionPriceToLadderRow,
   priceToLadderRow,
   projectDomBook,
   projectSweepCenterRow,
@@ -94,5 +95,33 @@ describe("continuous DOM x5 price ladder", () => {
     expect(
       projectSweepCenterRow(book, 0.0923, 0.0925, 0.00001, centerPrice),
     ).toBeCloseTo(0.5);
+  });
+
+  it.each([
+    ["BUY", 0.09233, 0.0923],
+    ["SELL", 0.09247, 0.0925],
+    ["BUY", 0.09235, 0.09235],
+    ["SELL", 0.09235, 0.09235],
+  ] as const)(
+    "projects %s execution %s through DOM bucket %s",
+    (side, executionPrice, displayPrice) => {
+      const centerPrice = 0.0924;
+      const tapeRow = executionPriceToLadderRow(
+        executionPrice,
+        side,
+        0.00001,
+        centerPrice,
+      );
+      const domRow =
+        priceToLadderRow(displayPrice, centerPrice, 0.00001) - (16 - 1) / 2;
+      expect(tapeRow).toBeCloseTo(domRow, 10);
+      expect(Number.isInteger((tapeRow ?? 0) + 0.5)).toBe(true);
+    },
+  );
+
+  it("moves Tape and DOM rows together when ladder center changes", () => {
+    const before = executionPriceToLadderRow(0.09233, "BUY", 0.00001, 0.0924);
+    const after = executionPriceToLadderRow(0.09233, "BUY", 0.00001, 0.09245);
+    expect(after).toBe((before ?? 0) + 1);
   });
 });

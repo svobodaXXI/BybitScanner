@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { NormalizedOrderBook, TradePrint } from "../contracts/marketData";
 import {
   displaySweptRows,
-  projectSweepCenterRow,
+  executionPriceToLadderRow,
 } from "../marketData/domProjection";
 import { printWidthPx, TapePanel } from "./TapePanel";
 
@@ -91,9 +91,22 @@ describe("Smart Tape cumulative geometry", () => {
     expect(printWidthPx(1_000_000) - printWidthPx(100)).toBeLessThan(18);
   });
 
-  it("projects the frozen sweep center onto the same visible DOM row ordering", () => {
-    expect(projectSweepCenterRow(book, 1.59478, 1.5948, 0.00001)).toBeCloseTo(
-      0.7,
+  it("anchors the bubble to the last execution DOM bucket, not sweep midpoint", () => {
+    const trade = cumulative("bucketed-buy", "BUY", 100, 4, 0);
+    trade.lastExecutionPrice = 1.59478;
+    trade.sweepLowPrice = 1.5947;
+    trade.sweepHighPrice = 1.5949;
+    render(<TapePanel book={book} centerPrice={1.5948} trades={[trade]} />);
+
+    const bubble = document.querySelector<HTMLElement>(".trade-print-bubble");
+    const expectedRow = executionPriceToLadderRow(
+      trade.lastExecutionPrice,
+      trade.side,
+      trade.tickSize,
+      1.5948,
+    );
+    expect(bubble?.style.getPropertyValue("--print-y")).toBe(
+      `${(expectedRow ?? 0) * 1.36}rem`,
     );
   });
 });
