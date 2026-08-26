@@ -12,6 +12,7 @@ from collections import deque
 from decimal import Decimal, ROUND_CEILING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Callable
 from urllib.parse import parse_qs, urlparse
 
 import websocket
@@ -70,6 +71,7 @@ class PublicTradeBuffer:
         *,
         tick_size: Decimal = Decimal("0.00001"),
         aggregation_window_ms: int = 50,
+        book_descriptor_provider: Callable[[], dict | None] | None = None,
     ) -> None:
         if tick_size <= 0 or aggregation_window_ms < 0:
             raise ValueError("invalid public-trade aggregation settings")
@@ -78,6 +80,7 @@ class PublicTradeBuffer:
         self._active: dict | None = None
         self._tick_size = tick_size
         self._aggregation_window_ms = aggregation_window_ms
+        self._book_descriptor_provider = book_descriptor_provider
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -115,6 +118,8 @@ class PublicTradeBuffer:
 
     def _add_trade_locked(self, trade: dict) -> None:
         timestamp = int(trade["timestamp"])
+        received_at_ms = int(trade.get("received_at_ms") or time.time() * 1000)
+        trade_seq = int(trade["seq"])
         side = str(trade["side"])
         price = Decimal(str(trade["price"]))
         quantity = Decimal(str(trade["quantity"]))
@@ -137,6 +142,10 @@ class PublicTradeBuffer:
                 "side": side,
                 "started_at_ms": timestamp,
                 "ended_at_ms": timestamp,
+                "first_trade_seq": trade_seq,
+                "last_trade_seq": trade_seq,
+                "backend_first_received_at_ms": received_at_ms,
+                "backend_last_received_at_ms": received_at_ms,
                 "trade_count": 0,
                 "total_quantity": Decimal("0"),
                 "total_notional_usdt": Decimal("0"),
@@ -150,6 +159,8 @@ class PublicTradeBuffer:
 
         active["seq"] = max(int(active["seq"]), int(trade["seq"]))
         active["ended_at_ms"] = timestamp
+        active["last_trade_seq"] = trade_seq
+        active["backend_last_received_at_ms"] = received_at_ms
         active["trade_count"] += 1
         active["total_quantity"] += quantity
         active["total_notional_usdt"] += price * quantity
@@ -169,6 +180,15 @@ class PublicTradeBuffer:
         if self._active is None:
             return
         active = self._active
+        finalized_at_ms = int(time.time() * 1000)
+        book_correlation = None
+        if self._book_descriptor_provider is not None:
+            book_descriptor = self._book_descriptor_provider()
+            if book_descriptor is not None:
+                book_correlation = {
+                    "basis": "LATEST_BACKEND_KNOWN_AT_FINALIZATION",
+                    **book_descriptor,
+                }
         low = active["min_execution_price"]
         high = active["max_execution_price"]
         swept_ticks = int(
@@ -190,6 +210,8 @@ class PublicTradeBuffer:
             "swept_ticks": swept_ticks,
             "tick_size": str(self._tick_size),
             "aggregation_window_ms": self._aggregation_window_ms,
+            "finalized_at_ms": finalized_at_ms,
+            "book_correlation": book_correlation,
         })
         self._active = None
 
@@ -219,6 +241,7 @@ class PublicTradeBuffer:
                         continue
 
                     normalized = []
+                    received_at_ms = int(time.time() * 1000)
 
                     for index, trade in enumerate(data):
                         if not isinstance(trade, dict):
@@ -247,6 +270,7 @@ class PublicTradeBuffer:
                             "side": "BUY" if side == "Buy" else "SELL",
                             "price": str(price),
                             "quantity": str(quantity),
+                            "received_at_ms": received_at_ms,
                         })
 
                     if normalized:
@@ -271,6 +295,7 @@ class PublicOrderBookBuffer:
         self._asks: dict[str, str] = {}
         self._state = "DISCONNECTED"
         self._timestamp = 0
+        self._matching_engine_cts = None
         self._received_at = 0
         self._update_id = 0
         self._sequence = 0
@@ -320,6 +345,8 @@ class PublicOrderBookBuffer:
             update_id = int(data["u"])
             sequence = int(data.get("seq") or 0)
             timestamp = int(message.get("ts") or time.time() * 1000)
+            raw_cts = data.get("cts", message.get("cts"))
+            matching_engine_cts = int(raw_cts) if raw_cts is not None else None
             bids = self._levels(data.get("b"))
             asks = self._levels(data.get("a"))
         except (KeyError, TypeError, ValueError):
@@ -340,6 +367,7 @@ class PublicOrderBookBuffer:
             self._trim_locked()
             self._state = "READY"
             self._timestamp = timestamp
+            self._matching_engine_cts = matching_engine_cts
             self._received_at = int(time.time() * 1000)
             self._update_id = update_id
             self._sequence = sequence
@@ -396,6 +424,7 @@ class PublicOrderBookBuffer:
         self._state = state
         self._timestamp = int(time.time() * 1000)
         self._received_at = self._timestamp
+        self._matching_engine_cts = None
         self._update_id = 0
         self._sequence = 0
         self._version += 1
@@ -413,13 +442,32 @@ class PublicOrderBookBuffer:
                 for price, size in self._asks.items()
             ],
             "timestamp": self._timestamp,
+            "matchingEngineCts": self._matching_engine_cts,
             "receivedAt": self._received_at,
             "updateId": self._update_id,
             "sequence": self._sequence,
             "state": self._state,
             "source": "BYBIT_LINEAR_WS",
             "version": self._version,
+            "bestBid": next(iter(self._bids), None),
+            "bestAsk": next(iter(self._asks), None),
         }
+
+    def latest_descriptor(self) -> dict | None:
+        """Return an immutable scalar descriptor of the latest READY book."""
+        with self._condition:
+            if self._state != "READY" or not self._bids or not self._asks:
+                return None
+            return {
+                "book_version": self._version,
+                "update_id": self._update_id,
+                "sequence": self._sequence,
+                "exchange_ts_ms": self._timestamp,
+                "matching_engine_cts_ms": self._matching_engine_cts,
+                "backend_received_at_ms": self._received_at,
+                "best_bid": next(iter(self._bids)),
+                "best_ask": next(iter(self._asks)),
+            }
 
     def _run(self) -> None:
         topic = f"orderbook.{self.depth}.{self.symbol}"
@@ -901,12 +949,13 @@ def main() -> None:
     database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
     port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
     instrument_snapshot = load_public_instrument("ONGUSDT")
+    public_orderbook = PublicOrderBookBuffer("ONGUSDT", depth=1000)
     public_trades = PublicTradeBuffer(
         "ONGUSDT",
         tick_size=instrument_snapshot.tick_size,
         aggregation_window_ms=50,
+        book_descriptor_provider=public_orderbook.latest_descriptor,
     )
-    public_orderbook = PublicOrderBookBuffer("ONGUSDT", depth=1000)
     public_trades.start()
     public_orderbook.start()
 

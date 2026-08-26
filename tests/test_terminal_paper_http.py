@@ -182,6 +182,7 @@ def test_public_orderbook_applies_snapshot_and_incremental_delta():
         "topic": "orderbook.2.ONGUSDT",
         "type": "snapshot",
         "ts": 1000,
+        "cts": 999,
         "data": {
             "u": 10,
             "seq": 20,
@@ -199,6 +200,14 @@ def test_public_orderbook_applies_snapshot_and_incremental_delta():
         {"price": "0.106", "size": "40"},
         {"price": "0.107", "size": "50"},
     ]
+    assert snapshot["timestamp"] == 1000
+    assert snapshot["matchingEngineCts"] == 999
+    assert snapshot["receivedAt"] >= 1000
+    assert snapshot["updateId"] == 10
+    assert snapshot["sequence"] == 20
+    assert snapshot["version"] == 1
+    assert snapshot["bestBid"] == "0.105"
+    assert snapshot["bestAsk"] == "0.106"
 
     assert book.apply_message({
         "topic": "orderbook.2.ONGUSDT",
@@ -296,6 +305,58 @@ def test_public_trades_aggregate_side_window_notional_and_sweep_ticks():
     assert aggregates[2]["trade_count"] == 1
 
 
+def test_finalized_trade_captures_immutable_latest_book_descriptor():
+    book = PublicOrderBookBuffer("ONGUSDT", depth=2)
+    book.apply_message({
+        "topic": "orderbook.2.ONGUSDT", "type": "snapshot", "ts": 1000,
+        "data": {"cts": 999, "u": 10, "seq": 20,
+                 "b": [["1", "2"]], "a": [["2", "3"]]},
+    })
+    trades = PublicTradeBuffer(
+        "ONGUSDT", book_descriptor_provider=book.latest_descriptor,
+    )
+    trades.add_trades([{
+        "id": "trade-1", "seq": 30, "timestamp": 1010,
+        "received_at_ms": 1020, "symbol": "ONGUSDT", "side": "BUY",
+        "price": "1.5", "quantity": "1",
+    }])
+    trades.flush()
+    aggregate = trades.snapshot_after(0)[0]
+    correlation = aggregate["book_correlation"]
+    assert correlation == {
+        "basis": "LATEST_BACKEND_KNOWN_AT_FINALIZATION",
+        "book_version": 1, "update_id": 10, "sequence": 20,
+        "exchange_ts_ms": 1000, "matching_engine_cts_ms": 999,
+        "backend_received_at_ms": book.snapshot()["receivedAt"],
+        "best_bid": "1", "best_ask": "2",
+    }
+    assert aggregate["first_trade_seq"] == 30
+    assert aggregate["last_trade_seq"] == 30
+    assert aggregate["backend_first_received_at_ms"] == 1020
+    assert aggregate["backend_last_received_at_ms"] == 1020
+    assert aggregate["finalized_at_ms"] >= 1020
+
+    book.apply_message({
+        "topic": "orderbook.2.ONGUSDT", "type": "delta", "ts": 1030,
+        "data": {"u": 11, "seq": 21, "b": [["1", "4"]], "a": []},
+    })
+    assert aggregate["book_correlation"] == correlation
+    assert aggregate["book_correlation"]["book_version"] == 1
+
+
+def test_finalized_trade_allows_unavailable_book_correlation():
+    book = PublicOrderBookBuffer("ONGUSDT", depth=2)
+    trades = PublicTradeBuffer(
+        "ONGUSDT", book_descriptor_provider=book.latest_descriptor,
+    )
+    trades.add_trades([{
+        "id": "trade-1", "seq": 1, "timestamp": 1000,
+        "symbol": "ONGUSDT", "side": "SELL", "price": "1", "quantity": "1",
+    }])
+    trades.flush()
+    assert trades.snapshot_after(0)[0]["book_correlation"] is None
+
+
 import unittest
 
 
@@ -309,5 +370,7 @@ def load_tests(loader, tests, pattern):
             test_public_orderbook_applies_snapshot_and_incremental_delta,
             test_public_orderbook_accepts_newer_noncontiguous_and_ignores_stale_delta,
             test_public_trades_aggregate_side_window_notional_and_sweep_ticks,
+            test_finalized_trade_captures_immutable_latest_book_descriptor,
+            test_finalized_trade_allows_unavailable_book_correlation,
         )
     )

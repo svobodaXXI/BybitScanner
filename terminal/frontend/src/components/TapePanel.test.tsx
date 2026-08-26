@@ -29,6 +29,15 @@ const cumulative = (
   sweptTicks,
   tickSize: 0.00001,
   rowOffset,
+  firstTradeSeq: 1,
+  lastTradeSeq: 3,
+  backendFirstReceivedAtMs: 1010,
+  backendLastReceivedAtMs: 1050,
+  finalizedAtMs: 1100,
+  browserReceivedAtMs: 1110,
+  bookCorrelation: null,
+  correlatedBookExchangeSkewMs: null,
+  correlatedBookCtsSkewMs: null,
 });
 
 const book: NormalizedOrderBook = {

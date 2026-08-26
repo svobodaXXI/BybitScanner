@@ -33,6 +33,26 @@ export interface TradePrint {
   sweptTicks: number;
   tickSize: number;
   rowOffset: number | null;
+  firstTradeSeq: number;
+  lastTradeSeq: number;
+  backendFirstReceivedAtMs: number;
+  backendLastReceivedAtMs: number;
+  finalizedAtMs: number;
+  browserReceivedAtMs: number;
+  bookCorrelation: BookCorrelation | null;
+  correlatedBookExchangeSkewMs: number | null;
+  correlatedBookCtsSkewMs: number | null;
+}
+export interface BookCorrelation {
+  basis: "LATEST_BACKEND_KNOWN_AT_FINALIZATION";
+  bookVersion: number;
+  updateId: number;
+  sequence: number;
+  exchangeTimestampMs: number;
+  matchingEngineCtsMs: number | null;
+  backendReceivedAtMs: number;
+  bestBid: number;
+  bestAsk: number;
 }
 export interface OwnOrder {
   id: string;
@@ -48,6 +68,13 @@ export interface NormalizedOrderBook {
   health: BookHealth;
   receivedAt: string;
   availableDepth: number;
+  exchangeTimestampMs?: number;
+  matchingEngineCtsMs?: number | null;
+  backendReceivedAtMs?: number;
+  updateId?: number;
+  sequence?: number;
+  bookVersion?: number;
+  browserReceivedAtMs?: number;
 }
 
 /**

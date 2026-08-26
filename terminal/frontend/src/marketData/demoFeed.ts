@@ -37,6 +37,15 @@ const trades: TradePrint[] = Array.from({ length: 18 }, (_, index) => ({
   sweptTicks: 1,
   tickSize: 0.5,
   rowOffset: 0,
+  firstTradeSeq: index + 1,
+  lastTradeSeq: index + 1,
+  backendFirstReceivedAtMs: 0,
+  backendLastReceivedAtMs: 0,
+  finalizedAtMs: 0,
+  browserReceivedAtMs: 0,
+  bookCorrelation: null,
+  correlatedBookExchangeSkewMs: null,
+  correlatedBookCtsSkewMs: null,
 }));
 export function createDemoMarketData(): MarketDataSnapshot {
   return {

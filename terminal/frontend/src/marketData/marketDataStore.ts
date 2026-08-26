@@ -29,6 +29,22 @@ type BackendTrade = {
   swept_price_range: string;
   swept_ticks: number;
   tick_size: string;
+  first_trade_seq: number;
+  last_trade_seq: number;
+  backend_first_received_at_ms: number;
+  backend_last_received_at_ms: number;
+  finalized_at_ms: number;
+  book_correlation: null | {
+    basis: "LATEST_BACKEND_KNOWN_AT_FINALIZATION";
+    book_version: number;
+    update_id: number;
+    sequence: number;
+    exchange_ts_ms: number;
+    matching_engine_cts_ms: number | null;
+    backend_received_at_ms: number;
+    best_bid: string;
+    best_ask: string;
+  };
 };
 
 type BackendTradesEvent = {
@@ -45,8 +61,11 @@ type BackendOrderBookEvent = {
   bids: BackendBookLevel[];
   asks: BackendBookLevel[];
   timestamp: number;
+  receivedAt: number;
+  matchingEngineCts: number | null;
   updateId: number;
   sequence: number;
+  version: number;
   state: "CONNECTING" | "READY" | "DISCONNECTED" | "DEGRADED";
   source: "BYBIT_LINEAR_WS";
 };
@@ -62,7 +81,7 @@ const unavailableBook = (
   availableDepth: 0,
 });
 
-class BackendSseMarketDataStore implements MarketDataPort {
+export class BackendSseMarketDataStore implements MarketDataPort {
   private snapshot: MarketDataSnapshot = {
     ...createDemoMarketData(),
     book: unavailableBook("NOT_READY"),
@@ -108,6 +127,7 @@ class BackendSseMarketDataStore implements MarketDataPort {
     this.tradesSource = source;
 
     source.onmessage = (event) => {
+      const browserReceivedAtMs = Date.now();
       let payload: BackendTradesEvent;
 
       try {
@@ -174,6 +194,30 @@ class BackendSseMarketDataStore implements MarketDataPort {
             sweepHighPrice,
             tickSize,
           ),
+          firstTradeSeq: trade.first_trade_seq,
+          lastTradeSeq: trade.last_trade_seq,
+          backendFirstReceivedAtMs: trade.backend_first_received_at_ms,
+          backendLastReceivedAtMs: trade.backend_last_received_at_ms,
+          finalizedAtMs: trade.finalized_at_ms,
+          browserReceivedAtMs,
+          bookCorrelation: trade.book_correlation === null ? null : {
+            basis: trade.book_correlation.basis,
+            bookVersion: trade.book_correlation.book_version,
+            updateId: trade.book_correlation.update_id,
+            sequence: trade.book_correlation.sequence,
+            exchangeTimestampMs: trade.book_correlation.exchange_ts_ms,
+            matchingEngineCtsMs: trade.book_correlation.matching_engine_cts_ms,
+            backendReceivedAtMs: trade.book_correlation.backend_received_at_ms,
+            bestBid: Number(trade.book_correlation.best_bid),
+            bestAsk: Number(trade.book_correlation.best_ask),
+          },
+          correlatedBookExchangeSkewMs: trade.book_correlation === null
+            ? null
+            : trade.book_correlation.exchange_ts_ms - trade.ended_at_ms,
+          correlatedBookCtsSkewMs:
+            trade.book_correlation?.matching_engine_cts_ms == null
+              ? null
+              : trade.book_correlation.matching_engine_cts_ms - trade.ended_at_ms,
         }];
       });
 
@@ -223,6 +267,7 @@ class BackendSseMarketDataStore implements MarketDataPort {
     this.bookSource = source;
 
     source.onmessage = (event) => {
+      const browserReceivedAtMs = Date.now();
       let payload: BackendOrderBookEvent;
 
       try {
@@ -251,8 +296,15 @@ class BackendSseMarketDataStore implements MarketDataPort {
           bids,
           asks,
           health: "READY",
-          receivedAt: new Date(payload.timestamp).toISOString(),
+          receivedAt: new Date(payload.receivedAt).toISOString(),
           availableDepth: Math.min(bids.length, asks.length),
+          exchangeTimestampMs: payload.timestamp,
+          matchingEngineCtsMs: payload.matchingEngineCts,
+          backendReceivedAtMs: payload.receivedAt,
+          updateId: payload.updateId,
+          sequence: payload.sequence,
+          bookVersion: payload.version,
+          browserReceivedAtMs,
         },
         source: "LIVE_NORMALIZED",
       };
