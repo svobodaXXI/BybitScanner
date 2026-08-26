@@ -2,11 +2,11 @@
 
 Version:
 
-7.63
+7.64
 
 Date:
 
-2026-08-23
+2026-08-26
 
 Document Type:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED
+IN_PROGRESS / IMPLEMENT / TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING
 
 Checkpoint:
 
-STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED
+TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING
 
 ChangeRequest revision:
 
-1.27
+1.38
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.27
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.38
 
 Product priority:
 
@@ -908,15 +908,15 @@ LOCAL_FIRST / DEPLOYMENT_NEUTRAL / FUTURE_VPS_COMPATIBLE
 
 Implementation status:
 
-STAGES_0_TO_7_COMPLETED / STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_IMPLEMENTED_VERIFIED
+CHART_UX_IMPLEMENTED_VERIFIED_IN_MAIN / SPATIAL_ALIGNMENT_IMPLEMENTED_ISOLATED_NOT_MERGED
 
 Current authorized action:
 
-STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED_REVISION_1_27
+REBASE_AND_INTEGRATE_ISOLATED_SPATIAL_ALIGNMENT_ONTO_MAIN_74FB37D
 
 Next phase:
 
-FURTHER_MOBILE_UX_CLARIFICATION / NEXT_IMPLEMENTATION_SLICE_REQUIRES_SEPARATE_AUTHORIZATION
+SPATIAL_AND_CHART_REGRESSION_VALIDATION_THEN_MANUAL_REVIEW_AND_MERGE
 
 Important:
 
@@ -943,6 +943,23 @@ The mobile design remains incomplete; no runtime change or next implementation a
 Revision 1.27 records the second approved mobile UX set: full-position STOP/TAKE proposals and invariants,
 signal TAKE behavior, no-position state, independent side volumes, position details, two-row Limit inventory,
 engine-derived PnL, average-entry line, line classes and reference-derived palette. It is documentation only.
+
+Revision 1.37 records serialized PAPER runtime ownership, live ONGUSDT metadata, order-book and public-trade
+streams, cumulative Smart Tape, x5 DOM projection and the fixed price ladder. Revision 1.38 records the
+Lightweight Charts 5.2.1 Chart UX in main at `e0141d3a7f15f2679af36d5726335b610ffe8352` and the verified
+follow-latest runtime correction in main at `74fb37db6554657f05d44d1631b583194021e5e0`. Manual verification
+confirmed pan-away, visible `→|`, return to latest and button disappearance.
+
+The Smart Tape to fixed-DOM spatial patch exists only in isolated commit
+`87a8573c654ad2df339217ea86669a9e702004ac` on `codex/spatial-tape-dom-alignment` in
+`C:\BybitScanner-spatial`; it is not merged into main. First rebase/integrate that branch onto current main,
+review `styles.css` conflicts, run spatial plus Chart UX plus follow-latest regressions and complete manual
+review. Afterwards verify publicTrade/order-book temporal synchronization, narrow cumulative bubbles,
+provide authoritative frontend tick size, and only later implement the new CENTER UX.
+
+Current mobile testing uses the PAPER backend at `http://127.0.0.1:8765` and the frontend served with
+`npm run dev -- --host 0.0.0.0`; the observed LAN address `http://192.168.100.8:5173/` opened successfully
+on a phone. Telegram Mini App/button configuration was not performed for this checkpoint.
 
 ---
 
@@ -4707,6 +4724,29 @@ Deep set загружается только при условиях,
 ---
 
 # VERSION_UPDATE_REASON
+
+from:
+
+PROJECT_STATE v7.63
+
+to:
+
+PROJECT_STATE v7.64
+
+reason:
+
+Current Trading Workspace checkpoint (v7.63 to v7.64):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.38 and checkpoint
+  `TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING`;
+* recorded the verified Chart UX commit `e0141d3a7f15f2679af36d5726335b610ffe8352` and follow-latest fix
+  `74fb37db6554657f05d44d1631b583194021e5e0` in main;
+* recorded the spatial patch `87a8573c654ad2df339217ea86669a9e702004ac` as isolated and not merged;
+* set safe integration of the isolated spatial branch onto current main as the first next task, followed by
+  spatial, Chart UX and follow-latest regression checks and manual review;
+* preserved the overall `IMPLEMENT / IN_PROGRESS` lifecycle and did not declare Trading Workspace complete.
+
+Previous version history follows.
 
 from:
 

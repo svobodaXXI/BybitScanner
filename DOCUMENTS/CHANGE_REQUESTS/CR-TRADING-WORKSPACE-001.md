@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.37",
+  "revision": "1.38",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -38,9 +38,11 @@
     ,"Implement the human-authorized PAPER resting Limit price-only amend with durable idempotency and authoritative in-place projection"
     ,"Run PAPER execution through a dedicated serialized runtime-owner lane with live symbol metadata and live order-book authority"
     ,"Implement the ONGUSDT live order-book and public-trade streams, cumulative Smart Tape aggregation, x5 DOM projection and a stable fixed price ladder"
+    ,"Implement and verify the Lightweight Charts 5.2.1 interactive chart workspace and follow-latest runtime action"
+    ,"Record the isolated Smart Tape to fixed DOM spatial-alignment patch while keeping its main integration pending"
   ],
   "prohibited_scope": [
-    "Functional DOM, L2 ingestion, Market Data Engine, Paper Trading Engine or chart implementation",
+    "Further unapproved DOM, L2, Market Data Engine, Paper Trading Engine or chart implementation beyond recorded checkpoints",
     "Bybit order placement or account mutation",
     "Scanner, detector, Geometry, Signal admission or Telegram runtime changes",
     "Trading Robot implementation",
@@ -349,8 +351,8 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "STAGE_8_INDEPENDENT_MARKET_NOTIONAL_AMOUNTS_IMPLEMENTED_VERIFIED",
-  "implementation_status": "STAGE_8_INDEPENDENT_MARKET_NOTIONAL_AMOUNTS_IMPLEMENTED_VERIFIED",
+  "current_checkpoint": "TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING",
+  "implementation_status": "CHART_UX_IMPLEMENTED_VERIFIED_IN_MAIN_SPATIAL_ALIGNMENT_IMPLEMENTED_ISOLATED_NOT_MERGED",
   "next_phase": "VERIFY",
   "next_phase_authorization": "NO_FURTHER_IMPLEMENTATION_AUTHORIZED_BY_THIS_CHECKPOINT",
   "related_commits": [
@@ -364,13 +366,15 @@
     ,{"phase": "CONTEXT_REVISION_1_6_BYBIT_EXECUTION_AND_WV_RESEARCH_CHECKPOINT", "commit": "d82ad7803f9a21f21f12ce9e4975ae71fdbfbdc8"}
     ,{"phase": "CONTEXT_REVISION_1_7_EXECUTION_RECONCILIATION_MODEL_CHECKPOINT", "commit": "5fa3bba7b347739fb73e57f25306ec8a677643e4"}
     ,{"phase": "IMPLEMENT_STAGE_7_API_PROJECTION_CONTRACTS", "commit": "61520861b6058a585460b3f5f964613d19dcd35b"}
+    ,{"phase": "INTERACTIVE_TRADING_CHART_WORKSPACE", "commit": "e0141d3a7f15f2679af36d5726335b610ffe8352"}
+    ,{"phase": "CHART_FOLLOW_LATEST_RUNTIME_FIX", "commit": "74fb37db6554657f05d44d1631b583194021e5e0"}
   ],
   "repository_sync": {
     "branch": "main",
     "baseline_local_head": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
     "baseline_origin_main": "5b898963ef46bbd33771123ac169d7b8d52fc0e0",
-    "latest_saved_checkpoint": "61520861b6058a585460b3f5f964613d19dcd35b",
-    "status": "STAGE_8_INDEPENDENT_MARKET_NOTIONAL_AMOUNTS_IMPLEMENTED_VERIFIED"
+    "latest_saved_checkpoint": "74fb37db6554657f05d44d1631b583194021e5e0",
+    "status": "TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Recorded and human-approved the Trading Workspace v1 Manual Live Trading durable Task/Spec for documentation checkpoint commit only without CONTEXT or implementation authorization", "date": "2026-08-20"},
@@ -409,7 +413,8 @@
     {"revision": "1.34", "reason": "Human-authorized bounded PAPER Full Close implementation using backend-authoritative remaining coin quantity, opposite-side reduce-only execution, safe already-FLAT no-op, no flip-through-zero, checked frontend/backend request contract, authoritative exposure refresh and real PAPER E2E coverage", "date": "2026-08-25"},
     {"revision": "1.35", "reason": "Human-authorized bounded PAPER Limit foundation implementing checked BUY/SELL GTC contracts, shared sizing admission, durable idempotent create/cancel ledger, authoritative SQLite resting-order projection, simple Terminal controls/list and real PAPER lifecycle E2E without matching, partial fills, DOM, L2 or live execution", "date": "2026-08-25"},
     {"revision": "1.36", "reason": "Human-authorized bounded PAPER resting Limit amend/reprice implementing checked price-only mutation, shared price normalization, durable idempotency, atomic in-place persistence, authoritative UI refresh and real PAPER create-amend-cancel E2E without quantity amend, matching, DOM, L2 or live execution", "date": "2026-08-25"},
-    {"revision": "1.37", "reason": "Checkpoint of serialized owner-thread PAPER execution, live ONGUSDT metadata and order-book authority, noncontiguous newer update-ID acceptance, 50-ms cumulative Smart Tape, x5 DOM compression, stable fixed ladder, canonical trade colors and IPv4 Vite binding while retaining the unresolved Tape-to-DOM spatial projection defect as the first next step", "date": "2026-08-26"}
+    {"revision": "1.37", "reason": "Checkpoint of serialized owner-thread PAPER execution, live ONGUSDT metadata and order-book authority, noncontiguous newer update-ID acceptance, 50-ms cumulative Smart Tape, x5 DOM compression, stable fixed ladder, canonical trade colors and IPv4 Vite binding while retaining the unresolved Tape-to-DOM spatial projection defect as the first next step", "date": "2026-08-26"},
+    {"revision": "1.38", "reason": "Recorded the verified Lightweight Charts 5.2.1 Chart UX and follow-latest runtime fix in main, local-network mobile browser validation, and the separately implemented but unmerged Smart Tape to fixed DOM spatial-alignment patch with integration onto current main as the first next step", "date": "2026-08-26"}
   ]
 }
 ```
@@ -2908,3 +2913,56 @@ double tap enables locked auto-centering and manual scroll disables the lock. Th
 This amendment records checkpoint `LIVE_TRADING_WORKSPACE_MARKET_DATA_CHECKPOINT_RECORDED`; it does not mark
 Trading Workspace complete and authorizes no new implementation beyond the already completed working-tree
 scope.
+
+## 47. Interactive Chart UX and isolated spatial-alignment checkpoint
+
+Revision 1.38 records the current authoritative main checkpoint
+`74fb37db6554657f05d44d1631b583194021e5e0` while the overall ChangeRequest remains
+`IMPLEMENT / IN_PROGRESS`.
+
+The Chart UX batch is implemented in main by
+`e0141d3a7f15f2679af36d5726335b610ffe8352`. The previous SVG prototype was replaced with
+Lightweight Charts 5.2.1, providing responsive candlesticks, time and right-price scales, grid and
+crosshair; directional midpoint-anchored pinch scaling with a three-percent dead zone and 1.55 dominance
+ratio; horizontal, vertical and independent diagonal scaling; manual/automatic price-scale control;
+cursor-anchored wheel and Ctrl+wheel scaling; direct axis scaling; horizontal pan; and follow-latest UI.
+The chart drawing layer provides Select, Crosshair, Trend Line, Horizontal Line, Ray, Horizontal Ray,
+Vertical Line, Fibonacci, Ruler and Rectangle tools with enlarged hit areas, selection, anchor/object
+dragging, Delete/Escape and mobile delete, lock, clear, undo/redo, nearest-OHLC Magnet and version-1
+localStorage persistence per symbol and timeframe. Canonical BUY `#3BC639` and SELL `#CD0000` colors remain
+preserved.
+
+The follow-latest runtime defect is fixed in main by
+`74fb37db6554657f05d44d1631b583194021e5e0`. The chart-stage capture handler previously called
+`setPointerCapture()` for the `→|` button, preventing its click, while `scrollToPosition(0, false)` did not
+represent the configured realtime position with the active right offset. Gesture capture now ignores the
+follow-latest control, the control calls the Lightweight Charts public `scrollToRealTime()` API, and
+follow-latest state remains derived from the factual visible logical range. Manual runtime verification
+passed: panning into history shows `→|`, activation returns the chart to latest, and the control disappears
+only after latest is reached.
+
+Smart Tape to fixed-DOM spatial alignment is implemented only in isolated commit
+`87a8573c654ad2df339217ea86669a9e702004ac` on branch
+`codex/spatial-tape-dom-alignment` in `C:\BybitScanner-spatial`; it is not merged into main. The patch maps
+the principal `lastExecutionPrice` through the same side-aware x5 compressed DOM bucket and exact fixed row
+Y coordinate, while sweep range affects bubble height only. Examples are BUY `0.09233 → 0.09230` and SELL
+`0.09247 → 0.09250`. DOM and Tape share `--dom-row-height: 1.36rem` and a common vertical origin; the stale
+numeric `top: 2rem` mismatch is removed. Browser pixel audit measured zero-pixel alignment delta.
+
+The isolated spatial branch is based on an older checkpoint. The first next task is to rebase or otherwise
+safely integrate it onto current main `74fb37db6554657f05d44d1631b583194021e5e0`, review conflicts—especially
+`styles.css`—run spatial, Chart UX and follow-latest regressions, and complete manual review before merging.
+Only after spatial alignment integration: verify temporal `publicTrade` to order-book synchronization,
+further narrow cumulative Smart Tape bubbles, replace frontend tick-size inference with authoritative
+frontend tick size, and later implement the new CENTER UX. This order must not change without a separate
+decision.
+
+For current local/mobile testing, the PAPER backend runs from `C:\BybitScanner` with
+`python -m terminal.runtime.paper_http_server` at `http://127.0.0.1:8765`; current public market streams use
+`ONGUSDT`. The frontend runs from `C:\BybitScanner\terminal\frontend` with
+`npm run dev -- --host 0.0.0.0`; the observed LAN URL was `http://192.168.100.8:5173/`, and the Trading
+Workspace opened successfully in a phone browser. Telegram Mini App/button configuration was not part of
+this checkpoint; testing used the browser over the local network.
+
+This amendment records checkpoint `TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING`. It
+does not mark Trading Workspace complete and does not claim that the isolated spatial patch is in main.
