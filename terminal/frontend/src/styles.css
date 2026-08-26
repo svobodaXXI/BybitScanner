@@ -2,6 +2,13 @@
 :root {
   --trade-buy: #3bc639;
   --trade-sell: #cd0000;
+  --chart-bg: #10151b;
+  --chart-grid: #202830;
+  --chart-text: #8996a3;
+  --chart-bull: var(--trade-buy);
+  --chart-bear: var(--trade-sell);
+  --chart-crosshair: #8996a3;
+  --chart-drawing: #e0b45b;
   color: #e4eaf0;
   background: #090c10;
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
@@ -154,45 +161,121 @@ button {
 .chart-panel {
   display: grid;
   grid-template-rows: auto 1fr;
-  background: #151a20;
+  background: var(--chart-bg);
 }
-.chart-canvas {
+.chart-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 28rem;
+  overflow: hidden;
+  background: var(--chart-bg);
+  touch-action: none;
+  user-select: none;
+}
+.chart-engine {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   min-height: 28rem;
-  background: linear-gradient(180deg, #171d24, #11161c);
+  background: var(--chart-bg);
 }
-.chart-grid-lines line {
-  stroke: #222b35;
-  stroke-width: 1;
+.drawing-overlay {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
 }
-.candle line {
-  stroke-width: 1.5;
+.drawing-overlay.tool-select {
+  cursor: default;
 }
-.candle.bullish line,
-.candle.bullish rect {
-  stroke: var(--trade-buy);
-  fill: var(--trade-buy);
-}
-.candle.bearish line,
-.candle.bearish rect {
-  stroke: var(--trade-sell);
-  fill: var(--trade-sell);
-}
-.zoom-controls {
+.drawing-toolbar {
+  position: absolute;
+  z-index: 5;
+  top: 0.4rem;
+  left: 0.4rem;
   display: flex;
-  align-items: center;
-  gap: 0.25rem;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding: 0.22rem;
+  border: 1px solid #303b47;
+  border-radius: 0.35rem;
+  background: color-mix(in srgb, var(--chart-bg) 92%, transparent);
+  box-shadow: 0 0.3rem 1rem rgba(0, 0, 0, 0.25);
 }
-.zoom-controls button {
-  width: 1.65rem;
-  height: 1.55rem;
+.drawing-toolbar button,
+.snap-latest,
+.auto-price-reset {
+  display: grid;
+  width: 2.25rem;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 0.28rem;
+  background: #171d24;
+  color: #aab5bf;
+  font-size: 0.68rem;
 }
-.zoom-controls output {
-  min-width: 3rem;
-  color: #97a6b5;
-  text-align: center;
-  font-size: 0.66rem;
+.drawing-toolbar button:hover {
+  border-color: #53616e;
+}
+.drawing-toolbar button.active {
+  border-color: var(--chart-drawing);
+  color: var(--chart-drawing);
+  background: #292317;
+}
+.drawing-toolbar button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.drawing-toolbar-divider {
+  height: 1px;
+  margin: 0.08rem;
+  background: #303b47;
+}
+.snap-latest {
+  position: absolute;
+  z-index: 6;
+  right: 4.4rem;
+  bottom: 2.25rem;
+  border-color: #53616e;
+}
+.auto-price-reset {
+  position: absolute;
+  z-index: 6;
+  right: 0.35rem;
+  top: 0.35rem;
+  width: 2.8rem;
+  color: var(--chart-drawing);
+  border-color: #80652f;
+}
+.drawing-toolbar button:focus-visible,
+.snap-latest:focus-visible,
+.auto-price-reset:focus-visible {
+  outline: 2px solid #dce5ed;
+  outline-offset: 2px;
+}
+@media (max-width: 620px) {
+  .drawing-toolbar {
+    top: 0.25rem;
+    left: 0.25rem;
+    max-height: calc(100% - 0.5rem);
+    overflow-y: auto;
+    scrollbar-width: none;
+  }
+  .drawing-toolbar button {
+    width: 2.75rem;
+    min-width: 2.75rem;
+    height: 2.75rem;
+  }
+  .chart-stage,
+  .chart-engine {
+    min-height: 24rem;
+  }
 }
 .market-sidecar {
   display: grid;
@@ -290,7 +373,8 @@ button {
 }
 .dom-row.best.sell {
   background: color-mix(in srgb, var(--trade-sell) 7%, transparent);
-  box-shadow: inset 0 -1px color-mix(in srgb, var(--trade-sell) 38%, transparent);
+  box-shadow: inset 0 -1px
+    color-mix(in srgb, var(--trade-sell) 38%, transparent);
 }
 .dom-body {
   position: relative;
@@ -1032,7 +1116,6 @@ button {
   top: 0;
 }
 
-
 /* steering wheel */
 
 .paper-autopilot-button {
@@ -1116,7 +1199,7 @@ button {
 
 .account-key-shaft {
   position: absolute;
-  left: 0.40rem;
+  left: 0.4rem;
   top: 0.34rem;
   width: 0.62rem;
   height: 1.5px;
@@ -1143,7 +1226,6 @@ button {
   right: 0.22rem;
   height: 0.16rem;
 }
-
 
 /* ---------------------------------------------------------
    AUTOPILOT STEERING WHEEL
@@ -1207,7 +1289,6 @@ button {
 .autopilot-wheel > span::after {
   content: none;
 }
-
 
 /* ---------------------------------------------------------
    POSITION DIRECTION
@@ -1282,7 +1363,6 @@ button {
 /* TERMINAL CONTROLS FIX V3 */
 
 @media (max-width: 620px) {
-
   /* =======================================================
      POSITION ROW
      Arrow + amount + USDT + close cross must always fit.
@@ -1340,7 +1420,6 @@ button {
   .paper-wv-close:disabled {
     opacity: 0.35;
   }
-
 
   /* =======================================================
      AUTOPILOT STEERING WHEEL
@@ -1441,7 +1520,6 @@ button {
   stroke-linecap: round;
 }
 
-
 .paper-autopilot-button {
   display: flex;
   align-items: center;
@@ -1462,7 +1540,6 @@ button {
 .paper-autopilot-wheel-icon circle:nth-of-type(2) {
   fill: #171d24;
 }
-
 
 /* Kill previous CSS-drawn steering-wheel pieces */
 .paper-autopilot-button .autopilot-wheel {
@@ -1747,7 +1824,6 @@ button {
 
 /* MOBILE DOM TAPE DENSITY V1 */
 @media (max-width: 620px) {
-
   .market-sidecar {
     grid-template-columns: minmax(0, 1.55fr) minmax(0, 0.68fr);
     gap: 0.22rem;
@@ -1846,7 +1922,6 @@ button {
 
 /* MOBILE LIVE PRINTS FIELD V1 */
 @media (max-width: 620px) {
-
   /* PRINTS left, DOM right */
   .market-sidecar {
     grid-template-columns: minmax(0, 1.45fr) minmax(0, 0.85fr);
@@ -1973,7 +2048,6 @@ button {
 
 /* PRINTS QUEUE CANONICAL V2 */
 @media (max-width: 620px) {
-
   .prints-panel {
     position: relative;
     display: block;

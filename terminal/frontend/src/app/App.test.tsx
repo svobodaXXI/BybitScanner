@@ -4,13 +4,16 @@ import { createDemoMarketData } from "../marketData/demoFeed";
 import { App } from "./App";
 
 describe("Trading Workspace runnable prototype", () => {
-  it("switches modes without resetting shared chart state", () => {
+  it("switches modes while keeping the shared chart mounted", () => {
     render(<App />);
-    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
-    expect(screen.getByLabelText("Chart zoom")).toHaveTextContent("1.25×");
+    expect(
+      screen.getByLabelText("Interactive market chart"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "AUTOPILOT" }));
     expect(screen.getByLabelText("AUTOPILOT controls")).toBeInTheDocument();
-    expect(screen.getByLabelText("Chart zoom")).toHaveTextContent("1.25×");
+    expect(
+      screen.getByLabelText("Interactive market chart"),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "BTCUSDT" }),
     ).toBeInTheDocument();

@@ -11,7 +11,6 @@ import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 
 export function App() {
   const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
-  const [zoom, setZoom] = useState(1);
   const [accountOpen, setAccountOpen] = useState(false);
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
     null,
@@ -36,7 +35,11 @@ export function App() {
       />
       {accountOpen ? <AccountMenu /> : null}
       <section className="workspace-grid" aria-label="Trading workspace">
-        <ChartPanel candles={market.candles} onZoom={setZoom} zoom={zoom} />
+        <ChartPanel
+          candles={market.candles}
+          symbol={market.book.symbol}
+          timeframe="5m"
+        />
         <aside className="market-sidecar" aria-label="Market depth and tape">
           <DomPanel
             book={market.book}
