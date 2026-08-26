@@ -11,6 +11,11 @@ import {
   type PaperLimitMutationResult,
   type PaperLimitOrder,
 } from "../contracts/trading";
+import {
+  formatPositionAverageEntry,
+  formatPositionPnlPercent,
+  positionPnlPercent,
+} from "../marketData/positionPnl";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
 
@@ -25,11 +30,13 @@ export function ModePanel({
   onModeChange,
   sizingReferencePrice,
   onPositionSideChange,
+  onPositionAverageEntryChange,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
   sizingReferencePrice: string;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
+  onPositionAverageEntryChange?: (averageEntry: number | null) => void;
 }) {
   const [executionStatus, setExecutionStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -41,6 +48,8 @@ export function ModePanel({
   const [oneWvUsdt, setOneWvUsdt] = useState("0");
   const [positionQuantity, setPositionQuantity] = useState("0");
   const [positionSide, setPositionSide] = useState<PaperState["position_side"]>("Flat");
+  const [positionSymbol, setPositionSymbol] = useState("");
+  const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [holdTooltip, setHoldTooltip] = useState<string | null>(null);
   const holdTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [buyAmount, setBuyAmount] = useState("");
@@ -71,8 +80,21 @@ export function ModePanel({
           ? String(Math.round(Math.max(0, engagedNotional)))
           : "0",
       );
-      setPositionSide(state.ok ? state.position_side : "Flat");
-      onPositionSideChange(state.ok ? state.position_side : "Flat");
+      const normalizedPositionSide =
+        state.ok && (state.position_side === "Long" || state.position_side === "Short")
+          ? state.position_side
+          : "Flat";
+      setPositionSide(normalizedPositionSide);
+      setPositionSymbol(state.ok ? state.symbol : "");
+      onPositionSideChange(normalizedPositionSide);
+      const averageEntry = Number(state.average_entry);
+      const normalizedAverageEntry =
+        state.ok && state.average_entry !== null && Number.isFinite(averageEntry)
+          && averageEntry > 0
+          ? averageEntry
+          : null;
+      setPositionAverageEntry(normalizedAverageEntry);
+      onPositionAverageEntryChange?.(normalizedAverageEntry);
       setOneWvUsdt(state.ok ? state.one_wv_usdt : "0");
       setPositionQuantity(state.ok ? state.position_quantity : "0");
       const limits = state.ok ? state.active_limit_orders : [];
@@ -89,8 +111,10 @@ export function ModePanel({
     } catch {
       setEngagedWorkingVolume(null);
       setEngagedNotionalUsdt("0");
+      setPositionAverageEntry(null);
+      onPositionAverageEntryChange?.(null);
     }
-  }, []);
+  }, [onPositionAverageEntryChange, onPositionSideChange]);
 
   useEffect(() => {
     if (mode === "TERMINAL") {
@@ -103,6 +127,14 @@ export function ModePanel({
   const alternatives = (["TERMINAL", "AUTOPILOT"] as const).filter(
     (candidate) => candidate !== mode,
   );
+  const pnlPercent = positionPnlPercent(
+    positionSide,
+    positionAverageEntry,
+    Number(sizingReferencePrice),
+  );
+  const pnlTone = pnlPercent === null || pnlPercent === 0
+    ? "neutral"
+    : pnlPercent > 0 ? "positive" : "negative";
 
   const startHoldTooltip = (message: string) => {
     if (holdTooltipTimer.current) {
@@ -261,24 +293,93 @@ export function ModePanel({
 
       {mode === "TERMINAL" ? (
         <div className="paper-market-actions">
-          <div className="paper-wv-indicator" aria-label="Engaged working volume">
-            <span
-              className="paper-wv-value paper-hold-target"
-              onPointerDown={() =>
-                startHoldTooltip(`1 \u0420\u041E = ${oneWvUsdt} USDT`)
-              }
-              onPointerUp={stopHoldTooltip}
-              onPointerCancel={stopHoldTooltip}
-              onPointerLeave={stopHoldTooltip}
-              onTouchStart={() =>
-                startHoldTooltip(`1 \u0420\u041E = ${oneWvUsdt} USDT`)
-              }
-              onTouchEnd={stopHoldTooltip}
-              onTouchCancel={stopHoldTooltip}
-              onContextMenu={(event) => event.preventDefault()}
-            >
-              {"\u2694\uFE0F"} {engagedWorkingVolume ?? "\u2014"}
-            </span>
+          <div className="paper-trade-side-group" aria-label="PAPER trade sides">
+            <div className="paper-market-side paper-market-buy-side">
+              <button
+                onClick={() => submitPaperMarket("Buy", buyAmount)}
+                className="paper-market-buy"
+                disabled={isSubmitting}
+                type="button"
+              >
+                {isSubmitting ? "..." : "BUY"}
+              </button>
+              <input
+                aria-label="BUY amount"
+                inputMode="decimal"
+                min="0"
+                onChange={(event) => {
+                  buyAmountEdited.current = true;
+                  setBuyAmount(event.target.value);
+                }}
+                type="number"
+                value={buyAmount}
+              />
+            </div>
+
+            <div className="paper-market-side paper-market-sell-side">
+              <button
+                onClick={() => submitPaperMarket("Sell", sellAmount)}
+                className="paper-market-sell"
+                disabled={isSubmitting}
+                type="button"
+              >
+                {isSubmitting ? "..." : "SELL"}
+              </button>
+              <input
+                aria-label="SELL amount"
+                inputMode="decimal"
+                min="0"
+                onChange={(event) => {
+                  sellAmountEdited.current = true;
+                  setSellAmount(event.target.value);
+                }}
+                type="number"
+                value={sellAmount}
+              />
+            </div>
+          </div>
+
+          <div className="paper-position-controls" aria-label="PAPER position controls">
+            <div className="paper-wv-indicator" aria-label="Engaged working volume">
+              <div className="paper-wv-primary">
+                <span
+                  className="paper-wv-value paper-hold-target"
+                  onPointerDown={() =>
+                    startHoldTooltip(`1 \u0420\u041E = ${oneWvUsdt} USDT`)
+                  }
+                  onPointerUp={stopHoldTooltip}
+                  onPointerCancel={stopHoldTooltip}
+                  onPointerLeave={stopHoldTooltip}
+                  onTouchStart={() =>
+                    startHoldTooltip(`1 \u0420\u041E = ${oneWvUsdt} USDT`)
+                  }
+                  onTouchEnd={stopHoldTooltip}
+                  onTouchCancel={stopHoldTooltip}
+                  onContextMenu={(event) => event.preventDefault()}
+                >
+                  {"\u2694\uFE0F"} {engagedWorkingVolume ?? "\u2014"}
+                </span>
+
+                {positionSide !== "Flat" ? (
+                  <button
+                    className={`paper-wv-close ${positionSide.toLowerCase()}`}
+                    disabled={isSubmitting}
+                    onClick={() => setCloseConfirmOpen(true)}
+                    type="button"
+                    aria-label="Закрыть позицию"
+                    title="Закрыть позицию"
+                  >
+                    <svg
+                      className="paper-close-icon"
+                      viewBox="0 0 16 16"
+                      aria-hidden="true"
+                    >
+                      <line x1="4" y1="4" x2="12" y2="12" />
+                      <line x1="12" y1="4" x2="4" y2="12" />
+                    </svg>
+                  </button>
+                ) : null}
+              </div>
 
             <div
               className={`paper-wv-position ${
@@ -319,70 +420,27 @@ export function ModePanel({
                 <span className="paper-wv-currency">USDT</span>
               </span>
 
-              <button
-                className="paper-wv-close"
-                disabled={isSubmitting || positionSide === "Flat"}
-                onClick={() => setCloseConfirmOpen(true)}
-                type="button"
-                aria-label="??????? ??????? ???????"
-                title="??????? ??????? ???????"
-              >
-                <svg
-                  className="paper-close-icon"
-                  viewBox="0 0 16 16"
-                  aria-hidden="true"
-                >
-                  <line x1="4" y1="4" x2="12" y2="12" />
-                  <line x1="12" y1="4" x2="4" y2="12" />
-                </svg>              </button>
             </div>
+            </div>
+
+            {positionSide !== "Flat" ? (
+              <div className="paper-position-info" aria-label="Current PAPER position">
+                <span className="paper-position-symbol">{positionSymbol}</span>
+                {positionAverageEntry !== null ? (
+                  <span className="paper-position-average">
+                    {formatPositionAverageEntry(positionAverageEntry)}
+                  </span>
+                ) : null}
+                {pnlPercent !== null ? (
+                  <span className={`paper-position-pnl ${pnlTone}`}>
+                    {formatPositionPnlPercent(pnlPercent)}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
-          <div className="paper-market-side paper-market-buy-side">
-            <button
-              onClick={() => submitPaperMarket("Buy", buyAmount)}
-              className="paper-market-buy"
-              disabled={isSubmitting}
-              type="button"
-            >
-              {isSubmitting ? "..." : "BUY"}
-            </button>
-            <input
-              aria-label="BUY amount"
-              inputMode="decimal"
-              min="0"
-              onChange={(event) => {
-                buyAmountEdited.current = true;
-                setBuyAmount(event.target.value);
-              }}
-              type="number"
-              value={buyAmount}
-            />
-          </div>
-
-          <div className="paper-market-side paper-market-sell-side">
-            <button
-              onClick={() => submitPaperMarket("Sell", sellAmount)}
-              className="paper-market-sell"
-              disabled={isSubmitting}
-              type="button"
-            >
-              {isSubmitting ? "..." : "SELL"}
-            </button>
-            <input
-              aria-label="SELL amount"
-              inputMode="decimal"
-              min="0"
-              onChange={(event) => {
-                sellAmountEdited.current = true;
-                setSellAmount(event.target.value);
-              }}
-              type="number"
-              value={sellAmount}
-            />
-          </div>
-
-          <div className="paper-utility-stack">
+          <div className="paper-utility-stack" aria-label="PAPER utility controls">
             <button
               className="paper-position-list-button"
               type="button"

@@ -2,7 +2,7 @@
 
 Version:
 
-7.64
+7.65
 
 Date:
 
@@ -880,19 +880,19 @@ DURABLE_TASK_SPEC_CHANGE_REQUEST
 
 Lifecycle state:
 
-IN_PROGRESS / IMPLEMENT / TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING
+IN_PROGRESS / IMPLEMENT / LIVE_PAPER_POSITION_PNL_UX_ACCEPTED
 
 Checkpoint:
 
-TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING
+LIVE_PAPER_POSITION_PNL_UX_ACCEPTED
 
 ChangeRequest revision:
 
-1.38
+1.40
 
 Owning record:
 
-`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.38
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md` revision 1.40
 
 Product priority:
 
@@ -908,15 +908,15 @@ LOCAL_FIRST / DEPLOYMENT_NEUTRAL / FUTURE_VPS_COMPATIBLE
 
 Implementation status:
 
-CHART_UX_IMPLEMENTED_VERIFIED_IN_MAIN / SPATIAL_ALIGNMENT_IMPLEMENTED_ISOLATED_NOT_MERGED
+SPATIAL_ALIGNMENT_IN_MAIN / LIVE_PAPER_PNL_AND_POSITION_CONTROLS_IMPLEMENTED_MANUALLY_ACCEPTED
 
 Current authorized action:
 
-REBASE_AND_INTEGRATE_ISOLATED_SPATIAL_ALIGNMENT_ONTO_MAIN_74FB37D
+CHART_LIVE_INTERACTION_WORK
 
 Next phase:
 
-SPATIAL_AND_CHART_REGRESSION_VALIDATION_THEN_MANUAL_REVIEW_AND_MERGE
+LIVE_CANDLES_THEN_PAN_ZOOM_THEN_MOBILE_DIRECTIONAL_PINCH
 
 Important:
 
@@ -950,12 +950,25 @@ Lightweight Charts 5.2.1 Chart UX in main at `e0141d3a7f15f2679af36d5726335b610f
 follow-latest runtime correction in main at `74fb37db6554657f05d44d1631b583194021e5e0`. Manual verification
 confirmed pan-away, visible `→|`, return to latest and button disappearance.
 
-The Smart Tape to fixed-DOM spatial patch exists only in isolated commit
-`87a8573c654ad2df339217ea86669a9e702004ac` on `codex/spatial-tape-dom-alignment` in
-`C:\BybitScanner-spatial`; it is not merged into main. First rebase/integrate that branch onto current main,
-review `styles.css` conflicts, run spatial plus Chart UX plus follow-latest regressions and complete manual
-review. Afterwards verify publicTrade/order-book temporal synchronization, narrow cumulative bubbles,
-provide authoritative frontend tick size, and only later implement the new CENTER UX.
+Revision 1.40 records implemented and human-accepted live PAPER position PnL. Authoritative
+`average_entry` flows through the existing PAPER refresh; current price is the live best-Bid/best-Ask
+midpoint, and one shared helper drives Smart Tape and POSITION INFO without a second poll or subscription.
+Manual smoke accepted restored publicTrade prints, fresh-LONG PnL movement from approximately zero percent,
+five-decimal average-entry presentation and the mobile grouping LEFT `BUY / SELL`, CENTER
+`swords/RO + Full Close + POSITION INFO`, RIGHT-CENTER `LIST / AUTOPILOT`, RIGHT `STOP / TAKE`.
+
+Operational diagnosis found that multiple Windows backend listener/process ownership around port 8765 had
+served old backend schemas to the current frontend. One backend from the current working tree restored the
+book, prints and PnL path. The exact next implementation priority is `CHART LIVE/INTERACTION WORK`: proper
+live candle-price updates; normal pan/zoom; directional mobile two-finger pinch; price/time coordinate mapping
+verification; removal of unnecessary drawing tools; then completion of the remaining drawing tools. Temporal
+publicTrade-to-order-book synchronization is deferred behind this Chart UX priority.
+
+The Smart Tape to fixed-DOM spatial patch was integrated into main through `9446bd9` and refined by
+`bea5e24`; subsequent position-indicator/dynamic-compression and temporal-correlation checkpoints are
+`95fc5b4` and `d5ac027`. The earlier isolated-branch integration task is complete and superseded. Current
+priority is the Chart live/interaction sequence recorded above; publicTrade/order-book temporal synchronization,
+further bubble narrowing, authoritative frontend tick size and any new CENTER UX remain deferred.
 
 Current mobile testing uses the PAPER backend at `http://127.0.0.1:8765` and the frontend served with
 `npm run dev -- --host 0.0.0.0`; the observed LAN address `http://192.168.100.8:5173/` opened successfully
@@ -4727,15 +4740,26 @@ Deep set загружается только при условиях,
 
 from:
 
-PROJECT_STATE v7.63
+PROJECT_STATE v7.64
 
 to:
 
-PROJECT_STATE v7.64
+PROJECT_STATE v7.65
 
 reason:
 
-Current Trading Workspace checkpoint (v7.63 to v7.64):
+Current Trading Workspace checkpoint (v7.64 to v7.65):
+
+* advanced `CR-TRADING-WORKSPACE-001` to revision 1.40 and checkpoint
+  `LIVE_PAPER_POSITION_PNL_UX_ACCEPTED`;
+* recorded authoritative average-entry flow, shared midpoint-based live PnL, restored Smart Tape prints and
+  accepted lower-panel position-controls layout after successful human smoke review;
+* recorded duplicate Windows backend ownership around port 8765 as the cause of frontend/backend schema
+  version skew during diagnosis;
+* activated ASSISTANT_PROTOCOL v4.22 / §2.3 beginner-safe workflow;
+* set exact next priority to `CHART LIVE/INTERACTION WORK` and deferred temporal publicTrade/order-book sync.
+
+Previous checkpoint preserved — PROJECT_STATE v7.63 to v7.64:
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.38 and checkpoint
   `TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING`;

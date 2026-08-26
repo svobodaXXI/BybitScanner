@@ -5,6 +5,12 @@ import {
   displaySweptRows,
   executionPriceToLadderRow,
 } from "../marketData/domProjection";
+import {
+  formatPositionPnlPercent,
+  positionPnlPercent,
+} from "../marketData/positionPnl";
+
+export { formatPositionPnlPercent, positionPnlPercent } from "../marketData/positionPnl";
 
 export const printWidthPx = (notionalUsdt: number) =>
   Math.min(22.8, Math.max(10.8, 10.8 + 1.95 * Math.log1p(notionalUsdt / 100)));
@@ -22,14 +28,27 @@ export function TapePanel({
   centerPrice,
   trades,
   positionSide,
+  averageEntryPrice,
+  currentPrice,
   compression,
 }: {
   book: NormalizedOrderBook;
   centerPrice: number | null;
   trades: readonly TradePrint[];
   positionSide: "Long" | "Short" | "Flat";
+  averageEntryPrice?: number | null;
+  currentPrice?: number | null;
   compression: number;
 }) {
+  const pnlPercent = positionPnlPercent(
+    positionSide,
+    averageEntryPrice,
+    currentPrice,
+  );
+  const pnlTone = pnlPercent === null || pnlPercent === 0
+    ? "neutral"
+    : pnlPercent > 0 ? "positive" : "negative";
+
   return (
     <section
       className="tape-panel prints-panel workspace-panel"
@@ -42,7 +61,14 @@ export function TapePanel({
             className={`prints-position-indicator ${positionSide.toLowerCase()}`}
             aria-label={`Open ${positionSide} position`}
           >
-            {positionSide === "Long" ? "\u2191" : "\u2193"}
+            <span className="position-arrow">
+              {positionSide === "Long" ? "\u2191" : "\u2193"}
+            </span>
+            {pnlPercent !== null ? (
+              <span className={`position-pnl ${pnlTone}`}>
+                {formatPositionPnlPercent(pnlPercent)}
+              </span>
+            ) : null}
           </div>
         ) : null}
         <div className="prints-stream">

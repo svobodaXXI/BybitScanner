@@ -5,7 +5,12 @@ import {
   displaySweptRows,
   executionPriceToLadderRow,
 } from "../marketData/domProjection";
-import { printWidthPx, TapePanel } from "./TapePanel";
+import {
+  formatPositionPnlPercent,
+  positionPnlPercent,
+  printWidthPx,
+  TapePanel,
+} from "./TapePanel";
 
 const cumulative = (
   id: string,
@@ -56,6 +61,48 @@ const book: NormalizedOrderBook = {
 };
 
 describe("Smart Tape cumulative geometry", () => {
+  it.each([
+    ["Long", 100, 101, 1, "+1.00%"],
+    ["Long", 100, 99, -1, "−1.00%"],
+    ["Short", 100, 99, 1, "+1.00%"],
+    ["Short", 100, 101, -1, "−1.00%"],
+  ] as const)("renders %s live PnL without moving the position indicator", (
+    side, average, current, expected, label,
+  ) => {
+    render(
+      <TapePanel book={book} centerPrice={1.5948} trades={[]}
+        positionSide={side} averageEntryPrice={average} currentPrice={current}
+        compression={3} />,
+    );
+    expect(positionPnlPercent(side, average, current)).toBeCloseTo(expected);
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(document.querySelector(".prints-position-indicator")).toBeInTheDocument();
+  });
+
+  it("omits the full indicator for Flat", () => {
+    render(<TapePanel book={book} centerPrice={null} trades={[]}
+      positionSide="Flat" averageEntryPrice={100} currentPrice={101} compression={3} />);
+    expect(document.querySelector(".prints-position-indicator")).not.toBeInTheDocument();
+  });
+
+  it("keeps the arrow but omits invalid or unavailable PnL", () => {
+    const { rerender } = render(<TapePanel book={book} centerPrice={null} trades={[]}
+      positionSide="Long" averageEntryPrice={null} currentPrice={101} compression={3} />);
+    expect(screen.getByText("↑")).toBeInTheDocument();
+    expect(document.querySelector(".position-pnl")).not.toBeInTheDocument();
+    rerender(<TapePanel book={book} centerPrice={null} trades={[]}
+      positionSide="Long" averageEntryPrice={0} currentPrice={Infinity} compression={3} />);
+    expect(document.body).not.toHaveTextContent(/NaN|Infinity/);
+  });
+
+  it("renders zero PnL with a neutral tone", () => {
+    render(<TapePanel book={book} centerPrice={null} trades={[]}
+      positionSide="Short" averageEntryPrice={100} currentPrice={100} compression={3} />);
+    const pnl = screen.getByText("0.00%");
+    expect(pnl).toHaveClass("neutral");
+    expect(formatPositionPnlPercent(0)).toBe("0.00%");
+  });
+
   it("renders cumulative queue order with tick height, USDT width, and side colors", () => {
     render(
       <TapePanel

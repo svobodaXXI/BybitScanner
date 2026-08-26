@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.39",
+  "revision": "1.40",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -40,6 +40,7 @@
     ,"Implement the ONGUSDT live order-book and public-trade streams, cumulative Smart Tape aggregation, x5 DOM projection and a stable fixed price ladder"
     ,"Implement and verify the Lightweight Charts 5.2.1 interactive chart workspace and follow-latest runtime action"
     ,"Record the isolated Smart Tape to fixed DOM spatial-alignment patch while keeping its main integration pending"
+    ,"Implement and manually accept live PAPER unrealized PnL plus the compact position-controls layout"
   ],
   "prohibited_scope": [
     "Further unapproved DOM, L2, Market Data Engine, Paper Trading Engine or chart implementation beyond recorded checkpoints",
@@ -415,7 +416,8 @@
     {"revision": "1.36", "reason": "Human-authorized bounded PAPER resting Limit amend/reprice implementing checked price-only mutation, shared price normalization, durable idempotency, atomic in-place persistence, authoritative UI refresh and real PAPER create-amend-cancel E2E without quantity amend, matching, DOM, L2 or live execution", "date": "2026-08-25"},
     {"revision": "1.37", "reason": "Checkpoint of serialized owner-thread PAPER execution, live ONGUSDT metadata and order-book authority, noncontiguous newer update-ID acceptance, 50-ms cumulative Smart Tape, x5 DOM compression, stable fixed ladder, canonical trade colors and IPv4 Vite binding while retaining the unresolved Tape-to-DOM spatial projection defect as the first next step", "date": "2026-08-26"},
     {"revision": "1.38", "reason": "Recorded the verified Lightweight Charts 5.2.1 Chart UX and follow-latest runtime fix in main, local-network mobile browser validation, and the separately implemented but unmerged Smart Tape to fixed DOM spatial-alignment patch with integration onto current main as the first next step", "date": "2026-08-26"},
-    {"revision": "1.39", "reason": "Recorded DOM_STALE_CENTER_CAN_MOVE_SPREAD_OUTSIDE_FIXED_LADDER as a known unresolved issue after end-to-end runtime tracing proved that order-book quantities remain intact and that resolution requires a separately approved CENTER policy decision", "date": "2026-08-26"}
+    {"revision": "1.39", "reason": "Recorded DOM_STALE_CENTER_CAN_MOVE_SPREAD_OUTSIDE_FIXED_LADDER as a known unresolved issue after end-to-end runtime tracing proved that order-book quantities remain intact and that resolution requires a separately approved CENTER policy decision", "date": "2026-08-26"},
+    {"revision": "1.40", "reason": "Recorded the implemented and human-accepted live PAPER unrealized-PnL and position-controls checkpoint, authoritative average-entry projection, live midpoint calculation, restored Smart Tape prints after duplicate-backend ownership diagnosis, accepted mobile control grouping and Chart live/interaction work as the next implementation priority", "date": "2026-08-26"}
   ]
 }
 ```
@@ -3003,3 +3005,30 @@ the approved one-shot and LOCKED CENTERING semantics unchanged.
 
 This amendment records checkpoint `DOM_STALE_CENTER_KNOWN_UNRESOLVED_ISSUE_RECORDED` and introduces no
 CENTER implementation authorization.
+
+## 49. Live PAPER position PnL and accepted controls checkpoint
+
+Revision 1.40 records checkpoint `LIVE_PAPER_POSITION_PNL_UX_ACCEPTED`. The PAPER state projection now
+exposes authoritative `average_entry`. The existing PAPER refresh supplies position side, symbol and full
+average-entry precision; no second polling loop was added. App derives current price from the live order-book
+midpoint `(bestBid + bestAsk) / 2`. One shared pure helper calculates LONG and SHORT unrealized PnL for both
+Smart Tape and the lower POSITION INFO. Average entry is rounded to five decimals only for presentation;
+the PnL calculation retains the full authoritative value.
+
+Human mobile and desktop smoke review accepted restored Smart Tape publicTrade prints, live unrealized PnL
+movement on a fresh LONG position from approximately zero percent with the market, five-decimal average-entry
+display and the compact lower controls. The accepted grouping is LEFT `BUY / SELL`, CENTER
+`swords/RO + Full Close + POSITION INFO`, RIGHT-CENTER `LIST / AUTOPILOT`, and RIGHT `STOP / TAKE`.
+Full Close continues through the existing `/api/full-close` path; execution semantics are unchanged.
+
+The runtime diagnosis also established an operational Windows hazard: multiple backend listener/process
+ownership around port 8765 can leave an older backend serving a newer frontend, producing paper-state and
+market-data schema version skew. Once port ownership was reduced to one backend from the current working
+tree, order-book availability, publicTrade prints and PnL data flow were restored. Browser-extension warnings
+were unrelated.
+
+The exact next implementation priority is `CHART LIVE/INTERACTION WORK`: (1) proper live candle-price
+updates, (2) normal pan/zoom, (3) directional two-finger pinch behavior on mobile, (4) verification of
+price/time coordinate mapping, (5) removal of unnecessary drawing tools, then (6) completion of the remaining
+drawing tools. Temporal publicTrade-to-order-book synchronization is explicitly deferred behind this Chart UX
+priority and is not started by this checkpoint.

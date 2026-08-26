@@ -14,6 +14,7 @@ export function App() {
   const [accountOpen, setAccountOpen] = useState(false);
   const [domCompression, setDomCompression] = useState(3);
   const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
+  const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
     null,
   );
@@ -24,6 +25,10 @@ export function App() {
     bestBid !== undefined && bestAsk !== undefined
       ? String((bestBid + bestAsk) / 2)
       : "0";
+  const liveMidPrice =
+    bestBid !== undefined && bestAsk !== undefined
+      ? (bestBid + bestAsk) / 2
+      : null;
 
   useEffect(() => {
     if (market.book.health !== "READY") return;
@@ -62,6 +67,8 @@ export function App() {
             centerPrice={ladderCenterPrice}
             trades={market.trades}
             positionSide={positionSide}
+            averageEntryPrice={positionAverageEntry}
+            currentPrice={liveMidPrice}
             compression={domCompression}
           />
         </aside>
@@ -70,6 +77,7 @@ export function App() {
           onModeChange={setMode}
           sizingReferencePrice={sizingReferencePrice}
           onPositionSideChange={setPositionSide}
+          onPositionAverageEntryChange={setPositionAverageEntry}
         />
       </section>
     </main>

@@ -86,6 +86,7 @@ export type PaperState = {
   one_wv_usdt: string;
   position_side: (typeof POSITION_SIDES)[number];
   position_quantity: string;
+  average_entry: string | null;
   engaged_notional_usdt: string;
   engaged_wv: string;
   active_limit_orders: PaperLimitOrder[];

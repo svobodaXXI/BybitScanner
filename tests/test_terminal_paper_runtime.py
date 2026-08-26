@@ -88,6 +88,7 @@ def test_full_close_uses_authoritative_remaining_quantity_and_flat_repeat_is_noo
             assert opened.status is CommandResultStatus.COMPLETED
             before_close = runtime.paper_state("BTCUSDT")
             assert before_close["position_side"] == "Long"
+            assert before_close["average_entry"] is not None
 
             closed = runtime.api.full_close(
                 FullCloseCommandRequest(ClientActionId("runtime-close-long"), "BTCUSDT")
@@ -95,6 +96,7 @@ def test_full_close_uses_authoritative_remaining_quantity_and_flat_repeat_is_noo
             assert closed.status is CommandResultStatus.COMPLETED
             state = runtime.paper_state("BTCUSDT")
             assert state["position_side"] == "Flat"
+            assert state["average_entry"] is None
             assert state["position_quantity"] == "0"
             assert state["engaged_notional_usdt"] == "0"
             assert state["engaged_wv"] == "0.0"

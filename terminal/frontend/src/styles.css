@@ -2177,14 +2177,135 @@ button {
   font-weight: 800;
   line-height: 1;
   pointer-events: none;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.28rem;
 }
 
-.prints-position-indicator.long {
-  color: #39ff88;
+.prints-position-indicator .position-arrow {
+  line-height: 1;
 }
 
-.prints-position-indicator.short {
-  color: #ff4d5a;
+.prints-position-indicator.long .position-arrow,
+.prints-position-indicator .position-pnl.positive {
+  color: #3bc639;
+}
+
+.prints-position-indicator.short .position-arrow,
+.prints-position-indicator .position-pnl.negative {
+  color: #cd0000;
+}
+
+.prints-position-indicator .position-pnl {
+  font-size: 0.78rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.prints-position-indicator .position-pnl.neutral {
+  color: #8f98a3;
+}
+
+/* PAPER POSITION SUMMARY V1 */
+.paper-trade-side-group,
+.paper-position-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.paper-wv-primary {
+  display: flex;
+  align-items: center;
+  gap: 0.12rem;
+  white-space: nowrap;
+}
+
+.paper-position-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 4.4rem;
+  line-height: 1.05;
+  white-space: nowrap;
+}
+
+.paper-position-symbol,
+.paper-position-average {
+  color: #8996a3;
+  font-size: 0.62rem;
+  font-weight: 650;
+}
+
+.paper-position-pnl {
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.paper-position-pnl.positive {
+  color: var(--trade-buy);
+}
+
+.paper-position-pnl.negative {
+  color: var(--trade-sell);
+}
+
+.paper-position-pnl.neutral {
+  color: #8f98a3;
+}
+
+.paper-wv-close.short {
+  border-color: var(--trade-sell) !important;
+  color: var(--trade-sell) !important;
+}
+
+@media (max-width: 620px) {
+  .paper-market-actions {
+    grid-template-columns: 6.74rem minmax(0, 1fr) 2rem 3.1rem;
+    grid-template-areas:
+      "trades position positions protection"
+      "limits limits limits limits";
+    column-gap: 0.24rem;
+  }
+
+  .paper-trade-side-group {
+    grid-area: trades;
+    align-items: flex-start;
+    gap: 0.24rem;
+  }
+
+  .paper-position-controls {
+    grid-area: position;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 0.22rem;
+  }
+
+  .paper-wv-indicator {
+    grid-area: unset;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .paper-wv-position {
+    grid-template-columns: 0.48rem auto auto;
+    min-width: 0;
+  }
+
+  .paper-wv-close {
+    grid-area: unset;
+    flex: 0 0 1.3rem;
+    align-self: center;
+  }
+
+  .paper-position-info {
+    grid-area: unset;
+    flex: 0 0 4.4rem;
+    align-self: start;
+    min-width: 0;
+    min-height: 2.25rem;
+  }
 }
 
 .dom-panel {

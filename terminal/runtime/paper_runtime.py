@@ -120,9 +120,15 @@ class PaperRuntime:
         position_quantity = (
             projection.quantity.value if projection is not None else Decimal("0")
         )
+        average_entry = (
+            projection.average_entry.value
+            if projection is not None and projection.average_entry is not None
+            else None
+        )
         if position_quantity == 0:
             position_quantity = Decimal("0")
             engaged_notional = Decimal("0")
+            average_entry = None
 
         return {
             "account_id": account.trading_account_id.value,
@@ -136,6 +142,7 @@ class PaperRuntime:
             "position_quantity": (
                 str(position_quantity)
             ),
+            "average_entry": str(average_entry) if average_entry is not None else None,
             "engaged_notional_usdt": str(engaged_notional),
             "engaged_wv": (
                 "0.0" if engaged_notional == 0 else str(engaged_notional / one_wv)
