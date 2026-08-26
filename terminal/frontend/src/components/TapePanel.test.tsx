@@ -68,7 +68,7 @@ describe("Smart Tape cumulative geometry", () => {
     expect(screen.getByText("76")).toBeInTheDocument();
     expect(screen.getByText("1.2k")).toBeInTheDocument();
     expect(bubbles[0].style.getPropertyValue("--print-height")).toBe("1.36rem");
-    expect(bubbles[1].style.getPropertyValue("--print-height")).toBe("1.36rem");
+    expect(bubbles[1].style.getPropertyValue("--print-height")).toBe("2.72rem");
     expect(
       Number.parseFloat(bubbles[1].style.getPropertyValue("--print-width")),
     ).toBeGreaterThan(
@@ -80,15 +80,15 @@ describe("Smart Tape cumulative geometry", () => {
 
   it("compresses native sweep height and strongly bounds USDT width", () => {
     expect(displaySweptRows(1)).toBe(1);
-    expect(displaySweptRows(5)).toBe(1);
+    expect(displaySweptRows(3)).toBe(1);
+    expect(displaySweptRows(4)).toBe(2);
     expect(displaySweptRows(6)).toBe(2);
-    expect(displaySweptRows(10)).toBe(2);
-    expect(displaySweptRows(11)).toBe(3);
+    expect(displaySweptRows(7)).toBe(3);
 
-    expect(printWidthPx(0)).toBe(18);
-    expect(printWidthPx(100)).toBeGreaterThan(18);
-    expect(printWidthPx(1_000_000)).toBeLessThanOrEqual(38);
-    expect(printWidthPx(1_000_000) - printWidthPx(100)).toBeLessThan(18);
+    expect(printWidthPx(0)).toBe(10.8);
+    expect(printWidthPx(100)).toBeGreaterThan(10.8);
+    expect(printWidthPx(1_000_000)).toBeLessThanOrEqual(22.8);
+    expect(printWidthPx(1_000_000) - printWidthPx(100)).toBeLessThan(10.8);
   });
 
   it("anchors the bubble to the last execution DOM bucket, not sweep midpoint", () => {

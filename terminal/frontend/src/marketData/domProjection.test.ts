@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { NormalizedOrderBook } from "../contracts/marketData";
 import {
   DOM_COMPRESSION,
+  dragDeltaToCenterStep,
   executionPriceToLadderRow,
   priceToLadderRow,
   projectDomBook,
+  projectPriceToDisplayBucket,
   projectSweepCenterRow,
 } from "./domProjection";
 
@@ -23,26 +25,40 @@ const sparseBook = (bestAsk = 0.0925): NormalizedOrderBook => ({
   availableDepth: 2,
 });
 
-describe("continuous DOM x5 price ladder", () => {
+describe("continuous DOM x3 price ladder", () => {
   it("keeps empty spread rows and continuous fixed price labels", () => {
     const projection = projectDomBook(sparseBook(), 0.0924);
     const spread = projection.levels.filter(
-      (level) => level.price <= 0.0925 && level.price >= 0.0923,
+      (level) => level.price <= 0.09252 && level.price >= 0.09228,
     );
 
-    expect(DOM_COMPRESSION).toBe(5);
-    expect(projection.displayStep).toBeCloseTo(0.00005, 8);
+    expect(DOM_COMPRESSION).toBe(3);
+    expect(projection.displayStep).toBeCloseTo(0.00003, 8);
     expect(spread.map((level) => level.price)).toEqual([
-      0.0925, 0.09245, 0.0924, 0.09235, 0.0923,
+      0.09252,
+      0.09249,
+      0.09246,
+      0.09243,
+      0.0924,
+      0.09237,
+      0.09234,
+      0.09231,
+      0.09228,
     ]);
     expect(spread.map((level) => level.side)).toEqual([
       "SELL",
       null,
       null,
       null,
+      null,
+      null,
+      null,
+      null,
       "BUY",
     ]);
-    expect(spread.map((level) => level.quantity)).toEqual([10, 0, 0, 0, 20]);
+    expect(spread.map((level) => level.quantity)).toEqual([
+      12, 0, 0, 0, 0, 0, 0, 0, 23,
+    ]);
     expect(
       projection.levels
         .slice(1)
@@ -50,7 +66,7 @@ describe("continuous DOM x5 price ladder", () => {
           (level, index) =>
             Number(
               (projection.levels[index].price - level.price).toFixed(8),
-            ) === 0.00005,
+            ) === 0.00003,
         ),
     ).toBe(true);
   });
@@ -63,45 +79,53 @@ describe("continuous DOM x5 price ladder", () => {
     expect(after.levels.map((level) => level.price)).toEqual(
       before.levels.map((level) => level.price),
     );
-    expect(after.levels.find((level) => level.price === 0.0925)?.quantity).toBe(
+    expect(after.levels.find((level) => level.price === 0.09252)?.quantity).toBe(
       0,
     );
-    expect(after.levels.find((level) => level.price === 0.0926)).toMatchObject({
+    expect(after.levels.find((level) => level.price === 0.09261)).toMatchObject({
       side: "SELL",
-      quantity: 10,
+      quantity: 12,
       isBest: true,
     });
   });
 
-  it("aggregates all native quantities in an x5 side bucket", () => {
+  it("aggregates all native quantities in an x3 side bucket", () => {
     const book: NormalizedOrderBook = {
       ...sparseBook(),
-      asks: Array.from({ length: 5 }, (_, index) => ({
-        price: 0.09251 + index * 0.00001,
+      asks: Array.from({ length: 3 }, (_, index) => ({
+        price: 0.0925 + index * 0.00001,
         quantity: index + 1,
       })),
     };
     const projection = projectDomBook(book, 0.0924);
     expect(
-      projection.levels.find((level) => level.price === 0.09255)?.quantity,
-    ).toBe(15);
+      projection.levels.find((level) => level.price === 0.09252)?.quantity,
+    ).toBe(6);
   });
 
   it("projects Tape prices onto the exact same ladder rows", () => {
     const book = sparseBook();
     const centerPrice = 0.0924;
-    expect(priceToLadderRow(0.0925, centerPrice, 0.00001)).toBeCloseTo(6);
-    expect(priceToLadderRow(0.0923, centerPrice, 0.00001)).toBeCloseTo(10);
+    const askBucket = projectPriceToDisplayBucket(
+      0.0925,
+      "SELL",
+      0.00001,
+    );
+    const bidBucket = projectPriceToDisplayBucket(0.0923, "BUY", 0.00001);
+    expect(askBucket).toBe(0.09252);
+    expect(bidBucket).toBe(0.09228);
+    expect(priceToLadderRow(askBucket, centerPrice, 0.00001)).toBeCloseTo(4);
+    expect(priceToLadderRow(bidBucket, centerPrice, 0.00001)).toBeCloseTo(12);
     expect(
       projectSweepCenterRow(book, 0.0923, 0.0925, 0.00001, centerPrice),
     ).toBeCloseTo(0.5);
   });
 
   it.each([
-    ["BUY", 0.09233, 0.0923],
-    ["SELL", 0.09247, 0.0925],
-    ["BUY", 0.09235, 0.09235],
-    ["SELL", 0.09235, 0.09235],
+    ["BUY", 0.09233, 0.09231],
+    ["SELL", 0.09247, 0.09249],
+    ["BUY", 0.09234, 0.09234],
+    ["SELL", 0.09234, 0.09234],
   ] as const)(
     "projects %s execution %s through DOM bucket %s",
     (side, executionPrice, displayPrice) => {
@@ -121,7 +145,29 @@ describe("continuous DOM x5 price ladder", () => {
 
   it("moves Tape and DOM rows together when ladder center changes", () => {
     const before = executionPriceToLadderRow(0.09233, "BUY", 0.00001, 0.0924);
-    const after = executionPriceToLadderRow(0.09233, "BUY", 0.00001, 0.09245);
+    const after = executionPriceToLadderRow(0.09233, "BUY", 0.00001, 0.09243);
     expect(after).toBe((before ?? 0) + 1);
+  });
+
+  it("moves the ladder in the same direction as the pointer drag", () => {
+    expect(dragDeltaToCenterStep(12)).toBe(1);
+    expect(dragDeltaToCenterStep(-12)).toBe(-1);
+
+    const centerPrice = 0.0924;
+    const displayStep = 0.00003;
+    const spreadPrice = 0.0924;
+    const before = priceToLadderRow(spreadPrice, centerPrice, 0.00001);
+    const afterDown = priceToLadderRow(
+      spreadPrice,
+      centerPrice + dragDeltaToCenterStep(12) * displayStep,
+      0.00001,
+    );
+    const afterUp = priceToLadderRow(
+      spreadPrice,
+      centerPrice + dragDeltaToCenterStep(-12) * displayStep,
+      0.00001,
+    );
+    expect(afterDown).toBeCloseTo(before + 1);
+    expect(afterUp).toBeCloseTo(before - 1);
   });
 });

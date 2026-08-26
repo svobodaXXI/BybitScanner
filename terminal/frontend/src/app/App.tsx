@@ -55,12 +55,6 @@ export function App() {
         </aside>
         <ModePanel mode={mode} onModeChange={setMode} />
       </section>
-      <footer className="status-bar">
-        <span className="status-dot" aria-hidden="true" />
-        <span>Market data: deterministic development feed</span>
-        <span>Book: {market.book.health}</span>
-        <span>Execution: PAPER / non-live</span>
-      </footer>
     </main>
   );
 }

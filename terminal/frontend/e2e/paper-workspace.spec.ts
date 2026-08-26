@@ -32,7 +32,7 @@ test("real PAPER workspace preserves edits and enforces authoritative no-flip be
   request,
 }) => {
   await page.goto("/");
-  await expect(page.getByText("Execution: PAPER / non-live")).toBeVisible();
+  await expect(page.getByText("Execution: PAPER / non-live")).toHaveCount(0);
 
   const initial = await paperState(request);
   expect(initial.ok).toBe(true);

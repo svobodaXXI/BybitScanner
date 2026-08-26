@@ -7,7 +7,7 @@ import {
 } from "../marketData/domProjection";
 
 export const printWidthPx = (notionalUsdt: number) =>
-  Math.min(38, Math.max(18, 18 + 3.25 * Math.log1p(notionalUsdt / 100)));
+  Math.min(22.8, Math.max(10.8, 10.8 + 1.95 * Math.log1p(notionalUsdt / 100)));
 
 const formatNotional = (notional: number) => {
   if (notional >= 1000) {

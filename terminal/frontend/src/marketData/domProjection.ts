@@ -7,7 +7,11 @@ import type {
 export const DOM_LEVELS_PER_SIDE = 8;
 export const DOM_VISIBLE_ROWS = DOM_LEVELS_PER_SIDE * 2;
 export const DOM_ROW_HEIGHT_REM = 1.36;
-export const DOM_COMPRESSION = 5;
+export const DOM_COMPRESSION = 3;
+
+export function dragDeltaToCenterStep(deltaY: number): number {
+  return deltaY > 0 ? 1 : -1;
+}
 
 export interface DisplayDomLevel extends PriceLevel {
   side: MarketSide | null;

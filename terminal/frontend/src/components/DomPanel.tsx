@@ -1,10 +1,12 @@
 import { type CSSProperties, useMemo, useRef, useState } from "react";
 import type { NormalizedOrderBook, OwnOrder } from "../contracts/marketData";
 import {
+  dragDeltaToCenterStep,
   projectDomBook,
   projectPriceToDisplayBucket,
   recommendedLadderCenter,
 } from "../marketData/domProjection";
+import { formatDomSize } from "./domSizeFormat";
 
 const formatPrice = (price: number) =>
   price.toLocaleString("en-US", {
@@ -27,6 +29,8 @@ export function DomPanel({
   const [locked, setLocked] = useState(false);
   const [visibleOrders, setVisibleOrders] = useState(ownOrders);
   const dragY = useRef<number | null>(null);
+  const centerPriceRef = useRef(centerPrice);
+  centerPriceRef.current = centerPrice;
   const projection = useMemo(
     () => projectDomBook(book, centerPrice),
     [book, centerPrice],
@@ -38,16 +42,19 @@ export function DomPanel({
   );
   const manualMove = (delta: number) => {
     setOffset((current) => Math.max(-6, Math.min(6, current + delta)));
-    if (projection.centerPrice !== null && projection.displayStep > 0) {
-      onCenterPriceChange(
-        projection.centerPrice + delta * projection.displayStep,
-      );
+    if (centerPriceRef.current !== null && projection.displayStep > 0) {
+      const nextCenterPrice =
+        centerPriceRef.current + delta * projection.displayStep;
+      centerPriceRef.current = nextCenterPrice;
+      onCenterPriceChange(nextCenterPrice);
     }
     setLocked(false);
   };
   const center = () => {
     setOffset(0);
-    onCenterPriceChange(recommendedLadderCenter(book));
+    const nextCenterPrice = recommendedLadderCenter(book);
+    centerPriceRef.current = nextCenterPrice;
+    onCenterPriceChange(nextCenterPrice);
   };
   return (
     <section className="dom-panel workspace-panel" aria-label="DOM order book">
@@ -77,7 +84,7 @@ export function DomPanel({
             Math.abs(event.clientY - dragY.current) < 12
           )
             return;
-          manualMove(event.clientY > dragY.current ? -1 : 1);
+          manualMove(dragDeltaToCenterStep(event.clientY - dragY.current));
           dragY.current = event.clientY;
         }}
         onPointerUp={() => {
@@ -144,7 +151,7 @@ export function DomPanel({
                   <span />
                 )}
                 <span className="dom-size">
-                  {level.quantity > 0 ? level.quantity.toFixed(3) : ""}
+                  {level.quantity > 0 ? formatDomSize(level.quantity) : ""}
                 </span>
               </span>
               <span className="dom-price">{formatPrice(level.price)}</span>
