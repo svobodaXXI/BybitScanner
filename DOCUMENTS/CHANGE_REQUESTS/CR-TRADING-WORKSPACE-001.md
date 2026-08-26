@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.38",
+  "revision": "1.39",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -414,7 +414,8 @@
     {"revision": "1.35", "reason": "Human-authorized bounded PAPER Limit foundation implementing checked BUY/SELL GTC contracts, shared sizing admission, durable idempotent create/cancel ledger, authoritative SQLite resting-order projection, simple Terminal controls/list and real PAPER lifecycle E2E without matching, partial fills, DOM, L2 or live execution", "date": "2026-08-25"},
     {"revision": "1.36", "reason": "Human-authorized bounded PAPER resting Limit amend/reprice implementing checked price-only mutation, shared price normalization, durable idempotency, atomic in-place persistence, authoritative UI refresh and real PAPER create-amend-cancel E2E without quantity amend, matching, DOM, L2 or live execution", "date": "2026-08-25"},
     {"revision": "1.37", "reason": "Checkpoint of serialized owner-thread PAPER execution, live ONGUSDT metadata and order-book authority, noncontiguous newer update-ID acceptance, 50-ms cumulative Smart Tape, x5 DOM compression, stable fixed ladder, canonical trade colors and IPv4 Vite binding while retaining the unresolved Tape-to-DOM spatial projection defect as the first next step", "date": "2026-08-26"},
-    {"revision": "1.38", "reason": "Recorded the verified Lightweight Charts 5.2.1 Chart UX and follow-latest runtime fix in main, local-network mobile browser validation, and the separately implemented but unmerged Smart Tape to fixed DOM spatial-alignment patch with integration onto current main as the first next step", "date": "2026-08-26"}
+    {"revision": "1.38", "reason": "Recorded the verified Lightweight Charts 5.2.1 Chart UX and follow-latest runtime fix in main, local-network mobile browser validation, and the separately implemented but unmerged Smart Tape to fixed DOM spatial-alignment patch with integration onto current main as the first next step", "date": "2026-08-26"},
+    {"revision": "1.39", "reason": "Recorded DOM_STALE_CENTER_CAN_MOVE_SPREAD_OUTSIDE_FIXED_LADDER as a known unresolved issue after end-to-end runtime tracing proved that order-book quantities remain intact and that resolution requires a separately approved CENTER policy decision", "date": "2026-08-26"}
   ]
 }
 ```
@@ -2966,3 +2967,39 @@ this checkpoint; testing used the browser over the local network.
 
 This amendment records checkpoint `TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING`. It
 does not mark Trading Workspace complete and does not claim that the isolated spatial patch is in main.
+
+## 48. Known unresolved fixed-ladder stale-center issue
+
+Revision 1.39 records `DOM_STALE_CENTER_CAN_MOVE_SPREAD_OUTSIDE_FIXED_LADDER` as a known unresolved issue.
+With LOCKED CENTERING disabled, the continuous fixed 16-row DOM ladder preserves its last `centerPrice`.
+During sufficiently fast market movement, the current spread can leave the narrow visible window. Rows in
+the lower portion may then appear to be empty bid rows at x3 or x10 even though that portion of the ladder
+no longer covers the current bid region. A real one-shot CENTER returns the spread and populated bid rows to
+the ladder; it intentionally does not enable persistent following.
+
+Correlated runtime tracing followed one update through Bybit WebSocket handling,
+`PublicOrderBookBuffer`, SSE serialization, the browser EventSource, `normalizeLevels`, `projectDomBook`
+and the rendered `DomPanel`. The investigation excluded backend depth loss, SSE truncation, frontend
+normalization truncation, compressed-bucket aggregation loss, `formatDomSize`, JSX/CSS hiding, stale
+repository or Vite proxy routing, and `WinError 10053` as causes. The latter is handled as an ordinary
+disconnected SSE client and does not clear or stop the independent order-book worker.
+
+Verified diagnostic steps included changing depth from 50 to 1000, observing a live READY book with 1000
+bids and 1000 asks, exercising a dense synthetic projection regression, tracing backend-to-rendered-row
+update identity and quantities, verifying CENTER/manual recenter behavior, and checking the backend and
+Vite listener processes, working paths and `/api` proxy target. The depth increase and dense projection
+test are independent capacity/regression protections; neither is considered a fix for this stale-center
+issue.
+
+The Smart Tape-to-DOM spatial invariant remains binding: execution price X must use the same shared
+side-aware compressed bucket and exact Y coordinate as DOM price X. Any future centering change must move
+DOM and Smart Tape through their shared `centerPrice` without changing this invariant.
+
+Resolution requires a separate explicit CENTER design decision. Candidate policies are auto-follow until
+the first manual drag/reposition, recenter only when the spread exits the visible ladder, default locked
+follow, or another explicitly approved CENTER UX. The recommended option for later review is auto-follow
+until the first manual drag/reposition. This checkpoint does not select or implement any option and leaves
+the approved one-shot and LOCKED CENTERING semantics unchanged.
+
+This amendment records checkpoint `DOM_STALE_CENTER_KNOWN_UNRESOLVED_ISSUE_RECORDED` and introduces no
+CENTER implementation authorization.

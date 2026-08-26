@@ -171,3 +171,39 @@ describe("continuous DOM x3 price ladder", () => {
     expect(afterUp).toBeCloseTo(before - 1);
   });
 });
+
+it("fills consecutive lower bid buckets when native depth is sufficient", () => {
+  const tickSize = 0.00001;
+  const bestBid = 0.09230;
+  const bestAsk = 0.09231;
+
+  const book: NormalizedOrderBook = {
+    symbol: "ONGUSDT",
+    asks: Array.from({ length: 100 }, (_, index) => ({
+      price: bestAsk + index * tickSize,
+      quantity: 1,
+    })),
+    bids: Array.from({ length: 100 }, (_, index) => ({
+      price: bestBid - index * tickSize,
+      quantity: 1,
+    })),
+    health: "READY",
+    receivedAt: "now",
+    availableDepth: 100,
+  };
+
+  const projection = projectDomBook(book);
+
+  const firstBidRow = projection.levels.findIndex(
+    (level) => level.price <= projectPriceToDisplayBucket(
+      bestBid,
+      "BUY",
+      tickSize,
+    ),
+  );
+  const lowerBidRows = projection.levels.slice(firstBidRow);
+
+  expect(firstBidRow).toBeGreaterThanOrEqual(0);
+  expect(lowerBidRows.length).toBeGreaterThan(0);
+  expect(lowerBidRows.every((level) => level.quantity > 0)).toBe(true);
+});

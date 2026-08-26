@@ -906,7 +906,7 @@ def main() -> None:
         tick_size=instrument_snapshot.tick_size,
         aggregation_window_ms=50,
     )
-    public_orderbook = PublicOrderBookBuffer("ONGUSDT")
+    public_orderbook = PublicOrderBookBuffer("ONGUSDT", depth=1000)
     public_trades.start()
     public_orderbook.start()
 
