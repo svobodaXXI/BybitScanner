@@ -239,6 +239,8 @@ export function ChartPanel({
       };
   };
   const onPointerDown = (event: React.PointerEvent) => {
+    if (event.target instanceof Element && event.target.closest(".snap-latest"))
+      return;
     const p = relative(event);
     if (!p) return;
     pointers.current.set(event.pointerId, p);
@@ -408,10 +410,7 @@ export function ChartPanel({
     snapLatest = () => {
       const timeScale = chartRef.current?.timeScale();
       if (!timeScale) return;
-      timeScale.scrollToPosition(0, false);
-      applyFollowLatest(
-        isAtLatest(timeScale.getVisibleLogicalRange(), candleCountRef.current),
-      );
+      timeScale.scrollToRealTime();
     };
   const deleteSelected = useCallback(() => {
     if (selectedId) {

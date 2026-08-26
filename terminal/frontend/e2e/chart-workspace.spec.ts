@@ -20,3 +20,22 @@ test("chart workspace renders tools and remains usable at mobile width", async (
     page.getByRole("button", { name: "Delete selected drawing" }),
   ).toBeEnabled();
 });
+
+test("follow-latest button returns the chart to realtime", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  const chart = page.getByLabel("Interactive market chart");
+  const box = await chart.boundingBox();
+  if (!box) throw new Error("chart box unavailable");
+  await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.85, box.y + box.height * 0.5, {
+    steps: 8,
+  });
+  await page.mouse.up();
+  const button = page.getByRole("button", { name: "Snap to latest candle" });
+  await expect(button).toBeVisible();
+  await button.click();
+  await page.waitForTimeout(100);
+  await expect(button).toBeHidden();
+});
