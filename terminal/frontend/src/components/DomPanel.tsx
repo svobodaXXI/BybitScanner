@@ -1,4 +1,4 @@
-import { type CSSProperties, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import type { NormalizedOrderBook, OwnOrder } from "../contracts/marketData";
 import {
   dragDeltaToCenterStep,
@@ -56,23 +56,20 @@ export function DomPanel({
     centerPriceRef.current = nextCenterPrice;
     onCenterPriceChange(nextCenterPrice);
   };
+
+  useEffect(() => {
+    if (!locked) return;
+
+    setOffset(0);
+    const nextCenterPrice = recommendedLadderCenter(book);
+    centerPriceRef.current = nextCenterPrice;
+    onCenterPriceChange(nextCenterPrice);
+  }, [book, locked, onCenterPriceChange]);
+
+
   return (
     <section className="dom-panel workspace-panel" aria-label="DOM order book">
-      <header className="panel-header dom-header">
-        <button
-          aria-pressed={locked}
-          className={locked ? "center-button locked" : "center-button"}
-          onClick={center}
-          onDoubleClick={() => {
-            center();
-            setLocked((current) => !current);
-          }}
-          type="button"
-        >
-          CENTER
-        </button>
-      </header>
-      <div
+<div
         className="dom-ladder"
         data-offset={offset}
         onPointerDown={(event) => {
@@ -154,7 +151,20 @@ export function DomPanel({
                   {level.quantity > 0 ? formatDomSize(level.quantity) : ""}
                 </span>
               </span>
-              <span className="dom-price">{formatPrice(level.price)}</span>
+              <span
+  className={locked ? "dom-price center-locked" : "dom-price"}
+  onClick={(event) => {
+    event.stopPropagation();
+    center();
+  }}
+  onDoubleClick={(event) => {
+    event.stopPropagation();
+    center();
+    setLocked(true);
+  }}
+>
+  {formatPrice(level.price)}
+</span>
             </div>
           );
         })}
@@ -162,3 +172,12 @@ export function DomPanel({
     </section>
   );
 }
+
+
+
+
+
+
+
+
+
