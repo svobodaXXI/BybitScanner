@@ -6,13 +6,15 @@ import { ModePanel, type WorkspaceMode } from "../components/ModePanel";
 import { TapePanel } from "../components/TapePanel";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
 import { recommendedLadderCenter } from "../marketData/domProjection";
-import { useMarketData } from "../marketData/useMarketData";
+import { type ChartTimeframe } from "../marketData/timeframes";
+import { setMarketTimeframe, useMarketData } from "../marketData/useMarketData";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 
 export function App() {
   const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
   const [accountOpen, setAccountOpen] = useState(false);
   const [domCompression, setDomCompression] = useState(3);
+  const [timeframe, setTimeframe] = useState<ChartTimeframe>("5m");
   const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
@@ -37,21 +39,30 @@ export function App() {
     );
   }, [market.book]);
 
+  const changeTimeframe = (next: ChartTimeframe) => {
+    setTimeframe(next);
+    setMarketTimeframe(next);
+  };
+
   return (
     <main className="workspace-shell">
       <TelegramMiniAppBridge />
       <WorkspaceHeader
         accountOpen={accountOpen}
-        mode={mode}
         onAccountToggle={() => setAccountOpen((open) => !open)}
+        onSymbolClick={() => {}}
         symbol={market.book.symbol}
+        timeframe={timeframe}
+        onTimeframeChange={changeTimeframe}
       />
       {accountOpen ? <AccountMenu /> : null}
       <section className="workspace-grid" aria-label="Trading workspace">
         <ChartPanel
+          key={`${market.book.symbol}:${timeframe}`}
           candles={market.candles}
+          tickSize={market.tickSize}
           symbol={market.book.symbol}
-          timeframe="5m"
+          timeframe={timeframe}
         />
         <aside className="market-sidecar" aria-label="Market depth and tape">
           <DomPanel

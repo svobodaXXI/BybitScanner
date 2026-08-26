@@ -19,6 +19,21 @@ export function segmentDistance(point: Point, a: Point, b: Point) {
   );
   return pointDistance(point, { x: a.x + t * dx, y: a.y + t * dy });
 }
+export function rayEndPoint(
+  origin: Point,
+  direction: Point,
+  bounds: { width: number; height: number },
+): Point {
+  const dx = direction.x - origin.x;
+  const dy = direction.y - origin.y;
+  if (dx === 0 && dy === 0) return direction;
+  const candidates = [
+    dx > 0 ? (bounds.width - origin.x) / dx : dx < 0 ? -origin.x / dx : Infinity,
+    dy > 0 ? (bounds.height - origin.y) / dy : dy < 0 ? -origin.y / dy : Infinity,
+  ].filter((value) => Number.isFinite(value) && value >= 1);
+  const factor = candidates.length ? Math.min(...candidates) : 1;
+  return { x: origin.x + dx * factor, y: origin.y + dy * factor };
+}
 export function nearestOhlcAnchor(
   anchor: DrawingAnchor,
   candles: readonly {

@@ -130,3 +130,7 @@ export class DrawingHistory {
     return this.current;
   }
 }
+
+export function clearDrawingHistory(history: DrawingHistory): DrawingObject[] {
+  return history.commit([]);
+}

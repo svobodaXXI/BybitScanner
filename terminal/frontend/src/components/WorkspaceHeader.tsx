@@ -1,24 +1,85 @@
-import type { WorkspaceMode } from "./ModePanel";
+import { useEffect, useRef, useState } from "react";
+import {
+  CHART_TIMEFRAMES,
+  type ChartTimeframe,
+} from "../marketData/timeframes";
 
 interface WorkspaceHeaderProps {
   accountOpen: boolean;
-  mode: WorkspaceMode;
   onAccountToggle: () => void;
+  onSymbolClick: () => void;
+  onTimeframeChange: (timeframe: ChartTimeframe) => void;
   symbol: string;
+  timeframe: ChartTimeframe;
 }
 
 export function WorkspaceHeader({
   accountOpen,
-  mode,
   onAccountToggle,
+  onSymbolClick,
+  onTimeframeChange,
   symbol,
+  timeframe,
 }: WorkspaceHeaderProps) {
+  const [timeframeOpen, setTimeframeOpen] = useState(false);
+  const timeframeRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!timeframeOpen) return;
+    const dismissOutside = (event: PointerEvent) => {
+      if (!timeframeRef.current?.contains(event.target as Node)) {
+        setTimeframeOpen(false);
+      }
+    };
+    const dismissEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setTimeframeOpen(false);
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("keydown", dismissEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("keydown", dismissEscape);
+    };
+  }, [timeframeOpen]);
   return (
     <header className="workspace-header">
       <div className="instrument-block">
-        <p className="eyebrow">Trading Workspace · {mode}</p>
-        <h1>{symbol}</h1>
-        <p className="instrument-note">5m · Development market feed</p>
+        <button
+          className="symbol-selector-trigger"
+          type="button"
+          aria-label={`Select symbol ${symbol}`}
+          onClick={onSymbolClick}
+        >
+          {symbol}
+        </button>
+        <div className="timeframe-selector" ref={timeframeRef}>
+          <button
+            aria-expanded={timeframeOpen}
+            aria-label="Select chart timeframe"
+            className="timeframe-display"
+            onClick={() => setTimeframeOpen((open) => !open)}
+            type="button"
+          >
+            {timeframe}
+          </button>
+          {timeframeOpen ? (
+            <div className="timeframe-menu" role="menu">
+              {CHART_TIMEFRAMES.map((option) => (
+                <button
+                  aria-current={option === timeframe ? "true" : undefined}
+                  key={option}
+                  onClick={() => {
+                    onTimeframeChange(option);
+                    setTimeframeOpen(false);
+                  }}
+                  role="menuitem"
+                  type="button"
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
       </div>
       <div className="header-actions">
         <button

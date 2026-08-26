@@ -1,16 +1,12 @@
 import type { DrawingTool } from "./drawingModel";
 
 const tools: Array<[DrawingTool, string, string]> = [
-  ["select", "↖", "Select / cursor"],
-  ["crosshair", "⌖", "Crosshair"],
-  ["trend", "╱", "Trend line"],
+  ["select", "⌖", "Crosshair / chart interaction"],
+  ["trend", "╱", "Straight line"],
   ["horizontal", "—", "Horizontal line"],
   ["ray", "↗", "Ray"],
   ["horizontal-ray", "→", "Horizontal ray"],
-  ["vertical", "│", "Vertical line"],
-  ["fibonacci", "Fib", "Fibonacci retracement"],
-  ["ruler", "⌁", "Ruler"],
-  ["rectangle", "□", "Rectangle"],
+  ["fibonacci", "Fib", "Fibonacci grid"],
 ];
 
 export function DrawingToolbar({
@@ -19,22 +15,18 @@ export function DrawingToolbar({
   selected,
   onTool,
   onMagnet,
-  onDelete,
   onUndo,
-  onRedo,
+  onDelete,
   onClear,
-  onLock,
 }: {
   activeTool: DrawingTool;
   magnet: boolean;
   selected: boolean;
   onTool: (tool: DrawingTool) => void;
   onMagnet: () => void;
-  onDelete: () => void;
   onUndo: () => void;
-  onRedo: () => void;
+  onDelete: () => void;
   onClear: () => void;
-  onLock: () => void;
 }) {
   return (
     <nav className="drawing-toolbar" aria-label="Drawing tools">
@@ -70,32 +62,16 @@ export function DrawingToolbar({
       >
         ↶
       </button>
-      <button
-        type="button"
-        title="Redo"
-        aria-label="Redo drawing"
-        onClick={onRedo}
-      >
-        ↷
-      </button>
-      <button
-        type="button"
-        title="Lock selected"
-        aria-label="Lock selected drawing"
-        disabled={!selected}
-        onClick={onLock}
-      >
-        🔒
-      </button>
-      <button
-        type="button"
-        title="Delete selected"
-        aria-label="Delete selected drawing"
-        disabled={!selected}
-        onClick={onDelete}
-      >
-        ⌫
-      </button>
+      {selected ? (
+        <button
+          type="button"
+          title="Delete selected"
+          aria-label="Delete selected drawing"
+          onClick={onDelete}
+        >
+          ⌫
+        </button>
+      ) : null}
       <button
         type="button"
         title="Clear drawings"

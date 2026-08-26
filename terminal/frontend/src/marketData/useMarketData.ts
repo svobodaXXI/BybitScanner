@@ -6,3 +6,5 @@ export function useMarketData() {
     marketDataStore.getSnapshot,
   );
 }
+
+export const setMarketTimeframe = marketDataStore.setTimeframe;

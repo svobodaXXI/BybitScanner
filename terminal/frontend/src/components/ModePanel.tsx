@@ -16,6 +16,8 @@ import {
   formatPositionPnlPercent,
   positionPnlPercent,
 } from "../marketData/positionPnl";
+import { marketApiRoutes } from "../marketData/apiRoutes";
+import { baseAssetFromSymbol } from "../marketData/symbol";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
 
@@ -62,7 +64,7 @@ export function ModePanel({
 
   const refreshPaperState = useCallback(async () => {
     try {
-      const response = await fetch("/api/paper-state?symbol=ONGUSDT");
+      const response = await fetch(marketApiRoutes.paperState("ONGUSDT"));
       if (!response.ok) {
         setEngagedWorkingVolume(null);
         return;
@@ -135,6 +137,7 @@ export function ModePanel({
   const pnlTone = pnlPercent === null || pnlPercent === 0
     ? "neutral"
     : pnlPercent > 0 ? "positive" : "negative";
+  const positionBaseAsset = baseAssetFromSymbol(positionSymbol);
 
   const startHoldTooltip = (message: string) => {
     if (holdTooltipTimer.current) {
@@ -404,13 +407,13 @@ export function ModePanel({
               <span
                 className="paper-position-notional-hold paper-hold-target"
                 onPointerDown={() =>
-                  startHoldTooltip(`${positionQuantity} BTC`)
+                  startHoldTooltip(`${positionQuantity} ${positionBaseAsset}`)
                 }
                 onPointerUp={stopHoldTooltip}
                 onPointerCancel={stopHoldTooltip}
                 onPointerLeave={stopHoldTooltip}
                 onTouchStart={() =>
-                  startHoldTooltip(`${positionQuantity} BTC`)
+                  startHoldTooltip(`${positionQuantity} ${positionBaseAsset}`)
                 }
                 onTouchEnd={stopHoldTooltip}
                 onTouchCancel={stopHoldTooltip}

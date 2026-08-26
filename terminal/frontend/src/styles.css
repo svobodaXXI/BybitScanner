@@ -45,26 +45,73 @@ button {
   justify-content: space-between;
   gap: 1rem;
   min-width: 0;
-  padding: 0.7rem 1rem;
+  padding: 0.42rem 0.7rem;
   border-bottom: 1px solid #27313b;
   background: #11161c;
 }
-.workspace-header h1 {
-  margin: 0.08rem 0;
-  font-size: 1.2rem;
-}
 .instrument-block {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
   min-width: 0;
 }
-.eyebrow,
-.instrument-note {
+
+.eyebrow {
   margin: 0;
   color: #8493a3;
   font-size: 0.68rem;
-}
-.eyebrow {
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+.symbol-selector-trigger {
+  padding: 0.32rem 0.5rem;
+  border: 1px solid #303b47;
+  border-radius: 0.3rem;
+  background: #171d24;
+  font-weight: 750;
+  letter-spacing: 0.025em;
+}
+.symbol-selector-trigger:hover,
+.symbol-selector-trigger:focus-visible {
+  border-color: #53616e;
+}
+.timeframe-display {
+  padding: 0.32rem 0.48rem;
+  border: 1px solid #303b47;
+  border-radius: 0.3rem;
+  background: #171d24;
+  color: #8996a3;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.timeframe-selector {
+  position: relative;
+}
+.timeframe-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  display: grid;
+  min-width: 3.8rem;
+  padding: 0.22rem;
+  border: 1px solid #303b47;
+  border-radius: 0.32rem;
+  background: #11171d;
+  box-shadow: 0 0.45rem 1rem rgba(0, 0, 0, 0.4);
+}
+.timeframe-menu button {
+  padding: 0.3rem 0.45rem;
+  border: 0;
+  border-radius: 0.22rem;
+  background: transparent;
+  color: #8996a3;
+  text-align: left;
+}
+.timeframe-menu button:hover,
+.timeframe-menu button[aria-current="true"] {
+  background: #202a33;
+  color: #e1e7ec;
 }
 .header-actions {
   display: flex;
@@ -161,7 +208,7 @@ button {
 }
 .chart-panel {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: 1fr;
   background: var(--chart-bg);
 }
 .chart-stage {
@@ -207,9 +254,7 @@ button {
   background: color-mix(in srgb, var(--chart-bg) 92%, transparent);
   box-shadow: 0 0.3rem 1rem rgba(0, 0, 0, 0.25);
 }
-.drawing-toolbar button,
-.snap-latest,
-.auto-price-reset {
+.drawing-toolbar button {
   display: grid;
   width: 2.25rem;
   min-width: 2.25rem;
@@ -238,25 +283,7 @@ button {
   margin: 0.08rem;
   background: #303b47;
 }
-.snap-latest {
-  position: absolute;
-  z-index: 6;
-  right: 4.4rem;
-  bottom: 2.25rem;
-  border-color: #53616e;
-}
-.auto-price-reset {
-  position: absolute;
-  z-index: 6;
-  right: 0.35rem;
-  top: 0.35rem;
-  width: 2.8rem;
-  color: var(--chart-drawing);
-  border-color: #80652f;
-}
-.drawing-toolbar button:focus-visible,
-.snap-latest:focus-visible,
-.auto-price-reset:focus-visible {
+.drawing-toolbar button:focus-visible {
   outline: 2px solid #dce5ed;
   outline-offset: 2px;
 }
@@ -2180,6 +2207,39 @@ button {
   display: inline-flex;
   align-items: baseline;
   gap: 0.28rem;
+}
+.drawing-clear-confirmation {
+  position: absolute;
+  z-index: 8;
+  top: 0.45rem;
+  left: 3.3rem;
+  width: max-content;
+  padding: 0.55rem;
+  border: 1px solid #3b4652;
+  border-radius: 0.35rem;
+  background: #151b22;
+  box-shadow: 0 0.45rem 1.2rem rgba(0, 0, 0, 0.38);
+}
+.drawing-clear-confirmation p {
+  margin: 0 0 0.5rem;
+  color: #d8e0e7;
+  font-size: 0.76rem;
+}
+.drawing-clear-confirmation > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+.drawing-clear-confirmation button {
+  padding: 0.3rem 0.55rem;
+  border: 1px solid #3b4652;
+  border-radius: 0.28rem;
+  background: #1b222a;
+  font-size: 0.7rem;
+}
+.drawing-clear-confirmation button.danger {
+  border-color: #7f3030;
+  color: #ff8585;
 }
 
 .prints-position-indicator .position-arrow {

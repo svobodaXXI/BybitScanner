@@ -4,6 +4,7 @@ import {
   nearestOhlcAnchor,
   type Point,
   pointDistance,
+  rayEndPoint,
   segmentDistance,
 } from "./drawingGeometry";
 import {
@@ -36,6 +37,7 @@ export function DrawingOverlay({
   onCommit,
   onSelect,
   onDrawingGesture,
+  onDrawingComplete,
 }: {
   drawings: DrawingObject[];
   selectedId: string | null;
@@ -46,6 +48,7 @@ export function DrawingOverlay({
   onCommit: (drawings: DrawingObject[]) => void;
   onSelect: (id: string | null) => void;
   onDrawingGesture: () => void;
+  onDrawingComplete: () => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const draftRef = useRef<DrawingObject | null>(null);
@@ -99,7 +102,9 @@ export function DrawingOverlay({
     ctx.clearRect(0, 0, rect.width, rect.height);
     for (const drawing of [
       ...drawings,
-      ...(draftRef.current ? [draftRef.current] : []),
+      ...(draftRef.current && !drawings.some((item) => item.id === draftRef.current?.id)
+        ? [draftRef.current]
+        : []),
     ]) {
       if (drawing.hidden) continue;
       const points = drawing.anchors
@@ -121,11 +126,9 @@ export function DrawingOverlay({
         ctx.moveTo(a.x, 0);
         ctx.lineTo(a.x, rect.height);
       } else if (drawing.type === "ray") {
-        const dx = b.x - a.x || 1,
-          dy = b.y - a.y;
-        const factor = Math.max(1, (rect.width - a.x) / dx);
+        const end = rayEndPoint(a, b, rect);
         ctx.moveTo(a.x, a.y);
-        ctx.lineTo(a.x + dx * factor, a.y + dy * factor);
+        ctx.lineTo(end.x, end.y);
       } else if (drawing.type === "rectangle") {
         ctx.rect(a.x, a.y, b.x - a.x, b.y - a.y);
       } else if (drawing.type === "fibonacci") {
@@ -173,7 +176,13 @@ export function DrawingOverlay({
     const id = requestAnimationFrame(redraw);
     return () => cancelAnimationFrame(id);
   }, [redraw]);
-  const hit = (point: Point) => {
+  useEffect(() => {
+    if (draftRef.current && selectedId !== draftRef.current.id) {
+      draftRef.current = null;
+      redraw();
+    }
+  }, [redraw, selectedId]);
+  const hit = (point: Point, bounds: { width: number; height: number }) => {
     for (let i = drawings.length - 1; i >= 0; i--) {
       const d = drawings[i];
       if (d.hidden) continue;
@@ -188,21 +197,43 @@ export function DrawingOverlay({
           (d.type === "vertical" && Math.abs(point.x - pts[0].x) < HIT_RADIUS)
         )
           return { id: d.id, anchor: null };
-      } else if (segmentDistance(point, pts[0], pts[1]) < HIT_RADIUS)
+      } else if (
+        segmentDistance(
+          point,
+          pts[0],
+          d.type === "ray" ? rayEndPoint(pts[0], pts[1], bounds) : pts[1],
+        ) < HIT_RADIUS
+      )
         return { id: d.id, anchor: null };
     }
     return null;
   };
+  const withDrawing = (drawing: DrawingObject) =>
+    drawings.some((item) => item.id === drawing.id)
+      ? drawings.map((item) => item.id === drawing.id ? drawing : item)
+      : [...drawings, drawing];
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.pointerType === "touch" && event.isPrimary === false) return;
     const anchor = anchorOf(event);
     if (!anchor) return;
     const rect = event.currentTarget.getBoundingClientRect();
+    if (draftRef.current) {
+      draftRef.current = {
+        ...draftRef.current,
+        anchors: [draftRef.current.anchors[0], anchor],
+      };
+      onCommit(withDrawing(draftRef.current));
+      onSelect(draftRef.current.id);
+      draftRef.current = null;
+      onDrawingComplete();
+      redraw();
+      return;
+    }
     if (tool === "select") {
-      const found = hit({
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top,
-      });
+      const found = hit(
+        { x: event.clientX - rect.left, y: event.clientY - rect.top },
+        rect,
+      );
       onSelect(found?.id ?? null);
       if (found) {
         onDrawingGesture();
@@ -233,9 +264,13 @@ export function DrawingOverlay({
     if (single) {
       onCommit([...drawings, draft]);
       onSelect(draft.id);
+      onDrawingComplete();
     } else {
       draft.anchors.push(anchor);
       draftRef.current = draft;
+      onCommit(withDrawing(draft));
+      onSelect(draft.id);
+      onDrawingGesture();
       event.currentTarget.setPointerCapture(event.pointerId);
       redraw();
     }
@@ -248,6 +283,7 @@ export function DrawingOverlay({
         ...draftRef.current,
         anchors: [draftRef.current.anchors[0], anchor],
       };
+      onCommit(withDrawing(draftRef.current));
       redraw();
       return;
     }
@@ -273,11 +309,6 @@ export function DrawingOverlay({
     onCommit(next);
   };
   const finish = () => {
-    if (draftRef.current) {
-      onCommit([...drawings, draftRef.current]);
-      onSelect(draftRef.current.id);
-      draftRef.current = null;
-    }
     dragRef.current = null;
     redraw();
   };

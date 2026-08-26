@@ -1,14 +1,22 @@
 ﻿import type {
+  Candle,
   MarketDataSnapshot,
   NormalizedOrderBook,
   PriceLevel,
   TradePrint,
 } from "../contracts/marketData";
 import { createDemoMarketData } from "./demoFeed";
+import { marketApiRoutes } from "./apiRoutes";
 import { projectSweepCenterRow } from "./domProjection";
+import {
+  BYBIT_INTERVAL_BY_TIMEFRAME,
+  type ChartTimeframe,
+} from "./timeframes";
 
 export interface MarketDataPort {
+  dispose(): void;
   getSnapshot(): MarketDataSnapshot;
+  setTimeframe(timeframe: ChartTimeframe): void;
   subscribe(listener: () => void): () => void;
 }
 
@@ -70,6 +78,22 @@ type BackendOrderBookEvent = {
   source: "BYBIT_LINEAR_WS";
 };
 
+type BackendKline = {
+  startTime: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+};
+
+type BackendKlinesEvent = {
+  symbol: string;
+  interval: string;
+  candles: BackendKline[];
+  tickSize: string;
+  state: "CONNECTING" | "READY" | "DEGRADED";
+};
+
 const unavailableBook = (
   health: NormalizedOrderBook["health"],
 ): NormalizedOrderBook => ({
@@ -84,6 +108,8 @@ const unavailableBook = (
 export class BackendSseMarketDataStore implements MarketDataPort {
   private snapshot: MarketDataSnapshot = {
     ...createDemoMarketData(),
+    candles: [],
+    tickSize: null,
     book: unavailableBook("NOT_READY"),
     trades: [],
   };
@@ -91,15 +117,50 @@ export class BackendSseMarketDataStore implements MarketDataPort {
   private listeners = new Set<() => void>();
   private tradesSource: EventSource | null = null;
   private bookSource: EventSource | null = null;
+  private klinesSource: EventSource | null = null;
   private tradesReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private bookReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private klinesReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private timeframe: ChartTimeframe = "5m";
 
   constructor() {
     this.connectTrades();
     this.connectOrderBook();
+    this.connectKlines();
   }
 
   getSnapshot = () => this.snapshot;
+
+  dispose = () => {
+    this.tradesSource?.close();
+    this.bookSource?.close();
+    this.klinesSource?.close();
+    this.tradesSource = null;
+    this.bookSource = null;
+    this.klinesSource = null;
+    if (this.tradesReconnectTimer) clearTimeout(this.tradesReconnectTimer);
+    if (this.bookReconnectTimer) clearTimeout(this.bookReconnectTimer);
+    if (this.klinesReconnectTimer) clearTimeout(this.klinesReconnectTimer);
+    this.tradesReconnectTimer = null;
+    this.bookReconnectTimer = null;
+    this.klinesReconnectTimer = null;
+  };
+
+  setTimeframe = (timeframe: ChartTimeframe) => {
+    if (timeframe === this.timeframe) return;
+    this.timeframe = timeframe;
+    if (this.klinesReconnectTimer) {
+      clearTimeout(this.klinesReconnectTimer);
+      this.klinesReconnectTimer = null;
+    }
+    if (this.klinesSource) {
+      this.klinesSource.close();
+      this.klinesSource = null;
+    }
+    this.snapshot = { ...this.snapshot, candles: [] };
+    this.emit();
+    this.connectKlines();
+  };
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -120,9 +181,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
       this.tradesSource.close();
     }
 
-    const source = new EventSource(
-      "/api/public-trades/stream?symbol=ONGUSDT",
-    );
+    const source = new EventSource(marketApiRoutes.trades("ONGUSDT"));
 
     this.tradesSource = source;
 
@@ -260,9 +319,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
       this.bookSource.close();
     }
 
-    const source = new EventSource(
-      "/api/public-orderbook/stream?symbol=ONGUSDT",
-    );
+    const source = new EventSource(marketApiRoutes.book("ONGUSDT"));
 
     this.bookSource = source;
 
@@ -331,6 +388,98 @@ export class BackendSseMarketDataStore implements MarketDataPort {
     };
   }
 
+  private connectKlines() {
+    if (this.klinesSource) {
+      this.klinesSource.close();
+    }
+    const timeframe = this.timeframe;
+    const interval = BYBIT_INTERVAL_BY_TIMEFRAME[timeframe];
+    const source = new EventSource(
+      marketApiRoutes.candles("ONGUSDT", interval),
+    );
+    this.klinesSource = source;
+
+    source.onmessage = (event) => {
+      if (this.klinesSource !== source || this.timeframe !== timeframe) return;
+      let payload: BackendKlinesEvent;
+      try {
+        payload = JSON.parse(event.data) as BackendKlinesEvent;
+      } catch {
+        return;
+      }
+      if (
+        payload.symbol !== "ONGUSDT"
+        || payload.interval !== interval
+        || payload.state !== "READY"
+        || !Array.isArray(payload.candles)
+      ) {
+        return;
+      }
+
+      const candles = payload.candles.flatMap<Candle>((candle) => {
+        const open = Number(candle.open);
+        const high = Number(candle.high);
+        const low = Number(candle.low);
+        const close = Number(candle.close);
+        if (
+          !Number.isInteger(candle.startTime)
+          || candle.startTime <= 0
+          || !Number.isFinite(open)
+          || !Number.isFinite(high)
+          || !Number.isFinite(low)
+          || !Number.isFinite(close)
+          || open <= 0
+          || high < Math.max(open, close)
+          || low <= 0
+          || low > Math.min(open, close)
+        ) {
+          return [];
+        }
+        return [{
+          time: new Date(candle.startTime).toISOString(),
+          open,
+          high,
+          low,
+          close,
+        }];
+      });
+      const tickSize = Number(payload.tickSize);
+      if (
+        candles.length === 0
+        || candles.length !== payload.candles.length
+        || !Number.isFinite(tickSize)
+        || tickSize <= 0
+        || candles.some((candle, index) => (
+          index > 0
+          && Date.parse(candle.time) <= Date.parse(candles[index - 1].time)
+        ))
+      ) {
+        return;
+      }
+
+      this.snapshot = {
+        ...this.snapshot,
+        candles,
+        tickSize,
+        source: "LIVE_NORMALIZED",
+      };
+      this.emit();
+    };
+
+    source.onerror = () => {
+      source.close();
+      if (this.klinesSource !== source || this.timeframe !== timeframe) return;
+      this.klinesSource = null;
+      if (this.klinesReconnectTimer) {
+        clearTimeout(this.klinesReconnectTimer);
+      }
+      this.klinesReconnectTimer = setTimeout(() => {
+        this.klinesReconnectTimer = null;
+        if (this.timeframe === timeframe) this.connectKlines();
+      }, 1000);
+    };
+  }
+
   private normalizeLevels(
     levels: BackendBookLevel[],
     descending: boolean,
@@ -369,3 +518,8 @@ export class BackendSseMarketDataStore implements MarketDataPort {
 
 export const marketDataStore: MarketDataPort =
   new BackendSseMarketDataStore();
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => marketDataStore.dispose());
+  import.meta.hot.accept(() => globalThis.location.reload());
+}

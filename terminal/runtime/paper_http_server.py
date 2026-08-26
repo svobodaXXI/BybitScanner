@@ -61,6 +61,8 @@ LIMIT_FIELDS = {
 }
 LIMIT_CANCEL_FIELDS = {"client_action_id", "symbol", "order_id"}
 LIMIT_AMEND_FIELDS = {"client_action_id", "symbol", "order_id", "limit_price"}
+NATIVE_KLINE_INTERVALS = ("1", "5", "15", "60", "D")
+SUPPORTED_KLINE_INTERVALS = ("15s", *NATIVE_KLINE_INTERVALS)
 
 
 class PublicTradeBuffer:
@@ -72,6 +74,7 @@ class PublicTradeBuffer:
         tick_size: Decimal = Decimal("0.00001"),
         aggregation_window_ms: int = 50,
         book_descriptor_provider: Callable[[], dict | None] | None = None,
+        raw_trade_consumer: Callable[[list[dict]], None] | None = None,
     ) -> None:
         if tick_size <= 0 or aggregation_window_ms < 0:
             raise ValueError("invalid public-trade aggregation settings")
@@ -81,6 +84,7 @@ class PublicTradeBuffer:
         self._tick_size = tick_size
         self._aggregation_window_ms = aggregation_window_ms
         self._book_descriptor_provider = book_descriptor_provider
+        self._raw_trade_consumer = raw_trade_consumer
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -105,11 +109,14 @@ class PublicTradeBuffer:
             ]
 
     def add_trades(self, trades: list[dict]) -> None:
+        ordered = sorted(
+            trades,
+            key=lambda item: (int(item["timestamp"]), int(item["seq"])),
+        )
+        if self._raw_trade_consumer is not None:
+            self._raw_trade_consumer(ordered)
         with self._lock:
-            for trade in sorted(
-                trades,
-                key=lambda item: (int(item["timestamp"]), int(item["seq"])),
-            ):
+            for trade in ordered:
                 self._add_trade_locked(trade)
 
     def flush(self) -> None:
@@ -505,6 +512,213 @@ class PublicOrderBookBuffer:
                         pass
 
 
+class PublicTradeKlineBuffer:
+    """Build bounded UTC-aligned 15-second OHLC from raw executions."""
+
+    def __init__(self, symbol: str, *, history_limit: int = 1000,
+                 tick_size: Decimal = Decimal("0.00001")) -> None:
+        self.symbol = symbol
+        self.interval = "15s"
+        self.history_limit = history_limit
+        self.tick_size = tick_size
+        self._candles: deque[dict] = deque(maxlen=history_limit)
+        self._version = 0
+        self._received_at = 0
+        self._condition = threading.Condition()
+        self._stop = threading.Event()
+
+    def add_trades(self, trades: list[dict]) -> None:
+        with self._condition:
+            changed = False
+            for trade in sorted(trades, key=lambda item: int(item["timestamp"])):
+                timestamp = int(trade["timestamp"])
+                price = Decimal(str(trade["price"]))
+                if timestamp <= 0 or not price.is_finite() or price <= 0:
+                    continue
+                start_time = timestamp // 15000 * 15000
+                current = self._candles[-1] if self._candles else None
+                if current is None or start_time > current["startTime"]:
+                    self._candles.append({
+                        "startTime": start_time, "open": str(price),
+                        "high": str(price), "low": str(price),
+                        "close": str(price),
+                    })
+                elif start_time == current["startTime"]:
+                    current["high"] = str(max(Decimal(current["high"]), price))
+                    current["low"] = str(min(Decimal(current["low"]), price))
+                    current["close"] = str(price)
+                else:
+                    continue
+                changed = True
+                self._received_at = max(self._received_at, timestamp)
+            if changed:
+                self._version += 1
+                self._condition.notify_all()
+
+    def start(self) -> None:
+        return
+
+    def close(self) -> None:
+        self._stop.set()
+        with self._condition:
+            self._condition.notify_all()
+
+    def snapshot_after(self, after_version: int, timeout: float = 15.0) -> dict:
+        with self._condition:
+            self._condition.wait_for(
+                lambda: self._version > after_version or self._stop.is_set(),
+                timeout=timeout,
+            )
+            return self._snapshot_locked()
+
+    def snapshot(self) -> dict:
+        with self._condition:
+            return self._snapshot_locked()
+
+    def _snapshot_locked(self) -> dict:
+        return {
+            "symbol": self.symbol, "interval": self.interval,
+            "tickSize": str(self.tick_size),
+            "candles": [item.copy() for item in self._candles],
+            "receivedAt": self._received_at,
+            "state": "READY" if self._candles else "CONNECTING",
+            "source": "BYBIT_PUBLIC_TRADES", "version": self._version,
+        }
+
+
+class PublicKlineBuffer:
+    """Poll one native Bybit kline interval and expose live snapshots."""
+
+    def __init__(
+        self,
+        symbol: str = "BTCUSDT",
+        *,
+        interval: str = "5",
+        history_limit: int = 1000,
+        tick_size: Decimal = Decimal("0.00001"),
+        poll_interval: float = 1.0,
+        session: requests.Session | None = None,
+    ) -> None:
+        if (
+            interval not in NATIVE_KLINE_INTERVALS
+            or not 1 <= history_limit <= 1000
+            or not tick_size.is_finite()
+            or tick_size <= 0
+        ):
+            raise ValueError("invalid public-kline settings")
+        self.symbol = symbol
+        self.interval = interval
+        self.history_limit = history_limit
+        self.tick_size = tick_size
+        self._poll_interval = poll_interval
+        self._session = session or create_bybit_rest_session()
+        self._candles: list[dict] = []
+        self._state = "CONNECTING"
+        self._received_at = 0
+        self._version = 0
+        self._condition = threading.Condition()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="bybit-public-klines", daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        with self._condition:
+            self._condition.notify_all()
+
+    def snapshot_after(self, after_version: int, timeout: float = 15.0) -> dict:
+        with self._condition:
+            self._condition.wait_for(
+                lambda: self._version > after_version or self._stop.is_set(),
+                timeout=timeout,
+            )
+            return self._snapshot_locked()
+
+    def snapshot(self) -> dict:
+        with self._condition:
+            return self._snapshot_locked()
+
+    def refresh(self) -> None:
+        response = self._session.get(
+            "https://api.bybit.com/v5/market/kline",
+            params={
+                "category": "linear", "symbol": self.symbol,
+                "interval": self.interval, "limit": self.history_limit,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("retCode") != 0:
+            raise RuntimeError("Bybit kline request failed")
+        result = payload.get("result")
+        raw_candles = result.get("list") if isinstance(result, dict) else None
+        if not isinstance(raw_candles, list) or not raw_candles:
+            raise RuntimeError("Bybit kline response is invalid")
+        candles = [self._normalize_candle(item) for item in raw_candles]
+        candles.sort(key=lambda item: item["startTime"])
+        if len({item["startTime"] for item in candles}) != len(candles):
+            raise RuntimeError("Bybit kline response contains duplicate intervals")
+        with self._condition:
+            self._candles = candles[-self.history_limit:]
+            self._state = "READY"
+            self._received_at = int(time.time() * 1000)
+            self._version += 1
+            self._condition.notify_all()
+
+    @staticmethod
+    def _normalize_candle(raw: object) -> dict:
+        if not isinstance(raw, list) or len(raw) < 5:
+            raise RuntimeError("Bybit kline item is invalid")
+        try:
+            start_time = int(raw[0])
+            prices = tuple(Decimal(str(value)) for value in raw[1:5])
+        except (TypeError, ValueError, ArithmeticError) as exc:
+            raise RuntimeError("Bybit kline item is invalid") from exc
+        open_price, high_price, low_price, close_price = prices
+        if (
+            start_time <= 0
+            or any(not price.is_finite() or price <= 0 for price in prices)
+            or high_price < max(open_price, close_price)
+            or low_price > min(open_price, close_price)
+        ):
+            raise RuntimeError("Bybit kline item is invalid")
+        return {
+            "startTime": start_time, "open": str(open_price),
+            "high": str(high_price), "low": str(low_price),
+            "close": str(close_price),
+        }
+
+    def _snapshot_locked(self) -> dict:
+        return {
+            "symbol": self.symbol, "interval": self.interval,
+            "tickSize": str(self.tick_size),
+            "candles": [candle.copy() for candle in self._candles],
+            "receivedAt": self._received_at, "state": self._state,
+            "source": "BYBIT_LINEAR_REST", "version": self._version,
+        }
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.refresh()
+            except Exception:
+                if not self._stop.is_set():
+                    LOGGER.exception(
+                        "Bybit kline worker failed; symbol=%s interval=%s",
+                        self.symbol, self.interval,
+                    )
+                    with self._condition:
+                        self._state = "DEGRADED"
+                        self._version += 1
+                        self._condition.notify_all()
+            self._stop.wait(self._poll_interval)
+
+
 class LiveOrderBookProvider:
     def __init__(self, buffer: PublicOrderBookBuffer) -> None:
         self._buffer = buffer
@@ -604,8 +818,22 @@ class SerializedPaperRuntime:
             runtime.close()
 
 
-def load_public_instrument(symbol: str):
-    response = requests.get(
+def create_bybit_rest_session() -> requests.Session:
+    session = requests.Session()
+    session.trust_env = False
+    proxy = os.environ.get(
+        "BYBITSCANNER_BYBIT_PROXY", "socks5h://127.0.0.1:10808",
+    )
+    if proxy:
+        session.proxies.update({"http": proxy, "https": proxy})
+    return session
+
+
+def load_public_instrument(
+    symbol: str,
+    session: requests.Session | None = None,
+):
+    response = (session or create_bybit_rest_session()).get(
         "https://api.bybit.com/v5/market/instruments-info",
         params={"category": "linear", "symbol": symbol},
         timeout=10,
@@ -719,6 +947,46 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             try:
                 while True:
                     payload = self.server.public_orderbook.snapshot_after(version)
+                    next_version = int(payload["version"])
+                    if next_version > version:
+                        version = next_version
+                        body = json.dumps(payload, separators=(",", ":"))
+                        self.wfile.write(f"data:{body}\n\n".encode("utf-8"))
+                    else:
+                        self.wfile.write(b":keepalive\n\n")
+                    self.wfile.flush()
+            except (
+                BrokenPipeError,
+                ConnectionResetError,
+                ConnectionAbortedError,
+            ):
+                return
+
+        if parsed.path == "/api/public-klines/stream":
+            query = parse_qs(parsed.query)
+            symbol = query.get("symbol", ["BTCUSDT"])[0]
+            interval = query.get("interval", ["5"])[0]
+            if (
+                interval not in SUPPORTED_KLINE_INTERVALS
+                or interval not in self.server.public_klines
+                or symbol != self.server.public_klines[interval].symbol
+            ):
+                self._json_response(
+                    400, {"ok": False, "error": "unsupported_kline_stream"},
+                )
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+
+            version = -1
+            try:
+                while True:
+                    payload = self.server.public_klines[interval].snapshot_after(version)
                     next_version = int(payload["version"])
                     if next_version > version:
                         version = next_version
@@ -948,16 +1216,33 @@ def main() -> None:
     )
     database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
     port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
-    instrument_snapshot = load_public_instrument("ONGUSDT")
+    rest_session = create_bybit_rest_session()
+    instrument_snapshot = load_public_instrument("ONGUSDT", rest_session)
     public_orderbook = PublicOrderBookBuffer("ONGUSDT", depth=1000)
+    trade_klines = PublicTradeKlineBuffer(
+        "ONGUSDT", history_limit=1000,
+        tick_size=instrument_snapshot.tick_size,
+    )
+    public_klines = {
+        interval: PublicKlineBuffer(
+            "ONGUSDT", interval=interval, history_limit=1000,
+            tick_size=instrument_snapshot.tick_size,
+            session=create_bybit_rest_session(),
+        )
+        for interval in NATIVE_KLINE_INTERVALS
+    }
+    public_klines["15s"] = trade_klines
     public_trades = PublicTradeBuffer(
         "ONGUSDT",
         tick_size=instrument_snapshot.tick_size,
         aggregation_window_ms=50,
         book_descriptor_provider=public_orderbook.latest_descriptor,
+        raw_trade_consumer=trade_klines.add_trades,
     )
     public_trades.start()
     public_orderbook.start()
+    for public_kline in public_klines.values():
+        public_kline.start()
 
     book_provider = LiveOrderBookProvider(public_orderbook)
     runtime = SerializedPaperRuntime(lambda: PaperRuntime(
@@ -970,6 +1255,7 @@ def main() -> None:
     server.runtime = runtime
     server.public_trades = public_trades
     server.public_orderbook = public_orderbook
+    server.public_klines = public_klines
 
     try:
         print(f"PAPER HTTP runtime listening on http://{HOST}:{port}")
@@ -979,6 +1265,8 @@ def main() -> None:
         runtime.close()
         public_trades.close()
         public_orderbook.close()
+        for public_kline in public_klines.values():
+            public_kline.close()
         server.server_close()
 
 

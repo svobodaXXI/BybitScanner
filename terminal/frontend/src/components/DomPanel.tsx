@@ -79,9 +79,11 @@ export function DomPanel({
         {compressionEditing ? (
           <input
             autoFocus
+            aria-label="DOM compression"
             className="dom-compression-input"
             inputMode="numeric"
             value={compressionDraft}
+            onFocus={(event) => event.currentTarget.select()}
             onChange={(event) => setCompressionDraft(event.target.value)}
             onBlur={() => {
               const next = Number.parseInt(compressionDraft, 10);
@@ -104,6 +106,7 @@ export function DomPanel({
           />
         ) : (
           <button
+            aria-label="DOM compression"
             className="dom-compression-button"
             type="button"
             onClick={() => {

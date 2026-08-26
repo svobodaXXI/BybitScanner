@@ -19,7 +19,7 @@ describe("ModePanel position PnL data flow", () => {
         engaged_wv: positionSide === "Flat" ? "0" : "1",
         engaged_notional_usdt: positionSide === "Flat" ? "0" : "250",
         position_side: positionSide,
-        position_quantity: positionSide === "Flat" ? "0" : "1",
+        position_quantity: positionSide === "Flat" ? "0" : "1576",
         average_entry: averageEntry,
         active_limit_orders: [],
       }),
@@ -48,6 +48,16 @@ describe("ModePanel position PnL data flow", () => {
     expect(screen.getByText("+0.85%")).toHaveClass("positive");
     expect(onAverageEntryChange).toHaveBeenCalledWith(0.1586559);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows position quantity with the base asset derived from ONGUSDT", async () => {
+    renderPosition("Long", "0.1586559", "0.16");
+    await screen.findByText("ONGUSDT");
+    fireEvent.pointerDown(document.querySelector(".paper-position-notional-hold")!);
+    expect(await screen.findByRole("tooltip", {}, { timeout: 800 })).toHaveTextContent(
+      "1576 ONG",
+    );
+    expect(screen.queryByText("1576 BTC")).toBeNull();
   });
 
   it("keeps trade, position, and protection controls in their structural groups", async () => {

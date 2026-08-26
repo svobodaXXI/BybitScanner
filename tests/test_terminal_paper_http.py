@@ -12,8 +12,10 @@ from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_http_server import (
     PaperHttpHandler,
+    PublicKlineBuffer,
     PublicOrderBookBuffer,
     PublicTradeBuffer,
+    PublicTradeKlineBuffer,
     SerializedPaperRuntime,
 )
 from terminal.runtime.paper_runtime import PaperRuntime
@@ -231,6 +233,105 @@ def test_public_orderbook_applies_snapshot_and_incremental_delta():
     assert updated["sequence"] == 21
 
 
+class _KlineResponse:
+    def __init__(self, candles):
+        self._candles = candles
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"retCode": 0, "result": {"list": self._candles}}
+
+
+class _KlineSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return _KlineResponse(self.responses.pop(0))
+
+
+def test_public_klines_load_history_update_current_and_append_new_interval():
+    session = _KlineSession([
+        [
+            ["600000", "1.1", "1.3", "1.0", "1.2", "10", "12"],
+            ["300000", "1.0", "1.2", "0.9", "1.1", "10", "11"],
+        ],
+        [
+            ["900000", "1.25", "1.4", "1.2", "1.35", "10", "13"],
+            ["600000", "1.1", "1.35", "1.0", "1.25", "10", "12"],
+            ["300000", "1.0", "1.2", "0.9", "1.1", "10", "11"],
+        ],
+    ])
+    klines = PublicKlineBuffer(
+        "ONGUSDT", history_limit=1000,
+        tick_size=Decimal("0.00001"), session=session,
+    )
+
+    klines.refresh()
+    initial = klines.snapshot()
+    assert [item["startTime"] for item in initial["candles"]] == [300000, 600000]
+    assert initial["candles"][-1]["close"] == "1.2"
+    assert initial["state"] == "READY"
+    assert initial["tickSize"] == "0.00001"
+
+    klines.refresh()
+    updated = klines.snapshot()
+    assert [item["startTime"] for item in updated["candles"]] == [
+        300000, 600000, 900000,
+    ]
+    assert updated["candles"][-2]["close"] == "1.25"
+    assert updated["candles"][-1]["close"] == "1.35"
+    assert session.calls[0][1]["params"] == {
+        "category": "linear", "symbol": "ONGUSDT",
+        "interval": "5", "limit": 1000,
+    }
+
+
+def test_public_klines_accept_only_supported_native_intervals():
+    for interval in ("1", "5", "15", "60", "D"):
+        session = _KlineSession([[
+            ["300000", "1", "2", "0.5", "1.5", "10", "15"],
+        ]])
+        klines = PublicKlineBuffer(
+            "ONGUSDT", interval=interval, session=session,
+        )
+        klines.refresh()
+        assert klines.interval == interval
+        assert len(klines.snapshot()["candles"]) == 1
+        assert session.calls[0][1]["params"]["interval"] == interval
+    for interval in ("15s", "3", "120", "W", ""):
+        try:
+            PublicKlineBuffer("ONGUSDT", interval=interval)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unexpected accepted interval: {interval}")
+
+
+def test_public_trade_15s_klines_use_utc_buckets_and_raw_execution_ohlc():
+    klines = PublicTradeKlineBuffer(
+        "ONGUSDT", history_limit=3, tick_size=Decimal("0.00001"),
+    )
+    klines.add_trades([
+        {"timestamp": 74999, "price": "2"},
+        {"timestamp": 61000, "price": "1"},
+        {"timestamp": 68000, "price": "3"},
+        {"timestamp": 75000, "price": "4"},
+        {"timestamp": 89999, "price": "2.5"},
+    ])
+    snapshot = klines.snapshot()
+    assert snapshot["interval"] == "15s"
+    assert snapshot["source"] == "BYBIT_PUBLIC_TRADES"
+    assert snapshot["candles"] == [
+        {"startTime": 60000, "open": "1", "high": "3", "low": "1", "close": "2"},
+        {"startTime": 75000, "open": "4", "high": "4", "low": "2.5", "close": "2.5"},
+    ]
+
+
 def test_public_orderbook_accepts_newer_noncontiguous_and_ignores_stale_delta():
     book = PublicOrderBookBuffer("ONGUSDT", depth=50)
     snapshot_message = {
@@ -369,6 +470,9 @@ def load_tests(loader, tests, pattern):
             test_threaded_http_serializes_concurrent_paper_mutations,
             test_public_orderbook_applies_snapshot_and_incremental_delta,
             test_public_orderbook_accepts_newer_noncontiguous_and_ignores_stale_delta,
+            test_public_klines_load_history_update_current_and_append_new_interval,
+            test_public_klines_accept_only_supported_native_intervals,
+            test_public_trade_15s_klines_use_utc_buckets_and_raw_execution_ohlc,
             test_public_trades_aggregate_side_window_notional_and_sweep_ticks,
             test_finalized_trade_captures_immutable_latest_book_descriptor,
             test_finalized_trade_allows_unavailable_book_correlation,

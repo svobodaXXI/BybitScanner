@@ -46,3 +46,29 @@ export function scaleRangeAroundAnchor(
     to: anchor + (to - anchor) / safeScale,
   };
 }
+
+export function translatePriceRangeByPixels(
+  range: { from: number; to: number },
+  deltaY: number,
+  plotHeight: number,
+) {
+  if (!(plotHeight > 0)) return range;
+  const priceDelta = deltaY * (range.to - range.from) / plotHeight;
+  return {
+    from: range.from + priceDelta,
+    to: range.to + priceDelta,
+  };
+}
+
+export function translateLogicalRangeByPixels(
+  range: { from: number; to: number },
+  deltaX: number,
+  plotWidth: number,
+) {
+  if (!(plotWidth > 0)) return range;
+  const logicalDelta = -deltaX * (range.to - range.from) / plotWidth;
+  return {
+    from: range.from + logicalDelta,
+    to: range.to + logicalDelta,
+  };
+}

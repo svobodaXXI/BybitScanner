@@ -84,6 +84,7 @@ export interface NormalizedOrderBook {
 export interface MarketDataSnapshot {
   book: NormalizedOrderBook;
   candles: readonly Candle[];
+  tickSize: number | null;
   trades: readonly TradePrint[];
   ownOrders: readonly OwnOrder[];
   source: "DEVELOPMENT" | "LIVE_NORMALIZED";

@@ -63,6 +63,7 @@ export function createDemoMarketData(): MarketDataSnapshot {
       availableDepth: 50,
     },
     candles,
+    tickSize: null,
     trades,
     ownOrders: [
       { id: "paper-buy-100", price: mid - 1, notionalUsdt: 100, side: "BUY" },

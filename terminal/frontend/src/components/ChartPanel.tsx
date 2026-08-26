@@ -15,18 +15,35 @@ import {
   DrawingOverlay,
 } from "../chart/DrawingOverlay";
 import { DrawingToolbar } from "../chart/DrawingToolbar";
+import { DrawingClearConfirmation } from "../chart/DrawingClearConfirmation";
 import {
   DrawingHistory,
+  clearDrawingHistory,
   type DrawingObject,
   type DrawingTool,
   deserializeDrawings,
   serializeDrawings,
 } from "../chart/drawingModel";
-import { isAtLatest } from "../chart/followLatest";
+import { chartAxisTarget } from "../chart/axisHitTest";
+import {
+  activateTouchCrosshair,
+  CROSSHAIR_HOLD_MS,
+  moveTouchCrosshair,
+  releaseTouchCrosshair,
+  type TouchCrosshairState,
+} from "../chart/crosshairInteraction";
+import {
+  DEFAULT_RIGHT_OFFSET_BARS,
+  replaceSeriesDataPreservingViewport,
+} from "../chart/followLatest";
 import {
   calculateDirectionalPinch,
   scaleRangeAroundAnchor,
+  translateLogicalRangeByPixels,
+  translatePriceRangeByPixels,
 } from "../chart/gestureMath";
+import { chartPriceFormat } from "../chart/priceFormat";
+import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
 
 const PRICE_SCALE_WIDTH_FALLBACK = 64,
@@ -61,17 +78,21 @@ type Gesture =
   | {
       type: "plot-pan";
       id: number;
-      startLogical: number;
+      startX: number;
+      startY: number;
       xRange: LogicalRange;
+      priceRange: { from: number; to: number };
     }
   | null;
 
 export function ChartPanel({
   candles,
+  tickSize,
   symbol = "BTCUSDT",
   timeframe = "5m",
 }: {
   candles: readonly Candle[];
+  tickSize: number | null;
   symbol?: string;
   timeframe?: string;
 }) {
@@ -80,15 +101,19 @@ export function ChartPanel({
     seriesRef = useRef<Series | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>()),
     gesture = useRef<Gesture>(null);
-  const candleCountRef = useRef(candles.length);
+  const touchCrosshair = useRef<{
+    state: TouchCrosshairState;
+    pointerId: number | null;
+    last: { x: number; y: number } | null;
+    timer: ReturnType<typeof setTimeout> | null;
+  }>({ state: { mode: "IDLE" }, pointerId: null, last: null, timer: null });
   const followLatestRef = useRef(true);
-  candleCountRef.current = candles.length;
-  const [manualPrice, setManualPrice] = useState(false),
-    [followLatest, setFollowLatest] = useState(true),
-    [renderTick, setRenderTick] = useState(0),
+  const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
+  const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
     [magnet, setMagnet] = useState(false),
-    [selectedId, setSelectedId] = useState<string | null>(null);
+    [selectedId, setSelectedId] = useState<string | null>(null),
+    [clearConfirmationOpen, setClearConfirmationOpen] = useState(false);
   const storageKey = `bybitscanner:drawings:v1:${symbol}:${timeframe}`;
   const historyRef = useRef(
     new DrawingHistory(
@@ -104,7 +129,6 @@ export function ChartPanel({
   }, []);
   const applyFollowLatest = useCallback((next: boolean) => {
     followLatestRef.current = next;
-    setFollowLatest(next);
   }, []);
   useEffect(() => {
     globalThis.localStorage?.setItem(storageKey, serializeDrawings(drawings));
@@ -151,12 +175,13 @@ export function ChartPanel({
         visible: true,
         borderColor: "#303b47",
         timeVisible: true,
-        rightOffset: 3,
+        rightOffset: DEFAULT_RIGHT_OFFSET_BARS,
+        fixRightEdge: false,
       },
       handleScroll: {
         mouseWheel: false,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
+        pressedMouseMove: false,
+        horzTouchDrag: false,
         vertTouchDrag: false,
       },
       handleScale: {
@@ -175,20 +200,28 @@ export function ChartPanel({
     });
     chartRef.current = chart;
     seriesRef.current = series;
-    const listener = (range: LogicalRange | null) => {
+    panBatcherRef.current = createFrameBatcher(
+      requestAnimationFrame,
+      cancelAnimationFrame,
+    );
+    const listener = () => {
       setRenderTick((v) => v + 1);
-      applyFollowLatest(isAtLatest(range, candleCountRef.current));
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(listener);
     return () => {
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(listener);
       chart.remove();
+      panBatcherRef.current?.cancel();
+      panBatcherRef.current = null;
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [applyFollowLatest]);
+  }, []);
   useEffect(() => {
-    seriesRef.current?.setData(
+    const series = seriesRef.current;
+    const timeScale = chartRef.current?.timeScale();
+    if (!series || !timeScale) return;
+    replaceSeriesDataPreservingViewport(
       candles.map((c, i) => ({
         time: candleTime(c, i),
         open: c.open,
@@ -196,11 +229,16 @@ export function ChartPanel({
         low: c.low,
         close: c.close,
       })),
+      followLatestRef.current,
+      series,
+      timeScale,
     );
-    if (followLatestRef.current)
-      chartRef.current?.timeScale().scrollToPosition(0, false);
     setRenderTick((v) => v + 1);
   }, [candles]);
+  useEffect(() => {
+    const priceFormat = tickSize === null ? null : chartPriceFormat(tickSize);
+    if (priceFormat) seriesRef.current?.applyOptions({ priceFormat });
+  }, [tickSize]);
   const coordinates = useMemo<DrawingCoordinates>(() => {
     void renderTick;
     return {
@@ -216,6 +254,30 @@ export function ChartPanel({
     const r = hostRef.current?.getBoundingClientRect();
     return r ? { x: event.clientX - r.left, y: event.clientY - r.top } : null;
   };
+  const clearCrosshairTimer = () => {
+    if (touchCrosshair.current.timer) {
+      clearTimeout(touchCrosshair.current.timer);
+      touchCrosshair.current.timer = null;
+    }
+  };
+  const updateCrosshair = (point: { x: number; y: number }) => {
+    const chart = chartRef.current;
+    const series = seriesRef.current;
+    if (!chart || !series) return;
+    const logical = chart.timeScale().coordinateToLogical(point.x);
+    const price = series.coordinateToPrice(point.y);
+    const index = logical === null
+      ? -1
+      : Math.max(0, Math.min(candles.length - 1, Math.round(logical)));
+    if (price !== null && candles[index]) {
+      chart.setCrosshairPosition(
+        price,
+        candleTime(candles[index], index),
+        series,
+      );
+    }
+  };
+  useEffect(() => () => clearCrosshairTimer(), []);
   const beginPinch = () => {
     const chart = chartRef.current,
       series = seriesRef.current,
@@ -239,13 +301,13 @@ export function ChartPanel({
       };
   };
   const onPointerDown = (event: React.PointerEvent) => {
-    if (event.target instanceof Element && event.target.closest(".snap-latest"))
-      return;
     const p = relative(event);
     if (!p) return;
     pointers.current.set(event.pointerId, p);
     event.currentTarget.setPointerCapture(event.pointerId);
     if (pointers.current.size === 2) {
+      clearCrosshairTimer();
+      touchCrosshair.current.state = { mode: "IDLE" };
       beginPinch();
       return;
     }
@@ -278,21 +340,61 @@ export function ChartPanel({
         priceRange: pr,
       };
     else if (tool === "select") {
-      const logical = chart.timeScale().coordinateToLogical(p.x);
-      if (logical !== null)
+      if (chart.timeScale().coordinateToLogical(p.x) !== null) {
         gesture.current = {
           type: "plot-pan",
           id: event.pointerId,
-          startLogical: logical,
+          startX: p.x,
+          startY: p.y,
           xRange: xr,
+          priceRange: pr,
         };
+        if (event.pointerType === "touch") {
+          if (touchCrosshair.current.state.mode === "PINNED") {
+            chart.clearCrosshairPosition();
+          }
+          clearCrosshairTimer();
+          touchCrosshair.current = {
+            state: { mode: "PENDING", start: p },
+            pointerId: event.pointerId,
+            last: p,
+            timer: setTimeout(() => {
+              const current = touchCrosshair.current;
+              current.state = activateTouchCrosshair(current.state);
+              current.timer = null;
+              if (current.state.mode === "INSPECTING" && current.last) {
+                gesture.current = null;
+                updateCrosshair(current.last);
+              }
+            }, CROSSHAIR_HOLD_MS),
+          };
+        }
+      }
     }
   };
   const onPointerMove = (event: React.PointerEvent) => {
-    if (!pointers.current.has(event.pointerId)) return;
     const p = relative(event),
       chart = chartRef.current;
     if (!p || !chart) return;
+    if (tool === "select" && event.pointerType !== "touch") {
+      updateCrosshair(p);
+    }
+    const touch = touchCrosshair.current;
+    if (event.pointerType === "touch" && touch.pointerId === event.pointerId) {
+      touch.last = p;
+      const next = moveTouchCrosshair(touch.state, p);
+      if (touch.state.mode === "PENDING" && next.mode === "PANNING") {
+        clearCrosshairTimer();
+      }
+      touch.state = next;
+      if (next.mode === "PENDING") return;
+      if (next.mode === "INSPECTING") {
+        updateCrosshair(p);
+        event.preventDefault();
+        return;
+      }
+    }
+    if (!pointers.current.has(event.pointerId)) return;
     pointers.current.set(event.pointerId, p);
     const g = gesture.current;
     if (g?.type === "pinch") {
@@ -305,7 +407,7 @@ export function ChartPanel({
         Math.abs(b.x - a.x),
         Math.abs(b.y - a.y),
       );
-      if (d.axes === "X" || d.axes === "XY")
+      if (d.axes === "X" || d.axes === "XY") {
         chart
           .timeScale()
           .setVisibleLogicalRange(
@@ -316,6 +418,8 @@ export function ChartPanel({
               d.xScale,
             ),
           );
+        applyFollowLatest(false);
+      }
       if (d.axes === "Y" || d.axes === "XY") {
         chart.priceScale("right").setAutoScale(false);
         chart
@@ -328,7 +432,6 @@ export function ChartPanel({
               d.yScale,
             ),
           );
-        setManualPrice(true);
       }
       event.preventDefault();
     } else if (g?.type === "axis-y" && g.id === event.pointerId) {
@@ -345,7 +448,6 @@ export function ChartPanel({
             scale,
           ),
         );
-      setManualPrice(true);
       event.preventDefault();
     } else if (g?.type === "axis-x" && g.id === event.pointerId) {
       const scale = Math.exp((p.x - g.startX) / 160),
@@ -358,12 +460,29 @@ export function ChartPanel({
       applyFollowLatest(false);
       event.preventDefault();
     } else if (g?.type === "plot-pan" && g.id === event.pointerId) {
-      const logical = chart.timeScale().coordinateToLogical(p.x);
-      if (logical === null) return;
-      const delta = g.startLogical - logical;
-      chart.timeScale().setVisibleLogicalRange({
-        from: g.xRange.from + delta,
-        to: g.xRange.to + delta,
+      const plotWidth = Math.max(
+        1,
+        (hostRef.current?.clientWidth ?? 1)
+          - (chart.priceScale("right").width() || PRICE_SCALE_WIDTH_FALLBACK),
+      );
+      const logicalRange = translateLogicalRangeByPixels(
+        g.xRange,
+        p.x - g.startX,
+        plotWidth,
+      );
+      const deltaY = p.y - g.startY;
+      panBatcherRef.current?.schedule(() => {
+        chart.timeScale().setVisibleLogicalRange(logicalRange);
+        if (deltaY !== 0) {
+          chart.priceScale("right").setAutoScale(false);
+          chart.priceScale("right").setVisibleRange(
+            translatePriceRangeByPixels(
+              g.priceRange,
+              deltaY,
+              Math.max(1, (hostRef.current?.clientHeight ?? 1) - TIME_SCALE_HEIGHT),
+            ),
+          );
+        }
       });
       applyFollowLatest(false);
       event.preventDefault();
@@ -371,6 +490,14 @@ export function ChartPanel({
   };
   const endPointer = (event: React.PointerEvent) => {
     pointers.current.delete(event.pointerId);
+    if (touchCrosshair.current.pointerId === event.pointerId) {
+      clearCrosshairTimer();
+      touchCrosshair.current.state = releaseTouchCrosshair(
+        touchCrosshair.current.state,
+      );
+      touchCrosshair.current.pointerId = null;
+      touchCrosshair.current.last = null;
+    }
     gesture.current = null;
   };
   const onWheel = (event: React.WheelEvent) => {
@@ -398,18 +525,18 @@ export function ChartPanel({
           .setVisibleRange(
             scaleRangeAroundAnchor(pr.from, pr.to, price, factor),
           );
-        setManualPrice(true);
       }
     }
     event.preventDefault();
   };
   const resetAuto = () => {
       chartRef.current?.priceScale("right").setAutoScale(true);
-      setManualPrice(false);
     },
-    snapLatest = () => {
+    resetHorizontalView = () => {
       const timeScale = chartRef.current?.timeScale();
       if (!timeScale) return;
+      applyFollowLatest(true);
+      timeScale.applyOptions({ rightOffset: DEFAULT_RIGHT_OFFSET_BARS });
       timeScale.scrollToRealTime();
     };
   const deleteSelected = useCallback(() => {
@@ -434,12 +561,6 @@ export function ChartPanel({
       className="chart-panel workspace-panel"
       aria-label="Candlestick chart"
     >
-      <header className="panel-header">
-        <div>
-          <span>Chart · {timeframe}</span>
-          <small>{manualPrice ? "Manual price" : "Auto price"}</small>
-        </div>
-      </header>
       <div
         className="chart-stage"
         role="application"
@@ -449,16 +570,26 @@ export function ChartPanel({
         onPointerUpCapture={endPointer}
         onPointerCancelCapture={endPointer}
         onLostPointerCapture={endPointer}
+        onPointerLeave={() => {
+          if (touchCrosshair.current.state.mode !== "PINNED") {
+            chartRef.current?.clearCrosshairPosition();
+          }
+        }}
         onWheel={onWheel}
         onDoubleClick={(e) => {
           const p = relative(e);
-          if (
-            p &&
-            p.x >
-              (hostRef.current?.clientWidth ?? 0) -
-                (chartRef.current?.priceScale("right").width() ||
-                  PRICE_SCALE_WIDTH_FALLBACK)
-          )
+          const chart = chartRef.current;
+          const host = hostRef.current;
+          if (!p || !chart || !host) return;
+          const target = chartAxisTarget(
+            p,
+            host.clientWidth,
+            host.clientHeight,
+            chart.priceScale("right").width() || PRICE_SCALE_WIDTH_FALLBACK,
+            TIME_SCALE_HEIGHT,
+          );
+          if (target === "TIME") resetHorizontalView();
+          else if (target === "PRICE")
             resetAuto();
         }}
       >
@@ -472,6 +603,7 @@ export function ChartPanel({
           coordinates={coordinates}
           onCommit={commit}
           onSelect={setSelectedId}
+          onDrawingComplete={() => setTool("select")}
           onDrawingGesture={() => {
             gesture.current = null;
           }}
@@ -482,46 +614,22 @@ export function ChartPanel({
           selected={selectedId !== null}
           onTool={setTool}
           onMagnet={() => setMagnet((v) => !v)}
-          onDelete={deleteSelected}
           onUndo={() => setDrawings(historyRef.current.undo())}
-          onRedo={() => setDrawings(historyRef.current.redo())}
-          onLock={() =>
-            commit(
-              drawings.map((d) =>
-                d.id === selectedId ? { ...d, locked: !d.locked } : d,
-              ),
-            )
-          }
+          onDelete={deleteSelected}
           onClear={() => {
-            if (
-              drawings.length &&
-              confirm("Clear all drawings for this symbol and timeframe?")
-            ) {
-              commit([]);
-              setSelectedId(null);
-            }
+            if (drawings.length) setClearConfirmationOpen(true);
           }}
         />
-        {!followLatest && (
-          <button
-            className="snap-latest"
-            type="button"
-            aria-label="Snap to latest candle"
-            onClick={snapLatest}
-          >
-            →|
-          </button>
-        )}
-        {manualPrice && (
-          <button
-            className="auto-price-reset"
-            type="button"
-            aria-label="Reset automatic price scale"
-            onClick={resetAuto}
-          >
-            Auto
-          </button>
-        )}
+        {clearConfirmationOpen ? (
+          <DrawingClearConfirmation
+            onCancel={() => setClearConfirmationOpen(false)}
+            onConfirm={() => {
+              setDrawings(clearDrawingHistory(historyRef.current));
+              setSelectedId(null);
+              setClearConfirmationOpen(false);
+            }}
+          />
+        ) : null}
       </div>
     </section>
   );

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   calculateDirectionalPinch,
   scaleRangeAroundAnchor,
+  translateLogicalRangeByPixels,
+  translatePriceRangeByPixels,
 } from "./gestureMath";
 
 describe("directional pinch math", () => {
@@ -37,5 +39,27 @@ describe("directional pinch math", () => {
     const range = scaleRangeAroundAnchor(0, 100, 25, 2);
     expect(range).toEqual({ from: 12.5, to: 62.5 });
     expect((25 - range.from) / (range.to - range.from)).toBe(0.25);
+  });
+
+  it("translates the price viewport without changing its span", () => {
+    const moved = translatePriceRangeByPixels(
+      { from: 90, to: 110 },
+      50,
+      200,
+    );
+    expect(moved).toEqual({ from: 95, to: 115 });
+    expect(moved.to - moved.from).toBe(20);
+  });
+
+  it("translates logical range from the fixed drag origin without viewport feedback", () => {
+    const origin = { from: 100, to: 200 };
+    expect(translateLogicalRangeByPixels(origin, 20, 400)).toEqual({
+      from: 95,
+      to: 195,
+    });
+    expect(translateLogicalRangeByPixels(origin, 40, 400)).toEqual({
+      from: 90,
+      to: 190,
+    });
   });
 });

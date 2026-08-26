@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createDrawing,
+  clearDrawingHistory,
   DrawingHistory,
   deserializeDrawings,
   fibonacciPrices,
@@ -25,6 +26,15 @@ describe("drawing model", () => {
       price: 9,
     });
   });
+  it("keeps ray type while either anchor is edited", () => {
+    const ray = createDrawing("ray", { logical: 1, price: 10 });
+    const complete = {
+      ...ray,
+      anchors: [...ray.anchors, { logical: 2, price: 12 }],
+    };
+    expect(moveAnchor(complete, 0, { logical: 0, price: 9 }).type).toBe("ray");
+    expect(moveAnchor(complete, 1, { logical: 3, price: 13 }).type).toBe("ray");
+  });
   it("supports delete through history plus undo and redo", () => {
     const drawing = createDrawing("horizontal", { logical: 1, price: 10 });
     const history = new DrawingHistory([drawing]);
@@ -34,6 +44,16 @@ describe("drawing model", () => {
     expect(history.current).toHaveLength(1);
     history.redo();
     expect(history.current).toHaveLength(0);
+  });
+  it("clears only drawing history and serializes an empty drawing document", () => {
+    const orders = [{ id: "limit-1" }];
+    const history = new DrawingHistory([
+      createDrawing("horizontal", { logical: 1, price: 10 }),
+    ]);
+    const cleared = clearDrawingHistory(history);
+    expect(cleared).toEqual([]);
+    expect(serializeDrawings(cleared)).toBe('{"version":1,"drawings":[]}');
+    expect(orders).toEqual([{ id: "limit-1" }]);
   });
   it("round trips only the supported persistence version", () => {
     const drawings = [createDrawing("vertical", { logical: 4, price: 10 })];

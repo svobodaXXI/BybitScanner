@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DrawingToolbar } from "./DrawingToolbar";
 
 describe("drawing toolbar", () => {
-  it("exposes active tools, magnet state, and selection actions", () => {
+  it("exposes only the approved drawing controls", () => {
     const onTool = vi.fn();
     const onMagnet = vi.fn();
     render(
@@ -13,14 +13,12 @@ describe("drawing toolbar", () => {
         selected={false}
         onTool={onTool}
         onMagnet={onMagnet}
-        onDelete={vi.fn()}
         onUndo={vi.fn()}
-        onRedo={vi.fn()}
+        onDelete={vi.fn()}
         onClear={vi.fn()}
-        onLock={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Trend line" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Straight line" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -28,12 +26,44 @@ describe("drawing toolbar", () => {
       "aria-pressed",
       "true",
     );
-    expect(
-      screen.getByRole("button", { name: "Delete selected drawing" }),
-    ).toBeDisabled();
+    expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Crosshair / chart interaction",
+      "Straight line",
+      "Horizontal line",
+      "Ray",
+      "Horizontal ray",
+      "Fibonacci grid",
+      "Magnet",
+      "Undo drawing",
+      "Clear drawings",
+    ]);
+    expect(screen.queryByRole("button", { name: "Vertical line" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ruler" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Rectangle" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Redo drawing" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Lock selected drawing" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete selected drawing" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Horizontal line" }));
     fireEvent.click(screen.getByRole("button", { name: "Magnet" }));
     expect(onTool).toHaveBeenCalledWith("horizontal");
     expect(onMagnet).toHaveBeenCalledOnce();
+  });
+
+  it("shows delete selected only while a drawing is selected", () => {
+    const onDelete = vi.fn();
+    render(
+      <DrawingToolbar
+        activeTool="select"
+        magnet={false}
+        selected={true}
+        onTool={vi.fn()}
+        onMagnet={vi.fn()}
+        onUndo={vi.fn()}
+        onDelete={onDelete}
+        onClear={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Delete selected drawing" }));
+    expect(onDelete).toHaveBeenCalledOnce();
   });
 });
