@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AccountMenu } from "../components/AccountMenu";
 import { ChartPanel } from "../components/ChartPanel";
 import { DomPanel } from "../components/DomPanel";
 import { ModePanel, type WorkspaceMode } from "../components/ModePanel";
 import { TapePanel } from "../components/TapePanel";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
+import type { PaperState } from "../contracts/trading";
+import { marketApiRoutes } from "../marketData/apiRoutes";
 import { recommendedLadderCenter } from "../marketData/domProjection";
-import { type ChartTimeframe } from "../marketData/timeframes";
+import type { ChartTimeframe } from "../marketData/timeframes";
 import { setMarketTimeframe, useMarketData } from "../marketData/useMarketData";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 
@@ -17,10 +19,14 @@ export function App() {
   const [timeframe, setTimeframe] = useState<ChartTimeframe>("5m");
   const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
+  const [paperState, setPaperState] = useState<PaperState | null>(null);
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
     null,
   );
   const market = useMarketData();
+  const tradingSymbol = market.book.symbol;
+  const currentPaperState =
+    paperState?.symbol === tradingSymbol ? paperState : null;
   const bestBid = market.book.bids[0]?.price;
   const bestAsk = market.book.asks[0]?.price;
   const sizingReferencePrice =
@@ -38,6 +44,23 @@ export function App() {
       (current) => current ?? recommendedLadderCenter(market.book),
     );
   }, [market.book]);
+
+  const refreshPaperState = useCallback(async () => {
+    try {
+      const response = await fetch(marketApiRoutes.paperState(tradingSymbol));
+      if (!response.ok) {
+        setPaperState(null);
+        return;
+      }
+      setPaperState((await response.json()) as PaperState);
+    } catch {
+      setPaperState(null);
+    }
+  }, [tradingSymbol]);
+
+  useEffect(() => {
+    if (mode === "TERMINAL") void refreshPaperState();
+  }, [mode, refreshPaperState]);
 
   const changeTimeframe = (next: ChartTimeframe) => {
     setTimeframe(next);
@@ -86,6 +109,12 @@ export function App() {
         <ModePanel
           mode={mode}
           onModeChange={setMode}
+          symbol={tradingSymbol}
+          paperState={currentPaperState}
+          activeLimitOrders={
+            currentPaperState?.ok ? currentPaperState.active_limit_orders : []
+          }
+          refreshPaperState={refreshPaperState}
           sizingReferencePrice={sizingReferencePrice}
           onPositionSideChange={setPositionSide}
           onPositionAverageEntryChange={setPositionAverageEntry}

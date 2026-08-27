@@ -1,17 +1,55 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useCallback, useEffect, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ModePanel } from "./ModePanel";
+import type { PaperState } from "../contracts/trading";
+import { ModePanel as ModePanelView, type WorkspaceMode } from "./ModePanel";
 
 afterEach(() => vi.unstubAllGlobals());
 
 const paperState = (overrides = {}) => ({
   ok: true,
+  account_id: "paper",
+  symbol: "BTCUSDT",
+  initial_deposit_usdt: "5000",
+  equity_usdt: "5000",
   engaged_wv: "0",
   engaged_notional_usdt: "0",
   one_wv_usdt: "250",
+  position_side: "Flat",
+  position_quantity: "0",
+  average_entry: null,
   active_limit_orders: [],
   ...overrides,
 });
+
+function ModePanel(props: {
+  mode: WorkspaceMode;
+  onModeChange: (mode: WorkspaceMode) => void;
+  sizingReferencePrice: string;
+  onPositionSideChange: (side: PaperState["position_side"]) => void;
+}) {
+  const [ownedPaperState, setOwnedPaperState] = useState<PaperState | null>(null);
+  const refreshPaperState = useCallback(async () => {
+    const response = await fetch("/api/paper-state?symbol=BTCUSDT");
+    setOwnedPaperState((await response.json()) as PaperState);
+  }, []);
+
+  useEffect(() => {
+    void refreshPaperState();
+  }, [refreshPaperState]);
+
+  return (
+    <ModePanelView
+      {...props}
+      symbol="BTCUSDT"
+      paperState={ownedPaperState}
+      activeLimitOrders={
+        ownedPaperState?.ok ? ownedPaperState.active_limit_orders : []
+      }
+      refreshPaperState={refreshPaperState}
+    />
+  );
+}
 
 describe("ModePanel PAPER Market amounts", () => {
   it("initializes independent amounts and shows authoritative position notional", async () => {
@@ -54,15 +92,19 @@ describe("ModePanel PAPER Market amounts", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
+    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="64250" onPositionSideChange={vi.fn()} />);
     const buyAmount = await screen.findByLabelText("BUY amount");
     fireEvent.change(buyAmount, { target: { value: "300" } });
     fireEvent.click(screen.getByRole("button", { name: "BUY" }));
 
     expect(await screen.findByText("PAPER BUY completed")).toBeInTheDocument();
     expect(buyAmount).toHaveValue(300);
-    expect(screen.getByLabelText("SELL amount")).toHaveValue(260);
-    expect(screen.getByText("300 USDT")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText("SELL amount")).toHaveValue(260),
+    );
+    expect(document.querySelector(".paper-wv-position")).toHaveTextContent(
+      "300USDT",
+    );
 
     const [, options] = fetchMock.mock.calls.find(
       ([requestUrl]) => requestUrl === "/api/market",

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PaperState } from "../contracts/trading";
 import { ModePanel } from "./ModePanel";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -10,19 +11,23 @@ describe("ModePanel position PnL data flow", () => {
     averageEntry: string | null,
     sizingReferencePrice: string,
   ) => {
+    const state: PaperState = {
+      account_id: "paper",
+      initial_deposit_usdt: "5000",
+      equity_usdt: "5000",
+      ok: true,
+      symbol: "ONGUSDT",
+      one_wv_usdt: "250",
+      engaged_wv: positionSide === "Flat" ? "0" : "1",
+      engaged_notional_usdt: positionSide === "Flat" ? "0" : "250",
+      position_side: positionSide,
+      position_quantity: positionSide === "Flat" ? "0" : "1576",
+      average_entry: averageEntry,
+      active_limit_orders: [],
+    };
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      json: vi.fn().mockResolvedValue({
-        ok: true,
-        symbol: "ONGUSDT",
-        one_wv_usdt: "250",
-        engaged_wv: positionSide === "Flat" ? "0" : "1",
-        engaged_notional_usdt: positionSide === "Flat" ? "0" : "250",
-        position_side: positionSide,
-        position_quantity: positionSide === "Flat" ? "0" : "1576",
-        average_entry: averageEntry,
-        active_limit_orders: [],
-      }),
+      json: vi.fn().mockResolvedValue(state),
     });
     vi.stubGlobal("fetch", fetchMock);
     const onAverageEntryChange = vi.fn();
@@ -31,6 +36,12 @@ describe("ModePanel position PnL data flow", () => {
       <ModePanel
         mode="TERMINAL"
         onModeChange={vi.fn()}
+        symbol="ONGUSDT"
+        paperState={state}
+        activeLimitOrders={state.active_limit_orders}
+        refreshPaperState={async () => {
+          await fetch("/api/paper-state?symbol=ONGUSDT");
+        }}
         sizingReferencePrice={sizingReferencePrice}
         onPositionSideChange={vi.fn()}
         onPositionAverageEntryChange={onAverageEntryChange}

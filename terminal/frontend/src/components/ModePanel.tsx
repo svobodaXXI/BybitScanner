@@ -1,22 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   type CommandResult,
   type FullCloseCommandRequest,
   HANDLED_REASON_CODES,
   type MarketCommandRequest,
   type MarketSide,
-  type PaperState,
-  type PaperLimitCancelRequest,
   type PaperLimitAmendRequest,
+  type PaperLimitCancelRequest,
   type PaperLimitMutationResult,
   type PaperLimitOrder,
+  type PaperState,
 } from "../contracts/trading";
 import {
   formatPositionAverageEntry,
   formatPositionPnlPercent,
   positionPnlPercent,
 } from "../marketData/positionPnl";
-import { marketApiRoutes } from "../marketData/apiRoutes";
 import { baseAssetFromSymbol } from "../marketData/symbol";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
@@ -30,12 +29,20 @@ const descriptions: Record<WorkspaceMode, string> = {
 export function ModePanel({
   mode,
   onModeChange,
+  symbol,
+  paperState,
+  activeLimitOrders,
+  refreshPaperState,
   sizingReferencePrice,
   onPositionSideChange,
   onPositionAverageEntryChange,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
+  symbol: string;
+  paperState: PaperState | null;
+  activeLimitOrders: PaperLimitOrder[];
+  refreshPaperState: () => Promise<void>;
   sizingReferencePrice: string;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
@@ -56,75 +63,56 @@ export function ModePanel({
   const holdTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [buyAmount, setBuyAmount] = useState("");
   const [sellAmount, setSellAmount] = useState("");
-  const [activeLimits, setActiveLimits] = useState<PaperLimitOrder[]>([]);
   const [amendPrices, setAmendPrices] = useState<Record<string, string>>({});
   const buyAmountEdited = useRef(false);
   const sellAmountEdited = useRef(false);
   const submissionInFlight = useRef(false);
 
-  const refreshPaperState = useCallback(async () => {
-    try {
-      const response = await fetch(marketApiRoutes.paperState("ONGUSDT"));
-      if (!response.ok) {
-        setEngagedWorkingVolume(null);
-        return;
-      }
-
-      const state = (await response.json()) as PaperState;
-
-      const engagedWv = Number(state.engaged_wv);
-      const engagedNotional = Number(state.engaged_notional_usdt);
+  useEffect(() => {
+      const engagedWv = Number(paperState?.engaged_wv);
+      const engagedNotional = Number(paperState?.engaged_notional_usdt);
       setEngagedWorkingVolume(
-        state.ok && Number.isFinite(engagedWv) ? engagedWv.toFixed(1) : null,
+        paperState?.ok && Number.isFinite(engagedWv) ? engagedWv.toFixed(1) : null,
       );
       setEngagedNotionalUsdt(
-        state.ok && Number.isFinite(engagedNotional)
+        paperState?.ok && Number.isFinite(engagedNotional)
           ? String(Math.round(Math.max(0, engagedNotional)))
           : "0",
       );
       const normalizedPositionSide =
-        state.ok && (state.position_side === "Long" || state.position_side === "Short")
-          ? state.position_side
+        paperState?.ok && (paperState.position_side === "Long" || paperState.position_side === "Short")
+          ? paperState.position_side
           : "Flat";
       setPositionSide(normalizedPositionSide);
-      setPositionSymbol(state.ok ? state.symbol : "");
+      setPositionSymbol(paperState?.ok ? paperState.symbol : "");
       onPositionSideChange(normalizedPositionSide);
-      const averageEntry = Number(state.average_entry);
+      const averageEntry = Number(paperState?.average_entry);
       const normalizedAverageEntry =
-        state.ok && state.average_entry !== null && Number.isFinite(averageEntry)
+        paperState?.ok && paperState.average_entry !== null && Number.isFinite(averageEntry)
           && averageEntry > 0
           ? averageEntry
           : null;
       setPositionAverageEntry(normalizedAverageEntry);
       onPositionAverageEntryChange?.(normalizedAverageEntry);
-      setOneWvUsdt(state.ok ? state.one_wv_usdt : "0");
-      setPositionQuantity(state.ok ? state.position_quantity : "0");
-      const limits = state.ok ? state.active_limit_orders : [];
-      setActiveLimits(limits);
+      setOneWvUsdt(paperState?.ok ? paperState.one_wv_usdt : "0");
+      setPositionQuantity(paperState?.ok ? paperState.position_quantity : "0");
       setAmendPrices((current) => Object.fromEntries(
-        limits.map((order) => [order.order_id, current[order.order_id] ?? order.price]),
+        activeLimitOrders.map((order) => [order.order_id, current[order.order_id] ?? order.price]),
       ));
-      if (state.ok && !buyAmountEdited.current) {
-        setBuyAmount(state.one_wv_usdt);
+      if (paperState?.ok && !buyAmountEdited.current) {
+        setBuyAmount(paperState.one_wv_usdt);
       }
-      if (state.ok && !sellAmountEdited.current) {
-        setSellAmount(state.one_wv_usdt);
+      if (paperState?.ok && !sellAmountEdited.current) {
+        setSellAmount(paperState.one_wv_usdt);
       }
-    } catch {
-      setEngagedWorkingVolume(null);
-      setEngagedNotionalUsdt("0");
-      setPositionAverageEntry(null);
-      onPositionAverageEntryChange?.(null);
-    }
-  }, [onPositionAverageEntryChange, onPositionSideChange]);
+  }, [activeLimitOrders, onPositionAverageEntryChange, onPositionSideChange, paperState]);
 
   useEffect(() => {
     if (mode === "TERMINAL") {
       buyAmountEdited.current = false;
       sellAmountEdited.current = false;
-      void refreshPaperState();
     }
-  }, [mode, refreshPaperState]);
+  }, [mode]);
 
   const alternatives = (["TERMINAL", "AUTOPILOT"] as const).filter(
     (candidate) => candidate !== mode,
@@ -171,7 +159,7 @@ export function ModePanel({
     try {
       const request: MarketCommandRequest = {
         client_action_id: `paper-market-${side.toLowerCase()}-${Date.now()}`,
-        symbol: "ONGUSDT",
+        symbol,
         side,
         volume: { unit: "usdt", amount },
         sizing_reference_price: sizingReferencePrice,
@@ -212,7 +200,7 @@ export function ModePanel({
     try {
       const request: FullCloseCommandRequest = {
         client_action_id: `paper-full-close-${Date.now()}`,
-        symbol: "ONGUSDT",
+        symbol,
       };
       const response = await fetch("/api/full-close", {
         method: "POST",
@@ -239,7 +227,7 @@ export function ModePanel({
     try {
       const request: PaperLimitCancelRequest = {
         client_action_id: `paper-limit-cancel-${Date.now()}`,
-        symbol: "ONGUSDT", order_id: orderId,
+        symbol, order_id: orderId,
       };
       const response = await fetch("/api/limit/cancel", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -261,7 +249,7 @@ export function ModePanel({
     try {
       const request: PaperLimitAmendRequest = {
         client_action_id: `paper-limit-amend-${Date.now()}`,
-        symbol: "ONGUSDT", order_id: orderId, limit_price: price,
+        symbol, order_id: orderId, limit_price: price,
       };
       const response = await fetch("/api/limit/amend", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -500,11 +488,11 @@ export function ModePanel({
           <section className="paper-limit-list" aria-label="Active PAPER limits">
             <div className="paper-limit-list-header">
               <span>LIMITS</span>
-              <strong>{activeLimits.length}</strong>
+              <strong>{activeLimitOrders.length}</strong>
             </div>
 
             <ul>
-              {activeLimits.map((order) => (
+              {activeLimitOrders.map((order) => (
                 <li key={order.order_id}>
                   <span className={`paper-limit-summary ${order.side.toLowerCase()}`}>
                     {order.side} {order.quantity} @ {order.price}
