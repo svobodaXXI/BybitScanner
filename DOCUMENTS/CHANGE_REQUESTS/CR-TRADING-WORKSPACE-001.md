@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.40",
+  "revision": "1.41",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -41,6 +41,7 @@
     ,"Implement and verify the Lightweight Charts 5.2.1 interactive chart workspace and follow-latest runtime action"
     ,"Record the isolated Smart Tape to fixed DOM spatial-alignment patch while keeping its main integration pending"
     ,"Implement and manually accept live PAPER unrealized PnL plus the compact position-controls layout"
+    ,"Record the human-approved documentation-only authoritative LIMITS UX, unified LimitDraft architecture and explicit supersession map without authorizing implementation"
   ],
   "prohibited_scope": [
     "Further unapproved DOM, L2, Market Data Engine, Paper Trading Engine or chart implementation beyond recorded checkpoints",
@@ -207,6 +208,12 @@
     ,"An open position always has a non-draggable almost-white highlighted average-entry line whose exact price appears at its right end only while the line is held"
     ,"Active Limits use solid canonical direction colors, STOP/TAKE use distinct muted dashed protection styling, and average entry uses an almost-white highlighted solid line"
     ,"The reference-derived palette baseline uses graphite surfaces and canonical BUY/Bid #3BC639 plus SELL/Ask #CD0000 consistently across candles, best book, prints and active Limit lines; exact muted STOP/TAKE shades remain unresolved"
+    ,"The main trading panel exposes one LIMITS N button, where N is the authoritative active-Limit count for the current symbol, plus a separate adjacent cancel-all-symbol cross that always requires confirmation"
+    ,"A short LIMITS activation opens one compact LONG/SHORT new-Limit popup whose rows default to one Working Volume and approximately current price times 0.98 or 1.02 after authoritative side-aware tickSize normalization; selecting either row creates the same single pending editable LimitDraft represented by the popup and chart line with bidirectional price synchronization, one submit path and outside-tap dismissal without execution"
+    ,"A long LIMITS activation opens the narrower current-symbol Limit inventory overlay with SHORT before LONG, both initially collapsed, side headers containing side, count, USDT total and cancel-all cross, confirmed side-wide cancellation, unconfirmed concrete-order cancellation and projection updates only after authoritative cancellation"
+    ,"Fast Limit placement has no dedicated BUY ORDER or SELL ORDER DOM controls: holding the existing BUY or SELL control and selecting a price with a second tap on either chart or DOM creates the same pending editable LimitDraft using that side's configured volume; marketable or aggressive Limit intent remains Limit and requires explicit confirmation"
+    ,"LIMITS popup, BUY or SELL hold plus chart and BUY or SELL hold plus DOM share exactly one LimitDraft model and controller, tick normalization path, sizing and quantity-conversion path, submit pipeline, duplicate protection and execution and reconciliation pipeline"
+    ,"Limit submission remains fail closed and idempotent: one client_action_id is generated once for a submission attempt, repeated confirmation while submitting reuses that same action and promise, and an ambiguous result retains the same identity for reconciliation rather than generating a new identifier or blind retry"
   ],
   "unresolved_decisions": [
     "Final adoption and version constraints for the researched KLineChart, FastAPI and SQLite/WAL directions after implementation planning and prototype evidence",
@@ -352,7 +359,7 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "TRADING_CHART_IMPLEMENTED_SPATIAL_ALIGNMENT_INTEGRATION_PENDING",
+  "current_checkpoint": "AUTHORITATIVE_LIMITS_UX_RECORDED_DOCUMENTATION_ONLY",
   "implementation_status": "CHART_UX_IMPLEMENTED_VERIFIED_IN_MAIN_SPATIAL_ALIGNMENT_IMPLEMENTED_ISOLATED_NOT_MERGED",
   "next_phase": "VERIFY",
   "next_phase_authorization": "NO_FURTHER_IMPLEMENTATION_AUTHORIZED_BY_THIS_CHECKPOINT",
@@ -417,7 +424,8 @@
     {"revision": "1.37", "reason": "Checkpoint of serialized owner-thread PAPER execution, live ONGUSDT metadata and order-book authority, noncontiguous newer update-ID acceptance, 50-ms cumulative Smart Tape, x5 DOM compression, stable fixed ladder, canonical trade colors and IPv4 Vite binding while retaining the unresolved Tape-to-DOM spatial projection defect as the first next step", "date": "2026-08-26"},
     {"revision": "1.38", "reason": "Recorded the verified Lightweight Charts 5.2.1 Chart UX and follow-latest runtime fix in main, local-network mobile browser validation, and the separately implemented but unmerged Smart Tape to fixed DOM spatial-alignment patch with integration onto current main as the first next step", "date": "2026-08-26"},
     {"revision": "1.39", "reason": "Recorded DOM_STALE_CENTER_CAN_MOVE_SPREAD_OUTSIDE_FIXED_LADDER as a known unresolved issue after end-to-end runtime tracing proved that order-book quantities remain intact and that resolution requires a separately approved CENTER policy decision", "date": "2026-08-26"},
-    {"revision": "1.40", "reason": "Recorded the implemented and human-accepted live PAPER unrealized-PnL and position-controls checkpoint, authoritative average-entry projection, live midpoint calculation, restored Smart Tape prints after duplicate-backend ownership diagnosis, accepted mobile control grouping and Chart live/interaction work as the next implementation priority", "date": "2026-08-26"}
+    {"revision": "1.40", "reason": "Recorded the implemented and human-accepted live PAPER unrealized-PnL and position-controls checkpoint, authoritative average-entry projection, live midpoint calculation, restored Smart Tape prints after duplicate-backend ownership diagnosis, accepted mobile control grouping and Chart live/interaction work as the next implementation priority", "date": "2026-08-26"},
+    {"revision": "1.41", "reason": "Human-approved documentation-only amendment establishing the authoritative LIMITS button, creation popup, inventory overlay and equal chart/DOM fast-Limit entry paths on one shared LimitDraft architecture; explicitly superseding conflicting permanent rows, individual-cancel confirmation, release-to-submit, chart-only, dedicated DOM order controls and cross-spread Market conversion without authorizing implementation", "date": "2026-08-27"}
   ]
 }
 ```
@@ -3032,3 +3040,93 @@ updates, (2) normal pan/zoom, (3) directional two-finger pinch behavior on mobil
 price/time coordinate mapping, (5) removal of unnecessary drawing tools, then (6) completion of the remaining
 drawing tools. Temporal publicTrade-to-order-book synchronization is explicitly deferred behind this Chart UX
 priority and is not started by this checkpoint.
+
+## 50. Authoritative LIMITS UX amendment
+
+Revision 1.41 records checkpoint `AUTHORITATIVE_LIMITS_UX_RECORDED_DOCUMENTATION_ONLY`. This section is
+the authoritative LIMITS UX and architecture specification. It is a documentation amendment only: the
+ChangeRequest remains `IN_PROGRESS` in `IMPLEMENT`, no production implementation is authorized by this
+checkpoint, and existing backend, tests and runtime behavior are unchanged.
+
+### 50.1 Main trading-panel controls
+
+The main trading panel has one `LIMITS N` button. `N` is the authoritative count of active Limit orders
+for the current symbol. A separate adjacent `×` cancels all active Limits for that symbol only after
+explicit confirmation. The button and adjacent cross are distinct interaction targets.
+
+### 50.2 Short activation: one new-Limit draft
+
+A short activation of `LIMITS N` opens a compact new-Limit popup with `LONG` and `SHORT` rows. Each row
+defaults to `1 WV`. The initial LONG price is approximately `current price × 0.98`; the initial SHORT
+price is approximately `current price × 1.02`. Both prices require authoritative `tickSize`: LONG/BUY is
+normalized down and SHORT/SELL is normalized up. Confirmation is blocked when authoritative `tickSize`
+is absent, stale or otherwise unusable.
+
+Touching either row creates the one shared pending editable `LimitDraft` and its pending chart line. The
+popup and line are two views of that same draft, never independent orders. Price edits synchronize in
+both directions. The popup checkmark and line checkmark call the same submit path. A tap outside the
+draft interaction dismisses the draft and sends no execution request.
+
+Only one LimitDraft may exist at a time, irrespective of its entry origin. A draft records its side,
+symbol, price, sizing intent and origin without giving any origin a separate lifecycle or submit path.
+
+### 50.3 Long activation: active-Limit inventory
+
+A long activation of `LIMITS N` opens a narrower overlay and identifies the current symbol. The `SHORT`
+section appears first and the `LONG` section second; both are initially collapsed. Each section header
+shows side, active-order count, aggregate USDT total and a side `×`.
+
+The side `×` requests cancellation of all active Limits on that side and requires explicit confirmation.
+An individual-order `×` requests cancellation of only that concrete order and requires no additional
+confirmation. Rows, counts, totals and `LIMITS N` change only after authoritative cancellation state is
+received; request acceptance or optimistic local removal is insufficient.
+
+### 50.4 Fast Limit through the existing side controls
+
+There are no dedicated `BUY ORDER` or `SELL ORDER` DOM buttons. The existing `BUY` and `SELL` controls
+retain their ordinary Market behavior outside the long-press gesture. Holding `BUY` or `SELL` and then
+selecting a price with a second tap on either the chart or a DOM row creates the same shared pending
+editable LimitDraft. Chart and DOM are equal price-selection surfaces. The draft uses the existing
+side-specific configured volume.
+
+The second tap selects price but does not submit on release. Submission requires the draft's explicit
+checkmark confirmation. A marketable or aggressive Limit never auto-converts to Market; it remains a
+Limit intent and preserves the explicit-confirmation safety policy.
+
+### 50.5 One architecture for all entry paths
+
+The `LIMITS` popup, `BUY` or `SELL` hold plus chart, and `BUY` or `SELL` hold plus DOM must use exactly
+one LimitDraft model/controller, one authoritative side-aware tick-normalization path, one sizing and
+quantity-conversion path, one submit pipeline, one duplicate-protection mechanism and one execution and
+reconciliation pipeline.
+
+Submission remains fail closed. One stable `client_action_id` is generated once per submission attempt.
+Repeated confirmation while that attempt is submitting reuses the same action identity and in-flight
+promise. An ambiguous outcome does not generate a new identifier or start a fresh submission
+automatically; the original identity remains locked to reconciliation.
+
+### 50.6 Explicit supersession of conflicting clauses
+
+For LIMITS behavior, this section supersedes only the following earlier clauses and their metadata
+summaries; unrelated parts of those sections remain authoritative:
+
+1. Section 5's permanent vertically arranged `LONG LIMITS — N` and `SHORT LIMITS — N` creation rows are
+   replaced by the single `LIMITS N` button, short-activation popup and long-activation inventory.
+2. Sections 36.7 and the revision 1.27 metadata clause requiring permanent BUY/SELL composite Limit rows
+   and confirmation for individual cancellation are replaced by §50.1-§50.3. Side-wide and symbol-wide
+   cancellation still require confirmation; concrete individual cancellation does not.
+3. Sections 35.5 and 35.7 and their revision 1.26 metadata summary requiring submission when the second
+   finger is released and treating the chart as the approved primary fast-Limit surface are replaced by
+   §50.2, §50.4 and §50.5: chart and DOM are equal selectors and explicit draft confirmation submits.
+4. Sections 19 and 21.5 and the metadata `Quick DOM execution` clauses requiring dedicated `BUY ORDER`
+   or `SELL ORDER` controls and converting a cross-spread selection into immediate Market execution are
+   replaced by §50.4. Cross-spread or otherwise aggressive intent remains Limit.
+5. Section 26.2's dedicated side-explicit DOM Limit-placement controls and chart-only desktop placement
+   mapping are replaced by the existing-side-control gesture and equal chart/DOM surfaces in §50.4.
+
+### 50.7 Preserved safety and unrelated semantics
+
+This amendment preserves fail-closed behavior, `client_action_id` idempotency, reconciliation after
+ambiguous outcomes, ordinary Market-order behavior outside the BUY/SELL long-press gesture, and all
+existing STOP, TAKE and position semantics. It does not change exchange authority, cancellation
+reconciliation, order ownership, PAPER/live boundaries or any backend contract.
