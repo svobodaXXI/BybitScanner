@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "symbol": "CHIPUSDT",
+  "pattern": "multi_timeframe_bullish_confluence",
+  "status": "completed_positive_example",
+  "known_parent_reference": "post_pump_falling_wedge_4h",
+  "sequence": [
+    "4h_falling_wedge_breakout",
+    "5m_ikigai_box_reversal_near_1_618",
+    "1m_triangle_breakout",
+    "1m_l_shape_continuation",
+    "continuation_above_target"
+  ],
+  "observations": {
+    "l_shape_target_approx": 0.02934,
+    "target_reached": true,
+    "continuation_above_target": true
+  },
+  "training_tags": [
+    "multi_timeframe",
+    "falling_wedge",
+    "ikigai_box",
+    "triangle",
+    "l_shape",
+    "confluence",
+    "positive_example"
+  ]
+}

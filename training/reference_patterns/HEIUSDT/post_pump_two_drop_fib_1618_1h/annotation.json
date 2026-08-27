@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "symbol": "HEIUSDT",
+  "timeframe": "1h",
+  "record_type": "reference_pattern",
+  "source": "manual_reference",
+  "pattern": "post_pump_two_drop_fib_1618",
+  "status": "completed_positive_example",
+  "direction": "long_reversal",
+  "sequence": [
+    "pump",
+    "drop_impulse_1",
+    "consolidation",
+    "drop_impulse_2",
+    "fib_1_618_entry_zone",
+    "reversal",
+    "fib_1_0_target"
+  ],
+  "fibonacci_rule": {
+    "construction": "draw Fibonacci from the end of the first downward impulse to the beginning of the first downward impulse",
+    "entry_level": 1.618,
+    "target_level": 1.0,
+    "important_note": "Both impulse 1 and impulse 2 are downward. The first impulse is the decline after the pump."
+  },
+  "observed_levels": {
+    "fib_1_0_approx": 0.1436,
+    "fib_1_618_approx": 0.12235
+  },
+  "outcome": {
+    "entry_zone_reached": true,
+    "reversal_observed": true,
+    "target_1_0_approached_or_realized": true
+  },
+  "training_tags": [
+    "post_pump",
+    "two_drop_impulses",
+    "fibonacci_1618",
+    "mean_reversion",
+    "long_entry",
+    "manual_annotation",
+    "positive_example"
+  ],
+  "notes": [
+    "Pattern is defined by two downward impulses separated by consolidation/protrading.",
+    "Do not interpret the first impulse as bullish.",
+    "Potential future confluence: falling wedge, L-shape, local compression, pivot/reversal confirmation."
+  ]
+}

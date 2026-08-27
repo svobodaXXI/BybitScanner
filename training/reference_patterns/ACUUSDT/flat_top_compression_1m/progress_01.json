@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "symbol": "ACUUSDT",
+  "timeframe": "5m",
+  "record_type": "progress",
+  "progress_id": 1,
+  "status": "in_progress",
+  "source": "manual_reference",
+  "parent_pattern": "flat_top_compression_1m",
+  "observations": {
+    "initial_setup": "bullish compression",
+    "initial_target": 0.13015,
+    "reference_support": 0.12694,
+    "subsequent_structure": "rising_wedge",
+    "target_reached": false,
+    "event": "breakdown_below_rising_wedge_lower_boundary",
+    "long_scenario": "invalidated_by_new_structure"
+  },
+  "risk_management_note": "After substantial favorable movement, the newly formed rising wedge becomes relevant for position management. A confirmed break below its lower boundary can be used to protect/exit the remaining long position. Short entry should require separate confirmation rather than automatic reversal.",
+  "training_tags": [
+    "compression",
+    "rising_wedge",
+    "pattern_transition",
+    "failed_target",
+    "structural_stop",
+    "long_invalidation"
+  ]
+}

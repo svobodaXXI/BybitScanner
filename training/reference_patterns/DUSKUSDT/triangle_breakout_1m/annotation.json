@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "symbol": "DUSKUSDT",
+  "timeframe": "1m",
+  "pattern": "contracting_triangle",
+  "geometry_mode": "EXPLORATORY",
+  "status": "completed_positive_example",
+  "outcome": "bullish_breakout_target_reached",
+  "observations": {
+    "target_zone_approx": [
+      0.07198,
+      0.07212
+    ],
+    "target_reached": true,
+    "post_breakout_reentry": false,
+    "liquidity_aware_tp_note": "Manual TP was adjusted in front of a visible large order-book density."
+  },
+  "training_tags": [
+    "triangle",
+    "bullish_breakout",
+    "target_reached",
+    "liquidity_aware_tp",
+    "positive_example"
+  ]
+}

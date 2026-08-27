@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "symbol": "RONINUSDT",
+  "timeframe": "1m",
+  "pattern": "l_shape_continuation_after_falling_wedge",
+  "status": "completed_positive_example",
+  "sequence": [
+    "falling_wedge_breakout",
+    "l_shape_continuation",
+    "target_reached"
+  ],
+  "observations": {
+    "entry_reference_approx": 0.04928,
+    "target_approx": 0.04971,
+    "estimated_potential_percent": 0.8,
+    "target_reached": true
+  },
+  "training_tags": [
+    "falling_wedge",
+    "l_shape",
+    "continuation",
+    "target_reached",
+    "positive_example"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "symbol": "CYSUSDT",
+  "reference": "outcome.png",
+  "stage": "partial_or_complex_resolution",
+  "outcome_pending": false,
+  "classification": "initial_downside_resolution_rejection_bounce_delayed_downside_continuation",
+  "sequence": [
+    "initial downside resolution from the local base",
+    "pierce/test of the higher-timeframe trendline area",
+    "strong rejection/bounce",
+    "later return downward and delayed downside continuation"
+  ],
+  "evaluation": "Do not label as a simple success or failure. Preserve as a complex/delayed realization example.",
+  "research_value": [
+    "outcome evaluation needs a time horizon",
+    "intermediate rejection does not necessarily invalidate later directional continuation",
+    "future Pattern Engine may need FALSE_BREAK, RETEST, DELAYED_CONTINUATION and time-to-resolution states"
+  ]
+}

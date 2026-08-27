@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "symbol": "ACUUSDT",
+  "timeframe": "5m",
+  "record_type": "outcome",
+  "outcome_id": 1,
+  "status": "completed",
+  "source": "manual_reference",
+  "parent_reference": "flat_top_compression_1m",
+  "result": "rising_wedge_bearish_breakdown_realized",
+  "observations": {
+    "preceding_setup": "bullish compression followed by rising wedge",
+    "rising_wedge_breakdown": true,
+    "direction_after_breakdown": "down",
+    "long_scenario_cancelled": true,
+    "note": "Price broke the lower boundary of the rising wedge and the bearish move subsequently realized."
+  },
+  "training_tags": [
+    "rising_wedge",
+    "bearish_breakdown",
+    "realized_outcome",
+    "pattern_transition",
+    "long_invalidation",
+    "manual_outcome"
+  ]
+}

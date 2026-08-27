@@ -1,0 +1,20 @@
+{
+  "symbol": "REDUSDT",
+  "timeframe": "1h",
+  "record_type": "trade_outcome",
+  "status": "resolved",
+  "captured_date": "2026-08-19",
+  "source_image": "outcome.png",
+  "source_image_policy": "original_user_upload_unchanged",
+  "observed_outcome": {
+    "direction": "bullish",
+    "breakout_above_visible_level": 0.4687,
+    "continued_above_visible_level": 0.4923,
+    "visible_last_price": 0.5368,
+    "note": "Strong bullish expansion visible on supplied outcome chart; exact original trade thesis/entry is not reconstructed here."
+  },
+  "linkage": {
+    "original_setup": "UNRESOLVED",
+    "reason": "Original 1h setup metadata is not present in recovered context; do not invent it."
+  }
+}

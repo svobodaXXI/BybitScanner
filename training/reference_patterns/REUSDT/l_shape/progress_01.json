@@ -1,0 +1,8 @@
+{
+  "symbol": "REUSDT",
+  "reference": "progress_01.png",
+  "stage": "progress_before_resolution",
+  "outcome_pending": true,
+  "observation": "Price remains in consolidation/compression near the higher-timeframe resistance. No confirmed resolution yet.",
+  "policy": "Do not overwrite the original pre-resolution annotation. Save final resolution separately as outcome.png."
+}

@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "symbol": "VELVETUSDT",
+  "pattern": "nested_ikigai_boxes",
+  "status": "completed_positive_example",
+  "cases": {
+    "1m": {
+      "entry_model": "fib_1_618_reversal",
+      "target_level": 1.0,
+      "target_reached": true,
+      "continued_above_target": true,
+      "returned_after_extension": true
+    },
+    "15s": {
+      "entry_model": "fib_1_618_reversal",
+      "overshoot_1_618": true,
+      "target_level": 1.0,
+      "target_reached": true
+    }
+  },
+  "key_learning": "A moderate overshoot of 1.618 did not automatically invalidate the 15s Ikigai Box.",
+  "training_tags": [
+    "ikigai_box",
+    "nested_pattern",
+    "multi_timeframe",
+    "fib_1_618_overshoot",
+    "target_reached",
+    "positive_example"
+  ]
+}

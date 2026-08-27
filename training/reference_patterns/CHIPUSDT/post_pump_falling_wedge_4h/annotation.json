@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "symbol": "CHIPUSDT",
+  "timeframe": "4h",
+  "pattern": "falling_wedge",
+  "subtype": "post_pump_dump_falling_wedge",
+  "status": "in_progress",
+  "source": "manual_reference",
+  "context": {
+    "pre_pattern": "pump_and_dump",
+    "note": "Extreme pump/dump is market context and must not be included in wedge geometry."
+  },
+  "structure": {
+    "direction": "bullish_reversal",
+    "geometry": "large_falling_wedge",
+    "breakout_state": "upper_boundary_breakout_started"
+  },
+  "training_tags": [
+    "falling_wedge",
+    "post_pump_dump",
+    "volatility_contraction",
+    "manual_annotation",
+    "outcome_pending"
+  ],
+  "notes": [
+    "Strong pump followed by dump precedes the wedge.",
+    "Long declining consolidation with compression.",
+    "Save later progress/outcome after breakout develops."
+  ]
+}

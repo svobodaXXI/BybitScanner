@@ -1,0 +1,38 @@
+{
+  "symbol": "AEONUSDT",
+  "timeframe": "5m",
+  "pattern": "Post-Pump Falling Wedge / Complex Continuation Case",
+  "category": "future_pattern_research_reference",
+  "reference_type": "manual_plus_progress",
+  "accepted": true,
+  "implementation_status": "deferred",
+  "stage": "progress_before_final_resolution",
+  "outcome_pending": true,
+  "initial_hypothesis": "Expected a pierce/retest of the rising support followed by continuation upward toward the falling-wedge potential target.",
+  "observed_progress": [
+    "local rising support was later broken downward",
+    "price nevertheless recovered and continued grinding upward",
+    "original bullish directional scenario may still realize despite invalidation of the local entry structure",
+    "a larger possible rising wedge / opposing parent structure begins to appear"
+  ],
+  "research_concepts": [
+    "pattern_invalidation_vs_entry_invalidation",
+    "trajectory_deviation",
+    "post_pump_risk",
+    "structural_location",
+    "nested_and_opposing_parent_structure"
+  ],
+  "post_pump_risk_hypothesis": "A bullish falling wedge near the highs after a strong pump may carry elevated distribution/dump risk and should not be ranked like the same geometry near a broader support/base.",
+  "pump_dump_base_hypothesis": "If a powerful dump develops after a pump, search for evidence that the dangerous decline is ending near the base/foot of the pump-and-dump structure. A falling wedge forming there is a candidate reversal context, but must still require defined confirmation and stop/invalidation logic rather than automatic entry.",
+  "future_metrics": [
+    "distance_from_pre_pump_base",
+    "pump_extension_percent",
+    "drawdown_from_pump_high",
+    "location_inside_pump_dump_structure",
+    "parent_structure_type",
+    "entry_invalidation",
+    "pattern_invalidation",
+    "time_to_target"
+  ],
+  "outcome_policy": "Save the final resolution later without rewriting the original hypothesis."
+}

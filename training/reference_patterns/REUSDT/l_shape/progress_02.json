@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "symbol": "REUSDT",
+  "timeframe": "1h",
+  "pattern": "l_shape",
+  "record_type": "progress",
+  "progress_index": 2,
+  "image": "progress_02.png",
+  "image_policy": "ORIGINAL_USER_IMAGE_UNMODIFIED",
+  "observation": {
+    "outcome": "BULLISH_BREAKOUT_CONTINUATION",
+    "visible_reference_levels": [
+      0.4687,
+      0.4923
+    ],
+    "visible_last_price_approx": 0.5368,
+    "summary": "Strong bullish resolution: price broke above the visible 0.4687 level, continued through 0.4923, and reached approximately 0.5368 on the supplied chart."
+  },
+  "notes": [
+    "Continuation record for the existing REUSDT/l_shape reference case.",
+    "No inference is made here about trade execution, fills, PnL, or exact entry/exit."
+  ]
+}

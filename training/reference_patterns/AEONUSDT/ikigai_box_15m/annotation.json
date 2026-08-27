@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "symbol": "AEONUSDT",
+  "timeframe": "15m",
+  "pattern": "ikigai_box",
+  "status": "in_progress",
+  "context": "bearish wedge breakdown followed by two-drop Fibonacci reversal setup",
+  "sequence": [
+    "wedge_breakdown",
+    "downward_impulse",
+    "ikigai_box",
+    "fib_1_618_reaction",
+    "manual_flip_short_to_long"
+  ],
+  "observations": {
+    "fib_1_618_approx": 0.07082,
+    "reaction_observed": true,
+    "final_outcome_pending": true
+  },
+  "training_tags": [
+    "ikigai_box",
+    "fib_1_618",
+    "reversal",
+    "wedge_breakdown_context",
+    "outcome_pending"
+  ]
+}

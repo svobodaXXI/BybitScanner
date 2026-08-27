@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "symbol": "REDUSDT",
+  "timeframe": "4h",
+  "pattern": "nested_bullish_confluence",
+  "status": "in_progress",
+  "source": "manual_reference",
+  "hierarchy": [
+    "parent_falling_wedge",
+    "inverse_head_and_shoulders",
+    "right_shoulder",
+    "child_falling_wedge",
+    "bullish_breakout"
+  ],
+  "structure": {
+    "parent_pattern": "falling_wedge",
+    "middle_pattern": "inverse_head_and_shoulders",
+    "child_pattern": "falling_wedge",
+    "child_role": "forms_inside_right_shoulder",
+    "direction": "bullish"
+  },
+  "training_tags": [
+    "falling_wedge",
+    "inverse_head_and_shoulders",
+    "nested_pattern",
+    "multi_scale",
+    "bullish_confluence",
+    "manual_annotation",
+    "outcome_pending"
+  ],
+  "notes": [
+    "Inverse H&S forms before exit from the larger falling wedge.",
+    "The right shoulder develops into a smaller falling wedge.",
+    "Useful example of multi-scale nested pattern hierarchy.",
+    "Save later progress/outcome after the move develops."
+  ]
+}

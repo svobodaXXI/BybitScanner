@@ -1,0 +1,41 @@
+{
+  "symbol": "ACUUSDT",
+  "timeframe": "1m",
+  "pattern": "Flat-Top Compression",
+  "pattern_alias": "Поджатие к сопротивлению",
+  "geometry_alias": "Ascending Triangle / Flat-Top Compression",
+  "category": "future_pattern_research_reference",
+  "reference_type": "manual",
+  "accepted": true,
+  "preferred_reference": "manual.png",
+  "current_use": "future_pattern_reference",
+  "implementation_status": "deferred",
+  "stage": "before_resolution",
+  "outcome_pending": true,
+  "purpose": "Pre-resolution reference for studying price compression directly below a nearly horizontal resistance level.",
+  "observed_structure": [
+    "nearly_horizontal_resistance",
+    "repeated_approaches_to_resistance_from_below",
+    "generally_rising_local_lows",
+    "reduced_pullback_depth_near_resistance",
+    "price_remaining_close_to_resistance_before_resolution"
+  ],
+  "research_hypothesis": {
+    "concept": "level_compression",
+    "note": "Поджатие рассматривается не только как отдельная геометрическая фигура, но и как поведение цены относительно значимого уровня. Оно потенциально может встречаться внутри разных parent structures.",
+    "directional_context": "compression_below_resistance",
+    "expected_resolution": "unknown",
+    "do_not_relabel_after_outcome": true
+  },
+  "future_metrics": [
+    "number_of_level_approaches",
+    "distance_to_level",
+    "pullback_depth_decay",
+    "rising_lows_strength",
+    "time_between_retests",
+    "time_spent_near_level",
+    "volume_behavior"
+  ],
+  "outcome_policy": "Save the later resolution regardless of breakout, rejection, false breakout, prolonged consolidation, or other result.",
+  "notes": "Captured before resolution. Do not classify as a successful breakout in advance."
+}

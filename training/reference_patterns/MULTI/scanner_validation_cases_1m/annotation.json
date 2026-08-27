@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "record_type": "scanner_validation_bundle",
+  "timeframe": "1m",
+  "cases": [
+    {
+      "symbol": "SPXUSDT",
+      "label": "negative_false_canonical",
+      "issue": "major sustained lower-boundary excursion and later re-entry; should not score 100/100 as canonical"
+    },
+    {
+      "symbol": "XAIUSDT",
+      "label": "positive_falling_wedge",
+      "note": "Visually coherent canonical falling wedge; useful positive control."
+    },
+    {
+      "symbol": "ZEREBROUSDT",
+      "label": "suspect_rising_wedge",
+      "issue": "start/phase alignment questionable and current price moved below both boundaries; 100/100 appears inflated"
+    }
+  ],
+  "training_tags": [
+    "scanner_validation",
+    "positive_control",
+    "negative_control",
+    "false_canonical",
+    "boundary_excursion",
+    "ranking_diagnostics"
+  ]
+}
