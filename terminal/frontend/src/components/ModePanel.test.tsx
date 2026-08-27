@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useCallback, useEffect, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PaperState } from "../contracts/trading";
@@ -47,6 +47,7 @@ function ModePanel(props: {
         ownedPaperState?.ok ? ownedPaperState.active_limit_orders : []
       }
       refreshPaperState={refreshPaperState}
+      authoritativeTickSize="0.5"
     />
   );
 }
@@ -62,6 +63,57 @@ describe("ModePanel PAPER Market amounts", () => {
     time_in_force: "GTC" as const,
   };
 
+  const renderLimitPopup = () => {
+    const state = paperState() as PaperState;
+    render(
+      <ModePanelView
+        mode="TERMINAL"
+        onModeChange={vi.fn()}
+        symbol="BTCUSDT"
+        paperState={state}
+        activeLimitOrders={state.active_limit_orders}
+        refreshPaperState={vi.fn()}
+        sizingReferencePrice="64250"
+        authoritativeTickSize="0.5"
+        onPositionSideChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "LIMITS 0" }));
+    return screen.getByRole("dialog", { name: "New Limit" });
+  };
+
+  it("opens the short-tap popup with normalized LONG and SHORT defaults", () => {
+    const popup = renderLimitPopup();
+    const longRow = within(popup).getByText("LONG / L").closest(".paper-limit-popup-row");
+    const shortRow = within(popup).getByText("SHORT / S").closest(".paper-limit-popup-row");
+
+    expect(longRow).toHaveTextContent("LONG / L250 USDT62965");
+    expect(shortRow).toHaveTextContent("SHORT / S250 USDT65535");
+    expect(within(popup).getByRole("button", { name: "Confirm LONG / L Limit" })).toBeDisabled();
+    expect(within(popup).getByRole("button", { name: "Confirm SHORT / S Limit" })).toBeDisabled();
+  });
+
+  it("keeps the popup open for inside interaction", () => {
+    const popup = renderLimitPopup();
+    fireEvent.pointerDown(popup);
+    fireEvent.click(within(popup).getByText("LONG / L"));
+
+    expect(screen.getByRole("dialog", { name: "New Limit" })).toBeInTheDocument();
+    expect(within(popup).getByText("LONG / L").closest(".paper-limit-popup-row")).toHaveClass("selected");
+  });
+
+  it("closes outside and dismisses the selected shared draft", () => {
+    const popup = renderLimitPopup();
+    fireEvent.click(within(popup).getByText("LONG / L"));
+    fireEvent.pointerDown(document.querySelector(".paper-limit-popup-backdrop")!);
+
+    expect(screen.queryByRole("dialog", { name: "New Limit" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "LIMITS 0" }));
+    const reopened = screen.getByRole("dialog", { name: "New Limit" });
+    expect(within(reopened).getByText("LONG / L").closest(".paper-limit-popup-row")).not.toHaveClass("selected");
+  });
+
   it("shows LIMITS N from authoritative active orders", () => {
     const state = paperState({ active_limit_orders: [activeLimit] }) as PaperState;
     render(
@@ -73,6 +125,7 @@ describe("ModePanel PAPER Market amounts", () => {
         activeLimitOrders={state.active_limit_orders}
         refreshPaperState={vi.fn()}
         sizingReferencePrice="64250"
+        authoritativeTickSize="0.5"
         onPositionSideChange={vi.fn()}
       />,
     );
@@ -91,6 +144,7 @@ describe("ModePanel PAPER Market amounts", () => {
         activeLimitOrders={state.active_limit_orders}
         refreshPaperState={vi.fn()}
         sizingReferencePrice="64250"
+        authoritativeTickSize="0.5"
         onPositionSideChange={vi.fn()}
       />,
     );

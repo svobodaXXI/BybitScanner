@@ -576,6 +576,62 @@ button {
   color: #d67a82;
 }
 
+.paper-limit-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0.75rem;
+  background: rgb(5 8 11 / 42%);
+}
+
+.paper-limit-popup {
+  display: grid;
+  gap: 0.3rem;
+  width: min(22rem, calc(100vw - 1.5rem));
+  padding: 0.45rem;
+  border: 1px solid #394653;
+  border-radius: 0.38rem;
+  background: #131a21;
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 45%);
+}
+
+.paper-limit-popup-row {
+  display: grid;
+  grid-template-columns: minmax(4.8rem, 1fr) minmax(4.5rem, auto) minmax(4.8rem, auto) 1.8rem;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.1rem;
+  padding: 0.25rem 0.3rem;
+  border: 1px solid #303c47;
+  border-radius: 0.3rem;
+  background: #171d24;
+  color: #aab5bf;
+  font-size: 0.65rem;
+  cursor: pointer;
+}
+
+.paper-limit-popup-row.buy strong {
+  color: var(--trade-buy);
+}
+
+.paper-limit-popup-row.sell strong {
+  color: var(--trade-sell);
+}
+
+.paper-limit-popup-row.selected {
+  border-color: #63788a;
+  background: #1b242d;
+}
+
+.paper-limit-popup-row button {
+  width: 1.8rem;
+  height: 1.6rem;
+  padding: 0;
+}
+
 .paper-wv-indicator {
   display: flex;
   flex-direction: column;

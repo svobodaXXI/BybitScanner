@@ -43,6 +43,7 @@ describe("ModePanel position PnL data flow", () => {
           await fetch("/api/paper-state?symbol=ONGUSDT");
         }}
         sizingReferencePrice={sizingReferencePrice}
+        authoritativeTickSize="0.00001"
         onPositionSideChange={vi.fn()}
         onPositionAverageEntryChange={onAverageEntryChange}
       />,

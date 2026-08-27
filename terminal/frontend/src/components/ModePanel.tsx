@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import {
   type CommandResult,
   type FullCloseCommandRequest,
@@ -17,6 +17,12 @@ import {
   positionPnlPercent,
 } from "../marketData/positionPnl";
 import { baseAssetFromSymbol } from "../marketData/symbol";
+import {
+  createLimitDraft,
+  EMPTY_LIMIT_DRAFT_STATE,
+  limitDraftReducer,
+  normalizeLimitDraftPrice,
+} from "../orders/limitDraft";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
 
@@ -34,6 +40,7 @@ export function ModePanel({
   activeLimitOrders,
   refreshPaperState,
   sizingReferencePrice,
+  authoritativeTickSize,
   onPositionSideChange,
   onPositionAverageEntryChange,
 }: {
@@ -44,6 +51,7 @@ export function ModePanel({
   activeLimitOrders: PaperLimitOrder[];
   refreshPaperState: () => Promise<void>;
   sizingReferencePrice: string;
+  authoritativeTickSize: string | null;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
 }) {
@@ -53,6 +61,10 @@ export function ModePanel({
   const [limitPresentationOpen, setLimitPresentationOpen] = useState(false);
   const [cancelAllLimitsConfirmOpen, setCancelAllLimitsConfirmOpen] =
     useState(false);
+  const [limitDraftState, dispatchLimitDraft] = useReducer(
+    limitDraftReducer,
+    EMPTY_LIMIT_DRAFT_STATE,
+  );
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
     null,
   );
@@ -129,6 +141,43 @@ export function ModePanel({
     ? "neutral"
     : pnlPercent > 0 ? "positive" : "negative";
   const positionBaseAsset = baseAssetFromSymbol(positionSymbol);
+  const currentPrice = Number(sizingReferencePrice);
+  const longDefaultPrice = Number.isFinite(currentPrice) && currentPrice > 0
+    ? normalizeLimitDraftPrice(
+        String(currentPrice * 0.98),
+        authoritativeTickSize,
+        "Buy",
+      )
+    : null;
+  const shortDefaultPrice = Number.isFinite(currentPrice) && currentPrice > 0
+    ? normalizeLimitDraftPrice(
+        String(currentPrice * 1.02),
+        authoritativeTickSize,
+        "Sell",
+      )
+    : null;
+
+  const selectLimitDraft = (side: MarketSide, price: string | null) => {
+    if (price === null) return;
+    dispatchLimitDraft({
+      type: "begin",
+      draft: createLimitDraft({
+        draftId: `limit-draft-${symbol}-${side.toLowerCase()}-${Date.now()}`,
+        symbol,
+        side,
+        origin: "limits-popup",
+        volume: { unit: "working_volume", amount: "1" },
+        sizingReferencePrice,
+        price,
+        authoritativeTickSize,
+      }),
+    });
+  };
+
+  const dismissLimitPresentation = () => {
+    setLimitPresentationOpen(false);
+    dispatchLimitDraft({ type: "dismiss" });
+  };
 
   const startHoldTooltip = (message: string) => {
     if (holdTooltipTimer.current) {
@@ -514,6 +563,61 @@ export function ModePanel({
           {holdTooltip ? (
             <div className="paper-hold-tooltip" role="tooltip">
               {holdTooltip}
+            </div>
+          ) : null}
+
+          {limitPresentationOpen ? (
+            <div
+              className="paper-limit-popup-backdrop"
+              role="presentation"
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  dismissLimitPresentation();
+                }
+              }}
+            >
+              <section
+                className="paper-limit-popup"
+                role="dialog"
+                aria-modal="true"
+                aria-label="New Limit"
+              >
+                {([
+                  { label: "LONG / L", side: "Buy", price: longDefaultPrice },
+                  { label: "SHORT / S", side: "Sell", price: shortDefaultPrice },
+                ] as const).map((row) => {
+                  const selected = limitDraftState.draft?.side === row.side;
+                  const displayedPrice = selected
+                    ? limitDraftState.draft?.price
+                    : row.price;
+                  return (
+                    <div
+                      key={row.side}
+                      className={`paper-limit-popup-row ${row.side.toLowerCase()}${selected ? " selected" : ""}`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => selectLimitDraft(row.side, row.price)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          selectLimitDraft(row.side, row.price);
+                        }
+                      }}
+                    >
+                      <strong>{row.label}</strong>
+                      <span>{oneWvUsdt} USDT</span>
+                      <span>{displayedPrice ?? "—"}</span>
+                      <button
+                        type="button"
+                        aria-label={`Confirm ${row.label} Limit`}
+                        disabled
+                      >
+                        ✓
+                      </button>
+                    </div>
+                  );
+                })}
+              </section>
             </div>
           ) : null}
 

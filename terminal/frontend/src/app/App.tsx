@@ -116,6 +116,9 @@ export function App() {
           }
           refreshPaperState={refreshPaperState}
           sizingReferencePrice={sizingReferencePrice}
+          authoritativeTickSize={
+            market.tickSize === null ? null : String(market.tickSize)
+          }
           onPositionSideChange={setPositionSide}
           onPositionAverageEntryChange={setPositionAverageEntry}
         />
