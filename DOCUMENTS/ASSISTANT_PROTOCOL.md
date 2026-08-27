@@ -2,11 +2,11 @@
 
 Версия:
 
-4.22
+4.23
 
 Дата:
 
-2026-08-26
+2026-08-27
 
 Document Type:
 
@@ -1266,6 +1266,22 @@ Tests и checks не повторяются, если после их
 После staging достаточно проверить exact staged
 file list и cached diff-check, когда это требуется.
 
+### OBJECTIVELY_NECESSARY_TESTING_RULE
+
+Codex НЕ должен создавать synthetic/fake UI tests для поведения,
+которое пользователь сразу проверяет вручную в реальном интерфейсе.
+
+Codex не должен добавлять или запускать тесты без объективной
+необходимости. Автотест нужен только тогда, когда он действительно
+защищает критическую логику, существенную регрессию или поведение,
+которое нельзя надёжно и быстро проверить вручную.
+
+Обычная немедленная ручная проверка реального UI пользователем имеет
+приоритет над созданием искусственного test harness, mocks или fake UI
+environment только ради формального наличия теста. Это правило не
+отменяет обязательные safety-, contract-, migration- или critical-logic
+проверки, когда они объективно необходимы.
+
 Если прочитанный код соответствует ожидаемой
 архитектуре, он не пересказывается. Достаточно
 краткого подтверждения; подробности приводятся
@@ -1690,17 +1706,22 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.21
+ASSISTANT_PROTOCOL v4.22
 
 to:
 
-ASSISTANT_PROTOCOL v4.22
+ASSISTANT_PROTOCOL v4.23
 
 date:
 
-2026-08-26
+2026-08-27
 
 reason:
+
+* added mandatory `OBJECTIVELY_NECESSARY_TESTING_RULE`, prohibiting synthetic/fake UI tests for behavior the user can immediately verify in the real interface;
+* prohibited adding or running tests without objective need and limited autotests to critical logic, material regression protection or behavior that cannot be verified reliably and quickly by hand.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.21 to v4.22:
 
 * added mandatory `NO ASSUMED USER STATE + BEGINNER-SAFE STEP-BY-STEP`, prohibiting assumptions about the user's Windows, PowerShell, command-line, process, port, frontend/backend, Git, Node, Python or developer knowledge;
 * required one objectively necessary practical step at a time, fully copy-ready commands, explicit Windows-level navigation and expected outcomes, and state discovery before process/window/server instructions;
