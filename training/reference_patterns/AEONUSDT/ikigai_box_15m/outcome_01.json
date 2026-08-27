@@ -1,0 +1,16 @@
+{
+  "symbol": "AEONUSDT",
+  "timeframe": "15m",
+  "pattern": "ikigai_box",
+  "case_id": "ikigai_box_15m_2026-08-17_case01",
+  "artifact_role": "outcome",
+  "sequence": 1,
+  "observed_outcome": [
+    "breakdown from the marked box",
+    "downside move reached and exceeded the marked 1.618 extension area",
+    "subsequent bottom formation",
+    "strong recovery above the marked target/structure level"
+  ],
+  "source_image": "outcome_01.png",
+  "source_image_sha256": "524c5769eca366db2c97ac372a50cf1ccd6468374a173400705b414a5534767c"
+}
