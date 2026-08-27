@@ -2471,3 +2471,85 @@ button {
 .dom-compression-input {
   outline: none;
 }
+
+.paper-limits-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgb(5 8 11 / 55%);
+}
+
+.paper-limits-overlay {
+  width: min(24rem, calc(100vw - 3rem));
+  max-height: 75vh;
+  overflow: auto;
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.55rem;
+  border: 1px solid #394653;
+  border-radius: 0.42rem;
+  background: #131a21;
+  box-shadow: 0 0.9rem 2.4rem rgb(0 0 0 / 50%);
+}
+
+.paper-limits-overlay-title,
+.paper-limits-side-header,
+.paper-limits-order-row {
+  display: grid;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.paper-limits-overlay-title {
+  grid-template-columns: 1fr auto;
+}
+
+.paper-limits-overlay-title button {
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+}
+
+.paper-limits-side {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.paper-limits-side-header {
+  grid-template-columns: minmax(4rem, 1fr) auto auto 1rem;
+  min-height: 2.15rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid #303c47;
+  border-radius: 0.32rem;
+  background: #171d24;
+}
+
+.paper-limits-side.sell .paper-limits-side-header strong {
+  color: var(--trade-sell);
+}
+
+.paper-limits-side.buy .paper-limits-side-header strong {
+  color: var(--trade-buy);
+}
+
+.paper-limits-order-list {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.paper-limits-order-row {
+  grid-template-columns: 1fr auto 1.7rem;
+  min-height: 1.9rem;
+  padding: 0.2rem 0.35rem;
+  border-bottom: 1px solid #27313b;
+}
+
+.paper-limits-order-row button {
+  width: 1.6rem;
+  height: 1.5rem;
+  padding: 0;
+}

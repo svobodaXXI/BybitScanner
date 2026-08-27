@@ -65,6 +65,11 @@ export function ModePanel({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [limitPresentationOpen, setLimitPresentationOpen] = useState(false);
+  const [limitsOverlayOpen, setLimitsOverlayOpen] = useState(false);
+  const [limitsShortExpanded, setLimitsShortExpanded] = useState(false);
+  const [limitsLongExpanded, setLimitsLongExpanded] = useState(false);
+  const limitsHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const limitsLongPressTriggered = useRef(false);
   const [cancelAllLimitsConfirmOpen, setCancelAllLimitsConfirmOpen] =
     useState(false);
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
@@ -324,6 +329,27 @@ export function ModePanel({
     finally { submissionInFlight.current = false; setIsSubmitting(false); }
   };
 
+  const shortLimitOrders = activeLimitOrders.filter((order) => order.side === "Sell");
+  const longLimitOrders = activeLimitOrders.filter((order) => order.side === "Buy");
+
+  const limitNotionalUsdt = (order: PaperLimitOrder) => {
+    const price = Number(order.price);
+    const quantity = Number(order.quantity);
+    return Number.isFinite(price) && Number.isFinite(quantity)
+      ? price * quantity
+      : 0;
+  };
+
+  const shortLimitsTotalUsdt = shortLimitOrders.reduce(
+    (total, order) => total + limitNotionalUsdt(order),
+    0,
+  );
+
+  const longLimitsTotalUsdt = longLimitOrders.reduce(
+    (total, order) => total + limitNotionalUsdt(order),
+    0,
+  );
+
   return (
     <section className="mode-panel" aria-label={`${mode} controls`}>
       <div>
@@ -551,8 +577,38 @@ export function ModePanel({
             <button
               type="button"
               className="paper-limits-button"
-              aria-expanded={limitPresentationOpen}
-              onClick={() => setLimitPresentationOpen(true)}
+              aria-expanded={limitPresentationOpen || limitsOverlayOpen}
+              onPointerDown={() => {
+                limitsLongPressTriggered.current = false;
+                limitsHoldTimer.current = setTimeout(() => {
+                  limitsLongPressTriggered.current = true;
+                  setLimitPresentationOpen(false);
+                  setLimitsShortExpanded(false);
+                  setLimitsLongExpanded(false);
+                  setLimitsOverlayOpen(true);
+                }, 500);
+              }}
+              onPointerUp={() => {
+                if (limitsHoldTimer.current) {
+                  clearTimeout(limitsHoldTimer.current);
+                  limitsHoldTimer.current = null;
+                }
+                if (!limitsLongPressTriggered.current) {
+                  setLimitPresentationOpen(true);
+                }
+              }}
+              onPointerCancel={() => {
+                if (limitsHoldTimer.current) {
+                  clearTimeout(limitsHoldTimer.current);
+                  limitsHoldTimer.current = null;
+                }
+              }}
+              onPointerLeave={() => {
+                if (limitsHoldTimer.current) {
+                  clearTimeout(limitsHoldTimer.current);
+                  limitsHoldTimer.current = null;
+                }
+              }}
             >
               LIMITS {activeLimitOrders.length}
             </button>
@@ -631,6 +687,98 @@ export function ModePanel({
                     </div>
                   );
                 })}
+              </section>
+            </div>
+          ) : null}
+
+          {limitsOverlayOpen ? (
+            <div
+              className="paper-limits-overlay-backdrop"
+              role="presentation"
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setLimitsOverlayOpen(false);
+                }
+              }}
+            >
+              <section
+                className="paper-limits-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-label={`Active Limit orders for ${symbol}`}
+              >
+                <div className="paper-limits-overlay-title">
+                  <strong>{symbol}</strong>
+                  <button
+                    type="button"
+                    aria-label="Close Limit orders"
+                    onClick={() => setLimitsOverlayOpen(false)}
+                  >
+                    {"\u00d7"}
+                  </button>
+                </div>
+
+                <div className="paper-limits-side sell">
+                  <button
+                    type="button"
+                    className="paper-limits-side-header"
+                    onClick={() => setLimitsShortExpanded((value) => !value)}
+                  >
+                    <strong>SHORT</strong>
+                    <span>{shortLimitOrders.length} orders</span>
+                    <span>{shortLimitsTotalUsdt.toFixed(2)} USDT</span>
+                    <span aria-hidden="true">{"\u00d7"}</span>
+                  </button>
+
+                  {limitsShortExpanded ? (
+                    <div className="paper-limits-order-list">
+                      {shortLimitOrders.map((order) => (
+                        <div className="paper-limits-order-row" key={order.order_id}>
+                          <span>{order.price}</span>
+                          <span>{limitNotionalUsdt(order).toFixed(2)} USDT</span>
+                          <button
+                            type="button"
+                            aria-label={`Cancel Limit ${order.order_id}`}
+                            onClick={() => cancelLimit(order.order_id)}
+                          >
+                            {"\u00d7"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="paper-limits-side buy">
+                  <button
+                    type="button"
+                    className="paper-limits-side-header"
+                    onClick={() => setLimitsLongExpanded((value) => !value)}
+                  >
+                    <strong>LONG</strong>
+                    <span>{longLimitOrders.length} orders</span>
+                    <span>{longLimitsTotalUsdt.toFixed(2)} USDT</span>
+                    <span aria-hidden="true">{"\u00d7"}</span>
+                  </button>
+
+                  {limitsLongExpanded ? (
+                    <div className="paper-limits-order-list">
+                      {longLimitOrders.map((order) => (
+                        <div className="paper-limits-order-row" key={order.order_id}>
+                          <span>{order.price}</span>
+                          <span>{limitNotionalUsdt(order).toFixed(2)} USDT</span>
+                          <button
+                            type="button"
+                            aria-label={`Cancel Limit ${order.order_id}`}
+                            onClick={() => cancelLimit(order.order_id)}
+                          >
+                            {"\u00d7"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </section>
             </div>
           ) : null}
