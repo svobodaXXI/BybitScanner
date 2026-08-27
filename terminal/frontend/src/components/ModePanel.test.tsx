@@ -1,7 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PaperState } from "../contracts/trading";
+import { PendingLimitLine } from "../chart/PendingLimitLine";
+import {
+  EMPTY_LIMIT_DRAFT_STATE,
+  limitDraftReducer,
+} from "../orders/limitDraft";
 import { ModePanel as ModePanelView, type WorkspaceMode } from "./ModePanel";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -29,6 +34,10 @@ function ModePanel(props: {
   onPositionSideChange: (side: PaperState["position_side"]) => void;
 }) {
   const [ownedPaperState, setOwnedPaperState] = useState<PaperState | null>(null);
+  const [limitDraftState, dispatchLimitDraft] = useReducer(
+    limitDraftReducer,
+    EMPTY_LIMIT_DRAFT_STATE,
+  );
   const refreshPaperState = useCallback(async () => {
     const response = await fetch("/api/paper-state?symbol=BTCUSDT");
     setOwnedPaperState((await response.json()) as PaperState);
@@ -48,6 +57,8 @@ function ModePanel(props: {
       }
       refreshPaperState={refreshPaperState}
       authoritativeTickSize="0.5"
+      limitDraftState={limitDraftState}
+      dispatchLimitDraft={dispatchLimitDraft}
     />
   );
 }
@@ -65,19 +76,40 @@ describe("ModePanel PAPER Market amounts", () => {
 
   const renderLimitPopup = () => {
     const state = paperState() as PaperState;
-    render(
-      <ModePanelView
-        mode="TERMINAL"
-        onModeChange={vi.fn()}
-        symbol="BTCUSDT"
-        paperState={state}
-        activeLimitOrders={state.active_limit_orders}
-        refreshPaperState={vi.fn()}
-        sizingReferencePrice="64250"
-        authoritativeTickSize="0.5"
-        onPositionSideChange={vi.fn()}
-      />,
-    );
+    const PopupHarness = () => {
+      const [limitDraftState, dispatchLimitDraft] = useReducer(
+        limitDraftReducer,
+        EMPTY_LIMIT_DRAFT_STATE,
+      );
+      return (
+        <>
+          <ModePanelView
+            mode="TERMINAL"
+            onModeChange={vi.fn()}
+            symbol="BTCUSDT"
+            paperState={state}
+            activeLimitOrders={state.active_limit_orders}
+            refreshPaperState={vi.fn()}
+            sizingReferencePrice="64250"
+            authoritativeTickSize="0.5"
+            limitDraftState={limitDraftState}
+            dispatchLimitDraft={dispatchLimitDraft}
+            onPositionSideChange={vi.fn()}
+          />
+          {limitDraftState.draft ? (
+            <PendingLimitLine
+              side={limitDraftState.draft.side}
+              price={limitDraftState.draft.price}
+              top={120}
+              onDragClientY={() =>
+                dispatchLimitDraft({ type: "update-price", price: "63000.4" })
+              }
+            />
+          ) : null}
+        </>
+      );
+    };
+    render(<PopupHarness />);
     fireEvent.click(screen.getByRole("button", { name: "LIMITS 0" }));
     return screen.getByRole("dialog", { name: "New Limit" });
   };
@@ -102,12 +134,34 @@ describe("ModePanel PAPER Market amounts", () => {
     expect(within(popup).getByText("LONG / L").closest(".paper-limit-popup-row")).toHaveClass("selected");
   });
 
+  it("keeps the pending line and popup on one normalized draft price", () => {
+    const popup = renderLimitPopup();
+    fireEvent.click(within(popup).getByText("LONG / L"));
+    const line = screen.getByRole("slider", {
+      name: "Pending Buy Limit at 62965",
+    });
+    Object.assign(line, {
+      setPointerCapture: vi.fn(),
+      hasPointerCapture: vi.fn(() => true),
+      releasePointerCapture: vi.fn(),
+    });
+
+    fireEvent.pointerDown(line, { pointerId: 1, clientY: 120 });
+    fireEvent.pointerMove(line, { pointerId: 1, clientY: 140 });
+
+    expect(
+      screen.getByRole("slider", { name: "Pending Buy Limit at 63000" }),
+    ).toBeInTheDocument();
+    expect(within(popup).getByText("LONG / L").closest(".paper-limit-popup-row")).toHaveTextContent("63000");
+  });
+
   it("closes outside and dismisses the selected shared draft", () => {
     const popup = renderLimitPopup();
     fireEvent.click(within(popup).getByText("LONG / L"));
     fireEvent.pointerDown(document.querySelector(".paper-limit-popup-backdrop")!);
 
     expect(screen.queryByRole("dialog", { name: "New Limit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("slider", { name: /Pending Buy Limit/ })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "LIMITS 0" }));
     const reopened = screen.getByRole("dialog", { name: "New Limit" });
@@ -126,6 +180,8 @@ describe("ModePanel PAPER Market amounts", () => {
         refreshPaperState={vi.fn()}
         sizingReferencePrice="64250"
         authoritativeTickSize="0.5"
+        limitDraftState={EMPTY_LIMIT_DRAFT_STATE}
+        dispatchLimitDraft={vi.fn()}
         onPositionSideChange={vi.fn()}
       />,
     );
@@ -145,6 +201,8 @@ describe("ModePanel PAPER Market amounts", () => {
         refreshPaperState={vi.fn()}
         sizingReferencePrice="64250"
         authoritativeTickSize="0.5"
+        limitDraftState={EMPTY_LIMIT_DRAFT_STATE}
+        dispatchLimitDraft={vi.fn()}
         onPositionSideChange={vi.fn()}
       />,
     );

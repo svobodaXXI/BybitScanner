@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PaperState } from "../contracts/trading";
+import { EMPTY_LIMIT_DRAFT_STATE } from "../orders/limitDraft";
 import { ModePanel } from "./ModePanel";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -44,6 +45,8 @@ describe("ModePanel position PnL data flow", () => {
         }}
         sizingReferencePrice={sizingReferencePrice}
         authoritativeTickSize="0.00001"
+        limitDraftState={EMPTY_LIMIT_DRAFT_STATE}
+        dispatchLimitDraft={vi.fn()}
         onPositionSideChange={vi.fn()}
         onPositionAverageEntryChange={onAverageEntryChange}
       />,

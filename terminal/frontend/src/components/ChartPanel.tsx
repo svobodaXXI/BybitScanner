@@ -45,6 +45,9 @@ import {
 import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
+import type { LimitDraft } from "../orders/limitDraft";
+import { normalizedLimitDraftPrice } from "../orders/limitDraft";
+import { PendingLimitLine } from "../chart/PendingLimitLine";
 
 const PRICE_SCALE_WIDTH_FALLBACK = 64,
   TIME_SCALE_HEIGHT = 30,
@@ -90,11 +93,15 @@ export function ChartPanel({
   tickSize,
   symbol = "BTCUSDT",
   timeframe = "5m",
+  pendingLimitDraft = null,
+  onPendingLimitPriceChange,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
   symbol?: string;
   timeframe?: string;
+  pendingLimitDraft?: LimitDraft | null;
+  onPendingLimitPriceChange?: (price: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -254,6 +261,9 @@ export function ChartPanel({
     const r = hostRef.current?.getBoundingClientRect();
     return r ? { x: event.clientX - r.left, y: event.clientY - r.top } : null;
   };
+  const targetsPendingLimitLine = (target: EventTarget | null) =>
+    target instanceof Element &&
+    target.closest("[data-pending-limit-line]") !== null;
   const clearCrosshairTimer = () => {
     if (touchCrosshair.current.timer) {
       clearTimeout(touchCrosshair.current.timer);
@@ -301,6 +311,7 @@ export function ChartPanel({
       };
   };
   const onPointerDown = (event: React.PointerEvent) => {
+    if (targetsPendingLimitLine(event.target)) return;
     const p = relative(event);
     if (!p) return;
     pointers.current.set(event.pointerId, p);
@@ -373,6 +384,7 @@ export function ChartPanel({
     }
   };
   const onPointerMove = (event: React.PointerEvent) => {
+    if (targetsPendingLimitLine(event.target)) return;
     const p = relative(event),
       chart = chartRef.current;
     if (!p || !chart) return;
@@ -489,6 +501,7 @@ export function ChartPanel({
     }
   };
   const endPointer = (event: React.PointerEvent) => {
+    if (targetsPendingLimitLine(event.target)) return;
     pointers.current.delete(event.pointerId);
     if (touchCrosshair.current.pointerId === event.pointerId) {
       clearCrosshairTimer();
@@ -539,6 +552,12 @@ export function ChartPanel({
       timeScale.applyOptions({ rightOffset: DEFAULT_RIGHT_OFFSET_BARS });
       timeScale.scrollToRealTime();
     };
+  const normalizedPendingLimitPrice = pendingLimitDraft
+    ? normalizedLimitDraftPrice(pendingLimitDraft)
+    : null;
+  const pendingLimitTop = normalizedPendingLimitPrice === null
+    ? null
+    : coordinates.priceToY(Number(normalizedPendingLimitPrice));
   const deleteSelected = useCallback(() => {
     if (selectedId) {
       commit(drawings.filter((d) => d.id !== selectedId));
@@ -608,6 +627,22 @@ export function ChartPanel({
             gesture.current = null;
           }}
         />
+        {pendingLimitDraft && normalizedPendingLimitPrice !== null ? (
+          <PendingLimitLine
+            side={pendingLimitDraft.side}
+            price={normalizedPendingLimitPrice}
+            top={pendingLimitTop}
+            onDragClientY={(clientY) => {
+              const host = hostRef.current;
+              const series = seriesRef.current;
+              if (!host || !series || !onPendingLimitPriceChange) return;
+              const price = series.coordinateToPrice(
+                clientY - host.getBoundingClientRect().top,
+              );
+              if (price !== null) onPendingLimitPriceChange(String(price));
+            }}
+          />
+        ) : null}
         <DrawingToolbar
           activeTool={tool}
           magnet={magnet}

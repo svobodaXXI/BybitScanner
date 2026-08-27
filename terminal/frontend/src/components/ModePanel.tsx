@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch } from "react";
 import {
   type CommandResult,
   type FullCloseCommandRequest,
@@ -19,8 +19,8 @@ import {
 import { baseAssetFromSymbol } from "../marketData/symbol";
 import {
   createLimitDraft,
-  EMPTY_LIMIT_DRAFT_STATE,
-  limitDraftReducer,
+  type LimitDraftAction,
+  type LimitDraftState,
   normalizeLimitDraftPrice,
 } from "../orders/limitDraft";
 
@@ -41,6 +41,8 @@ export function ModePanel({
   refreshPaperState,
   sizingReferencePrice,
   authoritativeTickSize,
+  limitDraftState,
+  dispatchLimitDraft,
   onPositionSideChange,
   onPositionAverageEntryChange,
 }: {
@@ -52,6 +54,8 @@ export function ModePanel({
   refreshPaperState: () => Promise<void>;
   sizingReferencePrice: string;
   authoritativeTickSize: string | null;
+  limitDraftState: LimitDraftState;
+  dispatchLimitDraft: Dispatch<LimitDraftAction>;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
 }) {
@@ -61,10 +65,6 @@ export function ModePanel({
   const [limitPresentationOpen, setLimitPresentationOpen] = useState(false);
   const [cancelAllLimitsConfirmOpen, setCancelAllLimitsConfirmOpen] =
     useState(false);
-  const [limitDraftState, dispatchLimitDraft] = useReducer(
-    limitDraftReducer,
-    EMPTY_LIMIT_DRAFT_STATE,
-  );
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
     null,
   );

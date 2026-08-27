@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 import { AccountMenu } from "../components/AccountMenu";
 import { ChartPanel } from "../components/ChartPanel";
 import { DomPanel } from "../components/DomPanel";
@@ -11,6 +11,10 @@ import { recommendedLadderCenter } from "../marketData/domProjection";
 import type { ChartTimeframe } from "../marketData/timeframes";
 import { setMarketTimeframe, useMarketData } from "../marketData/useMarketData";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
+import {
+  EMPTY_LIMIT_DRAFT_STATE,
+  limitDraftReducer,
+} from "../orders/limitDraft";
 
 export function App() {
   const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
@@ -20,6 +24,10 @@ export function App() {
   const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [paperState, setPaperState] = useState<PaperState | null>(null);
+  const [limitDraftState, dispatchLimitDraft] = useReducer(
+    limitDraftReducer,
+    EMPTY_LIMIT_DRAFT_STATE,
+  );
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
     null,
   );
@@ -86,6 +94,10 @@ export function App() {
           tickSize={market.tickSize}
           symbol={market.book.symbol}
           timeframe={timeframe}
+          pendingLimitDraft={limitDraftState.draft}
+          onPendingLimitPriceChange={(price) =>
+            dispatchLimitDraft({ type: "update-price", price })
+          }
         />
         <aside className="market-sidecar" aria-label="Market depth and tape">
           <DomPanel
@@ -119,6 +131,8 @@ export function App() {
           authoritativeTickSize={
             market.tickSize === null ? null : String(market.tickSize)
           }
+          limitDraftState={limitDraftState}
+          dispatchLimitDraft={dispatchLimitDraft}
           onPositionSideChange={setPositionSide}
           onPositionAverageEntryChange={setPositionAverageEntry}
         />

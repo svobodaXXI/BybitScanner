@@ -632,6 +632,39 @@ button {
   padding: 0;
 }
 
+.pending-limit-line {
+  position: absolute;
+  z-index: 18;
+  right: 0;
+  left: 0;
+  height: 1.1rem;
+  transform: translateY(-50%);
+  border-top: 2px dashed currentColor;
+  opacity: 0.62;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.pending-limit-line.buy {
+  color: var(--trade-buy);
+}
+
+.pending-limit-line.sell {
+  color: var(--trade-sell);
+}
+
+.pending-limit-line span {
+  position: absolute;
+  top: -0.72rem;
+  right: 0.25rem;
+  padding: 0.08rem 0.24rem;
+  border-radius: 0.2rem;
+  background: #11181f;
+  color: inherit;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
 .paper-wv-indicator {
   display: flex;
   flex-direction: column;
