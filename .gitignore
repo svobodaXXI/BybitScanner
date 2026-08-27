@@ -65,3 +65,9 @@ project_tree_raw.txt
 PROJECT_TREE_CURRENT.txt
 SNAPSHOT.md
 float_search.txt
+
+.pytest_cache/
+paper_runtime.sqlite3*
+terminal/frontend/test-results/
+review_queue/
+*.bak*
