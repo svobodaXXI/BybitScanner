@@ -47,6 +47,7 @@ describe("ModePanel position PnL data flow", () => {
         authoritativeTickSize="0.00001"
         limitDraftState={EMPTY_LIMIT_DRAFT_STATE}
         dispatchLimitDraft={vi.fn()}
+        onLimitDraftConfirm={vi.fn()}
         onPositionSideChange={vi.fn()}
         onPositionAverageEntryChange={onAverageEntryChange}
       />,

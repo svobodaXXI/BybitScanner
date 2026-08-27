@@ -665,6 +665,20 @@ button {
   font-weight: 700;
 }
 
+.pending-limit-line > button {
+  position: absolute;
+  top: -0.82rem;
+  right: 4.8rem;
+  width: 1.7rem;
+  height: 1.45rem;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 0.22rem;
+  background: #11181f;
+  color: inherit;
+  font-weight: 800;
+}
+
 .paper-wv-indicator {
   display: flex;
   flex-direction: column;

@@ -95,6 +95,7 @@ export function ChartPanel({
   timeframe = "5m",
   pendingLimitDraft = null,
   onPendingLimitPriceChange,
+  onPendingLimitConfirm,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -102,6 +103,7 @@ export function ChartPanel({
   timeframe?: string;
   pendingLimitDraft?: LimitDraft | null;
   onPendingLimitPriceChange?: (price: string) => void;
+  onPendingLimitConfirm?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -641,6 +643,11 @@ export function ChartPanel({
               );
               if (price !== null) onPendingLimitPriceChange(String(price));
             }}
+            onConfirm={onPendingLimitConfirm}
+            confirmDisabled={
+              pendingLimitDraft.status === "submitting" ||
+              pendingLimitDraft.status === "ambiguous"
+            }
           />
         ) : null}
         <DrawingToolbar

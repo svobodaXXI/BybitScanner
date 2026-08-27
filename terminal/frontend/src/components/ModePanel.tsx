@@ -43,6 +43,7 @@ export function ModePanel({
   authoritativeTickSize,
   limitDraftState,
   dispatchLimitDraft,
+  onLimitDraftConfirm,
   onPositionSideChange,
   onPositionAverageEntryChange,
 }: {
@@ -56,6 +57,7 @@ export function ModePanel({
   authoritativeTickSize: string | null;
   limitDraftState: LimitDraftState;
   dispatchLimitDraft: Dispatch<LimitDraftAction>;
+  onLimitDraftConfirm: () => void;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
 }) {
@@ -82,6 +84,7 @@ export function ModePanel({
   const buyAmountEdited = useRef(false);
   const sellAmountEdited = useRef(false);
   const submissionInFlight = useRef(false);
+  const previousLimitDraft = useRef(limitDraftState.draft);
 
   useEffect(() => {
       const engagedWv = Number(paperState?.engaged_wv);
@@ -128,6 +131,13 @@ export function ModePanel({
       sellAmountEdited.current = false;
     }
   }, [mode]);
+
+  useEffect(() => {
+    if (previousLimitDraft.current !== null && limitDraftState.draft === null) {
+      setLimitPresentationOpen(false);
+    }
+    previousLimitDraft.current = limitDraftState.draft;
+  }, [limitDraftState.draft]);
 
   const alternatives = (["TERMINAL", "AUTOPILOT"] as const).filter(
     (candidate) => candidate !== mode,
@@ -610,7 +620,11 @@ export function ModePanel({
                       <button
                         type="button"
                         aria-label={`Confirm ${row.label} Limit`}
-                        disabled
+                        disabled={!selected || limitDraftState.draft?.status === "submitting" || limitDraftState.draft?.status === "ambiguous"}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onLimitDraftConfirm();
+                        }}
                       >
                         ✓
                       </button>

@@ -59,6 +59,7 @@ function ModePanel(props: {
       authoritativeTickSize="0.5"
       limitDraftState={limitDraftState}
       dispatchLimitDraft={dispatchLimitDraft}
+      onLimitDraftConfirm={vi.fn()}
     />
   );
 }
@@ -74,7 +75,7 @@ describe("ModePanel PAPER Market amounts", () => {
     time_in_force: "GTC" as const,
   };
 
-  const renderLimitPopup = () => {
+  const renderLimitPopup = (onLimitDraftConfirm = vi.fn()) => {
     const state = paperState() as PaperState;
     const PopupHarness = () => {
       const [limitDraftState, dispatchLimitDraft] = useReducer(
@@ -94,6 +95,7 @@ describe("ModePanel PAPER Market amounts", () => {
             authoritativeTickSize="0.5"
             limitDraftState={limitDraftState}
             dispatchLimitDraft={dispatchLimitDraft}
+            onLimitDraftConfirm={onLimitDraftConfirm}
             onPositionSideChange={vi.fn()}
           />
           {limitDraftState.draft ? (
@@ -104,6 +106,7 @@ describe("ModePanel PAPER Market amounts", () => {
               onDragClientY={() =>
                 dispatchLimitDraft({ type: "update-price", price: "63000.4" })
               }
+              onConfirm={onLimitDraftConfirm}
             />
           ) : null}
         </>
@@ -155,6 +158,21 @@ describe("ModePanel PAPER Market amounts", () => {
     expect(within(popup).getByText("LONG / L").closest(".paper-limit-popup-row")).toHaveTextContent("63000");
   });
 
+  it("routes popup and chart checkmarks to one submit callback", () => {
+    const onSubmit = vi.fn();
+    const popup = renderLimitPopup(onSubmit);
+    fireEvent.click(within(popup).getByText("LONG / L"));
+
+    fireEvent.click(
+      within(popup).getByRole("button", { name: "Confirm LONG / L Limit" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm pending Buy Limit" }),
+    );
+
+    expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
   it("closes outside and dismisses the selected shared draft", () => {
     const popup = renderLimitPopup();
     fireEvent.click(within(popup).getByText("LONG / L"));
@@ -182,6 +200,7 @@ describe("ModePanel PAPER Market amounts", () => {
         authoritativeTickSize="0.5"
         limitDraftState={EMPTY_LIMIT_DRAFT_STATE}
         dispatchLimitDraft={vi.fn()}
+        onLimitDraftConfirm={vi.fn()}
         onPositionSideChange={vi.fn()}
       />,
     );
@@ -203,6 +222,7 @@ describe("ModePanel PAPER Market amounts", () => {
         authoritativeTickSize="0.5"
         limitDraftState={EMPTY_LIMIT_DRAFT_STATE}
         dispatchLimitDraft={vi.fn()}
+        onLimitDraftConfirm={vi.fn()}
         onPositionSideChange={vi.fn()}
       />,
     );

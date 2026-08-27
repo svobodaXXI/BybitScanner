@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { AccountMenu } from "../components/AccountMenu";
 import { ChartPanel } from "../components/ChartPanel";
 import { DomPanel } from "../components/DomPanel";
@@ -15,6 +15,7 @@ import {
   EMPTY_LIMIT_DRAFT_STATE,
   limitDraftReducer,
 } from "../orders/limitDraft";
+import { PaperLimitDraftSubmitController } from "../orders/limitDraftSubmission";
 
 export function App() {
   const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
@@ -28,6 +29,7 @@ export function App() {
     limitDraftReducer,
     EMPTY_LIMIT_DRAFT_STATE,
   );
+  const limitSubmitController = useRef(new PaperLimitDraftSubmitController());
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
     null,
   );
@@ -75,6 +77,17 @@ export function App() {
     setMarketTimeframe(next);
   };
 
+  const submitLimitDraft = useCallback(() => {
+    const draft = limitDraftState.draft;
+    if (!draft) return;
+    limitSubmitController.current.submit(draft, {
+      dispatch: dispatchLimitDraft,
+      createClientActionId: () =>
+        globalThis.crypto?.randomUUID?.() ?? `paper-limit-${Date.now()}`,
+      refreshPaperState,
+    });
+  }, [limitDraftState.draft, refreshPaperState]);
+
   return (
     <main className="workspace-shell">
       <TelegramMiniAppBridge />
@@ -98,6 +111,7 @@ export function App() {
           onPendingLimitPriceChange={(price) =>
             dispatchLimitDraft({ type: "update-price", price })
           }
+          onPendingLimitConfirm={submitLimitDraft}
         />
         <aside className="market-sidecar" aria-label="Market depth and tape">
           <DomPanel
@@ -133,6 +147,7 @@ export function App() {
           }
           limitDraftState={limitDraftState}
           dispatchLimitDraft={dispatchLimitDraft}
+          onLimitDraftConfirm={submitLimitDraft}
           onPositionSideChange={setPositionSide}
           onPositionAverageEntryChange={setPositionAverageEntry}
         />

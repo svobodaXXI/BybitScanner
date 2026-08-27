@@ -5,11 +5,15 @@ export function PendingLimitLine({
   price,
   top,
   onDragClientY,
+  onConfirm,
+  confirmDisabled = false,
 }: {
   side: MarketSide;
   price: string;
   top: number | null;
   onDragClientY: (clientY: number) => void;
+  onConfirm?: () => void;
+  confirmDisabled?: boolean;
 }) {
   if (top === null) return null;
 
@@ -40,6 +44,18 @@ export function PendingLimitLine({
       }}
     >
       <span>{price}</span>
+      <button
+        type="button"
+        aria-label={`Confirm pending ${side} Limit`}
+        disabled={confirmDisabled || !onConfirm}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          onConfirm?.();
+        }}
+      >
+        ✓
+      </button>
     </div>
   );
 }
