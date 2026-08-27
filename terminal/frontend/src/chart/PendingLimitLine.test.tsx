@@ -41,4 +41,20 @@ describe("PendingLimitLine", () => {
 
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("keeps the confirmation checkmark on the green action style for Sell", () => {
+    render(
+      <PendingLimitLine
+        side="Sell"
+        price="65535"
+        top={120}
+        onDragClientY={vi.fn()}
+        onConfirm={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", {
+      name: "Confirm pending Sell Limit",
+    })).toHaveClass("pending-limit-confirm");
+  });
 });

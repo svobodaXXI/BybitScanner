@@ -7,6 +7,7 @@ from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLe
 from terminal.paper.matching import (
     PaperBookUnavailable,
     PaperInsufficientLiquidity,
+    match_limit_order,
     match_market_order,
 )
 
@@ -74,3 +75,71 @@ def test_market_rejects_insufficient_liquidity():
             side=OrderSide.BUY,
             quantity=Quantity(Decimal("4")),
         )
+
+
+def test_limit_buy_walks_only_asks_at_or_below_cap():
+    result = match_limit_order(
+        _book(),
+        side=OrderSide.BUY,
+        limit_price=Price(Decimal("102")),
+        remaining_quantity=Quantity(Decimal("2.5")),
+    )
+
+    assert result is not None
+    assert result.fully_filled is True
+    assert result.filled_quantity.value == Decimal("2.5")
+    assert result.remaining_quantity.value == Decimal("0.0")
+    assert result.vwap.value == Decimal("101.6")
+    assert [fill.price.value for fill in result.fills] == [
+        Decimal("101"),
+        Decimal("102"),
+    ]
+
+
+def test_limit_sell_walks_only_bids_at_or_above_floor():
+    result = match_limit_order(
+        _book(),
+        side=OrderSide.SELL,
+        limit_price=Price(Decimal("98")),
+        remaining_quantity=Quantity(Decimal("4")),
+    )
+
+    assert result is not None
+    assert result.fully_filled is True
+    assert result.filled_quantity.value == Decimal("4")
+    assert result.remaining_quantity.value == Decimal("0")
+    assert [fill.price.value for fill in result.fills] == [
+        Decimal("99"),
+        Decimal("98"),
+    ]
+
+
+def test_limit_returns_partial_fill_when_eligible_liquidity_is_insufficient():
+    result = match_limit_order(
+        _book(),
+        side=OrderSide.BUY,
+        limit_price=Price(Decimal("101")),
+        remaining_quantity=Quantity(Decimal("3")),
+    )
+
+    assert result is not None
+    assert result.fully_filled is False
+    assert result.filled_quantity.value == Decimal("1")
+    assert result.remaining_quantity.value == Decimal("2")
+    assert [fill.price.value for fill in result.fills] == [Decimal("101")]
+
+
+@pytest.mark.parametrize(
+    ("side", "limit_price"),
+    [
+        (OrderSide.BUY, "100"),
+        (OrderSide.SELL, "100"),
+    ],
+)
+def test_limit_returns_no_match_before_market_reaches_price(side, limit_price):
+    assert match_limit_order(
+        _book(),
+        side=side,
+        limit_price=Price(Decimal(limit_price)),
+        remaining_quantity=Quantity(Decimal("1")),
+    ) is None

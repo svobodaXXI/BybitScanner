@@ -22,8 +22,8 @@ from terminal.domain.models import Symbol, TradingAccountId
 from terminal.domain.models import OrderId
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.book_provider import MarketBookProvider
-from terminal.paper.executor import PaperMarketExecutor
-from terminal.persistence.sqlite_store import SQLiteStore
+from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
+from terminal.persistence.sqlite_store import ExecutionApplyResult, SQLiteStore
 from terminal.runtime.paper_context import (
     PaperCommandContextProvider,
     working_volume_usdt,
@@ -62,6 +62,13 @@ class PaperRuntime:
     ) -> None:
         self.store = SQLiteStore.open(database_path)
         engine = ExecutionEngine(self.store)
+        self._book_provider = book_provider
+        self._limit_executor = PaperLimitExecutor(
+            engine,
+            fee_rate=Decimal("0.0006"),
+            clock_ms=lambda: int(time.time() * 1000),
+        )
+        self._last_processed_book_update_id: str | None = None
 
         paper_executor = PaperMarketExecutor(
             book_provider,
@@ -98,6 +105,32 @@ class PaperRuntime:
         self._guard = application.guard
         self._context = context_provider
         self._account_id = account_id
+
+    def process_orderbook_update(self, notified_book_update_id: str) -> int:
+        if not notified_book_update_id:
+            raise ValueError("book_update_id must be non-empty")
+        current_update = self._book_provider.get_current_book_update(
+            Symbol(self._context.instrument.symbol)
+        )
+        if current_update is None:
+            return 0
+        book_update_id, book = current_update
+        if book_update_id == self._last_processed_book_update_id:
+            return 0
+
+        # Claim the authoritative snapshot before applying its orders. A queued
+        # duplicate therefore cannot replay fills if one order raises midway.
+        self._last_processed_book_update_id = book_update_id
+        applied = 0
+        for order in self.store.load_active_paper_limits(book.symbol):
+            result = self._limit_executor.execute(
+                order=order,
+                book=book,
+                match_event_id=book_update_id,
+            )
+            if result is not None and result.apply_result is ExecutionApplyResult.APPLIED:
+                applied += 1
+        return applied
 
     def paper_state(self, symbol: str) -> dict[str, object]:
         normalized_symbol = symbol.strip().upper()

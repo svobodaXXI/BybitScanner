@@ -21,6 +21,8 @@ export function DomPanel({
   ownOrders,
   compression,
   onCompressionChange,
+  fastLimitActive = false,
+  onFastLimitPriceSelect,
 }: {
   book: NormalizedOrderBook;
   centerPrice: number | null;
@@ -28,6 +30,8 @@ export function DomPanel({
   ownOrders: readonly OwnOrder[];
   compression: number;
   onCompressionChange: (compression: number) => void;
+  fastLimitActive?: boolean;
+  onFastLimitPriceSelect?: (price: string) => void;
 }) {
   const [offset, setOffset] = useState(0);
   const [locked, setLocked] = useState(false);
@@ -205,6 +209,10 @@ export function DomPanel({
   className={locked ? "dom-price center-locked" : "dom-price"}
   onClick={(event) => {
     event.stopPropagation();
+    if (fastLimitActive && onFastLimitPriceSelect) {
+      onFastLimitPriceSelect(formatPrice(level.price));
+      return;
+    }
     center();
   }}
   onDoubleClick={(event) => {

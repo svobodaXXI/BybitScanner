@@ -2,6 +2,8 @@
 
 Canonical compact entry point for coding agents. It routes to project authority; it does not replace that authority.
 
+This root `AGENTS.md` applies to the entire repository tree rooted at `C:\BybitScanner` and is a mandatory project-level instruction file for Codex.
+
 ## Staged recovery
 
 0. **Local reality:** read this file; inspect branch, HEAD, index/working-tree status, the user task, and relevant dirty scope.
@@ -41,6 +43,8 @@ Before editing, inspect actual targets and `git status --short`. Treat unrelated
 Confirm existing components before adding modules, registries, paths, documents, or stores. Identify affected contracts, callers, tests, runtime behavior, and data compatibility.
 
 ## Verify and record
+
+Codex must not create synthetic/fake UI tests for behavior the user can immediately verify in the real interface. Do not add or run tests without objective necessity; add an automated test only when it protects critical logic, a material regression, or behavior that cannot be verified reliably and quickly by hand.
 
 After implementation, Codex must run `python -m tools.dev.verify` once with repeated `--path` arguments matching the exact task/changed paths. The verifier routes only the required scoped checks, avoids redundant broad/full tests, remains read-only with respect to Git/index, and writes its PASS receipt under `.git/bybitscanner/`.
 

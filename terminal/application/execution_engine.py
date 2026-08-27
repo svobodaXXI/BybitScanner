@@ -179,6 +179,26 @@ class ExecutionEngine:
             command_id=command.command_id if command is not None else None,
         )
 
+    def apply_paper_limit_execution(
+        self,
+        event: ExecutionEvent,
+        *,
+        updated_at_ms: int,
+    ) -> ExecutionApplyResult:
+        """Apply one PAPER limit fill atomically with its position projection."""
+
+        execution = _domain_execution(event)
+        current = self._store.get_position_projection(
+            _position_key_for_execution(event, self._orders)
+        )
+        projection = _projection_after_execution(event, current)
+        return self._store.apply_paper_limit_execution_once(
+            execution.order_id,
+            execution,
+            projection,
+            updated_at_ms=updated_at_ms,
+        )
+
     def projection_from_authoritative_position(
         self,
         event: PositionEvent,

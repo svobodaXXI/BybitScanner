@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -254,6 +254,58 @@ SCHEMA_V6_MIGRATION_STATEMENTS = (
     "ALTER TABLE paper_limit_actions_v6 RENAME TO paper_limit_actions",
 )
 
+SCHEMA_V7_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE paper_limit_orders_v7 (
+        order_id TEXT PRIMARY KEY,
+        order_link_id TEXT NOT NULL UNIQUE,
+        trading_account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL,
+        price TEXT NOT NULL,
+        quantity TEXT NOT NULL,
+        filled_quantity TEXT NOT NULL DEFAULT '0',
+        time_in_force TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        CHECK (side IN ('Buy', 'Sell')),
+        CHECK (time_in_force = 'GTC'),
+        CHECK (status IN ('open', 'partially_filled', 'filled', 'cancelled'))
+    )
+    """,
+    """
+    INSERT INTO paper_limit_orders_v7 (
+        order_id, order_link_id, trading_account_id, symbol, side, price,
+        quantity, filled_quantity, time_in_force, status, created_at_ms, updated_at_ms
+    )
+    SELECT
+        order_id, order_link_id, trading_account_id, symbol, side, price,
+        quantity, '0', time_in_force, status, created_at_ms, updated_at_ms
+    FROM paper_limit_orders
+    """,
+    """
+    CREATE TABLE paper_limit_actions_v7 (
+        client_action_id TEXT PRIMARY KEY,
+        operation TEXT NOT NULL,
+        request_fingerprint TEXT NOT NULL,
+        order_id TEXT,
+        created_at_ms INTEGER NOT NULL,
+        FOREIGN KEY (order_id) REFERENCES paper_limit_orders_v7(order_id),
+        CHECK (operation IN ('create', 'amend', 'cancel'))
+    ) WITHOUT ROWID
+    """,
+    """
+    INSERT INTO paper_limit_actions_v7
+    SELECT client_action_id, operation, request_fingerprint, order_id, created_at_ms
+    FROM paper_limit_actions
+    """,
+    "DROP TABLE paper_limit_actions",
+    "DROP TABLE paper_limit_orders",
+    "ALTER TABLE paper_limit_orders_v7 RENAME TO paper_limit_orders",
+    "ALTER TABLE paper_limit_actions_v7 RENAME TO paper_limit_actions",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -261,4 +313,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V4_MIGRATION_STATEMENTS
     + SCHEMA_V5_MIGRATION_STATEMENTS
     + SCHEMA_V6_MIGRATION_STATEMENTS
+    + SCHEMA_V7_MIGRATION_STATEMENTS
 )

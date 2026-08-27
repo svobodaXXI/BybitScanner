@@ -59,6 +59,7 @@ export function PendingLimitLine({
       <span>{price}</span>
       <button
         type="button"
+        className="pending-limit-confirm"
         aria-label={`Confirm pending ${side} Limit`}
         disabled={confirmDisabled || !onConfirm}
         onPointerDown={(event) => event.stopPropagation()}

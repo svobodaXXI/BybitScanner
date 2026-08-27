@@ -11,11 +11,11 @@ from terminal.domain.models import (
     TradingAccountId,
 )
 from terminal.exchange.events import ExecutionEvent
-from terminal.paper.matching import PaperMarketMatch
+from terminal.paper.matching import PaperLimitMatch, PaperMarketMatch
 
 
 def execution_event_from_paper_match(
-    match: PaperMarketMatch,
+    match: PaperMarketMatch | PaperLimitMatch,
     *,
     trading_account_id: TradingAccountId,
     order_id: OrderId,
@@ -23,6 +23,7 @@ def execution_event_from_paper_match(
     exec_id: ExecutionId,
     executed_at_ms: int,
     fee_rate: Decimal,
+    is_maker: bool = False,
 ) -> ExecutionEvent:
     if fee_rate < 0:
         raise ValueError("fee_rate must not be negative")
@@ -44,7 +45,7 @@ def execution_event_from_paper_match(
         execution_quantity=match.filled_quantity.value,
         execution_fee=execution_fee,
         execution_value=execution_value,
-        is_maker=False,
+        is_maker=is_maker,
         executed_at_ms=executed_at_ms,
         sequence=None,
     )

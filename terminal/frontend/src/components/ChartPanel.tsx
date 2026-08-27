@@ -132,6 +132,7 @@ export function ChartPanel({
     timer: ReturnType<typeof setTimeout> | null;
   }>({ state: { mode: "IDLE" }, pointerId: null, last: null, timer: null });
   const followLatestRef = useRef(true);
+  const lastFastLimitTouch = useRef<{ x: number; y: number; at: number } | null>(null);
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
   const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
@@ -329,6 +330,15 @@ export function ChartPanel({
         priceRange,
       };
   };
+  const fastLimitPriceAtY = (y: number) => {
+    const direct = seriesRef.current?.coordinateToPrice(y);
+    if (direct !== null && direct !== undefined) return direct;
+    const range = chartRef.current?.priceScale("right").getVisibleRange();
+    const plotHeight = (hostRef.current?.clientHeight ?? 0) - TIME_SCALE_HEIGHT;
+    if (!range || plotHeight <= 0) return null;
+    const ratio = Math.max(0, Math.min(1, y / plotHeight));
+    return range.to - ratio * (range.to - range.from);
+  };
   const onPointerDown = (event: React.PointerEvent) => {
     if (targetsPendingLimitLine(event.target)) return;
 
@@ -336,7 +346,18 @@ export function ChartPanel({
     if (!p) return;
 
     if (fastLimitActive && onFastLimitPriceSelect) {
-      const price = seriesRef.current?.coordinateToPrice(p.y);
+      const previous = lastFastLimitTouch.current;
+      if (
+        event.pointerType === "touch" &&
+        previous &&
+        event.timeStamp - previous.at < 50 &&
+        Math.abs(event.clientX - previous.x) < 1 &&
+        Math.abs(event.clientY - previous.y) < 1
+      ) {
+        event.preventDefault();
+        return;
+      }
+      const price = fastLimitPriceAtY(p.y);
       if (price !== null && price !== undefined) {
         event.preventDefault();
         onFastLimitPriceSelect(String(price));
@@ -411,6 +432,22 @@ export function ChartPanel({
         }
       }
     }
+  };
+  const onTouchStart = (event: React.TouchEvent) => {
+    if (!fastLimitActive || !onFastLimitPriceSelect) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const p = relative(touch);
+    if (!p) return;
+    const price = fastLimitPriceAtY(p.y);
+    if (price === null || price === undefined) return;
+    lastFastLimitTouch.current = {
+      x: touch.clientX,
+      y: touch.clientY,
+      at: event.timeStamp,
+    };
+    event.preventDefault();
+    onFastLimitPriceSelect(String(price));
   };
   const onPointerMove = (event: React.PointerEvent) => {
     if (targetsPendingLimitLine(event.target)) return;
@@ -610,6 +647,7 @@ export function ChartPanel({
         className="chart-stage"
         role="application"
         aria-label="Interactive market chart"
+        onTouchStartCapture={onTouchStart}
         onPointerDownCapture={onPointerDown}
         onPointerMoveCapture={onPointerMove}
         onPointerUpCapture={endPointer}
@@ -740,11 +778,16 @@ export function ChartPanel({
 
         {confirmAllPendingOpen ? (
           <div
-            className="pending-limit-batch-confirmation"
+            className="pending-limit-batch-confirmation submit-all"
             onClick={() => setConfirmAllPendingOpen(false)}
           >
             <div
               className="pending-limit-batch-confirmation-card"
+              style={{
+                position: "absolute",
+                right: "calc(64px + 2.6rem)",
+                bottom: "3.4rem",
+              }}
               onClick={(event) => event.stopPropagation()}
             >
               <strong>Confirm all pending limits?</strong>
@@ -755,7 +798,6 @@ export function ChartPanel({
                   onClick={async () => {
                     const drafts = [...visiblePendingLimitDrafts];
                     setConfirmAllPendingOpen(false);
-
                     for (const draft of drafts) {
                       await onPendingLimitConfirm?.(draft.draftId);
                     }
@@ -777,7 +819,7 @@ export function ChartPanel({
 
         {dismissAllPendingOpen ? (
           <div
-            className="pending-limit-batch-confirmation"
+            className="pending-limit-batch-confirmation dismiss-all"
             onClick={() => setDismissAllPendingOpen(false)}
           >
             <div

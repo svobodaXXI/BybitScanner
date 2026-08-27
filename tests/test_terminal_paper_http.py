@@ -7,7 +7,9 @@ from decimal import Decimal
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-from terminal.domain.models import Category, Price, Quantity, Symbol
+from terminal.domain.models import (
+    Category, OrderId, OrderSide, Price, Quantity, Symbol, TradingAccountId,
+)
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_http_server import (
@@ -31,6 +33,11 @@ class StaticBookProvider:
             received_at_ms=int(time.time() * 1000),
             available_depth=1,
         )
+
+    def get_current_book_update(
+        self, symbol: Symbol,
+    ) -> tuple[str, NormalizedOrderBook]:
+        return "BTCUSDT:20:10", self.get_book(symbol)
 
 
 def _runtime_owner(path: Path) -> SerializedPaperRuntime:
@@ -88,6 +95,48 @@ def test_market_post_completes_with_one_durable_execution():
                 lambda owned: len(owned.store.load_executions())
             )
             assert execution_count == 1
+        finally:
+            server.server_close()
+            runtime.close()
+
+
+def test_limit_post_returns_completed_and_creates_active_order():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
+        response = {}
+
+        def post_limit():
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/limit",
+                data=json.dumps({
+                    "client_action_id": "http-limit-buy-1",
+                    "symbol": "BTCUSDT",
+                    "side": "Buy",
+                    "volume": {"unit": "usdt", "amount": "321"},
+                    "sizing_reference_price": "64000",
+                    "limit_price": "64000",
+                    "time_in_force": "GTC",
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request) as result:
+                response["status"] = result.status
+                response["body"] = json.load(result)
+
+        client = threading.Thread(target=post_limit)
+        client.start()
+        try:
+            server.handle_request()
+            client.join(timeout=5)
+
+            assert not client.is_alive()
+            assert response["status"] == 200
+            assert response["body"]["status"] == "completed", response["body"]
+            state = runtime.call(lambda owner: owner.paper_state("BTCUSDT"))
+            assert len(state["active_limit_orders"]) == 1
         finally:
             server.server_close()
             runtime.close()
@@ -231,6 +280,87 @@ def test_public_orderbook_applies_snapshot_and_incremental_delta():
     assert updated["asks"][0] == {"price": "0.106", "size": "45"}
     assert updated["updateId"] == 11
     assert updated["sequence"] == 21
+
+
+def test_orderbook_update_callback_only_publishes_lightweight_identity():
+    book = PublicOrderBookBuffer("ONGUSDT", depth=2)
+    publisher_thread = threading.get_ident()
+    notifications = []
+
+    def enqueue_only(book_update_id: str) -> None:
+        notifications.append((book_update_id, threading.get_ident()))
+
+    book.set_update_consumer(enqueue_only)
+    assert book.apply_message({
+        "topic": "orderbook.2.ONGUSDT",
+        "type": "snapshot",
+        "ts": 1000,
+        "data": {
+            "u": 10,
+            "seq": 20,
+            "b": [["0.105", "30"]],
+            "a": [["0.106", "40"]],
+        },
+    }) == "APPLIED"
+
+    assert notifications == [("ONGUSDT:20:10", publisher_thread)]
+
+
+def test_book_update_notification_reaches_serialized_owner_thread():
+    publisher_thread = threading.get_ident()
+
+    class RecordingRuntime:
+        def __init__(self) -> None:
+            self.received = []
+
+        def process_orderbook_update(self, book_update_id: str) -> None:
+            self.received.append((book_update_id, threading.get_ident()))
+
+        def close(self) -> None:
+            return None
+
+    target = RecordingRuntime()
+    runtime = SerializedPaperRuntime(lambda: target)
+    try:
+        runtime.enqueue_book_update("ONGUSDT:21:11")
+        runtime.call(lambda _: None)
+        assert target.received == [("ONGUSDT:21:11", runtime._thread.ident)]
+        assert target.received[0][1] != publisher_thread
+    finally:
+        runtime.close()
+
+
+def test_duplicate_book_update_does_not_repeat_partial_limit_fill():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        try:
+            def create_limit(owner: PaperRuntime) -> None:
+                owner.store.create_paper_limit(
+                    client_action_id="runtime-limit-create-1",
+                    request_fingerprint="runtime-limit-fingerprint-1",
+                    order_id=OrderId("paper-runtime-limit-1"),
+                    order_link_id="paper-runtime-link-1",
+                    trading_account_id=TradingAccountId("paper"),
+                    symbol=Symbol("BTCUSDT"),
+                    side=OrderSide.BUY,
+                    price=Decimal("65000"),
+                    quantity=Decimal("20"),
+                    created_at_ms=900,
+                )
+
+            runtime.call(create_limit)
+            runtime.enqueue_book_update("BTCUSDT:20:10")
+            runtime.enqueue_book_update("BTCUSDT:20:10")
+            runtime.call(lambda _: None)
+
+            order = runtime.call(
+                lambda owner: owner.store.get_paper_limit("paper-runtime-limit-1")
+            )
+            assert order is not None
+            assert order.filled_quantity == Decimal("10")
+            assert order.status == "partially_filled"
+        finally:
+            runtime.close()
 
 
 class _KlineResponse:

@@ -17,6 +17,7 @@ export interface MarketDataPort {
   dispose(): void;
   getSnapshot(): MarketDataSnapshot;
   setTimeframe(timeframe: ChartTimeframe): void;
+  start(): void;
   subscribe(listener: () => void): () => void;
 }
 
@@ -122,16 +123,20 @@ export class BackendSseMarketDataStore implements MarketDataPort {
   private bookReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private klinesReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private timeframe: ChartTimeframe = "5m";
+  private started = false;
 
-  constructor() {
+  start = () => {
+    if (this.started) return;
+    this.started = true;
     this.connectTrades();
     this.connectOrderBook();
     this.connectKlines();
-  }
+  };
 
   getSnapshot = () => this.snapshot;
 
   dispose = () => {
+    this.started = false;
     this.tradesSource?.close();
     this.bookSource?.close();
     this.klinesSource?.close();
@@ -159,7 +164,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
     }
     this.snapshot = { ...this.snapshot, candles: [] };
     this.emit();
-    this.connectKlines();
+    if (this.started) this.connectKlines();
   };
 
   subscribe = (listener: () => void) => {
@@ -177,6 +182,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
   }
 
   private connectTrades() {
+    if (!this.started) return;
     if (this.tradesSource) {
       this.tradesSource.close();
     }
@@ -309,12 +315,13 @@ export class BackendSseMarketDataStore implements MarketDataPort {
 
       this.tradesReconnectTimer = setTimeout(() => {
         this.tradesReconnectTimer = null;
-        this.connectTrades();
+        if (this.started) this.connectTrades();
       }, 1000);
     };
   }
 
   private connectOrderBook() {
+    if (!this.started) return;
     if (this.bookSource) {
       this.bookSource.close();
     }
@@ -383,12 +390,13 @@ export class BackendSseMarketDataStore implements MarketDataPort {
 
       this.bookReconnectTimer = setTimeout(() => {
         this.bookReconnectTimer = null;
-        this.connectOrderBook();
+        if (this.started) this.connectOrderBook();
       }, 1000);
     };
   }
 
   private connectKlines() {
+    if (!this.started) return;
     if (this.klinesSource) {
       this.klinesSource.close();
     }
@@ -475,7 +483,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
       }
       this.klinesReconnectTimer = setTimeout(() => {
         this.klinesReconnectTimer = null;
-        if (this.timeframe === timeframe) this.connectKlines();
+        if (this.started && this.timeframe === timeframe) this.connectKlines();
       }, 1000);
     };
   }
@@ -521,5 +529,5 @@ export const marketDataStore: MarketDataPort =
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => marketDataStore.dispose());
-  import.meta.hot.accept(() => globalThis.location.reload());
+  import.meta.hot.accept();
 }

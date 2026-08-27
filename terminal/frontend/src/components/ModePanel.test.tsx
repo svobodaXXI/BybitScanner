@@ -117,6 +117,45 @@ describe("ModePanel PAPER Market amounts", () => {
     return screen.getByRole("dialog", { name: "New Limit" });
   };
 
+  it("activates BUY fast-Limit hold with haptic feedback at 200 ms", () => {
+    vi.useFakeTimers();
+    const onFastLimitHoldChange = vi.fn();
+    const vibrate = vi.fn();
+    Object.defineProperty(navigator, "vibrate", {
+      configurable: true,
+      value: vibrate,
+    });
+    const state = paperState() as PaperState;
+    render(
+      <ModePanelView
+        mode="TERMINAL"
+        onModeChange={vi.fn()}
+        symbol="BTCUSDT"
+        paperState={state}
+        activeLimitOrders={[]}
+        refreshPaperState={vi.fn()}
+        sizingReferencePrice="64250"
+        authoritativeTickSize="0.5"
+        limitDraftState={EMPTY_LIMIT_DRAFT_STATE}
+        dispatchLimitDraft={vi.fn()}
+        onLimitDraftConfirm={vi.fn()}
+        onFastLimitHoldChange={onFastLimitHoldChange}
+        onPositionSideChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "BUY" }));
+    vi.advanceTimersByTime(199);
+    expect(onFastLimitHoldChange).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(vibrate).toHaveBeenCalledWith(20);
+    expect(onFastLimitHoldChange).toHaveBeenCalledWith({
+      side: "Buy",
+      volumeUsdt: "250",
+    });
+    vi.useRealTimers();
+  });
+
   it("opens the short-tap popup with normalized LONG and SHORT defaults", () => {
     const popup = renderLimitPopup();
     const longRow = within(popup).getByText("LONG / L").closest(".paper-limit-popup-row");

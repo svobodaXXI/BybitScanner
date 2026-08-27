@@ -5,7 +5,11 @@ import { DomPanel } from "../components/DomPanel";
 import { ModePanel, type WorkspaceMode } from "../components/ModePanel";
 import { TapePanel } from "../components/TapePanel";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
-import type { PaperState } from "../contracts/trading";
+import type {
+  LimitCommandRequest,
+  PaperLimitMutationResult,
+  PaperState,
+} from "../contracts/trading";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import { recommendedLadderCenter } from "../marketData/domProjection";
 import type { ChartTimeframe } from "../marketData/timeframes";
@@ -15,8 +19,11 @@ import {
   createLimitDraft,
   EMPTY_LIMIT_DRAFT_STATE,
   limitDraftReducer,
+  normalizeLimitDraftPrice,
 } from "../orders/limitDraft";
 import { PaperLimitDraftSubmitController } from "../orders/limitDraftSubmission";
+
+const PAPER_STATE_REQUEST_TIMEOUT_MS = 5_000;
 
 export function App() {
   const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
@@ -26,6 +33,7 @@ export function App() {
   const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [paperState, setPaperState] = useState<PaperState | null>(null);
+  const [paperRefreshDebug, setPaperRefreshDebug] = useState("NOT_CALLED");
   const [fastLimitIntent, setFastLimitIntent] = useState<{
     side: "Buy" | "Sell";
     volumeUsdt: string;
@@ -35,6 +43,7 @@ export function App() {
     EMPTY_LIMIT_DRAFT_STATE,
   );
   const limitSubmitController = useRef(new PaperLimitDraftSubmitController());
+  const paperRefreshInFlight = useRef(false);
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
     null,
   );
@@ -61,20 +70,51 @@ export function App() {
   }, [market.book]);
 
   const refreshPaperState = useCallback(async () => {
+    if (paperRefreshInFlight.current) return;
+    paperRefreshInFlight.current = true;
+    setPaperRefreshDebug("CALLED");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(
+      () => controller.abort(),
+      PAPER_STATE_REQUEST_TIMEOUT_MS,
+    );
     try {
-      const response = await fetch(marketApiRoutes.paperState(tradingSymbol));
+      const response = await fetch(marketApiRoutes.paperState(tradingSymbol), {
+        signal: controller.signal,
+      });
+      setPaperRefreshDebug(`RESPONSE:${response.status}`);
       if (!response.ok) {
-        setPaperState(null);
         return;
       }
-      setPaperState((await response.json()) as PaperState);
-    } catch {
-      setPaperState(null);
+      const nextPaperState = (await response.json()) as PaperState;
+      setPaperRefreshDebug(
+        `JSON:${nextPaperState.symbol}:${nextPaperState.one_wv_usdt}`,
+      );
+      setPaperState(nextPaperState);
+      setPaperRefreshDebug("SET_STATE");
+    } catch (error) {
+      setPaperRefreshDebug(
+        `ERROR:${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    } finally {
+      window.clearTimeout(timeout);
+      paperRefreshInFlight.current = false;
     }
   }, [tradingSymbol]);
 
   useEffect(() => {
     if (mode === "TERMINAL") void refreshPaperState();
+  }, [mode, refreshPaperState]);
+
+  useEffect(() => {
+    if (mode !== "TERMINAL") return;
+
+    const timer = window.setInterval(() => {
+      void refreshPaperState();
+    }, 500);
+
+    return () => window.clearInterval(timer);
   }, [mode, refreshPaperState]);
 
   const changeTimeframe = (next: ChartTimeframe) => {
@@ -132,9 +172,80 @@ export function App() {
     return attempt.promise.then(() => undefined);
   }, [limitDraftState.draft, limitDraftState.drafts, refreshPaperState]);
 
+  const submitDomLimit = useCallback(async (price: string) => {
+    if (!fastLimitIntent || market.tickSize === null) return;
+    const normalizedPrice = normalizeLimitDraftPrice(
+      price,
+      String(market.tickSize),
+      fastLimitIntent.side,
+    );
+    if (normalizedPrice === null) return;
+    const numericPrice = Number(normalizedPrice);
+    if (
+      (fastLimitIntent.side === "Buy" &&
+        (bestAsk === undefined || numericPrice >= bestAsk)) ||
+      (fastLimitIntent.side === "Sell" &&
+        (bestBid === undefined || numericPrice <= bestBid))
+    ) {
+      return;
+    }
+    const request: LimitCommandRequest = {
+      client_action_id:
+        globalThis.crypto?.randomUUID?.() ?? `paper-dom-limit-${Date.now()}`,
+      symbol: tradingSymbol,
+      side: fastLimitIntent.side,
+      volume: { unit: "usdt", amount: fastLimitIntent.volumeUsdt },
+      sizing_reference_price: sizingReferencePrice,
+      limit_price: normalizedPrice,
+      time_in_force: "GTC",
+    };
+    try {
+      const response = await fetch("/api/limit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      });
+      const result = (await response.json()) as PaperLimitMutationResult;
+      if (result.status === "completed") await refreshPaperState();
+    } catch {
+      return;
+    }
+  }, [
+    bestAsk,
+    bestBid,
+    fastLimitIntent,
+    market.tickSize,
+    refreshPaperState,
+    sizingReferencePrice,
+    tradingSymbol,
+  ]);
+
   return (
     <main className="workspace-shell">
       <TelegramMiniAppBridge />
+      <div
+        aria-label="PAPER STATE DEBUG"
+        style={{
+          position: "fixed",
+          zIndex: 1000,
+          top: 0,
+          left: 0,
+          right: 0,
+          padding: "0.2rem 0.35rem",
+          borderBottom: "1px solid #5bbcff",
+          background: "#11181f",
+          color: "#8fd3ff",
+          fontSize: "0.65rem",
+          lineHeight: 1.25,
+          overflowWrap: "anywhere",
+        }}
+      >
+        PAPER STATE DEBUG: refresh={paperRefreshDebug} | paperState.symbol=
+        {paperState?.symbol ?? "null"} | paperState.one_wv_usdt=
+        {paperState?.one_wv_usdt ?? "null"} | currentPaperState=
+        {currentPaperState ? "OK" : "NULL"} | active_limit_orders=
+        {currentPaperState?.active_limit_orders.length ?? "null"}
+      </div>
       <WorkspaceHeader
         accountOpen={accountOpen}
         onAccountToggle={() => setAccountOpen((open) => !open)}
@@ -181,9 +292,11 @@ export function App() {
             centerPrice={ladderCenterPrice}
             onCenterPriceChange={setLadderCenterPrice}
             ownOrders={market.ownOrders}
-            compression={domCompression}
-            onCompressionChange={setDomCompression}
-          />
+          compression={domCompression}
+          onCompressionChange={setDomCompression}
+          fastLimitActive={fastLimitIntent !== null}
+          onFastLimitPriceSelect={submitDomLimit}
+        />
           <TapePanel
             book={market.book}
             centerPrice={ladderCenterPrice}
@@ -218,5 +331,3 @@ export function App() {
     </main>
   );
 }
-
-

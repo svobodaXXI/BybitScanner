@@ -9,6 +9,7 @@ import queue
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
 from decimal import Decimal, ROUND_CEILING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -307,6 +308,7 @@ class PublicOrderBookBuffer:
         self._update_id = 0
         self._sequence = 0
         self._version = 0
+        self._update_consumer: Callable[[str], None] | None = None
         self._condition = threading.Condition()
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -338,6 +340,10 @@ class PublicOrderBookBuffer:
     def snapshot(self) -> dict:
         with self._condition:
             return self._snapshot_locked()
+
+    def set_update_consumer(self, consumer: Callable[[str], None] | None) -> None:
+        with self._condition:
+            self._update_consumer = consumer
 
     def apply_message(self, message: dict) -> str:
         if message.get("topic") != f"orderbook.{self.depth}.{self.symbol}":
@@ -379,8 +385,19 @@ class PublicOrderBookBuffer:
             self._update_id = update_id
             self._sequence = sequence
             self._version += 1
+            book_update_id = f"{self.symbol}:{sequence}:{update_id}"
+            update_consumer = self._update_consumer
             self._condition.notify_all()
-            return "APPLIED"
+
+        if update_consumer is not None:
+            try:
+                update_consumer(book_update_id)
+            except Exception:
+                LOGGER.exception(
+                    "PAPER order-book notification failed; book_update_id=%s",
+                    book_update_id,
+                )
+        return "APPLIED"
 
     @staticmethod
     def _levels(raw_levels: object) -> dict[str, str]:
@@ -724,6 +741,12 @@ class LiveOrderBookProvider:
         self._buffer = buffer
 
     def get_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
+        current = self.get_current_book_update(symbol)
+        return current[1] if current is not None else None
+
+    def get_current_book_update(
+        self, symbol: Symbol,
+    ) -> tuple[str, NormalizedOrderBook] | None:
         payload = self._buffer.snapshot()
         if payload["state"] != "READY" or payload["symbol"] != symbol.value:
             return None
@@ -746,7 +769,7 @@ class LiveOrderBookProvider:
             return None
         if not bids or not asks:
             return None
-        return NormalizedOrderBook(
+        book = NormalizedOrderBook(
             symbol=symbol,
             bids=bids,
             asks=asks,
@@ -754,11 +777,23 @@ class LiveOrderBookProvider:
             received_at_ms=int(payload["receivedAt"]),
             available_depth=min(len(bids), len(asks)),
         )
+        return (
+            f"{symbol.value}:{int(payload['sequence'])}:{int(payload['updateId'])}",
+            book,
+        )
+
+
+@dataclass(frozen=True)
+class _BookUpdateNotification:
+    book_update_id: str
 
 
 class SerializedPaperRuntime:
     def __init__(self, factory) -> None:
         self._requests: queue.Queue = queue.Queue()
+        self._book_update_lock = threading.Lock()
+        self._latest_book_update_id: str | None = None
+        self._book_update_pending = False
         self._ready = threading.Event()
         self._initialization_error: BaseException | None = None
         self._thread = threading.Thread(
@@ -785,6 +820,18 @@ class SerializedPaperRuntime:
             raise error
         return response.get("result")
 
+    def enqueue_book_update(self, book_update_id: str) -> None:
+        if not book_update_id:
+            raise ValueError("book_update_id must be non-empty")
+        if not self._thread.is_alive():
+            raise RuntimeError("PAPER runtime owner is unavailable")
+        with self._book_update_lock:
+            self._latest_book_update_id = book_update_id
+            if self._book_update_pending:
+                return
+            self._book_update_pending = True
+        self._requests.put(_BookUpdateNotification(book_update_id))
+
     def close(self) -> None:
         if not self._thread.is_alive():
             return
@@ -804,7 +851,22 @@ class SerializedPaperRuntime:
         self._ready.set()
         try:
             while True:
-                operation, completed, response = self._requests.get()
+                request = self._requests.get()
+                if isinstance(request, _BookUpdateNotification):
+                    with self._book_update_lock:
+                        book_update_id = (
+                            self._latest_book_update_id or request.book_update_id
+                        )
+                        self._book_update_pending = False
+                    try:
+                        runtime.process_orderbook_update(book_update_id)
+                    except BaseException:
+                        LOGGER.exception(
+                            "PAPER Limit update processing failed; book_update_id=%s",
+                            book_update_id,
+                        )
+                    continue
+                operation, completed, response = request
                 if operation is None:
                     completed.set()
                     return
@@ -1053,11 +1115,20 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            symbol = symbols[0]
+            print(
+                f"PAPER_STATE HTTP ENTER {int(time.time() * 1000)} {symbol}",
+                flush=True,
+            )
             try:
                 state = self.server.runtime.call(
-                    lambda runtime: runtime.paper_state(symbols[0])
+                    lambda runtime: runtime.paper_state(symbol)
                 )
             except Exception:
+                print(
+                    f"PAPER_STATE HTTP EXIT {int(time.time() * 1000)} {symbol}",
+                    flush=True,
+                )
                 self._json_response(
                     400,
                     {
@@ -1067,6 +1138,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 )
                 return
 
+            print(
+                f"PAPER_STATE HTTP EXIT {int(time.time() * 1000)} {symbol}",
+                flush=True,
+            )
             self._json_response(
                 200,
                 {
@@ -1117,7 +1192,8 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 result = self.server.runtime.call(
                     lambda runtime: runtime.create_limit(request)
                 )
-            except Exception:
+            except Exception as exc:
+                print("LIMIT POST ERROR:", repr(exc), flush=True)
                 self._json_response(400, to_primitive(_validation_error()))
                 return
             self._json_response(200, to_primitive(result))
@@ -1240,7 +1316,6 @@ def main() -> None:
         raw_trade_consumer=trade_klines.add_trades,
     )
     public_trades.start()
-    public_orderbook.start()
     for public_kline in public_klines.values():
         public_kline.start()
 
@@ -1250,6 +1325,8 @@ def main() -> None:
         book_provider=book_provider,
         instrument_snapshot=instrument_snapshot,
     ))
+    public_orderbook.set_update_consumer(runtime.enqueue_book_update)
+    public_orderbook.start()
 
     server = ThreadingHTTPServer((HOST, port), PaperHttpHandler)
     server.runtime = runtime
@@ -1262,9 +1339,10 @@ def main() -> None:
         print("Bybit public market data streams: ONGUSDT")
         server.serve_forever()
     finally:
+        public_orderbook.set_update_consumer(None)
+        public_orderbook.close()
         runtime.close()
         public_trades.close()
-        public_orderbook.close()
         for public_kline in public_klines.values():
             public_kline.close()
         server.server_close()

@@ -38,6 +38,7 @@ from .schema import (
     SCHEMA_V4_MIGRATION_STATEMENTS,
     SCHEMA_V5_MIGRATION_STATEMENTS,
     SCHEMA_V6_MIGRATION_STATEMENTS,
+    SCHEMA_V7_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -238,6 +239,7 @@ class PaperLimitOrderRecord:
     side: OrderSide
     price: Decimal
     quantity: Decimal
+    filled_quantity: Decimal
     time_in_force: str
     status: str
     created_at_ms: int
@@ -323,6 +325,7 @@ def _paper_limit_from_row(row: sqlite3.Row) -> PaperLimitOrderRecord:
         side=OrderSide(row["side"]),
         price=_load_decimal(row["price"]),
         quantity=_load_decimal(row["quantity"]),
+        filled_quantity=_load_decimal(row["filled_quantity"]),
         time_in_force=row["time_in_force"],
         status=row["status"],
         created_at_ms=int(row["created_at_ms"]),
@@ -385,6 +388,7 @@ class SQLiteStore:
             SQLiteStore._migrate_v3_to_v4(connection)
             SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._migrate_v5_to_v6(connection)
+            SQLiteStore._migrate_v6_to_v7(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 2:
@@ -393,6 +397,7 @@ class SQLiteStore:
             SQLiteStore._migrate_v3_to_v4(connection)
             SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._migrate_v5_to_v6(connection)
+            SQLiteStore._migrate_v6_to_v7(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 3:
@@ -400,17 +405,25 @@ class SQLiteStore:
             SQLiteStore._migrate_v3_to_v4(connection)
             SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._migrate_v5_to_v6(connection)
+            SQLiteStore._migrate_v6_to_v7(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 4:
             SQLiteStore._validate_required_tables(connection, version=4)
             SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._migrate_v5_to_v6(connection)
+            SQLiteStore._migrate_v6_to_v7(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 5:
             SQLiteStore._validate_required_tables(connection, version=5)
             SQLiteStore._migrate_v5_to_v6(connection)
+            SQLiteStore._migrate_v6_to_v7(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 6:
+            SQLiteStore._validate_required_tables(connection, version=6)
+            SQLiteStore._migrate_v6_to_v7(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version != 0:
@@ -479,6 +492,18 @@ class SQLiteStore:
             for statement in SCHEMA_V6_MIGRATION_STATEMENTS:
                 connection.execute(statement)
             connection.execute("PRAGMA user_version = 6")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _migrate_v6_to_v7(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V7_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 7")
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")
@@ -654,14 +679,14 @@ class SQLiteStore:
             return existing, False
         record = PaperLimitOrderRecord(
             order_id, order_link_id, trading_account_id, symbol, side, price, quantity,
-            "GTC", "open", created_at_ms, created_at_ms,
+            Decimal("0"), "GTC", "open", created_at_ms, created_at_ms,
         )
         with self._transaction():
             self._connection.execute(
                 """INSERT INTO paper_limit_orders (
                     order_id, order_link_id, trading_account_id, symbol, side, price,
-                    quantity, time_in_force, status, created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'GTC', 'open', ?, ?)""",
+                    quantity, filled_quantity, time_in_force, status, created_at_ms, updated_at_ms
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, '0', 'GTC', 'open', ?, ?)""",
                 (order_id.value, order_link_id, trading_account_id.value, symbol.value,
                  side.value, _decimal_text(price), _decimal_text(quantity),
                  created_at_ms, created_at_ms),
@@ -691,7 +716,7 @@ class SQLiteStore:
                 (client_action_id, request_fingerprint, updated_at_ms),
             )
             cursor = self._connection.execute(
-                "UPDATE paper_limit_orders SET status = 'cancelled', updated_at_ms = ? WHERE order_id = ? AND status = 'open'",
+                "UPDATE paper_limit_orders SET status = 'cancelled', updated_at_ms = ? WHERE order_id = ? AND status IN ('open', 'partially_filled')",
                 (updated_at_ms, order_id.value),
             )
         return self.get_paper_limit(order_id.value), cursor.rowcount == 1
@@ -715,7 +740,7 @@ class SQLiteStore:
 
         with self._transaction():
             cursor = self._connection.execute(
-                "UPDATE paper_limit_orders SET price = ?, updated_at_ms = ? WHERE order_id = ? AND status = 'open'",
+                "UPDATE paper_limit_orders SET price = ?, updated_at_ms = ? WHERE order_id = ? AND status IN ('open', 'partially_filled')",
                 (_decimal_text(price), updated_at_ms, order_id.value),
             )
             if cursor.rowcount != 1:
@@ -739,7 +764,7 @@ class SQLiteStore:
     def load_active_paper_limits(self, symbol: Symbol) -> tuple[PaperLimitOrderRecord, ...]:
         self._assert_owner()
         rows = self._connection.execute(
-            "SELECT * FROM paper_limit_orders WHERE symbol = ? AND status = 'open' ORDER BY created_at_ms, order_id",
+            "SELECT * FROM paper_limit_orders WHERE symbol = ? AND status IN ('open', 'partially_filled') ORDER BY created_at_ms, order_id",
             (symbol.value,),
         )
         return tuple(_paper_limit_from_row(row) for row in rows)
@@ -939,6 +964,85 @@ class SQLiteStore:
             self._write_projection(projection)
             if command_id is not None:
                 self._correlate_command_order(command_id, execution.order_id)
+        return ExecutionApplyResult.APPLIED
+
+    def apply_paper_limit_execution_once(
+        self,
+        order_id: OrderId,
+        execution: Execution,
+        projection: PositionProjectionUpdate,
+        *,
+        updated_at_ms: int,
+    ) -> ExecutionApplyResult:
+        if execution.order_id != order_id:
+            raise ValueError("execution order does not match PAPER limit")
+        if execution.dedup_key.trading_account_id != projection.position_key.trading_account_id:
+            raise ValueError("execution and projection account differ")
+        if execution.dedup_key.category is not projection.position_key.category:
+            raise ValueError("execution and projection category differ")
+        if execution.symbol != projection.position_key.symbol:
+            raise ValueError("execution and projection symbol differ")
+        if execution.quantity.value <= 0:
+            raise ValueError("PAPER limit execution quantity must be positive")
+
+        with self._transaction():
+            existing_execution = self._execution_row(execution.dedup_key)
+            if existing_execution is not None:
+                if _execution_from_row(existing_execution) != execution:
+                    raise ImmutableExecutionConflict(
+                        "execution identity already exists with different immutable evidence"
+                    )
+                return ExecutionApplyResult.DUPLICATE
+
+            row = self._connection.execute(
+                "SELECT * FROM paper_limit_orders WHERE order_id = ?",
+                (order_id.value,),
+            ).fetchone()
+            if row is None:
+                raise PersistenceError("PAPER limit is missing")
+
+            order = _paper_limit_from_row(row)
+            if order.status not in {"open", "partially_filled"}:
+                raise PersistenceError("PAPER limit is inactive")
+            if order.trading_account_id != execution.dedup_key.trading_account_id:
+                raise ValueError("PAPER limit and execution account differ")
+            if order.symbol != execution.symbol:
+                raise ValueError("PAPER limit and execution symbol differ")
+            if order.side is not execution.side:
+                raise ValueError("PAPER limit and execution side differ")
+
+            new_filled = order.filled_quantity + execution.quantity.value
+            if new_filled > order.quantity:
+                raise ValueError("PAPER limit execution exceeds remaining quantity")
+
+            new_status = (
+                "filled"
+                if new_filled == order.quantity
+                else "partially_filled"
+            )
+
+            self._insert_execution(execution)
+            self._write_projection(projection)
+
+            cursor = self._connection.execute(
+                """
+                UPDATE paper_limit_orders
+                SET filled_quantity = ?, status = ?, updated_at_ms = ?
+                WHERE order_id = ?
+                  AND filled_quantity = ?
+                  AND status IN ('open', 'partially_filled')
+                """,
+                (
+                    _decimal_text(new_filled),
+                    new_status,
+                    updated_at_ms,
+                    order_id.value,
+                    _decimal_text(order.filled_quantity),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("PAPER limit fill state changed concurrently")
+
         return ExecutionApplyResult.APPLIED
 
     def _correlate_command_order(self, command_id: CommandId, order_id: OrderId) -> None:
