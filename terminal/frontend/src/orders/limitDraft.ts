@@ -30,17 +30,28 @@ export type LimitDraft = {
 
 export type LimitDraftState = {
   draft: LimitDraft | null;
+  drafts?: LimitDraft[];
 };
 
 export type LimitDraftAction =
   | { type: "begin"; draft: LimitDraft }
-  | { type: "update-price"; price: string }
-  | { type: "start-submitting"; clientActionId: string }
-  | { type: "mark-ambiguous"; clientActionId: string }
-  | { type: "mark-rejected"; clientActionId: string; reason: string }
-  | { type: "dismiss" };
+  | { type: "select"; draftId: string }
+  | { type: "update-price"; price: string; draftId?: string }
+  | { type: "start-submitting"; clientActionId: string; draftId?: string }
+  | { type: "mark-ambiguous"; clientActionId: string; draftId?: string }
+  | {
+      type: "mark-rejected";
+      clientActionId: string;
+      reason: string;
+      draftId?: string;
+    }
+  | { type: "dismiss"; draftId?: string }
+  | { type: "dismiss-all" };
 
-export const EMPTY_LIMIT_DRAFT_STATE: LimitDraftState = { draft: null };
+export const EMPTY_LIMIT_DRAFT_STATE: LimitDraftState = {
+  draft: null,
+  drafts: [],
+};
 
 type ParsedDecimal = {
   units: bigint;
@@ -136,62 +147,120 @@ export function limitDraftReducer(
   state: LimitDraftState,
   action: LimitDraftAction,
 ): LimitDraftState {
-  if (action.type === "begin") return { draft: action.draft };
-  if (action.type === "dismiss") return EMPTY_LIMIT_DRAFT_STATE;
-  const draft = state.draft;
-  if (!draft) return state;
+  if (action.type === "begin") {
+    const currentDrafts =
+      state.drafts ?? (state.draft ? [state.draft] : []);
+    const drafts = [
+      ...currentDrafts.filter((item) => item.draftId !== action.draft.draftId),
+      action.draft,
+    ];
+    return { draft: action.draft, drafts };
+  }
+
+  if (action.type === "select") {
+    const currentDrafts =
+      state.drafts ?? (state.draft ? [state.draft] : []);
+    const draft =
+      currentDrafts.find((item) => item.draftId === action.draftId) ?? null;
+    return draft ? { ...state, draft } : state;
+  }
+
+  if (action.type === "dismiss-all") {
+    return EMPTY_LIMIT_DRAFT_STATE;
+  }
+
+  const targetDraftId =
+    "draftId" in action && action.draftId
+      ? action.draftId
+      : state.draft?.draftId ?? null;
+
+  if (action.type === "dismiss") {
+    if (targetDraftId === null) return state;
+
+    const currentDrafts =
+      state.drafts ?? (state.draft ? [state.draft] : []);
+    const drafts = currentDrafts.filter(
+      (item) => item.draftId !== targetDraftId,
+    );
+
+    const draft =
+      state.draft?.draftId === targetDraftId
+        ? drafts.at(-1) ?? null
+        : state.draft;
+
+    return { draft, drafts };
+  }
+
+  if (targetDraftId === null) return state;
+
+  const currentDrafts =
+    state.drafts ?? (state.draft ? [state.draft] : []);
+
+  const target =
+    currentDrafts.find((item) => item.draftId === targetDraftId) ?? null;
+
+  if (!target) return state;
+
+  let updated = target;
 
   if (action.type === "update-price") {
-    if (draft.status === "submitting" || draft.status === "ambiguous") {
+    if (
+      target.status === "submitting" ||
+      target.status === "ambiguous"
+    ) {
       return state;
     }
-    return {
-      draft: {
-        ...draft,
-        price:
-          normalizeLimitDraftPrice(
-            action.price,
-            draft.authoritativeTickSize,
-            draft.side,
-          ) ?? action.price,
-        status: "editing",
+
+    updated = {
+      ...target,
+      price:
+        normalizeLimitDraftPrice(
+          action.price,
+          target.authoritativeTickSize,
+          target.side,
+        ) ?? action.price,
+      status: "editing",
+      clientActionId: null,
+      rejectionReason: null,
+    };
+  } else if (action.type === "start-submitting") {
+    if (!canConfirmLimitDraft(target)) return state;
+
+    updated = {
+      ...target,
+      price: normalizedLimitDraftPrice(target) ?? target.price,
+      status: "submitting",
+      clientActionId: action.clientActionId,
+      rejectionReason: null,
+    };
+  } else {
+    if (
+      target.clientActionId === null ||
+      target.clientActionId !== action.clientActionId
+    ) {
+      return state;
+    }
+
+    if (action.type === "mark-ambiguous") {
+      updated = { ...target, status: "ambiguous" };
+    } else if (action.type === "mark-rejected") {
+      updated = {
+        ...target,
+        status: "rejected",
         clientActionId: null,
-        rejectionReason: null,
-      },
-    };
+        rejectionReason: action.reason,
+      };
+    }
   }
 
-  if (action.type === "start-submitting") {
-    if (!canConfirmLimitDraft(draft)) return state;
-    return {
-      draft: {
-        ...draft,
-        price: normalizedLimitDraftPrice(draft) ?? draft.price,
-        status: "submitting",
-        clientActionId: action.clientActionId,
-        rejectionReason: null,
-      },
-    };
-  }
-
-  if (
-    draft.clientActionId === null ||
-    draft.clientActionId !== action.clientActionId
-  ) {
-    return state;
-  }
-
-  if (action.type === "mark-ambiguous") {
-    return { draft: { ...draft, status: "ambiguous" } };
-  }
+  const drafts = currentDrafts.map((item) =>
+    item.draftId === targetDraftId ? updated : item,
+  );
 
   return {
-    draft: {
-      ...draft,
-      status: "rejected",
-      clientActionId: null,
-      rejectionReason: action.reason,
-    },
+    draft:
+      state.draft?.draftId === targetDraftId ? updated : state.draft,
+    drafts,
   };
 }
 

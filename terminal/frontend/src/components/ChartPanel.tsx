@@ -45,6 +45,7 @@ import {
 import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
+import type { PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
 import { PendingLimitLine } from "../chart/PendingLimitLine";
@@ -93,17 +94,31 @@ export function ChartPanel({
   tickSize,
   symbol = "BTCUSDT",
   timeframe = "5m",
+  activeLimitOrders = [],
   pendingLimitDraft = null,
+  pendingLimitDrafts,
+  onPendingLimitSelect,
+  onPendingLimitDismiss,
+  onPendingLimitDismissAll,
   onPendingLimitPriceChange,
   onPendingLimitConfirm,
+  fastLimitActive = false,
+  onFastLimitPriceSelect,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
   symbol?: string;
   timeframe?: string;
+  activeLimitOrders?: readonly PaperLimitOrder[];
   pendingLimitDraft?: LimitDraft | null;
-  onPendingLimitPriceChange?: (price: string) => void;
-  onPendingLimitConfirm?: () => void;
+  pendingLimitDrafts?: readonly LimitDraft[];
+  onPendingLimitSelect?: (draftId: string) => void;
+  onPendingLimitDismiss?: (draftId: string) => void;
+  onPendingLimitDismissAll?: () => void;
+  onPendingLimitPriceChange?: (price: string, draftId?: string) => void;
+  onPendingLimitConfirm?: (draftId?: string) => void | Promise<void>;
+  fastLimitActive?: boolean;
+  onFastLimitPriceSelect?: (price: string) => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -122,7 +137,9 @@ export function ChartPanel({
     [tool, setTool] = useState<DrawingTool>("select"),
     [magnet, setMagnet] = useState(false),
     [selectedId, setSelectedId] = useState<string | null>(null),
-    [clearConfirmationOpen, setClearConfirmationOpen] = useState(false);
+    [clearConfirmationOpen, setClearConfirmationOpen] = useState(false),
+    [confirmAllPendingOpen, setConfirmAllPendingOpen] = useState(false),
+    [dismissAllPendingOpen, setDismissAllPendingOpen] = useState(false);
   const storageKey = `bybitscanner:drawings:v1:${symbol}:${timeframe}`;
   const historyRef = useRef(
     new DrawingHistory(
@@ -314,8 +331,18 @@ export function ChartPanel({
   };
   const onPointerDown = (event: React.PointerEvent) => {
     if (targetsPendingLimitLine(event.target)) return;
+
     const p = relative(event);
     if (!p) return;
+
+    if (fastLimitActive && onFastLimitPriceSelect) {
+      const price = seriesRef.current?.coordinateToPrice(p.y);
+      if (price !== null && price !== undefined) {
+        event.preventDefault();
+        onFastLimitPriceSelect(String(price));
+        return;
+      }
+    }
     pointers.current.set(event.pointerId, p);
     event.currentTarget.setPointerCapture(event.pointerId);
     if (pointers.current.size === 2) {
@@ -554,12 +581,9 @@ export function ChartPanel({
       timeScale.applyOptions({ rightOffset: DEFAULT_RIGHT_OFFSET_BARS });
       timeScale.scrollToRealTime();
     };
-  const normalizedPendingLimitPrice = pendingLimitDraft
-    ? normalizedLimitDraftPrice(pendingLimitDraft)
-    : null;
-  const pendingLimitTop = normalizedPendingLimitPrice === null
-    ? null
-    : coordinates.priceToY(Number(normalizedPendingLimitPrice));
+  const visiblePendingLimitDrafts =
+    pendingLimitDrafts ??
+    (pendingLimitDraft ? [pendingLimitDraft] : []);
   const deleteSelected = useCallback(() => {
     if (selectedId) {
       commit(drawings.filter((d) => d.id !== selectedId));
@@ -629,27 +653,161 @@ export function ChartPanel({
             gesture.current = null;
           }}
         />
-        {pendingLimitDraft && normalizedPendingLimitPrice !== null ? (
-          <PendingLimitLine
-            side={pendingLimitDraft.side}
-            price={normalizedPendingLimitPrice}
-            top={pendingLimitTop}
-            onDragClientY={(clientY) => {
-              const host = hostRef.current;
-              const series = seriesRef.current;
-              if (!host || !series || !onPendingLimitPriceChange) return;
-              const price = series.coordinateToPrice(
-                clientY - host.getBoundingClientRect().top,
-              );
-              if (price !== null) onPendingLimitPriceChange(String(price));
-            }}
-            onConfirm={onPendingLimitConfirm}
-            confirmDisabled={
-              pendingLimitDraft.status === "submitting" ||
-              pendingLimitDraft.status === "ambiguous"
-            }
-          />
+        {activeLimitOrders.map((order) => {
+          const price = Number(order.price);
+          if (!Number.isFinite(price)) return null;
+
+          const top = coordinates.priceToY(price);
+          if (top === null) return null;
+
+          return (
+            <div
+              key={order.order_id}
+              className={`active-limit-line ${order.side.toLowerCase()}`}
+              aria-label={`Active ${order.side} Limit at ${order.price}`}
+              style={{
+                top,
+                right:
+                  chartRef.current?.priceScale("right").width() ||
+                  PRICE_SCALE_WIDTH_FALLBACK,
+              }}
+            >
+              <span>{order.price}</span>
+            </div>
+          );
+        })}
+        {visiblePendingLimitDrafts.map((draft) => {
+          const normalizedPrice = normalizedLimitDraftPrice(draft);
+          if (normalizedPrice === null) return null;
+
+          const top = coordinates.priceToY(Number(normalizedPrice));
+          const selected = pendingLimitDraft?.draftId === draft.draftId;
+
+          return (
+            <PendingLimitLine
+              key={draft.draftId}
+              side={draft.side}
+              price={normalizedPrice}
+              top={top}
+              rightOffset={
+                chartRef.current?.priceScale("right").width() ||
+                PRICE_SCALE_WIDTH_FALLBACK
+              }
+              selected={selected}
+              onSelect={() => onPendingLimitSelect?.(draft.draftId)}
+              onDismiss={() => onPendingLimitDismiss?.(draft.draftId)}
+              onDragClientY={(clientY) => {
+                const host = hostRef.current;
+                const series = seriesRef.current;
+                if (!host || !series || !onPendingLimitPriceChange) return;
+
+                const price = series.coordinateToPrice(
+                  clientY - host.getBoundingClientRect().top,
+                );
+
+                if (price !== null) {
+                  onPendingLimitPriceChange(String(price), draft.draftId);
+                }
+              }}
+              onConfirm={() => onPendingLimitConfirm?.(draft.draftId)}
+              confirmDisabled={
+                draft.status === "submitting" ||
+                draft.status === "ambiguous"
+              }
+            />
+          );
+        })}
+        {visiblePendingLimitDrafts.length > 0 ? (
+          <div className="pending-limit-batch-actions">
+            <button
+              type="button"
+              className="pending-limit-batch-confirm"
+              aria-label="Confirm all pending Limit drafts"
+              onClick={() => setConfirmAllPendingOpen(true)}
+            >
+              {"\u2713"}
+            </button>
+            <button
+              type="button"
+              className="pending-limit-batch-dismiss"
+              aria-label="Dismiss all pending Limit drafts"
+              onClick={() => setDismissAllPendingOpen(true)}
+            >
+              &times;
+            </button>
+          </div>
         ) : null}
+
+        {confirmAllPendingOpen ? (
+          <div
+            className="pending-limit-batch-confirmation"
+            onClick={() => setConfirmAllPendingOpen(false)}
+          >
+            <div
+              className="pending-limit-batch-confirmation-card"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <strong>Confirm all pending limits?</strong>
+              <div>
+                <button
+                  type="button"
+                  className="confirm-all"
+                  onClick={async () => {
+                    const drafts = [...visiblePendingLimitDrafts];
+                    setConfirmAllPendingOpen(false);
+
+                    for (const draft of drafts) {
+                      await onPendingLimitConfirm?.(draft.draftId);
+                    }
+                  }}
+                >
+                  CONFIRM ALL
+                </button>
+                <button
+                  type="button"
+                  className="neutral"
+                  onClick={() => setConfirmAllPendingOpen(false)}
+                >
+                  CANCEL
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {dismissAllPendingOpen ? (
+          <div
+            className="pending-limit-batch-confirmation"
+            onClick={() => setDismissAllPendingOpen(false)}
+          >
+            <div
+              className="pending-limit-batch-confirmation-card"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <strong>Delete all pending limits?</strong>
+              <div>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => {
+                    setDismissAllPendingOpen(false);
+                    onPendingLimitDismissAll?.();
+                  }}
+                >
+                  DELETE ALL
+                </button>
+                <button
+                  type="button"
+                  className="neutral"
+                  onClick={() => setDismissAllPendingOpen(false)}
+                >
+                  KEEP
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <DrawingToolbar
           activeTool={tool}
           magnet={magnet}

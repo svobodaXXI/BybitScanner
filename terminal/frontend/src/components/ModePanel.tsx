@@ -44,6 +44,7 @@ export function ModePanel({
   limitDraftState,
   dispatchLimitDraft,
   onLimitDraftConfirm,
+  onFastLimitHoldChange = () => {},
   onPositionSideChange,
   onPositionAverageEntryChange,
 }: {
@@ -58,6 +59,9 @@ export function ModePanel({
   limitDraftState: LimitDraftState;
   dispatchLimitDraft: Dispatch<LimitDraftAction>;
   onLimitDraftConfirm: () => void;
+  onFastLimitHoldChange?: (
+    intent: { side: MarketSide; volumeUsdt: string } | null,
+  ) => void;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
 }) {
@@ -91,6 +95,8 @@ export function ModePanel({
   const buyAmountEdited = useRef(false);
   const sellAmountEdited = useRef(false);
   const submissionInFlight = useRef(false);
+  const fastLimitHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fastLimitHoldTriggered = useRef(false);
   const previousLimitDraft = useRef(limitDraftState.draft);
 
   useEffect(() => {
@@ -370,6 +376,48 @@ export function ModePanel({
     finally { submissionInFlight.current = false; setIsSubmitting(false); }
   };
 
+  const startFastLimitHold = (side: MarketSide, volumeUsdt: string) => {
+    fastLimitHoldTriggered.current = false;
+
+    if (fastLimitHoldTimer.current) {
+      clearTimeout(fastLimitHoldTimer.current);
+    }
+
+    fastLimitHoldTimer.current = setTimeout(() => {
+      fastLimitHoldTriggered.current = true;
+      onFastLimitHoldChange({ side, volumeUsdt });
+      fastLimitHoldTimer.current = null;
+    }, 500);
+  };
+
+  const finishFastLimitHold = (side: MarketSide, volumeUsdt: string) => {
+    if (fastLimitHoldTimer.current) {
+      clearTimeout(fastLimitHoldTimer.current);
+      fastLimitHoldTimer.current = null;
+    }
+
+    if (fastLimitHoldTriggered.current) {
+      onFastLimitHoldChange(null);
+      fastLimitHoldTriggered.current = false;
+      return;
+    }
+
+    submitPaperMarket(side, volumeUsdt);
+  };
+
+  const cancelFastLimitHold = () => {
+    if (fastLimitHoldTimer.current) {
+      clearTimeout(fastLimitHoldTimer.current);
+      fastLimitHoldTimer.current = null;
+    }
+
+    if (fastLimitHoldTriggered.current) {
+      onFastLimitHoldChange(null);
+    }
+
+    fastLimitHoldTriggered.current = false;
+  };
+
   const shortLimitOrders = activeLimitOrders.filter((order) => order.side === "Sell");
   const longLimitOrders = activeLimitOrders.filter((order) => order.side === "Buy");
 
@@ -416,7 +464,11 @@ export function ModePanel({
           <div className="paper-trade-side-group" aria-label="PAPER trade sides">
             <div className="paper-market-side paper-market-buy-side">
               <button
-                onClick={() => submitPaperMarket("Buy", buyAmount)}
+                onPointerDown={() => startFastLimitHold("Buy", buyAmount)}
+                onPointerUp={() => finishFastLimitHold("Buy", buyAmount)}
+                onPointerCancel={cancelFastLimitHold}
+                onPointerLeave={cancelFastLimitHold}
+                onContextMenu={(event) => event.preventDefault()}
                 className="paper-market-buy"
                 disabled={isSubmitting}
                 type="button"
@@ -438,7 +490,11 @@ export function ModePanel({
 
             <div className="paper-market-side paper-market-sell-side">
               <button
-                onClick={() => submitPaperMarket("Sell", sellAmount)}
+                onPointerDown={() => startFastLimitHold("Sell", sellAmount)}
+                onPointerUp={() => finishFastLimitHold("Sell", sellAmount)}
+                onPointerCancel={cancelFastLimitHold}
+                onPointerLeave={cancelFastLimitHold}
+                onContextMenu={(event) => event.preventDefault()}
                 className="paper-market-sell"
                 disabled={isSubmitting}
                 type="button"

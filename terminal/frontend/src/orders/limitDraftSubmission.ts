@@ -18,7 +18,10 @@ export type LimitDraftSubmissionDependencies = {
 };
 
 export class PaperLimitDraftSubmitController {
-  private readonly latch = new LimitDraftSubmitLatch<PaperLimitMutationResult>();
+  private readonly latches = new Map<
+    string,
+    LimitDraftSubmitLatch<PaperLimitMutationResult>
+  >();
   private readonly handled = new Set<string>();
 
   submit(
@@ -26,7 +29,13 @@ export class PaperLimitDraftSubmitController {
     dependencies: LimitDraftSubmissionDependencies,
   ): LimitSubmitAttempt<PaperLimitMutationResult> {
     const fetcher = dependencies.fetcher ?? fetch;
-    const attempt = this.latch.submit(
+    let latch = this.latches.get(draft.draftId);
+    if (!latch) {
+      latch = new LimitDraftSubmitLatch<PaperLimitMutationResult>();
+      this.latches.set(draft.draftId, latch);
+    }
+
+    const attempt = latch.submit(
       draft,
       dependencies.createClientActionId,
       async (submittingDraft) => {
@@ -52,6 +61,7 @@ export class PaperLimitDraftSubmitController {
     dependencies.dispatch({
       type: "start-submitting",
       clientActionId: attempt.clientActionId,
+      draftId: attempt.draftId,
     });
 
     if (!this.handled.has(attempt.clientActionId)) {
@@ -61,12 +71,16 @@ export class PaperLimitDraftSubmitController {
           dependencies.dispatch({
             type: "mark-ambiguous",
             clientActionId: attempt.clientActionId,
+            draftId: attempt.draftId,
           });
           return;
         }
 
         if (outcome.value.status === "completed") {
-          dependencies.dispatch({ type: "dismiss" });
+          dependencies.dispatch({
+            type: "dismiss",
+            draftId: attempt.draftId,
+          });
           await dependencies.refreshPaperState();
           this.handled.delete(attempt.clientActionId);
           return;
@@ -76,6 +90,7 @@ export class PaperLimitDraftSubmitController {
           type: "mark-rejected",
           clientActionId: attempt.clientActionId,
           reason: outcome.value.reason_code,
+          draftId: attempt.draftId,
         });
         this.handled.delete(attempt.clientActionId);
       });

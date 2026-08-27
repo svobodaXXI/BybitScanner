@@ -12,6 +12,7 @@ import type { ChartTimeframe } from "../marketData/timeframes";
 import { setMarketTimeframe, useMarketData } from "../marketData/useMarketData";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import {
+  createLimitDraft,
   EMPTY_LIMIT_DRAFT_STATE,
   limitDraftReducer,
 } from "../orders/limitDraft";
@@ -25,6 +26,10 @@ export function App() {
   const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [paperState, setPaperState] = useState<PaperState | null>(null);
+  const [fastLimitIntent, setFastLimitIntent] = useState<{
+    side: "Buy" | "Sell";
+    volumeUsdt: string;
+  } | null>(null);
   const [limitDraftState, dispatchLimitDraft] = useReducer(
     limitDraftReducer,
     EMPTY_LIMIT_DRAFT_STATE,
@@ -77,16 +82,55 @@ export function App() {
     setMarketTimeframe(next);
   };
 
-  const submitLimitDraft = useCallback(() => {
-    const draft = limitDraftState.draft;
+  const createFastLimitDraft = useCallback(
+    (price: string) => {
+      if (
+        !fastLimitIntent ||
+        market.book.health !== "READY" ||
+        market.tickSize === null
+      ) {
+        return;
+      }
+
+      dispatchLimitDraft({
+        type: "begin",
+        draft: createLimitDraft({
+          draftId: `limit-draft-${tradingSymbol}-${fastLimitIntent.side.toLowerCase()}-${Date.now()}`,
+          symbol: tradingSymbol,
+          side: fastLimitIntent.side,
+          origin: "chart-fast",
+          volume: { unit: "usdt", amount: fastLimitIntent.volumeUsdt },
+          sizingReferencePrice,
+          price,
+          authoritativeTickSize: String(market.tickSize),
+        }),
+      });
+    },
+    [
+      fastLimitIntent,
+      market.book.health,
+      market.tickSize,
+      sizingReferencePrice,
+      tradingSymbol,
+    ],
+  );
+
+  const submitLimitDraft = useCallback((draftId?: string) => {
+    const drafts =
+      limitDraftState.drafts ??
+      (limitDraftState.draft ? [limitDraftState.draft] : []);
+    const draft = draftId
+      ? drafts.find((candidate) => candidate.draftId === draftId) ?? null
+      : limitDraftState.draft;
     if (!draft) return;
-    limitSubmitController.current.submit(draft, {
+    const attempt = limitSubmitController.current.submit(draft, {
       dispatch: dispatchLimitDraft,
       createClientActionId: () =>
         globalThis.crypto?.randomUUID?.() ?? `paper-limit-${Date.now()}`,
       refreshPaperState,
     });
-  }, [limitDraftState.draft, refreshPaperState]);
+    return attempt.promise.then(() => undefined);
+  }, [limitDraftState.draft, limitDraftState.drafts, refreshPaperState]);
 
   return (
     <main className="workspace-shell">
@@ -107,11 +151,29 @@ export function App() {
           tickSize={market.tickSize}
           symbol={market.book.symbol}
           timeframe={timeframe}
+          activeLimitOrders={
+            currentPaperState?.ok ? currentPaperState.active_limit_orders : []
+          }
           pendingLimitDraft={limitDraftState.draft}
-          onPendingLimitPriceChange={(price) =>
-            dispatchLimitDraft({ type: "update-price", price })
+          pendingLimitDrafts={
+            limitDraftState.drafts ??
+            (limitDraftState.draft ? [limitDraftState.draft] : [])
+          }
+          onPendingLimitSelect={(draftId) =>
+            dispatchLimitDraft({ type: "select", draftId })
+          }
+          onPendingLimitDismiss={(draftId) =>
+            dispatchLimitDraft({ type: "dismiss", draftId })
+          }
+          onPendingLimitDismissAll={() =>
+            dispatchLimitDraft({ type: "dismiss-all" })
+          }
+          onPendingLimitPriceChange={(price, draftId) =>
+            dispatchLimitDraft({ type: "update-price", price, draftId })
           }
           onPendingLimitConfirm={submitLimitDraft}
+          fastLimitActive={fastLimitIntent !== null}
+          onFastLimitPriceSelect={createFastLimitDraft}
         />
         <aside className="market-sidecar" aria-label="Market depth and tape">
           <DomPanel
@@ -148,6 +210,7 @@ export function App() {
           limitDraftState={limitDraftState}
           dispatchLimitDraft={dispatchLimitDraft}
           onLimitDraftConfirm={submitLimitDraft}
+          onFastLimitHoldChange={setFastLimitIntent}
           onPositionSideChange={setPositionSide}
           onPositionAverageEntryChange={setPositionAverageEntry}
         />
