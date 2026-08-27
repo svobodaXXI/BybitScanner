@@ -549,6 +549,33 @@ button {
   align-items: center;
 }
 
+.paper-limits-shell {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0.18rem;
+}
+
+.paper-limits-button,
+.paper-limits-cancel-all {
+  border: 1px solid #394653;
+  border-radius: 0.28rem;
+  background: #171d24;
+  color: #aab5bf;
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.paper-limits-button {
+  min-width: 4.7rem;
+  padding: 0.42rem 0.48rem;
+}
+
+.paper-limits-cancel-all {
+  width: 1.65rem;
+  padding: 0;
+  color: #d67a82;
+}
+
 .paper-wv-indicator {
   display: flex;
   flex-direction: column;
@@ -947,72 +974,11 @@ button {
 
   /* LIMITS */
 
-  .paper-limit-list {
+  .paper-limits-shell {
     grid-area: limits;
     min-width: 0;
-    overflow: hidden;
     padding-top: 0.25rem;
     border-top: 1px solid #27313b;
-  }
-
-  .paper-limit-list-header {
-    display: flex;
-    align-items: center;
-    gap: 0.28rem;
-    margin-bottom: 0.15rem;
-    color: #7f8b97;
-    font-size: 0.56rem;
-  }
-
-  .paper-limit-list ul {
-    display: flex;
-    gap: 0.3rem;
-    margin: 0;
-    padding: 0;
-    overflow-x: auto;
-    list-style: none;
-  }
-
-  .paper-limit-list li {
-    display: grid;
-    grid-template-columns: auto 4.2rem 1.8rem 1.8rem;
-    align-items: center;
-    gap: 0.2rem;
-    flex: 0 0 auto;
-  }
-
-  .paper-limit-summary {
-    font-size: 0.62rem;
-    white-space: nowrap;
-  }
-
-  .paper-limit-summary.buy {
-    color: var(--trade-buy);
-  }
-
-  .paper-limit-summary.sell {
-    color: var(--trade-sell);
-  }
-
-  .paper-limit-list input {
-    width: 4.2rem;
-    min-width: 0;
-    border: 1px solid #394653;
-    border-radius: 0.25rem;
-    background: #10151b;
-    color: #d7e0e8;
-    font-size: 0.64rem;
-    text-align: center;
-  }
-
-  .paper-limit-list button {
-    width: 1.8rem;
-    height: 1.8rem;
-    padding: 0;
-    border: 1px solid #394653;
-    border-radius: 0.25rem;
-    background: #171d24;
-    font-size: 0.72rem;
   }
 
   .paper-execution-status {

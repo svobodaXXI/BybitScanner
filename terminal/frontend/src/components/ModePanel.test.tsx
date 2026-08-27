@@ -52,6 +52,62 @@ function ModePanel(props: {
 }
 
 describe("ModePanel PAPER Market amounts", () => {
+  const activeLimit = {
+    order_id: "paper-limit-1",
+    order_link_id: "link-1",
+    symbol: "BTCUSDT",
+    side: "Buy" as const,
+    price: "64000",
+    quantity: "0.005",
+    time_in_force: "GTC" as const,
+  };
+
+  it("shows LIMITS N from authoritative active orders", () => {
+    const state = paperState({ active_limit_orders: [activeLimit] }) as PaperState;
+    render(
+      <ModePanelView
+        mode="TERMINAL"
+        onModeChange={vi.fn()}
+        symbol="BTCUSDT"
+        paperState={state}
+        activeLimitOrders={state.active_limit_orders}
+        refreshPaperState={vi.fn()}
+        sizingReferencePrice="64250"
+        onPositionSideChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "LIMITS 1" })).toBeInTheDocument();
+  });
+
+  it("opens symbol-wide Limit cancellation confirmation from the separate cross", () => {
+    const state = paperState({ active_limit_orders: [activeLimit] }) as PaperState;
+    render(
+      <ModePanelView
+        mode="TERMINAL"
+        onModeChange={vi.fn()}
+        symbol="BTCUSDT"
+        paperState={state}
+        activeLimitOrders={state.active_limit_orders}
+        refreshPaperState={vi.fn()}
+        sizingReferencePrice="64250"
+        onPositionSideChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Cancel all Limit orders for BTCUSDT",
+      }),
+    );
+
+    expect(
+      screen.getByRole("dialog", {
+        name: "Cancel all Limit orders for BTCUSDT?",
+      }),
+    ).toBeInTheDocument();
+  });
+
   it("initializes independent amounts and shows authoritative position notional", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,

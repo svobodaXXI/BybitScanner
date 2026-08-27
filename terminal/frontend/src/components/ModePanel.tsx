@@ -50,6 +50,9 @@ export function ModePanel({
   const [executionStatus, setExecutionStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [limitPresentationOpen, setLimitPresentationOpen] = useState(false);
+  const [cancelAllLimitsConfirmOpen, setCancelAllLimitsConfirmOpen] =
+    useState(false);
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
     null,
   );
@@ -485,48 +488,24 @@ export function ModePanel({
             </button>
           </div>
 
-          <section className="paper-limit-list" aria-label="Active PAPER limits">
-            <div className="paper-limit-list-header">
-              <span>LIMITS</span>
-              <strong>{activeLimitOrders.length}</strong>
-            </div>
-
-            <ul>
-              {activeLimitOrders.map((order) => (
-                <li key={order.order_id}>
-                  <span className={`paper-limit-summary ${order.side.toLowerCase()}`}>
-                    {order.side} {order.quantity} @ {order.price}
-                  </span>
-                  <input
-                    aria-label={`????? ???? ${order.order_id}`}
-                    min="0"
-                    onChange={(event) => setAmendPrices((current) => ({
-                      ...current,
-                      [order.order_id]: event.target.value,
-                    }))}
-                    type="number"
-                    value={amendPrices[order.order_id] ?? order.price}
-                  />
-                  <button
-                    type="button"
-                    disabled={isSubmitting}
-                    onClick={() => amendLimit(order.order_id)}
-                    aria-label="??????????? ????? ????"
-                  >
-                    ?
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isSubmitting}
-                    onClick={() => cancelLimit(order.order_id)}
-                    aria-label="???????? ???????? ?????"
-                  >
-                    ?
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+          <div className="paper-limits-shell">
+            <button
+              type="button"
+              className="paper-limits-button"
+              aria-expanded={limitPresentationOpen}
+              onClick={() => setLimitPresentationOpen(true)}
+            >
+              LIMITS {activeLimitOrders.length}
+            </button>
+            <button
+              type="button"
+              className="paper-limits-cancel-all"
+              aria-label={`Cancel all Limit orders for ${symbol}`}
+              onClick={() => setCancelAllLimitsConfirmOpen(true)}
+            >
+              ×
+            </button>
+          </div>
 
           <p className="paper-execution-status" aria-live="polite">
             {executionStatus}
@@ -535,6 +514,44 @@ export function ModePanel({
           {holdTooltip ? (
             <div className="paper-hold-tooltip" role="tooltip">
               {holdTooltip}
+            </div>
+          ) : null}
+
+          {cancelAllLimitsConfirmOpen ? (
+            <div
+              className="paper-close-confirm-backdrop"
+              role="presentation"
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setCancelAllLimitsConfirmOpen(false);
+                }
+              }}
+            >
+              <section
+                className="paper-close-confirm"
+                role="dialog"
+                aria-modal="true"
+                aria-label={`Cancel all Limit orders for ${symbol}?`}
+              >
+                <strong>Cancel all Limit orders for {symbol}?</strong>
+                <span>Batch cancellation is not enabled yet.</span>
+                <div className="paper-close-confirm-actions">
+                  <button
+                    type="button"
+                    className="paper-close-confirm-accept"
+                    disabled
+                  >
+                    CANCEL ALL LIMITS
+                  </button>
+                  <button
+                    type="button"
+                    className="paper-close-confirm-cancel"
+                    onClick={() => setCancelAllLimitsConfirmOpen(false)}
+                  >
+                    KEEP LIMITS
+                  </button>
+                </div>
+              </section>
             </div>
           ) : null}
 
