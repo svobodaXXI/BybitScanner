@@ -72,6 +72,8 @@ export function ModePanel({
   const limitsLongPressTriggered = useRef(false);
   const [cancelAllLimitsConfirmOpen, setCancelAllLimitsConfirmOpen] =
     useState(false);
+  const [cancelLimitSideConfirm, setCancelLimitSideConfirm] =
+    useState<"Buy" | "Sell" | null>(null);
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
     null,
   );
@@ -305,6 +307,45 @@ export function ModePanel({
       if (result.status === "completed") await refreshPaperState();
     } catch { setExecutionStatus("Отмена LIMIT не выполнена"); }
     finally { submissionInFlight.current = false; setIsSubmitting(false); }
+  };
+
+  const cancelLimits = async (orders: PaperLimitOrder[]) => {
+    if (submissionInFlight.current || orders.length === 0) return;
+
+    submissionInFlight.current = true;
+    setIsSubmitting(true);
+
+    try {
+      const batchId = Date.now();
+
+      const results = await Promise.all(
+        orders.map(async (order, index) => {
+          const request: PaperLimitCancelRequest = {
+            client_action_id: `paper-limit-cancel-batch-${batchId}-${index}`,
+            symbol,
+            order_id: order.order_id,
+          };
+
+          const response = await fetch("/api/limit/cancel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(request),
+          });
+
+          return (await response.json()) as PaperLimitMutationResult;
+        }),
+      );
+
+      const completed = results.filter((result) => result.status === "completed").length;
+      setExecutionStatus(`PAPER LIMITS ????????: ${completed}/${orders.length}`);
+      await refreshPaperState();
+    } catch {
+      setExecutionStatus("???????? ?????? LIMIT ?? ?????????");
+      await refreshPaperState();
+    } finally {
+      submissionInFlight.current = false;
+      setIsSubmitting(false);
+    }
   };
 
   const amendLimit = async (orderId: string) => {
@@ -719,16 +760,26 @@ export function ModePanel({
                 </div>
 
                 <div className="paper-limits-side sell">
-                  <button
-                    type="button"
-                    className="paper-limits-side-header"
-                    onClick={() => setLimitsShortExpanded((value) => !value)}
-                  >
-                    <strong>SHORT</strong>
-                    <span>{shortLimitOrders.length} orders</span>
-                    <span>{shortLimitsTotalUsdt.toFixed(2)} USDT</span>
-                    <span aria-hidden="true">{"\u00d7"}</span>
-                  </button>
+                  <div className="paper-limits-side-header">
+                    <button
+                      type="button"
+                      className="paper-limits-side-toggle"
+                      onClick={() => setLimitsShortExpanded((value) => !value)}
+                    >
+                      <strong>SHORT</strong>
+                      <span>{shortLimitOrders.length} orders</span>
+                      <span>{shortLimitsTotalUsdt.toFixed(2)} USDT</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="paper-limits-side-cancel"
+                      aria-label={`Cancel all SHORT Limit orders for ${symbol}`}
+                      disabled={isSubmitting || shortLimitOrders.length === 0}
+                      onClick={() => setCancelLimitSideConfirm("Sell")}
+                    >
+                      {"\u00d7"}
+                    </button>
+                  </div>
 
                   {limitsShortExpanded ? (
                     <div className="paper-limits-order-list">
@@ -750,16 +801,26 @@ export function ModePanel({
                 </div>
 
                 <div className="paper-limits-side buy">
-                  <button
-                    type="button"
-                    className="paper-limits-side-header"
-                    onClick={() => setLimitsLongExpanded((value) => !value)}
-                  >
-                    <strong>LONG</strong>
-                    <span>{longLimitOrders.length} orders</span>
-                    <span>{longLimitsTotalUsdt.toFixed(2)} USDT</span>
-                    <span aria-hidden="true">{"\u00d7"}</span>
-                  </button>
+                  <div className="paper-limits-side-header">
+                    <button
+                      type="button"
+                      className="paper-limits-side-toggle"
+                      onClick={() => setLimitsLongExpanded((value) => !value)}
+                    >
+                      <strong>LONG</strong>
+                      <span>{longLimitOrders.length} orders</span>
+                      <span>{longLimitsTotalUsdt.toFixed(2)} USDT</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="paper-limits-side-cancel"
+                      aria-label={`Cancel all LONG Limit orders for ${symbol}`}
+                      disabled={isSubmitting || longLimitOrders.length === 0}
+                      onClick={() => setCancelLimitSideConfirm("Buy")}
+                    >
+                      {"\u00d7"}
+                    </button>
+                  </div>
 
                   {limitsLongExpanded ? (
                     <div className="paper-limits-order-list">
@@ -778,6 +839,53 @@ export function ModePanel({
                       ))}
                     </div>
                   ) : null}
+                </div>
+              </section>
+            </div>
+          ) : null}
+
+          {cancelLimitSideConfirm ? (
+            <div
+              className="paper-close-confirm-backdrop"
+              role="presentation"
+              onPointerDown={(event) => {
+                if (event.target === event.currentTarget) {
+                  setCancelLimitSideConfirm(null);
+                }
+              }}
+            >
+              <section
+                className="paper-close-confirm"
+                role="dialog"
+                aria-modal="true"
+                aria-label={`Cancel all ${cancelLimitSideConfirm === "Sell" ? "SHORT" : "LONG"} Limit orders for ${symbol}?`}
+              >
+                <strong>
+                  Cancel all {cancelLimitSideConfirm === "Sell" ? "SHORT" : "LONG"} Limit orders for {symbol}?
+                </strong>
+                <div className="paper-close-confirm-actions">
+                  <button
+                    type="button"
+                    className="paper-close-confirm-accept"
+                    disabled={isSubmitting}
+                    onClick={async () => {
+                      const orders =
+                        cancelLimitSideConfirm === "Sell"
+                          ? shortLimitOrders
+                          : longLimitOrders;
+                      await cancelLimits(orders);
+                      setCancelLimitSideConfirm(null);
+                    }}
+                  >
+                    CANCEL
+                  </button>
+                  <button
+                    type="button"
+                    className="paper-close-confirm-cancel"
+                    onClick={() => setCancelLimitSideConfirm(null)}
+                  >
+                    KEEP
+                  </button>
                 </div>
               </section>
             </div>
@@ -805,7 +913,11 @@ export function ModePanel({
                   <button
                     type="button"
                     className="paper-close-confirm-accept"
-                    disabled
+                    disabled={isSubmitting || activeLimitOrders.length === 0}
+                    onClick={async () => {
+                      await cancelLimits(activeLimitOrders);
+                      setCancelAllLimitsConfirmOpen(false);
+                    }}
                   >
                     CANCEL ALL LIMITS
                   </button>
