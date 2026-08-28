@@ -294,6 +294,7 @@ export function App() {
           fastLimitActive={fastLimitIntent !== null}
           onFastLimitPriceSelect={createFastLimitDraft}
           onActiveLimitAmend={amendPaperLimit}
+          onActiveLimitCancel={cancelPaperLimit}
         />
         <aside className="market-sidecar" aria-label="Market depth and tape">
           <DomPanel

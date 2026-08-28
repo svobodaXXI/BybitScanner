@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.55",
+  "revision": "1.61",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -440,7 +440,8 @@
     {"revision": "1.52", "reason": "Implemented one shared Enter/Done lifecycle for trading numeric inputs: prevent default focus progression, stop propagation and blur without submission across BUY/SELL quick volume and Limit popup volume/price; phone acceptance remains pending", "date": "2026-08-28"},
     {"revision": "1.53", "reason": "Replaced the phone-rejected blur-only Done behavior with one terminal focus boundary and completion latch that owns post-Enter focus and rejects implicit sibling-input focus until an explicit pointer edit begins; phone acceptance remains pending", "date": "2026-08-28"},
     {"revision": "1.54", "reason": "Recorded the user's intentional deferral of the unresolved real-phone Done/Enter focus progression, removed temporary on-screen focus/IME diagnostics, preserved the current functional focus policy, and returned acceptance priority to the existing LIMIT sequence", "date": "2026-08-28"},
-    {"revision": "1.55", "reason": "Recorded real-phone PASS evidence for the approximately 300-ms active-LIMIT edit hold and drag/release dashed-candidate controls, preserved the unresolved deferred Done/Enter issue, and clarified that the current × restore behavior remains incomplete because × must authoritatively cancel while outside activation alone abandons the edit", "date": "2026-08-28"}
+    {"revision": "1.55", "reason": "Recorded real-phone PASS evidence for the approximately 300-ms active-LIMIT edit hold and drag/release dashed-candidate controls, preserved the unresolved deferred Done/Enter issue, and clarified that the current × restore behavior remains incomplete because × must authoritatively cancel while outside activation alone abandons the edit", "date": "2026-08-28"},
+    {"revision": "1.61", "reason": "Recorded real-phone acceptance of the complete active-LIMIT interaction slice: solid tap cancellation affordance, pre-hold movement abort, 300-ms hold-only edit, immediate dashed re-grab, authoritative per-line amend/cancel, consume-once outside restore, and mixed normal-draft plus edited-active GLOBAL confirm/cancel semantics", "date": "2026-08-28"}
   ]
 }
 ```
@@ -3339,3 +3340,108 @@ acceptance blocker for continuing the current LIMIT sequence, and no claim is ma
 blocker is the active-LIMIT `×` semantic mismatch. The exact next roadmap action is a bounded correction that routes
 `×` through authoritative cancellation while preserving outside-abandon and `✓`-amend semantics. No deliberate
 deviation from the master roadmap is introduced.
+
+## 63. Active-LIMIT edit command-semantics implementation checkpoint
+
+Revision 1.56 records checkpoint `ACTIVE_LIMIT_EDIT_COMMAND_SEMANTICS_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING`.
+The active-LIMIT edit candidate remains local until one of three distinct intents occurs. Green `✓` sends the
+existing identity-preserving amend command for the authoritative `order_id`; red `×` sends the existing canonical
+single-order PAPER LIMIT cancel command for that same authoritative `order_id`; outside activation abandons only
+the local candidate and performs no backend mutation, restoring the original authoritative projection.
+
+The controller now represents amend and cancel as separate in-flight states. Both commands apply only their
+returned authoritative `paper_state` through `PaperTradingStore`; cancellation does not optimistically remove a
+line, and failure leaves the authoritative order available for projection or reconciliation. Stage 5 and Stage 6
+remain unaccepted pending real-phone verification. The exact next action is one real-phone active-LIMIT edit pass:
+create an active LIMIT, drag it to a candidate price, tap red `×`, and verify without reload that the same order
+disappears from Chart, the applicable BUY/SELL LIMITS count, DOM own-order projection, and backend active orders.
+
+## 64. Active-LIMIT pending-candidate re-drag checkpoint
+
+Revision 1.57 records checkpoint `ACTIVE_LIMIT_PENDING_CANDIDATE_REDRAG_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING`.
+After the initial 300-ms hold, drag and release, the dashed active-LIMIT candidate remains the same local edit
+session and may be grabbed and dragged again immediately, without another hold threshold. Every release returns
+the same authoritative `order_id` to `PENDING_CONFIRM` at its latest tick-normalized candidate price, with green
+amend and red cancel controls still available. This re-drag cycle is repeatable until the session is resolved.
+
+Re-drag uses the existing active-line hit target, pointer handlers and pointer capture. Pointer movement changes
+only the local candidate and emits no amend or cancel command. Green `✓`, red `×` and outside-dismiss retain the
+revision 1.56 command semantics, and no backend API or order lifecycle path changes. Stage 5 and Stage 6 remain
+unaccepted pending real-phone verification. The exact next action is one real-phone active-LIMIT edit pass: hold,
+drag and release an active LIMIT, re-grab the dashed candidate twice without another hold, release at each new
+price, then verify `✓`, `×` and outside remain available and authoritative behavior occurs only on the final action.
+
+## 65. Active-LIMIT initial-hold phase synchronization checkpoint
+
+Revision 1.58 records checkpoint `ACTIVE_LIMIT_INITIAL_HOLD_PHASE_SYNCHRONIZED_PHONE_ACCEPTANCE_PENDING`.
+The active-LIMIT controller now synchronizes its imperative pointer-phase reference with every React state
+transition. A quick release therefore observes and terminates the current `PRESSING` phase immediately, clears
+the hold timer, and cannot later enter edit mode after the finger has already lifted.
+
+The explicit phase boundary remains authoritative: a solid `ACTIVE` Limit enters `PRESSING` and becomes editable
+only when the 300-ms threshold completes; movement or release before that threshold does not edit it. Only an
+existing dashed `PENDING_CONFIRM` candidate enters `EDITING` immediately on pointer down, using the same pointer
+capture and repeatable local re-drag path recorded in revision 1.57. DOM classes and visual style do not select
+gesture timing. Amend, cancel, outside-dismiss, backend APIs and authoritative `order_id` semantics are unchanged.
+Stage 5 and Stage 6 remain unaccepted pending real-phone verification. The exact next action is one phone pass
+proving a short tap leaves a solid active LIMIT unchanged, a 300-ms hold enters dashed editing, and the released
+dashed candidate can then be re-grabbed immediately without another hold.
+
+## 66. Active-LIMIT hold-only edit and tap-cancel affordance checkpoint
+
+Revision 1.59 records checkpoint `ACTIVE_LIMIT_HOLD_ONLY_EDIT_TAP_CANCEL_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING`.
+The active-LIMIT state machine now distinguishes an idle solid order, a solid order with its cancellation
+affordance visible, an unresolved hold candidate, and the existing edit lifecycle. A valid short tap releases
+before 300 ms without significant movement, keeps the order solid and authoritative, and exposes one red `×` for
+that `order_id`. Merely exposing the control performs no backend mutation; `×` alone enters the existing canonical
+single-order PAPER cancellation command, while outside activation hides it without mutating the order.
+
+`PRESSING` records its pointer origin and uses the existing eight-pixel chart touch movement tolerance. Movement
+beyond that tolerance before 300 ms marks the gesture aborted and clears the hold timer. It cannot change the
+candidate price, cannot later enter editing, and release returns to idle `ACTIVE` without showing `×`. Only an
+unmoved hold that reaches 300 ms enters dashed `EDITING`. An existing `PENDING_CONFIRM` candidate retains immediate,
+repeatable re-grab. Amend, edit-mode cancel, outside-abandon, backend APIs and authoritative projection ownership
+are unchanged. Stage 5 and Stage 6 remain unaccepted pending real-phone verification. The exact next action is one
+phone pass covering solid-line short tap and outside dismissal, pre-threshold drag abort, 300-ms hold entry, and
+immediate dashed-candidate re-grab before exercising the visible red `×` cancellation.
+
+## 67. Active-LIMIT global edit boundary and shared candidate actions checkpoint
+
+Revision 1.60 records checkpoint `ACTIVE_LIMIT_GLOBAL_EDIT_BOUNDARY_SHARED_CANDIDATES_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING`.
+While an authoritative active LIMIT is dashed in `EDITING` or `PENDING_CONFIRM`, only that order-id-keyed line,
+its own controls and the global visible-candidate controls belong to the current edit interaction boundary. A
+capture-phase pointer outside that boundary abandons the local edit, restores the original authoritative price,
+performs no backend mutation and consumes the physical gesture before any other active line, pending draft or
+chart overlay can act on it. The next interaction requires a second explicit gesture.
+
+The global candidate action layer now explicitly consists of both ordinary pending Limit drafts and the edited
+active-LIMIT candidate whenever it is dashed and pending confirmation. Global `✓` preserves the existing ordered
+draft-confirm path and then authoritatively amends the edited active candidate at its latest price using the same
+`order_id`. Global `×` preserves ordinary draft dismissal and authoritatively cancels the edited active order via
+the existing single-order PAPER cancel command. Neither action creates a parallel backend command or locally fakes
+success. Global controls are inside the edit boundary and therefore cannot trigger outside-abandon before their
+intended action. Per-line `✓`/`×`, immediate dashed re-grab, solid-line tap cancellation and outside restore remain
+unchanged. Stage 5 and Stage 6 remain unaccepted pending real-phone verification. The exact next action is one
+real-phone pass with one ordinary pending draft plus one edited active LIMIT, proving outside taps are dismiss-only
+and GLOBAL `✓`/`×` include both visible dashed candidates through their respective canonical command paths.
+
+## 68. Active-LIMIT interaction real-phone acceptance
+
+Revision 1.61 records real-phone `PASS` for the active-LIMIT interaction slice implemented through revisions
+1.56-1.60. A short tap on a solid active LIMIT exposes its solid red cancellation `×`; outside activation hides
+that affordance without mutation. Pre-threshold movement aborts the hold without editing or moving the order,
+while an approximately 300-ms stationary hold enters dashed editing and the resulting candidate supports immediate,
+repeatable re-grab.
+
+Per-line `×` authoritatively cancels the actual order, and per-line `✓` authoritatively amends the same `order_id`
+without replacement or duplication. Any activation outside the current edited line, including another solid or
+dashed line, abandons the edit, restores the original price without backend mutation and consumes that gesture.
+The mixed visible-candidate set is also accepted: GLOBAL `×` discards normal pending drafts and authoritatively
+cancels the edited active LIMIT, while GLOBAL `✓` confirms normal pending drafts and authoritatively amends the
+edited active LIMIT using the same identity.
+
+This acceptance closes the bounded active-LIMIT interaction blocker but does not complete master-roadmap Stage 5,
+Stage 6 or the overall LIMIT acceptance gate. Done/Enter focus progression remains deliberately deferred. By the
+user's explicit post-checkpoint priority, the exact next task is `DOM LIMIT ORDER PLACEMENT`: implement direct
+LIMIT placement through DOM/order-book interaction using the existing canonical PAPER LIMIT lifecycle. This
+revision records that routing only and does not implement or newly authorize a parallel order lifecycle.

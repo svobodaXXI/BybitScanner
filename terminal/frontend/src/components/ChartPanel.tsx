@@ -49,7 +49,11 @@ import type { PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
 import { PendingLimitLine } from "../chart/PendingLimitLine";
-import { useActiveLimitEdit } from "../chart/activeLimitEdit";
+import {
+  cancelVisibleLimitCandidates,
+  confirmVisibleLimitCandidates,
+  useActiveLimitEdit,
+} from "../chart/activeLimitEdit";
 import { TradingControlButton } from "../interactions/useTradingControlActivation";
 import { normalizeLimitDraftPrice } from "../orders/limitDraft";
 
@@ -108,6 +112,7 @@ export function ChartPanel({
   fastLimitActive = false,
   onFastLimitPriceSelect,
   onActiveLimitAmend,
+  onActiveLimitCancel,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -124,6 +129,7 @@ export function ChartPanel({
   fastLimitActive?: boolean;
   onFastLimitPriceSelect?: (price: string) => void;
   onActiveLimitAmend?: (orderId: string, price: string) => Promise<void>;
+  onActiveLimitCancel?: (orderId: string) => Promise<unknown>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -355,6 +361,10 @@ export function ChartPanel({
     amend: async (orderId, price) => {
       if (!onActiveLimitAmend) throw new Error("active Limit amend unavailable");
       await onActiveLimitAmend(orderId, price);
+    },
+    cancelOrder: async (orderId) => {
+      if (!onActiveLimitCancel) throw new Error("active Limit cancel unavailable");
+      await onActiveLimitCancel(orderId);
     },
   });
   const onPointerDown = (event: React.PointerEvent) => {
@@ -612,6 +622,8 @@ export function ChartPanel({
   const visiblePendingLimitDrafts =
     pendingLimitDrafts ??
     (pendingLimitDraft ? [pendingLimitDraft] : []);
+  const hasVisibleLimitCandidates =
+    visiblePendingLimitDrafts.length > 0 || activeLimitEdit.activeCandidate !== null;
   const deleteSelected = useCallback(() => {
     if (selectedId) {
       commit(drawings.filter((d) => d.id !== selectedId));
@@ -683,8 +695,18 @@ export function ChartPanel({
         />
         {activeLimitOrders.map((order) => {
           const editState = activeLimitEdit.state;
-          const editing = editState.mode !== "ACTIVE" && editState.orderId === order.order_id;
-          const displayedPrice = editState.mode !== "ACTIVE" && editState.orderId === order.order_id
+          const selected = editState.mode !== "ACTIVE" && editState.orderId === order.order_id;
+          const editing = selected && (
+            editState.mode === "EDITING" ||
+            editState.mode === "PENDING_CONFIRM" ||
+            editState.mode === "AMENDING" ||
+            (editState.mode === "CANCELLING" && editState.presentation === "EDIT")
+          );
+          const activeCancelVisible = selected && (
+            editState.mode === "ACTIVE_CANCEL" ||
+            (editState.mode === "CANCELLING" && editState.presentation === "ACTIVE")
+          );
+          const displayedPrice = editState.mode !== "ACTIVE" && editing
             ? editState.candidatePrice
             : order.price;
           const price = Number(displayedPrice);
@@ -696,7 +718,7 @@ export function ChartPanel({
           return (
             <div
               key={order.order_id}
-              className={`active-limit-line ${order.side.toLowerCase()} ${editing && activeLimitEdit.state.mode !== "PRESSING" ? "editing" : ""}`}
+              className={`active-limit-line ${order.side.toLowerCase()} ${editing ? "editing" : ""}`}
               aria-label={`Active ${order.side} Limit at ${displayedPrice}`}
               data-active-limit-line
               data-active-limit-edit={order.order_id}
@@ -712,10 +734,15 @@ export function ChartPanel({
               }}
             >
               <span>{displayedPrice}</span>
-              {editing && (activeLimitEdit.state.mode === "PENDING_CONFIRM" || activeLimitEdit.state.mode === "AMENDING") ? (
+              {editing && (activeLimitEdit.state.mode === "PENDING_CONFIRM" || activeLimitEdit.state.mode === "AMENDING" || activeLimitEdit.state.mode === "CANCELLING") ? (
                 <div className="active-limit-actions">
-                  <TradingControlButton className="active-limit-confirm" aria-label={`Confirm amend ${order.order_id}`} onTap={() => void activeLimitEdit.confirm()} disabled={activeLimitEdit.state.mode === "AMENDING"}>✓</TradingControlButton>
-                  <TradingControlButton className="active-limit-dismiss" aria-label={`Cancel amend ${order.order_id}`} onTap={activeLimitEdit.cancel} disabled={activeLimitEdit.state.mode === "AMENDING"}>×</TradingControlButton>
+                  <TradingControlButton className="active-limit-confirm" aria-label={`Confirm amend ${order.order_id}`} onTap={() => void activeLimitEdit.confirm()} disabled={activeLimitEdit.state.mode !== "PENDING_CONFIRM"}>✓</TradingControlButton>
+                  <TradingControlButton className="active-limit-dismiss" aria-label={`Cancel Limit ${order.order_id}`} onTap={() => void activeLimitEdit.cancel().catch(() => {})} disabled={activeLimitEdit.state.mode !== "PENDING_CONFIRM"}>×</TradingControlButton>
+                </div>
+              ) : null}
+              {activeCancelVisible ? (
+                <div className="active-limit-actions">
+                  <TradingControlButton className="active-limit-dismiss" aria-label={`Cancel Limit ${order.order_id}`} onTap={() => void activeLimitEdit.cancel().catch(() => {})} disabled={activeLimitEdit.state.mode !== "ACTIVE_CANCEL"}>×</TradingControlButton>
                 </div>
               ) : null}
             </div>
@@ -762,8 +789,8 @@ export function ChartPanel({
             />
           );
         })}
-        {visiblePendingLimitDrafts.length > 0 ? (
-          <div className="pending-limit-batch-actions">
+        {hasVisibleLimitCandidates ? (
+          <div className="pending-limit-batch-actions" data-active-limit-global-actions>
             <button
               type="button"
               className="pending-limit-batch-confirm"
@@ -786,6 +813,7 @@ export function ChartPanel({
         {confirmAllPendingOpen ? (
           <div
             className="pending-limit-batch-confirmation submit-all"
+            data-active-limit-global-actions
             onClick={() => setConfirmAllPendingOpen(false)}
           >
             <div
@@ -803,11 +831,15 @@ export function ChartPanel({
                   type="button"
                   className="confirm-all"
                   onClick={async () => {
-                    const drafts = [...visiblePendingLimitDrafts];
+                    const draftIds = visiblePendingLimitDrafts.map((draft) => draft.draftId);
+                    const activeCandidate = activeLimitEdit.activeCandidate;
                     setConfirmAllPendingOpen(false);
-                    for (const draft of drafts) {
-                      await onPendingLimitConfirm?.(draft.draftId);
-                    }
+                    await confirmVisibleLimitCandidates({
+                      draftIds,
+                      activeCandidate,
+                      confirmDraft: (draftId) => onPendingLimitConfirm?.(draftId),
+                      confirmEditedActive: () => activeLimitEdit.confirm(),
+                    });
                   }}
                 >
                   CONFIRM ALL
@@ -827,6 +859,7 @@ export function ChartPanel({
         {dismissAllPendingOpen ? (
           <div
             className="pending-limit-batch-confirmation dismiss-all"
+            data-active-limit-global-actions
             onClick={() => setDismissAllPendingOpen(false)}
           >
             <div
@@ -839,8 +872,15 @@ export function ChartPanel({
                   type="button"
                   className="danger"
                   onClick={() => {
+                    const draftIds = visiblePendingLimitDrafts.map((draft) => draft.draftId);
+                    const activeCandidate = activeLimitEdit.activeCandidate;
                     setDismissAllPendingOpen(false);
-                    onPendingLimitDismissAll?.();
+                    void cancelVisibleLimitCandidates({
+                      draftIds,
+                      activeCandidate,
+                      dismissDrafts: () => onPendingLimitDismissAll?.(),
+                      cancelEditedActive: () => activeLimitEdit.cancel(),
+                    }).catch(() => {});
                   }}
                 >
                   DELETE ALL
