@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.43",
+  "revision": "1.45",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -42,6 +42,7 @@
     ,"Record the isolated Smart Tape to fixed DOM spatial-alignment patch while keeping its main integration pending"
     ,"Implement and manually accept live PAPER unrealized PnL plus the compact position-controls layout"
     ,"Record the human-approved documentation-only side-specific LIMITS UX, chart-draft and immediate DOM-Limit paths, and explicit supersession map without authorizing implementation"
+    ,"Implement one revision-ordered frontend PAPER authority, coalesced reconciliation and mutation responses carrying their serialized resulting PAPER state"
   ],
   "prohibited_scope": [
     "Further unapproved DOM, L2, Market Data Engine, Paper Trading Engine or chart implementation beyond recorded checkpoints",
@@ -59,6 +60,7 @@
     "DOCUMENTS/PROJECT_CONTRACTS.md#CONTRACT-CONTEXT-DUMP-001",
     "DOCUMENTS/PROJECT_STATE.md#TRADING_WORKSPACE_MANUAL_LIVE_TRADING_STATE",
     "DOCUMENTS/ROADMAP.md#CR-TRADING-WORKSPACE-001",
+    "DOCUMENTS/TRADING_WORKSPACE_MASTER_ROADMAP.md",
     "DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md"
   ],
   "context_scope_paths": [
@@ -66,6 +68,7 @@
     "DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-INTELLIGENCE-001.md",
     "DOCUMENTS/PROJECT_STATE.md",
     "DOCUMENTS/ROADMAP.md",
+    "DOCUMENTS/TRADING_WORKSPACE_MASTER_ROADMAP.md",
     "DOCUMENTS/PROJECT_CONTRACTS.md",
     "DOCUMENTS/ASSISTANT_PROTOCOL.md"
     ,"main.py"
@@ -354,13 +357,13 @@
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
     {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
-    {"id": "IMPLEMENT", "status": "SIDE_SPECIFIC_LIMITS_AND_IMMEDIATE_DOM_PLACEMENT_AUTHORIZED_IN_PROGRESS"},
+    {"id": "IMPLEMENT", "status": "PAPER_AUTHORITATIVE_STATE_SYNCHRONIZATION_IMPLEMENTED"},
     {"id": "VERIFY", "status": "BOUNDED_STAGES_0_TO_7_STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_VERIFIED"},
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "SIDE_SPECIFIC_LIMITS_AND_IMMEDIATE_DOM_PLACEMENT_IMPLEMENTATION_AUTHORIZED",
-  "implementation_status": "AUTHORIZED_IN_PROGRESS_SIDE_SPECIFIC_LIMITS_AND_IMMEDIATE_DOM_PLACEMENT",
+  "current_checkpoint": "TRADING_WORKSPACE_MASTER_ROADMAP_RECORDED",
+  "implementation_status": "PAPER_AUTHORITY_FOUNDATION_IMPLEMENTED_PHONE_ACCEPTANCE_BLOCKED",
   "next_phase": "VERIFY",
   "next_phase_authorization": "PRODUCTION_IMPLEMENTATION_OF_REVISION_1_42_SECTION_50_AUTHORIZED",
   "related_commits": [
@@ -427,7 +430,9 @@
     {"revision": "1.40", "reason": "Recorded the implemented and human-accepted live PAPER unrealized-PnL and position-controls checkpoint, authoritative average-entry projection, live midpoint calculation, restored Smart Tape prints after duplicate-backend ownership diagnosis, accepted mobile control grouping and Chart live/interaction work as the next implementation priority", "date": "2026-08-26"},
     {"revision": "1.41", "reason": "Human-approved documentation-only amendment establishing the authoritative LIMITS button, creation popup, inventory overlay and equal chart/DOM fast-Limit entry paths on one shared LimitDraft architecture; explicitly superseding conflicting permanent rows, individual-cancel confirmation, release-to-submit, chart-only, dedicated DOM order controls and cross-spread Market conversion without authorizing implementation", "date": "2026-08-27"},
     {"revision": "1.42", "reason": "Human-approved documentation-only amendment replacing the unified LIMITS control and inventory with separate BUY LIMITS and SELL LIMITS controls, retaining side-specific pending-draft creation and chart fast-Limit drafts, and authorizing immediate multi-tap resting DOM Limit submission without pending drafts or ordinary per-order confirmation while preserving aggressive-Limit safety and authoritative execution synchronization; no implementation is authorized by this amendment", "date": "2026-08-27"},
-    {"revision": "1.43", "reason": "Explicit human authorization to begin and continue production implementation of the already-approved revision 1.42 §50.1-§50.7 side-specific LIMITS and immediate DOM Limit placement amendment without changing its specification", "date": "2026-08-27"}
+    {"revision": "1.43", "reason": "Explicit human authorization to begin and continue production implementation of the already-approved revision 1.42 §50.1-§50.7 side-specific LIMITS and immediate DOM Limit placement amendment without changing its specification", "date": "2026-08-27"},
+    {"revision": "1.44", "reason": "Implemented the PAPER authoritative-state synchronization foundation with durable monotonic revisions, serialized mutation-plus-state responses, one frontend authority, coalesced no-drop refresh, stale-response rejection, operation-scoped mutation activity and definitive Limit-draft lifecycle completion", "date": "2026-08-28"},
+    {"revision": "1.45", "reason": "Recorded the canonical Trading Workspace master architecture and external-reference roadmap, its cross-session routing and the PHONE LIMIT MUTATION PATH DIAGNOSTIC as the immediate next action while preserving unaccepted Stage 1 status", "date": "2026-08-28"}
   ]
 }
 ```
@@ -3127,3 +3132,37 @@ Earlier sections 5, 19, 21.5, 26.2, 35.5, 35.7 and 36.7 and their metadata are s
 conflict with §50.1-§50.6. Unrelated semantics remain authoritative, including fail-closed behavior,
 idempotency, ambiguous-outcome reconciliation, existing Market behavior outside hold, chart fast-Limit
 drafts, PAPER matching and execution math, fill/cancel synchronization, STOP, TAKE and Position behavior.
+
+## 51. PAPER authoritative state synchronization checkpoint
+
+Revision 1.44 records checkpoint `PAPER_AUTHORITATIVE_STATE_SYNCHRONIZATION_IMPLEMENTED` while the overall
+ChangeRequest remains `IMPLEMENT / IN_PROGRESS`. SQLite schema v9 owns a durable monotonic PAPER state
+revision per account and symbol, including a safe v8 migration. Limit create, effective cancel, effective
+amend, Market execution, Full Close execution and Limit fills advance the revision transactionally with
+their authoritative state change through the serialized PAPER runtime owner. Idempotent replay and no-op
+amend do not advance it.
+
+PAPER mutation HTTP responses now carry the mutation result and the resulting authoritative `paper_state`
+from the same serialized runtime operation. The frontend has one `PaperTradingStore` that applies only
+non-older revisions, coalesces refresh requests made during an in-flight refresh into one required follow-up,
+and tracks mutation activity by operation identity instead of one global submission lock. Reconciliation
+polling remains a fallback for missing state and active Limit fills; ordinary mutation correctness no longer
+depends on a subsequent GET. The Limit-draft submission promise now resolves only after resulting state and
+the definitive draft lifecycle have been applied.
+
+This checkpoint establishes only the authoritative PAPER state foundation. It does not complete LIMITS UX,
+chart active-order rendering, DOM own-order presentation, transport redesign, STOP/TAKE, Live execution,
+Robot/AUTOPILOT or the overall Trading Workspace.
+
+## 52. Canonical master roadmap and current phone blocker
+
+Revision 1.45 records checkpoint `TRADING_WORKSPACE_MASTER_ROADMAP_RECORDED`. The master architecture roadmap is
+`DOCUMENTS/TRADING_WORKSPACE_MASTER_ROADMAP.md`. Future implementation slices must remain consistent with its
+architectural sequence and acceptance gates unless a proven defect requires a documented scoped deviation.
+
+The PAPER authoritative-state synchronization foundation has been implemented and audited in code but has not
+passed real phone acceptance. After the latest backend and frontend restart, the real phone observation is that
+LIMIT currently neither creates nor cancels. The immediate next action is `PHONE LIMIT MUTATION PATH DIAGNOSTIC`,
+tracing the phone interaction through the frontend request, Vite proxy, backend handler, serialized PAPER runtime,
+SQLite, mutation response, `PaperTradingStore`, and UI to identify the first broken transition. Stage 1 remains
+open; this documentation checkpoint does not mark the synchronization slice or LIMIT behavior accepted or complete.
