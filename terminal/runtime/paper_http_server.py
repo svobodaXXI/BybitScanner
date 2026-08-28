@@ -1116,19 +1116,11 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
 
             symbol = symbols[0]
-            print(
-                f"PAPER_STATE HTTP ENTER {int(time.time() * 1000)} {symbol}",
-                flush=True,
-            )
             try:
                 state = self.server.runtime.call(
                     lambda runtime: runtime.paper_state(symbol)
                 )
             except Exception:
-                print(
-                    f"PAPER_STATE HTTP EXIT {int(time.time() * 1000)} {symbol}",
-                    flush=True,
-                )
                 self._json_response(
                     400,
                     {
@@ -1138,10 +1130,6 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-            print(
-                f"PAPER_STATE HTTP EXIT {int(time.time() * 1000)} {symbol}",
-                flush=True,
-            )
             self._json_response(
                 200,
                 {
@@ -1167,13 +1155,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     ClientActionId(payload["client_action_id"]), payload["symbol"],
                     payload["order_id"], _decimal(payload["limit_price"]),
                 )
-                result = self.server.runtime.call(
-                    lambda runtime: runtime.amend_limit(request)
+                result, state = self.server.runtime.call(
+                    lambda runtime: (
+                        runtime.amend_limit(request),
+                        runtime.paper_state(request.symbol),
+                    )
                 )
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
-            self._json_response(200, to_primitive(result))
+            self._json_response(200, {
+                **to_primitive(result),
+                "paper_state": {"ok": True, **state},
+            })
             return
 
         if self.path == "/api/limit":
@@ -1189,14 +1183,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     _decimal(payload["sizing_reference_price"]),
                     _decimal(payload["limit_price"]), TimeInForce(payload["time_in_force"]),
                 )
-                result = self.server.runtime.call(
-                    lambda runtime: runtime.create_limit(request)
+                result, state = self.server.runtime.call(
+                    lambda runtime: (
+                        runtime.create_limit(request),
+                        runtime.paper_state(request.symbol),
+                    )
                 )
-            except Exception as exc:
-                print("LIMIT POST ERROR:", repr(exc), flush=True)
+            except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
-            self._json_response(200, to_primitive(result))
+            self._json_response(200, {
+                **to_primitive(result),
+                "paper_state": {"ok": True, **state},
+            })
             return
 
         if self.path == "/api/limit/cancel":
@@ -1206,13 +1205,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     ClientActionId(payload["client_action_id"]), payload["symbol"],
                     payload["order_id"],
                 )
-                result = self.server.runtime.call(
-                    lambda runtime: runtime.cancel_limit(request)
+                result, state = self.server.runtime.call(
+                    lambda runtime: (
+                        runtime.cancel_limit(request),
+                        runtime.paper_state(request.symbol),
+                    )
                 )
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
-            self._json_response(200, to_primitive(result))
+            self._json_response(200, {
+                **to_primitive(result),
+                "paper_state": {"ok": True, **state},
+            })
             return
 
         if self.path == "/api/full-close":
@@ -1224,10 +1229,16 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
-            result = self.server.runtime.call(
-                lambda runtime: runtime.api.full_close(request)
+            result, state = self.server.runtime.call(
+                lambda runtime: (
+                    runtime.api.full_close(request),
+                    runtime.paper_state(request.symbol),
+                )
             )
-            self._json_response(200, to_primitive(result))
+            self._json_response(200, {
+                **to_primitive(result),
+                "paper_state": {"ok": True, **state},
+            })
             return
 
         if self.path != "/api/market":
@@ -1240,10 +1251,16 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(400, to_primitive(_validation_error()))
             return
 
-        result = self.server.runtime.call(
-            lambda runtime: runtime.api.market(request)
+        result, state = self.server.runtime.call(
+            lambda runtime: (
+                runtime.api.market(request),
+                runtime.paper_state(request.symbol),
+            )
         )
-        self._json_response(200, to_primitive(result))
+        self._json_response(200, {
+            **to_primitive(result),
+            "paper_state": {"ok": True, **state},
+        })
 
     def _market_request(self) -> MarketCommandRequest:
         payload = self._payload(MARKET_FIELDS)

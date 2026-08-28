@@ -164,6 +164,9 @@ class PaperRuntime:
             average_entry = None
 
         return {
+            "state_revision": self.store.get_paper_state_revision(
+                account_id, Symbol(normalized_symbol),
+            ),
             "account_id": account.trading_account_id.value,
             "symbol": normalized_symbol,
             "initial_deposit_usdt": str(account.initial_deposit_usdt),

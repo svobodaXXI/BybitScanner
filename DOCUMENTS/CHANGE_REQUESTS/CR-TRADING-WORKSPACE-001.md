@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.45",
+  "revision": "1.55",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -432,7 +432,15 @@
     {"revision": "1.42", "reason": "Human-approved documentation-only amendment replacing the unified LIMITS control and inventory with separate BUY LIMITS and SELL LIMITS controls, retaining side-specific pending-draft creation and chart fast-Limit drafts, and authorizing immediate multi-tap resting DOM Limit submission without pending drafts or ordinary per-order confirmation while preserving aggressive-Limit safety and authoritative execution synchronization; no implementation is authorized by this amendment", "date": "2026-08-27"},
     {"revision": "1.43", "reason": "Explicit human authorization to begin and continue production implementation of the already-approved revision 1.42 §50.1-§50.7 side-specific LIMITS and immediate DOM Limit placement amendment without changing its specification", "date": "2026-08-27"},
     {"revision": "1.44", "reason": "Implemented the PAPER authoritative-state synchronization foundation with durable monotonic revisions, serialized mutation-plus-state responses, one frontend authority, coalesced no-drop refresh, stale-response rejection, operation-scoped mutation activity and definitive Limit-draft lifecycle completion", "date": "2026-08-28"},
-    {"revision": "1.45", "reason": "Recorded the canonical Trading Workspace master architecture and external-reference roadmap, its cross-session routing and the PHONE LIMIT MUTATION PATH DIAGNOSTIC as the immediate next action while preserving unaccepted Stage 1 status", "date": "2026-08-28"}
+    {"revision": "1.45", "reason": "Recorded the canonical Trading Workspace master architecture and external-reference roadmap, its cross-session routing and the PHONE LIMIT MUTATION PATH DIAGNOSTIC as the immediate next action while preserving unaccepted Stage 1 status", "date": "2026-08-28"},
+    {"revision": "1.48", "reason": "Implemented the systemic side-LIMIT creation-popup correction: an editable precision-preserving price draft, submission-boundary authoritative tick normalization and validation, shared TradingControl confirmation, and canonical PaperLimitDraftSubmitController to executePaperLimitCommand to PaperTradingStore mutation/state flow; phone acceptance remains pending", "date": "2026-08-28"},
+    {"revision": "1.49", "reason": "Implemented systemic active-LIMIT chart edit interaction with a binding 300-ms hold, one order-id-keyed pointer state machine, local tick-normalized candidate projection, explicit shared-control confirm/cancel, and canonical identity-preserving PAPER amend through PaperTradingStore; phone acceptance remains pending", "date": "2026-08-28"},
+    {"revision": "1.50", "reason": "Corrected the critical chart fast-Limit exactly-once violation by removing the competing touchstart intent source and retaining Pointer Events as the single cross-input semantic placement boundary; phone acceptance remains pending and active-LIMIT amend acceptance is paused", "date": "2026-08-28"},
+    {"revision": "1.51", "reason": "Recorded BUY/SELL chart fast-Limit exactly-once real-phone acceptance and implemented one App-owned side-specific selected USDT volume source shared by quick Market controls, editable Limit popup, chart fast-Limit, DOM fast-Limit and popup submission; Stage 5 acceptance remains pending", "date": "2026-08-28"},
+    {"revision": "1.52", "reason": "Implemented one shared Enter/Done lifecycle for trading numeric inputs: prevent default focus progression, stop propagation and blur without submission across BUY/SELL quick volume and Limit popup volume/price; phone acceptance remains pending", "date": "2026-08-28"},
+    {"revision": "1.53", "reason": "Replaced the phone-rejected blur-only Done behavior with one terminal focus boundary and completion latch that owns post-Enter focus and rejects implicit sibling-input focus until an explicit pointer edit begins; phone acceptance remains pending", "date": "2026-08-28"},
+    {"revision": "1.54", "reason": "Recorded the user's intentional deferral of the unresolved real-phone Done/Enter focus progression, removed temporary on-screen focus/IME diagnostics, preserved the current functional focus policy, and returned acceptance priority to the existing LIMIT sequence", "date": "2026-08-28"},
+    {"revision": "1.55", "reason": "Recorded real-phone PASS evidence for the approximately 300-ms active-LIMIT edit hold and drag/release dashed-candidate controls, preserved the unresolved deferred Done/Enter issue, and clarified that the current × restore behavior remains incomplete because × must authoritatively cancel while outside activation alone abandons the edit", "date": "2026-08-28"}
   ]
 }
 ```
@@ -3166,3 +3174,168 @@ LIMIT currently neither creates nor cancels. The immediate next action is `PHONE
 tracing the phone interaction through the frontend request, Vite proxy, backend handler, serialized PAPER runtime,
 SQLite, mutation response, `PaperTradingStore`, and UI to identify the first broken transition. Stage 1 remains
 open; this documentation checkpoint does not mark the synchronization slice or LIMIT behavior accepted or complete.
+
+## 53. Stage 6 authoritative PAPER DOM projection implementation checkpoint
+
+Revision 1.46 records checkpoint `PAPER_DOM_AUTHORITATIVE_PROJECTION_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING`.
+The DOM PAPER own-order input now maps the same `PaperTradingStore` active Limit snapshot used by the Chart
+and side-specific LIMIT inventories. Stable backend order identity is preserved as one DOM dot per order;
+same-price order notionals are summed for the row presentation. `DomPanel` no longer snapshots or locally
+deletes PAPER orders. A dot cancellation enters the same canonical PAPER Limit cancel command and mutation
+path as individual inventory cancellation, and UI removal occurs only when the returned authoritative
+`paper_state` is applied (or later reconciliation supplies it).
+
+This checkpoint implements only the Stage 6 DOM projection ownership slice. Stage 1 remains open, Stage 6
+is not fully complete, and real-phone production acceptance is still required. The exact next action is one
+real-phone production pass covering create, amend, individual DOM-dot cancel, fill, and two same-price orders,
+while comparing BUY/SELL LIMIT counts, DOM dots/totals, Chart active lines, and backend active orders.
+
+## 54. Side-LIMIT popup lifecycle and collapsed cancel controls checkpoint
+
+Revision 1.47 records checkpoint `SIDE_LIMIT_POPUP_LIFECYCLE_FIXED_PHONE_ACCEPTANCE_PENDING`.
+Collapsed BUY LIMITS and SELL LIMITS controls now expose independent side-specific cancellation targets.
+The primary target retains short-tap creation and long-press inventory behavior; the adjacent cancellation
+target opens only that side's existing confirmation and is disabled for an empty side. Creation, inventory,
+and side-cancel presentation are mutually exclusive.
+
+Side confirmation now dismisses on CANCEL activation, KEEP, or backdrop activation. CANCEL snapshots the
+selected side's authoritative active orders, closes presentation immediately, and then routes every concrete
+order through the existing canonical PAPER Limit cancellation callback. No optimistic order removal, local
+order state, batch endpoint, or second cancellation transport is introduced; subsequent counts and projections
+remain owned by `PaperTradingStore` state. Stage 1 and Stage 6 remain unaccepted pending real-phone production
+verification. The exact next action is a phone pass for both sides covering collapsed primary tap, long press,
+independent cancellation target, KEEP, backdrop dismissal, successful cancellation, and authoritative projection.
+
+## 55. Systemic side-LIMIT creation popup checkpoint
+
+Revision 1.48 records checkpoint `SIDE_LIMIT_EDITABLE_PRICE_CANONICAL_CONFIRM_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING`.
+Opening BUY LIMITS or SELL LIMITS now creates the applicable side-specific `LimitDraft` immediately and keeps the
+compact popup open as its editor. The price is a decimal-keyboard-oriented text input that preserves the exact
+typed value; invalid or empty input remains editable and cannot submit. Authoritative `tickSize` normalization is
+performed at validation/submission rather than on each keystroke.
+
+The popup checkmark uses the shared `TradingControlButton` activation state machine and confirms the current draft
+through `PaperLimitDraftSubmitController`, `PaperTradingStore.runMutation`, `executePaperLimitCommand`, the existing
+backend Limit endpoint and the returned authoritative `paper_state`. Successful authoritative creation dismisses
+the draft and popup; rejected validation or mutation leaves it available for correction, while ambiguous submission
+remains locked for reconciliation. No backend, persistence, transport, matching or second Limit business path was
+introduced.
+
+This checkpoint belongs to master-roadmap Stage 5 and shared Stage 7 interaction semantics before Stage 6 phone
+acceptance resumes. It does not accept or complete Stage 1, Stage 5 or Stage 6. The exact next action is one real-phone
+BUY LIMITS creation using a manually edited valid decimal price, verifying one order appears without reload in the
+BUY LIMITS count, DOM dot/total, Chart active line and backend active-order state.
+
+## 56. Systemic active-LIMIT chart edit checkpoint
+
+Revision 1.49 records checkpoint `ACTIVE_LIMIT_CHART_EDIT_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING`. Active chart
+Limit lines remain solid and immovable on ordinary touch. A pointer must remain pressed for exactly 300 ms before
+the one order-id-keyed edit controller enters editable mode; only then does the line become dashed and vertical
+movement update a tick-normalized local candidate. Release preserves the dashed candidate with explicit green
+confirmation and red cancellation controls. Pointer cancellation, cancellation control and outside activation
+restore the authoritative original projection without a backend mutation.
+
+Green confirmation alone emits one stable physical amend intent through `executePaperLimitAmend`,
+`PaperTradingStore.runMutation`, the existing PAPER amend endpoint and the returned authoritative `paper_state`.
+The request identifies the existing `order_id`; backend price-only amend preserves that identity and cannot create
+a second order. Rejection or transport failure restores/refetches authoritative state and does not retain the local
+candidate as if successful. This belongs to master-roadmap Stage 6 projection ownership and Stage 7 shared pointer
+semantics. Stage 1 and Stage 6 remain unaccepted. The exact next action is one real-phone hold-drag-release-confirm
+pass on an active Limit, verifying short touch does nothing, dashed mode begins only after 300 ms, cancel/outside
+restores the original price, and confirm moves the same order across Chart, DOM, inventory and backend state.
+
+## 57. Chart fast-LIMIT exactly-once correction checkpoint
+
+Revision 1.50 records checkpoint `CHART_FAST_LIMIT_EXACTLY_ONCE_FIXED_PHONE_ACCEPTANCE_PENDING`. The production
+duplicate was state-level: one physical phone tap could deliver both Pointer Events `pointerdown` and legacy
+`touchstart`; `ChartPanel` treated both as independent placement sources and each called the same App draft-creation
+callback. Each call dispatched a separate `begin`, and distinct timestamp-derived draft IDs were retained as two
+independently editable and submittable pending drafts. BUY and SELL were equally affected because both sides share
+that callback and reducer path.
+
+Pointer Events are now the sole chart fast-Limit activation source for touch, pen and mouse. The competing
+`touchstart` callback and its order-sensitive timestamp suppression workaround were removed. Consequently one
+physical chart activation while side hold is active produces one normalized semantic placement callback and one
+pending Limit draft. This is not visual deduplication and does not remove a duplicate after creation. Stage 5 and
+Stage 7 remain unaccepted, active-LIMIT amend phone acceptance remains paused, and the exact next action is one
+real-phone production pass for both BUY and SELL proving each single chart tap creates exactly one pending line,
+dragging reveals no second line at the original price, and confirming produces exactly one backend order.
+
+## 58. Side-volume synchronization checkpoint
+
+Revision 1.51 records checkpoint `SIDE_SELECTED_VOLUME_SINGLE_SOURCE_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING` and
+records the user's successful real-phone BUY and SELL chart fast-Limit exactly-once acceptance. `App` now owns
+exactly one selected USDT volume string per side. The BUY and SELL quick-volume fields and Limit creation popup
+are two editable views of those same independent values. Market submission, chart fast-Limit draft creation, DOM
+fast-Limit submission and normal popup Limit submission read the applicable current side value at intent creation.
+Hold mode carries only side identity and no longer snapshots a separate volume.
+
+Popup editing stays open and updates only its side. Empty, nonnumeric, non-finite, zero and negative input fails
+closed; existing backend sizing, Working Volume definition, leverage, quantity and order lifecycle semantics remain
+unchanged. A pending draft may retain its immutable creation snapshot, but popup confirmation deliberately builds
+the command intent from the canonical current side selection, so that snapshot is not a competing editable source.
+Stage 5 remains unaccepted. The exact next action is one real-phone pass changing BUY volume in both views and then
+SELL volume in both views, proving side isolation and identical sizing across Market, chart fast-Limit, DOM
+fast-Limit and popup Limit creation.
+
+## 59. Trading numeric-input Enter/focus checkpoint
+
+Revision 1.52 records checkpoint `TRADING_NUMERIC_INPUT_DONE_BLUR_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING`.
+The BUY and SELL quick-volume inputs and Limit-popup volume and price inputs now share one keyboard lifecycle.
+They advertise `enterKeyHint="done"`; Enter prevents the browser's implicit focus progression, stops propagation
+and blurs the current input. Existing controlled `onChange` ownership remains the value commit boundary, so Done
+does not focus a sibling, activate the popup checkmark, submit a Market or Limit order, or close the popup.
+
+No form submission, hidden submit control or explicit focus-transfer code existed; the mobile browser was free to
+infer next-field behavior because the numeric inputs previously provided neither a completion hint nor an Enter
+handler. Side-volume synchronization, validation, price normalization and all command paths remain unchanged.
+Stage 5 remains unaccepted. The exact next action is one real-phone pass pressing Done in BUY quick volume, SELL
+quick volume, Limit-popup volume and Limit-popup price, proving each keyboard closes with no focus transfer and no
+order submission.
+
+## 60. Trading numeric-input terminal focus-boundary correction
+
+Revision 1.53 records checkpoint `TRADING_INPUT_FOCUS_BOUNDARY_IMPLEMENTED_PHONE_ACCEPTANCE_PENDING` and
+supersedes revision 1.52's insufficient blur-only completion mechanism. Real-phone evidence proves that after the
+controlled BUY input committed and the Enter handler blurred it, the WebView subsequently focused the next editable
+trading input in DOM order. Repository audit proves there is no form, implicit submit control, autofocus, explicit
+sibling-focus call or controlled-input remount responsible. The exact Android WebView sub-event (`keyup` versus an
+IME-only completion action) is not observable from repository state and is therefore not asserted.
+
+One shared terminal focus policy now moves Enter completion to the non-input trading boundary and latches completion.
+Any subsequent implicit focus event targeting a marked trading numeric input is redirected to that boundary. An
+explicit pointer interaction on a trading numeric input releases the latch before focus, so navigation between fields
+remains available only by deliberate tap. No timeout, hidden input, per-field focus handler or order submission was
+introduced. The policy covers BUY quick volume, SELL quick volume, Limit-popup volume and Limit-popup price. Stage 5
+remains unaccepted. The exact next action is one real-phone Done pass across all four inputs, verifying the keyboard
+closes, no sibling gains focus, popup state remains intact and no order is submitted.
+
+## 61. Real-phone Done/Enter focus progression deferred
+
+Revision 1.54 records that real-phone Done/Enter focus progression remains unresolved after both the blur-only
+mechanism and the shared terminal focus-boundary correction failed to stop the WebView from advancing focus. The
+temporary on-screen focus/IME diagnostic did not produce evidence sufficient to justify further work and has been
+removed. No claim is made that the behavior is fixed.
+
+By explicit user decision, this issue is intentionally `DEFERRED` and is not an acceptance blocker for continuing
+the current LIMIT work. The existing functional Enter/Done handler, terminal focus boundary and completion latch
+remain in place without further semantic changes. Acceptance returns to the previous LIMIT sequence; the exact next
+action is the revision 1.51 side-volume synchronization phone pass, followed by the pending LIMIT creation and
+authoritative-projection acceptance sequence.
+
+## 62. Active-LIMIT edit phone checkpoint and remaining control correction
+
+Revision 1.55 records real-phone `PASS` evidence that an active LIMIT enters edit mode after an approximately
+300-ms hold and that drag/release preserves a dashed candidate with visible `✓` and `×` controls. These accepted
+interaction facts do not complete Stage 5, which remains `IN_PROGRESS`.
+
+The current `×` behavior restores the authoritative original projection without cancelling the order. That behavior
+is not the required final contract. The required control split is: `×` performs authoritative LIMIT cancellation;
+outside activation abandons the edit and restores the authoritative original projection; and `✓` performs the
+authoritative identity-preserving LIMIT amend. Revision 1.55 records this gap only and implements no correction.
+
+Real-phone Done/Enter focus progression remains unresolved and intentionally deferred by the user. It is not an
+acceptance blocker for continuing the current LIMIT sequence, and no claim is made that it is fixed. The current
+blocker is the active-LIMIT `×` semantic mismatch. The exact next roadmap action is a bounded correction that routes
+`×` through authoritative cancellation while preserving outside-abandon and `✓`-amend semantics. No deliberate
+deviation from the master roadmap is introduced.

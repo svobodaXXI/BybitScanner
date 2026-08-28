@@ -1,7 +1,8 @@
 import type { Dispatch } from "react";
 import type {
   LimitCommandRequest,
-  PaperLimitMutationResult,
+  PaperLimitMutationResponse,
+  PaperState,
 } from "../contracts/trading";
 import {
   type LimitDraft,
@@ -9,29 +10,30 @@ import {
   type LimitSubmitAttempt,
   LimitDraftSubmitLatch,
 } from "./limitDraft";
+import { executePaperLimitCommand } from "./paperLimitCommand";
 
 export type LimitDraftSubmissionDependencies = {
   dispatch: Dispatch<LimitDraftAction>;
   createClientActionId: () => string;
-  refreshPaperState: () => Promise<void>;
+  applyPaperState: (state: PaperState) => boolean;
   fetcher?: typeof fetch;
 };
 
 export class PaperLimitDraftSubmitController {
   private readonly latches = new Map<
     string,
-    LimitDraftSubmitLatch<PaperLimitMutationResult>
+    LimitDraftSubmitLatch<PaperLimitMutationResponse>
   >();
-  private readonly handled = new Set<string>();
+  private readonly handledAttempts = new WeakSet<object>();
 
   submit(
     draft: LimitDraft,
     dependencies: LimitDraftSubmissionDependencies,
-  ): LimitSubmitAttempt<PaperLimitMutationResult> {
+  ): LimitSubmitAttempt<PaperLimitMutationResponse> {
     const fetcher = dependencies.fetcher ?? fetch;
     let latch = this.latches.get(draft.draftId);
     if (!latch) {
-      latch = new LimitDraftSubmitLatch<PaperLimitMutationResult>();
+      latch = new LimitDraftSubmitLatch<PaperLimitMutationResponse>();
       this.latches.set(draft.draftId, latch);
     }
 
@@ -48,15 +50,16 @@ export class PaperLimitDraftSubmitController {
           limit_price: submittingDraft.price,
           time_in_force: "GTC",
         };
-        const response = await fetcher("/api/limit", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(request),
+        const result = await executePaperLimitCommand(request, {
+          fetcher,
+          applyPaperState: dependencies.applyPaperState,
         });
-        const result = (await response.json()) as PaperLimitMutationResult;
         return { certainty: "definitive", value: result };
       },
     );
+
+    if (this.handledAttempts.has(attempt)) return attempt;
+    this.handledAttempts.add(attempt);
 
     dependencies.dispatch({
       type: "start-submitting",
@@ -64,37 +67,30 @@ export class PaperLimitDraftSubmitController {
       draftId: attempt.draftId,
     });
 
-    if (!this.handled.has(attempt.clientActionId)) {
-      this.handled.add(attempt.clientActionId);
-      void attempt.promise.then(async (outcome) => {
-        if (outcome.certainty === "ambiguous") {
-          dependencies.dispatch({
-            type: "mark-ambiguous",
-            clientActionId: attempt.clientActionId,
-            draftId: attempt.draftId,
-          });
-          return;
-        }
-
-        if (outcome.value.status === "completed") {
-          dependencies.dispatch({
-            type: "dismiss",
-            draftId: attempt.draftId,
-          });
-          await dependencies.refreshPaperState();
-          this.handled.delete(attempt.clientActionId);
-          return;
-        }
-
+    const submission = attempt.promise;
+    attempt.promise = submission.then((outcome) => {
+      if (outcome.certainty === "ambiguous") {
         dependencies.dispatch({
-          type: "mark-rejected",
+          type: "mark-ambiguous",
           clientActionId: attempt.clientActionId,
-          reason: outcome.value.reason_code,
           draftId: attempt.draftId,
         });
-        this.handled.delete(attempt.clientActionId);
+        return outcome;
+      }
+
+      if (outcome.value.status === "completed") {
+        dependencies.dispatch({ type: "dismiss", draftId: attempt.draftId });
+        return outcome;
+      }
+
+      dependencies.dispatch({
+        type: "mark-rejected",
+        clientActionId: attempt.clientActionId,
+        reason: outcome.value.reason_code,
+        draftId: attempt.draftId,
       });
-    }
+      return outcome;
+    });
 
     return attempt;
   }

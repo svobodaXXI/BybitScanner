@@ -12,6 +12,7 @@ import { ModePanel as ModePanelView, type WorkspaceMode } from "./ModePanel";
 afterEach(() => vi.unstubAllGlobals());
 
 const paperState = (overrides = {}) => ({
+  state_revision: 1,
   ok: true,
   account_id: "paper",
   symbol: "BTCUSDT",

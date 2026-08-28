@@ -7,6 +7,7 @@ import {
   recommendedLadderCenter,
 } from "../marketData/domProjection";
 import { formatDomSize } from "./domSizeFormat";
+import { TradingControlButton } from "../interactions/useTradingControlActivation";
 
 const formatPrice = (price: number) =>
   price.toLocaleString("en-US", {
@@ -23,6 +24,7 @@ export function DomPanel({
   onCompressionChange,
   fastLimitActive = false,
   onFastLimitPriceSelect,
+  onOwnOrderCancel = () => {},
 }: {
   book: NormalizedOrderBook;
   centerPrice: number | null;
@@ -32,10 +34,10 @@ export function DomPanel({
   onCompressionChange: (compression: number) => void;
   fastLimitActive?: boolean;
   onFastLimitPriceSelect?: (price: string) => void;
+  onOwnOrderCancel?: (orderId: string) => void;
 }) {
   const [offset, setOffset] = useState(0);
   const [locked, setLocked] = useState(false);
-  const [visibleOrders, setVisibleOrders] = useState(ownOrders);
   const [compressionEditing, setCompressionEditing] = useState(false);
   const [compressionDraft, setCompressionDraft] = useState(String(compression));
   const dragY = useRef<number | null>(null);
@@ -151,7 +153,7 @@ export function DomPanel({
           </div>
         ) : null}
         {levels.map((level) => {
-          const orders = visibleOrders.filter(
+          const orders = ownOrders.filter(
             (order) =>
               projectPriceToDisplayBucket(
                 order.price,
@@ -178,16 +180,14 @@ export function DomPanel({
               <span className="order-dots">
                 {orders.map((order) => (
                   <button
-                    aria-label={`Cancel fixture order ${order.id}`}
-                    className="order-dot"
+                    aria-label={`Cancel Limit ${order.id}`}
+                    className={`order-dot ${order.side.toLowerCase()}`}
                     key={order.id}
                     onClick={(event) => {
                       event.stopPropagation();
-                      setVisibleOrders((current) =>
-                        current.filter((item) => item.id !== order.id),
-                      );
+                      onOwnOrderCancel(order.id);
                     }}
-                    title={`${order.notionalUsdt} USDT development fixture`}
+                    title={`${order.notionalUsdt} USDT`}
                     type="button"
                   />
                 ))}
@@ -205,10 +205,10 @@ export function DomPanel({
                   {level.quantity > 0 ? formatDomSize(level.quantity) : ""}
                 </span>
               </span>
-              <span
+              <TradingControlButton
   className={locked ? "dom-price center-locked" : "dom-price"}
-  onClick={(event) => {
-    event.stopPropagation();
+  type="button"
+  onTap={() => {
     if (fastLimitActive && onFastLimitPriceSelect) {
       onFastLimitPriceSelect(formatPrice(level.price));
       return;
@@ -217,12 +217,14 @@ export function DomPanel({
   }}
   onDoubleClick={(event) => {
     event.stopPropagation();
-    center();
-    setLocked(true);
+    if (!fastLimitActive) {
+      center();
+      setLocked(true);
+    }
   }}
 >
   {formatPrice(level.price)}
-</span>
+</TradingControlButton>
             </div>
           );
         })}

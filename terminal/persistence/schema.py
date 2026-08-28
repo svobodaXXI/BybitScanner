@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -306,6 +306,34 @@ SCHEMA_V7_MIGRATION_STATEMENTS = (
     "ALTER TABLE paper_limit_actions_v7 RENAME TO paper_limit_actions",
 )
 
+SCHEMA_V8_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE paper_state_revisions (
+        symbol TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL,
+        CHECK (revision >= 0)
+    ) WITHOUT ROWID
+    """,
+)
+
+SCHEMA_V9_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE paper_state_revisions_v9 (
+        trading_account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        PRIMARY KEY (trading_account_id, symbol),
+        CHECK (revision >= 0)
+    ) WITHOUT ROWID
+    """,
+    """
+    INSERT INTO paper_state_revisions_v9 (trading_account_id, symbol, revision)
+    SELECT 'paper', symbol, revision FROM paper_state_revisions
+    """,
+    "DROP TABLE paper_state_revisions",
+    "ALTER TABLE paper_state_revisions_v9 RENAME TO paper_state_revisions",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -314,4 +342,6 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V5_MIGRATION_STATEMENTS
     + SCHEMA_V6_MIGRATION_STATEMENTS
     + SCHEMA_V7_MIGRATION_STATEMENTS
+    + SCHEMA_V8_MIGRATION_STATEMENTS
+    + SCHEMA_V9_MIGRATION_STATEMENTS
 )

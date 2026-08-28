@@ -39,6 +39,8 @@ from .schema import (
     SCHEMA_V5_MIGRATION_STATEMENTS,
     SCHEMA_V6_MIGRATION_STATEMENTS,
     SCHEMA_V7_MIGRATION_STATEMENTS,
+    SCHEMA_V8_MIGRATION_STATEMENTS,
+    SCHEMA_V9_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -389,6 +391,8 @@ class SQLiteStore:
             SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._migrate_v5_to_v6(connection)
             SQLiteStore._migrate_v6_to_v7(connection)
+            SQLiteStore._migrate_v7_to_v8(connection)
+            SQLiteStore._migrate_v8_to_v9(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 2:
@@ -398,6 +402,8 @@ class SQLiteStore:
             SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._migrate_v5_to_v6(connection)
             SQLiteStore._migrate_v6_to_v7(connection)
+            SQLiteStore._migrate_v7_to_v8(connection)
+            SQLiteStore._migrate_v8_to_v9(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 3:
@@ -406,6 +412,8 @@ class SQLiteStore:
             SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._migrate_v5_to_v6(connection)
             SQLiteStore._migrate_v6_to_v7(connection)
+            SQLiteStore._migrate_v7_to_v8(connection)
+            SQLiteStore._migrate_v8_to_v9(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 4:
@@ -413,17 +421,34 @@ class SQLiteStore:
             SQLiteStore._migrate_v4_to_v5(connection)
             SQLiteStore._migrate_v5_to_v6(connection)
             SQLiteStore._migrate_v6_to_v7(connection)
+            SQLiteStore._migrate_v7_to_v8(connection)
+            SQLiteStore._migrate_v8_to_v9(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 5:
             SQLiteStore._validate_required_tables(connection, version=5)
             SQLiteStore._migrate_v5_to_v6(connection)
             SQLiteStore._migrate_v6_to_v7(connection)
+            SQLiteStore._migrate_v7_to_v8(connection)
+            SQLiteStore._migrate_v8_to_v9(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 6:
             SQLiteStore._validate_required_tables(connection, version=6)
             SQLiteStore._migrate_v6_to_v7(connection)
+            SQLiteStore._migrate_v7_to_v8(connection)
+            SQLiteStore._migrate_v8_to_v9(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 7:
+            SQLiteStore._validate_required_tables(connection, version=7)
+            SQLiteStore._migrate_v7_to_v8(connection)
+            SQLiteStore._migrate_v8_to_v9(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 8:
+            SQLiteStore._validate_required_tables(connection, version=8)
+            SQLiteStore._migrate_v8_to_v9(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version != 0:
@@ -510,6 +535,30 @@ class SQLiteStore:
             raise
 
     @staticmethod
+    def _migrate_v7_to_v8(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V8_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 8")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    @staticmethod
+    def _migrate_v8_to_v9(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V9_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 9")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+    @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
         connection.execute("BEGIN IMMEDIATE")
         try:
@@ -540,6 +589,8 @@ class SQLiteStore:
             required.add("paper_accounts")
         if version >= 5:
             required.update({"paper_limit_orders", "paper_limit_actions"})
+        if version >= 8:
+            required.add("paper_state_revisions")
         actual = {
             row[0]
             for row in connection.execute(
@@ -659,6 +710,29 @@ class SQLiteStore:
             updated_at_ms=updated_at_ms,
         )
 
+    def get_paper_state_revision(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> int:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT revision FROM paper_state_revisions WHERE trading_account_id = ? AND symbol = ?",
+            (trading_account_id.value, symbol.value),
+        ).fetchone()
+        return int(row[0]) if row is not None else 0
+
+    def _advance_paper_state_revision(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO paper_state_revisions (trading_account_id, symbol, revision)
+            VALUES (?, ?, 1)
+            ON CONFLICT(trading_account_id, symbol)
+            DO UPDATE SET revision = revision + 1
+            """,
+            (trading_account_id.value, symbol.value),
+        )
+
     def create_paper_limit(
         self, *, client_action_id: str, request_fingerprint: str,
         order_id: OrderId, order_link_id: str, trading_account_id: TradingAccountId,
@@ -695,6 +769,7 @@ class SQLiteStore:
                 "INSERT INTO paper_limit_actions VALUES (?, 'create', ?, ?, ?)",
                 (client_action_id, request_fingerprint, order_id.value, created_at_ms),
             )
+            self._advance_paper_state_revision(trading_account_id, symbol)
         return record, True
 
     def cancel_paper_limit(
@@ -719,6 +794,16 @@ class SQLiteStore:
                 "UPDATE paper_limit_orders SET status = 'cancelled', updated_at_ms = ? WHERE order_id = ? AND status IN ('open', 'partially_filled')",
                 (updated_at_ms, order_id.value),
             )
+            if cursor.rowcount == 1:
+                row = self._connection.execute(
+                    "SELECT trading_account_id, symbol FROM paper_limit_orders WHERE order_id = ?",
+                    (order_id.value,),
+                ).fetchone()
+                if row is None:
+                    raise PersistenceError("cancelled PAPER limit is unavailable")
+                self._advance_paper_state_revision(
+                    TradingAccountId(str(row[0])), Symbol(str(row[1])),
+                )
         return self.get_paper_limit(order_id.value), cursor.rowcount == 1
 
     def amend_paper_limit(
@@ -738,21 +823,31 @@ class SQLiteStore:
                 raise PersistenceError("durable amend action references no PAPER limit")
             return existing, False
 
+        current = self.get_paper_limit(order_id.value)
+        if current is None or current.status not in {"open", "partially_filled"}:
+            raise PersistenceError("PAPER limit is missing or inactive")
+
+        changed = current.price != price
         with self._transaction():
-            cursor = self._connection.execute(
-                "UPDATE paper_limit_orders SET price = ?, updated_at_ms = ? WHERE order_id = ? AND status IN ('open', 'partially_filled')",
-                (_decimal_text(price), updated_at_ms, order_id.value),
-            )
-            if cursor.rowcount != 1:
-                raise PersistenceError("PAPER limit is missing or inactive")
+            if changed:
+                cursor = self._connection.execute(
+                    "UPDATE paper_limit_orders SET price = ?, updated_at_ms = ? WHERE order_id = ? AND status IN ('open', 'partially_filled')",
+                    (_decimal_text(price), updated_at_ms, order_id.value),
+                )
+                if cursor.rowcount != 1:
+                    raise PersistenceError("PAPER limit is missing or inactive")
             self._connection.execute(
                 "INSERT INTO paper_limit_actions VALUES (?, 'amend', ?, ?, ?)",
                 (client_action_id, request_fingerprint, order_id.value, updated_at_ms),
             )
+            if changed:
+                self._advance_paper_state_revision(
+                    current.trading_account_id, current.symbol,
+                )
         amended = self.get_paper_limit(order_id.value)
         if amended is None:
             raise PersistenceError("amended PAPER limit is unavailable")
-        return amended, True
+        return amended, changed
 
     def get_paper_limit(self, order_id: str) -> PaperLimitOrderRecord | None:
         self._assert_owner()
@@ -964,6 +1059,9 @@ class SQLiteStore:
             self._write_projection(projection)
             if command_id is not None:
                 self._correlate_command_order(command_id, execution.order_id)
+            self._advance_paper_state_revision(
+                execution.dedup_key.trading_account_id, execution.symbol,
+            )
         return ExecutionApplyResult.APPLIED
 
     def apply_paper_limit_execution_once(
@@ -1042,6 +1140,9 @@ class SQLiteStore:
             )
             if cursor.rowcount != 1:
                 raise ConcurrentUpdate("PAPER limit fill state changed concurrently")
+            self._advance_paper_state_revision(
+                execution.dedup_key.trading_account_id, execution.symbol,
+            )
 
         return ExecutionApplyResult.APPLIED
 

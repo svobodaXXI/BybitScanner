@@ -43,7 +43,7 @@ describe("Limit Draft foundation", () => {
       state = limitDraftReducer(state, { type: "begin", draft: draft(origin) });
       expect(state.draft?.origin).toBe(origin);
     }
-    expect(state).toEqual({ draft: expect.any(Object) });
+    expect(state.drafts).toHaveLength(1);
   });
 
   it("blocks confirmation without authoritative tickSize", () => {
@@ -55,6 +55,17 @@ describe("Limit Draft foundation", () => {
         { type: "start-submitting", clientActionId: "action-1" },
       ),
     ).toEqual({ draft: missingTick });
+  });
+
+  it("preserves the typed decimal until submission normalization", () => {
+    const editing = limitDraftReducer(
+      { draft: draft(), drafts: [draft()] },
+      { type: "update-price", price: "10.1230" },
+    );
+
+    expect(editing.draft?.price).toBe("10.1230");
+    expect(normalizeLimitDraftPrice(editing.draft?.price ?? "", "0.05", "Buy"))
+      .toBe("10.1");
   });
 
   it("keeps the submission identity stable in reducer transitions", () => {

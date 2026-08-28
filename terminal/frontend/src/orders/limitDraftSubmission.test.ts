@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { PaperLimitMutationResult } from "../contracts/trading";
+import type { PaperLimitMutationResponse, PaperState } from "../contracts/trading";
 import { createLimitDraft, type LimitDraftAction } from "./limitDraft";
 import { PaperLimitDraftSubmitController } from "./limitDraftSubmission";
 
@@ -15,24 +15,46 @@ const draft = () =>
     authoritativeTickSize: "0.5",
   });
 
-const response = (result: PaperLimitMutationResult) =>
+const paperState: PaperState = {
+  ok: true,
+  state_revision: 1,
+  account_id: "paper",
+  symbol: "BTCUSDT",
+  initial_deposit_usdt: "5000",
+  equity_usdt: "5000",
+  one_wv_usdt: "250",
+  position_side: "Flat",
+  position_quantity: "0",
+  average_entry: null,
+  engaged_notional_usdt: "0",
+  engaged_wv: "0.0",
+  active_limit_orders: [],
+};
+
+const response = (result: PaperLimitMutationResponse) =>
   ({ json: vi.fn().mockResolvedValue(result) }) as unknown as Response;
 
 describe("PaperLimitDraftSubmitController", () => {
   it("deduplicates one successful attempt, clears once, and refreshes authority", async () => {
     const dispatch = vi.fn<(action: LimitDraftAction) => void>();
-    const refreshPaperState = vi.fn().mockResolvedValue(undefined);
-    const fetcher = vi.fn().mockResolvedValue(response({
+    const applyPaperState = vi.fn(() => true);
+    let resolveResponse!: (value: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      resolveResponse = resolve;
+    });
+    const fetcher = vi.fn().mockReturnValue(pendingResponse);
+    const completedResponse = response({
       client_action_id: "action-1",
       status: "completed",
       reason_code: "created",
       order_id: "paper-limit-1",
-    }));
+      paper_state: paperState,
+    });
     const createClientActionId = vi.fn(() => "action-1");
     const controller = new PaperLimitDraftSubmitController();
     const dependencies = {
       dispatch,
-      refreshPaperState,
+      applyPaperState,
       createClientActionId,
       fetcher: fetcher as unknown as typeof fetch,
     };
@@ -42,8 +64,12 @@ describe("PaperLimitDraftSubmitController", () => {
 
     expect(repeated).toBe(first);
     expect(repeated.promise).toBe(first.promise);
+    await Promise.resolve();
+    expect(applyPaperState).not.toHaveBeenCalled();
+    expect(dispatch.mock.calls.some(([action]) => action.type === "dismiss")).toBe(false);
+    resolveResponse(completedResponse);
     await first.promise;
-    await vi.waitFor(() => expect(refreshPaperState).toHaveBeenCalledTimes(1));
+    expect(applyPaperState).toHaveBeenCalledWith(paperState);
 
     expect(createClientActionId).toHaveBeenCalledTimes(1);
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -61,13 +87,14 @@ describe("PaperLimitDraftSubmitController", () => {
     const rejected = new PaperLimitDraftSubmitController();
     const rejectedAttempt = rejected.submit(draft(), {
       dispatch: rejectedDispatch,
-      refreshPaperState: vi.fn(),
+      applyPaperState: vi.fn(() => true),
       createClientActionId: () => "rejected-action",
       fetcher: vi.fn().mockResolvedValue(response({
         client_action_id: "rejected-action",
         status: "blocked",
         reason_code: "blocked",
         order_id: null,
+        paper_state: paperState,
       })) as unknown as typeof fetch,
     });
     await rejectedAttempt.promise;
@@ -76,6 +103,7 @@ describe("PaperLimitDraftSubmitController", () => {
         type: "mark-rejected",
         clientActionId: "rejected-action",
         reason: "blocked",
+        draftId: "draft-1",
       }),
     );
     expect(rejectedDispatch).not.toHaveBeenCalledWith({ type: "dismiss" });
@@ -85,7 +113,7 @@ describe("PaperLimitDraftSubmitController", () => {
     const ambiguous = new PaperLimitDraftSubmitController();
     const dependencies = {
       dispatch: ambiguousDispatch,
-      refreshPaperState: vi.fn(),
+      applyPaperState: vi.fn(() => true),
       createClientActionId: createId,
       fetcher: vi.fn().mockRejectedValue(new Error("network")) as unknown as typeof fetch,
     };
@@ -99,6 +127,7 @@ describe("PaperLimitDraftSubmitController", () => {
       expect(ambiguousDispatch).toHaveBeenCalledWith({
         type: "mark-ambiguous",
         clientActionId: "ambiguous-action",
+        draftId: "draft-1",
       }),
     );
   });

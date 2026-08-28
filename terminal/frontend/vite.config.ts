@@ -2,6 +2,19 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+type DiagnosticRequest = {
+  method?: string;
+  path?: string;
+  url?: string;
+  statusCode?: number;
+  on(event: "aborted" | "close", listener: () => void): void;
+};
+type DiagnosticProxy = {
+  on(event: "proxyReq", listener: (proxyReq: DiagnosticRequest, req: DiagnosticRequest) => void): void;
+  on(event: "proxyRes", listener: (proxyRes: DiagnosticRequest, req: DiagnosticRequest) => void): void;
+  on(event: "error", listener: (error: Error, req: DiagnosticRequest) => void): void;
+};
+
 const paperBackendUrl = (
   globalThis as { process?: { env?: Record<string, string | undefined> } }
 ).process?.env?.PAPER_BACKEND_URL;
@@ -21,7 +34,8 @@ export default defineConfig({
         target: paperBackendUrl ?? "http://127.0.0.1:8765",
         changeOrigin: true,
         configure(proxy) {
-          proxy.on("proxyReq", (proxyReq, req) => {
+          const diagnosticProxy = proxy as unknown as DiagnosticProxy;
+          diagnosticProxy.on("proxyReq", (proxyReq, req) => {
             console.log("VITE API IN", req.method, req.url);
             console.log("VITE API PROXY_REQ", proxyReq.method, proxyReq.path);
             req.on("aborted", () => {
@@ -31,7 +45,7 @@ export default defineConfig({
               console.log("VITE API IN CLOSE", req.method, req.url);
             });
           });
-          proxy.on("proxyRes", (proxyRes, req) => {
+          diagnosticProxy.on("proxyRes", (proxyRes, req) => {
             console.log(
               "VITE API PROXY_RES",
               proxyRes.statusCode,
@@ -45,7 +59,7 @@ export default defineConfig({
               console.log("VITE API PROXY_RES CLOSE", req.method, req.url);
             });
           });
-          proxy.on("error", (error, req) => {
+          diagnosticProxy.on("error", (error, req) => {
             console.error(
               "VITE API PROXY_ERROR",
               req.method,
@@ -55,6 +69,15 @@ export default defineConfig({
             );
           });
         },
+      },
+    },
+  },
+  preview: {
+    host: "0.0.0.0",
+    proxy: {
+      "/api": {
+        target: paperBackendUrl ?? "http://127.0.0.1:8765",
+        changeOrigin: true,
       },
     },
   },

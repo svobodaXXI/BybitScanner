@@ -49,6 +49,9 @@ import type { PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
 import { PendingLimitLine } from "../chart/PendingLimitLine";
+import { useActiveLimitEdit } from "../chart/activeLimitEdit";
+import { TradingControlButton } from "../interactions/useTradingControlActivation";
+import { normalizeLimitDraftPrice } from "../orders/limitDraft";
 
 const PRICE_SCALE_WIDTH_FALLBACK = 64,
   TIME_SCALE_HEIGHT = 30,
@@ -104,6 +107,7 @@ export function ChartPanel({
   onPendingLimitConfirm,
   fastLimitActive = false,
   onFastLimitPriceSelect,
+  onActiveLimitAmend,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -119,6 +123,7 @@ export function ChartPanel({
   onPendingLimitConfirm?: (draftId?: string) => void | Promise<void>;
   fastLimitActive?: boolean;
   onFastLimitPriceSelect?: (price: string) => void;
+  onActiveLimitAmend?: (orderId: string, price: string) => Promise<void>;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -132,7 +137,6 @@ export function ChartPanel({
     timer: ReturnType<typeof setTimeout> | null;
   }>({ state: { mode: "IDLE" }, pointerId: null, last: null, timer: null });
   const followLatestRef = useRef(true);
-  const lastFastLimitTouch = useRef<{ x: number; y: number; at: number } | null>(null);
   const panBatcherRef = useRef<ReturnType<typeof createFrameBatcher> | null>(null);
   const [renderTick, setRenderTick] = useState(0),
     [tool, setTool] = useState<DrawingTool>("select"),
@@ -283,7 +287,7 @@ export function ChartPanel({
   };
   const targetsPendingLimitLine = (target: EventTarget | null) =>
     target instanceof Element &&
-    target.closest("[data-pending-limit-line]") !== null;
+    target.closest("[data-pending-limit-line], [data-active-limit-line]") !== null;
   const clearCrosshairTimer = () => {
     if (touchCrosshair.current.timer) {
       clearTimeout(touchCrosshair.current.timer);
@@ -339,6 +343,20 @@ export function ChartPanel({
     const ratio = Math.max(0, Math.min(1, y / plotHeight));
     return range.to - ratio * (range.to - range.from);
   };
+  const activeLimitEdit = useActiveLimitEdit({
+    priceAtClientY: (clientY) => {
+      const host = hostRef.current;
+      if (!host) return null;
+      const price = fastLimitPriceAtY(clientY - host.getBoundingClientRect().top);
+      return price === null ? null : String(price);
+    },
+    normalizePrice: (price, side) =>
+      normalizeLimitDraftPrice(price, tickSize === null ? null : String(tickSize), side),
+    amend: async (orderId, price) => {
+      if (!onActiveLimitAmend) throw new Error("active Limit amend unavailable");
+      await onActiveLimitAmend(orderId, price);
+    },
+  });
   const onPointerDown = (event: React.PointerEvent) => {
     if (targetsPendingLimitLine(event.target)) return;
 
@@ -346,17 +364,6 @@ export function ChartPanel({
     if (!p) return;
 
     if (fastLimitActive && onFastLimitPriceSelect) {
-      const previous = lastFastLimitTouch.current;
-      if (
-        event.pointerType === "touch" &&
-        previous &&
-        event.timeStamp - previous.at < 50 &&
-        Math.abs(event.clientX - previous.x) < 1 &&
-        Math.abs(event.clientY - previous.y) < 1
-      ) {
-        event.preventDefault();
-        return;
-      }
       const price = fastLimitPriceAtY(p.y);
       if (price !== null && price !== undefined) {
         event.preventDefault();
@@ -432,22 +439,6 @@ export function ChartPanel({
         }
       }
     }
-  };
-  const onTouchStart = (event: React.TouchEvent) => {
-    if (!fastLimitActive || !onFastLimitPriceSelect) return;
-    const touch = event.changedTouches[0];
-    if (!touch) return;
-    const p = relative(touch);
-    if (!p) return;
-    const price = fastLimitPriceAtY(p.y);
-    if (price === null || price === undefined) return;
-    lastFastLimitTouch.current = {
-      x: touch.clientX,
-      y: touch.clientY,
-      at: event.timeStamp,
-    };
-    event.preventDefault();
-    onFastLimitPriceSelect(String(price));
   };
   const onPointerMove = (event: React.PointerEvent) => {
     if (targetsPendingLimitLine(event.target)) return;
@@ -647,7 +638,6 @@ export function ChartPanel({
         className="chart-stage"
         role="application"
         aria-label="Interactive market chart"
-        onTouchStartCapture={onTouchStart}
         onPointerDownCapture={onPointerDown}
         onPointerMoveCapture={onPointerMove}
         onPointerUpCapture={endPointer}
@@ -692,7 +682,12 @@ export function ChartPanel({
           }}
         />
         {activeLimitOrders.map((order) => {
-          const price = Number(order.price);
+          const editState = activeLimitEdit.state;
+          const editing = editState.mode !== "ACTIVE" && editState.orderId === order.order_id;
+          const displayedPrice = editState.mode !== "ACTIVE" && editState.orderId === order.order_id
+            ? editState.candidatePrice
+            : order.price;
+          const price = Number(displayedPrice);
           if (!Number.isFinite(price)) return null;
 
           const top = coordinates.priceToY(price);
@@ -701,8 +696,14 @@ export function ChartPanel({
           return (
             <div
               key={order.order_id}
-              className={`active-limit-line ${order.side.toLowerCase()}`}
-              aria-label={`Active ${order.side} Limit at ${order.price}`}
+              className={`active-limit-line ${order.side.toLowerCase()} ${editing && activeLimitEdit.state.mode !== "PRESSING" ? "editing" : ""}`}
+              aria-label={`Active ${order.side} Limit at ${displayedPrice}`}
+              data-active-limit-line
+              data-active-limit-edit={order.order_id}
+              onPointerDown={(event) => activeLimitEdit.pointerDown(event, order)}
+              onPointerMove={activeLimitEdit.pointerMove}
+              onPointerUp={activeLimitEdit.pointerUp}
+              onPointerCancel={activeLimitEdit.pointerCancel}
               style={{
                 top,
                 right:
@@ -710,7 +711,13 @@ export function ChartPanel({
                   PRICE_SCALE_WIDTH_FALLBACK,
               }}
             >
-              <span>{order.price}</span>
+              <span>{displayedPrice}</span>
+              {editing && (activeLimitEdit.state.mode === "PENDING_CONFIRM" || activeLimitEdit.state.mode === "AMENDING") ? (
+                <div className="active-limit-actions">
+                  <TradingControlButton className="active-limit-confirm" aria-label={`Confirm amend ${order.order_id}`} onTap={() => void activeLimitEdit.confirm()} disabled={activeLimitEdit.state.mode === "AMENDING"}>✓</TradingControlButton>
+                  <TradingControlButton className="active-limit-dismiss" aria-label={`Cancel amend ${order.order_id}`} onTap={activeLimitEdit.cancel} disabled={activeLimitEdit.state.mode === "AMENDING"}>×</TradingControlButton>
+                </div>
+              ) : null}
             </div>
           );
         })}

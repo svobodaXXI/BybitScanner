@@ -1,4 +1,5 @@
 import type { MarketSide } from "../contracts/trading";
+import { useTradingControlActivation } from "../interactions/useTradingControlActivation";
 
 export function PendingLimitLine({
   side,
@@ -23,6 +24,12 @@ export function PendingLimitLine({
   selected?: boolean;
   confirmDisabled?: boolean;
 }) {
+  const confirmActivation = useTradingControlActivation({
+    onTap: onConfirm,
+    disabled: confirmDisabled || !onConfirm,
+  });
+  const dismissActivation = useTradingControlActivation({ onTap: onDismiss });
+
   if (top === null) return null;
 
   return (
@@ -62,11 +69,7 @@ export function PendingLimitLine({
         className="pending-limit-confirm"
         aria-label={`Confirm pending ${side} Limit`}
         disabled={confirmDisabled || !onConfirm}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation();
-          onConfirm?.();
-        }}
+        {...confirmActivation}
       >
         ✓
       </button>
@@ -74,11 +77,7 @@ export function PendingLimitLine({
         type="button"
         className="pending-limit-dismiss"
         aria-label={`Dismiss pending ${side} Limit`}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          event.stopPropagation();
-          onDismiss?.();
-        }}
+        {...dismissActivation}
       >
         &times;
       </button>

@@ -213,12 +213,9 @@ export function limitDraftReducer(
 
     updated = {
       ...target,
-      price:
-        normalizeLimitDraftPrice(
-          action.price,
-          target.authoritativeTickSize,
-          target.side,
-        ) ?? action.price,
+      // Preserve the exact decimal draft while the user is typing. The
+      // authoritative tick is applied at validation/submission.
+      price: action.price,
       status: "editing",
       clientActionId: null,
       rejectionReason: null,

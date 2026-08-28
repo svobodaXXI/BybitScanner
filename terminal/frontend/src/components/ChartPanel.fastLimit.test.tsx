@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { ChartPanel } from "./ChartPanel";
 
-const coordinateToPrice = vi.fn(() => 100.5);
+const coordinateToPrice = vi.fn<() => number | null>(() => 100.5);
 
 vi.mock("lightweight-charts", () => ({
   CandlestickSeries: {},
@@ -33,9 +33,8 @@ vi.mock("lightweight-charts", () => ({
   }),
 }));
 
-it("creates a fast Limit from the first non-primary chart touch", () => {
+it("emits one fast-Limit intent when a touch pointer is followed by compatibility touchstart", () => {
   const onFastLimitPriceSelect = vi.fn();
-  coordinateToPrice.mockReturnValueOnce(null);
   render(
     <ChartPanel
       candles={[]}
@@ -50,17 +49,20 @@ it("creates a fast Limit from the first non-primary chart touch", () => {
   Object.defineProperty(chart.firstElementChild, "getBoundingClientRect", {
     value: () => ({ left: 0, top: 0 }),
   });
-  Object.defineProperty(chart.firstElementChild, "clientHeight", {
-    value: 200,
+  fireEvent.pointerDown(chart, {
+    pointerId: 2,
+    pointerType: "touch",
+    button: 0,
+    clientX: 50,
+    clientY: 80,
   });
-
   fireEvent.touchStart(chart, {
     changedTouches: [{ identifier: 2, clientX: 50, clientY: 80 }],
-    touches: [{ identifier: 1 }, { identifier: 2, clientX: 50, clientY: 80 }],
+    touches: [{ identifier: 2, clientX: 50, clientY: 80 }],
   });
 
   expect(onFastLimitPriceSelect).toHaveBeenCalledOnce();
-  expect(Number(onFastLimitPriceSelect.mock.calls[0][0])).toBeCloseTo(100.588);
+  expect(onFastLimitPriceSelect).toHaveBeenCalledWith("100.5");
 });
 
 it("positions confirm-all popup directly above the shared green button", () => {

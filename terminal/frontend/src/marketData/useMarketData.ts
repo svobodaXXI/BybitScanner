@@ -3,12 +3,9 @@ import { marketDataStore } from "./marketDataStore";
 
 export function useMarketData() {
   useEffect(() => {
-    const startTimer = globalThis.setTimeout(() => {
-      marketDataStore.start();
-    }, 1000);
+    marketDataStore.start();
 
     return () => {
-      globalThis.clearTimeout(startTimer);
       marketDataStore.dispose();
     };
   }, []);

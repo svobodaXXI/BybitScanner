@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState, type Dispatch } from "react";
 import {
-  type CommandResult,
+  type CommandMutationResponse,
   type FullCloseCommandRequest,
   HANDLED_REASON_CODES,
   type MarketCommandRequest,
   type MarketSide,
   type PaperLimitAmendRequest,
-  type PaperLimitCancelRequest,
-  type PaperLimitMutationResult,
+  type PaperLimitMutationResponse,
   type PaperLimitOrder,
   type PaperState,
 } from "../contracts/trading";
@@ -17,14 +16,25 @@ import {
   positionPnlPercent,
 } from "../marketData/positionPnl";
 import { baseAssetFromSymbol } from "../marketData/symbol";
+import { TradingControlButton } from "../interactions/useTradingControlActivation";
+import { useTradingNumericInputFocusPolicy } from "../interactions/tradingNumericInput";
+import {
+  dismissPopupFromBackdrop,
+  shieldPopupClickInteraction,
+  shieldPopupPointerInteraction,
+} from "../interactions/popupInteractionBoundary";
 import {
   createLimitDraft,
   type LimitDraftAction,
   type LimitDraftState,
   normalizeLimitDraftPrice,
 } from "../orders/limitDraft";
+import { isValidSelectedVolume, type SelectedSideVolumes } from "../orders/selectedVolume";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
+type PaperMutationRunner = <T>(key: string, operation: () => Promise<T>) => Promise<T>;
+const EMPTY_PENDING_ACTIONS: ReadonlySet<string> = new Set();
+const runMutationDirectly: PaperMutationRunner = (_key, operation) => operation();
 
 const descriptions: Record<WorkspaceMode, string> = {
   TERMINAL: "Manual PAPER execution is available for the development instrument.",
@@ -39,12 +49,18 @@ export function ModePanel({
   paperState,
   activeLimitOrders,
   refreshPaperState,
+  applyPaperState = () => false,
+  pendingActions = EMPTY_PENDING_ACTIONS,
+  runPaperMutation = runMutationDirectly,
   sizingReferencePrice,
   authoritativeTickSize,
   limitDraftState,
   dispatchLimitDraft,
   onLimitDraftConfirm,
   onFastLimitHoldChange = () => {},
+  selectedVolumes = { Buy: "", Sell: "" },
+  onSelectedVolumeChange = () => {},
+  onLimitCancel,
   onPositionSideChange,
   onPositionAverageEntryChange,
 }: {
@@ -54,26 +70,30 @@ export function ModePanel({
   paperState: PaperState | null;
   activeLimitOrders: PaperLimitOrder[];
   refreshPaperState: () => Promise<void>;
+  applyPaperState?: (state: PaperState) => boolean;
+  pendingActions?: ReadonlySet<string>;
+  runPaperMutation?: PaperMutationRunner;
   sizingReferencePrice: string;
   authoritativeTickSize: string | null;
   limitDraftState: LimitDraftState;
   dispatchLimitDraft: Dispatch<LimitDraftAction>;
   onLimitDraftConfirm: () => void;
   onFastLimitHoldChange?: (
-    intent: { side: MarketSide; volumeUsdt: string } | null,
+    intent: { side: MarketSide } | null,
   ) => void;
+  selectedVolumes?: SelectedSideVolumes;
+  onSelectedVolumeChange?: (side: MarketSide, value: string) => void;
+  onLimitCancel?: (orderId: string) => Promise<PaperLimitMutationResponse>;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
 }) {
+  const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [limitPresentationSide, setLimitPresentationSide] =
     useState<MarketSide | null>(null);
   const [limitsInventorySide, setLimitsInventorySide] =
     useState<MarketSide | null>(null);
-  const limitsHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const limitsLongPressTriggered = useRef(false);
   const [cancelLimitSideConfirm, setCancelLimitSideConfirm] =
     useState<"Buy" | "Sell" | null>(null);
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
@@ -87,14 +107,7 @@ export function ModePanel({
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [holdTooltip, setHoldTooltip] = useState<string | null>(null);
   const holdTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [buyAmount, setBuyAmount] = useState("");
-  const [sellAmount, setSellAmount] = useState("");
   const [amendPrices, setAmendPrices] = useState<Record<string, string>>({});
-  const buyAmountEdited = useRef(false);
-  const sellAmountEdited = useRef(false);
-  const submissionInFlight = useRef(false);
-  const fastLimitHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fastLimitHoldTriggered = useRef(false);
   const previousLimitDraft = useRef(limitDraftState.draft);
 
   useEffect(() => {
@@ -128,20 +141,7 @@ export function ModePanel({
       setAmendPrices((current) => Object.fromEntries(
         activeLimitOrders.map((order) => [order.order_id, current[order.order_id] ?? order.price]),
       ));
-      if (paperState?.ok && !buyAmountEdited.current) {
-        setBuyAmount(paperState.one_wv_usdt);
-      }
-      if (paperState?.ok && !sellAmountEdited.current) {
-        setSellAmount(paperState.one_wv_usdt);
-      }
   }, [activeLimitOrders, onPositionAverageEntryChange, onPositionSideChange, paperState]);
-
-  useEffect(() => {
-    if (mode === "TERMINAL") {
-      buyAmountEdited.current = false;
-      sellAmountEdited.current = false;
-    }
-  }, [mode]);
 
   useEffect(() => {
     if (previousLimitDraft.current !== null && limitDraftState.draft === null) {
@@ -178,8 +178,24 @@ export function ModePanel({
       )
     : null;
 
-  const selectLimitDraft = (side: MarketSide, price: string | null) => {
-    if (price === null) return;
+  const dismissLimitPresentation = () => {
+    setLimitPresentationSide(null);
+    dispatchLimitDraft({ type: "dismiss" });
+  };
+
+  const dismissSideCancelConfirmation = () => {
+    setCancelLimitSideConfirm(null);
+  };
+
+  const openLimitPresentation = (side: MarketSide) => {
+    setCancelLimitSideConfirm(null);
+    setLimitsInventorySide(null);
+    setLimitPresentationSide(side);
+    const price = side === "Buy" ? longDefaultPrice : shortDefaultPrice;
+    if (price === null) {
+      dispatchLimitDraft({ type: "dismiss" });
+      return;
+    }
     dispatchLimitDraft({
       type: "begin",
       draft: createLimitDraft({
@@ -187,7 +203,7 @@ export function ModePanel({
         symbol,
         side,
         origin: "limits-popup",
-        volume: { unit: "working_volume", amount: "1" },
+        volume: { unit: "usdt", amount: selectedVolumes[side] },
         sizingReferencePrice,
         price,
         authoritativeTickSize,
@@ -195,9 +211,18 @@ export function ModePanel({
     });
   };
 
-  const dismissLimitPresentation = () => {
+  const openLimitsInventory = (side: MarketSide) => {
+    setCancelLimitSideConfirm(null);
     setLimitPresentationSide(null);
-    dispatchLimitDraft({ type: "dismiss" });
+    setLimitsInventorySide(side);
+  };
+
+  const openSideCancelConfirmation = (side: MarketSide) => {
+    const orders = side === "Buy" ? longLimitOrders : shortLimitOrders;
+    if (orders.length === 0) return;
+    setLimitPresentationSide(null);
+    setLimitsInventorySide(null);
+    setCancelLimitSideConfirm(side);
   };
 
   const startHoldTooltip = (message: string) => {
@@ -220,16 +245,14 @@ export function ModePanel({
   };
 
   const submitPaperMarket = async (side: MarketSide, amount: string) => {
-    if (submissionInFlight.current) return;
     const numericAmount = Number(amount);
     if (!amount.trim() || !Number.isFinite(numericAmount) || numericAmount <= 0) {
       return;
     }
 
-    submissionInFlight.current = true;
-    setIsSubmitting(true);
-
-    try {
+    const actionKey = `MARKET:${side}`;
+    await runPaperMutation(actionKey, async () => {
+      try {
       const request: MarketCommandRequest = {
         client_action_id: `paper-market-${side.toLowerCase()}-${Date.now()}`,
         symbol,
@@ -245,7 +268,7 @@ export function ModePanel({
         body: JSON.stringify(request),
       });
 
-      const commandResult = (await result.json()) as CommandResult;
+      const commandResult = (await result.json()) as CommandMutationResponse;
 
       setExecutionStatus(
         commandResult.status === "completed"
@@ -256,21 +279,18 @@ export function ModePanel({
       );
 
       if (commandResult.status === "completed") {
+        applyPaperState(commandResult.paper_state);
+      }
+      } catch {
+        setExecutionStatus(`${side.toUpperCase()} отменено`);
         await refreshPaperState();
       }
-    } catch {
-      setExecutionStatus(`${side.toUpperCase()} отменено`);
-    } finally {
-      submissionInFlight.current = false;
-      setIsSubmitting(false);
-    }
+    });
   };
 
   const submitFullClose = async () => {
-    if (submissionInFlight.current) return;
-    submissionInFlight.current = true;
-    setIsSubmitting(true);
-    try {
+    await runPaperMutation("FULL_CLOSE", async () => {
+      try {
       const request: FullCloseCommandRequest = {
         client_action_id: `paper-full-close-${Date.now()}`,
         symbol,
@@ -280,85 +300,56 @@ export function ModePanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(request),
       });
-      const result = (await response.json()) as CommandResult;
+      const result = (await response.json()) as CommandMutationResponse;
       setExecutionStatus(
         result.status === "completed" ? "PAPER позиция закрыта" : "Закрытие отменено",
       );
-      if (result.status === "completed") await refreshPaperState();
-    } catch {
-      setExecutionStatus("Закрытие отменено");
-    } finally {
-      submissionInFlight.current = false;
-      setIsSubmitting(false);
-    }
+      if (result.status === "completed") applyPaperState(result.paper_state);
+      } catch {
+        setExecutionStatus("Закрытие отменено");
+        await refreshPaperState();
+      }
+    });
   };
 
   const cancelLimit = async (orderId: string) => {
-    if (submissionInFlight.current) return;
-    submissionInFlight.current = true;
-    setIsSubmitting(true);
+    if (!onLimitCancel) return;
     try {
-      const request: PaperLimitCancelRequest = {
-        client_action_id: `paper-limit-cancel-${Date.now()}`,
-        symbol, order_id: orderId,
-      };
-      const response = await fetch("/api/limit/cancel", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-      });
-      const result = (await response.json()) as PaperLimitMutationResult;
+      const result = await onLimitCancel(orderId);
       setExecutionStatus(result.status === "completed" ? "PAPER LIMIT отменён" : "Отмена LIMIT не выполнена");
-      if (result.status === "completed") await refreshPaperState();
-    } catch { setExecutionStatus("Отмена LIMIT не выполнена"); }
-    finally { submissionInFlight.current = false; setIsSubmitting(false); }
+    } catch {
+      setExecutionStatus("Отмена LIMIT не выполнена");
+    }
   };
 
   const cancelLimits = async (orders: PaperLimitOrder[]) => {
-    if (orders.length === 0) return;
+    if (orders.length === 0 || !onLimitCancel) return;
 
-    setIsSubmitting(true);
-
-    try {
-      const batchId = Date.now();
+    const side = orders[0].side;
+    await runPaperMutation(`CANCEL_SIDE:${side}`, async () => {
+      try {
       let completed = 0;
 
-      for (const [index, order] of orders.entries()) {
-        const request: PaperLimitCancelRequest = {
-          client_action_id: `paper-limit-cancel-batch-${batchId}-${index}`,
-          symbol,
-          order_id: order.order_id,
-        };
-
-        const response = await fetch("/api/limit/cancel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(request),
-        });
-
-        const result = (await response.json()) as PaperLimitMutationResult;
-
-        if (response.ok && result.status === "completed") {
+      for (const order of orders) {
+        const result = await onLimitCancel(order.order_id);
+        if (result.status === "completed") {
           completed += 1;
         }
       }
 
       setExecutionStatus(`PAPER LIMITS cancelled: ${completed}/${orders.length}`);
-      await refreshPaperState();
-    } catch {
-      setExecutionStatus("PAPER LIMIT cancellation failed");
-      await refreshPaperState();
-    } finally {
-      setIsSubmitting(false);
-    }
+      } catch {
+        setExecutionStatus("PAPER LIMIT cancellation failed");
+        await refreshPaperState();
+      }
+    });
   };
 
   const amendLimit = async (orderId: string) => {
-    if (submissionInFlight.current) return;
     const price = amendPrices[orderId];
     if (!(Number(price) > 0)) return;
-    submissionInFlight.current = true;
-    setIsSubmitting(true);
-    try {
+    await runPaperMutation(`AMEND_LIMIT:${orderId}`, async () => {
+      try {
       const request: PaperLimitAmendRequest = {
         client_action_id: `paper-limit-amend-${Date.now()}`,
         symbol, order_id: orderId, limit_price: price,
@@ -367,83 +358,14 @@ export function ModePanel({
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(request),
       });
-      const result = (await response.json()) as PaperLimitMutationResult;
+      const result = (await response.json()) as PaperLimitMutationResponse;
       setExecutionStatus(result.status === "completed" ? "PAPER LIMIT изменён" : "Изменение LIMIT не выполнено");
-      if (result.status === "completed") await refreshPaperState();
-    } catch { setExecutionStatus("Изменение LIMIT не выполнено"); }
-    finally { submissionInFlight.current = false; setIsSubmitting(false); }
-  };
-
-  const startFastLimitHold = (side: MarketSide, volumeUsdt: string) => {
-    fastLimitHoldTriggered.current = false;
-
-    if (fastLimitHoldTimer.current) {
-      clearTimeout(fastLimitHoldTimer.current);
-    }
-
-    fastLimitHoldTimer.current = setTimeout(() => {
-      fastLimitHoldTriggered.current = true;
-      navigator.vibrate?.(20);
-      onFastLimitHoldChange({ side, volumeUsdt });
-      fastLimitHoldTimer.current = null;
-    }, 200);
-  };
-
-  const finishFastLimitHold = (side: MarketSide, volumeUsdt: string) => {
-    if (fastLimitHoldTimer.current) {
-      clearTimeout(fastLimitHoldTimer.current);
-      fastLimitHoldTimer.current = null;
-    }
-
-    if (fastLimitHoldTriggered.current) {
-      onFastLimitHoldChange(null);
-      fastLimitHoldTriggered.current = false;
-      return;
-    }
-
-    submitPaperMarket(side, volumeUsdt);
-  };
-
-  const cancelFastLimitHold = () => {
-    if (fastLimitHoldTimer.current) {
-      clearTimeout(fastLimitHoldTimer.current);
-      fastLimitHoldTimer.current = null;
-    }
-
-    if (fastLimitHoldTriggered.current) {
-      onFastLimitHoldChange(null);
-    }
-
-    fastLimitHoldTriggered.current = false;
-  };
-
-  const startLimitsHold = (side: MarketSide) => {
-    limitsLongPressTriggered.current = false;
-    if (limitsHoldTimer.current) clearTimeout(limitsHoldTimer.current);
-    limitsHoldTimer.current = setTimeout(() => {
-      limitsLongPressTriggered.current = true;
-      setLimitPresentationSide(null);
-      setLimitsInventorySide(side);
-      limitsHoldTimer.current = null;
-    }, 500);
-  };
-
-  const finishLimitsHold = (side: MarketSide) => {
-    if (limitsHoldTimer.current) {
-      clearTimeout(limitsHoldTimer.current);
-      limitsHoldTimer.current = null;
-    }
-    if (!limitsLongPressTriggered.current) {
-      setLimitsInventorySide(null);
-      setLimitPresentationSide(side);
-    }
-  };
-
-  const cancelLimitsHold = () => {
-    if (limitsHoldTimer.current) {
-      clearTimeout(limitsHoldTimer.current);
-      limitsHoldTimer.current = null;
-    }
+      if (result.status === "completed") applyPaperState(result.paper_state);
+      } catch {
+        setExecutionStatus("Изменение LIMIT не выполнено");
+        await refreshPaperState();
+      }
+    });
   };
 
   const shortLimitOrders = activeLimitOrders.filter((order) => order.side === "Sell");
@@ -489,59 +411,65 @@ export function ModePanel({
       </nav>
 
       {mode === "TERMINAL" ? (
-        <div className="paper-market-actions">
+        <div className="paper-market-actions" {...tradingInputFocus.boundaryProps}>
           <div className="paper-trade-side-group" aria-label="PAPER trade sides">
             <div className="paper-market-side paper-market-buy-side">
-              <button
-                onPointerDown={() => startFastLimitHold("Buy", buyAmount)}
-                onPointerUp={() => finishFastLimitHold("Buy", buyAmount)}
-                onPointerCancel={cancelFastLimitHold}
-                onPointerLeave={cancelFastLimitHold}
-                onContextMenu={(event) => event.preventDefault()}
+              <TradingControlButton
+                onTap={() => void submitPaperMarket("Buy", selectedVolumes.Buy)}
+                onHoldStart={() => {
+                  navigator.vibrate?.(20);
+                  onFastLimitHoldChange({ side: "Buy" });
+                }}
+                onHoldEnd={() => onFastLimitHoldChange(null)}
+                onCancel={() => onFastLimitHoldChange(null)}
+                holdMs={200}
                 className="paper-market-buy"
-                disabled={isSubmitting}
+                disabled={pendingActions.has("MARKET:Buy")}
                 type="button"
               >
-                {isSubmitting ? "..." : "BUY"}
-              </button>
+                {pendingActions.has("MARKET:Buy") ? "..." : "BUY"}
+              </TradingControlButton>
               <input
+                {...tradingInputFocus.inputProps}
                 aria-label="BUY amount"
                 inputMode="decimal"
                 min="0"
                 placeholder={oneWvUsdt}
                 onChange={(event) => {
-                  buyAmountEdited.current = true;
-                  setBuyAmount(event.target.value);
+                  onSelectedVolumeChange("Buy", event.target.value);
                 }}
                 type="number"
-                value={buyAmount}
+                value={selectedVolumes.Buy}
               />
             </div>
 
             <div className="paper-market-side paper-market-sell-side">
-              <button
-                onPointerDown={() => startFastLimitHold("Sell", sellAmount)}
-                onPointerUp={() => finishFastLimitHold("Sell", sellAmount)}
-                onPointerCancel={cancelFastLimitHold}
-                onPointerLeave={cancelFastLimitHold}
-                onContextMenu={(event) => event.preventDefault()}
+              <TradingControlButton
+                onTap={() => void submitPaperMarket("Sell", selectedVolumes.Sell)}
+                onHoldStart={() => {
+                  navigator.vibrate?.(20);
+                  onFastLimitHoldChange({ side: "Sell" });
+                }}
+                onHoldEnd={() => onFastLimitHoldChange(null)}
+                onCancel={() => onFastLimitHoldChange(null)}
+                holdMs={200}
                 className="paper-market-sell"
-                disabled={isSubmitting}
+                disabled={pendingActions.has("MARKET:Sell")}
                 type="button"
               >
-                {isSubmitting ? "..." : "SELL"}
-              </button>
+                {pendingActions.has("MARKET:Sell") ? "..." : "SELL"}
+              </TradingControlButton>
               <input
+                {...tradingInputFocus.inputProps}
                 aria-label="SELL amount"
                 inputMode="decimal"
                 min="0"
                 placeholder={oneWvUsdt}
                 onChange={(event) => {
-                  sellAmountEdited.current = true;
-                  setSellAmount(event.target.value);
+                  onSelectedVolumeChange("Sell", event.target.value);
                 }}
                 type="number"
-                value={sellAmount}
+                value={selectedVolumes.Sell}
               />
             </div>
           </div>
@@ -568,10 +496,10 @@ export function ModePanel({
                 </span>
 
                 {positionSide !== "Flat" ? (
-                  <button
+                  <TradingControlButton
                     className={`paper-wv-close ${positionSide.toLowerCase()}`}
 
-                    onClick={() => setCloseConfirmOpen(true)}
+                    onTap={() => setCloseConfirmOpen(true)}
                     type="button"
                     aria-label="Закрыть позицию"
                     title="Закрыть позицию"
@@ -584,7 +512,7 @@ export function ModePanel({
                       <line x1="4" y1="4" x2="12" y2="12" />
                       <line x1="12" y1="4" x2="4" y2="12" />
                     </svg>
-                  </button>
+                  </TradingControlButton>
                 ) : null}
               </div>
 
@@ -705,20 +633,31 @@ export function ModePanel({
             {(["Buy", "Sell"] as const).map((side) => {
               const orders = side === "Buy" ? longLimitOrders : shortLimitOrders;
               return (
-                <button
-                  type="button"
-                  key={side}
-                  className={`paper-limits-button ${side.toLowerCase()}`}
-                  aria-expanded={
-                    limitPresentationSide === side || limitsInventorySide === side
-                  }
-                  onPointerDown={() => startLimitsHold(side)}
-                  onPointerUp={() => finishLimitsHold(side)}
-                  onPointerCancel={cancelLimitsHold}
-                  onPointerLeave={cancelLimitsHold}
-                >
-                  {side.toUpperCase()} LIMITS <small>{orders.length}</small>
-                </button>
+                <div className="paper-limits-side-control" key={side}>
+                  <TradingControlButton
+                    type="button"
+                    className={`paper-limits-button ${side.toLowerCase()}`}
+                    aria-expanded={
+                      limitPresentationSide === side || limitsInventorySide === side
+                    }
+                    onTap={() => openLimitPresentation(side)}
+                    onHoldStart={() => openLimitsInventory(side)}
+                    holdMs={500}
+                  >
+                    {side.toUpperCase()} LIMITS <small>{orders.length}</small>
+                  </TradingControlButton>
+                  <TradingControlButton
+                    type="button"
+                    className={`paper-limits-cancel-all ${side.toLowerCase()}`}
+                    aria-label={`Cancel all ${side} Limit orders for ${symbol}`}
+                    disabled={
+                      orders.length === 0 || pendingActions.has(`CANCEL_SIDE:${side}`)
+                    }
+                    onTap={() => openSideCancelConfirmation(side)}
+                  >
+                    ×
+                  </TradingControlButton>
+                </div>
               );
             })}
 
@@ -729,27 +668,34 @@ export function ModePanel({
               >
                 <header>
                   <strong>{limitsInventorySide.toUpperCase()} LIMITS</strong>
-                  <button
+                  <TradingControlButton
                     type="button"
                     aria-label={`Cancel all ${limitsInventorySide} Limit orders for ${symbol}`}
-                    disabled={isSubmitting || inventoryOrders.length === 0}
-                    onClick={() => setCancelLimitSideConfirm(limitsInventorySide)}
+                    disabled={
+                      pendingActions.has(`CANCEL_SIDE:${limitsInventorySide}`)
+                      || inventoryOrders.length === 0
+                    }
+                    onTap={() => openSideCancelConfirmation(limitsInventorySide)}
                   >
                     ×
-                  </button>
+                  </TradingControlButton>
                 </header>
                 <div className="paper-limits-order-list">
                   {inventoryOrders.map((order) => (
                     <div className="paper-limits-order-row" key={order.order_id}>
                       <span>{order.price}</span>
                       <span>{limitNotionalUsdt(order).toFixed(2)} USDT</span>
-                      <button
+                      <TradingControlButton
                         type="button"
                         aria-label={`Cancel Limit ${order.order_id}`}
-                        onClick={() => cancelLimit(order.order_id)}
+                        disabled={
+                          pendingActions.has(`CANCEL_LIMIT:${order.order_id}`)
+                          || pendingActions.has(`CANCEL_SIDE:${order.side}`)
+                        }
+                        onTap={() => void cancelLimit(order.order_id)}
                       >
                         ×
-                      </button>
+                      </TradingControlButton>
                     </div>
                   ))}
                 </div>
@@ -771,51 +717,74 @@ export function ModePanel({
             <div
               className="paper-limit-popup-backdrop"
               role="presentation"
-              onPointerDown={(event) => {
-                if (event.target === event.currentTarget) {
-                  dismissLimitPresentation();
-                }
-              }}
+              onPointerDown={(event) =>
+                dismissPopupFromBackdrop(event, dismissLimitPresentation)
+              }
             >
               <section
                 className="paper-limit-popup"
                 role="dialog"
                 aria-modal="true"
                 aria-label={`New ${limitPresentationSide} Limit`}
+                onPointerDown={shieldPopupPointerInteraction}
+                onClick={shieldPopupClickInteraction}
               >
                 {(() => {
                   const side = limitPresentationSide;
-                  const label = side === "Buy" ? "LONG / L" : "SHORT / S";
-                  const price = side === "Buy" ? longDefaultPrice : shortDefaultPrice;
+                  const label = side === "Buy" ? "LONG" : "SHORT";
                   const selected = limitDraftState.draft?.side === side;
-                  const displayedPrice = selected ? limitDraftState.draft?.price : price;
+                  const draft = selected ? limitDraftState.draft : null;
+                  const selectedVolume = selectedVolumes[side];
+                  const canSubmit = draft !== null
+                    && isValidSelectedVolume(selectedVolume)
+                    && normalizeLimitDraftPrice(
+                      draft.price,
+                      draft.authoritativeTickSize,
+                      draft.side,
+                    ) !== null
+                    && draft.status !== "submitting"
+                    && draft.status !== "ambiguous";
                   return (
                     <div
                       className={`paper-limit-popup-row ${side.toLowerCase()}${selected ? " selected" : ""}`}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => selectLimitDraft(side, price)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          selectLimitDraft(side, price);
-                        }
-                      }}
                     >
                       <strong>{label}</strong>
-                      <span>{oneWvUsdt} USDT</span>
-                      <span>{displayedPrice ?? "—"}</span>
-                      <button
+                      <input
+                        {...tradingInputFocus.inputProps}
+                        aria-label={`${label} Limit volume`}
+                        className="paper-limit-popup-volume"
+                        disabled={draft?.status === "submitting" || draft?.status === "ambiguous"}
+                        inputMode="decimal"
+                        min="0"
+                        onChange={(event) => onSelectedVolumeChange(side, event.target.value)}
+                        type="number"
+                        value={selectedVolume}
+                      />
+                      <input
+                        {...tradingInputFocus.inputProps}
+                        aria-label={`${label} Limit price`}
+                        className="paper-limit-popup-price"
+                        disabled={draft?.status === "submitting" || draft?.status === "ambiguous"}
+                        inputMode="decimal"
+                        onChange={(event) => {
+                          if (!draft) return;
+                          dispatchLimitDraft({
+                            type: "update-price",
+                            draftId: draft.draftId,
+                            price: event.target.value,
+                          });
+                        }}
+                        type="text"
+                        value={draft?.price ?? ""}
+                      />
+                      <TradingControlButton
                         type="button"
                         aria-label={`Confirm ${label} Limit`}
-                        disabled={!selected || limitDraftState.draft?.status === "submitting" || limitDraftState.draft?.status === "ambiguous"}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onLimitDraftConfirm();
-                        }}
+                        disabled={!canSubmit}
+                        onTap={onLimitDraftConfirm}
                       >
                         ✓
-                      </button>
+                      </TradingControlButton>
                     </div>
                   );
                 })()}
@@ -827,43 +796,43 @@ export function ModePanel({
             <div
               className="paper-close-confirm-backdrop"
               role="presentation"
-              onPointerDown={(event) => {
-                if (event.target === event.currentTarget) {
-                  setCancelLimitSideConfirm(null);
-                }
-              }}
+              onPointerDown={(event) =>
+                dismissPopupFromBackdrop(event, dismissSideCancelConfirmation)
+              }
             >
               <section
                 className="paper-close-confirm"
                 role="dialog"
                 aria-modal="true"
                 aria-label={`Cancel all ${cancelLimitSideConfirm === "Sell" ? "SHORT" : "LONG"} Limit orders for ${symbol}?`}
+                onPointerDown={shieldPopupPointerInteraction}
+                onClick={shieldPopupClickInteraction}
               >
                 <strong>
                   Cancel all {cancelLimitSideConfirm === "Sell" ? "SHORT" : "LONG"} Limit orders for {symbol}?
                 </strong>
                 <div className="paper-close-confirm-actions">
-                  <button
+                  <TradingControlButton
                     type="button"
                     className="paper-close-confirm-accept"
-                    onClick={async () => {
+                    onTap={() => {
                       const orders =
                         cancelLimitSideConfirm === "Sell"
                           ? shortLimitOrders
                           : longLimitOrders;
-                      await cancelLimits(orders);
-                      setCancelLimitSideConfirm(null);
+                      dismissSideCancelConfirmation();
+                      void cancelLimits(orders);
                     }}
                   >
                     CANCEL
-                  </button>
-                  <button
+                  </TradingControlButton>
+                  <TradingControlButton
                     type="button"
                     className="paper-close-confirm-cancel"
-                    onClick={() => setCancelLimitSideConfirm(null)}
+                    onTap={dismissSideCancelConfirmation}
                   >
                     KEEP
-                  </button>
+                  </TradingControlButton>
                 </div>
               </section>
             </div>
@@ -873,17 +842,17 @@ export function ModePanel({
             <div
               className="paper-close-confirm-backdrop"
               role="presentation"
-              onPointerDown={(event) => {
-                if (event.target === event.currentTarget) {
-                  setCloseConfirmOpen(false);
-                }
-              }}
+              onPointerDown={(event) =>
+                dismissPopupFromBackdrop(event, () => setCloseConfirmOpen(false))
+              }
             >
               <section
                 className="paper-close-confirm"
                 role="dialog"
                 aria-modal="true"
                 aria-label={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e?"}
+                onPointerDown={shieldPopupPointerInteraction}
+                onClick={shieldPopupClickInteraction}
               >
                 <strong>{"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e?"}</strong>
 
@@ -897,26 +866,26 @@ export function ModePanel({
                 </span>
 
                 <div className="paper-close-confirm-actions">
-                  <button
+                  <TradingControlButton
                     type="button"
                     className="paper-close-confirm-accept"
-                    disabled={isSubmitting}
-                    onClick={async () => {
+                    disabled={pendingActions.has("FULL_CLOSE")}
+                    onTap={async () => {
                       await submitFullClose();
                       setCloseConfirmOpen(false);
                     }}
                   >
                     {"\u0417\u0410\u041a\u0420\u042b\u0422\u042c \u041f\u041e\u0417\u0418\u0426\u0418\u042e"}
-                  </button>
+                  </TradingControlButton>
 
-                  <button
+                  <TradingControlButton
                     type="button"
                     className="paper-close-confirm-cancel"
-                    disabled={isSubmitting}
-                    onClick={() => setCloseConfirmOpen(false)}
+                    disabled={pendingActions.has("FULL_CLOSE")}
+                    onTap={() => setCloseConfirmOpen(false)}
                   >
                     {"\u041d\u0415 \u0417\u0410\u041a\u0420\u042b\u0412\u0410\u0422\u042c"}
-                  </button>
+                  </TradingControlButton>
                 </div>
               </section>
             </div>

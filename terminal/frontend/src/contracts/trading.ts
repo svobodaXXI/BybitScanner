@@ -68,6 +68,10 @@ export type PaperLimitMutationResult = {
   order_id: string | null;
 };
 
+export type PaperLimitMutationResponse = PaperLimitMutationResult & {
+  paper_state: PaperState;
+};
+
 export type CommandResult = {
   client_action_id: string;
   status: string;
@@ -77,8 +81,13 @@ export type CommandResult = {
   reconciliation_required: boolean;
 };
 
+export type CommandMutationResponse = CommandResult & {
+  paper_state: PaperState;
+};
+
 export type PaperState = {
   ok: boolean;
+  state_revision: number;
   account_id: string;
   symbol: string;
   initial_deposit_usdt: string;

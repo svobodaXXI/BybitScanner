@@ -395,6 +395,11 @@ button {
   background: #1a222b;
 }
 .dom-price {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   z-index: 1;
   align-self: stretch;
   display: grid;
@@ -474,6 +479,12 @@ button {
   background: var(--trade-buy);
 }
 .sell .order-dot {
+  background: var(--trade-sell);
+}
+.order-dot.buy {
+  background: var(--trade-buy);
+}
+.order-dot.sell {
   background: var(--trade-sell);
 }
 .tape-list {
@@ -571,6 +582,20 @@ button {
   padding: 0.42rem 0.48rem;
 }
 
+.paper-limits-side-control {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.paper-limits-side-control .paper-limits-button {
+  border-radius: 0.28rem 0 0 0.28rem;
+}
+
+.paper-limits-side-control .paper-limits-cancel-all {
+  margin-left: -1px;
+  border-radius: 0 0.28rem 0.28rem 0;
+}
+
 .paper-limits-button.buy {
   border-color: var(--trade-buy);
   color: var(--trade-buy);
@@ -627,6 +652,10 @@ button {
   color: #d67a82;
 }
 
+.paper-limits-cancel-all:disabled {
+  opacity: 0.35;
+}
+
 .paper-limit-popup-backdrop {
   position: fixed;
   inset: 0;
@@ -661,7 +690,6 @@ button {
   background: #171d24;
   color: #aab5bf;
   font-size: 0.65rem;
-  cursor: pointer;
 }
 
 .paper-limit-popup-row.buy strong {
@@ -675,6 +703,25 @@ button {
 .paper-limit-popup-row.selected {
   border-color: #63788a;
   background: #1b242d;
+}
+
+.paper-limit-popup-price,
+.paper-limit-popup-volume {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #495664;
+  border-radius: 0.22rem;
+  background: #111820;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  padding: 0.2rem 0.28rem;
+}
+
+.paper-limit-popup-price:focus,
+.paper-limit-popup-volume:focus {
+  border-color: currentColor;
+  outline: 1px solid currentColor;
 }
 
 .paper-limit-popup-row button {
@@ -2639,11 +2686,17 @@ button {
   position: absolute;
   z-index: 16;
   left: 0;
-  height: 1px;
-  border-top: 2px solid currentColor;
-  pointer-events: none;
+  height: 28px;
+  pointer-events: auto;
+  touch-action: none;
   transform: translateY(-50%);
 }
+
+.active-limit-line::before { content: ""; position: absolute; inset: 50% 0 auto; border-top: 2px solid currentColor; }
+.active-limit-line.editing::before { border-top-style: dashed; }
+.active-limit-actions { position: absolute; right: 0.12rem; top: -2rem; display: flex; gap: 0.25rem; }
+.active-limit-actions button { width: 1.7rem; height: 1.6rem; border: 1px solid currentColor; border-radius: 0.25rem; background: #11181f; color: inherit; }
+.active-limit-actions .active-limit-dismiss { color: var(--trade-sell); }
 
 .active-limit-line.buy {
   color: var(--trade-buy);
@@ -2656,7 +2709,8 @@ button {
 .active-limit-line span {
   position: absolute;
   right: 0.18rem;
-  top: -0.72rem;
+  top: 50%;
+  transform: translateY(-50%);
   padding: 0.08rem 0.24rem;
   border-radius: 0.2rem;
   background: #11181f;

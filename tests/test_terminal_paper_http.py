@@ -91,11 +91,56 @@ def test_market_post_completes_with_one_durable_execution():
             assert not client.is_alive()
             assert response["status"] == 200
             assert response["body"]["status"] == "completed", response["body"]
+            assert response["body"]["paper_state"]["state_revision"] == 1
             execution_count = runtime.call(
                 lambda owned: len(owned.store.load_executions())
             )
             assert execution_count == 1
         finally:
+            server.server_close()
+            runtime.close()
+
+
+def test_full_close_response_contains_revisioned_flat_state():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        def post(path: str, payload: dict) -> dict:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}{path}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request) as response:
+                return json.load(response)
+
+        try:
+            opened = post("/api/market", {
+                "client_action_id": "full-close-open-1",
+                "symbol": "BTCUSDT",
+                "side": "Buy",
+                "volume": {"unit": "usdt", "amount": "321"},
+                "sizing_reference_price": "64250",
+                "slippage_type": "Percent",
+                "slippage_value": "0.5",
+            })
+            assert opened["paper_state"]["state_revision"] == 1
+
+            closed = post("/api/full-close", {
+                "client_action_id": "full-close-1",
+                "symbol": "BTCUSDT",
+            })
+            assert closed["status"] == "completed"
+            assert closed["paper_state"]["position_side"] == "Flat"
+            assert closed["paper_state"]["position_quantity"] == "0"
+            assert closed["paper_state"]["state_revision"] == 2
+        finally:
+            server.shutdown()
             server.server_close()
             runtime.close()
 
@@ -135,9 +180,107 @@ def test_limit_post_returns_completed_and_creates_active_order():
             assert not client.is_alive()
             assert response["status"] == 200
             assert response["body"]["status"] == "completed", response["body"]
+            assert len(response["body"]["paper_state"]["active_limit_orders"]) == 1
+            assert response["body"]["paper_state"]["state_revision"] == 1
             state = runtime.call(lambda owner: owner.paper_state("BTCUSDT"))
             assert len(state["active_limit_orders"]) == 1
         finally:
+            server.server_close()
+            runtime.close()
+
+
+def test_limit_mutations_return_revisioned_resulting_authoritative_state():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        def post(path: str, payload: dict) -> dict:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}{path}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request) as response:
+                assert response.status == 200
+                return json.load(response)
+
+        try:
+            created = post("/api/limit", {
+                "client_action_id": "state-create-1",
+                "symbol": "BTCUSDT",
+                "side": "Buy",
+                "volume": {"unit": "usdt", "amount": "321"},
+                "sizing_reference_price": "64000",
+                "limit_price": "64000",
+                "time_in_force": "GTC",
+            })
+            order_id = created["order_id"]
+            assert created["status"] == "completed"
+            assert created["paper_state"]["state_revision"] == 1
+            assert [item["order_id"] for item in created["paper_state"]["active_limit_orders"]] == [order_id]
+
+            duplicate_create = post("/api/limit", {
+                "client_action_id": "state-create-1",
+                "symbol": "BTCUSDT",
+                "side": "Buy",
+                "volume": {"unit": "usdt", "amount": "321"},
+                "sizing_reference_price": "64000",
+                "limit_price": "64000",
+                "time_in_force": "GTC",
+            })
+            assert duplicate_create["reason_code"] == "duplicate_action"
+            assert duplicate_create["paper_state"]["state_revision"] == 1
+
+            amended = post("/api/limit/amend", {
+                "client_action_id": "state-amend-1",
+                "symbol": "BTCUSDT",
+                "order_id": order_id,
+                "limit_price": "63900",
+            })
+            assert amended["paper_state"]["state_revision"] == 2
+            assert amended["paper_state"]["active_limit_orders"][0]["price"] == "63900"
+
+            duplicate_amend = post("/api/limit/amend", {
+                "client_action_id": "state-amend-1",
+                "symbol": "BTCUSDT",
+                "order_id": order_id,
+                "limit_price": "63900",
+            })
+            assert duplicate_amend["reason_code"] == "duplicate_action"
+            assert duplicate_amend["paper_state"]["state_revision"] == 2
+
+            noop_amend = post("/api/limit/amend", {
+                "client_action_id": "state-amend-noop-1",
+                "symbol": "BTCUSDT",
+                "order_id": order_id,
+                "limit_price": "63900",
+            })
+            assert noop_amend["reason_code"] == "duplicate_action"
+            assert noop_amend["paper_state"]["state_revision"] == 2
+
+            cancelled = post("/api/limit/cancel", {
+                "client_action_id": "state-cancel-1",
+                "symbol": "BTCUSDT",
+                "order_id": order_id,
+            })
+            assert cancelled["reason_code"] == "cancelled"
+            assert cancelled["paper_state"]["state_revision"] == 3
+            assert cancelled["paper_state"]["active_limit_orders"] == []
+
+            repeated = post("/api/limit/cancel", {
+                "client_action_id": "state-cancel-2",
+                "symbol": "BTCUSDT",
+                "order_id": order_id,
+            })
+            assert repeated["reason_code"] == "already_absent"
+            assert repeated["paper_state"]["state_revision"] == 3
+            assert repeated["paper_state"]["active_limit_orders"] == []
+        finally:
+            server.shutdown()
             server.server_close()
             runtime.close()
 
@@ -359,6 +502,43 @@ def test_duplicate_book_update_does_not_repeat_partial_limit_fill():
             assert order is not None
             assert order.filled_quantity == Decimal("10")
             assert order.status == "partially_filled"
+            state = runtime.call(lambda owner: owner.paper_state("BTCUSDT"))
+            assert state["state_revision"] == 2
+        finally:
+            runtime.close()
+
+
+def test_full_limit_fill_advances_revision_with_order_and_position_atomically():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        try:
+            def create_limit(owner: PaperRuntime) -> None:
+                owner.store.create_paper_limit(
+                    client_action_id="runtime-full-create-1",
+                    request_fingerprint="runtime-full-fingerprint-1",
+                    order_id=OrderId("paper-runtime-full-1"),
+                    order_link_id="paper-runtime-full-link-1",
+                    trading_account_id=TradingAccountId("paper"),
+                    symbol=Symbol("BTCUSDT"),
+                    side=OrderSide.BUY,
+                    price=Decimal("65000"),
+                    quantity=Decimal("5"),
+                    created_at_ms=900,
+                )
+
+            runtime.call(create_limit)
+            runtime.enqueue_book_update("BTCUSDT:20:10")
+            runtime.call(lambda _: None)
+
+            state = runtime.call(lambda owner: owner.paper_state("BTCUSDT"))
+            order = runtime.call(
+                lambda owner: owner.store.get_paper_limit("paper-runtime-full-1")
+            )
+            assert order is not None
+            assert order.status == "filled"
+            assert state["active_limit_orders"] == []
+            assert state["position_quantity"] == "5"
+            assert state["state_revision"] == 2
         finally:
             runtime.close()
 

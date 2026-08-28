@@ -12,7 +12,8 @@ describe("ModePanel position PnL data flow", () => {
     averageEntry: string | null,
     sizingReferencePrice: string,
   ) => {
-    const state: PaperState = {
+  const state: PaperState = {
+    state_revision: 1,
       account_id: "paper",
       initial_deposit_usdt: "5000",
       equity_usdt: "5000",

@@ -39,6 +39,7 @@ it("removes a fully filled PAPER Limit after authoritative refresh", async () =>
       ok: true,
       json: async () => ({
         ok: true,
+        state_revision: requestCount,
         symbol: "BTCUSDT",
         active_limit_orders: requestCount === 1 ? [{ order_id: "limit-1" }] : [],
       }),

@@ -29,6 +29,8 @@ from terminal.persistence.schema import (
     SCHEMA_V1_STATEMENTS, SCHEMA_V2_MIGRATION_STATEMENTS,
     SCHEMA_V3_MIGRATION_STATEMENTS, SCHEMA_V4_MIGRATION_STATEMENTS,
     SCHEMA_V5_MIGRATION_STATEMENTS,
+    SCHEMA_V6_MIGRATION_STATEMENTS, SCHEMA_V7_MIGRATION_STATEMENTS,
+    SCHEMA_V8_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 from terminal.persistence.sqlite_store import (
@@ -136,6 +138,34 @@ class TerminalPersistenceTests(unittest.TestCase):
             ("create-1", "fingerprint-1", "order-1", 1000),
         )
         connection.execute("PRAGMA user_version = 5")
+        connection.commit()
+        connection.close()
+
+    def create_v7_database(self):
+        connection = sqlite3.connect(self.database_path)
+        for statement in (
+            SCHEMA_V1_STATEMENTS
+            + SCHEMA_V2_MIGRATION_STATEMENTS
+            + SCHEMA_V3_MIGRATION_STATEMENTS
+            + SCHEMA_V4_MIGRATION_STATEMENTS
+            + SCHEMA_V5_MIGRATION_STATEMENTS
+            + SCHEMA_V6_MIGRATION_STATEMENTS
+            + SCHEMA_V7_MIGRATION_STATEMENTS
+        ):
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version = 7")
+        connection.commit()
+        connection.close()
+
+    def create_v8_database(self):
+        self.create_v7_database()
+        connection = sqlite3.connect(self.database_path)
+        for statement in SCHEMA_V8_MIGRATION_STATEMENTS:
+            connection.execute(statement)
+        connection.execute(
+            "INSERT INTO paper_state_revisions (symbol, revision) VALUES ('BTCUSDT', 7)"
+        )
+        connection.execute("PRAGMA user_version = 8")
         connection.commit()
         connection.close()
 
@@ -413,6 +443,61 @@ class TerminalPersistenceTests(unittest.TestCase):
             )
             self.assertTrue(changed)
             self.assertEqual(amended.price, Decimal("64100"))
+
+    def test_v7_to_current_migration_adds_durable_paper_state_revision(self):
+        self.create_v7_database()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+            self.assertEqual(store.get_paper_state_revision(
+                TradingAccountId("paper"), Symbol("BTCUSDT"),
+            ), 0)
+
+    def test_v8_to_current_migration_preserves_paper_account_revision(self):
+        self.create_v8_database()
+
+        with self.open_store() as store:
+            self.assertEqual(store.get_paper_state_revision(
+                TradingAccountId("paper"), Symbol("BTCUSDT"),
+            ), 7)
+
+    def test_paper_state_revision_is_durable_and_ignores_idempotent_or_noop_mutations(self):
+        account_id = TradingAccountId("paper")
+        symbol = Symbol("BTCUSDT")
+        create_arguments = {
+            "client_action_id": "create-revision-1",
+            "request_fingerprint": "create-fingerprint-1",
+            "order_id": OrderId("revision-order-1"),
+            "order_link_id": "revision-link-1",
+            "trading_account_id": account_id,
+            "symbol": symbol,
+            "side": OrderSide.BUY,
+            "price": Decimal("64000"),
+            "quantity": Decimal("0.01"),
+            "created_at_ms": 1000,
+        }
+
+        with self.open_store() as store:
+            _, created = store.create_paper_limit(**create_arguments)
+            self.assertTrue(created)
+            self.assertEqual(store.get_paper_state_revision(account_id, symbol), 1)
+
+            _, duplicate = store.create_paper_limit(**create_arguments)
+            self.assertFalse(duplicate)
+            self.assertEqual(store.get_paper_state_revision(account_id, symbol), 1)
+
+            _, changed = store.amend_paper_limit(
+                client_action_id="noop-amend-1",
+                request_fingerprint="noop-amend-fingerprint-1",
+                order_id=OrderId("revision-order-1"),
+                price=Decimal("64000"),
+                updated_at_ms=2000,
+            )
+            self.assertFalse(changed)
+            self.assertEqual(store.get_paper_state_revision(account_id, symbol), 1)
+
+        with self.open_store() as reopened:
+            self.assertEqual(reopened.get_paper_state_revision(account_id, symbol), 1)
 
     def test_incompatible_schema_fails_closed_without_recreate(self):
         connection = sqlite3.connect(self.database_path)
