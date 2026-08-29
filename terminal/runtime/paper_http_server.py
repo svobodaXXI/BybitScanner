@@ -37,6 +37,7 @@ from terminal.api.models import (
 from terminal.domain.models import OrderSide
 from terminal.domain.models import Price, Quantity, Symbol
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
+from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.instrument_registry import InstrumentRegistry
 from terminal.runtime.paper_runtime import PaperRuntime
 
@@ -102,6 +103,39 @@ class PublicTradeBuffer:
 
     def close(self) -> None:
         self._stop.set()
+
+    def apply_message(self, message: dict) -> str:
+        if message.get("topic") != f"publicTrade.{self.symbol}":
+            return "IGNORED"
+        data = message.get("data")
+        if not isinstance(data, list):
+            return "IGNORED"
+        normalized = []
+        received_at_ms = int(time.time() * 1000)
+        for index, trade in enumerate(data):
+            if not isinstance(trade, dict):
+                continue
+            side = trade.get("S")
+            price = trade.get("p")
+            quantity = trade.get("v")
+            if side not in ("Buy", "Sell") or price is None or quantity is None:
+                continue
+            try:
+                timestamp = int(trade.get("T") or time.time() * 1000)
+                seq = int(trade.get("seq") or timestamp * 1000 + index)
+            except (TypeError, ValueError):
+                continue
+            normalized.append({
+                "id": str(trade.get("i") or f"{timestamp}-{seq}-{index}"),
+                "seq": seq, "timestamp": timestamp, "symbol": self.symbol,
+                "side": "BUY" if side == "Buy" else "SELL",
+                "price": str(price), "quantity": str(quantity),
+                "received_at_ms": received_at_ms,
+            })
+        if not normalized:
+            return "IGNORED"
+        self.add_trades(normalized)
+        return "APPLIED"
 
     def snapshot_after(self, after: int) -> list[dict]:
         with self._lock:
@@ -244,48 +278,7 @@ class PublicTradeBuffer:
                     raw = ws.recv()
                     message = json.loads(raw)
 
-                    if message.get("topic") != f"publicTrade.{self.symbol}":
-                        continue
-
-                    data = message.get("data")
-                    if not isinstance(data, list):
-                        continue
-
-                    normalized = []
-                    received_at_ms = int(time.time() * 1000)
-
-                    for index, trade in enumerate(data):
-                        if not isinstance(trade, dict):
-                            continue
-
-                        side = trade.get("S")
-                        price = trade.get("p")
-                        quantity = trade.get("v")
-
-                        if side not in ("Buy", "Sell"):
-                            continue
-                        if price is None or quantity is None:
-                            continue
-
-                        timestamp = int(trade.get("T") or time.time() * 1000)
-                        seq = int(trade.get("seq") or timestamp * 1000 + index)
-
-                        normalized.append({
-                            "id": str(
-                                trade.get("i")
-                                or f"{timestamp}-{seq}-{index}"
-                            ),
-                            "seq": seq,
-                            "timestamp": timestamp,
-                            "symbol": self.symbol,
-                            "side": "BUY" if side == "Buy" else "SELL",
-                            "price": str(price),
-                            "quantity": str(quantity),
-                            "received_at_ms": received_at_ms,
-                        })
-
-                    if normalized:
-                        self.add_trades(normalized)
+                    self.apply_message(message)
 
             except Exception:
                 if not self._stop.is_set():
@@ -327,6 +320,12 @@ class PublicOrderBookBuffer:
         self._stop.set()
         with self._condition:
             self._condition.notify_all()
+
+    def mark_connecting(self) -> None:
+        self._clear("CONNECTING")
+
+    def mark_disconnected(self) -> None:
+        self._clear("DISCONNECTED")
 
     def snapshot_after(
         self,
@@ -980,12 +979,14 @@ class MarketDataSession:
 class WorkspaceMarketDataManager:
     def __init__(self, instruments: InstrumentRegistry, provider: LiveOrderBookProvider,
                  runtime: SerializedPaperRuntime, initial: MarketDataSession, *,
+                 hub: MarketDataHub | None = None,
                  session_factory: Callable[[str, Decimal], MarketDataSession] | None = None,
                  readiness_timeout: float = 15.0) -> None:
         self._instruments = instruments
         self._provider = provider
         self._runtime = runtime
         self._active = initial
+        self._hub = hub
         self._generation = 1
         self._active.generation = self._generation
         self._session_factory = session_factory or create_market_data_session
@@ -1003,14 +1004,20 @@ class WorkspaceMarketDataManager:
                     tick_size = self._instruments.get(normalized).tick_size
                 except LookupError:
                     raise ValueError("unsupported symbol")
-            replacement = self._session_factory(normalized, tick_size)
+            replacement = (
+                self._hub.subscribe(normalized)
+                if self._hub is not None
+                else self._session_factory(normalized, tick_size)
+            )
             try:
                 ready = replacement.wait_until_ready(self._readiness_timeout)
             except BaseException:
-                replacement.close()
+                if self._hub is None:
+                    replacement.close()
                 raise
             if not ready:
-                replacement.close()
+                if self._hub is None:
+                    replacement.close()
                 raise TimeoutError("market-data candidate did not become READY")
             with self._lock:
                 previous = self._active
@@ -1018,10 +1025,12 @@ class WorkspaceMarketDataManager:
                 replacement.generation = self._generation
                 self._active = replacement
                 self._provider.set_buffer(replacement.public_orderbook)
+                previous.public_orderbook.set_update_consumer(None)
                 replacement.public_orderbook.set_update_consumer(
                     self._runtime.enqueue_book_update,
                 )
-            previous.close()
+            if self._hub is None:
+                previous.close()
             return replacement
 
     def get_active(self, symbol: str) -> tuple[MarketDataSession, int]:
@@ -1040,9 +1049,12 @@ class WorkspaceMarketDataManager:
         return self._instruments.api_projection()
 
     def close(self) -> None:
-        with self._lock:
-            active = self._active
-        active.close()
+        if self._hub is not None:
+            self._hub.close()
+        else:
+            with self._lock:
+                active = self._active
+            active.close()
 
 
 def create_market_data_session(symbol: str, tick_size: Decimal,
@@ -1069,6 +1081,27 @@ def create_market_data_session(symbol: str, tick_size: Decimal,
         public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     public_orderbook.start()
     return MarketDataSession(symbol, public_orderbook, public_trades, public_klines)
+
+
+def create_symbol_context(symbol: str, tick_size: Decimal) -> SymbolContext:
+    public_orderbook = PublicOrderBookBuffer(symbol, depth=1000)
+    trade_klines = PublicTradeKlineBuffer(symbol, history_limit=1000, tick_size=tick_size)
+    public_klines = {
+        interval: PublicKlineBuffer(
+            symbol, interval=interval, history_limit=1000,
+            tick_size=tick_size, session=create_bybit_rest_session(),
+        )
+        for interval in NATIVE_KLINE_INTERVALS
+    }
+    public_klines["15s"] = trade_klines
+    public_trades = PublicTradeBuffer(
+        symbol, tick_size=tick_size, aggregation_window_ms=50,
+        book_descriptor_provider=public_orderbook.latest_descriptor,
+        raw_trade_consumer=trade_klines.add_trades,
+    )
+    for public_kline in public_klines.values():
+        public_kline.start()
+    return SymbolContext(symbol, public_orderbook, public_trades, public_klines)
 
 
 class PaperHttpHandler(BaseHTTPRequestHandler):
@@ -1551,7 +1584,9 @@ def main() -> None:
     instruments = InstrumentRegistry(rest_session)
     instruments.refresh()
     instrument_snapshot = instruments.get("ONGUSDT")
-    initial_market = create_market_data_session("ONGUSDT", instrument_snapshot.tick_size)
+    hub = MarketDataHub(instruments, create_symbol_context)
+    initial_market = hub.subscribe("ONGUSDT")
+    hub.start()
     book_provider = LiveOrderBookProvider(
         initial_market.public_orderbook,
         rest_session=rest_session,
@@ -1563,7 +1598,9 @@ def main() -> None:
         instrument_provider=lambda symbol: instruments.get(symbol),
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
-    market_data = WorkspaceMarketDataManager(instruments, book_provider, runtime, initial_market)
+    market_data = WorkspaceMarketDataManager(
+        instruments, book_provider, runtime, initial_market, hub=hub,
+    )
 
     server = ThreadingHTTPServer((HOST, port), PaperHttpHandler)
     server.runtime = runtime

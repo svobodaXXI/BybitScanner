@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.73",
+  "revision": "1.74",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -457,7 +457,8 @@
     {"revision": "1.70", "reason": "Recorded the human-approved autonomous Android manual terminal future direction as a planning-only track without authorizing implementation or changing the immediate Workspace acceptance path", "date": "2026-08-30"},
     {"revision": "1.71", "reason": "Recorded the human-approved Market Data Hub plus multiplexed Workspace stream architecture correction after backend authority passed but real-phone transport acceptance failed; promoted the former deferred consolidation, preserved fail-closed generation authority, and defined registry, readiness, health, migration and chaos-test contracts without implementing them", "date": "2026-08-30"},
     {"revision": "1.72", "reason": "Completed documentation-only M0 by inventorying the current per-symbol workers and three-SSE browser topology, recording bounded BTCUSDT and ONGUSDT payload/rate measurements, and defining target snapshot/delta, readiness, health, efficiency, additive migration and later chaos-acceptance contracts without implementing the Hub or changing transport/PAPER semantics", "date": "2026-08-30"},
-    {"revision": "1.73", "reason": "Implemented and verified M1 as one authoritative backend InstrumentRegistry with complete Bybit linear pagination, strict Workspace-compatible filtering, Decimal-safe normalized metadata, duplicate/cursor-loop protection, atomic snapshot publication and previous-snapshot preservation; routed instruments API, Workspace switching and PAPER lookup through that registry without implementing M2", "date": "2026-08-30"}
+    {"revision": "1.73", "reason": "Implemented and verified M1 as one authoritative backend InstrumentRegistry with complete Bybit linear pagination, strict Workspace-compatible filtering, Decimal-safe normalized metadata, duplicate/cursor-loop protection, atomic snapshot publication and previous-snapshot preservation; routed instruments API, Workspace switching and PAPER lookup through that registry without implementing M2", "date": "2026-08-30"},
+    {"revision": "1.74", "reason": "Implemented and verified M2 as one long-lived backend MarketDataHub owning a shared Bybit public linear WebSocket, multi-symbol book/trade subscriptions, normalized dispatch, reconnect/resubscribe and reusable SymbolContexts; preserved generation-gated Workspace/PAPER/HTTP compatibility without implementing multiplexed frontend transport or later readiness/lifecycle stages", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3763,3 +3764,20 @@ failure.
 instance, and lookup performs no per-symbol Bybit request. The endpoint preserves its compact existing response
 shape. Focused pagination/filter/lookup/atomic-failure tests and the existing PAPER HTTP regression script pass.
 M2 `MarketDataHub` and later migration stages remain not implemented. M2 is the exact next gated stage.
+
+## 81. M2 long-lived MarketDataHub
+
+Revision 1.74 records `M2 — MARKET DATA HUB IMPLEMENTED + VERIFIED`. One backend Hub now owns one public linear
+WebSocket lifecycle across subscribed symbols, dispatches normalized orderbook/publicTrade messages into reusable
+`SymbolContext` instances, and reconnects/resubscribes all retained contexts after failure. Subscription health is
+not claimed before a real event is applied; reconnect/error and book sequence/version metadata are observable.
+
+The existing Workspace compatibility manager now switches among Hub contexts without recreating or closing the
+exchange-facing book/trade engine. It preserves candidate book readiness, generation identity, stale-generation
+rejection, previous-Workspace preservation, fail-closed book/PAPER behavior and existing HTTP/SSE API shapes.
+PAPER order semantics are unchanged and only the active context owns the PAPER book-update callback.
+
+Native candle buffers retain their existing REST refresh path inside each context. M2 does not implement bounded
+warm-context eviction, composite readiness/WorkspaceController, client book deltas or the multiplexed frontend
+WebSocket. Focused Hub tests prove one connection across multiple symbols, deterministic dispatch, unsupported
+symbol rejection, reconnect/resubscribe and previous-context reuse. M3 is the exact next gated stage.

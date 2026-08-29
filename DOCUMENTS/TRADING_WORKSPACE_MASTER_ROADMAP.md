@@ -196,7 +196,7 @@ Current status:
 ## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
 Human-approved architecture correction. Current status:
-`M1 INSTRUMENT REGISTRY IMPLEMENTED + VERIFIED / HUB NOT IMPLEMENTED`.
+`M2 MARKET DATA HUB IMPLEMENTED + VERIFIED / CLIENT TRANSPORT UNCHANGED`.
 
 Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
 a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
@@ -270,7 +270,9 @@ Migration sequence:
 - M1 — COMPLETE: one backend-owned `InstrumentRegistry` atomically publishes the fully paginated,
   transport-compatible Decimal-safe linear instrument universe; `/api/instruments`, Workspace switching and PAPER
   instrument lookup consume that same snapshot.
-- M2 — introduce one long-lived public linear `MarketDataHub` and `SubscriptionRegistry`.
+- M2 — COMPLETE: one long-lived public linear `MarketDataHub` owns orderbook/publicTrade subscribe,
+  dispatch, reconnect and resubscribe across reusable per-symbol contexts while the existing HTTP/PAPER boundary is
+  preserved by the compatibility manager.
 - M3 — move book, trades, candles and health into per-symbol `SymbolContext` ownership.
 - M4 — add `WorkspaceController` requested/active generation and composite readiness barrier.
 - M5 — add bounded active/warm context lifecycle and A→B→A reuse.
@@ -427,6 +429,25 @@ network request. `/api/instruments` preserves its existing compact `symbol` plus
 being projected from the registry. Workspace switch tick-size admission and PAPER instrument lookup use the same
 registry instance. M1 does not add a background refresh schedule; process-start refresh remains fail closed. M2 is
 the exact next gated stage and is not implemented or authorized by this checkpoint.
+
+### 10.6 M2 MarketDataHub checkpoint
+
+M2 introduces one backend-owned `MarketDataHub` thread and one Bybit public linear WebSocket connection for all
+currently subscribed orderbook and publicTrade topics. The Hub owns dynamic subscription, dispatch by exact symbol,
+disconnect clearing, reconnect and complete resubscription. A subscription is `SUBSCRIBING` after send and becomes
+`SUBSCRIBED` only after a normalized event is actually applied; reconnect count and latest error remain explicit.
+
+Each symbol has one reusable `SymbolContext` containing the authoritative reconstructed book, aggregated trades,
+derived 15-second candles, native candle buffers, subscription state, book sequence/version and last-update/health
+metadata. Repeated subscription returns the same context. Ordinary Workspace switching no longer creates or closes
+an exchange-facing book/trade engine: the compatibility manager waits on the candidate context, atomically changes
+active generation/provider/PAPER callback, rejects stale consumers and leaves the previous Hub context intact.
+Candidate failure still preserves the previous active Workspace.
+
+Native candle history/live refresh remains the existing REST polling owned by each context; frontend still uses the
+three existing SSE routes and their payload shapes. M2 does not implement multiplexed client transport, bounded
+active/warm eviction, composite readiness, client projection deltas or `WorkspaceController`. These remain later
+gated stages. M3 is the exact next migration stage.
 
 ## 11. Stage 10 — Real verification
 
