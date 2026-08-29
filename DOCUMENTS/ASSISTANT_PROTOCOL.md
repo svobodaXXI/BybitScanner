@@ -2,7 +2,7 @@
 
 Version:
 
-4.27
+4.28
 
 Date:
 
@@ -105,6 +105,22 @@ For dependent commands:
 Independent safe commands may be batched. A required action chain must begin from the last known user state and
 include every prerequisite: application/terminal, directory, runtime activation, exact input location, required
 restart, and expected outcome. Never require the user to infer missing setup.
+
+### 2.2.1 USER-ACTION PREFLIGHT — HARD GATE
+
+Immediately before sending any response that requires user action, verify that:
+
+1. the action is objectively necessary now;
+2. it is the next dependent step, not a premature later step;
+3. required terminal, process, directory, and runtime state is known;
+4. every command, text, or payload intended for copying is alone in a dedicated code block;
+5. any exact requested user reply—including `готово`, `да`, `PASS`, `A`, `э`, or another literal confirmation—is
+   itself in a copy-ready block introduced by `Сейчас сделай:`;
+6. current communication authority has been loaded and, if this protocol changed during the session, its changed
+   communication/workflow sections have been reloaded.
+
+If any condition fails, correct the response before sending it. This is an enforcement/preflight gate for the
+existing `COPY_READY_ACTION_BLOCK_RULE`, not a second copy-ready specification.
 
 ## 2.3 NO ASSUMED USER STATE + BEGINNER-SAFE STEP-BY-STEP
 
@@ -421,13 +437,21 @@ This escalation is not required for a trivial deterministic defect with a proven
 BybitScanner, Trading Workspace, Scanner, future Robot, Android terminal, and relevant infrastructure/tooling, and
 never weakens fail-closed safety, correctness, governance, verification, or protection of user-owned work.
 
+## 8.4 CHATGPT PROJECT INSTRUCTIONS GUARDRAIL SYNC NOTE
+
+ChatGPT Project Instructions are manually maintained outside the repository and are not project authority.
+`ASSISTANT_PROTOCOL.md` remains canonical. To make critical guardrails available before repository recovery, keep a
+compact mirror there of: beginner-safe one-dependent-step guidance, no assumed runtime state, copy-ready payloads,
+exact-reply copy-ready handling, pager ban, user-owned work protection, Vite build-before-acceptance, and the
+systemic-regression escalation trigger. This is a manual sync recommendation, not a duplicated protocol or a new
+repository authority.
+
 ---
 
 # 9. CURRENT REVISION RECORD
 
-`4.27` adds mandatory systemic-regression escalation: stop unexplained local patch loops, recover project intent,
-diagnose the whole failure boundary, compare proven external patterns, design a bounded correction, and only then
-implement and verify the failure class. Trivial defects with proven local causes retain the normal bounded workflow.
-Detailed history remains in Git.
+`4.28` adds a mandatory user-action preflight, reloads changed communication/workflow authority before the next
+user action, and records the compact non-authoritative ChatGPT Project Instructions guardrail sync recommendation.
+The existing copy-ready specification remains canonical and unchanged. Detailed history remains in Git.
 
 # END_OF_DOCUMENT
