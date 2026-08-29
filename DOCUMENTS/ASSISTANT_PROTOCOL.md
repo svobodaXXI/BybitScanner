@@ -1954,3 +1954,15 @@ Violation of this rule is a workflow error.
 ---
 
 # END_OF_DOCUMENT
+
+### GIT PAGER ABSOLUTE BAN
+
+Mandatory rule for all BybitScanner / Trading Workspace / terminal / scanner / robot / Codex workflows.
+
+- NEVER invoke an interactive Git pager, less, (END) screen, or equivalent paged output unless interactive paging is objectively required by the current operation.
+- Ordinary inspection and verification MUST use non-interactive output.
+- Commands such as git log, git show, git diff, git branch and similar MUST use git --no-pager ... or another explicitly non-interactive alternative whenever they could otherwise invoke a pager.
+- A pager MUST NOT be opened for convenience, inspection, verification, default Git behavior, or "just in case".
+- When both paged and ordinary PowerShell output can accomplish the task, ordinary PowerShell output is mandatory.
+- This rule overrides Git's default pager behavior in assistant-provided commands.
+- Date recorded: 2026-08-29.
