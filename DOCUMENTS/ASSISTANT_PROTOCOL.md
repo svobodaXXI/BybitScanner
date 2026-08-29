@@ -2,11 +2,11 @@
 
 Version:
 
-4.26
+4.27
 
 Date:
 
-2026-08-29
+2026-08-30
 
 Document Type:
 
@@ -353,14 +353,81 @@ USER CORRECTION
 Harden the whole failure class, preserve stronger higher-level rules, check for overlap/contradiction, and apply
 `IMMEDIATE_WORKFLOW_RULE_RECORDING` when authorized.
 
+## 8.3 SYSTEMIC REGRESSION ESCALATION — WHOLE-SYSTEM + EXTERNAL REFERENCE BEFORE PATCH
+
+When development begins to regress in an unexplained way, stop treating symptoms independently. Re-evaluate the
+affected behavior as part of the whole system, compare it with the project's intended architecture and proven
+external implementations, establish the real failure boundary, then design the correction before writing another
+patch.
+
+This hard rule triggers for an unexplained, recurring, cross-boundary, architectural, or real-runtime regression,
+including a previously working capability disappearing, neighboring behavior breaking, projections diverging,
+tests passing while a real device/runtime fails, repeated local fixes failing to stabilize the system, or an
+unexpected reliability, lifecycle, transport, authority, or synchronization failure. On trigger, the assistant
+must stop the local patch loop and follow:
+
+```text
+UNEXPLAINED REGRESSION
+→ STOP LOCAL PATCH LOOP
+→ RECOVER ACTUAL PROJECT STATE
+→ ANALYZE SYSTEM END-TO-END
+→ CHECK EXISTING ARCHITECTURE / ROADMAP / INVARIANTS
+→ RESEARCH EXTERNAL PROVEN IMPLEMENTATIONS
+→ COMPARE PATTERNS AND FAILURE MODES
+→ IDENTIFY ROOT CAUSE / FAILURE BOUNDARY
+→ DESIGN CORRECT TARGET ARCHITECTURE
+→ PLAN BOUNDED MIGRATION / CORRECTION
+→ ONLY THEN IMPLEMENT
+```
+
+Before redesign or another patch, inspect the feature in its system context where relevant: source of truth,
+ownership, lifecycle and state transitions, concurrency, transport, caches/projections, frontend/backend boundary,
+persistence, reconnect/recovery, sequencing/generation/revision, failure states, contracts/invariants, and neighboring
+subsystems. The latest visible symptom is not presumed to be the root cause.
+
+Recover the applicable Task/ChangeRequest, roadmap, architecture decisions, prior research, invariants, and last
+accepted implementation intent. Detect drift from an already-correct decision; do not preserve current code merely
+because it exists. Then consult external evidence before selecting the target correction, preferring official
+protocol/API/library documentation, mature open-source implementations, authoritative engineering design material,
+and relevant issue/PR history. Extract ownership, lifecycle, and failure-handling patterns rather than cargo-culting
+code.
+
+The analysis must explicitly compare:
+
+```text
+CURRENT IMPLEMENTATION
+vs
+EXISTING PROJECT INTENT
+vs
+EXTERNAL PROVEN PATTERNS
+```
+
+Identify what remains correct, what is only a symptom, the wrong boundary, whether the failure is local or systemic,
+and the minimum architectural correction that removes the failure class. Prefer correcting one broken
+lifecycle/transport/authority model over adding symbol-, stream-, race-, timeout-, or retry-specific patches.
+
+Whole-system analysis does not authorize guessing. When evidence is incomplete, diagnose first, collect objective
+runtime evidence, separate upstream/backend/transport/frontend/state failures, and establish the narrowest proven
+failure boundary. External research informs diagnosis and design; it does not replace project evidence.
+
+Implementation authorization remains separate. Before implementation, present the proven root cause or narrowest
+boundary, relevant external patterns, target architecture, valid existing behavior to preserve, bounded migration,
+risks, and verification strategy; then follow the normal authorization lifecycle. Verification should exercise the
+failure class where practical, including rapid transitions, stale state, reconnect, partial failure, unsupported
+input, slow dependencies, process/network interruption, ordering/generation mismatch, previous-state preservation,
+and fail-closed behavior—not only the first observed example.
+
+This escalation is not required for a trivial deterministic defect with a proven local cause. It applies across
+BybitScanner, Trading Workspace, Scanner, future Robot, Android terminal, and relevant infrastructure/tooling, and
+never weakens fail-closed safety, correctness, governance, verification, or protection of user-owned work.
+
 ---
 
 # 9. CURRENT REVISION RECORD
 
-`4.26` compacts the active protocol into canonical assistant-facing rules; removes stale project-state snapshots,
-duplicated continuation/artifact/session/token rules, duplicated Project Sync/Migration/Pipeline internals, and the
-post-terminator pager duplicate; preserves the stronger pager, beginner-safe action, bootstrap, dirty-work,
-verification, lifecycle, UI/image, Vite acceptance, and workflow-hardening invariants. Detailed history remains in
-Git.
+`4.27` adds mandatory systemic-regression escalation: stop unexplained local patch loops, recover project intent,
+diagnose the whole failure boundary, compare proven external patterns, design a bounded correction, and only then
+implement and verify the failure class. Trivial defects with proven local causes retain the normal bounded workflow.
+Detailed history remains in Git.
 
 # END_OF_DOCUMENT
