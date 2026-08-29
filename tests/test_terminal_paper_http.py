@@ -3,6 +3,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+import urllib.error
 from dataclasses import replace
 from decimal import Decimal
 from http.server import ThreadingHTTPServer
@@ -15,44 +16,415 @@ from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_http_server import (
     PaperHttpHandler,
+    MarketDataSession,
     PublicKlineBuffer,
     PublicOrderBookBuffer,
     PublicTradeBuffer,
     PublicTradeKlineBuffer,
     SerializedPaperRuntime,
-    load_public_instruments,
+    WorkspaceMarketDataManager,
 )
 from terminal.runtime.paper_runtime import PaperRuntime
 
 
-def test_load_public_instruments_uses_full_exchange_owned_supported_universe():
-    class Response:
-        def raise_for_status(self):
-            return None
+class _SwitchBook:
+    def __init__(self, ready: bool) -> None:
+        self.ready = ready
+        self.consumer = None
 
-        def json(self):
-            return {
-                "retCode": 0,
-                "result": {
-                    "nextPageCursor": "",
-                    "list": [
-                        {"symbol": "BTCUSDT", "status": "Trading", "settleCoin": "USDT", "priceFilter": {"tickSize": "0.10"}},
-                        {"symbol": "OLDUSDT", "status": "Settled", "settleCoin": "USDT", "priceFilter": {"tickSize": "0.01"}},
-                        {"symbol": "BTCUSD", "status": "Trading", "settleCoin": "BTC", "priceFilter": {"tickSize": "0.50"}},
-                    ],
-                },
-            }
+    def wait_until_ready(self, timeout: float) -> bool:
+        assert timeout == 0.01
+        return self.ready
 
-    class Session:
-        def get(self, url, *, params, timeout):
-            assert url.endswith("/v5/market/instruments-info")
-            assert params == {"category": "linear", "limit": 1000}
-            assert timeout == 10
-            return Response()
+    def set_update_consumer(self, consumer) -> None:
+        self.consumer = consumer
 
-    assert load_public_instruments(Session()) == [
-        {"symbol": "BTCUSDT", "tick_size": "0.10"},
-    ]
+
+class _SwitchSession:
+    def __init__(self, symbol: str, ready: bool, previous=None) -> None:
+        self.symbol = symbol
+        self.public_orderbook = _SwitchBook(ready)
+        self.public_trades = object()
+        self.public_klines = {}
+        self.generation = 0
+        self.closed = False
+        self.previous_closed_during_readiness = None
+        self._previous = previous
+
+    def wait_until_ready(self, timeout: float) -> bool:
+        self.previous_closed_during_readiness = (
+            self._previous.closed if self._previous is not None else None
+        )
+        return self.public_orderbook.wait_until_ready(timeout)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _SwitchProvider:
+    def __init__(self, buffer) -> None:
+        self.buffer = buffer
+
+    def set_buffer(self, buffer) -> None:
+        self.buffer = buffer
+
+
+class _SwitchRuntime:
+    def enqueue_book_update(self, book_update_id: str) -> None:
+        return None
+
+
+class _InstrumentRegistryStub:
+    def __init__(self, instruments: list[dict[str, str]]) -> None:
+        self._instruments = instruments
+
+    def get(self, symbol: str):
+        normalized = symbol.strip().upper()
+        for item in self._instruments:
+            if item["symbol"] == normalized:
+                return type("Instrument", (), {"tick_size": Decimal(item["tick_size"])})()
+        raise LookupError(normalized)
+
+    def api_projection(self) -> list[dict[str, str]]:
+        return list(self._instruments)
+
+
+def _instrument_registry(instruments: list[dict[str, str]]) -> _InstrumentRegistryStub:
+    return _InstrumentRegistryStub(instruments)
+
+
+class _BlockingTrades:
+    def __init__(self) -> None:
+        self.snapshot_started = threading.Event()
+        self.release_snapshot = threading.Event()
+
+    def snapshot_after(self, after: int) -> list[dict]:
+        self.snapshot_started.set()
+        assert self.release_snapshot.wait(timeout=1)
+        return [{"id": "late-btc", "seq": 1, "symbol": "BTCUSDT"}]
+
+    def close(self) -> None:
+        return None
+
+
+def _ready_market_session(symbol: str, sequence: int) -> MarketDataSession:
+    book = PublicOrderBookBuffer(symbol, depth=2)
+    assert book.apply_message({
+        "topic": f"orderbook.2.{symbol}",
+        "type": "snapshot",
+        "ts": sequence,
+        "data": {
+            "u": sequence,
+            "seq": sequence,
+            "b": [[str(sequence), "2"]],
+            "a": [[str(sequence + 1), "3"]],
+        },
+    }) == "APPLIED"
+    trades = PublicTradeBuffer(symbol, aggregation_window_ms=0)
+    trades.add_trades([{
+        "id": f"{symbol}-{sequence}",
+        "seq": sequence,
+        "timestamp": sequence,
+        "symbol": symbol,
+        "side": "BUY",
+        "price": str(sequence),
+        "quantity": "1",
+    }])
+    trades.flush()
+    return MarketDataSession(symbol, book, trades, {})
+
+
+def _read_sse_payload(response) -> dict:
+    while True:
+        line = response.readline()
+        if not line:
+            raise AssertionError("SSE stream ended before delivering data")
+        if line.startswith(b"data:"):
+            return json.loads(line.removeprefix(b"data:"))
+
+
+def _assert_sse_terminates(response) -> None:
+    while True:
+        line = response.readline()
+        if not line:
+            return
+        assert not line.startswith(b"data:")
+
+
+def _assert_inactive_request(url: str) -> None:
+    try:
+        urllib.request.urlopen(url)
+    except urllib.error.HTTPError as error:
+        assert error.code == 409
+        assert json.load(error)["error"] == "inactive_workspace_symbol"
+    else:
+        raise AssertionError("inactive workspace consumer request was not rejected")
+
+
+def test_workspace_switch_is_ready_before_atomic_swap_and_stale_consumer_cannot_reactivate():
+    btc = _SwitchSession("BTCUSDT", True)
+    eth = _SwitchSession("ETHUSDT", True, btc)
+    provider = _SwitchProvider(btc.public_orderbook)
+    manager = WorkspaceMarketDataManager(
+        _instrument_registry([
+            {"symbol": "BTCUSDT", "tick_size": "0.5"},
+            {"symbol": "ETHUSDT", "tick_size": "0.05"},
+        ]),
+        provider,
+        _SwitchRuntime(),
+        btc,
+        session_factory=lambda symbol, tick_size: eth,
+        readiness_timeout=0.01,
+    )
+
+    active = manager.switch("ethusdt")
+
+    assert active is eth
+    assert eth.previous_closed_during_readiness is False
+    assert btc.closed is True
+    assert provider.buffer is eth.public_orderbook
+    assert eth.public_orderbook.consumer is not None
+    assert manager.get_active("ETHUSDT") == (eth, 2)
+    try:
+        manager.get_active("BTCUSDT")
+    except LookupError:
+        pass
+    else:
+        raise AssertionError("stale BTC consumer was not rejected")
+    assert manager.get_active("ETHUSDT") == (eth, 2)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.market_data = manager
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/public-trades?symbol=BTCUSDT",
+            )
+        except urllib.error.HTTPError as error:
+            assert error.code == 409
+            assert json.load(error)["error"] == "inactive_workspace_symbol"
+        else:
+            raise AssertionError("stale HTTP consumer request was not rejected")
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def test_workspace_consumers_follow_active_generation_across_rapid_symbol_return():
+    btc = _ready_market_session("BTCUSDT", 100)
+    eth = _ready_market_session("ETHUSDT", 200)
+    returned_btc = _ready_market_session("BTCUSDT", 300)
+    candidates = iter((eth, returned_btc))
+    provider = _SwitchProvider(btc.public_orderbook)
+    manager = WorkspaceMarketDataManager(
+        _instrument_registry([
+            {"symbol": "BTCUSDT", "tick_size": "0.5"},
+            {"symbol": "ETHUSDT", "tick_size": "0.05"},
+        ]),
+        provider,
+        _SwitchRuntime(),
+        btc,
+        session_factory=lambda symbol, tick_size: next(candidates),
+        readiness_timeout=0.01,
+    )
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.market_data = manager
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    btc_book_stream = urllib.request.urlopen(
+        f"{base_url}/api/public-orderbook/stream?symbol=BTCUSDT",
+    )
+    btc_trade_stream = urllib.request.urlopen(
+        f"{base_url}/api/public-trades/stream?symbol=BTCUSDT",
+    )
+    try:
+        assert _read_sse_payload(btc_book_stream)["generation"] == 1
+        assert _read_sse_payload(btc_trade_stream)["generation"] == 1
+
+        assert manager.switch("ETHUSDT") is eth
+        assert manager.is_current(btc, 1) is False
+        assert manager.is_current(eth, 2) is True
+        _assert_sse_terminates(btc_book_stream)
+        _assert_sse_terminates(btc_trade_stream)
+
+        with urllib.request.urlopen(
+            f"{base_url}/api/public-orderbook/stream?symbol=ETHUSDT",
+        ) as eth_book_stream, urllib.request.urlopen(
+            f"{base_url}/api/public-trades/stream?symbol=ETHUSDT",
+        ) as eth_trade_stream:
+            eth_book = _read_sse_payload(eth_book_stream)
+            eth_tape = _read_sse_payload(eth_trade_stream)
+            assert eth_book["symbol"] == "ETHUSDT"
+            assert eth_book["generation"] == 2
+            assert eth_book["state"] == "READY"
+            assert eth_book["bids"] and eth_book["asks"]
+            assert eth_tape["symbol"] == "ETHUSDT"
+            assert eth_tape["generation"] == 2
+            assert eth_tape["trades"]
+            assert {trade["symbol"] for trade in eth_tape["trades"]} == {"ETHUSDT"}
+
+            _assert_inactive_request(
+                f"{base_url}/api/public-orderbook/stream?symbol=BTCUSDT",
+            )
+            _assert_inactive_request(
+                f"{base_url}/api/public-trades?symbol=BTCUSDT",
+            )
+
+            assert manager.switch("BTCUSDT") is returned_btc
+            assert manager.is_current(eth, 2) is False
+            assert manager.is_current(returned_btc, 3) is True
+            _assert_sse_terminates(eth_book_stream)
+            _assert_sse_terminates(eth_trade_stream)
+
+        with urllib.request.urlopen(
+            f"{base_url}/api/public-orderbook/stream?symbol=BTCUSDT",
+        ) as returned_book_stream, urllib.request.urlopen(
+            f"{base_url}/api/public-trades?symbol=BTCUSDT",
+        ) as returned_tape_response:
+            returned_book = _read_sse_payload(returned_book_stream)
+            returned_tape = json.load(returned_tape_response)
+            assert returned_book["symbol"] == "BTCUSDT"
+            assert returned_book["generation"] == 3
+            assert returned_book["state"] == "READY"
+            assert returned_book["bids"] and returned_book["asks"]
+            assert returned_tape["symbol"] == "BTCUSDT"
+            assert returned_tape["generation"] == 3
+            assert returned_tape["trades"]
+            assert {trade["symbol"] for trade in returned_tape["trades"]} == {"BTCUSDT"}
+
+        _assert_inactive_request(
+            f"{base_url}/api/public-trades?symbol=ETHUSDT",
+        )
+    finally:
+        btc_book_stream.close()
+        btc_trade_stream.close()
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def test_inflight_stale_trade_request_fails_closed_after_generation_changes():
+    btc = _ready_market_session("BTCUSDT", 100)
+    blocking_trades = _BlockingTrades()
+    btc.public_trades = blocking_trades
+    eth = _ready_market_session("ETHUSDT", 200)
+    manager = WorkspaceMarketDataManager(
+        _instrument_registry([
+            {"symbol": "BTCUSDT", "tick_size": "0.5"},
+            {"symbol": "ETHUSDT", "tick_size": "0.05"},
+        ]),
+        _SwitchProvider(btc.public_orderbook),
+        _SwitchRuntime(),
+        btc,
+        session_factory=lambda symbol, tick_size: eth,
+        readiness_timeout=0.01,
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.market_data = manager
+    server_thread = threading.Thread(target=server.serve_forever)
+    server_thread.start()
+    response: dict[str, object] = {}
+
+    def request_btc_trades() -> None:
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/public-trades?symbol=BTCUSDT",
+            )
+        except urllib.error.HTTPError as error:
+            response["status"] = error.code
+            response["payload"] = json.load(error)
+
+    request_thread = threading.Thread(target=request_btc_trades)
+    request_thread.start()
+    try:
+        assert blocking_trades.snapshot_started.wait(timeout=1)
+        assert manager.switch("ETHUSDT") is eth
+        blocking_trades.release_snapshot.set()
+        request_thread.join(timeout=1)
+        assert not request_thread.is_alive()
+        assert response == {
+            "status": 409,
+            "payload": {"ok": False, "error": "inactive_workspace_symbol"},
+        }
+        assert manager.get_active("ETHUSDT") == (eth, 2)
+    finally:
+        blocking_trades.release_snapshot.set()
+        request_thread.join(timeout=1)
+        server.shutdown()
+        server_thread.join(timeout=5)
+        server.server_close()
+
+
+def test_workspace_switch_timeout_preserves_ready_active_session_and_provider():
+    btc = _SwitchSession("BTCUSDT", True)
+    eth = _SwitchSession("ETHUSDT", False, btc)
+    provider = _SwitchProvider(btc.public_orderbook)
+    manager = WorkspaceMarketDataManager(
+        _instrument_registry([
+            {"symbol": "BTCUSDT", "tick_size": "0.5"},
+            {"symbol": "ETHUSDT", "tick_size": "0.05"},
+        ]),
+        provider,
+        _SwitchRuntime(),
+        btc,
+        session_factory=lambda symbol, tick_size: eth,
+        readiness_timeout=0.01,
+    )
+
+    try:
+        manager.switch("ETHUSDT")
+    except TimeoutError:
+        pass
+    else:
+        raise AssertionError("unready candidate switch did not fail closed")
+
+    assert eth.closed is True
+    assert btc.closed is False
+    assert provider.buffer is btc.public_orderbook
+    assert manager.get_active("BTCUSDT") == (btc, 1)
+
+
+def test_workspace_candidate_wait_does_not_block_current_read_only_consumers():
+    btc = _SwitchSession("BTCUSDT", True)
+    candidate_waiting = threading.Event()
+    release_candidate = threading.Event()
+    eth = _SwitchSession("ETHUSDT", True, btc)
+
+    def wait_until_ready(timeout: float) -> bool:
+        candidate_waiting.set()
+        assert release_candidate.wait(timeout=1)
+        return True
+
+    eth.wait_until_ready = wait_until_ready
+    provider = _SwitchProvider(btc.public_orderbook)
+    manager = WorkspaceMarketDataManager(
+        _instrument_registry([
+            {"symbol": "BTCUSDT", "tick_size": "0.5"},
+            {"symbol": "ETHUSDT", "tick_size": "0.05"},
+        ]),
+        provider,
+        _SwitchRuntime(),
+        btc,
+        session_factory=lambda symbol, tick_size: eth,
+        readiness_timeout=1,
+    )
+    switched = threading.Thread(target=lambda: manager.switch("ETHUSDT"))
+    switched.start()
+    assert candidate_waiting.wait(timeout=1)
+
+    assert manager.get_active("BTCUSDT") == (btc, 1)
+    assert manager.is_current(btc, 1) is True
+    assert btc.closed is False
+
+    release_candidate.set()
+    switched.join(timeout=1)
+    assert not switched.is_alive()
+    assert manager.get_active("ETHUSDT") == (eth, 2)
 
 
 class StaticBookProvider:
@@ -885,6 +1257,11 @@ def load_tests(loader, tests, pattern):
         unittest.FunctionTestCase(test)
         for test in (
             test_market_post_completes_with_one_durable_execution,
+            test_workspace_switch_is_ready_before_atomic_swap_and_stale_consumer_cannot_reactivate,
+            test_workspace_consumers_follow_active_generation_across_rapid_symbol_return,
+            test_inflight_stale_trade_request_fails_closed_after_generation_changes,
+            test_workspace_switch_timeout_preserves_ready_active_session_and_provider,
+            test_workspace_candidate_wait_does_not_block_current_read_only_consumers,
             test_health_get_returns_exact_paper_status,
             test_threaded_http_serializes_concurrent_paper_mutations,
             test_public_orderbook_applies_snapshot_and_incremental_delta,

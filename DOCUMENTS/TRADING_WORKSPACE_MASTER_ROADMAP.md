@@ -196,7 +196,7 @@ Current status:
 ## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
 Human-approved architecture correction. Current status:
-`M0 CONTRACT + MEASUREMENT BASELINE RECORDED / HUB NOT IMPLEMENTED`.
+`M1 INSTRUMENT REGISTRY IMPLEMENTED + VERIFIED / HUB NOT IMPLEMENTED`.
 
 Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
 a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
@@ -267,7 +267,9 @@ Migration sequence:
 
 - M0 — COMPLETE: preserve current authority invariants and record the measured distribution-boundary baseline and
   target projection/readiness/health contracts below.
-- M1 — introduce `InstrumentRegistry` with transport-compatible filtering and pagination tests.
+- M1 — COMPLETE: one backend-owned `InstrumentRegistry` atomically publishes the fully paginated,
+  transport-compatible Decimal-safe linear instrument universe; `/api/instruments`, Workspace switching and PAPER
+  instrument lookup consume that same snapshot.
 - M2 — introduce one long-lived public linear `MarketDataHub` and `SubscriptionRegistry`.
 - M3 — move book, trades, candles and health into per-symbol `SymbolContext` ownership.
 - M4 — add `WorkspaceController` requested/active generation and composite readiness barrier.
@@ -410,6 +412,21 @@ sequence break and resnapshot; silent/slow and duplicate trades; kline bootstrap
 reconnect/resume; isolated partial degradation; unsupported symbol; warm-context expiry; bounded backpressure and
 slow-client eviction; and payload/bandwidth regression against this M0 baseline. Each case must prove correct
 authority, explicit health, bounded queues/payloads and fail-closed market-data-dependent behavior.
+
+### 10.5 M1 InstrumentRegistry checkpoint
+
+M1 introduces one backend-owned registry over the existing normalized `InstrumentSnapshot`; it does not introduce
+a parallel trading-metadata model. Refresh follows every `nextPageCursor`, rejects duplicate symbols and cursor
+loops, skips unsupported or incomplete entries, and publishes one immutable candidate only after every page has
+completed successfully. A failed initial refresh publishes nothing; a failed later refresh preserves the previous
+valid snapshot. Supported instruments are exactly active `Trading`, USDT-quoted `LinearPerpetual` contracts with
+complete positive price/quantity/notional constraints. Numeric trading constraints remain `Decimal`.
+
+Normalized uppercase `get`, `supports` and sorted `list_supported` operations are snapshot-only and perform no
+network request. `/api/instruments` preserves its existing compact `symbol` plus `tick_size` response shape while
+being projected from the registry. Workspace switch tick-size admission and PAPER instrument lookup use the same
+registry instance. M1 does not add a background refresh schedule; process-start refresh remains fail closed. M2 is
+the exact next gated stage and is not implemented or authorized by this checkpoint.
 
 ## 11. Stage 10 — Real verification
 

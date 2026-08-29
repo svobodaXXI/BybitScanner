@@ -36,8 +36,8 @@ from terminal.api.models import (
 )
 from terminal.domain.models import OrderSide
 from terminal.domain.models import Price, Quantity, Symbol
-from terminal.exchange.normalization import normalize_instrument
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
+from terminal.market_data.instrument_registry import InstrumentRegistry
 from terminal.runtime.paper_runtime import PaperRuntime
 
 
@@ -64,6 +64,7 @@ LIMIT_FIELDS = {
 }
 LIMIT_CANCEL_FIELDS = {"client_action_id", "symbol", "order_id"}
 LIMIT_AMEND_FIELDS = {"client_action_id", "symbol", "order_id", "limit_price"}
+WORKSPACE_SYMBOL_FIELDS = {"symbol"}
 NATIVE_KLINE_INTERVALS = ("1", "5", "15", "60", "D")
 SUPPORTED_KLINE_INTERVALS = ("15s", *NATIVE_KLINE_INTERVALS)
 
@@ -342,6 +343,17 @@ class PublicOrderBookBuffer:
     def snapshot(self) -> dict:
         with self._condition:
             return self._snapshot_locked()
+
+    def wait_until_ready(self, timeout: float) -> bool:
+        with self._condition:
+            self._condition.wait_for(
+                lambda: (
+                    (self._state == "READY" and bool(self._bids) and bool(self._asks))
+                    or self._stop.is_set()
+                ),
+                timeout=timeout,
+            )
+            return self._state == "READY" and bool(self._bids) and bool(self._asks)
 
     def set_update_consumer(self, consumer: Callable[[str], None] | None) -> None:
         with self._condition:
@@ -946,68 +958,16 @@ def create_bybit_rest_session() -> requests.Session:
     return session
 
 
-def load_public_instrument(
-    symbol: str,
-    session: requests.Session | None = None,
-):
-    response = (session or create_bybit_rest_session()).get(
-        "https://api.bybit.com/v5/market/instruments-info",
-        params={"category": "linear", "symbol": symbol},
-        timeout=10,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("retCode") != 0:
-        raise RuntimeError("Bybit instrument request failed")
-    result = payload.get("result")
-    items = result.get("list") if isinstance(result, dict) else None
-    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
-        raise RuntimeError("Bybit instrument response is invalid")
-    normalized = dict(items[0])
-    normalized["category"] = "linear"
-    return normalize_instrument(normalized)
-
-
-def load_public_instruments(session: requests.Session | None = None) -> list[dict[str, str]]:
-    rest = session or create_bybit_rest_session()
-    cursor = ""
-    instruments: list[dict[str, str]] = []
-    while True:
-        params = {"category": "linear", "limit": 1000}
-        if cursor:
-            params["cursor"] = cursor
-        response = rest.get(
-            "https://api.bybit.com/v5/market/instruments-info",
-            params=params,
-            timeout=10,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        result = payload.get("result") if payload.get("retCode") == 0 else None
-        items = result.get("list") if isinstance(result, dict) else None
-        if not isinstance(items, list):
-            raise RuntimeError("Bybit instrument universe response is invalid")
-        for item in items:
-            price_filter = item.get("priceFilter") if isinstance(item, dict) else None
-            symbol = item.get("symbol") if isinstance(item, dict) else None
-            tick_size = price_filter.get("tickSize") if isinstance(price_filter, dict) else None
-            if (
-                isinstance(symbol, str) and isinstance(tick_size, str)
-                and item.get("status") == "Trading" and item.get("settleCoin") == "USDT"
-            ):
-                instruments.append({"symbol": symbol, "tick_size": tick_size})
-        cursor = result.get("nextPageCursor", "") if isinstance(result, dict) else ""
-        if not cursor:
-            break
-    return sorted(instruments, key=lambda item: item["symbol"])
-
-
 @dataclass
 class MarketDataSession:
     symbol: str
     public_orderbook: PublicOrderBookBuffer
     public_trades: PublicTradeBuffer
     public_klines: dict[str, object]
+    generation: int = 0
+
+    def wait_until_ready(self, timeout: float) -> bool:
+        return self.public_orderbook.wait_until_ready(timeout)
 
     def close(self) -> None:
         self.public_orderbook.set_update_consumer(None)
@@ -1018,29 +978,66 @@ class MarketDataSession:
 
 
 class WorkspaceMarketDataManager:
-    def __init__(self, instruments: list[dict[str, str]], provider: LiveOrderBookProvider,
-                 runtime: SerializedPaperRuntime, initial: MarketDataSession) -> None:
-        self.instruments = instruments
-        self._tick_sizes = {item["symbol"]: Decimal(item["tick_size"]) for item in instruments}
+    def __init__(self, instruments: InstrumentRegistry, provider: LiveOrderBookProvider,
+                 runtime: SerializedPaperRuntime, initial: MarketDataSession, *,
+                 session_factory: Callable[[str, Decimal], MarketDataSession] | None = None,
+                 readiness_timeout: float = 15.0) -> None:
+        self._instruments = instruments
         self._provider = provider
         self._runtime = runtime
         self._active = initial
+        self._generation = 1
+        self._active.generation = self._generation
+        self._session_factory = session_factory or create_market_data_session
+        self._readiness_timeout = readiness_timeout
         self._lock = threading.RLock()
+        self._switch_lock = threading.Lock()
 
-    def activate(self, symbol: str) -> MarketDataSession:
+    def switch(self, symbol: str) -> MarketDataSession:
+        normalized = symbol.strip().upper()
+        with self._switch_lock:
+            with self._lock:
+                if normalized == self._active.symbol:
+                    return self._active
+                try:
+                    tick_size = self._instruments.get(normalized).tick_size
+                except LookupError:
+                    raise ValueError("unsupported symbol")
+            replacement = self._session_factory(normalized, tick_size)
+            try:
+                ready = replacement.wait_until_ready(self._readiness_timeout)
+            except BaseException:
+                replacement.close()
+                raise
+            if not ready:
+                replacement.close()
+                raise TimeoutError("market-data candidate did not become READY")
+            with self._lock:
+                previous = self._active
+                self._generation += 1
+                replacement.generation = self._generation
+                self._active = replacement
+                self._provider.set_buffer(replacement.public_orderbook)
+                replacement.public_orderbook.set_update_consumer(
+                    self._runtime.enqueue_book_update,
+                )
+            previous.close()
+            return replacement
+
+    def get_active(self, symbol: str) -> tuple[MarketDataSession, int]:
         normalized = symbol.strip().upper()
         with self._lock:
-            if normalized == self._active.symbol:
-                return self._active
-            tick_size = self._tick_sizes.get(normalized)
-            if tick_size is None:
-                raise ValueError("unsupported symbol")
-            replacement = create_market_data_session(normalized, tick_size, self._runtime)
-            previous = self._active
-            self._active = replacement
-            self._provider.set_buffer(replacement.public_orderbook)
-        previous.close()
-        return replacement
+            if normalized != self._active.symbol:
+                raise LookupError("inactive symbol")
+            return self._active, self._generation
+
+    def is_current(self, session: MarketDataSession, generation: int) -> bool:
+        with self._lock:
+            return self._active is session and self._generation == generation
+
+    @property
+    def instruments(self) -> list[dict[str, str]]:
+        return self._instruments.api_projection()
 
     def close(self) -> None:
         with self._lock:
@@ -1097,11 +1094,11 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             symbol = query.get("symbol", ["BTCUSDT"])[0]
 
             try:
-                market = self.server.market_data.activate(symbol)
-            except ValueError:
+                market, generation = self.server.market_data.get_active(symbol)
+            except LookupError:
                 self._json_response(
-                    400,
-                    {"ok": False, "error": "unsupported_symbol"},
+                    409,
+                    {"ok": False, "error": "inactive_workspace_symbol"},
                 )
                 return
             public_trades = market.public_trades
@@ -1117,7 +1114,13 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
             try:
                 while True:
+                    if not self.server.market_data.is_current(market, generation):
+                        self.close_connection = True
+                        return
                     trades = public_trades.snapshot_after(0)
+                    if not self.server.market_data.is_current(market, generation):
+                        self.close_connection = True
+                        return
 
                     fresh = [
                         trade
@@ -1137,7 +1140,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                             seen_ids.intersection_update(current_ids)
 
                         payload = json.dumps(
-                            {"trades": fresh},
+                            {"symbol": market.symbol, "generation": generation, "trades": fresh},
                             separators=(",", ":"),
                         )
 
@@ -1160,11 +1163,11 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             symbol = query.get("symbol", ["BTCUSDT"])[0]
 
             try:
-                market = self.server.market_data.activate(symbol)
-            except ValueError:
+                market, generation = self.server.market_data.get_active(symbol)
+            except LookupError:
                 self._json_response(
-                    400,
-                    {"ok": False, "error": "unsupported_symbol"},
+                    409,
+                    {"ok": False, "error": "inactive_workspace_symbol"},
                 )
                 return
             public_orderbook = market.public_orderbook
@@ -1180,10 +1183,15 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             try:
                 while True:
                     payload = public_orderbook.snapshot_after(version)
+                    if not self.server.market_data.is_current(market, generation):
+                        self.close_connection = True
+                        return
                     next_version = int(payload["version"])
                     if next_version > version:
                         version = next_version
-                        body = json.dumps(payload, separators=(",", ":"))
+                        body = json.dumps(
+                            {**payload, "generation": generation}, separators=(",", ":"),
+                        )
                         self.wfile.write(f"data:{body}\n\n".encode("utf-8"))
                     else:
                         self.wfile.write(b":keepalive\n\n")
@@ -1200,8 +1208,8 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             symbol = query.get("symbol", ["BTCUSDT"])[0]
             interval = query.get("interval", ["5"])[0]
             try:
-                market = self.server.market_data.activate(symbol)
-            except ValueError:
+                market, generation = self.server.market_data.get_active(symbol)
+            except LookupError:
                 market = None
             if market is None or interval not in SUPPORTED_KLINE_INTERVALS or interval not in market.public_klines:
                 self._json_response(
@@ -1221,10 +1229,14 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             try:
                 while True:
                     payload = public_kline.snapshot_after(version)
+                    if not self.server.market_data.is_current(market, generation):
+                        return
                     next_version = int(payload["version"])
                     if next_version > version:
                         version = next_version
-                        body = json.dumps(payload, separators=(",", ":"))
+                        body = json.dumps(
+                            {**payload, "generation": generation}, separators=(",", ":"),
+                        )
                         self.wfile.write(f"data:{body}\n\n".encode("utf-8"))
                     else:
                         self.wfile.write(b":keepalive\n\n")
@@ -1241,13 +1253,13 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             symbol = query.get("symbol", ["BTCUSDT"])[0]
 
             try:
-                market = self.server.market_data.activate(symbol)
-            except ValueError:
+                market, generation = self.server.market_data.get_active(symbol)
+            except LookupError:
                 self._json_response(
-                    400,
+                    409,
                     {
                         "ok": False,
-                        "error": "unsupported_symbol",
+                        "error": "inactive_workspace_symbol",
                     },
                 )
                 return
@@ -1265,12 +1277,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
 
             trades = market.public_trades.snapshot_after(after)
+            if not self.server.market_data.is_current(market, generation):
+                self._json_response(
+                    409,
+                    {"ok": False, "error": "inactive_workspace_symbol"},
+                )
+                return
 
             self._json_response(
                 200,
                 {
                     "ok": True,
-                    "symbol": symbol,
+                    "symbol": market.symbol,
+                    "generation": generation,
                     "trades": trades,
                 },
             )
@@ -1339,6 +1358,23 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        if self.path == "/api/workspace/symbol":
+            try:
+                payload = self._payload(WORKSPACE_SYMBOL_FIELDS)
+                market = self.server.market_data.switch(payload["symbol"])
+            except ValueError:
+                self._json_response(400, {"ok": False, "error": "unsupported_symbol"})
+                return
+            except TimeoutError:
+                self._json_response(503, {"ok": False, "error": "workspace_symbol_not_ready"})
+                return
+            self._json_response(200, {
+                "ok": True,
+                "symbol": market.symbol,
+                "generation": market.generation,
+            })
+            return
+
         if self.path == "/api/close-all":
             try:
                 payload = self._payload(CLOSE_ALL_FIELDS)
@@ -1512,8 +1548,9 @@ def main() -> None:
     database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
     port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
     rest_session = create_bybit_rest_session()
-    instruments = load_public_instruments(rest_session)
-    instrument_snapshot = load_public_instrument("ONGUSDT", rest_session)
+    instruments = InstrumentRegistry(rest_session)
+    instruments.refresh()
+    instrument_snapshot = instruments.get("ONGUSDT")
     initial_market = create_market_data_session("ONGUSDT", instrument_snapshot.tick_size)
     book_provider = LiveOrderBookProvider(
         initial_market.public_orderbook,
@@ -1523,7 +1560,7 @@ def main() -> None:
         database_path,
         book_provider=book_provider,
         instrument_snapshot=instrument_snapshot,
-        instrument_provider=lambda symbol: load_public_instrument(symbol, rest_session),
+        instrument_provider=lambda symbol: instruments.get(symbol),
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(instruments, book_provider, runtime, initial_market)

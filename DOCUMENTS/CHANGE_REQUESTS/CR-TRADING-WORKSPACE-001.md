@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.72",
+  "revision": "1.73",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -456,7 +456,8 @@
     {"revision": "1.69", "reason": "Implemented the bounded real-phone symbol-switch layout refinement by moving ticker/timeframe into Chart, account control beside BUY/SELL LIMITS, shrinking adaptive chart label typography, reallocating the removed top strip height, and fixing clipped authoritative DOM own-order dots while keeping phone acceptance pending", "date": "2026-08-29"},
     {"revision": "1.70", "reason": "Recorded the human-approved autonomous Android manual terminal future direction as a planning-only track without authorizing implementation or changing the immediate Workspace acceptance path", "date": "2026-08-30"},
     {"revision": "1.71", "reason": "Recorded the human-approved Market Data Hub plus multiplexed Workspace stream architecture correction after backend authority passed but real-phone transport acceptance failed; promoted the former deferred consolidation, preserved fail-closed generation authority, and defined registry, readiness, health, migration and chaos-test contracts without implementing them", "date": "2026-08-30"},
-    {"revision": "1.72", "reason": "Completed documentation-only M0 by inventorying the current per-symbol workers and three-SSE browser topology, recording bounded BTCUSDT and ONGUSDT payload/rate measurements, and defining target snapshot/delta, readiness, health, efficiency, additive migration and later chaos-acceptance contracts without implementing the Hub or changing transport/PAPER semantics", "date": "2026-08-30"}
+    {"revision": "1.72", "reason": "Completed documentation-only M0 by inventorying the current per-symbol workers and three-SSE browser topology, recording bounded BTCUSDT and ONGUSDT payload/rate measurements, and defining target snapshot/delta, readiness, health, efficiency, additive migration and later chaos-acceptance contracts without implementing the Hub or changing transport/PAPER semantics", "date": "2026-08-30"},
+    {"revision": "1.73", "reason": "Implemented and verified M1 as one authoritative backend InstrumentRegistry with complete Bybit linear pagination, strict Workspace-compatible filtering, Decimal-safe normalized metadata, duplicate/cursor-loop protection, atomic snapshot publication and previous-snapshot preservation; routed instruments API, Workspace switching and PAPER lookup through that registry without implementing M2", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3748,3 +3749,17 @@ on every trade event. These bounded local measurements do not prove proxy/tunnel
 This checkpoint changes documentation only. It does not implement `InstrumentRegistry`, `MarketDataHub`,
 `SymbolContext`, `WorkspaceController`, a multiplexed WebSocket, frontend transport changes, or any PAPER/order
 semantic change. The next migration stage is M1, subject to its own authorized implementation slice and gate.
+
+## 80. M1 authoritative InstrumentRegistry
+
+Revision 1.73 records `M1 — INSTRUMENT REGISTRY IMPLEMENTED + VERIFIED`. One backend registry now owns the
+fully paginated Bybit linear Workspace universe and the existing Decimal-safe `InstrumentSnapshot` metadata.
+Eligibility is fail closed to `Trading`, USDT-quoted `LinearPerpetual` instruments with complete valid precision,
+step and minimum constraints. Duplicate symbols, repeated pagination cursors, malformed pages and incomplete
+upstream refreshes cannot publish a candidate; a prior valid immutable snapshot remains available after refresh
+failure.
+
+`/api/instruments`, Workspace symbol/tick-size admission and PAPER instrument lookup consume the same registry
+instance, and lookup performs no per-symbol Bybit request. The endpoint preserves its compact existing response
+shape. Focused pagination/filter/lookup/atomic-failure tests and the existing PAPER HTTP regression script pass.
+M2 `MarketDataHub` and later migration stages remain not implemented. M2 is the exact next gated stage.
