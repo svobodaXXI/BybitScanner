@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.69",
+  "revision": "1.70",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -46,6 +46,7 @@
     ,"Implement the account-wide PAPER Open Positions inventory and money-sensitive per-symbol Full Close reconciliation without optimistic row removal or blind retry"
     ,"Complete account-wide PAPER Open Positions with backend-owned per-symbol current PnL, symbol tick-size price formatting and serialized idempotent Close All orchestration"
     ,"Implement one canonical authoritative Workspace symbol-switch path shared by ticker autocomplete and Open Positions navigation, with atomic market-data and PAPER projection transition safety"
+    ,"Record the human-approved planning-only future direction for an autonomous Android manual Trading Workspace without authorizing implementation or selecting a final Android stack"
   ],
   "prohibited_scope": [
     "Further unapproved DOM, L2, Market Data Engine, Paper Trading Engine or chart implementation beyond recorded checkpoints",
@@ -3638,3 +3639,40 @@ Focused frontend regressions (34) plus the isolated account-placement regression
 build passes with 64 modules. These automated checks are not touch/live-stream acceptance. Workspace symbol
 switching manual/real-phone acceptance remains `PENDING`; the exact next action is reload of the fresh production
 build followed by real-phone layout, DOM-dot and symbol-switching acceptance.
+
+## 77. Autonomous Android manual terminal future-direction checkpoint
+
+Revision 1.70 records the human-approved documentation checkpoint
+`AUTONOMOUS ANDROID MANUAL TRADING TERMINAL — FUTURE DIRECTION RECORDED / IMPLEMENTATION NOT AUTHORIZED`.
+The owning direction is `DOCUMENTS/TRADING_WORKSPACE_MASTER_ROADMAP.md` section
+`Future track — Autonomous Android Manual Trading Terminal`.
+
+This is a separate `FUTURE / PLANNING ONLY / NOT_IMPLEMENTATION_AUTHORIZED` track after the current terminal
+completion and acceptance path. It does not replace the existing desktop/web or Telegram Mini App prototype,
+introduce Android code or dependencies, authorize real-money trading, or select Capacitor, another hybrid shell,
+Kotlin, React Native, or any final stack. The immediate next item remains
+`REAL-PHONE WORKSPACE SYMBOL SWITCHING ACCEPTANCE`.
+
+The future product intent is an autonomous manual terminal whose normal route is `PHONE → BYBIT`, without
+requiring `C:\BybitScanner`, the home Windows PC, its Python backend, VPS, Scanner runtime, or the future Robot.
+Robot architecture remains separate. The preferred research direction maximizes reuse of the existing
+React/TypeScript Workspace UI and contracts through a bridge to an Android-native market-data/trading core; a
+native rewrite remains evidence-gated.
+
+Credentials, signing, private API access, and authoritative reconciliation must remain outside
+React/JavaScript/WebView state. Future security research covers Android Keystore/hardware backing, minimum
+read/trade privileges, forbidden withdrawal permission, rotation/revocation, redaction, backup/export, and device
+threats. No secret may be hardcoded in the APK, repository, or frontend bundle, and a separate security gate is
+mandatory before real-money implementation.
+
+Start, resume, reconnect, process death, and network transition handling must restore public data and reconcile
+private exchange truth before unsafe actions are enabled. Existing safety constraints remain: one normalized
+market-data owner for Chart/DOM/Tape, explicit session/symbol authority, generation guards, readiness-before-swap,
+stale-consumer isolation, stable command identity, no blind ambiguous retry, duplicate prevention, fail-closed
+degraded state, authoritative order/position recovery, and Full Close that cannot flip through zero.
+
+Pre-implementation research gates own packaging/bridge, sustained market-data/device performance, Android
+lifecycle/background restrictions, security, then-current Bybit integration and clock/rate constraints,
+distribution/signing/update strategy, and observability. Preliminary phases A0–A7 cover research, UI packaging,
+autonomous public data, private read-only reconciliation, optional PAPER validation, restricted live commands,
+protection/recovery hardening, and real-device acceptance. This ordering remains preliminary.

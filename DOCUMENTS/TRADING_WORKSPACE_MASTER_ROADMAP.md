@@ -301,4 +301,145 @@ Not merely green tests.
 Completion means:
 No known defects remain in scope, critical invariants pass, and real acceptance scenarios are stable on the actual phone.
 
+## 16. Future track — Autonomous Android Manual Trading Terminal
+
+Checkpoint: `AUTONOMOUS ANDROID MANUAL TRADING TERMINAL — FUTURE DIRECTION RECORDED / IMPLEMENTATION NOT AUTHORIZED`.
+
+Status: `FUTURE / PLANNING ONLY / NOT_IMPLEMENTATION_AUTHORIZED`.
+
+This is a separate future track after the current terminal completion and acceptance path. It does not replace the
+desktop/web or Telegram Mini App prototype, does not start Android implementation, and does not change section 14's
+immediate next step: `REAL-PHONE WORKSPACE SYMBOL SWITCHING ACCEPTANCE`.
+
+### 16.1 Product intent and autonomy
+
+The future Android version is primarily a manual Bybit trading terminal that can operate independently of
+`C:\BybitScanner`, the home Windows PC and its Python backend, VPS, Scanner runtime, and the future Trading Robot.
+
+```text
+ANDROID TRADING WORKSPACE
+        │
+        ├── Chart / DOM / Smart Tape / controls
+        ├── local market-data/trading core
+        ├── secure credential boundary
+        ▼
+   BYBIT PUBLIC + PRIVATE API
+```
+
+The intended manual-trading route is `PHONE → BYBIT`, not `PHONE → PC/VPS → BYBIT`. Robot integration is not an
+Android requirement; the future Robot remains separate and must not depend on a running Android application.
+
+### 16.2 Reuse and preliminary architecture direction
+
+Android does not automatically require a rewrite. Prefer maximum reuse of the existing React/TypeScript UI and its
+Chart, DOM, Smart Tape, BUY/SELL, LIMITS, Open Positions, future completed STOP/TAKE, Working Volume, symbol
+switching, Drawing Tools, layout, and phone-interaction contracts. Keep UI/business boundaries capable of binding
+later either to the current backend transport or to an Android-local bridge without duplicating trading semantics.
+
+```text
+Existing React / TypeScript Trading Workspace UI
+                    │
+             internal bridge
+                    │
+        Android-native trading core
+                    │
+        ┌───────────┴───────────┐
+        ▼                       ▼
+Bybit Public WS/REST       Bybit Private API
+```
+
+Capacitor or a comparable native-shell approach is a candidate, not a selected stack. `Capacitor vs alternative
+hybrid/native approach` remains a future research decision. A full Kotlin or React Native rewrite is not required
+and may be considered only if measured performance, security, or Android UX evidence justifies it.
+
+### 16.3 Security and command boundary
+
+For real-money manual trading, the Bybit API Secret must never enter ordinary React/JavaScript/WebView state or be
+available to frontend code as a string.
+
+```text
+React UI
+   │ intent only
+   ▼
+Android native trading boundary
+   │
+   ├── credentials
+   ├── request signing
+   ├── private API
+   └── reconciliation
+```
+
+The UI sends intents such as `placeLimit`, `cancelOrder`, `amendOrder`, `marketBuy`, and `fullClose`; native code
+owns credentials, signing, private API access, and reconciliation. Research Android Keystore and hardware-backed
+storage where available. A dedicated Android-terminal key must have only necessary read/trade permissions, no
+withdrawal permission, minimum privileges, and a rotation/removal workflow. No secret may be hardcoded in the APK,
+repository, or frontend bundle. Exact design requires a separate security research gate before real-money work.
+
+### 16.4 Exchange authority and lifecycle
+
+The manual app need not run continuously. Successfully created exchange entities—active Limits, exchange-native
+Stop/Take where applicable, and open positions—remain at Bybit. Local UI state is never exchange truth.
+
+```text
+APP START / RESUME / RECONNECT
+        ↓
+authenticate
+        ↓
+restore public market data
+        ↓
+fetch/reconcile private authoritative state
+        ↓
+only then enable unsafe trading actions
+```
+
+The core must retain stable/unique command identity where required, no blind resend after ambiguity,
+reconciliation before retry, reconnect duplicate prevention, fail-closed ambiguous private state, authoritative
+position/order recovery, Full Close that cannot flip through zero, and exchange-authoritative protection lifecycle.
+
+### 16.5 Market-data authority
+
+The app must independently support Bybit public order-book WebSocket data, public trades, candles, normalized state,
+reconnect/resynchronization, sequence/integrity checks, and freshness/health.
+
+```text
+one authoritative normalized market-data owner
+        ↓
+Chart + DOM + Tape + liquidity-dependent manual trading
+```
+
+Chart, DOM, and Tape must not create independent subscriptions. Symbol/session switching requires explicit
+authority, generation identity, candidate readiness before swap, stale-consumer isolation, and fail-closed behavior.
+
+### 16.6 Research gates before implementation
+
+1. Packaging/runtime: native-shell alternatives, WebView capability/performance, and bridge API design.
+2. Market-data performance: sustained WS/DOM/Tape rates, battery, CPU, memory, and foreground/background transitions.
+3. Lifecycle: pause/resume, process death, connectivity changes, Wi-Fi/cellular switching, lock, and background restrictions.
+4. Security: Keystore/hardware backing, signing, root/device threats, redaction, backup/export, rotation, and revocation.
+5. Bybit integration: then-current WS/REST requirements, rate limits, reconciliation, metadata, clock, and recv-window.
+6. Distribution: private sideload versus store, updates, signing/release keys, and migration.
+7. Observability: connection/stream health, freshness, reconciliation, and pending/ambiguous command state.
+
+This checkpoint resolves none of these decisions.
+
+### 16.7 Preliminary future phases
+
+- **Android A0 — Architecture/security research:** no implementation; choose packaging, bridge, credentials, and lifecycle.
+- **Android A1 — UI packaging prototype:** installable current UI; no real-money private API.
+- **Android A2 — Autonomous public market data:** direct Bybit Chart/DOM/Tape without PC/VPS.
+- **Android A3 — Secure private read-only account connection:** credentials and authoritative reconciliation; no mutations.
+- **Android A4 — Manual PAPER trading:** validate command/session/lifecycle behavior without real-money mutations where useful.
+- **Android A5 — Restricted live manual trading:** progressively add Market/Limit/Cancel/Amend/Full Close under safety contracts.
+- **Android A6 — Protection/recovery hardening:** STOP/TAKE, reconnect, process death, ambiguity, network switching, and resume.
+- **Android A7 — Real-device acceptance/performance:** sustained load, battery, thermals, latency, unreliable network, and phone UX.
+
+The sequence is preliminary and may change after research.
+
+### 16.8 Non-goals
+
+- Android implementation is not started or authorized.
+- The future Robot is not coupled to Android, and autonomous manual Android mode does not require VPS.
+- Existing desktop/web architecture is not removed; React is not rewritten; Android dependencies are not introduced.
+- Secrets are not stored in JS/frontend, and real-money trading is not enabled by this checkpoint.
+
 This document is the canonical roadmap unless a proven defect requires a narrowly scoped deviation.
