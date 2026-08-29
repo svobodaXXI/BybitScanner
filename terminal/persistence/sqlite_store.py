@@ -1277,6 +1277,26 @@ class SQLiteStore:
         ).fetchone()
         return _projection_from_row(row) if row is not None else None
 
+    def load_open_position_projections(
+        self, trading_account_id: TradingAccountId,
+    ) -> tuple[PositionProjectionRecord, ...]:
+        """Return one-way open net positions for exactly one account."""
+
+        self._assert_owner()
+        rows = self._connection.execute(
+            """
+            SELECT * FROM position_projections
+            WHERE trading_account_id = ? AND category = ? AND position_idx = 0
+            ORDER BY symbol
+            """,
+            (trading_account_id.value, Category.LINEAR.value),
+        )
+        projections = tuple(_projection_from_row(row) for row in rows)
+        return tuple(
+            item for item in projections
+            if item.side is not PositionSide.FLAT and item.quantity.value > 0
+        )
+
     def begin_reconciliation(
         self,
         position_key: PositionKey,

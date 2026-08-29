@@ -6,11 +6,14 @@ import time
 import hashlib
 from decimal import Decimal
 from pathlib import Path
+from typing import Callable
 
 from terminal.api.rest import TerminalCommandApi
 from terminal.api.models import (
-    CommandResultStatus, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
-    PaperLimitMutationResult, PaperLimitOrderProjection, TimeInForce,
+    ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResultStatus,
+    FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
+    PaperLimitMutationResult, PaperLimitOrderProjection, PaperOpenPositionProjection,
+    PaperOpenPositionsResponse, TimeInForce,
 )
 from terminal.application.execution_engine import ExecutionEngine
 from terminal.application.pretrade_guard import MutationGate, PreTradeGuard
@@ -59,6 +62,7 @@ class PaperRuntime:
         *,
         book_provider: MarketBookProvider,
         instrument_snapshot: InstrumentSnapshot,
+        instrument_provider: Callable[[str], InstrumentSnapshot] | None = None,
     ) -> None:
         self.store = SQLiteStore.open(database_path)
         engine = ExecutionEngine(self.store)
@@ -89,6 +93,7 @@ class PaperRuntime:
             store=self.store,
             account_id=account_id,
             instrument=instrument_snapshot,
+            instrument_provider=instrument_provider,
         )
 
         application = TradingApplication(
@@ -109,9 +114,10 @@ class PaperRuntime:
     def process_orderbook_update(self, notified_book_update_id: str) -> int:
         if not notified_book_update_id:
             raise ValueError("book_update_id must be non-empty")
-        current_update = self._book_provider.get_current_book_update(
-            Symbol(self._context.instrument.symbol)
-        )
+        notified_symbol = notified_book_update_id.split(":", 1)[0].strip().upper()
+        if not notified_symbol:
+            return 0
+        current_update = self._book_provider.get_current_book_update(Symbol(notified_symbol))
         if current_update is None:
             return 0
         book_update_id, book = current_update
@@ -196,6 +202,69 @@ class PaperRuntime:
                 for item in self.store.load_active_paper_limits(Symbol(normalized_symbol))
             ],
         }
+
+    def open_positions(self) -> PaperOpenPositionsResponse:
+        account = self.store.get_paper_account(self._account_id)
+        if account is None:
+            raise ValueError("paper account is not initialized")
+        one_wv = working_volume_usdt(account.equity_usdt)
+        projected = []
+        for item in self.store.load_open_position_projections(self._account_id):
+            symbol = item.position_key.symbol
+            instrument = self._context._instrument_for(symbol.value)
+            book = self._book_provider.get_book(symbol)
+            now_ms = int(time.time() * 1000)
+            current_price = None
+            unrealized_pnl = None
+            if (
+                book is not None
+                and book.symbol == symbol
+                and 0 <= now_ms - book.received_at_ms <= 1000
+                and book.bids
+                and book.asks
+            ):
+                current_price = (
+                    book.bids[0].price.value + book.asks[0].price.value
+                ) / Decimal("2")
+                if item.average_entry is not None:
+                    direction = Decimal("1") if item.side.value == "Long" else Decimal("-1")
+                    unrealized_pnl = (
+                        direction
+                        * (current_price - item.average_entry.value)
+                        * item.quantity.value
+                    )
+            projected.append(PaperOpenPositionProjection(
+                symbol=item.position_key.symbol.value,
+                position_side=item.side.value,
+                position_quantity=item.quantity.value,
+                average_entry=(
+                    item.average_entry.value
+                    if item.average_entry is not None
+                    else None
+                ),
+                engaged_notional_usdt=item.engaged_notional.value,
+                engaged_wv=item.engaged_notional.value / one_wv,
+                current_price=current_price,
+                unrealized_pnl=unrealized_pnl,
+                tick_size=instrument.tick_size,
+            ))
+        return PaperOpenPositionsResponse(account.trading_account_id.value, tuple(projected))
+
+    def close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
+        source_positions = self.store.load_open_position_projections(self._account_id)
+        results = []
+        for position in source_positions:
+            symbol = position.position_key.symbol.value
+            digest = hashlib.sha256(
+                f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
+            ).hexdigest()[:32]
+            results.append(self.api.full_close(FullCloseCommandRequest(
+                ClientActionId(f"paper-close-all-{digest}"), symbol,
+            )))
+        refreshed = self.open_positions()
+        return CloseAllCommandResponse(
+            request.client_action_id.value, tuple(results), refreshed.positions,
+        )
 
     def create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()

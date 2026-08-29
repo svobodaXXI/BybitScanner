@@ -17,6 +17,7 @@ export interface MarketDataPort {
   dispose(): void;
   getSnapshot(): MarketDataSnapshot;
   setTimeframe(timeframe: ChartTimeframe): void;
+  setSymbol(symbol: string): void;
   start(): void;
   subscribe(listener: () => void): () => void;
 }
@@ -96,9 +97,10 @@ type BackendKlinesEvent = {
 };
 
 const unavailableBook = (
+  symbol: string,
   health: NormalizedOrderBook["health"],
 ): NormalizedOrderBook => ({
-  symbol: "ONGUSDT",
+  symbol,
   bids: [],
   asks: [],
   health,
@@ -107,11 +109,12 @@ const unavailableBook = (
 });
 
 export class BackendSseMarketDataStore implements MarketDataPort {
+  private symbol = "ONGUSDT";
   private snapshot: MarketDataSnapshot = {
     ...createDemoMarketData(),
     candles: [],
     tickSize: null,
-    book: unavailableBook("NOT_READY"),
+    book: unavailableBook("ONGUSDT", "NOT_READY"),
     trades: [],
   };
 
@@ -167,6 +170,42 @@ export class BackendSseMarketDataStore implements MarketDataPort {
     if (this.started) this.connectKlines();
   };
 
+  setSymbol = (symbol: string) => {
+    const normalized = symbol.trim().toUpperCase();
+    if (!normalized || normalized === this.symbol) return;
+    this.symbol = normalized;
+    this.closeSources();
+    this.snapshot = {
+      ...this.snapshot,
+      book: unavailableBook(normalized, "SYNCING"),
+      candles: [],
+      tickSize: null,
+      trades: [],
+      ownOrders: [],
+    };
+    this.emit();
+    if (this.started) {
+      this.connectTrades();
+      this.connectOrderBook();
+      this.connectKlines();
+    }
+  };
+
+  private closeSources() {
+    this.tradesSource?.close();
+    this.bookSource?.close();
+    this.klinesSource?.close();
+    this.tradesSource = null;
+    this.bookSource = null;
+    this.klinesSource = null;
+    if (this.tradesReconnectTimer) clearTimeout(this.tradesReconnectTimer);
+    if (this.bookReconnectTimer) clearTimeout(this.bookReconnectTimer);
+    if (this.klinesReconnectTimer) clearTimeout(this.klinesReconnectTimer);
+    this.tradesReconnectTimer = null;
+    this.bookReconnectTimer = null;
+    this.klinesReconnectTimer = null;
+  }
+
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
 
@@ -187,11 +226,13 @@ export class BackendSseMarketDataStore implements MarketDataPort {
       this.tradesSource.close();
     }
 
-    const source = new EventSource(marketApiRoutes.trades("ONGUSDT"));
+    const symbol = this.symbol;
+    const source = new EventSource(marketApiRoutes.trades(symbol));
 
     this.tradesSource = source;
 
     source.onmessage = (event) => {
+      if (this.tradesSource !== source || this.symbol !== symbol) return;
       const browserReceivedAtMs = Date.now();
       let payload: BackendTradesEvent;
 
@@ -206,6 +247,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
       }
 
       const incoming: TradePrint[] = payload.trades.flatMap((trade) => {
+        if (trade.symbol !== symbol) return [];
         const totalQuantity = Number(trade.total_quantity);
         const totalNotionalUsdt = Number(trade.total_notional_usdt);
         const firstExecutionPrice = Number(trade.first_execution_price);
@@ -315,7 +357,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
 
       this.tradesReconnectTimer = setTimeout(() => {
         this.tradesReconnectTimer = null;
-        if (this.started) this.connectTrades();
+        if (this.started && this.symbol === symbol) this.connectTrades();
       }, 1000);
     };
   }
@@ -326,11 +368,13 @@ export class BackendSseMarketDataStore implements MarketDataPort {
       this.bookSource.close();
     }
 
-    const source = new EventSource(marketApiRoutes.book("ONGUSDT"));
+    const symbol = this.symbol;
+    const source = new EventSource(marketApiRoutes.book(symbol));
 
     this.bookSource = source;
 
     source.onmessage = (event) => {
+      if (this.bookSource !== source || this.symbol !== symbol) return;
       const browserReceivedAtMs = Date.now();
       let payload: BackendOrderBookEvent;
 
@@ -340,7 +384,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
         return;
       }
 
-      if (payload.symbol !== "ONGUSDT" || payload.state !== "READY") {
+      if (payload.symbol !== symbol || payload.state !== "READY") {
         const health = payload.state === "CONNECTING" ? "SYNCING" : "DEGRADED";
         this.setBookUnavailable(health);
         return;
@@ -377,10 +421,8 @@ export class BackendSseMarketDataStore implements MarketDataPort {
 
     source.onerror = () => {
       source.close();
-
-      if (this.bookSource === source) {
-        this.bookSource = null;
-      }
+      if (this.bookSource !== source || this.symbol !== symbol) return;
+      this.bookSource = null;
 
       this.setBookUnavailable("DEGRADED");
 
@@ -390,7 +432,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
 
       this.bookReconnectTimer = setTimeout(() => {
         this.bookReconnectTimer = null;
-        if (this.started) this.connectOrderBook();
+        if (this.started && this.symbol === symbol) this.connectOrderBook();
       }, 1000);
     };
   }
@@ -401,14 +443,15 @@ export class BackendSseMarketDataStore implements MarketDataPort {
       this.klinesSource.close();
     }
     const timeframe = this.timeframe;
+    const symbol = this.symbol;
     const interval = BYBIT_INTERVAL_BY_TIMEFRAME[timeframe];
     const source = new EventSource(
-      marketApiRoutes.candles("ONGUSDT", interval),
+      marketApiRoutes.candles(symbol, interval),
     );
     this.klinesSource = source;
 
     source.onmessage = (event) => {
-      if (this.klinesSource !== source || this.timeframe !== timeframe) return;
+      if (this.klinesSource !== source || this.timeframe !== timeframe || this.symbol !== symbol) return;
       let payload: BackendKlinesEvent;
       try {
         payload = JSON.parse(event.data) as BackendKlinesEvent;
@@ -416,7 +459,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
         return;
       }
       if (
-        payload.symbol !== "ONGUSDT"
+        payload.symbol !== symbol
         || payload.interval !== interval
         || payload.state !== "READY"
         || !Array.isArray(payload.candles)
@@ -483,7 +526,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
       }
       this.klinesReconnectTimer = setTimeout(() => {
         this.klinesReconnectTimer = null;
-        if (this.started && this.timeframe === timeframe) this.connectKlines();
+        if (this.started && this.timeframe === timeframe && this.symbol === symbol) this.connectKlines();
       }, 1000);
     };
   }
@@ -518,7 +561,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
   private setBookUnavailable(health: NormalizedOrderBook["health"]) {
     this.snapshot = {
       ...this.snapshot,
-      book: unavailableBook(health),
+      book: unavailableBook(this.symbol, health),
     };
     this.emit();
   }

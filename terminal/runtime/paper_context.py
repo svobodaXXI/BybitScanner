@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_DOWN
+from typing import Callable
 
 from terminal.api.rest import ServerCommandContext
 from terminal.application.models import ReconciliationResult, TrustState
@@ -38,11 +39,27 @@ class PaperCommandContextProvider:
     store: SQLiteStore
     account_id: TradingAccountId
     instrument: InstrumentSnapshot
+    instrument_provider: Callable[[str], InstrumentSnapshot] | None = None
+    _instruments: dict[str, InstrumentSnapshot] = field(default_factory=dict, init=False)
+
+    def __post_init__(self) -> None:
+        self._instruments[self.instrument.symbol] = self.instrument
+
+    def _instrument_for(self, symbol: str) -> InstrumentSnapshot:
+        cached = self._instruments.get(symbol)
+        if cached is not None:
+            return cached
+        if self.instrument_provider is None:
+            raise ValueError("paper context symbol is unsupported")
+        resolved = self.instrument_provider(symbol)
+        if resolved.symbol != symbol:
+            raise ValueError("instrument provider returned a different symbol")
+        self._instruments[symbol] = resolved
+        return resolved
 
     def context_for(self, symbol: str) -> ServerCommandContext:
         normalized_symbol = symbol.strip().upper()
-        if normalized_symbol != self.instrument.symbol:
-            raise ValueError("paper context symbol is unsupported")
+        instrument = self._instrument_for(normalized_symbol)
 
         key = PositionKey(
             self.account_id,
@@ -96,7 +113,7 @@ class PaperCommandContextProvider:
             connectivity=ConnectivityState.ONLINE,
             reconciliation=reconciliation,
             conflicting_unresolved_command=False,
-            instrument=self.instrument,
+            instrument=instrument,
         )
 
         position = PositionEvent(
@@ -120,7 +137,7 @@ class PaperCommandContextProvider:
 
         return ServerCommandContext(
             pretrade=pretrade,
-            instrument=self.instrument,
+            instrument=instrument,
             position=position,
             one_wv_usdt=one_wv_usdt,
             protection_command_side=None,

@@ -136,6 +136,14 @@ Chart + DOM + Panel
 
 Current status: PARTIAL.
 
+Accepted progress:
+- resting BUY/SELL + DOM placement uses the shared canonical `PaperLimitCreateController` and `/api/limit` path;
+- stable per-intent identity, definitive release, ambiguity lock and 300-ms anti-bounce passed on the real phone;
+- PRICE and SIZE on one DOM row select the same level, while own-order dots remain cancel-only.
+
+Still open:
+- marketable/aggressive DOM LIMIT explicit confirmation; current behavior remains fail-closed.
+
 ## 7. Stage 6 — Chart and DOM become projections
 
 Chart:
@@ -158,7 +166,8 @@ Backend active orders
 
 must always describe the same order set.
 
-Current status: NOT YET IMPLEMENTED.
+Current status: PARTIAL. The resting DOM-create projection path is real-phone accepted; the complete Stage 6 gate
+remains open until all lifecycle/restart/fill acceptance items are complete.
 
 ## 8. Stage 7 — Mobile interaction state machines
 
@@ -175,9 +184,14 @@ Vite remains for development.
 
 Final phone acceptance should use production assets so HMR/dev behavior is not confused with terminal defects.
 
+Binding workflow gate: follow `ASSISTANT_PROTOCOL.md` section
+`VITE PREVIEW BUILD-BEFORE-ACCEPTANCE`; acceptance evidence under
+`vite preview` is valid only after a fresh successful build and page reload.
+
 Current status:
 - `npm run build` currently PASSES;
-- production-serving phone acceptance still needs to be established.
+- the production build passed real-phone acceptance for resting DOM LIMIT placement;
+- full production-serving terminal acceptance remains open.
 
 ## 10. Stage 9 — Transport consolidation only if measured
 
@@ -230,7 +244,7 @@ Do not close LIMIT until, without reload:
 2. Cancel one → exactly 1 everywhere.
 3. Cancel all → exactly 0 everywhere.
 4. Repeat SELL.
-5. Create via DOM → immediately appears in chart + inventory.
+5. Create via DOM → immediately appears in chart + inventory. **PASS — resting BUY/SELL DOM placement.**
 6. Amend → same order moves, no duplicate.
 7. Market fill → leaves active orders and updates position.
 8. Restart frontend/backend → no duplicates, cancelled orders do not return.
@@ -259,36 +273,26 @@ Then audit:
 
 Do not jump ahead.
 
-Current runtime:
-- backend restarted on `127.0.0.1:8765`;
-- Vite frontend restarted on `0.0.0.0:5173`;
-- phone opened current frontend;
-- user reported LIMIT does not create and does not delete at all.
-
-Next work item:
+Accepted current checkpoint:
 
 ```text
-PHONE LIMIT MUTATION PATH DIAGNOSTIC
+WORKSPACE SYMBOL SWITCHING + PHONE REFINEMENT — IMPLEMENTED / AUTOMATED PASS
 ```
 
-Trace:
+Open next work item:
 
 ```text
-phone interaction
-→ React handler
-→ fetch POST
-→ Vite proxy
-→ Python HTTP handler
-→ SerializedPaperRuntime
-→ SQLite
-→ mutation response
-→ PaperTradingStore
-→ UI
+REAL-PHONE WORKSPACE SYMBOL SWITCHING ACCEPTANCE
 ```
 
-Find the first layer where the request/state stops.
-
-Do not guess. Do not rewrite unrelated subsystems.
+Open Positions real-phone acceptance is `PASS`. Symbol switching plus its bounded phone-review refinement are
+implemented: ticker/timeframe are inside Chart, account switching is beside BUY/SELL LIMITS, removed header height
+belongs to the common market row, and clipped authoritative DOM own-order dots are corrected. On the real phone,
+verify case-insensitive autocomplete; BTCUSDT and ONGUSDT Chart/DOM/Tape authority; full-symbol internal identity;
+card confirmation/Cancel and close-`×` isolation; same-symbol return; selected-symbol PAPER projection; visible
+one-per-order concrete-cancel DOM dots including same-price orders; and the refined layout/price-axis readability.
+Manual/real-phone acceptance remains `PENDING`. Aggressive DOM Limit confirmation and Done/Enter focus progression
+remain separately deferred.
 
 ## 15. Engineering completion criterion
 

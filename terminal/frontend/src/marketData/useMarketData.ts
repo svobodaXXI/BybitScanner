@@ -17,3 +17,4 @@ export function useMarketData() {
 }
 
 export const setMarketTimeframe = marketDataStore.setTimeframe;
+export const setMarketSymbol = marketDataStore.setSymbol;

@@ -2,11 +2,11 @@
 
 Версия:
 
-4.23
+4.25
 
 Дата:
 
-2026-08-27
+2026-08-28
 
 Document Type:
 
@@ -302,6 +302,28 @@ checkpoint, но выдаёт следующий исполнимый payload т
 конкретное и безопасное требование; экономия длины ответа не оправдывает
 предположение неизвестного пользовательского состояния.
 
+### 2.3.1 NO INTERACTIVE PAGER — HARD RULE
+
+При работе с пользователем запрещено давать Git-команды, которые могут открыть
+интерактивный pager, `less` или отдельный просмотрщик. Для `git diff`, `git log`,
+`git show`, `git branch` и любых других Git-команд, потенциально использующих
+pager, обязательна pager-safe форма, например:
+
+```powershell
+git --no-pager diff ...
+git --no-pager log ...
+git --no-pager show ...
+```
+
+Нельзя рассчитывать на `q`, `Esc` или `Ctrl+C` и нельзя предлагать способы выхода
+из pager как штатный workflow. В используемой пользователем Windows/PowerShell
+среде выход из такого просмотрщика ненадёжен и иногда требует закрытия всего
+PowerShell-окна, поэтому pager должен предотвращаться заранее.
+
+Весь вывод Git должен оставаться непосредственно в текущем PowerShell. Правило
+распространяется на весь BybitScanner, Trading Workspace, scanner, terminal,
+будущий trading robot и проектный Git/PowerShell workflow.
+
 ## 2.4 IMAGE_GENERATION_EXPLICIT_APPROVAL_RULE
 
 For BybitScanner and Trading Workspace work, image generation and image editing are prohibited by default.
@@ -575,6 +597,47 @@ python -m py_compile путь\к\файлу.py
 Техническая документация также может
 изменяться точечно, если изменение локально,
 однозначно и контролируется Git.
+
+---
+
+## 8.1. VITE PREVIEW BUILD-BEFORE-ACCEPTANCE
+
+Для всех будущих frontend slices Trading Workspace,
+пока frontend runtime обслуживается через `vite preview`,
+изменения в `terminal/frontend/src` не считаются
+доступными пользователю для manual или real-phone acceptance
+до создания новой production build.
+
+Обязательная последовательность:
+
+1. Codex завершает frontend source changes.
+2. Выполняются необходимые targeted tests,
+   TypeScript checks и `git diff --check`.
+3. До просьбы проверить результат в браузере или на телефоне
+   Codex определяет или учитывает текущий frontend serving mode.
+4. Если активен `vite preview`, Codex до начала manual acceptance
+   обязан выполнить:
+
+   ```powershell
+   cd C:\BybitScanner\terminal\frontend
+   npm run build
+   ```
+
+5. Production build должна завершиться с результатом PASS.
+6. После успешной build Codex явно просит пользователя
+   reload/refresh страницы терминала.
+7. Manual или real-phone acceptance начинается только
+   после успешных build и reload.
+8. Запрещено сначала просить пользователя искать изменения,
+   а после их отсутствия вспоминать о пересборке `dist`.
+9. Диагностика cache, server, path или runtime начинается
+   только если изменения не видны после успешных build и reload.
+
+Beginner-safe requirement:
+
+Codex самостоятельно и своевременно сообщает пользователю
+точную build-команду на требуемом этапе. Нельзя ожидать,
+что пользователь догадается о необходимости пересобрать `dist`.
 
 ---
 # 9. PROJECT_SESSION_START
@@ -1706,17 +1769,28 @@ delivered_state = true
 
 from:
 
-ASSISTANT_PROTOCOL v4.22
+ASSISTANT_PROTOCOL v4.24
 
 to:
 
-ASSISTANT_PROTOCOL v4.23
+ASSISTANT_PROTOCOL v4.25
 
 date:
 
-2026-08-27
+2026-08-28
 
 reason:
+
+* added mandatory `NO INTERACTIVE PAGER — HARD RULE`, requiring pager-safe Git commands and prohibiting interactive pager exit instructions as normal user workflow;
+* required Git output to remain in the current PowerShell across all BybitScanner, Trading Workspace, scanner, terminal and future robot workflows.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.23 to v4.24:
+
+* added mandatory `VITE PREVIEW BUILD-BEFORE-ACCEPTANCE`, requiring a successful fresh production build before browser or real-phone acceptance when Trading Workspace is served through `vite preview`;
+* required reload after the build and prohibited cache/server/path/runtime diagnosis until successful build plus reload still fails to expose the source changes;
+* made Codex responsible for proactively providing the exact beginner-safe build command at the correct stage.
+
+Previous checkpoint preserved — ASSISTANT_PROTOCOL v4.22 to v4.23:
 
 * added mandatory `OBJECTIVELY_NECESSARY_TESTING_RULE`, prohibiting synthetic/fake UI tests for behavior the user can immediately verify in the real interface;
 * prohibited adding or running tests without objective need and limited autotests to critical logic, material regression protection or behavior that cannot be verified reliably and quickly by hand.

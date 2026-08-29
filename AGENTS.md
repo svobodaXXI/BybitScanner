@@ -15,6 +15,19 @@ Routine scoped work must not require the complete deep-recovery set. Do not run 
 
 Generate a compact disposable bootstrap when useful with `python -m tools.dev.task_context --path EXACT_PATH` (repeat `--path` as needed; optional `--hint`). Its JSON output is derived, non-authoritative context and never replaces repository authority or governance gates.
 
+## Project skills
+
+First-party procedural skills live under `.agents/skills/`; read a skill body only when its workflow applies:
+
+- context/recovery-intensive work: `.agents/skills/context-budget/SKILL.md`;
+- session, chat, or interrupted-work handoff: `.agents/skills/session-handoff/SKILL.md`;
+- non-trivial defect with an unknown cause: `.agents/skills/systematic-debugging/SKILL.md`;
+- before material completion, PASS, acceptance, or readiness claims: `.agents/skills/proof-before-done/SKILL.md`;
+- before accepting a high-risk or material behavioral change: `.agents/skills/change-review/SKILL.md`;
+- repeated workflow friction, recurring agent mistakes, or candidate process improvements: `.agents/skills/workflow-distiller/SKILL.md`.
+
+These skills describe how to work. They do not replace project authority, governance gates, or deterministic tools.
+
 ## Authority routing
 
 - Current local filesystem: what actually exists now.

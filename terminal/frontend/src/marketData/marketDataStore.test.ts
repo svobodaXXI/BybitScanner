@@ -25,11 +25,45 @@ afterEach(() => {
 });
 
 describe("live market-data temporal metadata", () => {
+  it("clears symbol-scoped projections and rejects late events from the previous symbol", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const { BackendSseMarketDataStore } = await import("./marketDataStore");
+    const store = new BackendSseMarketDataStore();
+    store.start();
+    const oldSources = FakeEventSource.instances.slice(-3);
+
+    store.setSymbol("BTCUSDT");
+    expect(store.getSnapshot()).toMatchObject({
+      book: { symbol: "BTCUSDT", health: "SYNCING", bids: [], asks: [] },
+      candles: [], trades: [], tickSize: null,
+    });
+    oldSources.find((source) => source.url.includes("public-orderbook"))?.emit({
+      symbol: "ONGUSDT", bids: [{ price: "1", size: "2" }],
+      asks: [{ price: "2", size: "3" }], timestamp: 1, receivedAt: 1,
+      matchingEngineCts: null, updateId: 1, sequence: 1, version: 1,
+      state: "READY", source: "BYBIT_LINEAR_WS",
+    });
+    expect(store.getSnapshot().book).toMatchObject({ symbol: "BTCUSDT", health: "SYNCING", bids: [] });
+
+    const newBook = FakeEventSource.instances.slice(-3)
+      .find((source) => source.url.includes("public-orderbook"))!;
+    expect(newBook.url).toContain("symbol=BTCUSDT");
+    newBook.emit({
+      symbol: "BTCUSDT", bids: [{ price: "10", size: "2" }],
+      asks: [{ price: "11", size: "3" }], timestamp: 2, receivedAt: 2,
+      matchingEngineCts: null, updateId: 2, sequence: 2, version: 2,
+      state: "READY", source: "BYBIT_LINEAR_WS",
+    });
+    expect(store.getSnapshot().book).toMatchObject({ symbol: "BTCUSDT", health: "READY" });
+    oldSources.find((source) => source.url.includes("public-orderbook"))?.onerror?.();
+    expect(store.getSnapshot().book).toMatchObject({ symbol: "BTCUSDT", health: "READY" });
+  });
   it("preserves backend fields and records browser arrival for both SSE streams", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.spyOn(Date, "now").mockReturnValueOnce(5000).mockReturnValueOnce(6000);
     const { BackendSseMarketDataStore } = await import("./marketDataStore");
     const store = new BackendSseMarketDataStore();
+    store.start();
     const sources = FakeEventSource.instances.slice(-3);
     const trades = sources.find((source) => source.url.includes("public-trades"));
     const book = sources.find((source) => source.url.includes("public-orderbook"));
@@ -99,6 +133,7 @@ describe("live market-data temporal metadata", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const { BackendSseMarketDataStore } = await import("./marketDataStore");
     const store = new BackendSseMarketDataStore();
+    store.start();
     const source = FakeEventSource.instances
       .slice(-3)
       .find((item) => item.url.includes("public-klines"));
@@ -145,6 +180,7 @@ describe("live market-data temporal metadata", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const { BackendSseMarketDataStore } = await import("./marketDataStore");
     const store = new BackendSseMarketDataStore();
+    store.start();
     const expected = [
       ["15s", "15s"], ["1m", "1"], ["5m", "5"],
       ["15m", "15"], ["1h", "60"], ["1d", "D"],
@@ -172,6 +208,7 @@ describe("live market-data temporal metadata", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const { BackendSseMarketDataStore } = await import("./marketDataStore");
     const store = new BackendSseMarketDataStore();
+    store.start();
     const sources = FakeEventSource.instances.slice(-3);
     const trades = sources.find((source) => source.url.includes("public-trades"))!;
     const book = sources.find((source) => source.url.includes("public-orderbook"))!;
@@ -220,6 +257,7 @@ describe("live market-data temporal metadata", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     const { BackendSseMarketDataStore } = await import("./marketDataStore");
     const store = new BackendSseMarketDataStore();
+    store.start();
     const sources = FakeEventSource.instances.slice(-3);
     store.dispose();
     expect(sources.every((source) => source.closed)).toBe(true);

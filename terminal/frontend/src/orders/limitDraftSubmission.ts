@@ -1,16 +1,14 @@
 import type { Dispatch } from "react";
 import type {
-  LimitCommandRequest,
   PaperLimitMutationResponse,
   PaperState,
 } from "../contracts/trading";
-import {
-  type LimitDraft,
-  type LimitDraftAction,
-  type LimitSubmitAttempt,
-  LimitDraftSubmitLatch,
+import type {
+  LimitDraft,
+  LimitDraftAction,
+  LimitSubmitAttempt,
 } from "./limitDraft";
-import { executePaperLimitCommand } from "./paperLimitCommand";
+import { PaperLimitCreateController } from "./paperLimitCreate";
 
 export type LimitDraftSubmissionDependencies = {
   dispatch: Dispatch<LimitDraftAction>;
@@ -20,9 +18,10 @@ export type LimitDraftSubmissionDependencies = {
 };
 
 export class PaperLimitDraftSubmitController {
-  private readonly latches = new Map<
+  private readonly creates = new PaperLimitCreateController();
+  private readonly attempts = new Map<
     string,
-    LimitDraftSubmitLatch<PaperLimitMutationResponse>
+    LimitSubmitAttempt<PaperLimitMutationResponse>
   >();
   private readonly handledAttempts = new WeakSet<object>();
 
@@ -31,32 +30,30 @@ export class PaperLimitDraftSubmitController {
     dependencies: LimitDraftSubmissionDependencies,
   ): LimitSubmitAttempt<PaperLimitMutationResponse> {
     const fetcher = dependencies.fetcher ?? fetch;
-    let latch = this.latches.get(draft.draftId);
-    if (!latch) {
-      latch = new LimitDraftSubmitLatch<PaperLimitMutationResponse>();
-      this.latches.set(draft.draftId, latch);
-    }
-
-    const attempt = latch.submit(
-      draft,
-      dependencies.createClientActionId,
-      async (submittingDraft) => {
-        const request: LimitCommandRequest = {
-          client_action_id: submittingDraft.clientActionId!,
-          symbol: submittingDraft.symbol,
-          side: submittingDraft.side,
-          volume: submittingDraft.volume,
-          sizing_reference_price: submittingDraft.sizingReferencePrice,
-          limit_price: submittingDraft.price,
-          time_in_force: "GTC",
-        };
-        const result = await executePaperLimitCommand(request, {
-          fetcher,
-          applyPaperState: dependencies.applyPaperState,
-        });
-        return { certainty: "definitive", value: result };
+    const existing = this.attempts.get(draft.draftId);
+    if (existing) return existing;
+    const createAttempt = this.creates.submit(
+      draft.draftId,
+      {
+        symbol: draft.symbol,
+        side: draft.side,
+        volume: draft.volume,
+        sizingReferencePrice: draft.sizingReferencePrice,
+        price: draft.price,
+        authoritativeTickSize: draft.authoritativeTickSize,
+      },
+      {
+        createClientActionId: dependencies.createClientActionId,
+        applyPaperState: dependencies.applyPaperState,
+        fetcher,
       },
     );
+    const attempt: LimitSubmitAttempt<PaperLimitMutationResponse> = {
+      draftId: draft.draftId,
+      clientActionId: createAttempt.clientActionId,
+      promise: createAttempt.promise,
+    };
+    this.attempts.set(draft.draftId, attempt);
 
     if (this.handledAttempts.has(attempt)) return attempt;
     this.handledAttempts.add(attempt);
@@ -79,6 +76,7 @@ export class PaperLimitDraftSubmitController {
       }
 
       if (outcome.value.status === "completed") {
+        this.attempts.delete(attempt.draftId);
         dependencies.dispatch({ type: "dismiss", draftId: attempt.draftId });
         return outcome;
       }
@@ -89,6 +87,7 @@ export class PaperLimitDraftSubmitController {
         reason: outcome.value.reason_code,
         draftId: attempt.draftId,
       });
+      this.attempts.delete(attempt.draftId);
       return outcome;
     });
 

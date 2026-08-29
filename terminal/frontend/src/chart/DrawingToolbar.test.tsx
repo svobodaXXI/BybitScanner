@@ -27,6 +27,7 @@ describe("drawing toolbar", () => {
       "true",
     );
     expect(screen.getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual([
+      "Hide drawing tools",
       "Crosshair / chart interaction",
       "Straight line",
       "Horizontal line",
@@ -65,5 +66,27 @@ describe("drawing toolbar", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Delete selected drawing" }));
     expect(onDelete).toHaveBeenCalledOnce();
+  });
+
+  it("collapses to one compact toggle and restores the drawing controls", () => {
+    render(
+      <DrawingToolbar
+        activeTool="select"
+        magnet={false}
+        selected={false}
+        onTool={vi.fn()}
+        onMagnet={vi.fn()}
+        onUndo={vi.fn()}
+        onDelete={vi.fn()}
+        onClear={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide drawing tools" }));
+    expect(screen.queryByRole("navigation", { name: "Drawing tools" })).toBeNull();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show drawing tools" }));
+    expect(screen.getByRole("navigation", { name: "Drawing tools" })).toBeInTheDocument();
   });
 });

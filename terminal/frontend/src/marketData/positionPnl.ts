@@ -22,5 +22,22 @@ export const positionPnlPercent = (
 export const formatPositionPnlPercent = (value: number) =>
   `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value).toFixed(2)}%`;
 
-export const formatPositionAverageEntry = (value: number) =>
-  value.toFixed(5);
+export const tickSizePrecision = (tickSize: string) => {
+  const normalized = tickSize.trim().toLowerCase();
+  const [coefficient, exponentText] = normalized.split("e");
+  const exponent = exponentText === undefined ? 0 : Number(exponentText);
+  const decimals = coefficient.includes(".")
+    ? coefficient.length - coefficient.indexOf(".") - 1
+    : 0;
+  return Number.isInteger(exponent) ? Math.max(0, decimals - exponent) : null;
+};
+
+export const formatPositionPrice = (value: string, tickSize: string) => {
+  const numeric = Number(value);
+  const precision = tickSizePrecision(tickSize);
+  return Number.isFinite(numeric) && precision !== null && precision <= 12
+    ? numeric.toFixed(precision)
+    : "—";
+};
+
+export const formatPositionAverageEntry = (value: number) => value.toFixed(5);

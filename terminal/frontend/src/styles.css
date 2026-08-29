@@ -50,6 +50,7 @@ button {
   background: #11161c;
 }
 .instrument-block {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.55rem;
@@ -211,6 +212,27 @@ button {
   grid-template-rows: 1fr;
   background: var(--chart-bg);
 }
+.chart-content-row {
+  --drawing-tools-control-size: 1.58rem;
+  --drawing-tools-occupied-width: calc(var(--drawing-tools-control-size) + 0.3rem + 2px);
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.chart-stage {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.drawing-tools-panel {
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+}
 .chart-stage {
   position: relative;
   min-width: 0;
@@ -240,25 +262,34 @@ button {
 .drawing-overlay.tool-select {
   cursor: default;
 }
-.drawing-toolbar {
-  position: absolute;
+.drawing-tools-panel {
   z-index: 5;
-  top: 0.4rem;
-  left: 0.4rem;
+  align-self: start;
   display: flex;
   flex-direction: column;
-  gap: 0.18rem;
-  padding: 0.22rem;
+  gap: 0.12rem;
+  padding: 0.15rem;
   border: 1px solid #303b47;
-  border-radius: 0.35rem;
-  background: color-mix(in srgb, var(--chart-bg) 92%, transparent);
-  box-shadow: 0 0.3rem 1rem rgba(0, 0, 0, 0.25);
+  background: rgba(15, 19, 24, 0.94);
 }
+
+.drawing-tools-panel.is-collapsed {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.drawing-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+.drawing-tools-toggle,
 .drawing-toolbar button {
   display: grid;
-  width: 2.25rem;
-  min-width: 2.25rem;
-  height: 2.25rem;
+  width: var(--drawing-tools-control-size);
+  min-width: var(--drawing-tools-control-size);
+  height: var(--drawing-tools-control-size);
   place-items: center;
   border: 1px solid transparent;
   border-radius: 0.28rem;
@@ -267,6 +298,9 @@ button {
   font-size: 0.68rem;
 }
 .drawing-toolbar button:hover {
+  border-color: #53616e;
+}
+.drawing-tools-toggle:hover {
   border-color: #53616e;
 }
 .drawing-toolbar button.active {
@@ -288,17 +322,20 @@ button {
   outline-offset: 2px;
 }
 @media (max-width: 620px) {
-  .drawing-toolbar {
-    top: 0.25rem;
-    left: 0.25rem;
+  .chart-content-row {
+    --drawing-tools-control-size: 1.93rem;
+  }
+
+  .drawing-tools-panel {
     max-height: calc(100% - 0.5rem);
     overflow-y: auto;
     scrollbar-width: none;
   }
+  .drawing-tools-toggle,
   .drawing-toolbar button {
-    width: 2.75rem;
-    min-width: 2.75rem;
-    height: 2.75rem;
+    width: var(--drawing-tools-control-size);
+    min-width: var(--drawing-tools-control-size);
+    height: var(--drawing-tools-control-size);
   }
   .chart-stage,
   .chart-engine {
@@ -319,8 +356,45 @@ button {
   min-height: 0;
 }
 .dom-panel,
+.dom-ladder-viewport,
 .dom-ladder {
   overflow: visible;
+}
+
+.symbol-selector-popover {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 0.35rem);
+  left: 0.45rem;
+  display: grid;
+  gap: 0.35rem;
+  width: min(20rem, calc(100vw - 1rem));
+  max-height: min(28rem, 70vh);
+  padding: 0.55rem;
+  border: 1px solid #303b47;
+  border-radius: 0.45rem;
+  background: #11171d;
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 45%);
+}
+
+.symbol-selector-popover input {
+  min-height: 2.5rem;
+  padding: 0 0.65rem;
+}
+
+.symbol-selector-results {
+  display: grid;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.symbol-selector-results button {
+  min-height: 2.35rem;
+  text-align: left;
+}
+
+.paper-open-position-row[role="button"] {
+  cursor: pointer;
 }
 .dom-header {
   justify-content: flex-end;
@@ -339,7 +413,7 @@ button {
   color: #f1cd7b;
 }
 .dom-ladder {
-  --dom-price-column-width: 3.2rem;
+  --dom-price-column-width: 3.05rem;
 
   position: relative;
   user-select: none;
@@ -461,12 +535,54 @@ button {
   position: absolute;
   z-index: 2;
   top: 50%;
-  right: calc(100% + 0.12rem);
+  left: 0.18rem;
   display: flex;
   justify-content: flex-end;
   gap: 0.15rem;
   min-width: 0;
   transform: translateY(-50%);
+}
+
+.chart-workspace-controls {
+  position: absolute;
+  z-index: 12;
+  top: 0.25rem;
+  left: calc(var(--drawing-tools-occupied-width) + 0.42rem);
+  display: grid;
+  gap: 0.2rem;
+  pointer-events: auto;
+}
+
+.chart-workspace-controls .instrument-block {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.chart-workspace-controls .symbol-selector-trigger,
+.chart-workspace-controls .timeframe-display {
+  justify-self: start;
+  min-height: 2rem;
+  background: rgb(17 23 29 / 92%);
+}
+
+.chart-workspace-controls .symbol-selector-popover {
+  top: 0;
+  left: 0;
+}
+
+.paper-account-control {
+  position: relative;
+  display: inline-flex;
+}
+
+.paper-account-control .account-menu {
+  position: absolute;
+  z-index: 70;
+  right: 0;
+  bottom: calc(100% + 0.35rem);
+  width: min(22rem, calc(100vw - 1rem));
+  border: 1px solid #394653;
+  box-shadow: 0 0.4rem 1rem rgb(0 0 0 / 45%);
 }
 .order-dot {
   width: 0.55rem;
@@ -904,6 +1020,18 @@ button {
   }
 }
 
+.paper-limits-cancel-all.buy {
+  border-color: var(--trade-buy);
+}
+
+.paper-limits-cancel-all.sell {
+  border-color: var(--trade-sell);
+}
+.dom-ladder-viewport {
+  grid-row: 2;
+  min-height: 0;
+  overflow: hidden;
+}
 @media (max-width: 620px) {
   .workspace-grid {
     gap: 0.3rem;
@@ -2055,7 +2183,7 @@ button {
   }
 
   .dom-ladder {
-    --dom-price-column-width: 3.15rem;
+    --dom-price-column-width: 3rem;
   }
 
   .dom-price {
@@ -2284,7 +2412,7 @@ button {
     align-items: center;
     justify-content: flex-end;
 
-    height: calc(var(--dom-row-height) * 16);
+    height: var(--dom-viewport-height);
     padding-right: 0.08rem;
 
     overflow: hidden;
@@ -2372,15 +2500,23 @@ button {
 .prints-position-indicator {
   position: absolute;
   top: 0.45rem;
-  left: 0.45rem;
-  z-index: 5;
+  left: 0.08rem;
+  z-index: 10;
   font-size: 1.4rem;
   font-weight: 800;
   line-height: 1;
   pointer-events: none;
   display: inline-flex;
   align-items: baseline;
-  gap: 0.28rem;
+  gap: 0.08rem;
+}
+
+.prints-field {
+  isolation: isolate;
+}
+
+.prints-stream {
+  z-index: 1;
 }
 .drawing-clear-confirmation {
   position: absolute;
@@ -2546,11 +2682,23 @@ button {
   position: relative;
 }
 
+.dom-control-header {
+  box-sizing: border-box;
+  justify-content: space-between;
+  height: 2rem;
+  min-height: 0;
+  min-width: 0;
+  padding: 0.18rem 0.25rem;
+}
+
 .dom-compression-control {
-  position: absolute;
-  top: 0.18rem;
-  right: 0.18rem;
-  z-index: 20;
+  display: flex;
+}
+
+.dom-control-header .dom-compression-button,
+.dom-control-header .dom-compression-input {
+  width: 1.55rem;
+  height: 1.55rem;
 }
 
 .dom-compression-button,
@@ -2657,6 +2805,177 @@ button {
   width: 1.6rem;
   height: 1.5rem;
   padding: 0;
+}
+
+.paper-open-positions-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  background: #0b1015;
+}
+
+.paper-open-positions {
+  width: min(42rem, 100%);
+  height: 100%;
+  margin: 0 auto;
+  overflow: auto;
+  padding: 0.8rem;
+  color: #d8e0e7;
+  background: #10171d;
+}
+
+.paper-open-positions > header,
+.paper-open-position-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.paper-open-positions > header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 0.65rem;
+  background: #10171d;
+}
+
+.paper-open-positions > header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.paper-open-positions-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.paper-open-positions > header button,
+.paper-open-position-close {
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid #46515d;
+  border-radius: 0.38rem;
+  background: #172027;
+  color: #f06a67;
+  font-size: 1.25rem;
+  touch-action: manipulation;
+}
+
+.paper-open-positions-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.paper-open-position-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.25rem 0.65rem;
+  min-height: 5.6rem;
+  padding: 0.55rem 3.6rem 0.55rem 0.65rem;
+  border: 1px solid #303c47;
+  border-radius: 0.42rem;
+  background: #151d24;
+  font-size: 0.76rem;
+}
+
+.paper-open-position-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.paper-open-position-metrics .profit { color: var(--trade-buy); }
+.paper-open-position-metrics .loss { color: var(--trade-sell); }
+.paper-open-position-average { color: #aeb9c3; }
+
+.paper-open-position-heading {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+
+.paper-open-position-row.long .paper-open-position-heading span {
+  color: var(--trade-buy);
+}
+
+.paper-open-position-row.short .paper-open-position-heading span {
+  color: var(--trade-sell);
+}
+
+.paper-open-position-close {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+}
+
+.paper-open-position-row small {
+  grid-column: 1 / -1;
+  color: #f4ba62;
+}
+
+.paper-open-positions-state {
+  min-height: 10rem;
+  display: grid;
+  place-content: center;
+  gap: 0.5rem;
+  text-align: center;
+}
+
+.paper-open-position-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 91;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(5 8 11 / 70%);
+}
+
+.paper-open-position-confirm > section {
+  width: min(22rem, 100%);
+  display: grid;
+  gap: 0.8rem;
+  padding: 0.9rem;
+  border: 1px solid #46515d;
+  border-radius: 0.45rem;
+  background: #151d24;
+}
+
+.paper-open-position-confirm > section > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.paper-open-position-confirm button {
+  min-height: 2.75rem;
+}
+
+.paper-open-position-confirm button.danger,
+.paper-open-positions-close-all {
+  border-color: #a13e3b;
+  background: #722b2a;
+  color: #fff;
+}
+
+.paper-open-positions-close-all {
+  width: auto;
+  min-height: 2.75rem;
+  padding: 0 0.7rem;
+  border-radius: 0.38rem;
+  white-space: nowrap;
+}
+
+.paper-open-positions > header .paper-open-positions-close-all {
+  width: auto;
+  min-width: 0;
+  font-size: 0.76rem;
 }
 
 
@@ -2816,3 +3135,102 @@ button {
   border-color: #65717d;
   color: #d6dde3;
 }
+
+/* COLLAPSIBLE DOM + SMART TAPE SIDE PANEL */
+.workspace-grid {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(33rem, 1fr) auto;
+}
+
+.workspace-market-row {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-market-row.side-panel-open {
+  grid-template-columns:
+    minmax(0, 1fr)
+    clamp(10.5rem, 32vw, 20rem);
+}
+
+.workspace-market-row.side-panel-closed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.market-side-panel-toggle {
+  position: absolute;
+  top: 0.35rem;
+  right: calc(clamp(10.5rem, 32vw, 20rem) - 0.78rem);
+  z-index: 25;
+  display: grid;
+  width: 1.55rem;
+  min-width: 1.55rem;
+  height: 1.55rem;
+  min-height: 1.55rem;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #394653;
+  border-radius: 0.28rem;
+  background: #171d24;
+  color: #bac6d1;
+  font-size: 1rem;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.workspace-market-row.side-panel-closed .market-side-panel-toggle {
+  right: 0.35rem;
+}
+
+.workspace-side-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 0.68fr) minmax(0, 1.55fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0.3rem;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-side-panel.is-hidden {
+  display: none;
+}
+
+.workspace-side-panel .dom-panel,
+.workspace-side-panel .tape-panel {
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-side-panel .dom-panel {
+  order: 2;
+}
+
+.workspace-side-panel .tape-panel {
+  order: 1;
+}
+
+@media (max-width: 980px) {
+  .workspace-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(24rem, 1fr) auto;
+  }
+
+  .workspace-market-row.side-panel-open {
+    grid-template-columns:
+      minmax(0, 1fr)
+      clamp(10.5rem, 44vw, 18rem);
+  }
+
+  .workspace-market-row.side-panel-closed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .market-side-panel-toggle {
+    right: calc(clamp(10.5rem, 44vw, 18rem) - 0.78rem);
+  }
+}
+
+/* END COLLAPSIBLE DOM + SMART TAPE SIDE PANEL */

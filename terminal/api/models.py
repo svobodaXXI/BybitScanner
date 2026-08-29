@@ -119,6 +119,37 @@ class FullCloseCommandRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class CloseAllCommandRequest:
+    client_action_id: ClientActionId
+
+
+@dataclass(frozen=True, slots=True)
+class PaperOpenPositionProjection:
+    symbol: str
+    position_side: str
+    position_quantity: Decimal
+    average_entry: Decimal | None
+    engaged_notional_usdt: Decimal
+    engaged_wv: Decimal
+    current_price: Decimal | None
+    unrealized_pnl: Decimal | None
+    tick_size: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class PaperOpenPositionsResponse:
+    account_id: str
+    positions: tuple[PaperOpenPositionProjection, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CloseAllCommandResponse:
+    client_action_id: str
+    results: tuple[CommandResult, ...]
+    positions: tuple[PaperOpenPositionProjection, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class LimitCommandRequest:
     client_action_id: ClientActionId
     symbol: str

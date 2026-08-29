@@ -3,6 +3,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+from dataclasses import replace
 from decimal import Decimal
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -19,8 +20,39 @@ from terminal.runtime.paper_http_server import (
     PublicTradeBuffer,
     PublicTradeKlineBuffer,
     SerializedPaperRuntime,
+    load_public_instruments,
 )
 from terminal.runtime.paper_runtime import PaperRuntime
+
+
+def test_load_public_instruments_uses_full_exchange_owned_supported_universe():
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "retCode": 0,
+                "result": {
+                    "nextPageCursor": "",
+                    "list": [
+                        {"symbol": "BTCUSDT", "status": "Trading", "settleCoin": "USDT", "priceFilter": {"tickSize": "0.10"}},
+                        {"symbol": "OLDUSDT", "status": "Settled", "settleCoin": "USDT", "priceFilter": {"tickSize": "0.01"}},
+                        {"symbol": "BTCUSD", "status": "Trading", "settleCoin": "BTC", "priceFilter": {"tickSize": "0.50"}},
+                    ],
+                },
+            }
+
+    class Session:
+        def get(self, url, *, params, timeout):
+            assert url.endswith("/v5/market/instruments-info")
+            assert params == {"category": "linear", "limit": 1000}
+            assert timeout == 10
+            return Response()
+
+    assert load_public_instruments(Session()) == [
+        {"symbol": "BTCUSDT", "tick_size": "0.10"},
+    ]
 
 
 class StaticBookProvider:
@@ -51,6 +83,7 @@ def _runtime_owner(path: Path) -> SerializedPaperRuntime:
         path,
         book_provider=StaticBookProvider(),
         instrument_snapshot=instrument,
+        instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
     ))
 
 
@@ -139,6 +172,82 @@ def test_full_close_response_contains_revisioned_flat_state():
             assert closed["paper_state"]["position_side"] == "Flat"
             assert closed["paper_state"]["position_quantity"] == "0"
             assert closed["paper_state"]["state_revision"] == 2
+        finally:
+            server.shutdown()
+            server.server_close()
+            runtime.close()
+
+
+def test_open_positions_get_returns_all_open_symbols_for_current_account():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        def post(symbol: str, action: str) -> None:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}/api/market",
+                data=json.dumps({
+                    "client_action_id": action, "symbol": symbol, "side": "Buy",
+                    "volume": {"unit": "usdt", "amount": "321"},
+                    "sizing_reference_price": "64250",
+                    "slippage_type": "Percent", "slippage_value": "0.5",
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            with urllib.request.urlopen(request) as response:
+                assert json.load(response)["status"] == "completed"
+
+        try:
+            post("BTCUSDT", "http-inventory-btc")
+            post("ETHUSDT", "http-inventory-eth")
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/open-positions"
+            ) as response:
+                payload = json.load(response)
+            assert payload["ok"] is True
+            assert payload["account_id"] == "paper"
+            assert [item["symbol"] for item in payload["positions"]] == [
+                "BTCUSDT", "ETHUSDT",
+            ]
+        finally:
+            server.shutdown()
+            server.server_close()
+            runtime.close()
+
+
+def test_close_all_post_closes_authoritative_inventory_once():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        def post(path: str, payload: dict) -> dict:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}{path}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            with urllib.request.urlopen(request) as response:
+                return json.load(response)
+
+        try:
+            for symbol in ("BTCUSDT", "ETHUSDT"):
+                post("/api/market", {
+                    "client_action_id": f"http-bulk-open-{symbol.lower()}",
+                    "symbol": symbol, "side": "Buy",
+                    "volume": {"unit": "usdt", "amount": "321"},
+                    "sizing_reference_price": "64250",
+                    "slippage_type": "Percent", "slippage_value": "0.5",
+                })
+            result = post("/api/close-all", {"client_action_id": "http-bulk-close-1"})
+            assert result["ok"] is True
+            assert len(result["results"]) == 2
+            assert result["positions"] == []
         finally:
             server.shutdown()
             server.server_close()

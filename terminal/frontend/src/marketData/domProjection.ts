@@ -7,7 +7,44 @@ import type {
 export const DOM_LEVELS_PER_SIDE = 8;
 export const DOM_VISIBLE_ROWS = DOM_LEVELS_PER_SIDE * 2;
 export const DOM_ROW_HEIGHT_REM = 1.36;
+export const DOM_MIN_VISIBLE_ROWS = 2;
+export const DOM_MAX_VISIBLE_ROWS = 200;
 export const DOM_COMPRESSION = 3;
+
+export interface DomViewportGeometry {
+  visibleRows: number;
+  rowHeightPx: number;
+  viewportHeightPx: number;
+}
+
+export function domViewportGeometry(
+  viewportHeightPx: number,
+  canonicalRowHeightPx: number,
+): DomViewportGeometry {
+  if (!(viewportHeightPx > 0) || !(canonicalRowHeightPx > 0)) {
+    return {
+      visibleRows: DOM_VISIBLE_ROWS,
+      rowHeightPx: canonicalRowHeightPx,
+      viewportHeightPx: canonicalRowHeightPx * DOM_VISIBLE_ROWS,
+    };
+  }
+  const visibleRows = Math.max(
+    DOM_MIN_VISIBLE_ROWS,
+    Math.min(DOM_MAX_VISIBLE_ROWS, Math.round(viewportHeightPx / canonicalRowHeightPx)),
+  );
+  return {
+    visibleRows,
+    rowHeightPx: viewportHeightPx / visibleRows,
+    viewportHeightPx,
+  };
+}
+
+export function visibleDomRowsForHeight(viewportHeightPx: number, rowHeightPx: number): number {
+  return domViewportGeometry(viewportHeightPx, rowHeightPx).visibleRows;
+}
+
+const normalizedVisibleRows = (visibleRows: number) =>
+  Math.max(DOM_MIN_VISIBLE_ROWS, Math.min(DOM_MAX_VISIBLE_ROWS, Math.floor(visibleRows)));
 
 export function dragDeltaToCenterStep(deltaY: number): number {
   return deltaY > 0 ? 1 : -1;
@@ -91,6 +128,7 @@ export function projectDomBook(
   book: NormalizedOrderBook,
   centerPrice: number | null = recommendedLadderCenter(book),
   compression = DOM_COMPRESSION,
+  visibleRows = DOM_VISIBLE_ROWS,
 ): DisplayDomProjection {
   const nativeTickSize = inferNativeTickSize(book);
   const displayStep = nativeTickSize * compression;
@@ -145,8 +183,9 @@ export function projectDomBook(
           compression,
         );
   const centerGridIndex = Math.round(centerPrice / displayStep);
-  const topGridIndex = centerGridIndex + DOM_LEVELS_PER_SIDE;
-  const levels = Array.from({ length: DOM_VISIBLE_ROWS }, (_, rowIndex) => {
+  const rowCount = normalizedVisibleRows(visibleRows);
+  const topGridIndex = centerGridIndex + Math.floor(rowCount / 2);
+  const levels = Array.from({ length: rowCount }, (_, rowIndex) => {
     const price = normalizedGridPrice(
       topGridIndex - rowIndex,
       nativeTickSize,
@@ -186,9 +225,11 @@ export function priceToLadderRow(
   price: number,
   centerPrice: number,
   tickSize: number,
+  compression = DOM_COMPRESSION,
+  visibleRows = DOM_VISIBLE_ROWS,
 ): number {
-  const displayStep = tickSize * DOM_COMPRESSION;
-  const topPrice = centerPrice + DOM_LEVELS_PER_SIDE * displayStep;
+  const displayStep = tickSize * compression;
+  const topPrice = centerPrice + Math.floor(normalizedVisibleRows(visibleRows) / 2) * displayStep;
   return (topPrice - price) / displayStep;
 }
 
@@ -202,6 +243,7 @@ export function executionPriceToLadderRow(
   tickSize: number,
   centerPrice: number | null,
   compression = DOM_COMPRESSION,
+  visibleRows = DOM_VISIBLE_ROWS,
 ): number | null {
   if (centerPrice === null || !(tickSize > 0)) return null;
   const displayPrice = projectPriceToDisplayBucket(
@@ -211,11 +253,12 @@ export function executionPriceToLadderRow(
     compression,
   );
   const displayStep = tickSize * compression;
+  const rowCount = normalizedVisibleRows(visibleRows);
   const topPrice =
     Math.round(centerPrice / displayStep) * displayStep +
-    DOM_LEVELS_PER_SIDE * displayStep;
+    Math.floor(rowCount / 2) * displayStep;
   const row = (topPrice - displayPrice) / displayStep;
-  return Math.round(row) - (DOM_VISIBLE_ROWS - 1) / 2;
+  return Math.round(row) - (rowCount - 1) / 2;
 }
 
 export function projectSweepCenterRow(
@@ -224,9 +267,12 @@ export function projectSweepCenterRow(
   highPrice: number,
   tickSize: number,
   centerPrice: number | null = recommendedLadderCenter(book),
+  compression = DOM_COMPRESSION,
+  visibleRows = DOM_VISIBLE_ROWS,
 ): number | null {
   if (centerPrice === null || !(tickSize > 0)) return null;
-  const lowRow = priceToLadderRow(lowPrice, centerPrice, tickSize);
-  const highRow = priceToLadderRow(highPrice, centerPrice, tickSize);
-  return (lowRow + highRow) / 2 - (DOM_VISIBLE_ROWS - 1) / 2;
+  const rowCount = normalizedVisibleRows(visibleRows);
+  const lowRow = priceToLadderRow(lowPrice, centerPrice, tickSize, compression, rowCount);
+  const highRow = priceToLadderRow(highPrice, centerPrice, tickSize, compression, rowCount);
+  return (lowRow + highRow) / 2 - (rowCount - 1) / 2;
 }

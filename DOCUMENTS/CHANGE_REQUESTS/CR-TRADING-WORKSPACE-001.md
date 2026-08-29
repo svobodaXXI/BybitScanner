@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.61",
+  "revision": "1.69",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -43,6 +43,9 @@
     ,"Implement and manually accept live PAPER unrealized PnL plus the compact position-controls layout"
     ,"Record the human-approved documentation-only side-specific LIMITS UX, chart-draft and immediate DOM-Limit paths, and explicit supersession map without authorizing implementation"
     ,"Implement one revision-ordered frontend PAPER authority, coalesced reconciliation and mutation responses carrying their serialized resulting PAPER state"
+    ,"Implement the account-wide PAPER Open Positions inventory and money-sensitive per-symbol Full Close reconciliation without optimistic row removal or blind retry"
+    ,"Complete account-wide PAPER Open Positions with backend-owned per-symbol current PnL, symbol tick-size price formatting and serialized idempotent Close All orchestration"
+    ,"Implement one canonical authoritative Workspace symbol-switch path shared by ticker autocomplete and Open Positions navigation, with atomic market-data and PAPER projection transition safety"
   ],
   "prohibited_scope": [
     "Further unapproved DOM, L2, Market Data Engine, Paper Trading Engine or chart implementation beyond recorded checkpoints",
@@ -362,8 +365,8 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "TRADING_WORKSPACE_MASTER_ROADMAP_RECORDED",
-  "implementation_status": "PAPER_AUTHORITY_FOUNDATION_IMPLEMENTED_PHONE_ACCEPTANCE_BLOCKED",
+  "current_checkpoint": "WORKSPACE_SYMBOL_SWITCHING_PHONE_REFINEMENT_IMPLEMENTED_AUTOMATED_PASS",
+  "implementation_status": "LAYOUT_AND_DOM_DOTS_REFINEMENT_TARGETED_PASS_BUILD_PASS_MANUAL_ACCEPTANCE_PENDING",
   "next_phase": "VERIFY",
   "next_phase_authorization": "PRODUCTION_IMPLEMENTATION_OF_REVISION_1_42_SECTION_50_AUTHORIZED",
   "related_commits": [
@@ -441,7 +444,15 @@
     {"revision": "1.53", "reason": "Replaced the phone-rejected blur-only Done behavior with one terminal focus boundary and completion latch that owns post-Enter focus and rejects implicit sibling-input focus until an explicit pointer edit begins; phone acceptance remains pending", "date": "2026-08-28"},
     {"revision": "1.54", "reason": "Recorded the user's intentional deferral of the unresolved real-phone Done/Enter focus progression, removed temporary on-screen focus/IME diagnostics, preserved the current functional focus policy, and returned acceptance priority to the existing LIMIT sequence", "date": "2026-08-28"},
     {"revision": "1.55", "reason": "Recorded real-phone PASS evidence for the approximately 300-ms active-LIMIT edit hold and drag/release dashed-candidate controls, preserved the unresolved deferred Done/Enter issue, and clarified that the current × restore behavior remains incomplete because × must authoritatively cancel while outside activation alone abandons the edit", "date": "2026-08-28"},
-    {"revision": "1.61", "reason": "Recorded real-phone acceptance of the complete active-LIMIT interaction slice: solid tap cancellation affordance, pre-hold movement abort, 300-ms hold-only edit, immediate dashed re-grab, authoritative per-line amend/cancel, consume-once outside restore, and mixed normal-draft plus edited-active GLOBAL confirm/cancel semantics", "date": "2026-08-28"}
+    {"revision": "1.61", "reason": "Recorded real-phone acceptance of the complete active-LIMIT interaction slice: solid tap cancellation affordance, pre-hold movement abort, 300-ms hold-only edit, immediate dashed re-grab, authoritative per-line amend/cancel, consume-once outside restore, and mixed normal-draft plus edited-active GLOBAL confirm/cancel semantics", "date": "2026-08-28"},
+    {"revision": "1.62", "reason": "Recorded real-phone acceptance of immediate resting DOM LIMIT placement through the shared canonical PAPER Limit-create lifecycle, including consecutive independent intents, stable identity, 300-ms anti-bounce, ambiguity lock, side-specific selected volume, authoritative Chart/DOM/Panel projection, equivalent PRICE/SIZE row activation and cancel-only own-order dots; aggressive DOM Limit confirmation and Done/Enter remain separately deferred", "date": "2026-08-28"},
+    {"revision": "1.63", "reason": "Recorded the implemented collapsible DOM plus Smart Tape structural micro-slice with targeted tests, production build and exact-path verification passing while manual/real-phone acceptance remains pending; also referenced the approved post-current-stage central VPS migration direction without implementing it", "date": "2026-08-28"},
+    {"revision": "1.64", "reason": "Recorded the account-wide PAPER Open Positions implementation and corrected its money-sensitive Full Close reconciliation so completed-but-still-open and ambiguous outcomes retain one stable locked attempt until authoritative FLAT; focused regressions, production build and fresh change-review pass while real-phone acceptance remains pending", "date": "2026-08-29"},
+    {"revision": "1.65", "reason": "Completed account-wide Open Positions with backend-owned per-symbol current PnL and tick metadata plus serialized idempotent Close All orchestration while keeping phone acceptance pending", "date": "2026-08-29"},
+    {"revision": "1.66", "reason": "Refined the real-phone Open Positions presentation with compact labeled rows, PnL percent and the header Close All control while keeping acceptance pending", "date": "2026-08-29"},
+    {"revision": "1.67", "reason": "Recorded real-phone PASS and completion acceptance for account-wide PAPER Open Positions, and authorized WORKSPACE SYMBOL SWITCHING as the exact next implementation slice", "date": "2026-08-29"},
+    {"revision": "1.68", "reason": "Implemented one canonical Workspace symbol-switch path shared by authoritative ticker autocomplete and confirmed Open Positions navigation, generalized the real backend active market-data session beyond ONGUSDT, added stale-source guards and kept real-phone acceptance pending", "date": "2026-08-29"},
+    {"revision": "1.69", "reason": "Implemented the bounded real-phone symbol-switch layout refinement by moving ticker/timeframe into Chart, account control beside BUY/SELL LIMITS, shrinking adaptive chart label typography, reallocating the removed top strip height, and fixing clipped authoritative DOM own-order dots while keeping phone acceptance pending", "date": "2026-08-29"}
   ]
 }
 ```
@@ -3445,3 +3456,185 @@ Stage 6 or the overall LIMIT acceptance gate. Done/Enter focus progression remai
 user's explicit post-checkpoint priority, the exact next task is `DOM LIMIT ORDER PLACEMENT`: implement direct
 LIMIT placement through DOM/order-book interaction using the existing canonical PAPER LIMIT lifecycle. This
 revision records that routing only and does not implement or newly authorize a parallel order lifecycle.
+
+## 69. DOM LIMIT order placement real-phone acceptance
+
+Revision 1.62 records real-phone `PASS` for immediate resting DOM LIMIT placement. Holding BUY or SELL and
+selecting a DOM level with the second finger now creates one canonical PAPER Limit using the current selected
+volume for that side. PRICE and SIZE activation on the same row resolve to the same normalized `level.price`;
+an own-order dot remains a cancel-only concrete-order target and cannot create another Limit.
+
+DOM and chart draft entry now share the reusable `PaperLimitCreateController` command boundary without sharing
+presentation state. Each deliberate DOM placement owns one stable `client_action_id`; completed and definitive
+rejected attempts release placement ownership, ambiguous transport retains the same identity and blocks new
+placement until reconciliation, and the 300-ms anti-bounce suppresses only an accidental repeat of one gesture.
+Two later deliberate DOM selections therefore create two independent intents rather than reusing the prior latch.
+
+Successful state remains exclusively authoritative: `/api/limit` returns the resulting `paper_state`,
+`PaperTradingStore` applies it, and Chart, DOM and Panel project that same order set without a DOM-local order
+reality. The existing active-LIMIT amend/cancel lifecycle is unchanged. Production assets were rebuilt and this
+slice was accepted on the real phone. Master-roadmap Stage 5 remains `PARTIAL`, but its canonical resting-DOM
+entry path and LIMIT acceptance-gate DOM-create item are accepted.
+
+Marketable/aggressive DOM Limits remain deliberately fail-closed: BUY at or above Ask and SELL at or below Bid
+do not submit. Their required explicit confirmation is `OPEN/DEFERRED` as a separate bounded slice. Real-phone
+Done/Enter focus progression also remains `USER-DEFERRED` and is not part of that slice. The exact next action is
+`AGGRESSIVE DOM LIMIT CONFIRMATION`: define and separately authorize the smallest explicit-confirmation path that
+preserves Limit identity and the same canonical create lifecycle; no implementation is authorized by this
+documentation checkpoint.
+
+## 70. Collapsible DOM and Smart Tape structural implementation checkpoint
+
+Revision 1.63 records this right-sidecar micro-slice as
+`IMPLEMENTED / TARGETED PASS / BUILD PASS / MANUAL ACCEPTANCE PENDING`.
+
+The former full-height vertical DOM plus Smart Tape handle and its dedicated grid column are removed. The open
+workspace is conceptually `[ CHART ][ SMART TAPE ][ DOM ]`; the closed workspace is a full-width Chart. Collapse
+and restore use a small absolute-positioned square overlay button that reserves no grid column. Open, the toggle
+sits near the upper-left edge of the side panel; closed, restore remains near the upper-right Chart/workspace area.
+
+DOM and Smart Tape remain mounted while collapsed, so collapse/restore does not intentionally reset DOM-local
+state. The Chart continues to use Lightweight Charts `autoSize: true`; no manual `chart.resize()` was introduced.
+Current local DOM PRICE candidate widths remain `3.05rem` on desktop and `3rem` on mobile. SIZE compaction and
+Chart price-scale compaction remain deferred.
+
+Validation evidence for this bounded slice is: isolated collapse/restore test `PASS`; relevant layout test
+`PASS`; `npm run build` `PASS` with 63 modules; exact-path project verifier `PASS`; and pager-safe
+`git diff --check` `PASS` apart from ordinary LF-to-CRLF warnings. The full `App.test.tsx` run is not green: one
+neighboring earlier PAPER Limit assertion remains unresolved and out of scope (`expected 0, received 1`). Manual
+desktop/real-phone acceptance has not yet been performed, so this slice is not accepted or closed.
+
+The approved central VPS development/runtime direction does not interrupt this logical Trading Workspace stage.
+The current stage must first complete manual acceptance and receive a clean checkpoint; only then does VPS
+migration become the next major operational stage. Migration remains planned and unimplemented, and the rented
+server's suitability remains subject to inspection. `ARCHITECTURE.md`, `DEVELOPMENT_GUIDE.md` and
+`DECISION_LOG.md` own the architecture, isolation and workflow details.
+
+## 71. Account-wide PAPER Open Positions reconciliation checkpoint
+
+Revision 1.64 records the account-wide PAPER Open Positions inventory as implemented with manual/real-phone
+acceptance still `PENDING`. Each visible row remains an authoritative `/api/open-positions` projection and its
+Full Close continues through the canonical `/api/full-close` command using one per-symbol `client_action_id`.
+
+A `completed` command acknowledgement no longer releases that identity while authoritative inventory still
+contains the position or cannot be refreshed. An ambiguous outcome likewise remains locked without blind retry.
+Only a successful authoritative refresh that no longer contains the symbol establishes FLAT, settles the attempt,
+clears pending/ambiguity state and removes the row. No optimistic position removal or additional close command is
+introduced.
+
+Focused regression tests for completed-but-still-open and ambiguous-then-FLAT both pass, the production frontend
+build passes, and the fresh money-sensitive change-review reports no material defects in the reviewed scope. These
+automated checks do not constitute touch, browser or real-phone acceptance. The exact next action is real-phone
+Open Positions acceptance.
+
+## 72. Account-wide PAPER Open Positions completion checkpoint
+
+Revision 1.65 completes the automated implementation scope for the account-wide PAPER Open Positions page while
+keeping manual/real-phone acceptance `PENDING`. `/api/open-positions` now enriches each authoritative PAPER
+position with that symbol's authoritative instrument `tick_size` and with backend-owned current price plus
+unrealized USDT PnL only when a matching normalized order book is fresh. Missing, mismatched, future-dated or
+stale market data fails closed as unavailable PnL; the current Workspace ticker is not an account-wide fallback.
+Accounting values remain Decimal-backed and presentation formatting alone follows the symbol tick step.
+
+`POST /api/close-all` owns one serialized account-wide PAPER action. Its source inventory is the durable current
+PAPER account store, independent of market-data presentation availability. It derives one stable child identity
+from the bulk `client_action_id` and symbol and routes every child through the canonical per-symbol Full Close.
+Therefore authoritative remaining quantity, no reversal, symbol-scoped FLAT cleanup and durable command
+idempotency remain unchanged. The frontend sends one bulk request after explicit confirmation, locks every target,
+removes only rows absent from the returned or subsequently refreshed authoritative inventory, preserves the last
+projection on refresh failure and never creates a new identity for an ambiguous outcome.
+
+Focused backend tests (23) and Open Positions Vitest tests (6) pass, and the production frontend build passes with
+64 modules. Fresh money-sensitive review reports no material defects after decoupling bulk source inventory from
+PnL/metadata enrichment. These checks are not touch or device evidence. The exact next action is real-phone Open
+Positions completion acceptance for per-symbol PnL/tick formatting, compact row layout, confirmation/Cancel and
+full/partial Close All reconciliation.
+
+## 73. Open Positions real-phone presentation refinement checkpoint
+
+Revision 1.66 records the bounded presentation refinement requested by real-phone review while keeping acceptance
+`PENDING`. Each position row labels its notional as `Объем:`, labels symbol-tick-formatted average entry as
+`Ср. цена:`, and appends canonical Trading Workspace PnL percent to available backend-owned USDT PnL. The percent
+reuses the shared `positionPnlPercent` and `formatPositionPnlPercent` semantics already used by ModePanel and Smart
+Tape; unavailable authoritative average/current price remains fail-closed without a percentage.
+
+The existing Close All trigger is renamed `Закрыть все` and moved into the Open Positions header immediately
+before the overlay close control. Its confirmation order, serialized backend action, deterministic identities,
+UNKNOWN reconciliation, row locking and authoritative-FLAT removal semantics are unchanged. Focused Open Positions
+tests and the production build pass. Manual/real-phone acceptance remains `PENDING`; the exact next action is the
+same real-phone Open Positions completion acceptance using the freshly rebuilt production assets.
+
+## 74. Account-wide PAPER Open Positions real-phone acceptance
+
+Revision 1.67 records real-phone `PASS` and completion acceptance for account-wide PAPER Open Positions. The
+accepted production flow displayed multiple symbols with backend-owned per-symbol USDT and percent PnL, formatted
+average entry by each symbol's authoritative tick size, and preserved the compact row layout. Individual close
+confirmation and Cancel were non-mutating until confirmation; confirmed BTC Full Close affected only BTC, and
+the row disappeared only after authoritative state reconciliation while ONGUSDT remained.
+
+Closing the inventory preserved Chart, DOM and Tape workspace state. Close All used the required confirmation,
+its Cancel path did not mutate trading state, and one confirmed action closed the remaining ONGUSDT without an
+observed duplicate, reversal or error. Authoritative reconciliation then rendered `Нет открытых позиций`.
+
+The exact next work item is `WORKSPACE SYMBOL SWITCHING`: one canonical symbol-transition path shared by the
+ticker autocomplete and confirmed Open Positions card navigation, backed by the authoritative supported-instrument
+universe and real symbol-propagating market-data/PAPER lifecycle. Manual/real-phone acceptance for this new slice
+is `PENDING`.
+
+## 75. Workspace symbol switching implementation checkpoint
+
+Revision 1.68 records `WORKSPACE SYMBOL SWITCHING` as
+`IMPLEMENTED / TARGETED PASS / BUILD PASS / MANUAL ACCEPTANCE PENDING`.
+
+`App` owns one `switchWorkspaceSymbol` transition used by both deliberate ticker autocomplete selection and
+confirmed Open Positions card navigation. Same-symbol navigation closes the overlay and returns to the workspace
+without restarting market data. The card's individual close control stops propagation, and both navigation Cancel
+and close Cancel remain non-mutating.
+
+The backend `/api/instruments` universe is loaded from Bybit linear instrument authority with pagination and
+filters to currently Trading USDT-settled instruments; frontend search is case-insensitive substring matching and
+contains no hardcoded candidate list. `WorkspaceMarketDataManager` owns exactly one active public order-book,
+trade and kline session. Activating a supported symbol replaces that session, rebinds the normalized book provider
+used by PAPER execution and routes Chart/DOM/Tape through symbol-qualified SSE endpoints. The PAPER account store
+remains account-wide, while `/api/paper-state?symbol=...` supplies the selected-symbol projection.
+
+The frontend market-data store exposes explicit transition state by immediately clearing book, trades, candles,
+tick size and local own-order projection under the new symbol before reconnecting. Source identity, requested
+symbol and timeframe guards reject late responses/events and error callbacks from the prior session. PAPER state
+continues to require both selected-symbol identity and monotonic state revision. No trading mutation is part of
+navigation.
+
+Focused frontend regressions (22) and backend/runtime regressions (33) pass, Python source compiles, and the
+production frontend build passes with 64 modules. Automated checks are not browser/touch/live-stream acceptance.
+Manual/real-phone acceptance is `PENDING`; the exact next action is real-phone Workspace symbol-switching
+acceptance using freshly rebuilt production assets.
+
+## 76. Workspace symbol switching real-phone refinement checkpoint
+
+Revision 1.69 records the bounded phone-review refinement as
+`IMPLEMENTED / TARGETED PASS / BUILD PASS / MANUAL ACCEPTANCE PENDING`.
+
+The separate top Workspace control strip is no longer rendered. The existing authoritative ticker autocomplete
+and timeframe control are one Chart-owned overlay in the upper-left visual area and are excluded from drawing,
+pan, pinch and fast-Limit pointer capture. Display uses the existing safe `baseAssetFromSymbol` helper, so a
+canonical `BTCUSDT` identity renders as `BTC` while non-USDT symbols remain unchanged. The existing PAPER/account
+button and menu moved into the lower `paper-limits-shell` beside BUY LIMITS and SELL LIMITS without duplicating
+account state or semantics. Removing the header element releases its height to the shared Chart/Tape/DOM market
+row rather than hiding or reserving an empty row.
+
+Lightweight Charts continues to own dynamic price-scale width from actual formatted label content. Its supported
+layout font size is reduced from the library default 12 to 11 while `minimumWidth` remains zero, so the axis can
+contract but expands for symbols whose complete price labels require more room; no canvas CSS override or fixed
+maximum width is introduced.
+
+Systematic diagnosis established the first broken DOM-dot layer as presentation CSS. Authoritative selected-symbol
+active LIMIT orders reached `PaperTradingStore`, `projectPaperLimitOrders`, compressed display-bucket matching and
+the correct `.dom-row`; concrete cancel buttons existed, but `right: calc(100% + 0.12rem)` positioned the entire
+dot group outside the row where panel overflow clipped it. The fix positions that same order-id-keyed group inside
+the row. No fake dot or DOM-local order truth is introduced, and projection now explicitly rejects an order whose
+canonical symbol differs from the selected Workspace symbol.
+
+Focused frontend regressions (34) plus the isolated account-placement regression pass, and the production frontend
+build passes with 64 modules. These automated checks are not touch/live-stream acceptance. Workspace symbol
+switching manual/real-phone acceptance remains `PENDING`; the exact next action is reload of the fresh production
+build followed by real-phone layout, DOM-dot and symbol-switching acceptance.

@@ -30,6 +30,8 @@ import {
   normalizeLimitDraftPrice,
 } from "../orders/limitDraft";
 import { isValidSelectedVolume, type SelectedSideVolumes } from "../orders/selectedVolume";
+import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
+import { AccountMenu } from "./AccountMenu";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
 type PaperMutationRunner = <T>(key: string, operation: () => Promise<T>) => Promise<T>;
@@ -63,6 +65,9 @@ export function ModePanel({
   onLimitCancel,
   onPositionSideChange,
   onPositionAverageEntryChange,
+  onWorkspaceSymbolSelect,
+  accountOpen = false,
+  onAccountToggle = () => {},
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -86,10 +91,14 @@ export function ModePanel({
   onLimitCancel?: (orderId: string) => Promise<PaperLimitMutationResponse>;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
+  onWorkspaceSymbolSelect?: (symbol: string) => void;
+  accountOpen?: boolean;
+  onAccountToggle?: () => void;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [openPositionsVisible, setOpenPositionsVisible] = useState(false);
   const [limitPresentationSide, setLimitPresentationSide] =
     useState<MarketSide | null>(null);
   const [limitsInventorySide, setLimitsInventorySide] =
@@ -581,7 +590,7 @@ export function ModePanel({
               type="button"
               aria-label="?????? ???????? ???????"
               title="?????? ???????? ???????"
-              onClick={() => setExecutionStatus("?????? ???????: ????????? ????")}
+              onClick={() => setOpenPositionsVisible(true)}
             >
               <span />
               <span />
@@ -660,6 +669,25 @@ export function ModePanel({
                 </div>
               );
             })}
+            <div className="paper-account-control">
+              <button
+                aria-expanded={accountOpen}
+                aria-label="Open account selection"
+                className="account-switch-button"
+                onClick={onAccountToggle}
+                type="button"
+              >
+                <span className="account-switch-key" aria-hidden="true">
+                  <span className="account-key-head" />
+                  <span className="account-key-shaft" />
+                </span>
+                <span className="account-switch-label">
+                  <strong>PAPER</strong>
+                  <small>NON-LIVE</small>
+                </span>
+              </button>
+              {accountOpen ? <AccountMenu /> : null}
+            </div>
 
             {limitsInventorySide ? (
               <section
@@ -836,6 +864,18 @@ export function ModePanel({
                 </div>
               </section>
             </div>
+          ) : null}
+
+          {openPositionsVisible ? (
+            <OpenPositionsOverlay
+              onClose={() => setOpenPositionsVisible(false)}
+              onNavigate={(nextSymbol) => {
+                setOpenPositionsVisible(false);
+                onWorkspaceSymbolSelect?.(nextSymbol);
+              }}
+              runPaperMutation={runPaperMutation}
+              applyPaperState={applyPaperState}
+            />
           ) : null}
 
           {closeConfirmOpen ? (

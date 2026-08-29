@@ -9,7 +9,7 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type DrawingCoordinates,
   DrawingOverlay,
@@ -113,6 +113,7 @@ export function ChartPanel({
   onFastLimitPriceSelect,
   onActiveLimitAmend,
   onActiveLimitCancel,
+  workspaceControls,
 }: {
   candles: readonly Candle[];
   tickSize: number | null;
@@ -130,6 +131,7 @@ export function ChartPanel({
   onFastLimitPriceSelect?: (price: string) => void;
   onActiveLimitAmend?: (orderId: string, price: string) => Promise<void>;
   onActiveLimitCancel?: (orderId: string) => Promise<unknown>;
+  workspaceControls?: ReactNode;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
@@ -184,6 +186,7 @@ export function ChartPanel({
           color: token("--chart-bg", "#10151b"),
         },
         textColor: token("--chart-text", "#8996a3"),
+        fontSize: 10,
         attributionLogo: false,
       },
       grid: {
@@ -207,6 +210,7 @@ export function ChartPanel({
         visible: true,
         borderColor: "#303b47",
         autoScale: true,
+        minimumWidth: 0,
       },
       timeScale: {
         visible: true,
@@ -293,7 +297,7 @@ export function ChartPanel({
   };
   const targetsPendingLimitLine = (target: EventTarget | null) =>
     target instanceof Element &&
-    target.closest("[data-pending-limit-line], [data-active-limit-line]") !== null;
+    target.closest("[data-pending-limit-line], [data-active-limit-line], [data-chart-control]") !== null;
   const clearCrosshairTimer = () => {
     if (touchCrosshair.current.timer) {
       clearTimeout(touchCrosshair.current.timer);
@@ -646,6 +650,19 @@ export function ChartPanel({
       className="chart-panel workspace-panel"
       aria-label="Candlestick chart"
     >
+      <div className="chart-content-row">
+        <DrawingToolbar
+          activeTool={tool}
+          magnet={magnet}
+          selected={selectedId !== null}
+          onTool={setTool}
+          onMagnet={() => setMagnet((v) => !v)}
+          onUndo={() => setDrawings(historyRef.current.undo())}
+          onDelete={deleteSelected}
+          onClear={() => {
+            if (drawings.length) setClearConfirmationOpen(true);
+          }}
+        />
       <div
         className="chart-stage"
         role="application"
@@ -678,6 +695,7 @@ export function ChartPanel({
             resetAuto();
         }}
       >
+        {workspaceControls}
         <div ref={hostRef} className="chart-engine" />
         <DrawingOverlay
           drawings={drawings}
@@ -897,18 +915,6 @@ export function ChartPanel({
           </div>
         ) : null}
 
-        <DrawingToolbar
-          activeTool={tool}
-          magnet={magnet}
-          selected={selectedId !== null}
-          onTool={setTool}
-          onMagnet={() => setMagnet((v) => !v)}
-          onUndo={() => setDrawings(historyRef.current.undo())}
-          onDelete={deleteSelected}
-          onClear={() => {
-            if (drawings.length) setClearConfirmationOpen(true);
-          }}
-        />
         {clearConfirmationOpen ? (
           <DrawingClearConfirmation
             onCancel={() => setClearConfirmationOpen(false)}
@@ -919,6 +925,7 @@ export function ChartPanel({
             }}
           />
         ) : null}
+      </div>
       </div>
     </section>
   );

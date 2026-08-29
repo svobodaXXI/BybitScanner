@@ -2,8 +2,8 @@
 
 # BybitScanner — Development Guide
 
-Версия документа: 1.0  
-Дата актуализации: 2026-07-25
+Версия документа: 1.1
+Дата актуализации: 2026-08-28
 
 ---
 
@@ -521,6 +521,40 @@ Notification
 ```
 
 Каждый слой делает только свою работу.
+
+---
+
+# 21. Planned central VPS development workflow
+
+Status: `PLANNED / APPROVED DIRECTION / NOT IMPLEMENTED`.
+
+VPS migration does not interrupt the current logical frontend and Trading Workspace stage. First complete that
+stage, perform manual acceptance, create a clean project checkpoint and verify local/GitHub repository state.
+The VPS migration then becomes the next major operational task.
+
+Intended migration sequence:
+
+1. Finish the current logical frontend/Trading Workspace stage.
+2. Complete manual acceptance.
+3. Create a clean project checkpoint.
+4. Verify repository and GitHub state.
+5. Inspect hosting type, VPS/VDS versus shared hosting, Linux version, CPU, RAM, storage, network/IP, SSH and root/sudo access.
+6. Establish safe SSH access.
+7. Create appropriate non-root server users.
+8. Configure minimal appropriate server security/firewall controls.
+9. Install Git, Python, project Python dependencies, Node.js, npm and Codex CLI.
+10. Create or clone the DEV repository on the VPS.
+11. Restore dependencies.
+12. Run existing project verification/tests.
+13. Run the frontend build.
+14. Start and test the Trading Workspace from the VPS.
+15. Test phone access over mobile internet.
+16. Establish an always-on service strategy for Scanner, backend and frontend where appropriate.
+17. Only after DEV is verified, establish separate PROD through controlled promotion.
+18. Perform an additional security review before enabling future live trading/Robot secrets or runtime.
+
+Development occurs in VPS DEV; Codex must not edit live PROD directly. Exact paths and service choices follow
+server inspection. SSH remains a direct path and no proprietary phone-access transport is mandatory.
 
 ---
 

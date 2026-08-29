@@ -3,25 +3,27 @@ import {
   CHART_TIMEFRAMES,
   type ChartTimeframe,
 } from "../marketData/timeframes";
+import { baseAssetFromSymbol } from "../marketData/symbol";
 
 interface WorkspaceHeaderProps {
-  accountOpen: boolean;
-  onAccountToggle: () => void;
-  onSymbolClick: () => void;
+  instruments: readonly string[];
+  onSymbolSelect: (symbol: string) => void;
   onTimeframeChange: (timeframe: ChartTimeframe) => void;
   symbol: string;
   timeframe: ChartTimeframe;
 }
 
 export function WorkspaceHeader({
-  accountOpen,
-  onAccountToggle,
-  onSymbolClick,
+  instruments,
+  onSymbolSelect,
   onTimeframeChange,
   symbol,
   timeframe,
 }: WorkspaceHeaderProps) {
   const [timeframeOpen, setTimeframeOpen] = useState(false);
+  const [symbolOpen, setSymbolOpen] = useState(false);
+  const [symbolQuery, setSymbolQuery] = useState("");
+  const symbolRef = useRef<HTMLDivElement>(null);
   const timeframeRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!timeframeOpen) return;
@@ -40,17 +42,65 @@ export function WorkspaceHeader({
       document.removeEventListener("keydown", dismissEscape);
     };
   }, [timeframeOpen]);
+  useEffect(() => {
+    if (!symbolOpen) return;
+    const dismissOutside = (event: PointerEvent) => {
+      if (!symbolRef.current?.contains(event.target as Node)) setSymbolOpen(false);
+    };
+    const dismissEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSymbolOpen(false);
+    };
+    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("keydown", dismissEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("keydown", dismissEscape);
+    };
+  }, [symbolOpen]);
+  const normalizedQuery = symbolQuery.trim().toUpperCase();
+  const matches = normalizedQuery
+    ? instruments.filter((instrument) => instrument.includes(normalizedQuery))
+    : instruments;
   return (
-    <header className="workspace-header">
-      <div className="instrument-block">
+    <div className="chart-workspace-controls" data-chart-control>
+      <div className="instrument-block" ref={symbolRef}>
         <button
           className="symbol-selector-trigger"
           type="button"
           aria-label={`Select symbol ${symbol}`}
-          onClick={onSymbolClick}
+          onClick={() => {
+            setSymbolQuery("");
+            setSymbolOpen(true);
+          }}
         >
-          {symbol}
+          {baseAssetFromSymbol(symbol)}
         </button>
+        {symbolOpen ? (
+          <div className="symbol-selector-popover" role="dialog" aria-label="Выбор инструмента">
+            <input
+              autoFocus
+              aria-label="Поиск инструмента"
+              onChange={(event) => setSymbolQuery(event.target.value)}
+              placeholder="BTC, ON..."
+              value={symbolQuery}
+            />
+            <div className="symbol-selector-results" role="listbox">
+              {matches.map((instrument) => (
+                <button
+                  key={instrument}
+                  onClick={() => {
+                    onSymbolSelect(instrument);
+                    setSymbolOpen(false);
+                  }}
+                  role="option"
+                  type="button"
+                >{instrument}</button>
+              ))}
+              {matches.length === 0 ? <span>Инструменты не найдены</span> : null}
+            </div>
+            <button onClick={() => setSymbolOpen(false)} type="button">Отмена</button>
+          </div>
+        ) : null}
         <div className="timeframe-selector" ref={timeframeRef}>
           <button
             aria-expanded={timeframeOpen}
@@ -81,24 +131,6 @@ export function WorkspaceHeader({
           ) : null}
         </div>
       </div>
-      <div className="header-actions">
-        <button
-          aria-expanded={accountOpen}
-          aria-label="Open account selection"
-          className="account-switch-button"
-          onClick={onAccountToggle}
-          type="button"
-        >
-          <span className="account-switch-key" aria-hidden="true">
-            <span className="account-key-head" />
-            <span className="account-key-shaft" />
-          </span>
-          <span className="account-switch-label">
-            <strong>PAPER</strong>
-            <small>NON-LIVE</small>
-          </span>
-        </button>
-      </div>
-    </header>
+    </div>
   );
 }

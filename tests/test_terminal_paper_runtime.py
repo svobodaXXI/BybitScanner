@@ -1,9 +1,11 @@
 ﻿import tempfile
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
 from terminal.api.models import (
     ClientActionId,
+    CloseAllCommandRequest,
     CommandResultStatus,
     FullCloseCommandRequest,
     LimitCommandRequest,
@@ -33,6 +35,23 @@ class StaticBookProvider:
         )
 
 
+class ToggleBookProvider(StaticBookProvider):
+    unavailable_symbols: set[str]
+    stale_symbols: set[str]
+
+    def __init__(self) -> None:
+        self.unavailable_symbols = set()
+        self.stale_symbols = set()
+
+    def get_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
+        if symbol.value in self.unavailable_symbols:
+            return None
+        book = super().get_book(symbol)
+        if symbol.value in self.stale_symbols:
+            return replace(book, received_at_ms=0)
+        return book
+
+
 def _instrument() -> InstrumentSnapshot:
     return InstrumentSnapshot(
         Category.LINEAR, "BTCUSDT", "LinearPerpetual", "Trading",
@@ -43,10 +62,12 @@ def _instrument() -> InstrumentSnapshot:
 
 
 def _runtime(path: Path) -> PaperRuntime:
+    primary = _instrument()
     return PaperRuntime(
         path,
         book_provider=StaticBookProvider(),
-        instrument_snapshot=_instrument(),
+        instrument_snapshot=primary,
+        instrument_provider=lambda symbol: replace(primary, symbol=symbol),
     )
 
 
@@ -271,6 +292,135 @@ def test_paper_limit_amend_missing_or_inactive_fails_closed():
             runtime.close()
 
 
+def test_account_inventory_is_multi_symbol_and_close_is_symbol_scoped():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            for symbol, side, action in (
+                ("BTCUSDT", OrderSide.BUY, "inventory-btc"),
+                ("ETHUSDT", OrderSide.SELL, "inventory-eth"),
+            ):
+                result = runtime.api.market(MarketCommandRequest(
+                    ClientActionId(action), symbol, side,
+                    VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                    "Percent", Decimal("0.5"),
+                ))
+                assert result.status is CommandResultStatus.COMPLETED
+
+            inventory = runtime.open_positions()
+            assert inventory.account_id == "paper"
+            assert [item.symbol for item in inventory.positions] == ["BTCUSDT", "ETHUSDT"]
+            assert [item.position_side for item in inventory.positions] == ["Long", "Short"]
+
+            closed = runtime.api.full_close(FullCloseCommandRequest(
+                ClientActionId("inventory-close-btc"), "BTCUSDT",
+            ))
+            assert closed.status is CommandResultStatus.COMPLETED
+            assert [item.symbol for item in runtime.open_positions().positions] == ["ETHUSDT"]
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+            assert runtime.paper_state("ETHUSDT")["position_side"] == "Short"
+        finally:
+            runtime.close()
+
+
+def test_account_inventory_projects_per_symbol_price_pnl_and_tick_size():
+    with tempfile.TemporaryDirectory() as temp:
+        primary = replace(_instrument(), tick_size=Decimal("0.10"))
+        runtime = PaperRuntime(
+            Path(temp) / "paper.sqlite3",
+            book_provider=StaticBookProvider(),
+            instrument_snapshot=primary,
+            instrument_provider=lambda symbol: replace(
+                primary, symbol=symbol,
+                tick_size=Decimal("0.10") if symbol == "BTCUSDT" else Decimal("0.01"),
+            ),
+        )
+        try:
+            opened = runtime.api.market(MarketCommandRequest(
+                ClientActionId("inventory-pnl-btc"), "BTCUSDT", OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                "Percent", Decimal("0.5"),
+            ))
+            assert opened.status is CommandResultStatus.COMPLETED
+            item = runtime.open_positions().positions[0]
+            assert item.current_price == Decimal("64250.0")
+            assert item.unrealized_pnl is not None
+            assert item.tick_size == Decimal("0.10")
+        finally:
+            runtime.close()
+
+
+def test_account_inventory_fails_closed_when_symbol_price_is_unavailable():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = ToggleBookProvider()
+        runtime = PaperRuntime(
+            Path(temp) / "paper.sqlite3",
+            book_provider=provider,
+            instrument_snapshot=_instrument(),
+            instrument_provider=lambda symbol: replace(_instrument(), symbol=symbol),
+        )
+        try:
+            runtime.api.market(MarketCommandRequest(
+                ClientActionId("inventory-no-price-eth"), "ETHUSDT", OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                "Percent", Decimal("0.5"),
+            ))
+            provider.unavailable_symbols.add("ETHUSDT")
+            item = runtime.open_positions().positions[0]
+            assert item.symbol == "ETHUSDT"
+            assert item.current_price is None
+            assert item.unrealized_pnl is None
+        finally:
+            runtime.close()
+
+
+def test_account_inventory_fails_closed_when_symbol_price_is_stale():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = ToggleBookProvider()
+        runtime = PaperRuntime(
+            Path(temp) / "paper.sqlite3",
+            book_provider=provider,
+            instrument_snapshot=_instrument(),
+        )
+        try:
+            runtime.api.market(MarketCommandRequest(
+                ClientActionId("inventory-stale-price"), "BTCUSDT", OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                "Percent", Decimal("0.5"),
+            ))
+            provider.stale_symbols.add("BTCUSDT")
+            item = runtime.open_positions().positions[0]
+            assert item.current_price is None
+            assert item.unrealized_pnl is None
+        finally:
+            runtime.close()
+
+
+def test_close_all_uses_stable_children_and_does_not_duplicate_closes():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            for symbol, action in (("BTCUSDT", "bulk-open-btc"), ("ETHUSDT", "bulk-open-eth")):
+                runtime.api.market(MarketCommandRequest(
+                    ClientActionId(action), symbol, OrderSide.BUY,
+                    VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                    "Percent", Decimal("0.5"),
+                ))
+            request = CloseAllCommandRequest(ClientActionId("bulk-close-1"))
+            first = runtime.close_all(request)
+            execution_count = len(runtime.store.load_executions())
+            second = runtime.close_all(request)
+
+            assert first.positions == ()
+            assert second.positions == ()
+            assert len(first.results) == 2
+            assert len(runtime.store.load_executions()) == execution_count
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+            assert runtime.paper_state("ETHUSDT")["position_side"] == "Flat"
+        finally:
+            runtime.close()
+
+
 import unittest
 
 
@@ -281,6 +431,11 @@ def load_tests(loader, tests, pattern):
             test_composed_paper_runtime_market_buy_completes,
             test_full_close_uses_authoritative_remaining_quantity_and_flat_repeat_is_noop,
             test_full_close_closes_short_without_flipping_long,
+            test_account_inventory_is_multi_symbol_and_close_is_symbol_scoped,
+            test_account_inventory_projects_per_symbol_price_pnl_and_tick_size,
+            test_account_inventory_fails_closed_when_symbol_price_is_unavailable,
+            test_account_inventory_fails_closed_when_symbol_price_is_stale,
+            test_close_all_uses_stable_children_and_does_not_duplicate_closes,
             test_paper_limit_create_is_durable_idempotent_and_cancel_is_safe,
             test_paper_sell_limit_uses_shared_sizing_and_gtc,
             test_paper_limit_amend_reprices_in_place_and_is_durable_idempotent,

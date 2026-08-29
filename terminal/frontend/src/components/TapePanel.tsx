@@ -2,6 +2,8 @@ import type { CSSProperties } from "react";
 import type { NormalizedOrderBook, TradePrint } from "../contracts/marketData";
 import {
   DOM_ROW_HEIGHT_REM,
+  DOM_VISIBLE_ROWS,
+  type DomViewportGeometry,
   displaySweptRows,
   executionPriceToLadderRow,
 } from "../marketData/domProjection";
@@ -31,6 +33,11 @@ export function TapePanel({
   averageEntryPrice,
   currentPrice,
   compression,
+  viewportGeometry = {
+    visibleRows: DOM_VISIBLE_ROWS,
+    rowHeightPx: DOM_ROW_HEIGHT_REM * 16,
+    viewportHeightPx: DOM_ROW_HEIGHT_REM * 16 * DOM_VISIBLE_ROWS,
+  },
 }: {
   book: NormalizedOrderBook;
   centerPrice: number | null;
@@ -39,7 +46,9 @@ export function TapePanel({
   averageEntryPrice?: number | null;
   currentPrice?: number | null;
   compression: number;
+  viewportGeometry?: DomViewportGeometry;
 }) {
+  const { rowHeightPx, visibleRows, viewportHeightPx } = viewportGeometry;
   const pnlPercent = positionPnlPercent(
     positionSide,
     averageEntryPrice,
@@ -71,11 +80,14 @@ export function TapePanel({
             ) : null}
           </div>
         ) : null}
-        <div className="prints-stream">
+        <div
+          className="prints-stream"
+          style={{ "--dom-viewport-height": `${viewportHeightPx}px` } as CSSProperties}
+        >
           {trades.map((trade) => {
             const width = printWidthPx(trade.totalNotionalUsdt);
             const height =
-              displaySweptRows(trade.sweptTicks, compression) * DOM_ROW_HEIGHT_REM;
+              displaySweptRows(trade.sweptTicks, compression) * rowHeightPx;
             const rowOffset =
               executionPriceToLadderRow(
                 trade.lastExecutionPrice,
@@ -83,6 +95,7 @@ export function TapePanel({
                 trade.tickSize,
                 centerPrice,
                 compression,
+                visibleRows,
               ) ?? 0;
 
             return (
@@ -92,8 +105,8 @@ export function TapePanel({
                 style={
                   {
                     "--print-width": `${width}px`,
-                    "--print-height": `${height}rem`,
-                    "--print-y": `${rowOffset * DOM_ROW_HEIGHT_REM}rem`,
+                    "--print-height": `${height}px`,
+                    "--print-y": `${rowOffset * rowHeightPx}px`,
                   } as CSSProperties
                 }
                 title={`${trade.tradeCount} trades · ${trade.sweptTicks} ticks`}

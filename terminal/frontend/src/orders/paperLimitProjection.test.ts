@@ -16,4 +16,14 @@ describe("projectPaperLimitOrders", () => {
       { id: "sell-1", price: 2.5, notionalUsdt: 5, side: "SELL" },
     ]);
   });
+
+  it("keeps only the authoritative selected-symbol projection across a switch", () => {
+    const orders: PaperLimitOrder[] = [
+      { order_id: "a", order_link_id: "a", symbol: "ONGUSDT", side: "Buy", price: "2", quantity: "3", time_in_force: "GTC" },
+      { order_id: "b", order_link_id: "b", symbol: "BTCUSDT", side: "Sell", price: "64000", quantity: "0.01", time_in_force: "GTC" },
+    ];
+    expect(projectPaperLimitOrders(orders, "BTCUSDT").map((order) => order.id)).toEqual(["b"]);
+    expect(projectPaperLimitOrders([], "BTCUSDT")).toEqual([]);
+    expect(projectPaperLimitOrders(orders, "ETHUSDT")).toEqual([]);
+  });
 });

@@ -1,9 +1,9 @@
 import {
-  createElement,
-  useRef,
   type ButtonHTMLAttributes,
+  createElement,
   type MouseEvent,
   type PointerEvent,
+  useRef,
 } from "react";
 
 type ActivationOptions = {
@@ -74,6 +74,9 @@ export function useTradingControlActivation({
         onHoldEnd?.();
         if (event.pointerType !== "mouse")
           suppressCompatibilityClick.current = true;
+      } else if (event.pointerType !== "mouse") {
+        suppressCompatibilityClick.current = true;
+        onTap?.();
       }
     },
     onPointerCancel: cancel,

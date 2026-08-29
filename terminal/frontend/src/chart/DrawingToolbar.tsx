@@ -1,11 +1,12 @@
 import type { DrawingTool } from "./drawingModel";
+import { useState } from "react";
 
 const tools: Array<[DrawingTool, string, string]> = [
-  ["select", "⌖", "Crosshair / chart interaction"],
-  ["trend", "╱", "Straight line"],
-  ["horizontal", "—", "Horizontal line"],
-  ["ray", "↗", "Ray"],
-  ["horizontal-ray", "→", "Horizontal ray"],
+  ["select", "\u2316", "Crosshair / chart interaction"],
+  ["trend", "\u2571", "Straight line"],
+  ["horizontal", "\u2014", "Horizontal line"],
+  ["ray", "\u2197", "Ray"],
+  ["horizontal-ray", "\u2192", "Horizontal ray"],
   ["fibonacci", "Fib", "Fibonacci grid"],
 ];
 
@@ -28,8 +29,21 @@ export function DrawingToolbar({
   onDelete: () => void;
   onClear: () => void;
 }) {
+  const [open, setOpen] = useState(true);
+
   return (
-    <nav className="drawing-toolbar" aria-label="Drawing tools">
+    <aside className={`drawing-tools-panel${open ? "" : " is-collapsed"}`}>
+      <button
+        type="button"
+        className="drawing-tools-toggle"
+        title={`${open ? "Hide" : "Show"} drawing tools`}
+        aria-label={`${open ? "Hide" : "Show"} drawing tools`}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open ? "\u02C4" : "\u02C5"}
+      </button>
+      {open ? <nav className="drawing-toolbar" aria-label="Drawing tools">
       {tools.map(([tool, icon, label]) => (
         <button
           key={tool}
@@ -52,7 +66,7 @@ export function DrawingToolbar({
         className={magnet ? "active" : ""}
         onClick={onMagnet}
       >
-        🧲
+        {"\u{1F9F2}"}
       </button>
       <button
         type="button"
@@ -60,7 +74,7 @@ export function DrawingToolbar({
         aria-label="Undo drawing"
         onClick={onUndo}
       >
-        ↶
+        {"\u21B6"}
       </button>
       {selected ? (
         <button
@@ -69,7 +83,7 @@ export function DrawingToolbar({
           aria-label="Delete selected drawing"
           onClick={onDelete}
         >
-          ⌫
+          {"\u232B"}
         </button>
       ) : null}
       <button
@@ -78,8 +92,9 @@ export function DrawingToolbar({
         aria-label="Clear drawings"
         onClick={onClear}
       >
-        ×
+        {"\u00D7"}
       </button>
-    </nav>
+      </nav> : null}
+    </aside>
   );
 }

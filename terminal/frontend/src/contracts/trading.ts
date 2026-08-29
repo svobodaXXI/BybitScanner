@@ -28,6 +28,35 @@ export type FullCloseCommandRequest = {
   symbol: string;
 };
 
+export type CloseAllCommandRequest = {
+  client_action_id: string;
+};
+
+export type PaperOpenPosition = {
+  symbol: string;
+  position_side: "Long" | "Short";
+  position_quantity: string;
+  average_entry: string | null;
+  engaged_notional_usdt: string;
+  engaged_wv: string;
+  current_price: string | null;
+  unrealized_pnl: string | null;
+  tick_size: string;
+};
+
+export type CloseAllCommandResponse = {
+  ok: boolean;
+  client_action_id: string;
+  results: CommandResult[];
+  positions: PaperOpenPosition[];
+};
+
+export type PaperOpenPositionsResponse = {
+  ok: boolean;
+  account_id: string;
+  positions: PaperOpenPosition[];
+};
+
 export type LimitCommandRequest = {
   client_action_id: string;
   symbol: string;

@@ -124,8 +124,8 @@ describe("Smart Tape cumulative geometry", () => {
     expect(bubbles[1]).toHaveClass("sell");
     expect(screen.getByText("76")).toBeInTheDocument();
     expect(screen.getByText("1.2k")).toBeInTheDocument();
-    expect(bubbles[0].style.getPropertyValue("--print-height")).toBe("1.36rem");
-    expect(bubbles[1].style.getPropertyValue("--print-height")).toBe("2.72rem");
+    expect(bubbles[0].style.getPropertyValue("--print-height")).toBe("21.76px");
+    expect(bubbles[1].style.getPropertyValue("--print-height")).toBe("43.52px");
     expect(
       Number.parseFloat(bubbles[1].style.getPropertyValue("--print-width")),
     ).toBeGreaterThan(
@@ -153,17 +153,26 @@ describe("Smart Tape cumulative geometry", () => {
     trade.lastExecutionPrice = 1.59478;
     trade.sweepLowPrice = 1.5947;
     trade.sweepHighPrice = 1.5949;
-    render(<TapePanel book={book} centerPrice={1.5948} trades={[trade]} positionSide="Flat" compression={3} />);
+    const viewportGeometry = {
+      visibleRows: 25,
+      rowHeightPx: 20,
+      viewportHeightPx: 500,
+    };
+    render(<TapePanel book={book} centerPrice={1.5948} trades={[trade]} positionSide="Flat" compression={3} viewportGeometry={viewportGeometry} />);
 
     const bubble = document.querySelector<HTMLElement>(".trade-print-bubble");
+    const stream = document.querySelector<HTMLElement>(".prints-stream");
     const expectedRow = executionPriceToLadderRow(
       trade.lastExecutionPrice,
       trade.side,
       trade.tickSize,
       1.5948,
+      3,
+      25,
     );
     expect(bubble?.style.getPropertyValue("--print-y")).toBe(
-      `${(expectedRow ?? 0) * 1.36}rem`,
+      `${(expectedRow ?? 0) * viewportGeometry.rowHeightPx}px`,
     );
+    expect(stream?.style.getPropertyValue("--dom-viewport-height")).toBe("500px");
   });
 });

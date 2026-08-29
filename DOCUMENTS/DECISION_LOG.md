@@ -2,7 +2,7 @@
 
 Version:
 
-1.2
+1.3
 
 Date:
 
@@ -396,3 +396,50 @@ consequences:
 * migration proceeds through independently verified and revertible phases;
 * no production scanner behavior or Project Sync migration implementation is authorized by this decision;
 * Phase 0 records the design only; implementation remains NOT_STARTED.
+
+---
+
+## DECISION-008
+
+title:
+
+Central Always-On VPS Development and Runtime Direction
+
+date:
+
+2026-08-28
+
+status:
+
+ACCEPTED / PLANNED / NOT IMPLEMENTED
+
+category:
+
+Development Operations / Deployment Architecture
+
+context:
+
+Development and runtime currently depend on a user's Windows PC being available. The project must support
+persistent work from the normal PC, another computer or a phone without that home PC remaining powered on. The
+exact rented server has not been inspected, so adequacy cannot be assumed.
+
+decision:
+
+After the current logical frontend/Trading Workspace stage is completed, manually accepted and checkpointed,
+migrate development to the rented VPS as the central persistent environment. Keep separate DEV and PROD
+workspaces, controlled promotion into PROD, direct SSH access, secrets outside source, production credentials
+restricted from ordinary DEV/Codex access, and non-root least-privilege operation by default. Codex, tests, builds
+and Git run on the VPS repository; model inference remains with OpenAI and is not locally hosted.
+
+rationale:
+
+This removes dependence on one home computer, enables continuous remote work/operation, and creates a safer
+foundation for the Scanner, Trading Workspace services and eventually the Robot.
+
+consequences:
+
+* migration follows, and does not interrupt, completion and checkpoint of the current logical stage;
+* server inspection precedes final paths, services, capacity or suitability claims;
+* Codex may change DEV, while PROD changes only through controlled deployment/promotion;
+* live trading credentials and Robot runtime require additional capacity/security validation;
+* this decision implements no migration or production deployment.

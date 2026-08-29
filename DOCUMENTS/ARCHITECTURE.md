@@ -2,7 +2,7 @@
 
 Version:
 
-5.0
+5.1
 
 Date:
 
@@ -2926,6 +2926,64 @@ Geometry Filter max_error:
 
 ---
 
+# CENTRAL_VPS_DEVELOPMENT_AND_RUNTIME_TARGET
+
+Status:
+
+PLANNED / APPROVED DIRECTION
+
+After the current logical Trading Workspace stage is completed, manually accepted and checkpointed,
+BybitScanner is intended to move from dependence on one powered-on home Windows PC to a central persistent,
+normally Linux-based VPS. The rented server's suitability remains unconfirmed until its hosting type, operating
+system, CPU, RAM, storage, network and administrative access are inspected.
+
+```text
+VPS
+|
++-- Git
++-- Python
++-- Node.js / npm
++-- Codex CLI
+|
++-- DEV BybitScanner workspace
++-- PROD BybitScanner workspace
++-- protected secrets / runtime configuration
+```
+
+Codex CLI/runtime will execute on the VPS against repository files physically stored there. Shell commands,
+tests, builds and Git operations will run in that environment, while model inference remains an OpenAI service;
+this does not introduce a locally hosted OpenAI model.
+
+```text
+GitHub
+   ^
+   |
+DEV repository on VPS
+   ^
+   |
+Codex / tests / build
+   ^
+   |
+phone or PC remote control/access
+```
+
+Work must be possible from the normal PC, another computer and a phone over mobile internet without the home PC
+remaining powered on. SSH remains a viable direct administrative/development path; no proprietary mobile
+transport is architecturally mandatory.
+
+DEV and PROD are separate trust and change domains. Conceptual paths are `/srv/bybitscanner-dev` and
+`/srv/bybitscanner-prod`; exact paths are deferred until inspection. Codex may change DEV and run tests, builds
+and PAPER/development services there. PROD is a stable verified deployment updated only by an explicit controlled
+promotion step; active Codex development must not edit the live production trading runtime directly.
+
+Secrets and runtime configuration remain outside source. Production exchange credentials must not be
+unnecessarily exposed to DEV or Codex, future real Bybit credentials require an additional security review, and
+least privilege is mandatory. Unrestricted root access is not the normal Codex workflow. Subject to capacity and
+security validation, the VPS may eventually host the Scanner, Trading Workspace services and Robot. No VPS
+migration or production deployment is implemented by this record.
+
+---
+
 # EVOLUTION_STATE
 
 Completed:
@@ -3108,50 +3166,20 @@ error_mean > max_error
 
 from:
 
-ARCHITECTURE v4.9
+ARCHITECTURE v5.0
 
 to:
 
-ARCHITECTURE v5.0
+ARCHITECTURE v5.1
 
 reason:
 
-* проведена фактическая runtime-проверка
-  Geometry Candidate Filtering;
-* подтверждён корректный кандидат
-  с error_mean = 0.0;
-* подтверждён корректный кандидат
-  с error_mean = 0.06;
-* подтверждена граничная точка
-  error_mean = 1.0;
-* подтверждено прохождение
-  кандидата при error_mean == max_error;
-* подтверждено отклонение
-  кандидата при error_mean = 1.004;
-* подтверждено фактическое условие
-  error_mean <= max_error;
-* явно зафиксирована
-  включительная верхняя граница
-  Candidate Filter;
-* добавлен Geometry Filter
-  boundary verification;
-* добавлено правило 12
-  Dependency Rules;
-* сохранены Geometry Validation
-  и Validation Gate;
-* сохранён Geometry Ranking
-  после Validation Gate;
-* сохранён Pipeline Engine 3.3;
-* сохранены 12 canonical stages;
-* сохранён PipelineRegistry как
-  Single Source Of Truth;
-* сохранён PipelineExecutor как
-  Single Execution Contour;
-* сохранён PipelineReport как
-  canonical report model;
-* сохранён Migration Control
-  Refinement как текущий
-  архитектурный фокус.
+* recorded the approved central always-on VPS target;
+* established mandatory DEV/PROD isolation and controlled promotion;
+* preserved SSH and multi-device access as architectural requirements;
+* established least-privilege and secret-isolation boundaries;
+* kept exact server paths, capacity and suitability open pending inspection;
+* recorded migration as planned after the current logical stage and not yet implemented.
 
 ---
 

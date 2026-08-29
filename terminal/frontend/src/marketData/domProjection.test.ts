@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { NormalizedOrderBook } from "../contracts/marketData";
 import {
   DOM_COMPRESSION,
+  domViewportGeometry,
   dragDeltaToCenterStep,
   executionPriceToLadderRow,
   priceToLadderRow,
   projectDomBook,
   projectPriceToDisplayBucket,
   projectSweepCenterRow,
+  visibleDomRowsForHeight,
 } from "./domProjection";
 
 const sparseBook = (bestAsk = 0.0925): NormalizedOrderBook => ({
@@ -26,6 +28,30 @@ const sparseBook = (bestAsk = 0.0925): NormalizedOrderBook => ({
 });
 
 describe("continuous DOM x3 price ladder", () => {
+  it("fills the viewport exactly with an effective row height near canonical", () => {
+    const geometry = domViewportGeometry(500, 21.76);
+    expect(geometry.visibleRows).toBe(23);
+    expect(geometry.rowHeightPx).toBeCloseTo(21.7391304348, 10);
+    expect(geometry.visibleRows * geometry.rowHeightPx).toBeCloseTo(
+      geometry.viewportHeightPx,
+      10,
+    );
+  });
+
+  it("derives and projects a responsive row count beyond the historical 16", () => {
+    expect(visibleDomRowsForHeight(544, 21.76)).toBe(25);
+    const projection = projectDomBook(sparseBook(), 0.0924, 3, 25);
+    expect(projection.levels).toHaveLength(25);
+    expect(projection.levels[0].price).toBeCloseTo(0.09276, 8);
+    expect(projection.levels.at(-1)?.price).toBeCloseTo(0.09204, 8);
+    expect(projection.levels[12].price).toBeCloseTo(0.0924, 8);
+  });
+
+  it("safely clamps measured row counts", () => {
+    expect(visibleDomRowsForHeight(10, 20)).toBe(2);
+    expect(visibleDomRowsForHeight(10_000, 20)).toBe(200);
+  });
+
   it("keeps empty spread rows and continuous fixed price labels", () => {
     const projection = projectDomBook(sparseBook(), 0.0924);
     const spread = projection.levels.filter(
@@ -147,6 +173,22 @@ describe("continuous DOM x3 price ladder", () => {
     const before = executionPriceToLadderRow(0.09233, "BUY", 0.00001, 0.0924);
     const after = executionPriceToLadderRow(0.09233, "BUY", 0.00001, 0.09243);
     expect(after).toBe((before ?? 0) + 1);
+  });
+
+  it("keeps Tape and DOM price-to-Y geometry identical for non-16 row counts", () => {
+    const visibleRows = 25;
+    const projection = projectDomBook(sparseBook(), 0.0924, 3, visibleRows);
+    const displayPrice = projectPriceToDisplayBucket(0.09233, "BUY", 0.00001);
+    const domRow = projection.levels.findIndex((level) => level.price === displayPrice);
+    const tapeOffset = executionPriceToLadderRow(
+      0.09233,
+      "BUY",
+      0.00001,
+      0.0924,
+      3,
+      visibleRows,
+    );
+    expect(tapeOffset).toBeCloseTo(domRow - (visibleRows - 1) / 2, 10);
   });
 
   it("moves the ladder in the same direction as the pointer drag", () => {
