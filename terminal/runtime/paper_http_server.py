@@ -39,6 +39,7 @@ from terminal.domain.models import Price, Quantity, Symbol
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.instrument_registry import InstrumentRegistry
+from terminal.market_data.workspace_controller import WorkspaceController
 from terminal.runtime.paper_runtime import PaperRuntime
 
 
@@ -993,8 +994,26 @@ class WorkspaceMarketDataManager:
         self._readiness_timeout = readiness_timeout
         self._lock = threading.RLock()
         self._switch_lock = threading.Lock()
+        self._controller = (
+            WorkspaceController(hub, initial, self._activate_hub_context)
+            if hub is not None else None
+        )
+
+    def _activate_hub_context(
+        self, previous: SymbolContext, replacement: SymbolContext,
+    ) -> None:
+        self._provider.set_buffer(replacement.public_orderbook)
+        previous.public_orderbook.set_update_consumer(None)
+        replacement.public_orderbook.set_update_consumer(
+            self._runtime.enqueue_book_update,
+        )
 
     def switch(self, symbol: str) -> MarketDataSession:
+        if self._controller is not None:
+            try:
+                return self._controller.switch(symbol, self._readiness_timeout)
+            except LookupError as exc:
+                raise ValueError("unsupported symbol") from exc
         normalized = symbol.strip().upper()
         with self._switch_lock:
             with self._lock:
@@ -1034,6 +1053,8 @@ class WorkspaceMarketDataManager:
             return replacement
 
     def get_active(self, symbol: str) -> tuple[MarketDataSession, int]:
+        if self._controller is not None:
+            return self._controller.get_active(symbol)
         normalized = symbol.strip().upper()
         with self._lock:
             if normalized != self._active.symbol:
@@ -1041,6 +1062,8 @@ class WorkspaceMarketDataManager:
             return self._active, self._generation
 
     def is_current(self, session: MarketDataSession, generation: int) -> bool:
+        if self._controller is not None:
+            return self._controller.is_current(session, generation)
         with self._lock:
             return self._active is session and self._generation == generation
 
@@ -1048,8 +1071,23 @@ class WorkspaceMarketDataManager:
     def instruments(self) -> list[dict[str, str]]:
         return self._instruments.api_projection()
 
+    @property
+    def workspace_state(self) -> object:
+        if self._controller is None:
+            return None
+        return self._controller.state()
+
+    def ensure_initial_ready(self) -> MarketDataSession:
+        if self._controller is not None:
+            return self._controller.ensure_initial_ready(self._readiness_timeout)
+        if not self._active.wait_until_ready(self._readiness_timeout):
+            raise TimeoutError("Initial market data did not become READY")
+        return self._active
+
     def close(self) -> None:
         if self._hub is not None:
+            if self._controller is not None:
+                self._controller.close()
             self._hub.close()
         else:
             with self._lock:
@@ -1601,6 +1639,7 @@ def main() -> None:
     market_data = WorkspaceMarketDataManager(
         instruments, book_provider, runtime, initial_market, hub=hub,
     )
+    market_data.ensure_initial_ready()
 
     server = ThreadingHTTPServer((HOST, port), PaperHttpHandler)
     server.runtime = runtime

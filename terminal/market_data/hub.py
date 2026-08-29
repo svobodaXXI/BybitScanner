@@ -40,6 +40,9 @@ class SymbolContext:
     public_klines: dict[str, object]
     generation: int = 0
     subscription_state: str = "NOT_SUBSCRIBED"
+    book_subscription_state: str = "NOT_SUBSCRIBED"
+    trades_subscription_state: str = "NOT_SUBSCRIBED"
+    trade_bootstrap_complete: bool = False
     reconnect_count: int = 0
     last_error: str | None = None
     created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
@@ -59,6 +62,9 @@ class SymbolContext:
             "symbol": self.symbol,
             "state": "READY" if book.get("state") == "READY" else "NOT_READY",
             "subscription_state": self.subscription_state,
+            "book_subscription_state": self.book_subscription_state,
+            "trades_subscription_state": self.trades_subscription_state,
+            "trade_bootstrap_complete": self.trade_bootstrap_complete,
             "reconnect_count": self.reconnect_count,
             "last_error": self.last_error,
             "last_book_ts": book.get("receivedAt", 0),
@@ -131,6 +137,11 @@ class MarketDataHub:
             raise LookupError(f"symbol context is not subscribed: {normalized}")
         return context
 
+    def has_context(self, symbol: str) -> bool:
+        normalized = self._instruments.get(symbol).symbol
+        with self._lock:
+            return normalized in self._contexts
+
     def list_contexts(self) -> tuple[SymbolContext, ...]:
         with self._lock:
             return tuple(self._contexts[symbol] for symbol in sorted(self._contexts))
@@ -140,6 +151,13 @@ class MarketDataHub:
             if self._contexts.get(context.symbol) is not context:
                 return
             del self._contexts[context.symbol]
+            ws = self._ws
+        if ws is not None:
+            try:
+                with self._send_lock:
+                    ws.send(json.dumps({"op": "unsubscribe", "args": self._topics(context)}))
+            except Exception:
+                pass
         context.close()
 
     def close(self) -> None:
@@ -167,8 +185,15 @@ class MarketDataHub:
 
     def _send_subscribe(self, ws, context: SymbolContext) -> None:
         context.subscription_state = "SUBSCRIBING"
+        context.book_subscription_state = "SUBSCRIBING"
+        context.trades_subscription_state = "SUBSCRIBING"
+        context.trade_bootstrap_complete = False
         with self._send_lock:
-            ws.send(json.dumps({"op": "subscribe", "args": self._topics(context)}))
+            ws.send(json.dumps({
+                "op": "subscribe",
+                "req_id": f"workspace:{context.symbol}",
+                "args": self._topics(context),
+            }))
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -179,6 +204,9 @@ class MarketDataHub:
                 for context in contexts:
                     context.public_orderbook.mark_connecting()
                     context.subscription_state = "CONNECTING"
+                    context.book_subscription_state = "CONNECTING"
+                    context.trades_subscription_state = "CONNECTING"
+                    context.trade_bootstrap_complete = False
                 ws = self._connection_factory(self.URL, timeout=1)
                 with self._lock:
                     self._ws = ws
@@ -197,6 +225,9 @@ class MarketDataHub:
                         contexts = tuple(self._contexts.values())
                     for context in contexts:
                         context.subscription_state = "DISCONNECTED"
+                        context.book_subscription_state = "DISCONNECTED"
+                        context.trades_subscription_state = "DISCONNECTED"
+                        context.trade_bootstrap_complete = False
                         context.reconnect_count += 1
                         context.last_error = type(exc).__name__
                         context.public_orderbook.mark_disconnected()
@@ -216,6 +247,7 @@ class MarketDataHub:
             return
         topic = message.get("topic")
         if not isinstance(topic, str):
+            self._apply_subscription_ack(message)
             return
         symbol = topic.rsplit(".", 1)[-1]
         with self._lock:
@@ -224,10 +256,41 @@ class MarketDataHub:
             return
         if topic.startswith("orderbook."):
             applied = context.public_orderbook.apply_message(message)
+            component = "book"
         elif topic.startswith("publicTrade."):
             applied = context.public_trades.apply_message(message)
+            component = "trades"
         else:
             return
         if applied == "APPLIED":
             context.subscription_state = "SUBSCRIBED"
+            if component == "book":
+                context.book_subscription_state = "SUBSCRIBED"
+            else:
+                context.trades_subscription_state = "SUBSCRIBED"
+                context.trade_bootstrap_complete = True
             context.last_error = None
+
+    def _apply_subscription_ack(self, message: dict) -> None:
+        if message.get("op") != "subscribe":
+            return
+        request_id = message.get("req_id")
+        if not isinstance(request_id, str) or not request_id.startswith("workspace:"):
+            return
+        symbol = request_id.removeprefix("workspace:")
+        with self._lock:
+            context = self._contexts.get(symbol)
+        if context is None:
+            return
+        if message.get("success") is True:
+            context.subscription_state = "SUBSCRIBED"
+            context.book_subscription_state = "SUBSCRIBED"
+            context.trades_subscription_state = "SUBSCRIBED"
+            context.trade_bootstrap_complete = True
+            context.last_error = None
+        else:
+            context.subscription_state = "DEGRADED"
+            context.book_subscription_state = "DEGRADED"
+            context.trades_subscription_state = "DEGRADED"
+            context.trade_bootstrap_complete = False
+            context.last_error = str(message.get("ret_msg") or "subscription_rejected")

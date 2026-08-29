@@ -46,7 +46,12 @@ class _Book:
         self.consumer = consumer
 
     def snapshot(self):
-        return {"state": self.state, "receivedAt": 1, "sequence": 2, "version": 3}
+        ready = self.state == "READY"
+        return {
+            "state": self.state, "receivedAt": 1, "sequence": 2, "version": 3,
+            "updateId": 4, "bids": [{"price": "1", "size": "1"}] if ready else [],
+            "asks": [{"price": "2", "size": "1"}] if ready else [],
+        }
 
     def mark_connecting(self):
         self.state = "CONNECTING"
@@ -80,7 +85,7 @@ class _Kline:
         self.closed = False
 
     def snapshot(self):
-        return {"receivedAt": 4}
+        return {"receivedAt": 4, "state": "READY", "candles": [{"startTime": 1}]}
 
     def close(self):
         self.closed = True
@@ -177,6 +182,21 @@ def test_hub_rejects_unsupported_symbol_without_creating_context():
     assert hub.list_contexts() == ()
 
 
+def test_subscription_ack_makes_quiet_trades_bootstrap_explicitly_valid():
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *args, **kwargs: None)
+    context = hub.subscribe("BTCUSDT")
+    assert context.trade_bootstrap_complete is False
+
+    hub._dispatch({
+        "op": "subscribe", "req_id": "workspace:BTCUSDT", "success": True,
+    })
+
+    assert context.trades_subscription_state == "SUBSCRIBED"
+    assert context.trade_bootstrap_complete is True
+    assert context.public_trades.snapshot_after(0) == []
+    hub.close()
+
+
 def test_hub_reconnects_and_resubscribes_existing_contexts():
     first = _FailingWebSocket()
     second = _WebSocket()
@@ -205,6 +225,9 @@ def test_workspace_switch_reuses_hub_context_and_preserves_previous_context():
     ong = hub.subscribe("ONGUSDT")
     btc.public_orderbook.state = "READY"
     ong.public_orderbook.state = "READY"
+    for context in (btc, ong):
+        context.trades_subscription_state = "SUBSCRIBED"
+        context.trade_bootstrap_complete = True
     provider = _Provider(btc.public_orderbook)
     manager = WorkspaceMarketDataManager(
         _Registry(), provider, _Runtime(), btc, hub=hub, readiness_timeout=0.01,
@@ -226,6 +249,7 @@ def test_workspace_switch_reuses_hub_context_and_preserves_previous_context():
 TESTS = (
     test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
     test_hub_rejects_unsupported_symbol_without_creating_context,
+    test_subscription_ack_makes_quiet_trades_bootstrap_explicitly_valid,
     test_hub_reconnects_and_resubscribes_existing_contexts,
     test_workspace_switch_reuses_hub_context_and_preserves_previous_context,
 )
