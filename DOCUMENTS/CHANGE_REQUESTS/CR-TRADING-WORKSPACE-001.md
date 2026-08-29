@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.71",
+  "revision": "1.72",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -455,7 +455,8 @@
     {"revision": "1.68", "reason": "Implemented one canonical Workspace symbol-switch path shared by authoritative ticker autocomplete and confirmed Open Positions navigation, generalized the real backend active market-data session beyond ONGUSDT, added stale-source guards and kept real-phone acceptance pending", "date": "2026-08-29"},
     {"revision": "1.69", "reason": "Implemented the bounded real-phone symbol-switch layout refinement by moving ticker/timeframe into Chart, account control beside BUY/SELL LIMITS, shrinking adaptive chart label typography, reallocating the removed top strip height, and fixing clipped authoritative DOM own-order dots while keeping phone acceptance pending", "date": "2026-08-29"},
     {"revision": "1.70", "reason": "Recorded the human-approved autonomous Android manual terminal future direction as a planning-only track without authorizing implementation or changing the immediate Workspace acceptance path", "date": "2026-08-30"},
-    {"revision": "1.71", "reason": "Recorded the human-approved Market Data Hub plus multiplexed Workspace stream architecture correction after backend authority passed but real-phone transport acceptance failed; promoted the former deferred consolidation, preserved fail-closed generation authority, and defined registry, readiness, health, migration and chaos-test contracts without implementing them", "date": "2026-08-30"}
+    {"revision": "1.71", "reason": "Recorded the human-approved Market Data Hub plus multiplexed Workspace stream architecture correction after backend authority passed but real-phone transport acceptance failed; promoted the former deferred consolidation, preserved fail-closed generation authority, and defined registry, readiness, health, migration and chaos-test contracts without implementing them", "date": "2026-08-30"},
+    {"revision": "1.72", "reason": "Completed documentation-only M0 by inventorying the current per-symbol workers and three-SSE browser topology, recording bounded BTCUSDT and ONGUSDT payload/rate measurements, and defining target snapshot/delta, readiness, health, efficiency, additive migration and later chaos-acceptance contracts without implementing the Hub or changing transport/PAPER semantics", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3730,3 +3731,20 @@ The exact next work item is
 `MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION`, beginning with roadmap M0.
 This revision changes documentation only and does not claim or authorize that the Hub or multiplexed stream is
 already implemented.
+
+## 79. M0 contract and measurement baseline
+
+Revision 1.72 records `M0 — CONTRACT + MEASUREMENT BASELINE` as complete. The owning inventory, 15-second
+BTCUSDT/ONGUSDT payload-only measurements, exact resend behavior, target `workspace_snapshot` and incremental
+event contracts, composite readiness barrier, health model, measurement-based efficiency goals, additive migration
+sequence and later deterministic/chaos acceptance categories are in roadmap sections 10.1–10.4.
+
+The measured current browser path uses three SSE connections. BTCUSDT produced 6.600 messages/s and 452,324
+payload B/s combined; ONGUSDT produced 5.067 messages/s and 337,744 payload B/s combined. Every measured book
+message contained the full 1000 bids plus 1000 asks, and every measured 5m kline message contained the full 1000
+candles. Trade history is bootstrapped per connection and filtered to unseen aggregates thereafter; it is not resent
+on every trade event. These bounded local measurements do not prove proxy/tunnel/mobile overload or peak load.
+
+This checkpoint changes documentation only. It does not implement `InstrumentRegistry`, `MarketDataHub`,
+`SymbolContext`, `WorkspaceController`, a multiplexed WebSocket, frontend transport changes, or any PAPER/order
+semantic change. The next migration stage is M1, subject to its own authorized implementation slice and gate.

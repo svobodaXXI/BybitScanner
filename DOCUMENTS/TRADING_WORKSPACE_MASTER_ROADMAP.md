@@ -196,7 +196,7 @@ Current status:
 ## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
 Human-approved architecture correction. Current status:
-`ARCHITECTURE CORRECTION RECORDED / NOT IMPLEMENTED`.
+`M0 CONTRACT + MEASUREMENT BASELINE RECORDED / HUB NOT IMPLEMENTED`.
 
 Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
 a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
@@ -265,7 +265,8 @@ backpressure, bounded queues and slow-client eviction.
 
 Migration sequence:
 
-- M0 — preserve current authority invariants and add measurements at the proven distribution boundary.
+- M0 — COMPLETE: preserve current authority invariants and record the measured distribution-boundary baseline and
+  target projection/readiness/health contracts below.
 - M1 — introduce `InstrumentRegistry` with transport-compatible filtering and pagination tests.
 - M2 — introduce one long-lived public linear `MarketDataHub` and `SubscriptionRegistry`.
 - M3 — move book, trades, candles and health into per-symbol `SymbolContext` ownership.
@@ -274,6 +275,141 @@ Migration sequence:
 - M6 — implement one multiplexed Workspace WebSocket with bounded snapshot/delta/bootstrap contracts.
 - M7 — migrate Chart, DOM and Smart Tape together; remove their independent SSE ownership only after parity.
 - M8 — run deterministic, chaos, local-browser, proxy/tunnel and real-phone acceptance before retiring the old path.
+
+### 10.1 M0 current implementation inventory and measured baseline
+
+Measurement date: 2026-08-30. Method: an isolated local PAPER runtime on port 8876 with temporary persistence,
+followed by simultaneous direct reads of the three current SSE routes for 15 seconds per symbol. Counts are JSON
+payload bytes after the SSE `data:` prefix and exclude HTTP/TLS/tunnel overhead. Results characterize these bounded
+windows only; they do not prove tunnel or mobile overload and do not establish peak rates.
+
+Current backend ownership is per active-symbol `MarketDataSession`, recreated on a successful symbol switch:
+
+- one Bybit public linear WebSocket worker for `orderbook.1000.<symbol>`, reconstructing and retaining the
+  authoritative 1000-level-per-side L2 book;
+- one separate Bybit public linear WebSocket worker for `publicTrade.<symbol>`, retaining at most 500 aggregated
+  Tape items and also feeding the derived 15-second candle buffer;
+- five independent REST polling workers for native klines `1`, `5`, `15`, `60`, and `D`, each polling once per
+  second and retaining/sending up to 1000 candles; `15s` has no worker and is derived from public trades.
+
+The browser owns exactly three concurrent market-data `EventSource` instances for the selected symbol/timeframe:
+
+- `/api/public-orderbook/stream?symbol=<symbol>`;
+- `/api/public-trades/stream?symbol=<symbol>`;
+- `/api/public-klines/stream?symbol=<symbol>&interval=<interval>`.
+
+Symbol change closes and recreates all three. Timeframe change closes/recreates only klines. Each `onerror` closes
+its source and schedules a one-second reconnect. Native browser EventSource retry may occur before the explicit
+close handler runs, but the store itself owns the one-second retry. Source-object, selected-symbol and timeframe
+identity checks reject callbacks from replaced sources.
+
+| 15-second payload-only baseline | BTCUSDT | ONGUSDT |
+| --- | ---: | ---: |
+| Orderbook first / median subsequent payload | 72,295 / 72,296 B | 65,246 / 65,233 B |
+| Orderbook messages/s / payload bytes/s | 5.200 / 375,939 | 4.000 / 260,935 |
+| Orderbook levels per message | 1000 bids + 1000 asks | 1000 bids + 1000 asks |
+| Trades first / median subsequent payload | 1,095 / 1,095 B | 1,088 / 1,165 B |
+| Trades messages/s / payload bytes/s | 0.600 / 662 | 0.267 / 306 |
+| Trade items per measured message | 1 | 1 |
+| 5m klines first / median subsequent payload | 94,654 / 94,654 B | 95,630 / 95,630 B |
+| 5m klines messages/s / payload bytes/s | 0.800 / 75,723 | 0.800 / 76,504 |
+| Candles per message | 1000 | 1000 |
+| Combined messages/s / payload bytes/s | 6.600 / 452,324 | 5.067 / 337,744 |
+| Concurrent realtime client connections | 3 | 3 |
+
+Every orderbook update sends a full reconstructed snapshot, not a delta. Its payload carries symbol, generation,
+bids, asks, exchange timestamp, matching-engine timestamp, backend receive time, update id, sequence, state, source,
+version and best bid/ask. The backend authoritative depth and transmitted client depth are both 1000 per side; the
+default DOM renders 16 rows, with responsive rendering bounded at 2–200 total rows.
+
+Trades call `snapshot_after(0)` on every 30-ms server loop, but per-connection `seen_ids` filtering sends the
+retained items only once on connection/bootstrap and then sends only unseen aggregates. The backend retains 500;
+the frontend retains the latest 80. Therefore accumulated history is not resent on every event, but reconnect opens
+a new connection and bootstraps all then-retained items. The measured post-switch windows contained one item per
+message; quiet symbols need no fabricated trade for readiness.
+
+Every native kline refresh replaces and sends the full retained history. The measured 5m stream sent 1000 candles
+in every one of 12 messages in each window. It carries symbol, interval, tick size, candles, receive time, state,
+source, version and generation. JSON parsing CPU was not separately isolated by this probe, so no CPU percentage or
+mobile parsing-cost claim is made; repeated parsing/allocation of the measured full arrays is a direct behavioral
+fact, while its device impact remains an acceptance measurement.
+
+Backend authoritative full L2 must remain available to `LiveOrderBookProvider`, `PaperRuntime` book-update
+processing, L2-walk PAPER Market fills/VWAP/slippage, and book-correlated trade/sweep projection. Client projection
+optimization must not reduce or replace that backend truth.
+
+### 10.2 M0 target client projection contract
+
+The first event for a candidate generation is `workspace_snapshot`. It atomically carries:
+
+- `kind`, `symbol`, `workspace_generation`, snapshot/event timestamp and composite health state;
+- supported instrument metadata required by sizing and display: tick/quantity steps, precision, minimum quantity
+  and minimum notional;
+- a bounded client book projection with book update id/sequence/version, exchange/receive timestamps and best
+  bid/ask;
+- recent trade bootstrap, which may be explicitly empty-valid, with last trade sequence/identity if available;
+- candle history bootstrap for the selected timeframe with interval and candle version/source timestamp;
+- component subscription states, reconnect counts and latest errors.
+
+Incremental events are limited to `book_delta`, `trade_batch`, `candle_update`, and `health`. Every event carries
+`kind`, `symbol`, `workspace_generation`, event timestamp, component state and payload. `book_delta` additionally
+carries the base/new book version and upstream update id/sequence plus changed/removed price levels;
+`trade_batch` carries bounded new trades and stable trade identities/sequences; `candle_update` carries interval,
+candle identity/start time, candle version and whether it appends or replaces the live candle; `health` carries the
+component and composite state/observability fields. Source timestamps are mandatory where meaningful, and
+sequence/version is mandatory where the source or normalized owner supplies it. The client rejects every event
+whose symbol or generation differs from its candidate/active authority, and a book base-version or sequence break
+forces fail-closed resnapshot rather than speculative merge.
+
+### 10.3 M0 readiness and health contract
+
+`WORKSPACE_READY` requires one valid fresh sequenced orderbook snapshot, a healthy trades subscription plus a
+completed recent-trades bootstrap (including explicitly empty-valid), completed candle-history bootstrap, and a
+healthy live-candle transport. A newly arriving trade is not required. Activation is one atomic authority swap only
+after all mandatory components belong to the same candidate symbol/generation. Failure or timeout leaves the
+previous Workspace visible and authoritative, reports the switch failure explicitly and discards the candidate;
+candidate retention is not authorized until the later bounded warm-context lifecycle is implemented. A new symbol
+label must never accompany empty or prior-generation projections.
+
+Health states:
+
+- `NOT_READY`: no usable validated snapshot; projections are hidden; market-data-dependent trading is disabled;
+- `SYNCING`: subscription/bootstrap/resnapshot in progress; candidate is not visible; market-data-dependent trading
+  is disabled;
+- `READY`: all readiness-barrier components are current; all projections render and market-data-dependent PAPER
+  behavior may use authoritative backend truth;
+- `STALE`: last-known validated data may remain visibly marked, but it is not current liquidity truth and
+  market-data-dependent trading is disabled;
+- `DEGRADED`: one component has failed while others remain valid; healthy components and visibly marked last-known
+  data may render, but any action depending on the failed/stale component is disabled fail closed.
+
+Required observability is `last_book_ts`, `last_trade_ts`, `last_candle_ts`, book update id/sequence/version,
+component subscription state, reconnect count and `last_error`, plus symbol/generation. Numeric staleness thresholds
+remain `TUNABLE / MEASUREMENT-BASED`; M0 does not invent them.
+
+### 10.4 M0 efficiency goals, migration safety and later acceptance
+
+The immutable goals are one multiplexed Workspace client connection; bounded initial book projection plus deltas;
+one-time recent-trades bootstrap plus new bounded batches; and one-time candle history plus live candle updates.
+The existing DOM needs 16 rows by default and at most 200 total responsive rows, the frontend retains 80 Tape
+items, and the current chart consumes 1000 candles. Therefore provisional limits are: enough book price coverage to
+produce the current 200-row maximum at the selected compression with a measured safety margin, at most 80 recent
+trade aggregates for bootstrap, and at most 1000 selected-timeframe candles for bootstrap. Exact book level/band,
+delta-batch, queue, cadence and staleness numbers remain `TUNABLE / MEASUREMENT-BASED` and require M6 load and
+device evidence rather than arbitrary constants.
+
+Migration is additive: introduce the Hub behind existing normalized backend interfaces; keep full L2 and existing
+PAPER consumers unchanged; add bounded client projection independently; prove snapshot/delta parity, ordering and
+failure semantics before connecting the frontend; migrate Chart/DOM/Tape together to the multiplexed stream; run
+local, proxy/tunnel and real-phone acceptance; only then remove the three SSE routes and per-consumer ownership.
+No big-bang transport or PAPER rewrite is permitted.
+
+Later deterministic/chaos acceptance categories are: A→B and rapid A→B→A; stale/late generation rejection;
+missing book snapshot and candidate timeout with previous-Workspace preservation; stale/out-of-order delta,
+sequence break and resnapshot; silent/slow and duplicate trades; kline bootstrap/live failure; upstream and client
+reconnect/resume; isolated partial degradation; unsupported symbol; warm-context expiry; bounded backpressure and
+slow-client eviction; and payload/bandwidth regression against this M0 baseline. Each case must prove correct
+authority, explicit health, bounded queues/payloads and fail-closed market-data-dependent behavior.
 
 ## 11. Stage 10 — Real verification
 
