@@ -193,24 +193,87 @@ Current status:
 - the production build passed real-phone acceptance for resting DOM LIMIT placement;
 - full production-serving terminal acceptance remains open.
 
-## 10. Stage 9 — Transport consolidation only if measured
+## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
-Do not rewrite transport prematurely.
+Human-approved architecture correction. Current status:
+`ARCHITECTURE CORRECTION RECORDED / NOT IMPLEMENTED`.
 
-If phone measurements confirm connection pressure, target one multiplexed transport:
+Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
+a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
+rendered blank Chart, DOM and Smart Tape. The proven failure boundary is therefore after backend authority, in the
+backend→proxy/tunnel→mobile distribution path. Observed payloads were approximately 65 KB for book, 58 KB for
+trades and 96 KB for klines, with book traffic approximately 2 MB per six seconds. Transport overload is a supported
+root-cause candidate, not a proven exact cause.
+
+Target architecture:
 
 ```text
-one WebSocket
-  ├─ orderbook
-  ├─ trades
-  ├─ candles
-  ├─ PAPER order updates
-  └─ position/account updates
+BYBIT
+→ one long-lived public linear MarketDataHub
+→ InstrumentRegistry + SubscriptionRegistry
+→ per-symbol SymbolContext
+   - authoritative full L2
+   - trades
+   - candles
+   - health
+   - sequence/subscription state
+→ WorkspaceController
+   - requested_symbol
+   - active_symbol
+   - generation
+   - readiness barrier
+→ one multiplexed workspace client stream
+→ Chart + DOM + Smart Tape
 ```
 
-REST remains command path.
+Binding contracts:
 
-Current status: DEFERRED.
+1. An ordinary Workspace symbol switch must not recreate the exchange-facing engine.
+2. UI consumers must not own Bybit subscriptions.
+3. Symbol contexts have explicit active and bounded-warm lifecycle states.
+4. Switch success requires Workspace readiness: a fresh sequenced book, healthy trades or a recent bootstrap, and
+   healthy candle history/live state.
+5. The previous Workspace remains visible and working until `WORKSPACE_READY` for the candidate generation.
+6. Candidate failure preserves the previous Workspace and active authority.
+7. The backend owns authoritative full L2; the frontend receives a bounded snapshot followed by sequenced deltas.
+8. Trades bootstrap once and then deliver only new trades in bounded batches.
+9. Candle history is delivered once and followed by live candle updates.
+10. The former deferred transport consolidation is promoted to one multiplexed Workspace WebSocket, replacing
+    separate Workspace market-data SSE streams. REST remains the command path.
+11. Every event carries symbol, generation, kind, source/event timestamps, and state; sequence/version is mandatory
+    where the source supplies it.
+12. Chart, DOM and Smart Tape consume one generation and cannot maintain independent active-symbol authority.
+13. The previous symbol remains warm for a bounded grace period so A→B→A does not require avoidable cold startup.
+14. Health exposes `NOT_READY`, `SYNCING`, `READY`, `STALE`, and `DEGRADED`, plus timestamps, sequence,
+    reconnect/subscription state and the latest error.
+15. Components are isolated: kline failure must not destroy healthy book/trades, and a quiet Tape must not make DOM
+    unavailable.
+16. Existing explicit switch authority, stale-generation rejection, generation identity, candidate preparation,
+    previous-Workspace preservation and fail-closed behavior remain mandatory.
+
+`InstrumentRegistry` must admit only instruments that the Workspace transports can serve: linear, `Trading`,
+LinearPerpetual-compatible, `quoteCoin=USDT`, complete tick/quantity/precision/minimum constraints, and correct
+pagination. Autocomplete must expose only this supported Workspace universe.
+
+An ambiguous, stale or unsequenced book is not current liquidity truth. The UI may retain a last-known view only
+when visibly marked `STALE` or `DEGRADED`; uncertainty must not silently become a blank or READY Workspace.
+
+Future deterministic and chaos coverage must include stale/out-of-order book deltas, sequence gaps and resnapshot,
+duplicate trades, slow/quiet trades, kline-only failure, one-component reconnect, candidate timeout/failure,
+rapid A→B→A switching, late prior-generation events, warm-context expiry, client reconnect/resume, proxy/tunnel
+backpressure, bounded queues and slow-client eviction.
+
+Migration sequence:
+
+- M0 — preserve current authority invariants and add measurements at the proven distribution boundary.
+- M1 — introduce `InstrumentRegistry` with transport-compatible filtering and pagination tests.
+- M2 — introduce one long-lived public linear `MarketDataHub` and `SubscriptionRegistry`.
+- M3 — move book, trades, candles and health into per-symbol `SymbolContext` ownership.
+- M4 — add `WorkspaceController` requested/active generation and composite readiness barrier.
+- M5 — add bounded active/warm context lifecycle and A→B→A reuse.
+- M6 — implement one multiplexed Workspace WebSocket with bounded snapshot/delta/bootstrap contracts.
+- M7 — migrate Chart, DOM and Smart Tape together; remove their independent SSE ownership only after parity.
+- M8 — run deterministic, chaos, local-browser, proxy/tunnel and real-phone acceptance before retiring the old path.
 
 ## 11. Stage 10 — Real verification
 
@@ -273,26 +336,23 @@ Then audit:
 
 Do not jump ahead.
 
-Accepted current checkpoint:
+Current checkpoint:
 
 ```text
-WORKSPACE SYMBOL SWITCHING + PHONE REFINEMENT — IMPLEMENTED / AUTOMATED PASS
+WORKSPACE SYMBOL SWITCHING — BACKEND AUTHORITY FIX AUTOMATED PASS / REAL-PHONE TRANSPORT ACCEPTANCE FAIL
 ```
 
 Open next work item:
 
 ```text
-REAL-PHONE WORKSPACE SYMBOL SWITCHING ACCEPTANCE
+MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 ```
 
-Open Positions real-phone acceptance is `PASS`. Symbol switching plus its bounded phone-review refinement are
-implemented: ticker/timeframe are inside Chart, account switching is beside BUY/SELL LIMITS, removed header height
-belongs to the common market row, and clipped authoritative DOM own-order dots are corrected. On the real phone,
-verify case-insensitive autocomplete; BTCUSDT and ONGUSDT Chart/DOM/Tape authority; full-symbol internal identity;
-card confirmation/Cancel and close-`×` isolation; same-symbol return; selected-symbol PAPER projection; visible
-one-per-order concrete-cancel DOM dots including same-price orders; and the refined layout/price-axis readability.
-Manual/real-phone acceptance remains `PENDING`. Aggressive DOM Limit confirmation and Done/Enter focus progression
-remain separately deferred.
+Open Positions real-phone acceptance remains `PASS`, and the backend symbol-authority/generation correction has
+automated proof. The real-phone ONG result is nevertheless a transport acceptance failure: Chart, DOM and Tape were
+blank despite a live READY backend. Section 10 is now the owning corrective architecture and M0 is its exact next
+implementation step. The Hub and multiplexed stream are not implemented. Aggressive DOM Limit confirmation and
+Done/Enter focus progression remain separately deferred.
 
 ## 15. Engineering completion criterion
 
@@ -309,7 +369,7 @@ Status: `FUTURE / PLANNING ONLY / NOT_IMPLEMENTATION_AUTHORIZED`.
 
 This is a separate future track after the current terminal completion and acceptance path. It does not replace the
 desktop/web or Telegram Mini App prototype, does not start Android implementation, and does not change section 14's
-immediate next step: `REAL-PHONE WORKSPACE SYMBOL SWITCHING ACCEPTANCE`.
+immediate next step: `MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION`.
 
 ### 16.1 Product intent and autonomy
 

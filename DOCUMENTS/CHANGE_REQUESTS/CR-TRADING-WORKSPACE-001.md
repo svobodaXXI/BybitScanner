@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.70",
+  "revision": "1.71",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -453,7 +453,9 @@
     {"revision": "1.66", "reason": "Refined the real-phone Open Positions presentation with compact labeled rows, PnL percent and the header Close All control while keeping acceptance pending", "date": "2026-08-29"},
     {"revision": "1.67", "reason": "Recorded real-phone PASS and completion acceptance for account-wide PAPER Open Positions, and authorized WORKSPACE SYMBOL SWITCHING as the exact next implementation slice", "date": "2026-08-29"},
     {"revision": "1.68", "reason": "Implemented one canonical Workspace symbol-switch path shared by authoritative ticker autocomplete and confirmed Open Positions navigation, generalized the real backend active market-data session beyond ONGUSDT, added stale-source guards and kept real-phone acceptance pending", "date": "2026-08-29"},
-    {"revision": "1.69", "reason": "Implemented the bounded real-phone symbol-switch layout refinement by moving ticker/timeframe into Chart, account control beside BUY/SELL LIMITS, shrinking adaptive chart label typography, reallocating the removed top strip height, and fixing clipped authoritative DOM own-order dots while keeping phone acceptance pending", "date": "2026-08-29"}
+    {"revision": "1.69", "reason": "Implemented the bounded real-phone symbol-switch layout refinement by moving ticker/timeframe into Chart, account control beside BUY/SELL LIMITS, shrinking adaptive chart label typography, reallocating the removed top strip height, and fixing clipped authoritative DOM own-order dots while keeping phone acceptance pending", "date": "2026-08-29"},
+    {"revision": "1.70", "reason": "Recorded the human-approved autonomous Android manual terminal future direction as a planning-only track without authorizing implementation or changing the immediate Workspace acceptance path", "date": "2026-08-30"},
+    {"revision": "1.71", "reason": "Recorded the human-approved Market Data Hub plus multiplexed Workspace stream architecture correction after backend authority passed but real-phone transport acceptance failed; promoted the former deferred consolidation, preserved fail-closed generation authority, and defined registry, readiness, health, migration and chaos-test contracts without implementing them", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3676,3 +3678,55 @@ lifecycle/background restrictions, security, then-current Bybit integration and 
 distribution/signing/update strategy, and observability. Preliminary phases A0–A7 cover research, UI packaging,
 autonomous public data, private read-only reconciliation, optional PAPER validation, restricted live commands,
 protection/recovery hardening, and real-device acceptance. This ordering remains preliminary.
+
+## 78. Market Data Hub and multiplexed Workspace stream architecture correction
+
+Revision 1.71 records the human-approved checkpoint
+`MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION RECORDED / NOT IMPLEMENTED`.
+The owning architecture, contracts, failure evidence, migration M0–M8 and future verification matrix are in
+`DOCUMENTS/TRADING_WORKSPACE_MASTER_ROADMAP.md` section
+`MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION`.
+
+Backend symbol authority and generation isolation have automated PASS evidence. Live ONG probes reached a READY
+1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed, while the real phone still showed
+blank Chart, DOM and Smart Tape. The narrow proven failure boundary is therefore backend→proxy/tunnel→mobile
+distribution after backend authority. Approximately 65 KB book, 58 KB trades and 96 KB klines payloads, with
+approximately 2 MB of book traffic per six seconds, make transport overload a candidate but do not prove it as the
+exact cause.
+
+The approved target is one long-lived public linear `MarketDataHub`, an `InstrumentRegistry` and
+`SubscriptionRegistry`, per-symbol active/warm `SymbolContext` ownership for authoritative full L2, trades,
+candles, health and sequence/subscription state, one readiness-gated `WorkspaceController`, and one multiplexed
+Workspace client WebSocket consumed by Chart, DOM and Smart Tape as a single symbol/generation authority.
+
+Switch success requires a fresh sequenced book, healthy trades or recent bootstrap, and healthy candle history/live
+state. The previous Workspace remains visible and working until candidate `WORKSPACE_READY`; candidate failure
+preserves it. Backend full L2 is projected as a bounded client snapshot plus sequenced deltas; trades and candles
+use one-time bootstrap/history followed by bounded new/live updates. Every event carries symbol, generation, kind,
+timestamps and state, plus sequence/version where applicable. Previous-symbol warm grace supports rapid A→B→A.
+
+Health is explicit as `NOT_READY`, `SYNCING`, `READY`, `STALE` or `DEGRADED`, with timestamps, sequence,
+reconnect/subscription state and latest error. Kline failure cannot destroy healthy book/trades; a quiet Tape cannot
+make DOM unavailable. Ambiguous, stale or unsequenced book state is not current liquidity truth; last-known UI may
+remain only with visible stale/degraded marking. Existing explicit switch authority, stale-generation rejection,
+generation identity, candidate preparation, previous-Workspace preservation and fail-closed behavior remain
+binding.
+
+`InstrumentRegistry` admits only transport-supported linear `Trading`, LinearPerpetual-compatible USDT-quoted
+instruments with complete tick, quantity, precision and minimum constraints and correct pagination. Autocomplete
+must expose only that supported universe. UI consumers do not own exchange subscriptions, and ordinary symbol
+switching does not recreate the exchange-facing engine.
+
+The former measured-only transport consolidation is now promoted to required architecture: one multiplexed
+Workspace WebSocket replaces separate Workspace market-data SSE streams after migration parity; REST remains the
+command path. Migration must proceed through roadmap M0–M8 and prove sequence-gap recovery, stale/out-of-order
+isolation, duplicate/quiet trade handling, component failure isolation, candidate failure, rapid A→B→A, warm expiry,
+late-generation rejection, reconnect/resume, bounded backpressure and slow-client behavior, followed by local,
+proxy/tunnel and real-phone acceptance.
+
+Current status is
+`WORKSPACE SYMBOL SWITCHING — BACKEND AUTHORITY FIX AUTOMATED PASS / REAL-PHONE TRANSPORT ACCEPTANCE FAIL`.
+The exact next work item is
+`MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION`, beginning with roadmap M0.
+This revision changes documentation only and does not claim or authorize that the Hub or multiplexed stream is
+already implemented.
