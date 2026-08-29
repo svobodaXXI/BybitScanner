@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.74",
+  "revision": "1.75",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -458,7 +458,8 @@
     {"revision": "1.71", "reason": "Recorded the human-approved Market Data Hub plus multiplexed Workspace stream architecture correction after backend authority passed but real-phone transport acceptance failed; promoted the former deferred consolidation, preserved fail-closed generation authority, and defined registry, readiness, health, migration and chaos-test contracts without implementing them", "date": "2026-08-30"},
     {"revision": "1.72", "reason": "Completed documentation-only M0 by inventorying the current per-symbol workers and three-SSE browser topology, recording bounded BTCUSDT and ONGUSDT payload/rate measurements, and defining target snapshot/delta, readiness, health, efficiency, additive migration and later chaos-acceptance contracts without implementing the Hub or changing transport/PAPER semantics", "date": "2026-08-30"},
     {"revision": "1.73", "reason": "Implemented and verified M1 as one authoritative backend InstrumentRegistry with complete Bybit linear pagination, strict Workspace-compatible filtering, Decimal-safe normalized metadata, duplicate/cursor-loop protection, atomic snapshot publication and previous-snapshot preservation; routed instruments API, Workspace switching and PAPER lookup through that registry without implementing M2", "date": "2026-08-30"},
-    {"revision": "1.74", "reason": "Implemented and verified M2 as one long-lived backend MarketDataHub owning a shared Bybit public linear WebSocket, multi-symbol book/trade subscriptions, normalized dispatch, reconnect/resubscribe and reusable SymbolContexts; preserved generation-gated Workspace/PAPER/HTTP compatibility without implementing multiplexed frontend transport or later readiness/lifecycle stages", "date": "2026-08-30"}
+    {"revision": "1.74", "reason": "Implemented and verified M2 as one long-lived backend MarketDataHub owning a shared Bybit public linear WebSocket, multi-symbol book/trade subscriptions, normalized dispatch, reconnect/resubscribe and reusable SymbolContexts; preserved generation-gated Workspace/PAPER/HTTP compatibility without implementing multiplexed frontend transport or later readiness/lifecycle stages", "date": "2026-08-30"},
+    {"revision": "1.75", "reason": "Implemented and verified M3 as one backend WorkspaceController owning requested/active symbol authority, generation, pending candidate, composite book/trades/candle readiness, explicit switch failure and bounded warm-context reuse/expiry while preserving Hub ownership, PAPER semantics and existing SSE compatibility", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3781,3 +3782,22 @@ Native candle buffers retain their existing REST refresh path inside each contex
 warm-context eviction, composite readiness/WorkspaceController, client book deltas or the multiplexed frontend
 WebSocket. Focused Hub tests prove one connection across multiple symbols, deterministic dispatch, unsupported
 symbol rejection, reconnect/resubscribe and previous-context reuse. M3 is the exact next gated stage.
+
+## 82. M3 WorkspaceController, composite readiness and warm contexts
+
+Revision 1.75 records `M3 — WORKSPACE CONTROLLER / READINESS / WARM-CONTEXT LIFECYCLE IMPLEMENTED + VERIFIED`.
+One controller now owns requested and active symbol, active generation, switch state, pending candidate and latest
+switch error. The previous context/generation remains authoritative throughout candidate synchronization and is
+replaced only after a single composite readiness decision and successful atomic activation callback.
+Initial server availability is gated by the same composite readiness contract.
+
+Readiness requires a valid sequenced non-empty book, acknowledged trades subscription with completed recent-trade
+bootstrap (including explicitly empty-valid), completed selected 5-minute candle history and healthy live candle
+state. Candidate timeout/failure preserves the previous Workspace and discards a newly created failed context.
+Stale context/generation consumers continue to fail closed.
+
+One previous context is retained warm for a tunable default 30-second grace, enabling A→B→A reuse without a new
+exchange-facing engine. Limit overflow and grace expiry invoke Hub unsubscribe/discard. The shared Hub, registry,
+PAPER behavior and current HTTP/SSE shapes are preserved. M3 does not implement client multiplexing or projection
+deltas. M4 efficient snapshot + delta client projections are the exact next gated stage. Chaos/regression
+hardening remains M7.

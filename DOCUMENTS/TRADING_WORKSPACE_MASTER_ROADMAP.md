@@ -196,7 +196,7 @@ Current status:
 ## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
 Human-approved architecture correction. Current status:
-`M2 MARKET DATA HUB IMPLEMENTED + VERIFIED / CLIENT TRANSPORT UNCHANGED`.
+`M3 WORKSPACE CONTROLLER + READINESS + WARM LIFECYCLE IMPLEMENTED / CLIENT TRANSPORT UNCHANGED`.
 
 Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
 a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
@@ -273,12 +273,15 @@ Migration sequence:
 - M2 — COMPLETE: one long-lived public linear `MarketDataHub` owns orderbook/publicTrade subscribe,
   dispatch, reconnect and resubscribe across reusable per-symbol contexts while the existing HTTP/PAPER boundary is
   preserved by the compatibility manager.
-- M3 — move book, trades, candles and health into per-symbol `SymbolContext` ownership.
-- M4 — add `WorkspaceController` requested/active generation and composite readiness barrier.
-- M5 — add bounded active/warm context lifecycle and A→B→A reuse.
-- M6 — implement one multiplexed Workspace WebSocket with bounded snapshot/delta/bootstrap contracts.
-- M7 — migrate Chart, DOM and Smart Tape together; remove their independent SSE ownership only after parity.
-- M8 — run deterministic, chaos, local-browser, proxy/tunnel and real-phone acceptance before retiring the old path.
+- M3 — COMPLETE: `WorkspaceController` owns requested/active authority, generation, pending candidate, composite
+  readiness and bounded active/warm context lifecycle over the M2 `SymbolContext` registry.
+- M4 — implement efficient bounded snapshot + delta client projections over authoritative per-symbol contexts.
+- M5 — implement one multiplexed Workspace stream with bounded bootstrap, resume and backpressure contracts.
+- M6 — project one atomic frontend generation across Chart, DOM and Smart Tape; remove independent SSE ownership
+  only after parity.
+- M7 — run the deterministic chaos/regression suite, including component degradation, reconnect, ordering and
+  rapid-switch cases.
+- M8 — run local/proxy/tunnel and real-phone performance acceptance before retiring the old path.
 
 ### 10.1 M0 current implementation inventory and measured baseline
 
@@ -399,8 +402,8 @@ The existing DOM needs 16 rows by default and at most 200 total responsive rows,
 items, and the current chart consumes 1000 candles. Therefore provisional limits are: enough book price coverage to
 produce the current 200-row maximum at the selected compression with a measured safety margin, at most 80 recent
 trade aggregates for bootstrap, and at most 1000 selected-timeframe candles for bootstrap. Exact book level/band,
-delta-batch, queue, cadence and staleness numbers remain `TUNABLE / MEASUREMENT-BASED` and require M6 load and
-device evidence rather than arbitrary constants.
+delta-batch, queue, cadence and staleness numbers remain `TUNABLE / MEASUREMENT-BASED` and require M4 measurement
+plus M8 load and device evidence rather than arbitrary constants.
 
 Migration is additive: introduce the Hub behind existing normalized backend interfaces; keep full L2 and existing
 PAPER consumers unchanged; add bounded client projection independently; prove snapshot/delta parity, ordering and
@@ -448,6 +451,30 @@ Native candle history/live refresh remains the existing REST polling owned by ea
 three existing SSE routes and their payload shapes. M2 does not implement multiplexed client transport, bounded
 active/warm eviction, composite readiness, client projection deltas or `WorkspaceController`. These remain later
 gated stages. M3 is the exact next migration stage.
+
+### 10.7 M3 WorkspaceController, readiness and warm lifecycle checkpoint
+
+M3 introduces one backend-owned `WorkspaceController` as the sole production authority for `requested_symbol`,
+`active_symbol`, `active_generation`, switch state, pending candidate and latest switch error. A switch serializes
+candidate preparation but does not block current read-only consumers. The active context/generation changes only
+after the candidate passes one composite readiness barrier and the provider/PAPER callback swap succeeds.
+The initial HTTP Workspace also waits on this barrier fail closed before the server begins serving.
+
+The barrier requires a non-empty READY book with positive version/update/sequence identity, acknowledged healthy
+trades subscription with completed bootstrap (explicitly empty is valid), non-empty selected 5-minute candle
+history and healthy live candle state. A quiet symbol does not require a newly arriving trade. Timeout, unsupported
+symbol or activation failure leaves the previous Workspace authoritative and records explicit failed state; a new
+unready context is unsubscribed and discarded.
+
+Successful switching retains the previous context as warm, supports A→B→A identity reuse, and bounds retention to
+one warm context with a tunable 30-second default grace. Limit overflow or grace expiry unsubscribes and closes the
+evicted context. The Hub remains the only exchange subscription owner. Existing POST switch and three SSE routes
+remain compatibility adapters over controller authority, including generation and stale-consumer rejection.
+
+M4 efficient snapshot + delta client projections are the exact next gated stage. Chaos/regression hardening
+remains M7.
+
+M3 does not implement bounded client projections/deltas, the multiplexed client stream or frontend migration.
 
 ## 11. Stage 10 — Real verification
 
