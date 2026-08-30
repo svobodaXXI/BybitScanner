@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.84",
+  "revision": "1.85",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -4205,4 +4205,83 @@ Current Terminal policy:
 - continue Terminal completion/acceptance;
 - workflow / Task Transaction experiment remains frozen and must not displace Terminal work;
 - real-phone acceptance remains a separate required acceptance stage.
+
+---
+
+# 2026-08-30 TERMINAL ACCESS / NETWORKING POLICY UPDATE
+
+Status:
+
+ADOPTED
+
+## USER-FACING ACCESS POLICY
+
+Pinggy and temporary SSH/public tunneling are no longer part of the active
+Trading Workspace development or acceptance workflow.
+
+Deprecated / do not use:
+
+- Pinggy;
+- `a.pinggy.io`;
+- temporary Pinggy URLs;
+- old `lhr.life` tunnel URLs;
+- similar ephemeral SSH tunnel URLs;
+- reopening Terminal for the user through `localhost` or `127.0.0.1`.
+
+Do not automatically propose these access methods in future Terminal sessions.
+
+## LOCALHOST / LOOPBACK ROLE
+
+`localhost` and `127.0.0.1` remain valid only as internal machine-local
+transport addresses between development processes.
+
+Example of an allowed internal binding:
+
+- Vite preview proxy -> PAPER backend at `127.0.0.1:8765`.
+
+They are not the canonical user-facing desktop or phone Terminal entry point.
+
+## CURRENT DESKTOP / REAL-PHONE ACCESS
+
+The active local development access model is:
+
+`device -> PC LAN address -> Vite preview -> backend`
+
+Current confirmed Vite preview port:
+
+`4173`
+
+Current observed PC LAN URL:
+
+`http://192.168.100.8:4173/`
+
+This LAN address is environment-dependent and must not be treated as a
+permanent hardcoded address. After network changes, reboot, adapter changes,
+or DHCP changes, use the current Network URL reported by Vite preview.
+
+Desktop and real-phone acceptance should use the current LAN Vite preview URL
+when the devices can reach the same local network.
+
+## EXTERNAL / FUTURE ACCESS
+
+If Trading Workspace requires stable access from outside the local network,
+solve it through the planned production/VPS deployment architecture.
+
+Do not restore Pinggy or another temporary tunnel as the default production
+or acceptance solution unless the user explicitly requests a temporary
+diagnostic exception.
+
+## CURRENT DECISION
+
+Canonical current direction:
+
+- local development runtime: Vite preview;
+- internal backend transport: loopback is allowed;
+- user-facing local access: current LAN Vite URL;
+- phone acceptance: LAN Vite URL;
+- temporary public tunnels: deprecated;
+- future persistent remote access: VPS / production deployment.
+
+This policy supersedes earlier Pinggy / `lhr.life` development-access
+instructions where they conflict with this section.
 
