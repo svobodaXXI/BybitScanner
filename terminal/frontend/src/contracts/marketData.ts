@@ -77,6 +77,15 @@ export interface NormalizedOrderBook {
   browserReceivedAtMs?: number;
 }
 
+export interface WorkspaceProjectionAuthority {
+  streamId: string;
+  symbol: string;
+  generation: number;
+  eventSequence: number;
+  interval: string;
+  state: BookHealth;
+}
+
 /**
  * Frontend-facing normalized data only. Raw exchange snapshot/delta fields and
  * sequence mechanics belong to the future Market Data Engine and its adapters.
@@ -88,4 +97,5 @@ export interface MarketDataSnapshot {
   trades: readonly TradePrint[];
   ownOrders: readonly OwnOrder[];
   source: "DEVELOPMENT" | "LIVE_NORMALIZED";
+  workspace?: WorkspaceProjectionAuthority;
 }

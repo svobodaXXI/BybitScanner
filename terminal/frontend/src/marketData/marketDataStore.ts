@@ -7,6 +7,7 @@
 } from "../contracts/marketData";
 import { createDemoMarketData } from "./demoFeed";
 import { marketApiRoutes } from "./apiRoutes";
+import { BackendWorkspaceMarketDataStore } from "./workspaceMarketDataStore";
 import { projectSweepCenterRow } from "./domProjection";
 import {
   BYBIT_INTERVAL_BY_TIMEFRAME,
@@ -568,7 +569,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
 }
 
 export const marketDataStore: MarketDataPort =
-  new BackendSseMarketDataStore();
+  new BackendWorkspaceMarketDataStore();
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => marketDataStore.dispose());

@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.77",
+  "revision": "1.78",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -461,7 +461,8 @@
     {"revision": "1.74", "reason": "Implemented and verified M2 as one long-lived backend MarketDataHub owning a shared Bybit public linear WebSocket, multi-symbol book/trade subscriptions, normalized dispatch, reconnect/resubscribe and reusable SymbolContexts; preserved generation-gated Workspace/PAPER/HTTP compatibility without implementing multiplexed frontend transport or later readiness/lifecycle stages", "date": "2026-08-30"},
     {"revision": "1.75", "reason": "Implemented and verified M3 as one backend WorkspaceController owning requested/active symbol authority, generation, pending candidate, composite book/trades/candle readiness, explicit switch failure and bounded warm-context reuse/expiry while preserving Hub ownership, PAPER semantics and existing SSE compatibility", "date": "2026-08-30"},
     {"revision": "1.76", "reason": "Implemented and verified M4 as one backend ClientMarketProjection with configurable bounded book bootstrap and exact window deltas/resnapshot, bounded deduplicated trade bootstrap/batches, one-time candle bootstrap/changed-record updates, additive projection SSE and measured BTC/ONG payload reduction while preserving full PAPER L2 and legacy frontend SSE", "date": "2026-08-30"},
-    {"revision": "1.77", "reason": "Implemented and verified M5 as one additive generation-scoped multiplexed Workspace WebSocket with atomic bounded snapshot, sequenced book/trade/candle/health envelopes, bounded replay/resume, resnapshot on ambiguity and bounded slow-client eviction while preserving legacy SSE, REST commands, full PAPER L2 and unchanged frontend ownership", "date": "2026-08-30"}
+    {"revision": "1.77", "reason": "Implemented and verified M5 as one additive generation-scoped multiplexed Workspace WebSocket with atomic bounded snapshot, sequenced book/trade/candle/health envelopes, bounded replay/resume, resnapshot on ambiguity and bounded slow-client eviction while preserving legacy SSE, REST commands, full PAPER L2 and unchanged frontend ownership", "date": "2026-08-30"},
+    {"revision": "1.78", "reason": "Implemented and verified M6 as one frontend atomic Workspace projection over the M5 multiplexed WebSocket with complete snapshot gating, strict symbol/generation/sequence authority, bounded book/trade/candle updates, resume and fail-closed fresh resnapshot while preserving backend legacy SSE, full PAPER L2 and command semantics", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3849,3 +3850,27 @@ M5 is backend-only and additive. Legacy market-data SSE, the M4 component projec
 authoritative full PAPER L2 and frontend source are unchanged. M6 atomic frontend generation projection and
 transport migration are the exact next gated stage and are not started. M8 still owns proxy/tunnel and real-phone
 performance acceptance; transport volume remains measured inefficiency rather than a proven phone-failure cause.
+
+## 85. M6 frontend atomic generation projection
+
+Revision 1.78 records `M6 — FRONTEND ATOMIC GENERATION PROJECTION IMPLEMENTED / AUTOMATED + BUILD PASS`. The
+default frontend market-data owner is now one `BackendWorkspaceMarketDataStore` consuming the M5 multiplexed
+`/api/workspace/stream` WebSocket. Its pure reducer publishes a new `MarketDataSnapshot` only after one complete
+READY `workspace_snapshot` validates the requested symbol, Workspace generation, interval, bounded book, empty-valid
+trade bootstrap, non-empty candle history and instrument tick metadata.
+
+Incremental events must match the current stream, symbol, generation and interval and advance `event_sequence`
+exactly once. Duplicates and foreign authority are ignored. Sequence gaps/regressions, malformed payloads, book
+base-version mismatch and invalid candle mutations preserve the prior projection with explicit degradation and
+force reconnect without resume for an atomic resnapshot. Ordinary disconnect retains last-known STALE data and
+resumes with stream identity plus last sequence. Transport heartbeat cannot independently restore degraded state.
+
+Book deltas update the bounded client window, trades deduplicate and retain 80, candle append/replace retains 1000,
+and one external-store publication keeps Chart, DOM and Smart Tape on the same authority. Vite dev/preview proxy
+WebSocket upgrade is enabled. The legacy SSE store remains an explicit compatibility class and backend legacy
+routes remain available, but default frontend ownership no longer opens three SSE streams. PAPER full L2,
+REST commands and order/execution semantics are unchanged.
+
+M6 targeted atomic/transport plus legacy SSE tests pass, the full frontend suite exits zero, and the production
+build passes with 66 transformed modules. No browser, tunnel or real-phone acceptance is claimed. M7 deterministic
+chaos/regression hardening is the exact next gated stage and is not started; M8 acceptance is also not started.

@@ -196,7 +196,7 @@ Current status:
 ## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
 Human-approved architecture correction. Current status:
-`M5 MULTIPLEXED WORKSPACE STREAM IMPLEMENTED / FRONTEND TRANSPORT UNCHANGED`.
+`M6 FRONTEND ATOMIC GENERATION PROJECTION IMPLEMENTED / AUTOMATED + BUILD PASS`.
 
 Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
 a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
@@ -279,8 +279,8 @@ Migration sequence:
   bootstrap/new batches and one-time candle bootstrap/changed-candle updates from authoritative Hub contexts.
 - M5 — COMPLETE: one generation-scoped multiplexed Workspace WebSocket carries an atomic bounded bootstrap and
   sequenced book/trade/candle/health updates with bounded replay, resnapshot and slow-client eviction contracts.
-- M6 — project one atomic frontend generation across Chart, DOM and Smart Tape; remove independent SSE ownership
-  only after parity.
+- M6 — COMPLETE: one frontend store consumes the M5 multiplexed WebSocket and atomically projects one symbol,
+  generation and event sequence across Chart, DOM and Smart Tape; legacy SSE remains backend-compatible.
 - M7 — run the deterministic chaos/regression suite, including component degradation, reconnect, ordering and
   rapid-switch cases.
 - M8 — run local/proxy/tunnel and real-phone performance acceptance before retiring the old path.
@@ -544,6 +544,37 @@ Migration remains additive. The three legacy SSE routes, the M4 per-component pr
 paths, authoritative full PAPER L2 and all frontend source remain unchanged. M6 atomic frontend generation
 projection and transport migration are the exact next gated stage and have not started. Proxy/tunnel and real-phone
 performance acceptance remain M8; M5 does not claim that the earlier phone failure is resolved.
+
+### 10.10 M6 frontend atomic generation projection checkpoint
+
+M6 replaces default frontend ownership of three independent `EventSource` connections with one
+`BackendWorkspaceMarketDataStore` over `/api/workspace/stream`. The old `BackendSseMarketDataStore` remains an
+explicit compatibility class and all backend legacy routes remain available; there is no automatic fallback that
+could create two simultaneous symbol authorities. Vite dev and preview proxies now explicitly upgrade WebSockets.
+
+One pure `workspaceProjection` reducer owns the client authority tuple `stream_id`, symbol, Workspace generation,
+selected interval and monotonic `event_sequence`. A complete READY `workspace_snapshot` validates and converts
+book, explicitly empty-valid trade bootstrap, non-empty selected-timeframe candle history and instrument tick
+metadata before publishing one new immutable `MarketDataSnapshot`. Invalid or incomplete snapshots leave the prior
+projection untouched. Chart, DOM and Smart Tape therefore observe one atomic external-store update rather than
+independent component arrival.
+
+Incremental events apply only to the requested symbol/interval and current stream/generation. Exact duplicates and
+foreign authority are ignored; sequence gaps/regressions, malformed events, book base-version mismatch and invalid
+candle append/replace semantics close the socket, clear resume authority, visibly degrade the retained projection
+and reconnect for a fresh snapshot. Ordinary disconnect visibly marks the last validated book STALE and reconnects
+with `stream_id` plus `after_sequence`; successful replay continues monotonically, while a backend resnapshot is
+applied atomically. A transport heartbeat advances sequence but cannot restore degraded Workspace readiness.
+
+Book deltas mutate the bounded M4 client window, trade batches deduplicate by stable ID and retain 80, candle
+updates append/replace by open time and retain 1000, instrument tick size comes from the atomic snapshot, and book
+health can retain last-known levels only with explicit STALE/DEGRADED state. Authoritative PAPER full L2 and all
+command/order semantics remain backend-owned and unchanged.
+
+Deterministic M6 projection/store plus legacy SSE parity tests pass, the full frontend regression suite exits zero,
+and the production Vite build passes with 66 transformed modules. These are automated/build evidence only, not
+browser, tunnel or real-phone acceptance. M7 chaos/regression hardening is the exact next gated stage; M8 real-phone
+and tunnel performance acceptance has not started.
 
 ## 11. Stage 10 — Real verification
 

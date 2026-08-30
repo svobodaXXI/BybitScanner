@@ -33,6 +33,7 @@ export default defineConfig({
       "/api": {
         target: paperBackendUrl ?? "http://127.0.0.1:8765",
         changeOrigin: true,
+        ws: true,
         configure(proxy) {
           const diagnosticProxy = proxy as unknown as DiagnosticProxy;
           diagnosticProxy.on("proxyReq", (proxyReq, req) => {
@@ -78,6 +79,7 @@ export default defineConfig({
       "/api": {
         target: paperBackendUrl ?? "http://127.0.0.1:8765",
         changeOrigin: true,
+        ws: true,
       },
     },
   },
