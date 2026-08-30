@@ -14,6 +14,8 @@ from terminal.market_data.workspace_errors import (
     UpstreamWorkspaceMarketDataFailure,
     WorkspaceCandidateNotReady,
     WorkspaceInstrumentBootstrapFailure,
+    WorkspaceErrorDetails,
+    WorkspaceSemanticError,
 )
 
 
@@ -24,7 +26,7 @@ class WorkspaceState:
     active_generation: int
     switch_state: str
     pending_candidate: str | None
-    last_switch_error: str | None
+    last_switch_error: WorkspaceErrorDetails | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,7 +61,7 @@ class WorkspaceController:
         self._requested_symbol = initial.symbol
         self._switch_state = "SYNCING"
         self._pending: SymbolContext | None = None
-        self._last_switch_error: str | None = None
+        self._last_switch_error: WorkspaceErrorDetails | None = None
         self._on_activate = on_activate
         self._required_candle_interval = required_candle_interval
         self._warm_context_limit = warm_context_limit
@@ -85,23 +87,26 @@ class WorkspaceController:
         readiness = self._wait_until_ready(self._active, timeout)
         with self._lock:
             if not readiness.ready:
-                self._fail_locked("initial_workspace_not_ready")
-                raise WorkspaceCandidateNotReady(
+                error = WorkspaceCandidateNotReady(
                     "Initial Workspace did not reach composite readiness",
                     requested_symbol=self._requested_symbol,
                     active_symbol=self._active.symbol,
                 )
+                self._fail_locked(error)
+                raise error
             self._switch_state = "READY"
             self._last_switch_error = None
             return self._active
 
     def switch(self, symbol: str, timeout: float) -> SymbolContext:
         if not isinstance(symbol, str) or not symbol.strip():
-            raise UnsupportedWorkspaceInstrument(
+            error = UnsupportedWorkspaceInstrument(
                 "Unsupported Workspace instrument",
                 requested_symbol=symbol if isinstance(symbol, str) else None,
                 active_symbol=self._active.symbol,
             )
+            self._fail(error)
+            raise error
         normalized = symbol.strip().upper()
         with self._switch_lock:
             self._expire_warm()
@@ -121,14 +126,14 @@ class WorkspaceController:
                     f"Unsupported Workspace instrument: {normalized}",
                     requested_symbol=normalized, active_symbol=self._active.symbol,
                 )
-                self._fail(error.code)
+                self._fail(error)
                 raise error from exc
             except Exception as exc:
                 error = WorkspaceInstrumentBootstrapFailure(
                     f"Workspace instrument bootstrap failed: {normalized}",
                     requested_symbol=normalized, active_symbol=self._active.symbol,
                 )
-                self._fail(error.code)
+                self._fail(error)
                 raise error from exc
             with self._lock:
                 was_warm = self._warm.get(candidate.symbol, (None, 0))[0] is candidate
@@ -143,11 +148,12 @@ class WorkspaceController:
                         self._retain_warm_locked(candidate)
                 if not existed:
                     self._hub.discard(candidate)
-                self._fail("workspace_candidate_not_ready")
-                raise WorkspaceCandidateNotReady(
+                error = WorkspaceCandidateNotReady(
                     "Workspace candidate did not reach composite readiness",
                     requested_symbol=normalized, active_symbol=self._active.symbol,
                 )
+                self._fail(error)
+                raise error
             with self._lock:
                 previous = self._active
                 try:
@@ -158,7 +164,7 @@ class WorkspaceController:
                         "Workspace activation failed at the market-data boundary",
                         requested_symbol=normalized, active_symbol=previous.symbol,
                     )
-                    self._fail_locked(error.code)
+                    self._fail_locked(error)
                     if was_warm:
                         self._retain_warm_locked(candidate)
                     if not existed:
@@ -223,6 +229,31 @@ class WorkspaceController:
         with self._lock:
             return self._active is context and self._active_generation == generation
 
+    def diagnostics(self) -> dict[str, object]:
+        """Return one fresh read-only view derived from current controller authority."""
+        with self._lock:
+            context = self._active
+            readiness = self.readiness(context)
+            return {
+                "requested_symbol": self._requested_symbol,
+                "active_symbol": context.symbol,
+                "active_generation": self._active_generation,
+                "switch_state": self._switch_state,
+                "pending_symbol": self._pending.symbol if self._pending is not None else None,
+                "last_error": (
+                    self._last_switch_error.as_dict()
+                    if self._last_switch_error is not None else None
+                ),
+                "readiness": {
+                    "ready": readiness.ready,
+                    "book_ready": readiness.book_ready,
+                    "trades_ready": readiness.trades_ready,
+                    "candle_history_ready": readiness.candle_history_ready,
+                    "live_candle_ready": readiness.live_candle_ready,
+                },
+                "upstream": context.health_snapshot(),
+            }
+
     def close(self) -> None:
         with self._lock:
             timers = tuple(self._warm_timers.values())
@@ -239,13 +270,13 @@ class WorkspaceController:
                 return readiness
             time.sleep(min(self._poll_interval, max(0, deadline - time.monotonic())))
 
-    def _fail(self, error: str) -> None:
+    def _fail(self, error: WorkspaceSemanticError) -> None:
         with self._lock:
             self._fail_locked(error)
 
-    def _fail_locked(self, error: str) -> None:
+    def _fail_locked(self, error: WorkspaceSemanticError) -> None:
         self._switch_state = "FAILED"
-        self._last_switch_error = error
+        self._last_switch_error = error.details()
 
     def _retain_warm_locked(self, context: SymbolContext) -> None:
         if self._warm_context_limit == 0 or self._warm_grace_seconds == 0:

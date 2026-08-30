@@ -1158,6 +1158,35 @@ class WorkspaceMarketDataManager:
             return None
         return self._controller.state()
 
+    @property
+    def workspace_diagnostics(self) -> dict[str, object]:
+        if self._controller is None:
+            with self._lock:
+                active = self._active
+                generation = self._generation
+            book = active.public_orderbook
+            book_snapshot = book.snapshot() if hasattr(book, "snapshot") else {}
+            ready = (
+                book_snapshot.get("state") == "READY"
+                if book_snapshot else bool(getattr(book, "ready", False))
+            )
+            diagnostic = {
+                "requested_symbol": active.symbol,
+                "active_symbol": active.symbol,
+                "active_generation": generation,
+                "switch_state": "READY",
+                "pending_symbol": None,
+                "last_error": None,
+                "readiness": {
+                    "ready": ready,
+                    "book_ready": ready,
+                },
+                "upstream": None,
+            }
+        else:
+            diagnostic = self._controller.diagnostics()
+        return {**diagnostic, "streams": self._workspace_streams.diagnostics()}
+
     def ensure_initial_ready(self) -> MarketDataSession:
         if self._controller is not None:
             return self._controller.ensure_initial_ready(self._readiness_timeout)
@@ -1239,6 +1268,13 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/instruments":
             self._json_response(200, {"ok": True, "instruments": self.server.market_data.instruments})
+            return
+
+        if parsed.path == "/api/workspace/state":
+            self._json_response(200, {
+                "ok": True,
+                "workspace": self.server.market_data.workspace_diagnostics,
+            })
             return
 
         if parsed.path == "/api/workspace/stream":

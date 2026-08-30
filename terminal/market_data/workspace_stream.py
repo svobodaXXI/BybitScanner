@@ -249,6 +249,28 @@ class WorkspaceStreamBroker:
             self._sessions.pop(stream_id, None)
             self._attached.discard(stream_id)
 
+    def diagnostics(self) -> dict[str, object]:
+        """Describe broker-owned stream sessions without changing their lifecycle."""
+        with self._lock:
+            return {
+                "session_limit": self._session_limit,
+                "session_count": len(self._sessions),
+                "attached_count": len(self._attached),
+                "sessions": [
+                    {
+                        "stream_id": session.stream_id,
+                        "symbol": session.symbol,
+                        "interval": session.interval,
+                        "workspace_generation": session.workspace_generation,
+                        "latest_sequence": session.latest_sequence,
+                        "attached": session.stream_id in self._attached,
+                    }
+                    for session in sorted(
+                        self._sessions.values(), key=lambda item: item.stream_id,
+                    )
+                ],
+            }
+
     def _make_room_locked(self) -> None:
         if len(self._sessions) < self._session_limit:
             return

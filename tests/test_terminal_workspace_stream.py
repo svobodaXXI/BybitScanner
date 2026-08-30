@@ -132,6 +132,11 @@ class WorkspaceStreamTests(unittest.TestCase):
         self.assertEqual(resumed.events, ())
         broker.detach(opened.session.stream_id)
         replacement = broker.open("BTCUSDT", "5")
+        diagnostic = broker.diagnostics()
+        self.assertEqual(diagnostic["session_count"], 1)
+        self.assertEqual(diagnostic["attached_count"], 1)
+        self.assertEqual(diagnostic["sessions"][0]["stream_id"], replacement.session.stream_id)
+        self.assertTrue(diagnostic["sessions"][0]["attached"])
         with self.assertRaises(UnknownWorkspaceStream) as raised:
             broker.open("BTCUSDT", "5", stream_id=opened.session.stream_id, after_sequence=0)
         self.assertEqual(raised.exception.code, "unknown_stream")

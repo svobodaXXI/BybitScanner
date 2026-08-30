@@ -133,6 +133,14 @@ def test_pending_candidate_does_not_replace_active_until_composite_ready():
     assert state.active_generation == 1
     assert state.switch_state == "SYNCING"
     assert controller.get_active("BTCUSDT") == (btc, 1)
+    diagnostic = controller.diagnostics()
+    assert diagnostic["requested_symbol"] == "ONGUSDT"
+    assert diagnostic["active_symbol"] == "BTCUSDT"
+    assert diagnostic["active_generation"] == 1
+    assert diagnostic["switch_state"] == "SYNCING"
+    assert diagnostic["pending_symbol"] == "ONGUSDT"
+    assert diagnostic["readiness"]["ready"] is True
+    assert diagnostic["upstream"]["subscription_state"] == "SUBSCRIBED"
 
     _make_ready(ong)
     switched.join(timeout=1)
@@ -166,7 +174,7 @@ def test_initial_workspace_fails_closed_until_composite_ready():
     else:
         raise AssertionError("unready initial Workspace was accepted")
     assert controller.state().switch_state == "FAILED"
-    assert controller.state().last_switch_error == "initial_workspace_not_ready"
+    assert controller.state().last_switch_error.code == "candidate_not_ready"
     _make_ready(context)
     assert controller.ensure_initial_ready(0.01) is context
     assert controller.state().switch_state == "READY"
@@ -191,7 +199,21 @@ def test_timeout_preserves_previous_and_discards_new_candidate():
     assert state.active_generation == 1
     assert state.switch_state == "FAILED"
     assert state.pending_candidate is None
-    assert state.last_switch_error == "workspace_candidate_not_ready"
+    assert state.last_switch_error.code == "candidate_not_ready"
+    diagnostic = controller.diagnostics()
+    assert diagnostic["requested_symbol"] == "ONGUSDT"
+    assert diagnostic["active_symbol"] == "BTCUSDT"
+    assert diagnostic["active_generation"] == 1
+    assert diagnostic["pending_symbol"] is None
+    assert diagnostic["last_error"] == {
+        "code": "candidate_not_ready",
+        "stage": "candidate_readiness",
+        "requested_symbol": "ONGUSDT",
+        "active_symbol": "BTCUSDT",
+        "retryable": True,
+        "request_id": None,
+        "message": "Workspace candidate did not reach composite readiness",
+    }
     assert hub.discarded == [ong]
     assert controller.is_current(btc, 1) is True
 
@@ -221,7 +243,7 @@ def test_malformed_symbol_and_book_identity_fail_closed():
     else:
         raise AssertionError("unsupported symbol was accepted")
     assert controller.state().switch_state == "FAILED"
-    assert controller.state().last_switch_error == "unsupported_instrument"
+    assert controller.state().last_switch_error.code == "unsupported_instrument"
     btc.public_orderbook.snapshot = lambda: {
         "state": "READY", "bids": [1], "asks": [2],
         "version": "bad", "updateId": 2, "sequence": 3,

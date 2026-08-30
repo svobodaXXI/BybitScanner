@@ -40,7 +40,7 @@ class WorkspaceSemanticError(Exception):
         self.requested_symbol = requested_symbol
         self.active_symbol = active_symbol
 
-    def envelope(self, *, request_id: str | None = None) -> dict[str, object]:
+    def details(self, *, request_id: str | None = None) -> WorkspaceErrorDetails:
         return WorkspaceErrorDetails(
             code=self.code,
             stage=self.stage,
@@ -49,7 +49,10 @@ class WorkspaceSemanticError(Exception):
             retryable=self.retryable,
             request_id=request_id,
             message=str(self),
-        ).as_dict()
+        )
+
+    def envelope(self, *, request_id: str | None = None) -> dict[str, object]:
+        return self.details(request_id=request_id).as_dict()
 
 
 class UnsupportedWorkspaceInstrument(WorkspaceSemanticError, LookupError):

@@ -432,6 +432,41 @@ def test_workspace_switch_http_preserves_structured_semantic_failure():
         server.server_close()
 
 
+def test_workspace_state_endpoint_is_read_only_and_reports_authoritative_state():
+    btc = _SwitchSession("BTCUSDT", True)
+    manager = WorkspaceMarketDataManager(
+        _instrument_registry([{"symbol": "BTCUSDT", "tick_size": "0.5"}]),
+        _SwitchProvider(btc.public_orderbook), _SwitchRuntime(), btc,
+        readiness_timeout=0.01,
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.market_data = manager
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_port}/api/workspace/state"
+    before = manager.get_active("BTCUSDT")
+    try:
+        with urllib.request.urlopen(url) as response:
+            first = json.load(response)
+        with urllib.request.urlopen(url) as response:
+            second = json.load(response)
+        assert first == second
+        assert first["ok"] is True
+        assert first["workspace"]["requested_symbol"] == "BTCUSDT"
+        assert first["workspace"]["active_symbol"] == "BTCUSDT"
+        assert first["workspace"]["active_generation"] == 1
+        assert first["workspace"]["switch_state"] == "READY"
+        assert first["workspace"]["pending_symbol"] is None
+        assert first["workspace"]["last_error"] is None
+        assert first["workspace"]["readiness"]["ready"] is True
+        assert first["workspace"]["streams"]["session_count"] == 0
+        assert manager.get_active("BTCUSDT") == before
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
 def test_workspace_activation_failure_rolls_back_provider_and_active_generation():
     btc = _SwitchSession("BTCUSDT", True)
     eth = _SwitchSession("ETHUSDT", True, btc)
@@ -1340,6 +1375,7 @@ def load_tests(loader, tests, pattern):
             test_inflight_stale_trade_request_fails_closed_after_generation_changes,
             test_workspace_switch_timeout_preserves_ready_active_session_and_provider,
             test_workspace_switch_http_preserves_structured_semantic_failure,
+            test_workspace_state_endpoint_is_read_only_and_reports_authoritative_state,
             test_workspace_activation_failure_rolls_back_provider_and_active_generation,
             test_workspace_candidate_wait_does_not_block_current_read_only_consumers,
             test_health_get_returns_exact_paper_status,
