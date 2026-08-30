@@ -690,7 +690,7 @@ Do not jump ahead.
 Current checkpoint:
 
 ```text
-M8 — COMPLETE / REAL-PHONE ACCEPTANCE PASS
+M0–M9 — COMPLETE / ACCEPTED
 ```
 
 Completed corrective migration:
@@ -700,19 +700,43 @@ M0–M8 — MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM
 IMPLEMENTED / VERIFIED / REAL-PHONE ACCEPTED
 ```
 
-The former instruction to begin M0 is superseded. `InstrumentRegistry`, `MarketDataHub`, `WorkspaceController`, efficient snapshot/delta client projection, the multiplexed Workspace WebSocket, atomic frontend generation projection, deterministic chaos/regression coverage, and real-phone acceptance are complete through M8.
+The former instruction to begin M0 or M9 is superseded. `InstrumentRegistry`, `MarketDataHub`, `WorkspaceController`, efficient snapshot/delta client projection, the multiplexed Workspace WebSocket, atomic frontend generation projection, deterministic chaos/regression coverage, real-phone acceptance and M9 operability/diagnostics are complete.
 
-Open next bounded work item:
+Manual Terminal v1 remains `IN_PROGRESS`. STOP, TAKE PROFIT, real-account/API management and real-account
+execution are closure blockers in the current ChangeRequest, not future/out-of-scope work. The binding order is:
 
 ```text
-M9 — WORKSPACE OPERABILITY / DIAGNOSTICS
+1. DRAWING TOOLS RULER — COMPLETE / REAL-PHONE ACCEPTED
+2. FIBONACCI LEVELS/FILLS + TWO-STAGE TOUCH PLACEMENT — COMPLETE / REAL-PHONE ACCEPTED
+3. OPEN POSITIONS UX — IMPLEMENTED / MANUAL ACCEPTANCE PENDING
+4. STOP + TAKE ON PAPER
+5. REAL ACCOUNT/API MANAGEMENT AND SWITCHING
+6. REAL EXECUTION/RECONCILIATION
+7. FINAL MANUAL TERMINAL V1 ACCEPTANCE
+8. CR CLOSURE
 ```
 
-M9 must preserve semantic root causes, expose read-only diagnostic state, keep `WorkspaceController` as sole symbol authority, make frontend symbol transition depend on backend activation acknowledgement/new generation, classify reconnect behavior, provide a deterministic developer doctor command, and verify registry→Workspace support consistency.
+Ruler and Fibonacci are complete and real-phone accepted, including two-stage placement, directed Ruler signs,
+temporary anchor guides, Ruler fix/move/dismiss lifecycle, Fibonacci levels/fills/labels, edit gate and bounded
+mobile hit region. Native browser text/icon selection in the palette is
+`USER-DEFERRED / NON-BLOCKING`. Fibonacci uses the established two-anchor lifecycle with the binding levels
+through `4.236`, chart-authoritative coefficient/price labels and translucent adjacent fills; manual acceptance
+requires a first press/drag/release that fixes the level-1 anchor without a grid, then a second press/drag/release
+that live-stretches the level-0 anchor and completes the Fib. Temporary full-width dashed guides follow placement
+and active anchor edits. Inactive Fib drawings remain visible but cannot mutate until a deliberate practical-region
+activation tap followed by a separate edit gesture; outside tap deactivates, and cancel/tool change discards the
+one-anchor draft. Open Positions must place and highlight the active-symbol row first, list other positions below, move Close All
+closer to its heading and use a red border without changing execution semantics. STOP and TAKE must complete
+authoritative PAPER create/edit/activate/cancel, 100%-quantity synchronization, explicit-only price edits and
+confirmed-FLAT cleanup before real enablement; approved TAKE proposal semantics remain binding.
 
-M9 does not authorize a market-data rewrite, a second state owner, or any change to PAPER/trading semantics. Implementation remains separately gated after this architecture/documentation checkpoint.
+Real-account work must keep API Secret behind the backend security boundary, provide reconciled account-scoped
+selection/switching with mutations locked during transition, and reuse the established Market/Limit/STOP/TAKE
+execution architecture with fail-closed `UNKNOWN`/`RECONCILING`, authoritative exchange reconciliation, no blind
+retry and a real-money security/acceptance gate.
 
-Aggressive DOM Limit confirmation and Done/Enter focus progression remain separately deferred.
+CENTER approximately 13/15 and Done/Enter focus progression are `USER-DEFERRED / NON-BLOCKING`.
+Robot/AUTOPILOT, Android, MetaScalp, VPS, Scanner and strategy work remain outside this sequence.
 
 ## 15. Engineering completion criterion
 

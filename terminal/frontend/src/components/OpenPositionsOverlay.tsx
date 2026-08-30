@@ -18,11 +18,13 @@ import {
 type MutationRunner = <T>(key: string, operation: () => Promise<T>) => Promise<T>;
 
 export function OpenPositionsOverlay({
+  activeSymbol,
   onClose,
   onNavigate,
   runPaperMutation,
   applyPaperState,
 }: {
+  activeSymbol: string;
   onClose: () => void;
   onNavigate: (symbol: string) => void;
   runPaperMutation: MutationRunner;
@@ -41,6 +43,16 @@ export function OpenPositionsOverlay({
   const ambiguousSymbols = useRef(new Set<string>());
   const bulkActionId = useRef<string | null>(null);
   const bulkTargetSymbols = useRef(new Set<string>());
+  const activePositionIndex = positions.findIndex(
+    (position) => position.symbol === activeSymbol,
+  );
+  const displayedPositions = activePositionIndex <= 0
+    ? positions
+    : [
+        positions[activePositionIndex],
+        ...positions.slice(0, activePositionIndex),
+        ...positions.slice(activePositionIndex + 1),
+      ];
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -271,14 +283,16 @@ export function OpenPositionsOverlay({
     <div className="paper-open-positions-backdrop" role="presentation">
       <section className="paper-open-positions" aria-label="Открытые позиции">
         <header>
-          <h2>Открытые позиции</h2>
-          <div className="paper-open-positions-actions">
+          <div className="paper-open-positions-title">
+            <h2>Открытые позиции</h2>
             <button
               className="paper-open-positions-close-all"
               disabled={positions.length === 0 || bulkPending || pendingSymbol !== null || ambiguousSymbols.current.size > 0}
               onClick={() => setConfirmAll(true)}
               type="button"
             >Закрыть все</button>
+          </div>
+          <div className="paper-open-positions-actions">
             <button
               aria-label="Закрыть список позиций"
               disabled={pendingSymbol !== null || bulkPending || ambiguousSymbols.current.size > 0}
@@ -301,13 +315,16 @@ export function OpenPositionsOverlay({
 
         {positions.length > 0 ? (
           <div className="paper-open-positions-list">
-            {positions.map((position) => {
+            {displayedPositions.map((position) => {
               const sideClass = position.position_side === "Long" ? "long" : "short";
+              const activeSymbolClass = position.symbol === activeSymbol
+                ? " active-symbol"
+                : "";
               const disabled = bulkPending || pendingSymbol === position.symbol
                 || ambiguousSymbols.current.has(position.symbol);
               return (
                 <article
-                  className={`paper-open-position-row ${sideClass}`}
+                  className={`paper-open-position-row ${sideClass}${activeSymbolClass}`}
                   key={position.symbol}
                   aria-label={`Открыть позицию ${position.symbol} в терминале`}
                   onClick={() => setNavigatePosition(position)}

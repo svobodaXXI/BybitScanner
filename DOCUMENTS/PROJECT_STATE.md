@@ -2,7 +2,7 @@
 
 Version:
 
-7.74
+7.82
 
 Date:
 
@@ -6087,4 +6087,78 @@ with DOM is accepted, and live PnL clears the collapse control. Focused DOM/Tape
 
 CENTER's approximately 13/15 visible-row distribution is `USER-DEFERRED / NON-BLOCKING`. It is not a failure
 or blocker and requires no further work in the current slice.
+
+## MANUAL TERMINAL V1 REMAINS IN PROGRESS
+
+The previous documentation-only conclusion that the Terminal ChangeRequest could close is superseded.
+`CR-TRADING-WORKSPACE-001` remains `IN_PROGRESS / IMPLEMENT` until these product blockers are implemented and
+accepted:
+
+1. Drawing Tools Ruler: expose the existing two-point measurement lifecycle in the palette with live price and
+   percentage delta, existing time/bar measurement where supported, movement and shared deletion.
+2. Open Positions UX: active Terminal symbol first and highlighted; remaining positions below; `Закрыть все`
+   moved closer to `Открытые позиции` with a red border and unchanged execution semantics.
+3. STOP and TAKE PROFIT on PAPER: complete create/edit/activate/cancel lifecycles, authoritative projection,
+   100%-of-current-position quantity synchronization, explicitly edited prices only and confirmed-FLAT cleanup;
+   preserve approved TAKE proposal semantics.
+4. Backend-secured Bybit API credential management and configured account selection/switching, with API Secret
+   excluded from the frontend, account-scoped state and mutation lock through load/reconciliation.
+5. Real selected-account Market, Limit, STOP and TAKE execution through the established architecture, retaining
+   fail-closed `UNKNOWN`/`RECONCILING`, authoritative reconciliation, no blind retry and a real-money security and
+   acceptance gate.
+6. Final Manual Terminal v1 acceptance, followed only then by CR closure.
+
+Implementation order is Drawing Tools Ruler; Open Positions UX; STOP + TAKE on PAPER; real account/API management and switching;
+real execution/reconciliation; final acceptance; closure. CENTER approximately 13/15 and Done/Enter focus
+progression remain `USER-DEFERRED / NON-BLOCKING`. Robot/AUTOPILOT, Android, MetaScalp, VPS, Scanner and strategy
+work remain outside this sequence.
+
+## RULER ACCEPTED / OPEN POSITIONS UX CURRENT
+
+Drawing Tools Ruler is `COMPLETE / REAL-PHONE ACCEPTED`. Native browser text/icon selection in the Drawing Tools
+palette is `USER-DEFERRED / NON-BLOCKING`.
+
+Open Positions UX is the current implementation slice with manual acceptance pending: derive active-symbol-first
+ordering from existing workspace authority without mutating server arrays, highlight only that row, preserve all
+other relative ordering, and present unchanged Close All semantics beside the heading with a red border.
+
+## FIBONACCI DRAWING UPGRADE CURRENT
+
+The existing two-anchor Fibonacci tool now includes binding retracement/extension levels through `4.236`, supports
+both anchor directions, labels each level with coefficient plus chart-authoritative formatted price, and renders
+restrained translucent adjacent bands beneath the level lines. Shared create, magnet, movement, selection,
+persistence and deletion semantics are unchanged. Manual acceptance is pending.
+
+Ruler remains accepted. Open Positions UX remains implemented with manual acceptance pending. Native browser
+Drawing Tools selection remains `USER-DEFERRED / NON-BLOCKING`.
+
+## FIBONACCI TWO-STAGE TOUCH PLACEMENT CURRENT
+
+Fibonacci phone acceptance now requires an internal one-anchor draft after the first deliberate tap, immediate
+Anchor A adjustment, a separate second tap for Anchor B, and no grid/fills/levels before B exists. Active anchor
+placement/editing shows a temporary full-width horizontal dashed price guide that is never persisted. Tool
+change/cancel discards the unfinished draft. Completed-Fib interaction semantics remain unchanged.
+
+Version 7.80 supersedes the prior tap-then-adjust detail with binding drag-first/drag-second semantics. The first
+press/drag/release fixes the level-1 anchor without rendering a grid; the second press/drag/release live-stretches
+the level-0 anchor and completes the selected Fib. Completed inactive Fib drawings are visible but mutation-locked:
+a practical-region tap activates without mutation, a later explicit active edit may move an anchor, and an outside
+tap deactivates. Horizontal placement/edit guides remain temporary. Manual phone acceptance is pending.
+
+## RULER MOBILE LIFECYCLE CURRENT
+
+Version 7.81 records the binding temporary Ruler lifecycle: two explicit drag-release anchor placements with live
+measurement; `ACTIVE` independent endpoint editing; first outside tap to `FIXED`; rigid whole-object translation
+while fixed; and second outside tap to dismissal. Gesture releases do not advance the outside-tap lifecycle, and
+tool change discards an incomplete draft. Manual phone acceptance is pending; other blockers are unchanged.
+
+## DRAWING TOOLS ACCEPTED / OPEN POSITIONS VISUAL ACCEPTANCE PENDING
+
+Version 7.82 records real-phone `PASS` for the completed Ruler and Fibonacci behavior, including their final touch
+placement, editing, temporary-guide, lifecycle, sign and hit-bound semantics. Native browser Drawing Tools
+selection remains `USER-DEFERRED / NON-BLOCKING` because the browser is not the intended final Terminal surface.
+
+Open Positions active-symbol ordering/highlight and Close All placement/red-border implementation remains complete
+with focused tests; real-phone visual acceptance is still pending. Remaining CR blockers are STOP, TAKE PROFIT,
+real-account/API management and real execution/reconciliation.
 

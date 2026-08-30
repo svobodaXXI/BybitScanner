@@ -30,9 +30,10 @@ function inventory(positions: PaperOpenPosition[]) {
   };
 }
 
-function renderOverlay(onNavigate = vi.fn()) {
+function renderOverlay(onNavigate = vi.fn(), activeSymbol = "BTCUSDT") {
   render(
     <OpenPositionsOverlay
+      activeSymbol={activeSymbol}
       onClose={vi.fn()}
       onNavigate={onNavigate}
       runPaperMutation={(_key, operation) => operation()}
@@ -51,6 +52,32 @@ afterEach(() => {
 });
 
 describe("account-wide PAPER Full Close reconciliation", () => {
+  it("renders the active symbol first and highlighted without reordering other positions", async () => {
+    const eth = { ...position, symbol: "ETHUSDT", tick_size: "0.01" };
+    const sol = { ...position, symbol: "SOLUSDT", tick_size: "0.001" };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(inventory([position, eth, sol])));
+    renderOverlay(vi.fn(), "ETHUSDT");
+
+    const rows = await screen.findAllByRole("button", { name: /Открыть позицию .* в терминале/ });
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+      "Открыть позицию ETHUSDT в терминале",
+      "Открыть позицию BTCUSDT в терминале",
+      "Открыть позицию SOLUSDT в терминале",
+    ]);
+    expect(rows[0]).toHaveClass("active-symbol");
+    expect(rows[1]).not.toHaveClass("active-symbol");
+    expect(rows[2]).not.toHaveClass("active-symbol");
+  });
+
+  it("places the red Close All control beside the heading", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(inventory([position])));
+    renderOverlay();
+
+    const closeAll = await screen.findByRole("button", { name: "Закрыть все" });
+    expect(closeAll.parentElement).toHaveClass("paper-open-positions-title");
+    expect(closeAll).toHaveClass("paper-open-positions-close-all");
+  });
+
   it("requires navigation confirmation and keeps close action isolated from card navigation", async () => {
     const onNavigate = vi.fn();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(inventory([position])));

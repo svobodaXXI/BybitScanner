@@ -862,6 +862,7 @@ export function ModePanel({
 
           {openPositionsVisible ? (
             <OpenPositionsOverlay
+              activeSymbol={symbol}
               onClose={() => setOpenPositionsVisible(false)}
               onNavigate={(nextSymbol) => {
                 setOpenPositionsVisible(false);

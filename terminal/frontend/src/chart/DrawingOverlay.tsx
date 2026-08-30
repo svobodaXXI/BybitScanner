@@ -11,6 +11,8 @@ import {
   type DrawingAnchor,
   type DrawingObject,
   type DrawingTool,
+  fibonacciBands,
+  fibonacciLabel,
   fibonacciPrices,
   rulerMeasurement,
 } from "./drawingModel";
@@ -22,6 +24,13 @@ export interface DrawingCoordinates {
   yToPrice(value: number): number | null;
 }
 const HIT_RADIUS = 12;
+const FIBONACCI_BAND_COLORS = [
+  "rgb(59 198 57 / 8%)",
+  "rgb(92 156 196 / 8%)",
+  "rgb(224 180 91 / 8%)",
+  "rgb(150 112 196 / 8%)",
+  "rgb(205 77 90 / 8%)",
+] as const;
 const fmtDuration = (seconds: number) =>
   seconds >= 3600
     ? `${Math.floor(seconds / 3600)}h${Math.floor((seconds % 3600) / 60)}m`
@@ -38,6 +47,7 @@ export function DrawingOverlay({
   onSelect,
   onDrawingGesture,
   onDrawingComplete,
+  priceFormatter = (price) => price.toFixed(4),
 }: {
   drawings: DrawingObject[];
   selectedId: string | null;
@@ -49,9 +59,14 @@ export function DrawingOverlay({
   onSelect: (id: string | null) => void;
   onDrawingGesture: () => void;
   onDrawingComplete: () => void;
+  priceFormatter?: (price: number) => string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const draftRef = useRef<DrawingObject | null>(null);
+  const fibonacciAnchorActiveRef = useRef(false);
+  const rulerAnchorActiveRef = useRef(false);
+  const fixedRulerIdRef = useRef<string | null>(null);
+  const guideAnchorRef = useRef<DrawingAnchor | null>(null);
   const dragRef = useRef<{
     id: string;
     anchor: number | null;
@@ -131,18 +146,34 @@ export function DrawingOverlay({
         ctx.lineTo(end.x, end.y);
       } else if (drawing.type === "rectangle") {
         ctx.rect(a.x, a.y, b.x - a.x, b.y - a.y);
+      } else if (drawing.type === "fibonacci" && drawing.anchors.length === 1) {
+        ctx.moveTo(a.x - 6, a.y);
+        ctx.lineTo(a.x + 6, a.y);
       } else if (drawing.type === "fibonacci") {
+        const firstPrice = drawing.anchors[0].price;
+        const secondPrice = drawing.anchors[1]?.price ?? firstPrice;
+        const left = Math.min(a.x, b.x);
+        const width = Math.abs(b.x - a.x);
+        for (const [index, band] of fibonacciBands(firstPrice, secondPrice).entries()) {
+          const fromY = coordinates.priceToY(band.from.price);
+          const toY = coordinates.priceToY(band.to.price);
+          if (fromY === null || toY === null) continue;
+          ctx.fillStyle = FIBONACCI_BAND_COLORS[index % FIBONACCI_BAND_COLORS.length];
+          ctx.fillRect(left, Math.min(fromY, toY), width, Math.abs(toY - fromY));
+        }
+        ctx.fillStyle = drawing.style.color;
+        ctx.font = "600 10px Inter, ui-sans-serif, sans-serif";
         for (const item of fibonacciPrices(
-          drawing.anchors[0].price,
-          drawing.anchors[1]?.price ?? drawing.anchors[0].price,
+          firstPrice,
+          secondPrice,
         )) {
           const y = coordinates.priceToY(item.price);
           if (y === null) continue;
           ctx.moveTo(Math.min(a.x, b.x), y);
           ctx.lineTo(Math.max(a.x, b.x), y);
           ctx.fillText(
-            `${item.level}  ${item.price.toFixed(4)}`,
-            Math.min(a.x, b.x) + 4,
+            fibonacciLabel(item.level, item.price, priceFormatter),
+            left + 4,
             y - 3,
           );
         }
@@ -152,7 +183,8 @@ export function DrawingOverlay({
       }
       ctx.stroke();
       if (drawing.type === "ruler" && drawing.anchors[1]) {
-        const m = rulerMeasurement(drawing.anchors[0], drawing.anchors[1]);
+        const [origin, destination] = drawing.anchors;
+        const m = rulerMeasurement(origin, destination);
         const sign = m.priceDelta >= 0 ? "+" : "";
         ctx.fillText(
           `${sign}${m.percentDelta.toFixed(2)}% · ${sign}${m.priceDelta.toFixed(4)} · ${m.bars} bars · ${fmtDuration(m.elapsedSeconds)}`,
@@ -170,7 +202,21 @@ export function DrawingOverlay({
         }
       }
     }
-  }, [drawings, pointOf, selectedId, coordinates]);
+    const guidePoint = guideAnchorRef.current
+      ? pointOf(guideAnchorRef.current)
+      : null;
+    if (guidePoint) {
+      ctx.save();
+      ctx.strokeStyle = "rgb(216 224 231 / 75%)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(0, guidePoint.y);
+      ctx.lineTo(rect.width, guidePoint.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }, [drawings, pointOf, selectedId, coordinates, priceFormatter]);
   useEffect(() => {
     redraw();
     const id = requestAnimationFrame(redraw);
@@ -179,9 +225,26 @@ export function DrawingOverlay({
   useEffect(() => {
     if (draftRef.current && selectedId !== draftRef.current.id) {
       draftRef.current = null;
+      fibonacciAnchorActiveRef.current = false;
+      rulerAnchorActiveRef.current = false;
+      guideAnchorRef.current = null;
       redraw();
     }
   }, [redraw, selectedId]);
+  useEffect(() => {
+    if (
+      (draftRef.current?.type === "fibonacci" || draftRef.current?.type === "ruler") &&
+      draftRef.current.anchors.length === 1 &&
+      tool !== draftRef.current.type
+    ) {
+      draftRef.current = null;
+      fibonacciAnchorActiveRef.current = false;
+      rulerAnchorActiveRef.current = false;
+      guideAnchorRef.current = null;
+      onSelect(null);
+      redraw();
+    }
+  }, [onSelect, redraw, tool]);
   const hit = (point: Point, bounds: { width: number; height: number }) => {
     for (let i = drawings.length - 1; i >= 0; i--) {
       const d = drawings[i];
@@ -190,6 +253,39 @@ export function DrawingOverlay({
       for (let a = 0; a < pts.length; a++)
         if (pointDistance(point, pts[a]) <= HIT_RADIUS)
           return { id: d.id, anchor: a };
+      if (d.type === "fibonacci" && pts.length === 2) {
+        const levels = fibonacciPrices(
+          d.anchors[0].price,
+          d.anchors[1].price,
+        ).map((item) => ({ ...item, y: coordinates.priceToY(item.price) }));
+        const levelYs = levels
+          .map((item) => item.y)
+          .filter((y): y is number => y !== null);
+        const visualLeft = Math.min(pts[0].x, pts[1].x);
+        const visualRight = Math.max(pts[0].x, pts[1].x);
+        if (
+          levelYs.length > 0 &&
+          point.x >= visualLeft - HIT_RADIUS &&
+          point.x <= visualRight + HIT_RADIUS &&
+          point.y >= Math.min(...levelYs) - HIT_RADIUS &&
+          point.y <= Math.max(...levelYs) + HIT_RADIUS
+        )
+          return { id: d.id, anchor: null };
+        for (const level of levels) {
+          if (level.y === null) continue;
+          const labelWidth = fibonacciLabel(
+            level.level,
+            level.price,
+            priceFormatter,
+          ).length * 6;
+          if (
+            point.x >= visualLeft - HIT_RADIUS &&
+            point.x <= visualLeft + 4 + labelWidth + HIT_RADIUS &&
+            Math.abs(point.y - level.y) <= HIT_RADIUS
+          )
+            return { id: d.id, anchor: null };
+        }
+      }
       if (pts.length === 1) {
         if (
           (d.type === "horizontal" &&
@@ -217,6 +313,33 @@ export function DrawingOverlay({
     const anchor = anchorOf(event);
     if (!anchor) return;
     const rect = event.currentTarget.getBoundingClientRect();
+    if (
+      draftRef.current?.type === "fibonacci" &&
+      draftRef.current.anchors.length === 1
+    ) {
+      draftRef.current = {
+        ...draftRef.current,
+        anchors: [anchor, draftRef.current.anchors[0]],
+      };
+      fibonacciAnchorActiveRef.current = true;
+      guideAnchorRef.current = anchor;
+      onDrawingGesture();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      redraw();
+      return;
+    }
+    if (draftRef.current?.type === "ruler" && draftRef.current.anchors.length === 1) {
+      draftRef.current = {
+        ...draftRef.current,
+        anchors: [draftRef.current.anchors[0], anchor],
+      };
+      rulerAnchorActiveRef.current = true;
+      guideAnchorRef.current = anchor;
+      onDrawingGesture();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      redraw();
+      return;
+    }
     if (draftRef.current) {
       draftRef.current = {
         ...draftRef.current,
@@ -234,10 +357,42 @@ export function DrawingOverlay({
         { x: event.clientX - rect.left, y: event.clientY - rect.top },
         rect,
       );
+      const selected = selectedId
+        ? drawings.find((drawing) => drawing.id === selectedId)
+        : null;
+      if (!found && selected?.type === "ruler" && !selected.locked) {
+        onCommit(drawings.map((drawing) =>
+          drawing.id === selected.id ? { ...drawing, locked: true } : drawing,
+        ));
+        fixedRulerIdRef.current = selected.id;
+        onSelect(null);
+        return;
+      }
+      if (!found && fixedRulerIdRef.current) {
+        const fixedId = fixedRulerIdRef.current;
+        onCommit(drawings.filter((drawing) => drawing.id !== fixedId));
+        fixedRulerIdRef.current = null;
+        onSelect(null);
+        return;
+      }
       onSelect(found?.id ?? null);
       if (found) {
-        onDrawingGesture();
         const original = drawings.find((d) => d.id === found.id);
+        if (original?.type === "fibonacci" && selectedId !== found.id) return;
+        if (original?.type === "ruler" && original.locked) {
+          fixedRulerIdRef.current = original.id;
+          onDrawingGesture();
+          dragRef.current = {
+            id: original.id,
+            anchor: null,
+            start: anchor,
+            original,
+          };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          onSelect(null);
+          return;
+        }
+        onDrawingGesture();
         if (original && !original.locked) {
           dragRef.current = {
             id: found.id,
@@ -246,6 +401,12 @@ export function DrawingOverlay({
             original,
           };
           event.currentTarget.setPointerCapture(event.pointerId);
+          if (
+            (original.type === "fibonacci" || original.type === "ruler") &&
+            found.anchor !== null
+          ) {
+            guideAnchorRef.current = original.anchors[found.anchor];
+          }
         }
       }
       return;
@@ -261,6 +422,26 @@ export function DrawingOverlay({
       locked: false,
       hidden: false,
     } as DrawingObject;
+    if (type === "fibonacci") {
+      draftRef.current = draft;
+      fibonacciAnchorActiveRef.current = true;
+      guideAnchorRef.current = anchor;
+      onSelect(draft.id);
+      onDrawingGesture();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      redraw();
+      return;
+    }
+    if (type === "ruler") {
+      draftRef.current = draft;
+      rulerAnchorActiveRef.current = true;
+      guideAnchorRef.current = anchor;
+      onSelect(draft.id);
+      onDrawingGesture();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      redraw();
+      return;
+    }
     if (single) {
       onCommit([...drawings, draft]);
       onSelect(draft.id);
@@ -278,6 +459,31 @@ export function DrawingOverlay({
   const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const anchor = anchorOf(event);
     if (!anchor) return;
+    if (
+      draftRef.current?.type === "fibonacci" &&
+      fibonacciAnchorActiveRef.current
+    ) {
+      draftRef.current = {
+        ...draftRef.current,
+        anchors: draftRef.current.anchors.length === 1
+          ? [anchor]
+          : [anchor, draftRef.current.anchors[1]],
+      };
+      guideAnchorRef.current = anchor;
+      redraw();
+      return;
+    }
+    if (draftRef.current?.type === "ruler" && rulerAnchorActiveRef.current) {
+      draftRef.current = {
+        ...draftRef.current,
+        anchors: draftRef.current.anchors.length === 1
+          ? [anchor]
+          : [draftRef.current.anchors[0], anchor],
+      };
+      guideAnchorRef.current = anchor;
+      redraw();
+      return;
+    }
     if (draftRef.current) {
       draftRef.current = {
         ...draftRef.current,
@@ -307,9 +513,48 @@ export function DrawingOverlay({
       };
     });
     onCommit(next);
+    if (
+      (drag.original.type === "fibonacci" || drag.original.type === "ruler") &&
+      drag.anchor !== null
+    ) {
+      guideAnchorRef.current = anchor;
+      redraw();
+    }
   };
   const finish = () => {
+    if (
+      (draftRef.current?.type === "fibonacci" || draftRef.current?.type === "ruler") &&
+      draftRef.current.anchors.length === 2
+    ) {
+      const completed = draftRef.current;
+      onCommit([...drawings, completed]);
+      onSelect(completed.id);
+      draftRef.current = null;
+      fixedRulerIdRef.current = null;
+      onDrawingComplete();
+    }
+    fibonacciAnchorActiveRef.current = false;
+    rulerAnchorActiveRef.current = false;
     dragRef.current = null;
+    guideAnchorRef.current = null;
+    redraw();
+  };
+  const cancel = () => {
+    if (
+      (draftRef.current?.type === "fibonacci" || draftRef.current?.type === "ruler") &&
+      draftRef.current.anchors.length === 2
+    ) {
+      draftRef.current = {
+        ...draftRef.current,
+        anchors: [draftRef.current.type === "fibonacci"
+          ? draftRef.current.anchors[1]
+          : draftRef.current.anchors[0]],
+      };
+    }
+    fibonacciAnchorActiveRef.current = false;
+    rulerAnchorActiveRef.current = false;
+    dragRef.current = null;
+    guideAnchorRef.current = null;
     redraw();
   };
   return (
@@ -320,7 +565,7 @@ export function DrawingOverlay({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={finish}
-      onPointerCancel={finish}
+      onPointerCancel={cancel}
     />
   );
 }

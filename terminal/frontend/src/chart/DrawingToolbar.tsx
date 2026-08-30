@@ -7,6 +7,7 @@ const tools: Array<[DrawingTool, string, string]> = [
   ["horizontal", "\u2014", "Horizontal line"],
   ["ray", "\u2197", "Ray"],
   ["horizontal-ray", "\u2192", "Horizontal ray"],
+  ["ruler", "\u0394", "Ruler"],
   ["fibonacci", "Fib", "Fibonacci grid"],
 ];
 

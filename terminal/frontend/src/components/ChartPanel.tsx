@@ -280,6 +280,10 @@ export function ChartPanel({
     const priceFormat = tickSize === null ? null : chartPriceFormat(tickSize);
     if (priceFormat) seriesRef.current?.applyOptions({ priceFormat });
   }, [tickSize]);
+  const drawingPriceFormatter = useMemo(() => {
+    const format = tickSize === null ? null : chartPriceFormat(tickSize);
+    return format?.formatter ?? ((price: number) => price.toFixed(4));
+  }, [tickSize]);
   const coordinates = useMemo<DrawingCoordinates>(() => {
     void renderTick;
     return {
@@ -704,6 +708,7 @@ export function ChartPanel({
           magnet={magnet}
           candles={candles}
           coordinates={coordinates}
+          priceFormatter={drawingPriceFormatter}
           onCommit={commit}
           onSelect={setSelectedId}
           onDrawingComplete={() => setTool("select")}

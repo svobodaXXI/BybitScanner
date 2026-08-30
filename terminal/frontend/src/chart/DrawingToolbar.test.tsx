@@ -33,20 +33,22 @@ describe("drawing toolbar", () => {
       "Horizontal line",
       "Ray",
       "Horizontal ray",
+      "Ruler",
       "Fibonacci grid",
       "Magnet",
       "Undo drawing",
       "Clear drawings",
     ]);
     expect(screen.queryByRole("button", { name: "Vertical line" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Ruler" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Rectangle" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Redo drawing" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Lock selected drawing" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Delete selected drawing" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Horizontal line" }));
+    fireEvent.click(screen.getByRole("button", { name: "Ruler" }));
     fireEvent.click(screen.getByRole("button", { name: "Magnet" }));
     expect(onTool).toHaveBeenCalledWith("horizontal");
+    expect(onTool).toHaveBeenCalledWith("ruler");
     expect(onMagnet).toHaveBeenCalledOnce();
   });
 

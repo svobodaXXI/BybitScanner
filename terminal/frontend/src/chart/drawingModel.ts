@@ -1,6 +1,6 @@
 export const DRAWING_SCHEMA_VERSION = 1;
 export const FIBONACCI_LEVELS = [
-  0, 0.236, 0.382, 0.5, 0.618, 0.786, 1,
+  0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 3.618, 4.236,
 ] as const;
 
 export type DrawingTool =
@@ -90,16 +90,28 @@ export function fibonacciPrices(first: number, second: number) {
     price: first + (second - first) * level,
   }));
 }
+export function fibonacciBands(first: number, second: number) {
+  const levels = fibonacciPrices(first, second);
+  return levels.slice(0, -1).map((from, index) => ({
+    from,
+    to: levels[index + 1],
+  }));
+}
+export const fibonacciLabel = (
+  level: number,
+  price: number,
+  formatPrice: (value: number) => string,
+) => `${level}  ${formatPrice(price)}`;
 export function rulerMeasurement(
-  a: DrawingAnchor,
-  b: DrawingAnchor,
+  origin: DrawingAnchor,
+  destination: DrawingAnchor,
   candleSeconds = 300,
 ) {
-  const priceDelta = b.price - a.price;
-  const bars = Math.round(Math.abs(b.logical - a.logical));
+  const priceDelta = destination.price - origin.price;
+  const bars = Math.round(Math.abs(destination.logical - origin.logical));
   return {
     priceDelta,
-    percentDelta: a.price === 0 ? 0 : (priceDelta / a.price) * 100,
+    percentDelta: origin.price === 0 ? 0 : (priceDelta / origin.price) * 100,
     bars,
     elapsedSeconds: bars * candleSeconds,
   };

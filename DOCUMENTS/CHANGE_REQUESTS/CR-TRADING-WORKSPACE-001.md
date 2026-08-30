@@ -7,13 +7,11 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.89",
+  "revision": "1.97",
   "lifecycle_stage": "IMPLEMENT",
-  "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
+  "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
-    "Implement any Stage 8 functionality beyond the bounded frontend foundation and structural shell",
     "Implement autonomous Trading Robot behavior or AUTOPILOT",
-    "Connect the initial Trading Workspace execution path to a real-money Bybit account",
     "Couple Terminal availability to Scanner runtime",
     "Treat chart, UI acknowledgement or local expected state as authoritative exchange truth",
     "Change Scanner detection, Signal admission, Telegram delivery or trading behavior"
@@ -46,16 +44,22 @@
     ,"Implement the account-wide PAPER Open Positions inventory and money-sensitive per-symbol Full Close reconciliation without optimistic row removal or blind retry"
     ,"Complete account-wide PAPER Open Positions with backend-owned per-symbol current PnL, symbol tick-size price formatting and serialized idempotent Close All orchestration"
     ,"Implement one canonical authoritative Workspace symbol-switch path shared by ticker autocomplete and Open Positions navigation, with atomic market-data and PAPER projection transition safety"
+    ,"Complete and accept the missing chart Drawing Tools Ruler through the established drawing lifecycle"
+    ,"Upgrade the existing Fibonacci drawing with binding retracement/extension levels, chart-authoritative labels and translucent adjacent fills"
+    ,"Complete and accept authoritative STOP and TAKE PROFIT lifecycles on PAPER before real-account enablement"
+    ,"Complete active-symbol-first Open Positions ordering, highlighting and Close All presentation without changing Close All execution semantics"
+    ,"Implement backend-secured Bybit API credential management and safely reconciled configured-account switching without exposing API Secret to the frontend"
+    ,"Extend the established Terminal execution and reconciliation architecture to the selected real account for Market, Limit, STOP and TAKE without blind retry"
+    ,"Complete the real-money security, reconciliation and acceptance gate before Manual Terminal v1 closure"
     ,"Record the human-approved planning-only future direction for an autonomous Android manual Trading Workspace without authorizing implementation or selecting a final Android stack"
   ],
   "prohibited_scope": [
     "Further unapproved DOM, L2, Market Data Engine, Paper Trading Engine or chart implementation beyond recorded checkpoints",
-    "Bybit order placement or account mutation",
     "Scanner, detector, Geometry, Signal admission or Telegram runtime changes",
     "Trading Robot implementation",
     "AUTOPILOT enablement",
     "Dependencies outside the bounded frontend build, styling, lint and focused-test foundation",
-    "Any Stage 8 implementation beyond the explicitly authorized first runnable Fast DOM client slice"
+    "Any unapproved expansion beyond the recorded Manual Terminal v1 completion blockers"
   ],
   "authoritative_references": [
     "AGENTS.md#Task-and-change-routing",
@@ -4416,4 +4420,100 @@ build is `PASS`, and real-phone acceptance is `PASS`.
 
 After CENTER, the approximately 13/15 visible-row distribution is `USER-DEFERRED / NON-BLOCKING` by explicit
 user decision. It is not a failure or blocker for this accepted slice.
+
+## MANUAL TERMINAL V1 COMPLETION SCOPE
+
+Revision 1.91 supersedes the documentation-only conclusion that STOP, TAKE PROFIT, real-account/API management
+and real-account execution are future or outside this ChangeRequest. `CR-TRADING-WORKSPACE-001` remains
+`IN_PROGRESS` in `IMPLEMENT` until all blockers below are implemented and accepted.
+
+1. **Drawing Tools Ruler:** expose the existing two-point Ruler in the palette with live price-difference and
+   percentage measurement, existing time/bar measurement where supported, movement and shared deletion semantics.
+2. **Open Positions UX:** show the active Terminal symbol first and visually highlighted; list all other open
+   positions below it; move `Закрыть все` closer to the `Открытые позиции` heading and use a red border without
+   changing Close All execution semantics.
+3. **STOP on PAPER:** implement and accept create, edit, activate and cancel; authoritative projection; quantity
+   fixed to 100% of current position with automatic quantity synchronization after size changes; price preserved
+   unless explicitly edited; cleanup after confirmed FLAT.
+4. **TAKE PROFIT on PAPER:** implement and accept the same lifecycle, projection, 100%-quantity synchronization,
+   explicit-only price edits and confirmed-FLAT cleanup while preserving approved signal TAKE proposal semantics.
+5. **Real account/API management:** add credentials only through a backend security boundary; never expose API
+   Secret to the frontend; support configured account selection and switching with account-scoped state and a
+   mutation lock until loading and reconciliation complete.
+6. **Real execution/reconciliation:** reuse the established execution architecture for Market, Limit, STOP and
+   TAKE on the selected real account; retain fail-closed `UNKNOWN`/`RECONCILING`, authoritative exchange
+   reconciliation before success and no blind retries; complete a real-money security and acceptance gate.
+
+Binding order is Drawing Tools Ruler; Open Positions UX; STOP + TAKE on PAPER; real account/API management and switching; real
+execution/reconciliation; final Manual Terminal v1 acceptance; then and only then CR closure. CENTER's
+approximately 13/15 distribution and Done/Enter focus progression remain `USER-DEFERRED / NON-BLOCKING`.
+Robot/AUTOPILOT, Android, MetaScalp, VPS, Scanner and strategy work remain outside this completion sequence.
+
+## RULER ACCEPTANCE AND OPEN POSITIONS UX CHECKPOINT
+
+Revision 1.92 records the Drawing Tools Ruler as `COMPLETE / REAL-PHONE ACCEPTED`. It uses the established
+two-point drawing lifecycle, live price and percentage measurement, existing bar/time metrics, movement and shared
+deletion. Native browser text/icon selection within Drawing Tools is `USER-DEFERRED / NON-BLOCKING`.
+
+Open Positions UX is the current implementation slice. The bounded implementation derives an active-symbol-first
+presentation order from the existing authoritative workspace symbol without mutating server inventory, highlights
+that row presentation-only, preserves relative order for all other positions, and moves the unchanged Close All
+action beside the heading with a red border. Manual/browser acceptance remains pending.
+
+## FIBONACCI DRAWING UPGRADE CHECKPOINT
+
+Revision 1.93 records the current Drawing Tools slice: the existing two-anchor Fibonacci drawing now uses default
+levels `0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 3.618, 4.236`, including genuine extensions in
+either anchor direction. Each level shows coefficient plus a price formatted through existing chart tick-size
+authority, and adjacent intervals receive restrained translucent fills beneath readable level lines.
+
+Creation, magnet, anchor movement, selection, persistence and deletion remain on the shared drawing lifecycle.
+Open Positions UX remains implemented with manual acceptance pending; Ruler remains complete/accepted; native
+browser Drawing Tools selection remains `USER-DEFERRED / NON-BLOCKING`.
+
+## FIBONACCI MOBILE TWO-STAGE PLACEMENT CHECKPOINT
+
+Revision 1.94 makes explicit two-stage touch placement the current Fibonacci acceptance requirement. Selecting Fib
+creates nothing. The first deliberate chart touch creates only an internal Anchor A draft; it may be dragged
+immediately and after release while the tool waits for a separate second tap. Full levels, fills and labels appear
+only after Anchor B is deliberately placed.
+
+While either anchor is initially placed or actively adjusted, a temporary non-persisted horizontal dashed guide
+tracks its exact price across the chart and disappears when interaction ends. Tool change/cancel discards an
+unfinished one-anchor draft. Completed Fibonacci selection, anchor editing, magnet, movement, persistence and
+deletion remain on the shared drawing architecture. Phone acceptance is pending.
+
+## FIBONACCI TOUCH INTERACTION CORRECTION
+
+Revision 1.95 supersedes the prior tap-then-adjust placement detail. Each physical anchor is defined by one
+press/optional-drag/release gesture: the first fixes the level-1 anchor without a grid; the second stretches the
+level-0 anchor with live levels, extensions, fills and labels, then completes the selected Fib on release. Temporary
+horizontal guides follow the anchor during each placement and active anchor edits.
+
+A completed Fib is initially active. An inactive Fib remains fully visible but cannot be moved or edited; a
+deliberate tap within its practical rendered levels/bands/anchors/labels region activates it without changing
+geometry, and only a subsequent explicit active edit gesture may mutate it. A tap outside deactivates it. Tool
+change/cancel still discards a one-anchor draft. Phone acceptance remains pending.
+
+## RULER MOBILE TEMPORARY LIFECYCLE
+
+Revision 1.96 binds Ruler placement to two press/optional-drag/release gestures with live measurement during the
+second stretch. Completion starts `ACTIVE`, with independent endpoint editing. The first deliberate outside tap
+changes the Ruler to `FIXED` without deleting it; fixed endpoint touches cannot resize it, while a body drag rigidly
+translates both endpoints and preserves the measurement span. A subsequent deliberate outside tap dismisses the
+fixed temporary Ruler. Internal drag releases never count as outside taps, and tool change discards a one-anchor
+draft. Phone acceptance is pending.
+
+## DRAWING TOOLS ACCEPTANCE CHECKPOINT
+
+Revision 1.97 records Ruler and Fibonacci as `ACCEPTED / COMPLETE` by real-phone acceptance. Ruler includes
+two-stage touch placement, directed origin-to-destination measurement signs, active endpoint editing, temporary
+horizontal anchor guides, first-outside fix, rigid fixed-body translation and second-outside dismissal. Fibonacci
+includes the binding levels/fills/labels, corrected anchor order, live second-anchor stretch, active/inactive edit
+gate and bounded mobile hit region. Native browser Drawing Tools text/icon selection remains `USER-DEFERRED /
+NON-BLOCKING` because the browser is not the intended final Terminal surface.
+
+Open Positions UX remains implemented with focused automated evidence; real-phone visual acceptance remains
+pending. The ChangeRequest remains `IN_PROGRESS / IMPLEMENT` for STOP, TAKE PROFIT, real-account/API management
+and real execution/reconciliation.
 

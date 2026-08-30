@@ -4,6 +4,9 @@ import {
   clearDrawingHistory,
   DrawingHistory,
   deserializeDrawings,
+  FIBONACCI_LEVELS,
+  fibonacciBands,
+  fibonacciLabel,
   fibonacciPrices,
   moveAnchor,
   moveDrawing,
@@ -70,5 +73,44 @@ describe("drawing model", () => {
     expect(measurement.bars).toBe(17);
     expect(measurement.priceDelta).toBeCloseTo(2.37);
     expect(measurement.percentDelta).toBeCloseTo(2.37);
+  });
+
+  it("keeps Ruler price and percentage signs directed from origin to destination", () => {
+    const upward = rulerMeasurement(
+      { logical: 10, price: 100 },
+      { logical: 20, price: 125 },
+    );
+    expect(upward.priceDelta).toBe(25);
+    expect(upward.percentDelta).toBe(25);
+
+    const downward = rulerMeasurement(
+      { logical: 10, price: 125 },
+      { logical: 20, price: 100 },
+    );
+    expect(downward.priceDelta).toBe(-25);
+    expect(downward.percentDelta).toBe(-20);
+  });
+
+  it("uses the binding retracement and extension levels", () => {
+    expect(FIBONACCI_LEVELS).toEqual([
+      0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 3.618, 4.236,
+    ]);
+  });
+
+  it("calculates genuine extensions in both anchor directions", () => {
+    const forward = fibonacciPrices(100, 110);
+    const reverse = fibonacciPrices(110, 100);
+    expect(forward.find((item) => item.level === 1.618)?.price).toBeCloseTo(116.18);
+    expect(reverse.find((item) => item.level === 1.618)?.price).toBeCloseTo(93.82);
+  });
+
+  it("produces adjacent fill bands and coefficient-price labels", () => {
+    const bands = fibonacciBands(0.07, 0.080841);
+    expect(bands).toHaveLength(FIBONACCI_LEVELS.length - 1);
+    expect(bands[0].from.level).toBe(0);
+    expect(bands[0].to.level).toBe(0.236);
+    const level = fibonacciPrices(0.07, 0.080841).find((item) => item.level === 0.618)!;
+    expect(fibonacciLabel(level.level, level.price, (price) => price.toFixed(4)))
+      .toBe("0.618  0.0767");
   });
 });
