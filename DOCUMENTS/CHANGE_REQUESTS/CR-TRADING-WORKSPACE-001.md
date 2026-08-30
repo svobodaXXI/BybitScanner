@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.75",
+  "revision": "1.76",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -459,7 +459,8 @@
     {"revision": "1.72", "reason": "Completed documentation-only M0 by inventorying the current per-symbol workers and three-SSE browser topology, recording bounded BTCUSDT and ONGUSDT payload/rate measurements, and defining target snapshot/delta, readiness, health, efficiency, additive migration and later chaos-acceptance contracts without implementing the Hub or changing transport/PAPER semantics", "date": "2026-08-30"},
     {"revision": "1.73", "reason": "Implemented and verified M1 as one authoritative backend InstrumentRegistry with complete Bybit linear pagination, strict Workspace-compatible filtering, Decimal-safe normalized metadata, duplicate/cursor-loop protection, atomic snapshot publication and previous-snapshot preservation; routed instruments API, Workspace switching and PAPER lookup through that registry without implementing M2", "date": "2026-08-30"},
     {"revision": "1.74", "reason": "Implemented and verified M2 as one long-lived backend MarketDataHub owning a shared Bybit public linear WebSocket, multi-symbol book/trade subscriptions, normalized dispatch, reconnect/resubscribe and reusable SymbolContexts; preserved generation-gated Workspace/PAPER/HTTP compatibility without implementing multiplexed frontend transport or later readiness/lifecycle stages", "date": "2026-08-30"},
-    {"revision": "1.75", "reason": "Implemented and verified M3 as one backend WorkspaceController owning requested/active symbol authority, generation, pending candidate, composite book/trades/candle readiness, explicit switch failure and bounded warm-context reuse/expiry while preserving Hub ownership, PAPER semantics and existing SSE compatibility", "date": "2026-08-30"}
+    {"revision": "1.75", "reason": "Implemented and verified M3 as one backend WorkspaceController owning requested/active symbol authority, generation, pending candidate, composite book/trades/candle readiness, explicit switch failure and bounded warm-context reuse/expiry while preserving Hub ownership, PAPER semantics and existing SSE compatibility", "date": "2026-08-30"},
+    {"revision": "1.76", "reason": "Implemented and verified M4 as one backend ClientMarketProjection with configurable bounded book bootstrap and exact window deltas/resnapshot, bounded deduplicated trade bootstrap/batches, one-time candle bootstrap/changed-record updates, additive projection SSE and measured BTC/ONG payload reduction while preserving full PAPER L2 and legacy frontend SSE", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3801,3 +3802,28 @@ exchange-facing engine. Limit overflow and grace expiry invoke Hub unsubscribe/d
 PAPER behavior and current HTTP/SSE shapes are preserved. M3 does not implement client multiplexing or projection
 deltas. M4 efficient snapshot + delta client projections are the exact next gated stage. Chaos/regression
 hardening remains M7.
+
+## 83. M4 efficient snapshot + delta client projections
+
+Revision 1.76 records `M4 — EFFICIENT SNAPSHOT + DELTA CLIENT PROJECTIONS IMPLEMENTED / AUTOMATED PASS`.
+One backend-owned `ClientMarketProjection` consumes the controller-owned active Hub context and carries symbol,
+Workspace generation, kind, projection/source identity, timestamps and health in a common future-M5 envelope.
+Stale generations fail closed. The authoritative 1000×2 backend book remains available to PAPER unchanged.
+
+Book bootstrap defaults to configurable 250 levels per side, derived from the 200-row responsive DOM maximum plus
+a 25 percent margin. Deltas exactly transform the previous bounded top window into the current one, including
+size-zero deletes, edge displacement and hidden-level reveal. Client version mismatch, source-version skip,
+identity regression or health recovery produces a bounded resnapshot; untrusted truth produces health/resync and
+no current-looking delta. Internal full-book comparison is retained as a quantified replaceable correctness
+boundary.
+
+Trade bootstrap is bounded to 80, later batches contain only unseen aggregate IDs, duplicates are suppressed and
+quiet bootstrap is valid. Candle bootstrap is bounded to 1000 per interval; later polling emits only changed
+open-time records marked `replace` or `append`, unchanged polls emit nothing, and incompatible history reboots.
+
+Migration is additive through `/api/client-market-projection/stream`; legacy SSE payloads and frontend source are
+unchanged. A 15.016-second payload-only BTC/ONG run measured combined incremental projection at 7,478 B/s and
+12,013 B/s respectively, reductions of 444,846 B/s (98.35 percent) and 325,731 B/s (96.44 percent) from the M0
+combined baselines. This excludes HTTP/TLS/tunnel overhead and does not claim the prior phone failure was caused or
+resolved by transport volume. M5 one multiplexed Workspace stream is the exact next gated stage; M6+ are not
+started and chaos remains M7.

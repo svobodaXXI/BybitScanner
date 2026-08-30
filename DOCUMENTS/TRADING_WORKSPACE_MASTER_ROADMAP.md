@@ -196,7 +196,7 @@ Current status:
 ## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
 Human-approved architecture correction. Current status:
-`M3 WORKSPACE CONTROLLER + READINESS + WARM LIFECYCLE IMPLEMENTED / CLIENT TRANSPORT UNCHANGED`.
+`M4 EFFICIENT SNAPSHOT + DELTA CLIENT PROJECTIONS IMPLEMENTED / FRONTEND TRANSPORT UNCHANGED`.
 
 Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
 a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
@@ -275,7 +275,8 @@ Migration sequence:
   preserved by the compatibility manager.
 - M3 — COMPLETE: `WorkspaceController` owns requested/active authority, generation, pending candidate, composite
   readiness and bounded active/warm context lifecycle over the M2 `SymbolContext` registry.
-- M4 — implement efficient bounded snapshot + delta client projections over authoritative per-symbol contexts.
+- M4 — COMPLETE: one backend-owned `ClientMarketProjection` emits bounded book bootstrap/deltas, bounded trade
+  bootstrap/new batches and one-time candle bootstrap/changed-candle updates from authoritative Hub contexts.
 - M5 — implement one multiplexed Workspace stream with bounded bootstrap, resume and backpressure contracts.
 - M6 — project one atomic frontend generation across Chart, DOM and Smart Tape; remove independent SSE ownership
   only after parity.
@@ -471,10 +472,51 @@ one warm context with a tunable 30-second default grace. Limit overflow or grace
 evicted context. The Hub remains the only exchange subscription owner. Existing POST switch and three SSE routes
 remain compatibility adapters over controller authority, including generation and stale-consumer rejection.
 
-M4 efficient snapshot + delta client projections are the exact next gated stage. Chaos/regression hardening
-remains M7.
+At the M3 checkpoint, M4 efficient snapshot + delta client projections were the exact next gated stage;
+chaos/regression hardening remained M7.
 
 M3 does not implement bounded client projections/deltas, the multiplexed client stream or frontend migration.
+
+### 10.8 M4 efficient snapshot + delta client projections checkpoint
+
+M4 adds one stateful backend `ClientMarketProjection` between full authoritative `SymbolContext` truth and client
+transport. It uses the controller-owned active context/generation and rejects stale generations. The full 1000×2
+book remains unchanged for PAPER execution. Client book bootstrap is configurable and defaults to 250 levels per
+side: the current responsive maximum of 200 DOM rows plus a 25 percent safety margin.
+
+Each READY book event carries symbol, Workspace generation, projection/source versions, upstream update/sequence
+identity, timestamps and health. A normal delta is the exact mutation from the previous bounded window to the new
+one, including explicit size `0` deletes, displaced edge removal and newly revealed hidden levels. Client base
+version mismatch, skipped source version, regressed upstream identity or recovery from untrusted health emits a
+fresh bounded snapshot; non-READY truth emits health with `resync_required` and no apparently-current delta.
+
+Trade bootstrap is capped at the frontend retention of 80 aggregates. Later batches contain only unseen IDs,
+duplicate IDs are suppressed, and a quiet bootstrap is explicitly empty without fabricated trades. Candle
+bootstrap is capped at 1000 for the selected interval. Later REST-poll projections emit only changed records with
+open-time identity and explicit `replace` or `append`; unchanged polls emit nothing, while incompatible history
+requires a bounded rebootstrap.
+
+Migration is additive. `/api/client-market-projection/stream` exposes one selected projection kind with the common
+future-M5 envelope, while all three legacy SSE routes and current frontend remain unchanged. M5 multiplexing,
+frontend migration and real-phone acceptance have not started.
+
+Payload-only live measurement used compact JSON before HTTP/TLS/tunnel overhead for 15.016 seconds on 2026-08-30:
+
+| Projection measurement | BTCUSDT | ONGUSDT |
+| --- | ---: | ---: |
+| Book bootstrap / bounded levels | 18,268 B / 250+250 | 16,839 B / 250+250 |
+| Book median delta / messages/s / bytes/s | 1,236.5 B / 5.061 / 6,697 | 1,119 B / 4.395 / 5,464 |
+| Trades bootstrap bytes/items | 1,200 B / 1 | 142 B / 0 |
+| Trades messages/s / bytes/s | 0.599 / 741 | 3.863 / 6,448 |
+| 5m candle bootstrap bytes/items | 94,694 B / 1000 | 95,662 B / 1000 |
+| 5m candle update median / messages/s / bytes/s | 299.5 B / 0.133 / 40 | 301 B / 0.333 / 100 |
+| Combined incremental bytes/s | 7,478 | 12,013 |
+| Reduction from M0 combined bytes/s | 444,846 B/s / 98.35% | 325,731 B/s / 96.44% |
+
+The projection currently compares one full authoritative book snapshot to its previous 250×2 window per accepted
+source update: bounded client output is correct, but the internal O(authoritative depth log depth) comparison is a
+replaceable optimization boundary. The measurement proves payload reduction, not the cause or resolution of the
+earlier phone failure. M5 one multiplexed Workspace stream is the exact next gated stage.
 
 ## 11. Stage 10 — Real verification
 

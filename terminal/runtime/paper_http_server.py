@@ -38,6 +38,7 @@ from terminal.domain.models import OrderSide
 from terminal.domain.models import Price, Quantity, Symbol
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
+from terminal.market_data.client_projection import ClientMarketProjection, StaleProjectionError
 from terminal.market_data.instrument_registry import InstrumentRegistry
 from terminal.market_data.workspace_controller import WorkspaceController
 from terminal.runtime.paper_runtime import PaperRuntime
@@ -1067,6 +1068,12 @@ class WorkspaceMarketDataManager:
         with self._lock:
             return self._active is session and self._generation == generation
 
+    def client_projection(self, symbol: str) -> ClientMarketProjection:
+        context, generation = self.get_active(symbol)
+        return ClientMarketProjection(
+            context, generation, is_current=self.is_current,
+        )
+
     @property
     def instruments(self) -> list[dict[str, str]]:
         return self._instruments.api_projection()
@@ -1159,6 +1166,59 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/instruments":
             self._json_response(200, {"ok": True, "instruments": self.server.market_data.instruments})
             return
+
+        if parsed.path == "/api/client-market-projection/stream":
+            query = parse_qs(parsed.query)
+            symbol = query.get("symbol", ["BTCUSDT"])[0]
+            kind = query.get("kind", ["book"])[0]
+            interval = query.get("interval", ["5"])[0]
+            if kind not in {"book", "trades", "candles"}:
+                self._json_response(400, {"ok": False, "error": "unsupported_projection_kind"})
+                return
+            try:
+                projection = self.server.market_data.client_projection(symbol)
+                source = (
+                    projection.context.public_orderbook if kind == "book"
+                    else projection.context.public_klines.get(interval) if kind == "candles"
+                    else projection.context.public_trades
+                )
+            except LookupError:
+                self._json_response(409, {"ok": False, "error": "inactive_workspace_symbol"})
+                return
+            if source is None:
+                self._json_response(400, {"ok": False, "error": "unsupported_projection_interval"})
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            source_version = -1
+            try:
+                while True:
+                    if kind == "trades":
+                        event = projection.trades_event()
+                        time.sleep(0.03)
+                    else:
+                        snapshot = source.snapshot_after(source_version)
+                        source_version = int(snapshot.get("version", source_version))
+                        event = (
+                            projection.book_event()
+                            if kind == "book" else projection.candles_event(interval)
+                        )
+                    if event is None:
+                        self.wfile.write(b":keepalive\n\n")
+                    else:
+                        body = json.dumps(event, separators=(",", ":"))
+                        self.wfile.write(f"data:{body}\n\n".encode("utf-8"))
+                    self.wfile.flush()
+            except StaleProjectionError:
+                self.close_connection = True
+                return
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                return
 
         if parsed.path == "/api/public-trades/stream":
             query = parse_qs(parsed.query)
