@@ -196,7 +196,7 @@ Current status:
 ## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
 Human-approved architecture correction. Current status:
-`M4 EFFICIENT SNAPSHOT + DELTA CLIENT PROJECTIONS IMPLEMENTED / FRONTEND TRANSPORT UNCHANGED`.
+`M5 MULTIPLEXED WORKSPACE STREAM IMPLEMENTED / FRONTEND TRANSPORT UNCHANGED`.
 
 Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
 a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
@@ -277,7 +277,8 @@ Migration sequence:
   readiness and bounded active/warm context lifecycle over the M2 `SymbolContext` registry.
 - M4 — COMPLETE: one backend-owned `ClientMarketProjection` emits bounded book bootstrap/deltas, bounded trade
   bootstrap/new batches and one-time candle bootstrap/changed-candle updates from authoritative Hub contexts.
-- M5 — implement one multiplexed Workspace stream with bounded bootstrap, resume and backpressure contracts.
+- M5 — COMPLETE: one generation-scoped multiplexed Workspace WebSocket carries an atomic bounded bootstrap and
+  sequenced book/trade/candle/health updates with bounded replay, resnapshot and slow-client eviction contracts.
 - M6 — project one atomic frontend generation across Chart, DOM and Smart Tape; remove independent SSE ownership
   only after parity.
 - M7 — run the deterministic chaos/regression suite, including component degradation, reconnect, ordering and
@@ -516,7 +517,33 @@ Payload-only live measurement used compact JSON before HTTP/TLS/tunnel overhead 
 The projection currently compares one full authoritative book snapshot to its previous 250×2 window per accepted
 source update: bounded client output is correct, but the internal O(authoritative depth log depth) comparison is a
 replaceable optimization boundary. The measurement proves payload reduction, not the cause or resolution of the
-earlier phone failure. M5 one multiplexed Workspace stream is the exact next gated stage.
+earlier phone failure. At the M4 checkpoint, M5 one multiplexed Workspace stream was the exact next gated stage.
+
+### 10.9 M5 multiplexed Workspace stream checkpoint
+
+M5 adds one backend-owned `WorkspaceStreamBroker` and additive `/api/workspace/stream` WebSocket endpoint. A new
+generation-scoped stream begins with one atomic `workspace_snapshot` containing instrument sizing/display metadata,
+bounded M4 book/trade/candle bootstraps, component states and Hub health/sequence/reconnect observability. Later
+events share one `stream_id` and strictly increasing `event_sequence` and are limited to `book_delta`,
+`trade_batch`, `candle_update` and `health`; every envelope carries symbol, Workspace generation, event timestamp,
+component state and the complete M4 projection payload.
+
+The broker retains at most 32 resumable sessions. Each session retains at most 256 sequenced events and permits at
+most 64 pending outbound events. Reconnect may supply `stream_id` and `after_sequence`: available events replay in
+order, while an invalid or expired replay position produces a fresh atomic `workspace_snapshot` with an explicit
+resync reason. A component-level M4 resnapshot is likewise promoted to an atomic Workspace resnapshot rather than
+allowing mixed component generations. The final snapshot assembly rechecks active generation and stale generation
+polling fails closed.
+
+The HTTP runtime uses WebSocket write timeout plus the bounded pending contract to evict slow clients. Ordinary
+disconnect retains the bounded broker session for resume; stale generation, backpressure or write timeout removes
+it. Ten-second stream health heartbeats preserve proxy observability without claiming frontend/PAPER readiness.
+WebSocket framing is server-to-client text only in M5; client command/subscription ownership is not introduced.
+
+Migration remains additive. The three legacy SSE routes, the M4 per-component projection SSE route, REST command
+paths, authoritative full PAPER L2 and all frontend source remain unchanged. M6 atomic frontend generation
+projection and transport migration are the exact next gated stage and have not started. Proxy/tunnel and real-phone
+performance acceptance remain M8; M5 does not claim that the earlier phone failure is resolved.
 
 ## 11. Stage 10 — Real verification
 

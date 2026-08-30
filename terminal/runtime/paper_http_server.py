@@ -40,6 +40,10 @@ from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLe
 from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.client_projection import ClientMarketProjection, StaleProjectionError
 from terminal.market_data.instrument_registry import InstrumentRegistry
+from terminal.market_data.workspace_stream import (
+    WorkspaceStreamBackpressure, WorkspaceStreamBroker, WorkspaceStreamError,
+    websocket_accept, websocket_text_frame,
+)
 from terminal.market_data.workspace_controller import WorkspaceController
 from terminal.runtime.paper_runtime import PaperRuntime
 
@@ -999,6 +1003,9 @@ class WorkspaceMarketDataManager:
             WorkspaceController(hub, initial, self._activate_hub_context)
             if hub is not None else None
         )
+        self._workspace_streams = WorkspaceStreamBroker(
+            self.client_projection, self.client_instrument,
+        )
 
     def _activate_hub_context(
         self, previous: SymbolContext, replacement: SymbolContext,
@@ -1073,6 +1080,22 @@ class WorkspaceMarketDataManager:
         return ClientMarketProjection(
             context, generation, is_current=self.is_current,
         )
+
+    def client_instrument(self, symbol: str) -> dict[str, str]:
+        instrument = self._instruments.get(symbol)
+        return {
+            "symbol": instrument.symbol,
+            "tick_size": str(instrument.tick_size),
+            "quantity_step": str(instrument.quantity_step),
+            "min_quantity": str(instrument.min_order_quantity),
+            "min_notional": str(instrument.min_notional_value),
+            "price_precision": str(max(0, -instrument.tick_size.normalize().as_tuple().exponent)),
+            "quantity_precision": str(max(0, -instrument.quantity_step.normalize().as_tuple().exponent)),
+        }
+
+    @property
+    def workspace_streams(self) -> WorkspaceStreamBroker:
+        return self._workspace_streams
 
     @property
     def instruments(self) -> list[dict[str, str]]:
@@ -1166,6 +1189,71 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/instruments":
             self._json_response(200, {"ok": True, "instruments": self.server.market_data.instruments})
             return
+
+        if parsed.path == "/api/workspace/stream":
+            query = parse_qs(parsed.query)
+            symbol = query.get("symbol", ["BTCUSDT"])[0]
+            interval = query.get("interval", ["5"])[0]
+            stream_id = query.get("stream_id", [None])[0]
+            after_raw = query.get("after_sequence", [None])[0]
+            try:
+                after_sequence = int(after_raw) if after_raw is not None else None
+            except ValueError:
+                self._json_response(400, {"ok": False, "error": "invalid_resume_sequence"})
+                return
+            websocket_key = self.headers.get("Sec-WebSocket-Key", "").strip()
+            if (
+                self.headers.get("Upgrade", "").lower() != "websocket"
+                or "upgrade" not in self.headers.get("Connection", "").lower()
+                or self.headers.get("Sec-WebSocket-Version") != "13"
+                or not websocket_key
+            ):
+                self._json_response(426, {"ok": False, "error": "websocket_upgrade_required"})
+                return
+            try:
+                opened = self.server.market_data.workspace_streams.open(
+                    symbol, interval, stream_id=stream_id, after_sequence=after_sequence,
+                )
+            except LookupError:
+                self._json_response(409, {"ok": False, "error": "workspace_stream_unavailable"})
+                return
+            except WorkspaceStreamError:
+                self._json_response(503, {"ok": False, "error": "workspace_not_ready"})
+                return
+
+            self.send_response(101, "Switching Protocols")
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", websocket_accept(websocket_key))
+            self.end_headers()
+            self.connection.settimeout(5.0)
+            heartbeat_at = time.monotonic() + 10.0
+            session = opened.session
+            try:
+                session.enqueue(opened.events)
+                while True:
+                    for event in session.drain():
+                        self.wfile.write(websocket_text_frame(event))
+                    self.wfile.flush()
+                    events = session.poll()
+                    if events:
+                        session.enqueue(events)
+                    elif time.monotonic() >= heartbeat_at:
+                        session.enqueue((session.heartbeat(),))
+                        heartbeat_at = time.monotonic() + 10.0
+                    time.sleep(0.02)
+            except (WorkspaceStreamBackpressure, StaleProjectionError, TimeoutError):
+                self.server.market_data.workspace_streams.drop(session.stream_id)
+                self.close_connection = True
+                return
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                self.server.market_data.workspace_streams.detach(session.stream_id)
+                self.close_connection = True
+                return
+            except OSError:
+                self.server.market_data.workspace_streams.drop(session.stream_id)
+                self.close_connection = True
+                return
 
         if parsed.path == "/api/client-market-projection/stream":
             query = parse_qs(parsed.query)

@@ -195,6 +195,10 @@ class ClientMarketProjection:
         if not self._is_current(self.context, self.workspace_generation):
             raise StaleProjectionError("stale Workspace projection generation")
 
+    def assert_current(self) -> None:
+        """Fail closed if this projection lost active Workspace authority."""
+        self._require_current()
+
     @staticmethod
     def _positive_int(value: object) -> int:
         try:

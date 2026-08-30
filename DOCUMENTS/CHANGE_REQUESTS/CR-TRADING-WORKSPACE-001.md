@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.76",
+  "revision": "1.77",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -460,7 +460,8 @@
     {"revision": "1.73", "reason": "Implemented and verified M1 as one authoritative backend InstrumentRegistry with complete Bybit linear pagination, strict Workspace-compatible filtering, Decimal-safe normalized metadata, duplicate/cursor-loop protection, atomic snapshot publication and previous-snapshot preservation; routed instruments API, Workspace switching and PAPER lookup through that registry without implementing M2", "date": "2026-08-30"},
     {"revision": "1.74", "reason": "Implemented and verified M2 as one long-lived backend MarketDataHub owning a shared Bybit public linear WebSocket, multi-symbol book/trade subscriptions, normalized dispatch, reconnect/resubscribe and reusable SymbolContexts; preserved generation-gated Workspace/PAPER/HTTP compatibility without implementing multiplexed frontend transport or later readiness/lifecycle stages", "date": "2026-08-30"},
     {"revision": "1.75", "reason": "Implemented and verified M3 as one backend WorkspaceController owning requested/active symbol authority, generation, pending candidate, composite book/trades/candle readiness, explicit switch failure and bounded warm-context reuse/expiry while preserving Hub ownership, PAPER semantics and existing SSE compatibility", "date": "2026-08-30"},
-    {"revision": "1.76", "reason": "Implemented and verified M4 as one backend ClientMarketProjection with configurable bounded book bootstrap and exact window deltas/resnapshot, bounded deduplicated trade bootstrap/batches, one-time candle bootstrap/changed-record updates, additive projection SSE and measured BTC/ONG payload reduction while preserving full PAPER L2 and legacy frontend SSE", "date": "2026-08-30"}
+    {"revision": "1.76", "reason": "Implemented and verified M4 as one backend ClientMarketProjection with configurable bounded book bootstrap and exact window deltas/resnapshot, bounded deduplicated trade bootstrap/batches, one-time candle bootstrap/changed-record updates, additive projection SSE and measured BTC/ONG payload reduction while preserving full PAPER L2 and legacy frontend SSE", "date": "2026-08-30"},
+    {"revision": "1.77", "reason": "Implemented and verified M5 as one additive generation-scoped multiplexed Workspace WebSocket with atomic bounded snapshot, sequenced book/trade/candle/health envelopes, bounded replay/resume, resnapshot on ambiguity and bounded slow-client eviction while preserving legacy SSE, REST commands, full PAPER L2 and unchanged frontend ownership", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3827,3 +3828,24 @@ unchanged. A 15.016-second payload-only BTC/ONG run measured combined incrementa
 combined baselines. This excludes HTTP/TLS/tunnel overhead and does not claim the prior phone failure was caused or
 resolved by transport volume. M5 one multiplexed Workspace stream is the exact next gated stage; M6+ are not
 started and chaos remains M7.
+
+## 84. M5 multiplexed Workspace stream
+
+Revision 1.77 records `M5 — MULTIPLEXED WORKSPACE STREAM IMPLEMENTED / AUTOMATED PASS`. One backend
+`WorkspaceStreamBroker` serves additive `/api/workspace/stream` WebSocket sessions scoped to the active symbol and
+Workspace generation. The first event is an atomic `workspace_snapshot` containing supported instrument metadata,
+bounded book/trade/candle bootstraps, component states and Hub health/sequence/reconnect observability. Incremental
+`book_delta`, `trade_batch`, `candle_update` and `health` events share one stream identity and strict monotonically
+increasing event sequence.
+
+Resume uses `stream_id` plus `after_sequence` against a 256-event bounded replay window. Missing, invalid or
+expired continuity produces an explicit atomic resnapshot; component resnapshot is promoted to the same Workspace
+boundary, and a final generation check prevents a mixed or newly stale bootstrap. The broker bounds retained
+sessions to 32 and pending output to 64 events. Backpressure, stale generation and write timeout evict fail closed;
+ordinary disconnect preserves bounded resume state. Ten-second health heartbeats remain transport observability and
+do not assert frontend or trading readiness.
+
+M5 is backend-only and additive. Legacy market-data SSE, the M4 component projection SSE, REST command paths,
+authoritative full PAPER L2 and frontend source are unchanged. M6 atomic frontend generation projection and
+transport migration are the exact next gated stage and are not started. M8 still owns proxy/tunnel and real-phone
+performance acceptance; transport volume remains measured inefficiency rather than a proven phone-failure cause.
