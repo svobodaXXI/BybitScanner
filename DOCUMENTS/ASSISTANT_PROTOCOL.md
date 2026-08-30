@@ -2,7 +2,7 @@
 
 Version:
 
-4.28
+4.29
 
 Date:
 
@@ -446,12 +446,81 @@ exact-reply copy-ready handling, pager ban, user-owned work protection, Vite bui
 systemic-regression escalation trigger. This is a manual sync recommendation, not a duplicated protocol or a new
 repository authority.
 
+
+## 8.5 REPOSITORY AUTHORITY OVER MEMORY — HARD RULE
+
+Assistant memory, chat context, summaries, handoffs, and remembered preferences are accelerators only. They are never
+normative authority for project workflow rules when the repository authority is available.
+
+For BybitScanner work, the assistant must recover applicable workflow rules from `AGENTS.md` and
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` before issuing project-specific user actions. A remembered rule may reduce search
+cost, but it must not substitute for loading the current canonical text when enforcement matters.
+
+If repository authority is available through an integrated GitHub/repository connector, the assistant must read the
+committed authority directly instead of asking the user to copy or paste committed file contents. User-provided
+PowerShell output is reserved for local-only reality that the remote repository cannot know, such as dirty/untracked
+state, running processes, ports, runtime logs, local configuration, and uncommitted changes.
+
+A failure to obey an already-explicit canonical rule is an `ENFORCEMENT FAILURE`, not a rule-definition gap. Do not
+respond by duplicating the same rule in more documents. Instead, identify why bootstrap/preflight/enforcement failed
+and strengthen the smallest existing mechanism that can prevent recurrence.
+
+## 8.6 TECHNICAL GUARDRAIL OVER REMINDER — HARD RULE
+
+Critical workflow rules should be technically enforced where practical. Documentation remains authoritative, but a
+deterministic guard should prevent or fail closed on a known high-cost failure class whenever the environment or
+project tooling can do so cheaply.
+
+Examples include:
+- non-interactive Git output for commands that may page;
+- exact-path staging and receipt-bound checkpoints;
+- preflight anchor/version checks before mechanical documentation rewrites;
+- refusal to overwrite files when expected authority/version anchors do not match;
+- scoped verification before commit/push.
+
+The assistant must prefer `rule + technical guard` over `rule + repeated reminder` when the guard is simple,
+deterministic, reversible, and materially reduces user cost or error probability.
+
+## 8.7 NO USER AS FILE TRANSPORT — HARD RULE
+
+Do not use the user as a manual transport layer for repository files that the assistant can read directly through an
+available repository/file connector. Do not ask the user to paste large committed documents, broad diffs, or file
+fragments merely to restore assistant context.
+
+Ask for local shell output only when the information is inherently local or not otherwise accessible. Prefer narrow,
+purpose-built commands that return only the missing fact.
+
+## 8.8 MACHINE-APPLIED MULTILINE FILE CHANGE — HARD RULE
+
+For substantial multiline changes to project files on the user's Windows machine, do not default to long PowerShell
+here-strings, manual Notepad editing, or fragile inline replacement commands.
+
+Preferred order:
+1. Codex/local automation when authorized and available;
+2. a downloadable deterministic Python/patch helper with anchor/version preflight and fail-closed behavior;
+3. a short targeted command only when the edit is genuinely small and encoding-safe;
+4. manual fragment editing only when no safer automated path exists and the user explicitly accepts it.
+
+Machine-applied helpers must:
+- preserve UTF-8 text without adding BOM unless the target already uses it;
+- preserve the file's existing newline convention where practical;
+- validate expected anchors/versions before writing;
+- modify only the authorized paths;
+- fail closed on ambiguity;
+- be followed by scoped diff/check verification.
+
+The helper `tools/dev/migrations/update_workspace_docs_m9.py` records the exact documentation migration that moved
+Trading Workspace authority from M8 completion to the M9 operability/diagnostics checkpoint. It is a historical,
+reproducible migration helper, not a general-purpose updater and not current state authority.
+
 ---
 
 # 9. CURRENT REVISION RECORD
 
-`4.28` adds a mandatory user-action preflight, reloads changed communication/workflow authority before the next
-user action, and records the compact non-authoritative ChatGPT Project Instructions guardrail sync recommendation.
-The existing copy-ready specification remains canonical and unchanged. Detailed history remains in Git.
+`4.29` hardens rule enforcement after a repeated enforcement failure: repository authority is normative over
+assistant memory, committed authority should be read directly instead of transported through the user, existing-rule
+violations trigger enforcement analysis rather than duplicate rules, critical rules prefer deterministic technical
+guards, and substantial multiline Windows edits prefer fail-closed machine-applied helpers. It also records the
+historical M9 documentation migration helper path. Detailed history remains in Git.
 
 # END_OF_DOCUMENT

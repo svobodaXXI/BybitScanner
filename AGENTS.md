@@ -19,6 +19,25 @@ Generate a compact disposable bootstrap when useful with `python -m tools.dev.ta
 
 Before the first project-specific user action or technical instruction in every BybitScanner ChatGPT chat, load the scoped communication and user-action authority from `DOCUMENTS/ASSISTANT_PROTOCOL.md`. This remains mandatory for Trading Workspace work in addition to its existing roadmap/ChangeRequest routing. If `ASSISTANT_PROTOCOL.md` changes during the current chat/session, reload its changed communication/workflow sections before issuing the next user action. Keep this bootstrap compact and scoped; it does not require full/deep recovery or duplication of the protocol.
 
+## Enforcement bootstrap — hard rule
+
+Repository authority beats assistant memory. Chat memory, summaries, and remembered workflow rules may speed up
+recovery but never replace loading the applicable current `AGENTS.md` / `ASSISTANT_PROTOCOL.md` authority before
+project-specific user actions.
+
+When committed authority is available through an integrated repository connector, read it directly. Do not ask the
+user to manually paste committed project files or broad diffs. Request shell output only for local-only facts that
+the remote repository cannot know, such as dirty/untracked state, running processes, ports, runtime logs, local
+configuration, and uncommitted changes.
+
+Treat violation of an already-explicit rule as an enforcement failure. Strengthen bootstrap/preflight or a
+deterministic guard instead of duplicating the same rule. Prefer technical prevention when cheap and reliable.
+
+For substantial multiline Windows file changes, prefer Codex/local automation or a deterministic downloadable
+Python/patch helper with anchor/version checks over PowerShell here-strings or manual fragment editing. Preserve
+encoding/newlines, fail closed on mismatched anchors, and verify only the authorized paths afterward.
+
+
 ## Project skills
 
 First-party procedural skills live under `.agents/skills/`; read a skill body only when its workflow applies:

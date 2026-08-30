@@ -2,7 +2,7 @@
 
 Version:
 
-7.66
+7.67
 
 Date:
 
@@ -5565,3 +5565,42 @@ Current authoritative state:
 Exact next action:
 
 Implement M9 only after the documentation checkpoint is reviewed and accepted, beginning with typed semantic failure classes + structured diagnostics while preserving M0–M8 behavior.
+
+---
+
+# WORKFLOW_ENFORCEMENT_CHECKPOINT_2026_08_30
+
+Status:
+
+ACTIVE
+
+Purpose:
+
+Record the user-approved hardening of assistant rule recovery, memory usage, user-action enforcement, and
+machine-applied documentation workflow.
+
+Canonical decisions:
+
+* repository authority is normative; assistant memory/chat summaries are acceleration only;
+* applicable `AGENTS.md` + `ASSISTANT_PROTOCOL.md` workflow authority must be loaded before project-specific user actions;
+* when committed authority is directly accessible through a repository connector, the user must not be used as a
+  manual file-transport layer;
+* PowerShell/user output is reserved for local-only reality such as dirty state, runtime/process/port data, local
+  configuration, and uncommitted changes;
+* violation of an already-explicit rule is classified as an enforcement failure, not automatically as a missing-rule
+  problem;
+* repeated failure should harden bootstrap/preflight or add a deterministic guard instead of duplicating rules;
+* critical rules should use technical enforcement where practical;
+* interactive Git paging remains prohibited and the user machine now also has a machine-level pager guard configured;
+* substantial multiline project-file edits should prefer Codex/local automation or a deterministic downloadable
+  helper/patch over long PowerShell here-strings or manual fragment editing;
+* deterministic helpers must validate anchors/versions, preserve encoding/newline behavior, scope writes narrowly,
+  fail closed on ambiguity, and be followed by scoped verification;
+* `tools/dev/migrations/update_workspace_docs_m9.py` is preserved as the exact historical helper used to migrate
+  Trading Workspace documentation from the M8-complete checkpoint to M9 operability/diagnostics planning.
+
+Authority:
+
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` owns assistant workflow behavior.
+`AGENTS.md` owns compact bootstrap/routing.
+This PROJECT_STATE checkpoint records the current adopted enforcement state but does not duplicate the full protocol.
