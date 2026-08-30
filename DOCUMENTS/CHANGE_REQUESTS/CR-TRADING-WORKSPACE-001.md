@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.78",
+  "revision": "1.79",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -462,7 +462,8 @@
     {"revision": "1.75", "reason": "Implemented and verified M3 as one backend WorkspaceController owning requested/active symbol authority, generation, pending candidate, composite book/trades/candle readiness, explicit switch failure and bounded warm-context reuse/expiry while preserving Hub ownership, PAPER semantics and existing SSE compatibility", "date": "2026-08-30"},
     {"revision": "1.76", "reason": "Implemented and verified M4 as one backend ClientMarketProjection with configurable bounded book bootstrap and exact window deltas/resnapshot, bounded deduplicated trade bootstrap/batches, one-time candle bootstrap/changed-record updates, additive projection SSE and measured BTC/ONG payload reduction while preserving full PAPER L2 and legacy frontend SSE", "date": "2026-08-30"},
     {"revision": "1.77", "reason": "Implemented and verified M5 as one additive generation-scoped multiplexed Workspace WebSocket with atomic bounded snapshot, sequenced book/trade/candle/health envelopes, bounded replay/resume, resnapshot on ambiguity and bounded slow-client eviction while preserving legacy SSE, REST commands, full PAPER L2 and unchanged frontend ownership", "date": "2026-08-30"},
-    {"revision": "1.78", "reason": "Implemented and verified M6 as one frontend atomic Workspace projection over the M5 multiplexed WebSocket with complete snapshot gating, strict symbol/generation/sequence authority, bounded book/trade/candle updates, resume and fail-closed fresh resnapshot while preserving backend legacy SSE, full PAPER L2 and command semantics", "date": "2026-08-30"}
+    {"revision": "1.78", "reason": "Implemented and verified M6 as one frontend atomic Workspace projection over the M5 multiplexed WebSocket with complete snapshot gating, strict symbol/generation/sequence authority, bounded book/trade/candle updates, resume and fail-closed fresh resnapshot while preserving backend legacy SSE, full PAPER L2 and command semantics", "date": "2026-08-30"},
+    {"revision": "1.79", "reason": "Implemented and verified M7 as deterministic bounded backend and frontend chaos/regression coverage for authority isolation, sequence and resnapshot boundaries, replay and queue pressure, reconnect/resume, component escalation and mixed projection churn while preserving legacy SSE, full PAPER L2 and command/order semantics; M8 device and transport acceptance remains not started", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3874,3 +3875,18 @@ REST commands and order/execution semantics are unchanged.
 M6 targeted atomic/transport plus legacy SSE tests pass, the full frontend suite exits zero, and the production
 build passes with 66 transformed modules. No browser, tunnel or real-phone acceptance is claimed. M7 deterministic
 chaos/regression hardening is the exact next gated stage and is not started; M8 acceptance is also not started.
+
+## 86. M7 deterministic chaos and regression suite
+
+Revision 1.79 records `M7 — DETERMINISTIC CHAOS / REGRESSION SUITE IMPLEMENTED / AUTOMATED PASS`. A new backend
+suite deterministically covers replay boundaries and expiry, invalid/future resume, bounded pending overflow,
+stale generation, atomic component resnapshot, heartbeat sequencing, duplicate/foreign/unknown attachment,
+session pressure and mixed book/trade/candle churn. A new frontend suite covers stale/future/foreign authority,
+symbol/interval mismatch, duplicate/gap/regression sequencing, malformed/partial snapshots, authoritative-only
+recovery, book displacement/reveal and base mismatch, repeated/out-of-order trades, candle replace/append,
+disconnect bursts, stale socket isolation, resume and fresh resnapshot.
+
+The new cases run with the existing M5 and M6 regression suites and require no sleep-heavy timing, live Bybit,
+proxy or tunnel. No production defect was found and no production source changed. Backend legacy SSE, the explicit
+legacy frontend store, full authoritative PAPER L2, REST commands and order/execution behavior remain unchanged.
+M8 local/proxy/tunnel and real-phone performance acceptance is the exact next gated stage and is not started.

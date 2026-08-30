@@ -196,7 +196,7 @@ Current status:
 ## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
 Human-approved architecture correction. Current status:
-`M6 FRONTEND ATOMIC GENERATION PROJECTION IMPLEMENTED / AUTOMATED + BUILD PASS`.
+`M7 DETERMINISTIC CHAOS / REGRESSION SUITE IMPLEMENTED / AUTOMATED PASS`.
 
 Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
 a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
@@ -281,8 +281,8 @@ Migration sequence:
   sequenced book/trade/candle/health updates with bounded replay, resnapshot and slow-client eviction contracts.
 - M6 — COMPLETE: one frontend store consumes the M5 multiplexed WebSocket and atomically projects one symbol,
   generation and event sequence across Chart, DOM and Smart Tape; legacy SSE remains backend-compatible.
-- M7 — run the deterministic chaos/regression suite, including component degradation, reconnect, ordering and
-  rapid-switch cases.
+- M7 — COMPLETE: deterministic bounded chaos/regression coverage proves authority isolation, sequence/resnapshot,
+  replay/backpressure, reconnect, mixed projection churn and M3–M6 compatibility invariants.
 - M8 — run local/proxy/tunnel and real-phone performance acceptance before retiring the old path.
 
 ### 10.1 M0 current implementation inventory and measured baseline
@@ -575,6 +575,26 @@ Deterministic M6 projection/store plus legacy SSE parity tests pass, the full fr
 and the production Vite build passes with 66 transformed modules. These are automated/build evidence only, not
 browser, tunnel or real-phone acceptance. M7 chaos/regression hardening is the exact next gated stage; M8 real-phone
 and tunnel performance acceptance has not started.
+
+### 10.11 M7 deterministic chaos and regression checkpoint
+
+Revision 1.79 records `M7 — DETERMINISTIC CHAOS / REGRESSION SUITE IMPLEMENTED / AUTOMATED PASS`. New bounded
+backend tests exercise replay-window boundaries, invalid/future resume, queue overflow and clearing, stale
+generation rejection, component-resnapshot escalation, heartbeat sequencing, duplicate/foreign attachment,
+unknown streams, session pressure and mixed book/trade/candle churn on one stream and generation. The tests use no
+wall-clock sleeps, live exchange dependency, proxy or tunnel.
+
+New pure frontend/store tests exercise stale and future generations, foreign streams, symbol/interval mismatch,
+exact duplicates, sequence gap/regression, malformed/unknown events, incomplete snapshots, authoritative recovery,
+book displacement/reveal and base-version mismatch, duplicate/out-of-order trades, candle replace/append and wrong
+interval, disconnect bursts, stale socket isolation, resume and forced fresh resnapshot. Existing M5 stream and M6
+projection/store tests run beside the new cases as regression evidence.
+
+The suite found no production defect and changed no production source. Legacy SSE compatibility, full authoritative
+PAPER L2, REST commands and order/execution semantics remain unchanged. This is automated local evidence only: it
+does not exercise proxy/tunnel throughput, socket write-timeout behavior under a real slow network, browser
+rendering or a real phone. M8 local/proxy/tunnel and real-phone performance acceptance is the exact next gated stage
+and is not started.
 
 ## 11. Stage 10 — Real verification
 
