@@ -2,7 +2,7 @@
 
 Version:
 
-7.71
+7.72
 
 Date:
 
@@ -6005,4 +6005,62 @@ without new objective evidence of failure.
 
 Workflow / Task Transaction experiment remains frozen and outside the current
 Terminal completion path.
+
+---
+
+# 2026-08-30 M9 WORKSPACE OPERABILITY / DIAGNOSTICS ACCEPTANCE
+
+Status:
+
+COMPLETE / ACCEPTED
+
+## FINAL RUNTIME CONTROL
+
+The authoritative Workspace doctor was rerun after the desktop and real-phone
+acceptance checkpoints:
+
+`.\venv\Scripts\python.exe -m tools.dev.workspace_doctor --symbol OGUSDT --interval 5`
+
+Observed result:
+
+- `STATUS PASS`;
+- `INSTRUMENT PASS symbol=OGUSDT`;
+- `SWITCH PASS active_symbol=OGUSDT generation=4`;
+- `READINESS PASS book=true trades=true candles=true`;
+- `STREAM PASS kind=workspace_snapshot generation=4`;
+- `STATE PASS switch_state=READY active_symbol=OGUSDT generation=4`.
+
+## M9 ACCEPTED CAPABILITIES
+
+M9 now has accepted evidence for:
+
+- typed Workspace semantic failure classes;
+- structured semantic error envelopes;
+- requested/active symbol and generation authority;
+- candidate failure preserving the previous active Workspace;
+- read-only `/api/workspace/state` diagnostics;
+- stream-session diagnostics;
+- authoritative symbol-switch acknowledgement;
+- Workspace startup from backend symbol/generation authority;
+- deterministic `workspace_doctor`;
+- registry / activation / readiness / stream runtime verification;
+- desktop runtime acceptance;
+- real-phone runtime acceptance through Vite LAN access.
+
+The previous `attached=false` / `LIVE BOOK UNAVAILABLE` condition is historical
+diagnostic evidence and is not an active blocker.
+
+## CURRENT STATE
+
+M9 Workspace Operability / Diagnostics is closed.
+
+No further M9 architecture expansion is required without new objective failure
+evidence.
+
+The next decision is not another M9 implementation slice. The next step is to
+compare the complete current Trading Workspace v1 state against the remaining
+CR acceptance requirements and determine whether the Terminal CR itself can be
+closed or whether a bounded non-M9 acceptance item remains.
+
+Workflow / Task Transaction work remains frozen during that decision.
 
