@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.85",
+  "revision": "1.86",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -4284,4 +4284,53 @@ Canonical current direction:
 
 This policy supersedes earlier Pinggy / `lhr.life` development-access
 instructions where they conflict with this section.
+
+---
+
+# 2026-08-30 REAL-PHONE ACCEPTANCE PASS
+
+Status:
+
+PASS
+
+## VERIFIED ON REAL PHONE
+
+Trading Workspace was opened through the current Vite LAN URL:
+
+`http://192.168.100.8:4173/`
+
+Observed on the real phone:
+
+- authoritative `OGUSDT` startup selection was applied correctly;
+- Chart was live;
+- DOM was live;
+- Smart Tape was live;
+- `LIVE BOOK UNAVAILABLE` was absent;
+- mobile layout remained operational without the previously observed viewport regression;
+- no Pinggy or temporary public tunnel was used;
+- no `localhost` user-facing access was used.
+
+## ACCEPTANCE RESULT
+
+The startup authority fix is now accepted on:
+
+- desktop runtime;
+- real phone runtime.
+
+The current local access path is confirmed as:
+
+`phone / desktop -> PC LAN address -> Vite preview -> backend`
+
+This closes the real-phone acceptance requirement for the workspace startup
+authority blocker.
+
+## CURRENT TERMINAL DIRECTION
+
+Continue Terminal completion and acceptance from this accepted runtime state.
+
+Do not reopen Pinggy / localhost user-facing access or Vite proxy investigation
+without new objective evidence of failure.
+
+Workflow / Task Transaction experiment remains frozen and outside the current
+Terminal completion path.
 
