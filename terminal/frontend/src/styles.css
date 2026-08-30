@@ -2991,6 +2991,7 @@ button {
 .paper-open-positions > header .paper-open-positions-close-all {
   width: auto;
   min-width: 0;
+  border: 1px solid var(--trade-sell);
   font-size: 0.76rem;
 }
 

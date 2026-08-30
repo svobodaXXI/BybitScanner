@@ -2,7 +2,7 @@
 
 Version:
 
-7.82
+7.83
 
 Date:
 
@@ -6161,4 +6161,10 @@ selection remains `USER-DEFERRED / NON-BLOCKING` because the browser is not the 
 Open Positions active-symbol ordering/highlight and Close All placement/red-border implementation remains complete
 with focused tests; real-phone visual acceptance is still pending. Remaining CR blockers are STOP, TAKE PROFIT,
 real-account/API management and real execution/reconciliation.
+
+## OPEN POSITIONS UX ACCEPTED
+
+Version 7.83 records real-phone `PASS` for active-symbol-first ordering, active-row highlighting, stable remaining
+order, Close All placement and its final red-border emphasis. Execution semantics remain unchanged. Open Positions
+UX is `ACCEPTED / COMPLETE`; the next Terminal implementation item is STOP + TAKE PROFIT on PAPER.
 

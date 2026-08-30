@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.97",
+  "revision": "1.98",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -4516,4 +4516,12 @@ NON-BLOCKING` because the browser is not the intended final Terminal surface.
 Open Positions UX remains implemented with focused automated evidence; real-phone visual acceptance remains
 pending. The ChangeRequest remains `IN_PROGRESS / IMPLEMENT` for STOP, TAKE PROFIT, real-account/API management
 and real execution/reconciliation.
+
+## OPEN POSITIONS UX ACCEPTANCE CHECKPOINT
+
+Revision 1.98 records Open Positions UX as `ACCEPTED / COMPLETE` by real-phone acceptance: active workspace
+symbol first, active-row highlight, stable ordering of other rows, Close All beside the heading and a clearly red
+Close All border. Close All execution, confirmation and reconciliation semantics are unchanged. The ChangeRequest
+remains `IN_PROGRESS / IMPLEMENT`; the next blockers are STOP and TAKE PROFIT on PAPER, followed by real-account/API
+management and real execution/reconciliation.
 

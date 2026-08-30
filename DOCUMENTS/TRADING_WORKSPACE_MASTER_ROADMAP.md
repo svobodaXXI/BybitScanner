@@ -708,7 +708,7 @@ execution are closure blockers in the current ChangeRequest, not future/out-of-s
 ```text
 1. DRAWING TOOLS RULER — COMPLETE / REAL-PHONE ACCEPTED
 2. FIBONACCI LEVELS/FILLS + TWO-STAGE TOUCH PLACEMENT — COMPLETE / REAL-PHONE ACCEPTED
-3. OPEN POSITIONS UX — IMPLEMENTED / MANUAL ACCEPTANCE PENDING
+3. OPEN POSITIONS UX — COMPLETE / REAL-PHONE ACCEPTED
 4. STOP + TAKE ON PAPER
 5. REAL ACCOUNT/API MANAGEMENT AND SWITCHING
 6. REAL EXECUTION/RECONCILIATION
@@ -725,8 +725,8 @@ requires a first press/drag/release that fixes the level-1 anchor without a grid
 that live-stretches the level-0 anchor and completes the Fib. Temporary full-width dashed guides follow placement
 and active anchor edits. Inactive Fib drawings remain visible but cannot mutate until a deliberate practical-region
 activation tap followed by a separate edit gesture; outside tap deactivates, and cancel/tool change discards the
-one-anchor draft. Open Positions must place and highlight the active-symbol row first, list other positions below, move Close All
-closer to its heading and use a red border without changing execution semantics. STOP and TAKE must complete
+one-anchor draft. Open Positions is real-phone accepted with active-symbol-first ordering/highlight and Close All
+beside the heading with a red border; its execution semantics are unchanged. STOP and TAKE must complete
 authoritative PAPER create/edit/activate/cancel, 100%-quantity synchronization, explicit-only price edits and
 confirmed-FLAT cleanup before real enablement; approved TAKE proposal semantics remain binding.
 
