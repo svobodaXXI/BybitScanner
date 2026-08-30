@@ -2,7 +2,7 @@
 
 Version:
 
-4.29
+4.30
 
 Date:
 
@@ -188,13 +188,19 @@ authority is `PROJECT_STATE.md` and the applicable active Task/ChangeRequest.
 Use the smallest reliable context footprint:
 
 - do not repeat unchanged files, established history, known requirements, successful checks, or already-loaded authority;
+- every read, search, status, diff, and test must have a concrete current-task necessity; do not repeat one when its
+  relevant state has not changed;
 - use targeted searches and scoped status/diffs instead of broad output;
+- do not explore alternative architectures when the current solution remains authoritative and no new evidence
+  invalidates it;
+- on an unexpected blocker, localize the smallest failure boundary first; broad audit or research is escalation,
+  not the default;
 - report remaining-context estimates only on request or when loss of context is a real risk;
 - batch compatible tasks and related decisions when scope, risk, approval, validation, and governance allow it;
 - split work only for a concrete dependency, risk, approval/checkpoint, validation, safety, or governance reason.
 
-Economy never weakens correctness, safety, fail-closed behavior, contract checks, mandatory E2E, verification, or
-governance.
+Optimize for useful result per Codex limit consumed. Economy never weakens correctness, safety, fail-closed
+behavior, contract checks, mandatory E2E, verification, or governance.
 
 ---
 
@@ -310,6 +316,17 @@ correctness, safety, or governance.
 Batch approved compatible micro-tasks and related decisions. Do not interrupt implementation with serial
 micro-questions when one safe decision batch suffices. Full research, status, diff, and verbose logs are off by
 default. Use Codex primarily for current local inspection/mutation, tests/build/runtime, and authorized Git work.
+Do not perform opportunistic refactoring, cleanup, redesign, or “while here” improvements. Prefer the smallest
+targeted tests and checks that prove the current delta; run full suites only when objectively required.
+
+Default execution loop:
+
+```text
+minimal inspection -> minimal patch -> targeted validation -> required build/runtime check -> STOP
+```
+
+When manual, browser, or real-phone acceptance is required, stop after automated prerequisites and wait for user
+evidence instead of continuing autonomously.
 
 Default compact report:
 
