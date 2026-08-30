@@ -84,6 +84,17 @@ def fingerprints(root: Path, files: Sequence[str]) -> dict[str, dict[str, str]]:
     return {path: fingerprint(root, path) for path in files}
 
 
+def index_snapshot(root: Path, git: Git) -> tuple[str, bytes]:
+    """Return the exact real-index state without refreshing or otherwise mutating it."""
+    raw = require_ok(git.run("rev-parse", "--git-path", "index"), "real index discovery")
+    path = Path(raw)
+    path = (path if path.is_absolute() else root / path).resolve()
+    try:
+        return "file", path.read_bytes()
+    except FileNotFoundError:
+        return "missing", b""
+
+
 def receipt_path(root: Path, git: Git) -> Path:
     raw = require_ok(git.run("rev-parse", "--git-dir"), "Git directory discovery")
     directory = Path(raw)

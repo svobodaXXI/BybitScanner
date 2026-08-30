@@ -7,7 +7,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.dev.task_transaction import TransactionError, begin, derive_candidate, inspect
+from tools.dev.task_transaction import (
+    TransactionError, begin, candidate_root, derive_candidate, inspect, load_transaction,
+)
 from tools.dev.workflow import Git
 
 
@@ -43,6 +45,12 @@ class TaskTransactionTests(unittest.TestCase):
         self.assertEqual(self.candidate("clean"), self.path.read_bytes())
         self.assertEqual(proofs["sample.txt"].status, "PASS")
         self.assertEqual(inspect("clean", git=self.git)["files"][0]["classification"], "TASK_NEW")
+
+    def test_public_transaction_lookup_returns_validated_metadata_paths(self):
+        begin(["sample.txt"], git=self.git, task_id="lookup")
+        directory, metadata = load_transaction("lookup", git=self.git)
+        self.assertEqual(metadata["task_id"], "lookup")
+        self.assertEqual(candidate_root("lookup", git=self.git), directory / "candidate")
 
     def test_dirty_independent_task_hunk_yields_task_only_and_inverse_proof(self):
         self.path.write_bytes(b"alpha user\nbeta\ngamma\n")

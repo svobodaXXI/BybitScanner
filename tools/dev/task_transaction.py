@@ -163,6 +163,19 @@ def _load(root: Path, task_id: str, git: Git) -> tuple[Path, dict]:
     return directory, metadata
 
 
+def load_transaction(task_id: str, *, git: Git | None = None) -> tuple[Path, dict]:
+    """Load validated transaction metadata without changing repository state."""
+    active = git or Git(Path.cwd())
+    root = repository_root(active)
+    active = Git(root)
+    return _load(root, task_id, active)
+
+
+def candidate_root(task_id: str, *, git: Git | None = None) -> Path:
+    directory, _ = load_transaction(task_id, git=git)
+    return directory / "candidate"
+
+
 def _validate(root: Path, git: Git, metadata: dict) -> list[str]:
     blockers: list[str] = []
     try:
