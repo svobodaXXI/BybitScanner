@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from terminal.application.models import ProtectionState
-from terminal.domain.models import OrderSide, PositionKey
+from terminal.application.normalization import normalize_limit_price
+from terminal.domain.models import OrderSide, PositionKey, PositionSide
 from terminal.domain.states import ConnectivityState
 from terminal.exchange.events import InstrumentSnapshot, PositionEvent
 from terminal.persistence.sqlite_store import ProtectionProjectionRecord
@@ -53,3 +54,44 @@ def validate_manual_protection(intent: ManualProtectionIntent) -> None:
             raise ValueError(f"{name} must already be normalized to tick size")
         if not (intent.instrument.min_price <= value <= intent.instrument.max_price):
             raise ValueError(f"{name} is outside instrument limits")
+
+
+def normalize_paper_protection_trigger(
+    position: PositionEvent,
+    instrument: InstrumentSnapshot,
+    requested_trigger: Decimal,
+    leg: str,
+) -> Decimal:
+    """Normalize and validate one full-position protection trigger."""
+
+    if position.side is PositionSide.FLAT or position.size <= 0:
+        raise ValueError("PAPER protection requires an authoritative open position")
+    if position.average_entry is None or position.average_entry <= 0:
+        raise ValueError("PAPER protection requires authoritative average entry")
+    if leg not in {"stop", "take"}:
+        raise ValueError("unsupported PAPER protection leg")
+    closing_side = (
+        OrderSide.SELL if position.side is PositionSide.LONG else OrderSide.BUY
+    )
+    normalized = normalize_limit_price(
+        requested_trigger, instrument.tick_size, closing_side,
+    )
+    if not (instrument.min_price <= normalized <= instrument.max_price):
+        raise ValueError("protection trigger is outside instrument limits")
+    expects_below = (
+        (leg == "stop" and position.side is PositionSide.LONG)
+        or (leg == "take" and position.side is PositionSide.SHORT)
+    )
+    if expects_below and normalized >= position.average_entry:
+        raise ValueError(f"{leg.upper()} must be below authoritative average entry")
+    if not expects_below and normalized <= position.average_entry:
+        raise ValueError(f"{leg.upper()} must be above authoritative average entry")
+    return normalized
+
+
+def normalize_paper_stop_trigger(
+    position: PositionEvent,
+    instrument: InstrumentSnapshot,
+    requested_trigger: Decimal,
+) -> Decimal:
+    return normalize_paper_protection_trigger(position, instrument, requested_trigger, "stop")

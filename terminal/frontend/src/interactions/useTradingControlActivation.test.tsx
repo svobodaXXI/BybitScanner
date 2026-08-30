@@ -20,7 +20,7 @@ describe("TradingControlButton pointer activation", () => {
     fireEvent.pointerUp(button, { pointerId: 2, pointerType: "touch" });
     expect(onTap).toHaveBeenCalledOnce();
 
-    fireEvent.click(button, { detail: 1 });
+    fireEvent.click(button, { detail: 0 });
     expect(onTap).toHaveBeenCalledOnce();
   });
 

@@ -83,7 +83,7 @@ export function useTradingControlActivation({
     onClick: (event: MouseEvent<HTMLButtonElement>) => {
       event.stopPropagation();
       if (disabled) return;
-      if (suppressCompatibilityClick.current && event.detail > 0) {
+      if (suppressCompatibilityClick.current) {
         suppressCompatibilityClick.current = false;
         return;
       }

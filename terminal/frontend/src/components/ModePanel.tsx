@@ -33,6 +33,7 @@ import { isValidSelectedVolume, type SelectedSideVolumes } from "../orders/selec
 import { executePaperMarketCommand } from "../orders/paperMarketCommand";
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 import { AccountMenu } from "./AccountMenu";
+import { StopSettings } from "./StopSettings";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
 type PaperMutationRunner = <T>(key: string, operation: () => Promise<T>) => Promise<T>;
@@ -66,6 +67,24 @@ export function ModePanel({
   onLimitCancel,
   onPositionSideChange,
   onPositionAverageEntryChange,
+  onStopTap = () => {},
+  onStopHold = () => {},
+  stopActive = false,
+  stopSettingsOpen = false,
+  stopPresetPercent = "2",
+  stopReferencePrice = "0",
+  onStopSettingsApply = () => {},
+  onStopPresetChange = () => {},
+  onStopSettingsClose = () => {},
+  onTakeTap = () => {},
+  onTakeHold = () => {},
+  takeActive = false,
+  takeSettingsOpen = false,
+  takePresetPercent = "3",
+  takeReferencePrice = "0",
+  onTakeSettingsApply = () => {},
+  onTakePresetChange = () => {},
+  onTakeSettingsClose = () => {},
   onWorkspaceSymbolSelect,
   accountOpen = false,
   onAccountToggle = () => {},
@@ -92,6 +111,24 @@ export function ModePanel({
   onLimitCancel?: (orderId: string) => Promise<PaperLimitMutationResponse>;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
+  onStopTap?: () => "drafted" | "not-improved" | undefined | void;
+  onStopHold?: () => void;
+  stopActive?: boolean;
+  stopSettingsOpen?: boolean;
+  stopPresetPercent?: string;
+  stopReferencePrice?: string;
+  onStopSettingsApply?: (price: string, percent: string) => void;
+  onStopPresetChange?: (percent: string) => void;
+  onStopSettingsClose?: () => void;
+  onTakeTap?: () => void;
+  onTakeHold?: () => void;
+  takeActive?: boolean;
+  takeSettingsOpen?: boolean;
+  takePresetPercent?: string;
+  takeReferencePrice?: string;
+  onTakeSettingsApply?: (price: string, percent: string) => void;
+  onTakePresetChange?: (percent: string) => void;
+  onTakeSettingsClose?: () => void;
   onWorkspaceSymbolSelect?: (symbol: string) => void;
   accountOpen?: boolean;
   onAccountToggle?: () => void;
@@ -616,20 +653,54 @@ export function ModePanel({
           </div>
 
           <div className="paper-protection-stack">
-            <button
+            <TradingControlButton
               className="paper-stop-button"
               type="button"
-              onClick={() => setExecutionStatus("STOP: ??????? ??????????")}
+              aria-pressed={stopActive}
+              onTap={() => {
+                const result = onStopTap();
+                if (result === "not-improved") setExecutionStatus("STOP unchanged: protection would not improve");
+              }}
+              onHoldStart={onStopHold}
+              holdMs={500}
             >
+              {stopActive ? <span className="paper-stop-active-dot" aria-hidden="true" /> : null}
               STOP
-            </button>
-            <button
+            </TradingControlButton>
+            {stopSettingsOpen && paperState?.ok && paperState.position_side !== "Flat" ? (
+              <StopSettings
+                side={paperState.position_side}
+                referencePrice={stopReferencePrice}
+                tickSize={authoritativeTickSize}
+                presetPercent={stopPresetPercent}
+                onPresetChange={onStopPresetChange}
+                onApply={onStopSettingsApply}
+                onClose={onStopSettingsClose}
+              />
+            ) : null}
+            <TradingControlButton
               className="paper-take-button"
               type="button"
-              onClick={() => setExecutionStatus("TAKE: ??????? ??????????")}
+              aria-pressed={takeActive}
+              onTap={onTakeTap}
+              onHoldStart={onTakeHold}
+              holdMs={500}
             >
+              {takeActive ? <span className="paper-take-active-dot" aria-hidden="true" /> : null}
               TAKE
-            </button>
+            </TradingControlButton>
+            {takeSettingsOpen && paperState?.ok && paperState.position_side !== "Flat" ? (
+              <StopSettings
+                leg="TAKE"
+                side={paperState.position_side}
+                referencePrice={takeReferencePrice}
+                tickSize={authoritativeTickSize}
+                presetPercent={takePresetPercent}
+                onPresetChange={onTakePresetChange}
+                onApply={onTakeSettingsApply}
+                onClose={onTakeSettingsClose}
+              />
+            ) : null}
           </div>
 
           <div className="paper-limits-shell">

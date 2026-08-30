@@ -41,6 +41,7 @@ from .schema import (
     SCHEMA_V7_MIGRATION_STATEMENTS,
     SCHEMA_V8_MIGRATION_STATEMENTS,
     SCHEMA_V9_MIGRATION_STATEMENTS,
+    SCHEMA_V10_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -383,6 +384,11 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 9:
+            SQLiteStore._validate_required_tables(connection, version=9)
+            SQLiteStore._migrate_v9_to_v10(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
         if version == 1:
             SQLiteStore._validate_required_tables(connection, version=1)
             SQLiteStore._migrate_v1_to_v2(connection)
@@ -557,6 +563,19 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v9_to_v10(connection)
+
+    @staticmethod
+    def _migrate_v9_to_v10(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V10_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 10")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -591,6 +610,8 @@ class SQLiteStore:
             required.update({"paper_limit_orders", "paper_limit_actions"})
         if version >= 8:
             required.add("paper_state_revisions")
+        if version >= 10:
+            required.add("paper_protection_actions")
         actual = {
             row[0]
             for row in connection.execute(
@@ -732,6 +753,172 @@ class SQLiteStore:
             """,
             (trading_account_id.value, symbol.value),
         )
+
+    def mutate_paper_stop(
+        self,
+        *,
+        client_action_id: str,
+        request_fingerprint: str,
+        operation: str,
+        position_key: PositionKey,
+        stop_loss: Decimal | None,
+        updated_at_ms: int,
+    ) -> tuple[ProtectionProjectionRecord | None, bool, bool]:
+        return self.mutate_paper_protection_leg(
+            client_action_id=client_action_id,
+            request_fingerprint=request_fingerprint,
+            operation=operation,
+            position_key=position_key,
+            leg="stop",
+            trigger=stop_loss,
+            updated_at_ms=updated_at_ms,
+        )
+
+    def mutate_paper_protection_leg(
+        self,
+        *,
+        client_action_id: str,
+        request_fingerprint: str,
+        operation: str,
+        position_key: PositionKey,
+        leg: str,
+        trigger: Decimal | None,
+        updated_at_ms: int,
+    ) -> tuple[ProtectionProjectionRecord | None, bool, bool]:
+        """Apply one idempotent PAPER protection-leg mutation and revision atomically."""
+
+        self._assert_owner()
+        if leg not in {"stop", "take"}:
+            raise ValueError("unsupported PAPER protection leg")
+        column = "stop_loss" if leg == "stop" else "take_profit"
+        action_operation = operation
+        if operation not in {"create", "amend", "delete"}:
+            raise ValueError("unsupported PAPER protection operation")
+        if operation == "delete" and trigger is not None:
+            raise ValueError("PAPER protection delete cannot carry a trigger")
+        if operation != "delete" and trigger is None:
+            raise ValueError("PAPER protection mutation requires a trigger")
+
+        existing_action = self._connection.execute(
+            """SELECT operation, request_fingerprint, trading_account_id, symbol
+               FROM paper_protection_actions WHERE client_action_id = ?""",
+            (client_action_id,),
+        ).fetchone()
+        if existing_action is not None:
+            identity = (
+                existing_action["operation"], existing_action["request_fingerprint"],
+                existing_action["trading_account_id"], existing_action["symbol"],
+            )
+            expected = (
+                action_operation, request_fingerprint,
+                position_key.trading_account_id.value, position_key.symbol.value,
+            )
+            if identity != expected:
+                raise DuplicateIdentity(
+                    "client action identity already exists with different PAPER protection intent"
+                )
+            return self.get_protection_projection(position_key), False, True
+
+        current = self.get_protection_projection(position_key)
+        current_trigger = None if current is None else getattr(current, column)
+        if operation == "create" and current_trigger is not None:
+            raise PersistenceError(f"PAPER {leg.upper()} already exists")
+        if operation == "amend" and current_trigger is None:
+            raise PersistenceError(f"PAPER {leg.upper()} is missing")
+
+        changed = (
+            current_trigger is None
+            if operation == "create"
+            else current_trigger != trigger
+            if operation == "amend"
+            else current_trigger is not None
+        )
+        with self._transaction():
+            if operation == "delete":
+                sibling = None if current is None else (
+                    current.take_profit if leg == "stop" else current.stop_loss
+                )
+                if changed and sibling is not None:
+                    self._connection.execute(
+                        f"""UPDATE protection_projections
+                           SET {column}=NULL, status='confirmed_active', pending_command_id=NULL,
+                               version=version+1, evidence_at_ms=?, updated_at_ms=?
+                           WHERE trading_account_id=? AND category=? AND symbol=? AND position_idx=?""",
+                        (
+                            updated_at_ms, updated_at_ms,
+                            position_key.trading_account_id.value, position_key.category.value,
+                            position_key.symbol.value, position_key.position_idx,
+                        ),
+                    )
+                elif changed and current is not None:
+                    self._connection.execute(
+                        """DELETE FROM protection_projections
+                           WHERE trading_account_id=? AND category=? AND symbol=? AND position_idx=?""",
+                        (
+                            position_key.trading_account_id.value, position_key.category.value,
+                            position_key.symbol.value, position_key.position_idx,
+                        ),
+                    )
+            elif current is None:
+                self._connection.execute(
+                    """INSERT INTO protection_projections
+                       (trading_account_id, category, symbol, position_idx, status,
+                        take_profit, stop_loss, trailing_stop, pending_command_id,
+                        version, evidence_at_ms, updated_at_ms)
+                       VALUES (?, ?, ?, ?, 'confirmed_active', ?, ?, NULL, NULL, 1, ?, ?)""",
+                    (
+                        position_key.trading_account_id.value, position_key.category.value,
+                        position_key.symbol.value, position_key.position_idx,
+                        _decimal_text(trigger) if leg == "take" else None,
+                        _decimal_text(trigger) if leg == "stop" else None,
+                        updated_at_ms, updated_at_ms,
+                    ),
+                )
+            elif changed:
+                self._connection.execute(
+                    f"""UPDATE protection_projections
+                       SET {column}=?, status='confirmed_active', pending_command_id=NULL,
+                           version=version+1, evidence_at_ms=?, updated_at_ms=?
+                       WHERE trading_account_id=? AND category=? AND symbol=? AND position_idx=?""",
+                    (
+                        _decimal_text(trigger), updated_at_ms, updated_at_ms,
+                        position_key.trading_account_id.value, position_key.category.value,
+                        position_key.symbol.value, position_key.position_idx,
+                    ),
+                )
+            self._connection.execute(
+                "INSERT INTO paper_protection_actions VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    client_action_id, action_operation, request_fingerprint,
+                    position_key.trading_account_id.value, position_key.symbol.value,
+                    updated_at_ms,
+                ),
+            )
+            if changed:
+                self._advance_paper_state_revision(
+                    position_key.trading_account_id, position_key.symbol,
+                )
+        return self.get_protection_projection(position_key), changed, False
+
+    def clear_paper_protection_for_flat(
+        self, position_key: PositionKey,
+    ) -> bool:
+        """Remove stale PAPER protection only when durable position is already FLAT."""
+
+        self._assert_owner()
+        position = self.get_position_projection(position_key)
+        if position is not None and (
+            position.side is not PositionSide.FLAT or position.quantity.value != 0
+        ):
+            raise PersistenceError("cannot clear PAPER protection for an open position")
+        if self.get_protection_projection(position_key) is None:
+            return False
+        with self._transaction():
+            self._delete_protection_projection(position_key)
+            self._advance_paper_state_revision(
+                position_key.trading_account_id, position_key.symbol,
+            )
+        return True
 
     def create_paper_limit(
         self, *, client_action_id: str, request_fingerprint: str,
@@ -1057,6 +1244,7 @@ class SQLiteStore:
 
             self._insert_execution(execution)
             self._write_projection(projection)
+            self._clear_protection_after_confirmed_flat(projection)
             if command_id is not None:
                 self._correlate_command_order(command_id, execution.order_id)
             self._advance_paper_state_revision(
@@ -1121,6 +1309,7 @@ class SQLiteStore:
 
             self._insert_execution(execution)
             self._write_projection(projection)
+            self._clear_protection_after_confirmed_flat(projection)
 
             cursor = self._connection.execute(
                 """
@@ -1145,6 +1334,24 @@ class SQLiteStore:
             )
 
         return ExecutionApplyResult.APPLIED
+
+    def _clear_protection_after_confirmed_flat(
+        self, projection: PositionProjectionUpdate,
+    ) -> None:
+        if projection.side is PositionSide.FLAT:
+            if projection.quantity.value != 0:
+                raise ValueError("FLAT projection must have zero quantity")
+            self._delete_protection_projection(projection.position_key)
+
+    def _delete_protection_projection(self, position_key: PositionKey) -> None:
+        self._connection.execute(
+            """DELETE FROM protection_projections
+               WHERE trading_account_id=? AND category=? AND symbol=? AND position_idx=?""",
+            (
+                position_key.trading_account_id.value, position_key.category.value,
+                position_key.symbol.value, position_key.position_idx,
+            ),
+        )
 
     def _correlate_command_order(self, command_id: CommandId, order_id: OrderId) -> None:
         cursor = self._connection.execute(

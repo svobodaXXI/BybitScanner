@@ -30,6 +30,8 @@ from terminal.api.models import (
     MarketCommandRequest,
     PaperLimitCancelRequest,
     PaperLimitAmendRequest,
+    PaperStopDeleteRequest,
+    PaperStopMutationRequest,
     TimeInForce,
     VolumeRequest,
     VolumeUnit,
@@ -80,6 +82,8 @@ LIMIT_FIELDS = {
 }
 LIMIT_CANCEL_FIELDS = {"client_action_id", "symbol", "order_id"}
 LIMIT_AMEND_FIELDS = {"client_action_id", "symbol", "order_id", "limit_price"}
+STOP_MUTATION_FIELDS = {"client_action_id", "symbol", "trigger_price"}
+STOP_DELETE_FIELDS = {"client_action_id", "symbol"}
 WORKSPACE_SYMBOL_FIELDS = {"symbol"}
 NATIVE_KLINE_INTERVALS = ("1", "5", "15", "60", "D")
 SUPPORTED_KLINE_INTERVALS = ("15s", *NATIVE_KLINE_INTERVALS)
@@ -1776,6 +1780,57 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     runtime.paper_state(request.symbol),
                 )
             )
+            self._json_response(200, {
+                **to_primitive(result),
+                "paper_state": {"ok": True, **state},
+            })
+            return
+
+        if self.path in {"/api/stop", "/api/stop/amend", "/api/take", "/api/take/amend"}:
+            try:
+                payload = self._payload(STOP_MUTATION_FIELDS)
+                request = PaperStopMutationRequest(
+                    ClientActionId(payload["client_action_id"]), payload["symbol"],
+                    _decimal(payload["trigger_price"]),
+                )
+                operation = {
+                    "/api/stop": PaperRuntime.create_stop,
+                    "/api/stop/amend": PaperRuntime.amend_stop,
+                    "/api/take": PaperRuntime.create_take,
+                    "/api/take/amend": PaperRuntime.amend_take,
+                }[self.path]
+                result, state = self.server.runtime.call(
+                    lambda runtime: (
+                        operation(runtime, request),
+                        runtime.paper_state(request.symbol),
+                    )
+                )
+            except Exception:
+                self._json_response(400, to_primitive(_validation_error()))
+                return
+            self._json_response(200, {
+                **to_primitive(result),
+                "paper_state": {"ok": True, **state},
+            })
+            return
+
+        if self.path in {"/api/stop/delete", "/api/take/delete"}:
+            try:
+                payload = self._payload(STOP_DELETE_FIELDS)
+                request = PaperStopDeleteRequest(
+                    ClientActionId(payload["client_action_id"]), payload["symbol"],
+                )
+                result, state = self.server.runtime.call(
+                    lambda runtime: (
+                        (runtime.delete_stop(request)
+                         if self.path == "/api/stop/delete"
+                         else runtime.delete_take(request)),
+                        runtime.paper_state(request.symbol),
+                    )
+                )
+            except Exception:
+                self._json_response(400, to_primitive(_validation_error()))
+                return
             self._json_response(200, {
                 **to_primitive(result),
                 "paper_state": {"ok": True, **state},

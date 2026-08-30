@@ -195,6 +195,31 @@ class PaperLimitMutationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class PaperStopMutationRequest:
+    client_action_id: ClientActionId
+    symbol: str
+    trigger_price: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class PaperStopDeleteRequest:
+    client_action_id: ClientActionId
+    symbol: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaperStopMutationResult:
+    client_action_id: str
+    status: CommandResultStatus
+    reason_code: str
+
+
+PaperTakeMutationRequest = PaperStopMutationRequest
+PaperTakeDeleteRequest = PaperStopDeleteRequest
+PaperTakeMutationResult = PaperStopMutationResult
+
+
+@dataclass(frozen=True, slots=True)
 class AmendCommandRequest:
     client_action_id: ClientActionId
     symbol: str

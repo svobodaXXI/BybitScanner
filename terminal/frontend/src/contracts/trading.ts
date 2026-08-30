@@ -101,6 +101,38 @@ export type PaperLimitMutationResponse = PaperLimitMutationResult & {
   paper_state: PaperState;
 };
 
+export type PaperProtection = {
+  status: string;
+  take_profit: string | null;
+  stop_loss: string | null;
+  trailing_stop: string | null;
+  pending_command_id: string | null;
+  warning: string | null;
+  effective_quantity: string | null;
+};
+
+export type PaperStopMutationRequest = {
+  client_action_id: string;
+  symbol: string;
+  trigger_price: string;
+};
+
+export type PaperStopDeleteRequest = {
+  client_action_id: string;
+  symbol: string;
+};
+
+export type PaperStopMutationResponse = {
+  client_action_id: string;
+  status: string;
+  reason_code: string;
+  paper_state: PaperState;
+};
+
+export type PaperTakeMutationRequest = PaperStopMutationRequest;
+export type PaperTakeDeleteRequest = PaperStopDeleteRequest;
+export type PaperTakeMutationResponse = PaperStopMutationResponse;
+
 export type CommandResult = {
   client_action_id: string;
   status: string;
@@ -128,4 +160,5 @@ export type PaperState = {
   engaged_notional_usdt: string;
   engaged_wv: string;
   active_limit_orders: PaperLimitOrder[];
+  protection?: PaperProtection;
 };

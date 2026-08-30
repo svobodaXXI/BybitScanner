@@ -26,6 +26,7 @@ import {
   createLimitDraft,
   EMPTY_LIMIT_DRAFT_STATE,
   limitDraftReducer,
+  normalizeLimitDraftPrice,
 } from "../orders/limitDraft";
 import { PaperLimitDraftSubmitController } from "../orders/limitDraftSubmission";
 import { executePaperLimitAmend, executePaperLimitCancel } from "../orders/paperLimitCommand";
@@ -36,6 +37,38 @@ import {
 } from "../orders/paperLimitCreate";
 import { projectPaperLimitOrders } from "../orders/paperLimitProjection";
 import { isValidSelectedVolume, updateSelectedVolume } from "../orders/selectedVolume";
+import {
+  authoritativeStopPrice,
+  authoritativeTakePrice,
+  paperStateNeedsPolling,
+  shouldClearStopDraft,
+  stopDraftReducer,
+} from "../orders/stopDraft";
+import {
+  isImprovingStop,
+  loadStopPreset,
+  loadTakePreset,
+  saveStopPreset,
+  saveTakePreset,
+  shouldCloseStopSettings,
+  stopPriceFromPercent,
+  takePriceFromPercent,
+} from "../orders/stopPreset";
+import {
+  executePaperStopAmend,
+  executePaperStopCreate,
+  executePaperStopDelete,
+  executePaperTakeAmend,
+  executePaperTakeCreate,
+  executePaperTakeDelete,
+} from "../orders/paperStopCommand";
+import {
+  isSignalTakeProposalHandled,
+  markSignalTakeProposalHandled,
+  readScannerSignalContext,
+  shouldClearSignalTakeProposal,
+  signalTakeProposalPrice,
+} from "../orders/signalTakeProposal";
 import {
   domSelectionRequiresMarket,
   executePaperMarketCommand,
@@ -68,6 +101,14 @@ export function App() {
     limitDraftReducer,
     EMPTY_LIMIT_DRAFT_STATE,
   );
+  const [stopDraft, dispatchStopDraft] = useReducer(stopDraftReducer, null);
+  const [takeDraft, dispatchTakeDraft] = useReducer(stopDraftReducer, null);
+  const [stopPresetPercent, setStopPresetPercent] = useState(loadStopPreset);
+  const [takePresetPercent, setTakePresetPercent] = useState(loadTakePreset);
+  const [scannerSignal] = useState(readScannerSignalContext);
+  const [protectionSettings, setProtectionSettings] = useState<{
+    leg: "STOP" | "TAKE"; symbol: string;
+  } | null>(null);
   const limitSubmitController = useRef(new PaperLimitDraftSubmitController());
   const domLimitController = useRef(new DomLimitPlacementController());
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
@@ -101,6 +142,9 @@ export function App() {
     setWorkspaceSwitchError(null);
     setFastLimitIntent(null);
     dispatchLimitDraft({ type: "dismiss-all" });
+    dispatchStopDraft({ type: "clear" });
+    dispatchTakeDraft({ type: "clear" });
+    setProtectionSettings(null);
     setLadderCenterPrice(null);
     setPositionSide("Flat");
     setPositionAverageEntry(null);
@@ -114,6 +158,8 @@ export function App() {
   const activeLimitOrders = currentPaperState?.ok
     ? currentPaperState.active_limit_orders
     : [];
+  const activeStopPrice = authoritativeStopPrice(currentPaperState);
+  const activeTakePrice = authoritativeTakePrice(currentPaperState);
   const domOwnOrders = useMemo(
     () => projectPaperLimitOrders(activeLimitOrders, tradingSymbol),
     [activeLimitOrders, tradingSymbol],
@@ -145,13 +191,80 @@ export function App() {
   useEffect(() => {
     if (mode !== "TERMINAL") return;
 
-    if (paperState?.ok && paperState.active_limit_orders.length === 0) return;
+    if (!paperStateNeedsPolling(paperState)) return;
     const timer = window.setInterval(() => {
       void refreshPaperState();
     }, 2_000);
 
     return () => window.clearInterval(timer);
   }, [mode, paperState, refreshPaperState]);
+
+  useEffect(() => {
+    if (shouldClearStopDraft(stopDraft, currentPaperState, tradingSymbol)) {
+      dispatchStopDraft({ type: "clear" });
+    }
+    if (shouldClearStopDraft(takeDraft, currentPaperState, tradingSymbol)) {
+      dispatchTakeDraft({ type: "clear" });
+    }
+    if (shouldCloseStopSettings(protectionSettings?.symbol ?? null, currentPaperState, tradingSymbol)) {
+      setProtectionSettings(null);
+    }
+  }, [currentPaperState, protectionSettings, stopDraft, takeDraft, tradingSymbol]);
+
+  useEffect(() => {
+    if (takeDraft !== null || scannerSignal === null) return;
+    const price = signalTakeProposalPrice({
+      signal: scannerSignal,
+      state: currentPaperState,
+      activeTakePrice,
+      presetPercent: takePresetPercent,
+      tickSize: market.tickSize === null ? null : String(market.tickSize),
+      workspaceSymbol: tradingSymbol,
+      handled: isSignalTakeProposalHandled(scannerSignal.signalId),
+    });
+    if (price === null) return;
+    dispatchTakeDraft({
+      type: "begin-create",
+      symbol: tradingSymbol,
+      price,
+      proposalSignalId: scannerSignal.signalId,
+    });
+  }, [activeTakePrice, currentPaperState, market.tickSize, scannerSignal, takeDraft, takePresetPercent, tradingSymbol]);
+
+  useEffect(() => {
+    if (
+      scannerSignal !== null && activeTakePrice !== null &&
+      scannerSignal.symbol === tradingSymbol
+    ) {
+      markSignalTakeProposalHandled(scannerSignal.signalId);
+    }
+  }, [activeTakePrice, scannerSignal, tradingSymbol]);
+
+  useEffect(() => {
+    if (!shouldClearSignalTakeProposal(
+      takeDraft?.proposalSignalId, currentPaperState, tradingSymbol, activeTakePrice,
+    )) return;
+    dispatchTakeDraft({ type: "clear" });
+  }, [activeTakePrice, currentPaperState, takeDraft?.proposalSignalId, tradingSymbol]);
+
+  const dismissTakeDraft = useCallback(() => {
+    if (takeDraft?.proposalSignalId) {
+      markSignalTakeProposalHandled(takeDraft.proposalSignalId);
+    }
+    dispatchTakeDraft({ type: "clear" });
+  }, [takeDraft]);
+
+  useEffect(() => {
+    if (!takeDraft?.proposalSignalId || takeDraft.status === "submitting") return;
+    const dismissOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('[data-protection-leg="TAKE"]')) return;
+      markSignalTakeProposalHandled(takeDraft.proposalSignalId!);
+      dispatchTakeDraft({ type: "clear" });
+    };
+    document.addEventListener("pointerdown", dismissOutside, true);
+    return () => document.removeEventListener("pointerdown", dismissOutside, true);
+  }, [takeDraft]);
 
   const changeTimeframe = (next: ChartTimeframe) => {
     setTimeframe(next);
@@ -329,6 +442,188 @@ export function App() {
     }
   }, [tradingSymbol]);
 
+  const beginStopDraft = useCallback((): "drafted" | "not-improved" | undefined => {
+    if (!currentPaperState?.ok || market.tickSize === null) return;
+    const referencePrice = activeStopPrice === null
+      ? currentPaperState.average_entry
+      : sizingReferencePrice;
+    const price = stopPriceFromPercent(
+      currentPaperState.position_side,
+      referencePrice,
+      stopPresetPercent,
+      String(market.tickSize),
+    );
+    if (price === null) return;
+    if (activeStopPrice === null) {
+      dispatchStopDraft({ type: "begin-create", symbol: tradingSymbol, price });
+      return "drafted";
+    }
+    if (!isImprovingStop(currentPaperState.position_side, price, activeStopPrice)) {
+      return "not-improved";
+    }
+    dispatchStopDraft({
+      type: "begin-edit",
+      symbol: tradingSymbol,
+      authoritativePrice: activeStopPrice,
+    });
+    dispatchStopDraft({ type: "update-price", price });
+    return "drafted";
+  }, [activeStopPrice, currentPaperState, market.tickSize, sizingReferencePrice, stopPresetPercent, tradingSymbol]);
+
+  const applyStopSettings = useCallback((price: string, percent: string) => {
+    if (!currentPaperState?.ok) return;
+    setStopPresetPercent(percent);
+    saveStopPreset(percent);
+    if (activeStopPrice === null) {
+      dispatchStopDraft({ type: "begin-create", symbol: tradingSymbol, price });
+    } else {
+      dispatchStopDraft({
+        type: "begin-edit",
+        symbol: tradingSymbol,
+        authoritativePrice: activeStopPrice,
+      });
+      dispatchStopDraft({ type: "update-price", price });
+    }
+    setProtectionSettings(null);
+  }, [activeStopPrice, currentPaperState, tradingSymbol]);
+
+  const updateStopPreset = useCallback((percent: string) => {
+    setStopPresetPercent(percent);
+    saveStopPreset(percent);
+  }, []);
+
+  const beginTakeDraft = useCallback(() => {
+    if (!currentPaperState?.ok || market.tickSize === null) return;
+    const referencePrice = activeTakePrice === null
+      ? currentPaperState.average_entry
+      : sizingReferencePrice;
+    const price = takePriceFromPercent(
+      currentPaperState.position_side,
+      referencePrice,
+      takePresetPercent,
+      String(market.tickSize),
+    );
+    if (price === null) return;
+    if (activeTakePrice === null) {
+      dispatchTakeDraft({ type: "begin-create", symbol: tradingSymbol, price });
+    } else {
+      dispatchTakeDraft({
+        type: "begin-edit", symbol: tradingSymbol,
+        authoritativePrice: activeTakePrice,
+      });
+      dispatchTakeDraft({ type: "update-price", price });
+    }
+  }, [activeTakePrice, currentPaperState, market.tickSize, sizingReferencePrice, takePresetPercent, tradingSymbol]);
+
+  const applyTakeSettings = useCallback((price: string, percent: string) => {
+    if (!currentPaperState?.ok) return;
+    setTakePresetPercent(percent);
+    saveTakePreset(percent);
+    if (activeTakePrice === null) {
+      dispatchTakeDraft({ type: "begin-create", symbol: tradingSymbol, price });
+    } else {
+      dispatchTakeDraft({
+        type: "begin-edit", symbol: tradingSymbol,
+        authoritativePrice: activeTakePrice,
+      });
+      dispatchTakeDraft({ type: "update-price", price });
+    }
+    setProtectionSettings(null);
+  }, [activeTakePrice, currentPaperState, tradingSymbol]);
+
+  const updateTakePreset = useCallback((percent: string) => {
+    setTakePresetPercent(percent);
+    saveTakePreset(percent);
+  }, []);
+
+  const beginStopEdit = useCallback(() => {
+    if (activeStopPrice === null) return;
+    dispatchStopDraft({
+      type: "begin-edit",
+      symbol: tradingSymbol,
+      authoritativePrice: activeStopPrice,
+    });
+  }, [activeStopPrice, tradingSymbol]);
+
+  const beginTakeEdit = useCallback(() => {
+    if (activeTakePrice === null) return;
+    dispatchTakeDraft({
+      type: "begin-edit", symbol: tradingSymbol,
+      authoritativePrice: activeTakePrice,
+    });
+  }, [activeTakePrice, tradingSymbol]);
+
+  const updateStopDraftPrice = useCallback((rawPrice: string) => {
+    if (!stopDraft || !currentPaperState?.ok || market.tickSize === null) return;
+    const closingSide = currentPaperState.position_side === "Long" ? "Sell" : "Buy";
+    const normalized = normalizeLimitDraftPrice(
+      rawPrice, String(market.tickSize), closingSide,
+    );
+    if (normalized !== null) {
+      dispatchStopDraft({ type: "update-price", price: normalized });
+    }
+  }, [currentPaperState, market.tickSize, stopDraft]);
+
+  const updateTakeDraftPrice = useCallback((rawPrice: string) => {
+    if (!takeDraft || !currentPaperState?.ok || market.tickSize === null) return;
+    const closingSide = currentPaperState.position_side === "Long" ? "Sell" : "Buy";
+    const normalized = normalizeLimitDraftPrice(rawPrice, String(market.tickSize), closingSide);
+    if (normalized !== null) dispatchTakeDraft({ type: "update-price", price: normalized });
+  }, [currentPaperState, market.tickSize, takeDraft]);
+
+  const confirmProtectionDraft = useCallback(async (leg: "STOP" | "TAKE") => {
+    const draft = leg === "STOP" ? stopDraft : takeDraft;
+    const dispatch = leg === "STOP" ? dispatchStopDraft : dispatchTakeDraft;
+    if (!draft || draft.status === "submitting") return;
+    const clientActionId = globalThis.crypto?.randomUUID?.()
+      ?? `paper-${leg.toLowerCase()}-${Date.now()}`;
+    dispatch({ type: "submitting" });
+    try {
+      const execute = leg === "STOP"
+        ? draft.mode === "CREATE" ? executePaperStopCreate : executePaperStopAmend
+        : draft.mode === "CREATE" ? executePaperTakeCreate : executePaperTakeAmend;
+      const result = await paperTradingStore.runMutation(
+        `${draft.mode}_${leg}:${clientActionId}`,
+        () => execute({
+          client_action_id: clientActionId,
+          symbol: tradingSymbol,
+          trigger_price: draft.price,
+        }, { applyPaperState: paperTradingStore.applyPaperState }),
+      );
+      const authoritative = leg === "STOP"
+        ? authoritativeStopPrice(result.paper_state)
+        : authoritativeTakePrice(result.paper_state);
+      if (authoritative !== null) {
+        if (leg === "TAKE" && draft.proposalSignalId) {
+          markSignalTakeProposalHandled(draft.proposalSignalId);
+        }
+        dispatch({ type: "clear" });
+      } else {
+        dispatch({ type: "restore-editing" });
+      }
+    } catch {
+      dispatch({ type: "restore-editing" });
+      await paperTradingStore.refresh();
+    }
+  }, [stopDraft, takeDraft, tradingSymbol]);
+
+  const deleteProtection = useCallback(async (leg: "STOP" | "TAKE") => {
+    if ((leg === "STOP" ? activeStopPrice : activeTakePrice) === null) return;
+    const clientActionId = globalThis.crypto?.randomUUID?.()
+      ?? `paper-${leg.toLowerCase()}-delete-${Date.now()}`;
+    const execute = leg === "STOP" ? executePaperStopDelete : executePaperTakeDelete;
+    try {
+      await paperTradingStore.runMutation(`DELETE_${leg}:${clientActionId}`, () =>
+        execute({
+          client_action_id: clientActionId,
+          symbol: tradingSymbol,
+        }, { applyPaperState: paperTradingStore.applyPaperState }),
+      );
+    } catch {
+      await paperTradingStore.refresh();
+    }
+  }, [activeStopPrice, activeTakePrice, tradingSymbol]);
+
   return (
     <main className="workspace-shell">
       {workspaceSwitchError && (
@@ -377,6 +672,25 @@ export function App() {
           onFastLimitPriceSelect={createFastLimitDraft}
           onActiveLimitAmend={amendPaperLimit}
           onActiveLimitCancel={cancelPaperLimit}
+          authoritativeStopPrice={activeStopPrice}
+          stopDraft={stopDraft}
+          onStopDraftPriceChange={updateStopDraftPrice}
+          onStopConfirm={() => confirmProtectionDraft("STOP")}
+          onStopCancelDraft={() => dispatchStopDraft({ type: "clear" })}
+          onStopEdit={beginStopEdit}
+          onStopDelete={() => deleteProtection("STOP")}
+          authoritativeTakePrice={activeTakePrice}
+          takeDraft={takeDraft}
+          onTakeDraftPriceChange={updateTakeDraftPrice}
+          onTakeConfirm={() => confirmProtectionDraft("TAKE")}
+          onTakeCancelDraft={dismissTakeDraft}
+          onTakeEdit={beginTakeEdit}
+          onTakeDelete={() => deleteProtection("TAKE")}
+          averageEntryPrice={
+            currentPaperState?.ok && currentPaperState.position_side !== "Flat"
+              ? currentPaperState.average_entry
+              : null
+          }
           workspaceControls={(
             <WorkspaceHeader
               instruments={instruments}
@@ -455,6 +769,32 @@ export function App() {
           }
           onPositionSideChange={setPositionSide}
           onPositionAverageEntryChange={setPositionAverageEntry}
+          onStopTap={beginStopDraft}
+          onStopHold={() => setProtectionSettings({ leg: "STOP", symbol: tradingSymbol })}
+          stopActive={activeStopPrice !== null}
+          stopSettingsOpen={protectionSettings?.leg === "STOP" && protectionSettings.symbol === tradingSymbol}
+          stopPresetPercent={stopPresetPercent}
+          stopReferencePrice={
+            activeStopPrice === null
+              ? currentPaperState?.average_entry ?? "0"
+              : sizingReferencePrice
+          }
+          onStopSettingsApply={applyStopSettings}
+          onStopPresetChange={updateStopPreset}
+          onStopSettingsClose={() => setProtectionSettings(null)}
+          onTakeTap={beginTakeDraft}
+          onTakeHold={() => setProtectionSettings({ leg: "TAKE", symbol: tradingSymbol })}
+          takeActive={activeTakePrice !== null}
+          takeSettingsOpen={protectionSettings?.leg === "TAKE" && protectionSettings.symbol === tradingSymbol}
+          takePresetPercent={takePresetPercent}
+          takeReferencePrice={
+            activeTakePrice === null
+              ? currentPaperState?.average_entry ?? "0"
+              : sizingReferencePrice
+          }
+          onTakeSettingsApply={applyTakeSettings}
+          onTakePresetChange={updateTakePreset}
+          onTakeSettingsClose={() => setProtectionSettings(null)}
           onWorkspaceSymbolSelect={switchWorkspaceSymbol}
           accountOpen={accountOpen}
           onAccountToggle={() => setAccountOpen((open) => !open)}

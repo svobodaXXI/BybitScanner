@@ -4,7 +4,9 @@ import {
   CrosshairMode,
   createChart,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
+  LineStyle,
   type LogicalRange,
   type Time,
   type UTCTimestamp,
@@ -49,6 +51,8 @@ import type { PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
 import { PendingLimitLine } from "../chart/PendingLimitLine";
+import { StopLine } from "../chart/StopLine";
+import type { StopDraft } from "../orders/stopDraft";
 import {
   cancelVisibleLimitCandidates,
   confirmVisibleLimitCandidates,
@@ -113,6 +117,21 @@ export function ChartPanel({
   onFastLimitPriceSelect,
   onActiveLimitAmend,
   onActiveLimitCancel,
+  authoritativeStopPrice = null,
+  stopDraft = null,
+  onStopDraftPriceChange,
+  onStopConfirm,
+  onStopCancelDraft,
+  onStopEdit,
+  onStopDelete,
+  authoritativeTakePrice = null,
+  takeDraft = null,
+  onTakeDraftPriceChange,
+  onTakeConfirm,
+  onTakeCancelDraft,
+  onTakeEdit,
+  onTakeDelete,
+  averageEntryPrice = null,
   workspaceControls,
 }: {
   candles: readonly Candle[];
@@ -131,11 +150,28 @@ export function ChartPanel({
   onFastLimitPriceSelect?: (price: string) => void;
   onActiveLimitAmend?: (orderId: string, price: string) => Promise<void>;
   onActiveLimitCancel?: (orderId: string) => Promise<unknown>;
+  authoritativeStopPrice?: string | null;
+  stopDraft?: StopDraft | null;
+  onStopDraftPriceChange?: (price: string) => void;
+  onStopConfirm?: () => void | Promise<void>;
+  onStopCancelDraft?: () => void;
+  onStopEdit?: () => void;
+  onStopDelete?: () => void | Promise<void>;
+  authoritativeTakePrice?: string | null;
+  takeDraft?: StopDraft | null;
+  onTakeDraftPriceChange?: (price: string) => void;
+  onTakeConfirm?: () => void | Promise<void>;
+  onTakeCancelDraft?: () => void;
+  onTakeEdit?: () => void;
+  onTakeDelete?: () => void | Promise<void>;
+  averageEntryPrice?: string | null;
   workspaceControls?: ReactNode;
 }) {
   const hostRef = useRef<HTMLDivElement>(null),
     chartRef = useRef<IChartApi | null>(null),
     seriesRef = useRef<Series | null>(null);
+  const averageEntryLineRef = useRef<IPriceLine | null>(null);
+  const averageEntryLineSymbolRef = useRef<string | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>()),
     gesture = useRef<Gesture>(null);
   const touchCrosshair = useRef<{
@@ -256,6 +292,8 @@ export function ChartPanel({
       panBatcherRef.current = null;
       chartRef.current = null;
       seriesRef.current = null;
+      averageEntryLineRef.current = null;
+      averageEntryLineSymbolRef.current = null;
     };
   }, []);
   useEffect(() => {
@@ -280,6 +318,37 @@ export function ChartPanel({
     const priceFormat = tickSize === null ? null : chartPriceFormat(tickSize);
     if (priceFormat) seriesRef.current?.applyOptions({ priceFormat });
   }, [tickSize]);
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    const price = Number(averageEntryPrice);
+    const valid = averageEntryPrice !== null && Number.isFinite(price) && price > 0;
+    if (
+      averageEntryLineRef.current !== null &&
+      (!valid || averageEntryLineSymbolRef.current !== symbol)
+    ) {
+      series.removePriceLine(averageEntryLineRef.current);
+      averageEntryLineRef.current = null;
+      averageEntryLineSymbolRef.current = null;
+    }
+    if (!valid) return;
+    if (averageEntryLineRef.current === null) {
+      averageEntryLineRef.current = series.createPriceLine({
+        price,
+        color: "#d7dce2",
+        lineWidth: 1,
+        lineStyle: LineStyle.Solid,
+        lineVisible: true,
+        axisLabelVisible: true,
+        title: "AVG",
+        axisLabelColor: "#707780",
+        axisLabelTextColor: "#f1f3f5",
+      });
+      averageEntryLineSymbolRef.current = symbol;
+      return;
+    }
+    averageEntryLineRef.current.applyOptions({ price });
+  }, [averageEntryPrice, symbol]);
   const drawingPriceFormatter = useMemo(() => {
     const format = tickSize === null ? null : chartPriceFormat(tickSize);
     return format?.formatter ?? ((price: number) => price.toFixed(4));
@@ -301,7 +370,7 @@ export function ChartPanel({
   };
   const targetsPendingLimitLine = (target: EventTarget | null) =>
     target instanceof Element &&
-    target.closest("[data-pending-limit-line], [data-active-limit-line], [data-chart-control]") !== null;
+    target.closest("[data-pending-limit-line], [data-active-limit-line], [data-protection-line], [data-chart-control]") !== null;
   const clearCrosshairTimer = () => {
     if (touchCrosshair.current.timer) {
       clearTimeout(touchCrosshair.current.timer);
@@ -716,6 +785,69 @@ export function ChartPanel({
             gesture.current = null;
           }}
         />
+        {(() => {
+          const displayedPrice = stopDraft?.price ?? authoritativeStopPrice;
+          if (displayedPrice === null) return null;
+          const numericPrice = Number(displayedPrice);
+          if (!Number.isFinite(numericPrice)) return null;
+          return (
+            <StopLine
+              price={displayedPrice}
+              top={coordinates.priceToY(numericPrice)}
+              rightOffset={
+                chartRef.current?.priceScale("right").width() ||
+                PRICE_SCALE_WIDTH_FALLBACK
+              }
+              mode={stopDraft?.mode ?? "ACTIVE"}
+              submitting={stopDraft?.status === "submitting"}
+              onDragClientY={(clientY) => {
+                const host = hostRef.current;
+                const series = seriesRef.current;
+                if (!host || !series || !onStopDraftPriceChange) return;
+                const price = series.coordinateToPrice(
+                  clientY - host.getBoundingClientRect().top,
+                );
+                if (price !== null) onStopDraftPriceChange(String(price));
+              }}
+              onConfirm={() => void onStopConfirm?.()}
+              onCancel={onStopCancelDraft}
+              onEdit={onStopEdit}
+              onDelete={() => void onStopDelete?.()}
+            />
+          );
+        })()}
+        {(() => {
+          const displayedPrice = takeDraft?.price ?? authoritativeTakePrice;
+          if (displayedPrice === null) return null;
+          const numericPrice = Number(displayedPrice);
+          if (!Number.isFinite(numericPrice)) return null;
+          return (
+            <StopLine
+              leg="TAKE"
+              price={displayedPrice}
+              top={coordinates.priceToY(numericPrice)}
+              rightOffset={
+                chartRef.current?.priceScale("right").width() ||
+                PRICE_SCALE_WIDTH_FALLBACK
+              }
+              mode={takeDraft?.mode ?? "ACTIVE"}
+              submitting={takeDraft?.status === "submitting"}
+              onDragClientY={(clientY) => {
+                const host = hostRef.current;
+                const series = seriesRef.current;
+                if (!host || !series || !onTakeDraftPriceChange) return;
+                const price = series.coordinateToPrice(
+                  clientY - host.getBoundingClientRect().top,
+                );
+                if (price !== null) onTakeDraftPriceChange(String(price));
+              }}
+              onConfirm={() => void onTakeConfirm?.()}
+              onCancel={onTakeCancelDraft}
+              onEdit={onTakeEdit}
+              onDelete={() => void onTakeDelete?.()}
+            />
+          );
+        })()}
         {activeLimitOrders.map((order) => {
           const editState = activeLimitEdit.state;
           const selected = editState.mode !== "ACTIVE" && editState.orderId === order.order_id;

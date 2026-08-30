@@ -13,16 +13,21 @@ from terminal.api.models import (
     ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResultStatus,
     FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
     PaperLimitMutationResult, PaperLimitOrderProjection, PaperOpenPositionProjection,
-    PaperOpenPositionsResponse, TimeInForce,
+    PaperOpenPositionsResponse, PaperStopDeleteRequest, PaperStopMutationRequest,
+    PaperStopMutationResult, TimeInForce, to_primitive,
 )
+from terminal.api.projections import project_protection
+from terminal.application.protection import normalize_paper_protection_trigger
 from terminal.application.execution_engine import ExecutionEngine
 from terminal.application.pretrade_guard import MutationGate, PreTradeGuard
 from terminal.application.normalization import normalize_limit_price
 from terminal.application.pretrade_guard import NotionalIntent, OrderKind, PreTradeIntent
 from terminal.application.pretrade_guard import WorkingVolumeIntent
 from terminal.application.trading_application import TradingApplication
-from terminal.domain.models import Symbol, TradingAccountId
-from terminal.domain.models import OrderId
+from terminal.domain.models import (
+    ExecutionId, OrderId, OrderSide, PositionSide, Quantity, Symbol,
+    TradingAccountId,
+)
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.book_provider import MarketBookProvider
 from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
@@ -74,7 +79,7 @@ class PaperRuntime:
         )
         self._last_processed_book_update_id: str | None = None
 
-        paper_executor = PaperMarketExecutor(
+        self._market_executor = PaperMarketExecutor(
             book_provider,
             engine,
             max_book_age_ms=1000,
@@ -103,7 +108,7 @@ class PaperRuntime:
             engine,
             mutations_enabled=True,
             clock_ms=lambda: int(time.time() * 1000),
-            paper_market_executor=paper_executor,
+            paper_market_executor=self._market_executor,
         )
 
         self.api = TerminalCommandApi(application, context_provider)
@@ -136,6 +141,62 @@ class PaperRuntime:
             )
             if result is not None and result.apply_result is ExecutionApplyResult.APPLIED:
                 applied += 1
+        context = self._context.context_for(book.symbol.value)
+        protection = self.store.get_protection_projection(
+            context.pretrade.position_key
+        )
+        if protection is None or (
+            protection.stop_loss is None and protection.take_profit is None
+        ):
+            return applied
+        position = self.store.get_position_projection(context.pretrade.position_key)
+        if position is None or (
+            position.side is PositionSide.FLAT or position.quantity.value == 0
+        ):
+            self.store.clear_paper_protection_for_flat(context.pretrade.position_key)
+            return applied
+
+        exit_market = (
+            book.bids[0].price.value
+            if position.side is PositionSide.LONG
+            else book.asks[0].price.value
+        )
+        stop_triggered = protection.stop_loss is not None and (
+            exit_market <= protection.stop_loss
+            if position.side is PositionSide.LONG
+            else exit_market >= protection.stop_loss
+        )
+        take_triggered = protection.take_profit is not None and (
+            exit_market >= protection.take_profit
+            if position.side is PositionSide.LONG
+            else exit_market <= protection.take_profit
+        )
+        leg = "stop" if stop_triggered else "take" if take_triggered else None
+        if leg is None:
+            return applied
+
+        digest = hashlib.sha256(
+            (
+                f"{context.pretrade.position_key.symbol.value}\0{protection.version}"
+                f"\0{book_update_id}"
+            ).encode("utf-8")
+        ).hexdigest()
+        side = (
+            OrderSide.SELL
+            if position.side is PositionSide.LONG
+            else OrderSide.BUY
+        )
+        stop_result = self._market_executor.execute(
+            trading_account_id=context.pretrade.position_key.trading_account_id,
+            symbol=context.pretrade.position_key.symbol,
+            side=side,
+            quantity=Quantity(position.quantity.value),
+            order_link_id=f"paper-{leg}-{digest}",
+            order_id=OrderId(f"paper-{leg}-order-{digest}"),
+            exec_id=ExecutionId(f"paper-{leg}-exec-{digest}"),
+        )
+        if stop_result.apply_result is ExecutionApplyResult.APPLIED:
+            applied += 1
         return applied
 
     def paper_state(self, symbol: str) -> dict[str, object]:
@@ -168,6 +229,16 @@ class PaperRuntime:
             position_quantity = Decimal("0")
             engaged_notional = Decimal("0")
             average_entry = None
+        protection = project_protection(
+            self.store.get_protection_projection(context.pretrade.position_key)
+        )
+        protection_projection = to_primitive(protection)
+        protection_projection["effective_quantity"] = (
+            str(position_quantity)
+            if (protection.stop_loss is not None or protection.take_profit is not None)
+            and position_quantity > 0
+            else None
+        )
 
         return {
             "state_revision": self.store.get_paper_state_revision(
@@ -201,6 +272,7 @@ class PaperRuntime:
                 }
                 for item in self.store.load_active_paper_limits(Symbol(normalized_symbol))
             ],
+            "protection": protection_projection,
         }
 
     def open_positions(self) -> PaperOpenPositionsResponse:
@@ -371,6 +443,74 @@ class PaperRuntime:
         return PaperLimitMutationResult(
             request.client_action_id.value, CommandResultStatus.COMPLETED,
             "amended" if changed else "duplicate_action", amended.order_id.value,
+        )
+
+    def create_stop(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("stop", "create", request)
+
+    def amend_stop(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("stop", "amend", request)
+
+    def delete_stop(self, request: PaperStopDeleteRequest) -> PaperStopMutationResult:
+        return self._delete_protection("stop", request)
+
+    def create_take(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("take", "create", request)
+
+    def amend_take(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("take", "amend", request)
+
+    def delete_take(self, request: PaperStopDeleteRequest) -> PaperStopMutationResult:
+        return self._delete_protection("take", request)
+
+    def _delete_protection(
+        self, leg: str, request: PaperStopDeleteRequest,
+    ) -> PaperStopMutationResult:
+        symbol = request.symbol.strip().upper()
+        context = self._context.context_for(symbol)
+        fingerprint = _fingerprint(symbol, "delete") if leg == "stop" else _fingerprint(symbol, leg, "delete")
+        _, changed, replayed = self.store.mutate_paper_protection_leg(
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=fingerprint,
+            operation="delete",
+            position_key=context.pretrade.position_key,
+            leg=leg,
+            trigger=None,
+            updated_at_ms=int(time.time() * 1000),
+        )
+        return PaperStopMutationResult(
+            request.client_action_id.value,
+            CommandResultStatus.COMPLETED,
+            "duplicate_action" if replayed else "deleted" if changed else "already_absent",
+        )
+
+    def _mutate_protection(
+        self, leg: str, operation: str, request: PaperStopMutationRequest,
+    ) -> PaperStopMutationResult:
+        symbol = request.symbol.strip().upper()
+        context = self._context.context_for(symbol)
+        normalized = normalize_paper_protection_trigger(
+            context.position, context.instrument, request.trigger_price, leg,
+        )
+        fingerprint = (
+            _fingerprint(symbol, operation, str(normalized))
+            if leg == "stop"
+            else _fingerprint(symbol, leg, operation, str(normalized))
+        )
+        _, changed, replayed = self.store.mutate_paper_protection_leg(
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=fingerprint,
+            operation=operation,
+            position_key=context.pretrade.position_key,
+            leg=leg,
+            trigger=normalized,
+            updated_at_ms=int(time.time() * 1000),
+        )
+        return PaperStopMutationResult(
+            request.client_action_id.value,
+            CommandResultStatus.COMPLETED,
+            ("duplicate_action" if replayed or not changed
+             else {"create": "created", "amend": "amended"}[operation]),
         )
 
     def close(self) -> None:

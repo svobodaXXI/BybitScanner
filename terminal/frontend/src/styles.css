@@ -1308,10 +1308,90 @@ button {
     font-weight: 700;
   }
 
-  .paper-stop-button {
-    border: 1px dashed #a8555e;
-    color: #d67a82;
-  }
+.paper-stop-button {
+  border: 1px dashed #a8555e;
+  color: #d67a82;
+  position: relative;
+}
+
+.paper-stop-active-dot {
+  display: inline-block;
+  width: 0.38rem;
+  height: 0.38rem;
+  margin-right: 0.2rem;
+  border-radius: 50%;
+  background: #f04455;
+  box-shadow: 0 0 0.3rem rgb(240 68 85 / 70%);
+}
+
+.paper-take-active-dot {
+  display: inline-block;
+  width: 0.38rem;
+  height: 0.38rem;
+  margin-right: 0.2rem;
+  border-radius: 50%;
+  background: #36cf83;
+  box-shadow: 0 0 0.3rem rgb(54 207 131 / 70%);
+}
+
+.paper-protection-stack {
+  position: relative;
+}
+
+.paper-stop-settings {
+  position: absolute;
+  z-index: 90;
+  right: 0;
+  bottom: calc(100% + 0.35rem);
+  width: 12rem;
+  padding: 0.55rem;
+  border: 1px solid #69434a;
+  border-radius: 0.38rem;
+  background: #11181f;
+  box-shadow: 0 0.55rem 1.4rem rgb(0 0 0 / 45%);
+  color: #c9d0d7;
+  font-size: 0.68rem;
+}
+
+.paper-stop-settings-reference {
+  margin-bottom: 0.4rem;
+  color: #919ca6;
+}
+
+.paper-stop-settings label {
+  display: grid;
+  grid-template-columns: 4rem 1fr;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.3rem;
+}
+
+.paper-stop-settings input {
+  min-width: 0;
+  padding: 0.28rem 0.35rem;
+  border: 1px solid #394653;
+  border-radius: 0.24rem;
+  background: #171d24;
+  color: #eef1f4;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.paper-stop-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+}
+
+.paper-stop-settings-actions button {
+  padding: 0.25rem 0.45rem;
+  border: 1px solid #5c6874;
+  border-radius: 0.24rem;
+  background: #202a34;
+  color: #dce2e7;
+  font-size: 0.65rem;
+}
 
   .paper-take-button {
     border: 1px dashed #477d62;
@@ -3056,6 +3136,79 @@ button {
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.stop-line {
+  position: absolute;
+  z-index: 17;
+  left: 0;
+  height: 28px;
+  color: #c24f78;
+  transform: translateY(-50%);
+  touch-action: none;
+}
+
+.stop-line::before {
+  content: "";
+  position: absolute;
+  inset: 50% 0 auto;
+  border-top: 2px solid currentColor;
+}
+
+.stop-line.draft::before {
+  border-top-style: dashed;
+}
+
+.stop-line.take {
+  color: #38c7bd;
+}
+
+.stop-line > span {
+  position: absolute;
+  right: 0.18rem;
+  top: 50%;
+  padding: 0.08rem 0.22rem;
+  background: #11181f;
+  color: inherit;
+  font-size: 0.66rem;
+  font-weight: 700;
+  transform: translateY(-50%);
+  user-select: none;
+}
+
+.stop-line-actions {
+  position: absolute;
+  right: 0.12rem;
+  top: -2rem;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.stop-line-actions button {
+  width: 1.7rem;
+  height: 1.6rem;
+  border: 1px solid currentColor;
+  border-radius: 0.25rem;
+  background: #11181f;
+  color: #c24f78;
+}
+
+.stop-line.stop .stop-line-confirm {
+  width: 2.75rem;
+  height: 2.75rem;
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.stop-line.take .stop-line-actions button {
+  color: #38c7bd;
+}
+
+.stop-line-delete,
+.stop-line-cancel {
+  color: #f04455 !important;
 }
 
 
