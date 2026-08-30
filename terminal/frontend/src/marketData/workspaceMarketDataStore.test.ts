@@ -77,4 +77,59 @@ describe("multiplexed Workspace market-data store", () => {
     expect(sockets[1].url).not.toContain("stream_id=");
     store.dispose();
   });
+
+  it("switches 5m to 1m and back only through complete atomic snapshots", () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const store = new BackendWorkspaceMarketDataStore((url) => {
+      const socket = new FakeSocket(url);
+      sockets.push(socket);
+      return socket as unknown as WebSocket;
+    });
+    store.start();
+    sockets[0].message(snapshotEvent());
+    expect(store.getSnapshot().workspace).toMatchObject({
+      interval: "5", generation: 4, eventSequence: 1, state: "READY",
+    });
+    expect(store.getSnapshot().book.health).toBe("READY");
+    expect(store.getSnapshot().candles).toHaveLength(1);
+
+    store.setTimeframe("1m");
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0].closed).toBe(true);
+    expect(sockets[1].url).toContain("interval=1");
+    expect(sockets[1].url).not.toContain("stream_id=");
+    expect(store.getSnapshot().workspace?.interval).toBe("5");
+    sockets[0].message({
+      stream_id: "stream-1", event_sequence: 2, symbol: "ONGUSDT",
+      workspace_generation: 4, kind: "health", state: "DEGRADED",
+      component: "book", payload: {},
+    });
+    expect(store.getSnapshot().book.health).toBe("READY");
+
+    sockets[1].message({
+      ...snapshotEvent(), stream_id: "stream-2", event_sequence: 1,
+      candles: { ...snapshotEvent().candles, interval: "1" },
+    });
+    expect(store.getSnapshot().workspace).toMatchObject({
+      streamId: "stream-2", interval: "1", generation: 4,
+      eventSequence: 1, state: "READY",
+    });
+    expect(store.getSnapshot().book.health).toBe("READY");
+    expect(store.getSnapshot().candles).toHaveLength(1);
+
+    store.setTimeframe("5m");
+    expect(sockets).toHaveLength(3);
+    expect(sockets[1].closed).toBe(true);
+    expect(sockets[2].url).toContain("interval=5");
+    expect(sockets[2].url).not.toContain("stream_id=");
+    sockets[2].message({ ...snapshotEvent(), stream_id: "stream-3" });
+    expect(store.getSnapshot().workspace).toMatchObject({
+      streamId: "stream-3", interval: "5", generation: 4,
+      eventSequence: 1, state: "READY",
+    });
+    vi.runOnlyPendingTimers();
+    expect(sockets).toHaveLength(3);
+    store.dispose();
+  });
 });

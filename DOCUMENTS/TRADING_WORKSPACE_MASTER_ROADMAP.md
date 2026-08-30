@@ -196,7 +196,7 @@ Current status:
 ## 10. MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
 
 Human-approved architecture correction. Current status:
-`M7 DETERMINISTIC CHAOS / REGRESSION SUITE IMPLEMENTED / AUTOMATED PASS`.
+`M8 COMPLETE / REAL-PHONE + TUNNEL ACCEPTANCE PASS`.
 
 Backend symbol authority and generation isolation pass automated tests. Live ONG backend probes reached READY with
 a 1000×1000 book plus trades and 5-minute klines, and local UI ONG→BTC→ONG passed. The real phone nevertheless
@@ -283,7 +283,8 @@ Migration sequence:
   generation and event sequence across Chart, DOM and Smart Tape; legacy SSE remains backend-compatible.
 - M7 — COMPLETE: deterministic bounded chaos/regression coverage proves authority isolation, sequence/resnapshot,
   replay/backpressure, reconnect, mixed projection churn and M3–M6 compatibility invariants.
-- M8 — run local/proxy/tunnel and real-phone performance acceptance before retiring the old path.
+- M8 — COMPLETE: rebuilt production assets passed desktop and real-phone Chrome acceptance through the active
+  tunnel, including ONGUSDT 5m→1m→5m with stable Chart/DOM, visible candles and live DOM/Smart Tape.
 
 ### 10.1 M0 current implementation inventory and measured baseline
 
@@ -595,6 +596,35 @@ PAPER L2, REST commands and order/execution semantics remain unchanged. This is 
 does not exercise proxy/tunnel throughput, socket write-timeout behavior under a real slow network, browser
 rendering or a real phone. M8 local/proxy/tunnel and real-phone performance acceptance is the exact next gated stage
 and is not started.
+
+### 10.12 M8 real-browser failure and bounded layout correction
+
+Revision 1.80 keeps M8 `OPEN / FAIL` after production/tunnel observation on 2026-08-30. ONGUSDT initially rendered
+live DOM and Smart Tape, but a 5m→1m selection made Chart and DOM expand far beyond the viewport, Chart candles
+became unusable, and DOM reported `LIVE BOOK UNAVAILABLE` while last-known Tape values remained visible. This is
+failure evidence, not M8 acceptance.
+
+Direct M5 probes proved complete READY ONGUSDT snapshots for both interval `5` and interval `1`, with the same
+active Workspace generation, correct candle interval/history and READY book/candle components. Local production
+browser reproduction isolated the visual defect to a circular layout boundary: the DOM `ResizeObserver` increased
+the projected row count from the available ladder height, intrinsic grid content then increased the unbounded
+minimum-height shell, and the newly enlarged ladder triggered another row calculation. Body height grew from a
+720-pixel viewport to 2,088 pixels within 50 ms; Chart canvas and DOM followed the expanded grid. A simultaneous
+tunnel WebSocket `ECONNABORTED` explained the unavailable book state; no generation/interval mismatch, empty candle
+projection, mixed component authority or backend resnapshot loop was observed.
+
+The bounded correction gives `.workspace-shell` an explicit Telegram stable-viewport/`100vh` height while
+preserving its existing minimum-height and safe-area behavior, allowing the grid to distribute a finite available
+height rather than derive it from DOM rows. A store regression covers atomic 5m→1m→5m transitions, stale socket
+isolation, READY book, non-empty candle history, correct interval and absence of reconnect timers. Targeted
+Chart/DOM/Workspace tests and a fresh production build pass. Rebuilt local production browser evidence remains
+stable at body 720 px and Chart/DOM 591 px with 26 rows through 5m→1m→5m. M8 remains open until the same rebuilt
+assets pass a fresh external tunnel/browser and real-phone acceptance sequence.
+
+Revision 1.81 records that re-acceptance as PASS. Desktop Chrome and phone Chrome through the active `lhr.life`
+tunnel both passed ONGUSDT 5m→1m→5m: Chart and DOM stayed bounded, candles remained visible, DOM and Smart Tape
+continued live updates, and `LIVE BOOK UNAVAILABLE` did not recur. M8 is complete; measured payload reduction and
+this device result remain separate evidence and do not prove transport overload was the original root cause.
 
 ## 11. Stage 10 — Real verification
 

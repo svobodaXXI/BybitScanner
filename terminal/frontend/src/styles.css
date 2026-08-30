@@ -32,6 +32,7 @@ button {
 .workspace-shell {
   display: flex;
   flex-direction: column;
+  height: var(--tg-viewport-stable-height, 100vh);
   min-height: var(--tg-viewport-stable-height, 100vh);
   padding-top: var(--tg-content-safe-area-inset-top, 0px);
   padding-right: var(--tg-content-safe-area-inset-right, 0px);

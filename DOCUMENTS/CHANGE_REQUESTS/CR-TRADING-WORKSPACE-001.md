@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.79",
+  "revision": "1.81",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -463,7 +463,9 @@
     {"revision": "1.76", "reason": "Implemented and verified M4 as one backend ClientMarketProjection with configurable bounded book bootstrap and exact window deltas/resnapshot, bounded deduplicated trade bootstrap/batches, one-time candle bootstrap/changed-record updates, additive projection SSE and measured BTC/ONG payload reduction while preserving full PAPER L2 and legacy frontend SSE", "date": "2026-08-30"},
     {"revision": "1.77", "reason": "Implemented and verified M5 as one additive generation-scoped multiplexed Workspace WebSocket with atomic bounded snapshot, sequenced book/trade/candle/health envelopes, bounded replay/resume, resnapshot on ambiguity and bounded slow-client eviction while preserving legacy SSE, REST commands, full PAPER L2 and unchanged frontend ownership", "date": "2026-08-30"},
     {"revision": "1.78", "reason": "Implemented and verified M6 as one frontend atomic Workspace projection over the M5 multiplexed WebSocket with complete snapshot gating, strict symbol/generation/sequence authority, bounded book/trade/candle updates, resume and fail-closed fresh resnapshot while preserving backend legacy SSE, full PAPER L2 and command semantics", "date": "2026-08-30"},
-    {"revision": "1.79", "reason": "Implemented and verified M7 as deterministic bounded backend and frontend chaos/regression coverage for authority isolation, sequence and resnapshot boundaries, replay and queue pressure, reconnect/resume, component escalation and mixed projection churn while preserving legacy SSE, full PAPER L2 and command/order semantics; M8 device and transport acceptance remains not started", "date": "2026-08-30"}
+    {"revision": "1.79", "reason": "Implemented and verified M7 as deterministic bounded backend and frontend chaos/regression coverage for authority isolation, sequence and resnapshot boundaries, replay and queue pressure, reconnect/resume, component escalation and mixed projection churn while preserving legacy SSE, full PAPER L2 and command/order semantics; M8 device and transport acceptance remains not started", "date": "2026-08-30"},
+    {"revision": "1.80", "reason": "Kept M8 open after production/tunnel real-browser 5m-to-1m acceptance exposed a reproducible Chart/DOM viewport feedback loop plus a coincident tunnel WebSocket abort; implemented and built a bounded stable-viewport shell correction and atomic 5m-to-1m-to-5m regression while requiring fresh tunnel/browser and real-phone re-acceptance before PASS", "date": "2026-08-30"},
+    {"revision": "1.81", "reason": "Completed M8 after rebuilt production assets passed desktop and real-phone Chrome acceptance through the active lhr.life tunnel for ONGUSDT 5m-to-1m-to-5m with bounded Chart and DOM, visible candles, live DOM and Smart Tape, and no recurrence of LIVE BOOK UNAVAILABLE", "date": "2026-08-30"}
   ]
 }
 ```
@@ -3890,3 +3892,22 @@ The new cases run with the existing M5 and M6 regression suites and require no s
 proxy or tunnel. No production defect was found and no production source changed. Backend legacy SSE, the explicit
 legacy frontend store, full authoritative PAPER L2, REST commands and order/execution behavior remain unchanged.
 M8 local/proxy/tunnel and real-phone performance acceptance is the exact next gated stage and is not started.
+
+## 87. M8 real-browser failure, diagnosis and pending re-acceptance
+
+Revision 1.80 records M8 as `OPEN / REAL-BROWSER FAIL — FIX BUILT, RE-ACCEPTANCE PENDING`. Through the production
+preview and temporary tunnel, ONGUSDT initially displayed live DOM and Smart Tape. Switching 5m→1m then made Chart
+and DOM expand outside the viewport, removed usable candle presentation and showed `LIVE BOOK UNAVAILABLE` while
+last-known Tape values remained visible.
+
+Direct stream evidence shows valid atomic READY snapshots for both intervals with correct candle history, READY
+book state and one active Workspace generation; the frontend also accepts 5m→1m→5m without mixed interval or
+reconnect/resnapshot loop. The visual root cause was a circular DOM ResizeObserver/grid intrinsic-size feedback in
+an unbounded minimum-height shell. A concurrent external WebSocket abort caused the unavailable-book state and was
+not a generation mismatch. The minimal correction binds the shell to the Telegram stable viewport or `100vh`, and
+the new store regression covers atomic interval transitions, stale-socket isolation, readiness and no reconnect
+timer loop. Targeted tests and the required production build pass, and rebuilt local browser geometry remains
+bounded. Revision 1.81 records fresh desktop and real-phone Chrome re-acceptance through the active `lhr.life`
+tunnel as PASS for ONGUSDT 5m→1m→5m. Chart and DOM remained bounded, candles stayed visible, DOM and Smart Tape
+remained live, and `LIVE BOOK UNAVAILABLE` did not recur. M8 is
+`COMPLETE / REAL-PHONE + TUNNEL ACCEPTANCE PASS`; payload reduction and device success remain distinct evidence.
