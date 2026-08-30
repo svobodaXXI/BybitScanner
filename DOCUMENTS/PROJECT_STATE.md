@@ -2,7 +2,7 @@
 
 Version:
 
-7.67
+7.68
 
 Date:
 
@@ -5604,3 +5604,201 @@ Authority:
 `DOCUMENTS/ASSISTANT_PROTOCOL.md` owns assistant workflow behavior.
 `AGENTS.md` owns compact bootstrap/routing.
 This PROJECT_STATE checkpoint records the current adopted enforcement state but does not duplicate the full protocol.
+
+---
+
+# 2026-08-30 TERMINAL RECOVERY / LIMIT-EXHAUSTION CHECKPOINT
+
+Status:
+
+ACTIVE_RECOVERY_CHECKPOINT
+
+Baseline:
+
+- branch: `main`;
+- local HEAD: `92c51c70fc90c71d6255d8028f3cfcf823bc3a52`;
+- origin/main: `92c51c70fc90c71d6255d8028f3cfcf823bc3a52`;
+- local HEAD == origin/main: YES;
+- working tree: DIRTY by intentional unfinished Terminal work, unfinished workflow experiment, and user-owned files.
+
+## PRIMARY CURRENT PRIORITY
+
+The current priority is again:
+
+`FINISH TRADING WORKSPACE TERMINAL`
+
+Workflow/tooling work must not displace Terminal completion unless a concrete Terminal blocker objectively requires it or the user explicitly changes priority.
+
+Do not introduce additional workflow subsystems during the Terminal completion slice.
+
+## TERMINAL / M9 CONFIRMED STATE
+
+Completed and already committed backend/diagnostic M9 checkpoints include:
+
+- semantic Workspace error boundary;
+- read-only `/api/workspace/state`;
+- `workspace_doctor`;
+- backend diagnostics exposing requested/active symbol, generation, switch state, readiness, upstream state, and stream sessions.
+
+Confirmed 2026-08-30 runtime result:
+
+- backend freshly restarted from current local code;
+- backend listening on `127.0.0.1:8765`;
+- `workspace_doctor --symbol OGUSDT --interval 5`: PASS;
+- authoritative active symbol: `OGUSDT`;
+- active generation: `2`;
+- Workspace switch state: `READY`;
+- book readiness: PASS;
+- trades readiness: PASS;
+- candle history readiness: PASS;
+- live candle readiness: PASS;
+- upstream state: `READY`;
+- subscription state: `SUBSCRIBED`;
+- public book/trade subscriptions: active;
+- upstream reconnect count: `0`;
+- frontend production build: PASS;
+- Vite build transformed 67 modules.
+
+Current unfinished frontend M9/product scope includes transactional symbol-switch work in the dirty `terminal/frontend` tree, including new `workspaceSwitch.ts` and `workspaceSwitch.test.ts`.
+
+## CURRENT AUTHORITATIVE TERMINAL BLOCKER
+
+The present blocking defect is no longer an upstream Bybit readiness failure.
+
+Observed state:
+
+- direct backend `/api/workspace/state` works;
+- the same HTTP endpoint through Vite preview on port `4173` works;
+- therefore ordinary Vite HTTP proxying to backend is functional;
+- frontend creates a Workspace stream session on backend;
+- backend reports `session_count = 1`;
+- backend reports `attached_count = 0`;
+- the Workspace stream session reports `attached = false`;
+- UI remains without live chart/DOM data and displays `LIVE BOOK UNAVAILABLE`;
+- browser UI may continue to display stale frontend symbol state while backend authoritative symbol is `OGUSDT`.
+
+Therefore the next Terminal investigation must be systemic around the complete frontend <-> Vite preview <-> backend WebSocket lifecycle, not isolated speculative edits.
+
+Required investigation scope:
+
+1. frontend Workspace socket URL construction and lifecycle;
+2. Vite preview WebSocket proxy behavior;
+3. backend stream creation vs attachment semantics;
+4. generation/symbol compatibility during stream attach;
+5. reconnect/close/error lifecycle;
+6. authoritative symbol projection into UI;
+7. only after root cause is established, implement the smallest correction.
+
+Do not add broad reconnect/backoff architecture unless runtime evidence requires it.
+
+## RUNTIME PROCESS NOISE FOUND DURING ACCEPTANCE
+
+Several stale runtime processes caused diagnostic noise:
+
+- old backend processes were still running;
+- an older Vite preview was running separately;
+- the older preview emitted `WS proxy error` / `ECONNABORTED`;
+- stale backend did not expose the new `/api/workspace/state` route.
+
+Recovery actions already completed:
+
+- stale backend process set was stopped;
+- fresh current backend was started;
+- old Vite preview on port `4174` was closed;
+- current production preview is running on port `4173`.
+
+This process duplication is recorded as an environmental/runtime-operability issue, not yet as the root cause of the current `attached=false` defect.
+
+## WORKFLOW / TASK TRANSACTION DETOUR
+
+A substantial part of the current development budget and Codex limits was consumed by a workflow/tooling detour rather than Terminal completion.
+
+Already committed experimental workflow checkpoints:
+
+- `acc91f64ecdda27eae7b1d694890470b0b0e465a` - Task Transaction engine;
+- `92c51c70fc90c71d6255d8028f3cfcf823bc3a52` - workflow integration.
+
+The later Phase 3 / Phase 3.1 work remains uncommitted.
+
+### STALE INDEX DEFECT
+
+The alternate-index commit mechanism advanced HEAD while leaving the real `.git/index` at an older tree.
+
+Consequence:
+
+- workflow files appeared as unexpected staged reverse changes;
+- checkpoint verification failed even though Phase 3 had not newly staged those files.
+
+Forensic recovery completed:
+
+- stale index was preserved under `.git/bybitscanner/forensics/...`;
+- real index was reconciled to HEAD with `git read-tree HEAD`;
+- index tree == HEAD tree after recovery;
+- staged paths became empty;
+- working-tree bytes were preserved.
+
+Local Phase 3.1 then changed the intended transaction invariant so that a successful alternate-index commit reconciles the real index to the newly created HEAD before push.
+
+### WINDOWS ENCODING DEFECT
+
+The next workflow checkpoint then crashed on Windows locale decoding.
+
+Observed failure:
+
+- `subprocess.run(..., text=True)` used locale-dependent Windows decoding;
+- Git output containing Cyrillic paths was decoded through `cp1251`;
+- `UnicodeDecodeError` occurred;
+- downstream code then hit a secondary `NoneType.split()` failure.
+
+Therefore the current Task Transaction / checkpoint workflow is not considered accepted or reliable.
+
+## WORKFLOW EXPERIMENT CURRENT POLICY
+
+The dirty workflow experiment is frozen during Terminal completion.
+
+Current dirty workflow scope includes:
+
+- `tools/dev/workflow.py`;
+- `tools/dev/verify.py`;
+- `tools/dev/checkpoint.py`;
+- `tools/dev/task_transaction.py`;
+- `tests/test_dev_workflow.py`;
+- `tests/test_task_transaction.py`;
+- `tools/dev/isolate_m9_frontend_checkpoint.py`;
+- `tests/test_isolate_m9_frontend_checkpoint.py`.
+
+Do not commit these files with the Terminal checkpoint.
+
+Do not delete, reset, restore, or discard them yet.
+
+After Terminal acceptance, perform a dedicated workflow decision:
+
+- determine whether Task Transaction Phase 1/2 provides enough value to retain;
+- otherwise revert/remove the Task Transaction subsystem cleanly;
+- preserve only minimal useful hardening such as deterministic UTF-8 Git subprocess decoding and a simpler safe checkpoint model if justified;
+- avoid recreating a large workflow subsystem without demonstrated product benefit.
+
+## USER-OWNED / NON-TERMINAL FILE PRESERVATION
+
+The following files are outside the Terminal checkpoint and must remain untouched unless explicitly requested:
+
+- `Инструкции +комм строка.txt`;
+- `test_100.txt`;
+- `test_compare_falling_candidates.py`;
+- `Инструкция по запуску на новом компьютере.txt`.
+
+## NEXT EXECUTION ORDER
+
+1. record and commit this recovery/documentation checkpoint;
+2. commit only current `terminal/**` product changes as a separate Terminal checkpoint;
+3. inspect the complete committed Terminal state systemically;
+4. resolve the Workspace WebSocket `attached=false` blocker;
+5. rerun targeted tests;
+6. run `npm run build`;
+7. desktop runtime acceptance;
+8. real-phone acceptance;
+9. update Trading Workspace acceptance state;
+10. only after Terminal is accepted, return to workflow experiment cleanup/revert decision.
+
+No new workflow/tooling expansion is authorized by this checkpoint.
+
