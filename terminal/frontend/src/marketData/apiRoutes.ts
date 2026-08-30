@@ -6,5 +6,6 @@ export const marketApiRoutes = {
   paperState: (symbol: string) => `/api/paper-state?symbol=${encodeURIComponent(symbol)}`,
   openPositions: "/api/open-positions",
   trades: (symbol: string) => `/api/public-trades/stream?symbol=${encodeURIComponent(symbol)}`,
+  workspaceState: "/api/workspace/state",
   workspaceSymbol: "/api/workspace/symbol",
 };
