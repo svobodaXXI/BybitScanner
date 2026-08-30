@@ -2,7 +2,7 @@
 
 Version:
 
-7.68
+7.69
 
 Date:
 
@@ -5801,4 +5801,80 @@ The following files are outside the Terminal checkpoint and must remain untouche
 10. only after Terminal is accepted, return to workflow experiment cleanup/revert decision.
 
 No new workflow/tooling expansion is authorized by this checkpoint.
+
+---
+
+# 2026-08-30 WORKSPACE STARTUP AUTHORITY BLOCKER RESOLVED
+
+Status:
+
+PASS - DESKTOP RUNTIME ACCEPTANCE
+
+Resolved blocker:
+
+The previously recorded Workspace WebSocket `attached=false` / `LIVE BOOK UNAVAILABLE`
+condition is no longer an active Terminal blocker.
+
+Confirmed root cause:
+
+- Vite preview WebSocket proxy was functional;
+- backend Workspace WebSocket transport was functional;
+- direct test through `ws://127.0.0.1:4173/api/workspace/stream` returned a complete
+  `workspace_snapshot` with READY book/trades/candles;
+- frontend startup was using hardcoded local symbol `ONGUSDT`;
+- backend authoritative Workspace could already be a different symbol, observed as `OGUSDT`;
+- therefore frontend could open its initial Workspace stream against a stale local symbol
+  instead of backend authority.
+
+Control experiment:
+
+- backend was switched to `ONGUSDT`;
+- with backend and hardcoded frontend symbol matching, chart, DOM and Smart Tape immediately
+  became live and `LIVE BOOK UNAVAILABLE` disappeared;
+- this isolated startup symbol authority as the defect rather than proxy/transport.
+
+Implemented correction:
+
+- frontend now reads `/api/workspace/state` before starting the market-data store;
+- startup authority is taken from backend `workspace.active_symbol`;
+- startup generation is taken from backend `workspace.active_generation`;
+- the store receives authoritative symbol + generation before opening its Workspace socket;
+- route `/api/workspace/state` was added to frontend market API routes.
+
+Validation:
+
+- targeted frontend tests: 3 files PASS;
+- targeted frontend tests: 11 / 11 PASS;
+- `npm run build`: PASS;
+- Vite production build: 67 modules transformed;
+- desktop hard-reload acceptance on `http://127.0.0.1:4173/`: PASS;
+- frontend automatically adopted backend authoritative `OGUSDT`;
+- live Chart: PASS;
+- live DOM: PASS;
+- live Smart Tape: PASS;
+- `LIVE BOOK UNAVAILABLE`: absent;
+- backend diagnostics after browser attachment:
+  - active_symbol = `OGUSDT`;
+  - active_generation = `4`;
+  - switch_state = `READY`;
+  - readiness.ready = true;
+  - attached_count = 1;
+  - active browser stream symbol = `OGUSDT`;
+  - active browser stream workspace_generation = `4`;
+  - active browser stream attached = true.
+
+Historical detached generation-2 stream remains diagnostic history only and is not the
+active browser connection.
+
+Committed fix:
+
+`ddcf164580bcf88b8da8f72ae580d7efb25435a0`
+`fix: bootstrap frontend from workspace state`
+
+Current Terminal policy:
+
+- do not reopen the Vite/WebSocket proxy investigation unless new runtime evidence requires it;
+- continue Terminal completion/acceptance;
+- workflow / Task Transaction experiment remains frozen and must not displace Terminal work;
+- real-phone acceptance remains a separate required acceptance stage.
 
