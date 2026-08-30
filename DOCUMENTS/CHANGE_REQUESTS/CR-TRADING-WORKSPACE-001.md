@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.87",
+  "revision": "1.88",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -165,7 +165,7 @@
     ,"The selected frontend stack is one React 19 plus TypeScript plus Vite SPA for desktop web and Telegram Mini App, using npm with package-lock.json, Zustand for client/UI state, TanStack Query for REST/server state, a separate WebSocket realtime layer, Tailwind 4, selective shadcn/Radix ordinary controls, Vitest plus React Testing Library plus Playwright, and Biome"
     ,"High-frequency DOM rendering is isolated from the ordinary React render lifecycle; TanStack Query does not own high-frequency L2 updates, and this frontend decision does not select the chart or rendering engine"
     ,"Desktop fast Limit interaction uses side-explicit BUY/BID and SELL/ASK execution columns, left-click Limit placement, specific-order right-click cancellation, selected-order drag for modification, and no implicit Market order or trading double-click on the DOM ladder"
-    ,"Holding BUY or SELL with the left mouse button enters the corresponding Limit placement mode so deliberate chart right-clicks may place multiple same-side Limit intents; normal non-marketable fast Limits require no confirmation, while marketable aggressive Limits require explicit confirmation and always remain Limit orders"
+    ,"Holding BUY or SELL with the left mouse button enters the corresponding Limit placement mode so deliberate chart right-clicks may place multiple same-side Limit intents; fast DOM classifies the selected price before command creation, routing resting selections to canonical GTC Limit creation and spread-crossing selections to canonical Market execution"
     ,"A single BUY or SELL activation prepares a Market order that requires confirmation with ticker, WV/USDT reference, calculated rounded base quantity, relevant prices, estimated VWAP and estimated L2 slippage from the authoritative normalized book"
     ,"BUY, SELL and LIMIT placement gestures use a binding 500-ms long-press threshold; entering LONG_PRESS_ACTIVE suppresses the original short-click action and remains independent from the 300-ms trading anti-bounce"
     ,"Fast order placement is fail-closed with one physical gesture producing at most one uniquely identified intent, no blind resend after ambiguity, client-order-identity reconciliation before recovery, new placement blocked in DEGRADED/OFFLINE/ambiguous state, and success sound only after exchange or execution-engine acknowledgement"
@@ -2027,10 +2027,11 @@ mode. While the hold remains valid, deliberate chart right-clicks may submit mul
 Buy Limit intents. SELL is symmetric. A separate LIMIT/BUY ORDER hold-mode below the book may expose the
 same repeated chart-Limit behavior. Each physical placement still creates at most one logical submission.
 
-Normal non-marketable fast Limit placement requires no confirmation. A Buy Limit at or above the current
-Ask, or a Sell Limit at or below the current Bid, is marketable/aggressive and requires explicit confirmation.
-It remains a Limit order and is never silently converted to Market. Successful placement emits its
-characteristic sound only after backend/execution-engine acknowledgement, never on the local pointer action.
+Normal resting fast Limit placement requires no confirmation. Fast DOM classifies intent before command
+creation: BUY below Ask and SELL above Bid use the canonical GTC Limit path, while BUY at or above Ask and
+SELL at or below Bid use the canonical Market path and are never created as Limits first. Missing required
+authoritative book quotes remains fail-closed. Successful placement emits its characteristic sound only after
+backend/execution-engine acknowledgement, never on the local pointer action.
 
 ### 26.3 Confirmed Market preparation
 
@@ -3146,10 +3147,10 @@ stable per-attempt `client_action_id`, duplicate protection, Limit submission AP
 execution boundary, reconciliation and authoritative projection pipeline. It must not duplicate matching,
 execution or Position arithmetic.
 
-Resting DOM Limits may submit without confirmation. Marketable or aggressive BUY above Ask and SELL below
-Bid remain Limits, never Market, and must preserve the project's currently binding aggressive-Limit safety
-policy. This amendment does not weaken fail-closed behavior or authorize bypassing any safety confirmation
-that policy requires.
+Resting DOM selections submit through canonical GTC Limit creation without confirmation. Spread-crossing
+BUY at or above Ask and SELL at or below Bid submit through canonical Market execution and are not created as
+Limits first. Required book authority remains fail-closed; this routing does not weaken command identity,
+ambiguity, reconciliation, or acknowledgement safeguards.
 
 ### 50.7 Explicit supersession and preserved semantics
 
@@ -3489,12 +3490,9 @@ reality. The existing active-LIMIT amend/cancel lifecycle is unchanged. Producti
 slice was accepted on the real phone. Master-roadmap Stage 5 remains `PARTIAL`, but its canonical resting-DOM
 entry path and LIMIT acceptance-gate DOM-create item are accepted.
 
-Marketable/aggressive DOM Limits remain deliberately fail-closed: BUY at or above Ask and SELL at or below Bid
-do not submit. Their required explicit confirmation is `OPEN/DEFERRED` as a separate bounded slice. Real-phone
-Done/Enter focus progression also remains `USER-DEFERRED` and is not part of that slice. The exact next action is
-`AGGRESSIVE DOM LIMIT CONFIRMATION`: define and separately authorize the smallest explicit-confirmation path that
-preserves Limit identity and the same canonical create lifecycle; no implementation is authorized by this
-documentation checkpoint.
+This historical checkpoint is superseded by revision 1.88 for fast DOM routing: spread-crossing selections use
+canonical Market execution rather than an aggressive Limit confirmation path. Real-phone Done/Enter focus
+progression remains `USER-DEFERRED` and is not part of that routing slice.
 
 ## 70. Collapsible DOM and Smart Tape structural implementation checkpoint
 
@@ -4391,4 +4389,15 @@ CR acceptance requirements and determine whether the Terminal CR itself can be
 closed or whether a bounded non-M9 acceptance item remains.
 
 Workflow / Task Transaction work remains frozen during that decision.
+
+## FAST DOM MARKET ROUTING AND OWN-ORDER ACCEPTANCE
+
+Revision 1.88 records the accepted bounded non-M9 slice. Fast DOM classifies intent before command creation:
+resting BUY below Ask and SELL above Bid use canonical GTC Limit creation; crossing BUY at or above Ask and
+SELL at or below Bid use canonical Market execution and are never created as Limits first. Missing required
+book authority remains fail-closed.
+
+Fresh production build and real-phone acceptance are PASS. Crossing selections execute immediately without a
+pending Limit confirmation. Own active Limit dots are visible in the mobile DOM, each dot cancels only its
+concrete order, and two orders at one price render two independently cancellable dots.
 

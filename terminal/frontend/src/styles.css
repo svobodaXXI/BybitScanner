@@ -2206,7 +2206,8 @@ button {
   }
 
   .order-dots {
-    right: calc(100% + 0.08rem);
+    left: 0.18rem;
+    right: auto;
     gap: 0.1rem;
   }
 

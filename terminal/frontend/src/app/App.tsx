@@ -37,6 +37,10 @@ import {
 import { projectPaperLimitOrders } from "../orders/paperLimitProjection";
 import { isValidSelectedVolume, updateSelectedVolume } from "../orders/selectedVolume";
 import {
+  domSelectionRequiresMarket,
+  executePaperMarketCommand,
+} from "../orders/paperMarketCommand";
+import {
   paperTradingStore,
   usePaperTrading,
 } from "../paperTrading/paperTradingStore";
@@ -228,15 +232,45 @@ export function App() {
     };
     const normalizedPrice = normalizedPaperLimitCreatePrice(intent);
     if (normalizedPrice === null) return;
-    const numericPrice = Number(normalizedPrice);
     if (
-      (fastLimitIntent.side === "Buy" &&
-        (bestAsk === undefined || numericPrice >= bestAsk)) ||
-      (fastLimitIntent.side === "Sell" &&
-        (bestBid === undefined || numericPrice <= bestBid))
+      bestBid === undefined ||
+      bestAsk === undefined
     ) {
       return;
     }
+
+    if (
+      domSelectionRequiresMarket(
+        fastLimitIntent.side,
+        normalizedPrice,
+        bestBid,
+        bestAsk,
+      )
+    ) {
+      const side = fastLimitIntent.side;
+      await paperTradingStore.runMutation(`MARKET:${side}`, async () => {
+        try {
+          await executePaperMarketCommand(
+            {
+              client_action_id:
+                globalThis.crypto?.randomUUID?.() ??
+                `paper-dom-market-${side.toLowerCase()}-${Date.now()}`,
+              symbol: tradingSymbol,
+              side,
+              volume: { unit: "usdt", amount: volumeUsdt },
+              sizing_reference_price: sizingReferencePrice,
+              slippage_type: "Percent",
+              slippage_value: "0.5",
+            },
+            { applyPaperState: paperTradingStore.applyPaperState },
+          );
+        } catch {
+          await paperTradingStore.refresh();
+        }
+      });
+      return;
+    }
+
     const attempt = domLimitController.current.submit(intent, {
       createClientActionId: () =>
         globalThis.crypto?.randomUUID?.() ?? `paper-dom-limit-${Date.now()}`,

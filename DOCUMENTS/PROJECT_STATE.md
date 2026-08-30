@@ -2,7 +2,7 @@
 
 Version:
 
-7.72
+7.73
 
 Date:
 
@@ -6063,4 +6063,15 @@ CR acceptance requirements and determine whether the Terminal CR itself can be
 closed or whether a bounded non-M9 acceptance item remains.
 
 Workflow / Task Transaction work remains frozen during that decision.
+
+## FAST DOM MARKET ROUTING AND OWN-ORDER ACCEPTANCE
+
+The bounded post-M9 Terminal slice is implemented and accepted. Fast DOM classifies intent before command
+creation: resting BUY below Ask and SELL above Bid follow canonical GTC Limit creation; crossing BUY at or
+above Ask and SELL at or below Bid follow canonical Market execution and are never created as Limits first.
+Missing required book authority remains fail-closed.
+
+Fresh production build and real-phone acceptance are PASS. Crossing selections have no pending Limit
+confirmation. Mobile DOM own active Limit dots are visible and individually cancel-only, including two
+separate dots for two orders at the same price.
 

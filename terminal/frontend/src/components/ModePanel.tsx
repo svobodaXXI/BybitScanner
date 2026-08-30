@@ -30,6 +30,7 @@ import {
   normalizeLimitDraftPrice,
 } from "../orders/limitDraft";
 import { isValidSelectedVolume, type SelectedSideVolumes } from "../orders/selectedVolume";
+import { executePaperMarketCommand } from "../orders/paperMarketCommand";
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 import { AccountMenu } from "./AccountMenu";
 
@@ -271,13 +272,9 @@ export function ModePanel({
         slippage_type: "Percent",
         slippage_value: "0.5",
       };
-      const result = await fetch("/api/market", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
+      const commandResult = await executePaperMarketCommand(request, {
+        applyPaperState,
       });
-
-      const commandResult = (await result.json()) as CommandMutationResponse;
 
       setExecutionStatus(
         commandResult.status === "completed"
@@ -287,9 +284,6 @@ export function ModePanel({
             : `${side.toUpperCase()} отменено`,
       );
 
-      if (commandResult.status === "completed") {
-        applyPaperState(commandResult.paper_state);
-      }
       } catch {
         setExecutionStatus(`${side.toUpperCase()} отменено`);
         await refreshPaperState();
