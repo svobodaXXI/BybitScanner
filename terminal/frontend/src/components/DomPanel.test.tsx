@@ -33,7 +33,7 @@ function renderDom(onCompressionChange = vi.fn()) {
 }
 
 describe("DOM compression editor", () => {
-  it("keeps the reserved top track without exposing a CENTER control", () => {
+  it("overlays compression inside the ladder viewport without a reserved header", () => {
     const { container } = render(
       <DomPanel
         book={book}
@@ -45,11 +45,11 @@ describe("DOM compression editor", () => {
       />,
     );
     const panel = container.querySelector(".dom-panel")!;
-    const header = panel.firstElementChild;
-    expect(header).toHaveClass("dom-control-header");
+    const viewport = panel.firstElementChild;
+    expect(viewport).toHaveClass("dom-ladder-viewport");
     expect(screen.queryByRole("button", { name: "CENTER" })).not.toBeInTheDocument();
-    expect(header).toContainElement(screen.getByRole("button", { name: "DOM compression" }));
-    expect(header?.nextElementSibling).toHaveClass("dom-ladder-viewport");
+    expect(viewport).toContainElement(screen.getByRole("button", { name: "DOM compression" }));
+    expect(panel.querySelector(".dom-control-header")).not.toBeInTheDocument();
   });
 
   it("selects the current value so typing replaces 3 with 10", () => {

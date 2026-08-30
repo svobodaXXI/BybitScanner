@@ -63,7 +63,6 @@ export function TapePanel({
       className="tape-panel prints-panel workspace-panel"
       aria-label="Live trade prints"
     >
-      <div className="panel-header prints-header-spacer" aria-hidden="true" />
       <div className="prints-field">
         {positionSide !== "Flat" ? (
           <div

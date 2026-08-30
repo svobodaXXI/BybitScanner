@@ -2,7 +2,7 @@
 
 Version:
 
-7.73
+7.74
 
 Date:
 
@@ -6074,4 +6074,17 @@ Missing required book authority remains fail-closed.
 Fresh production build and real-phone acceptance are PASS. Crossing selections have no pending Limit
 confirmation. Mobile DOM own active Limit dots are visible and individually cancel-only, including two
 separate dots for two orders at the same price.
+
+## MOBILE CHART AND DOM/TAPE LAYOUT ACCEPTANCE
+
+The bounded display-only slice is implemented and accepted on the real phone. Chart labels use 9px; ordinary
+sub-1 prices retain the leading zero, and chart-only compact notation begins at two fractional leading zeros,
+including `0.003367 -> (2)3367` and `0.0003367 -> (3)3367`. Numeric price and tick-size authority are unchanged.
+
+Mobile DOM fills the panel, x3 remains usable, unavailable status does not obscure data, Smart Tape Y alignment
+with DOM is accepted, and live PnL clears the collapse control. Focused DOM/Tape geometry tests are
+`31/31 PASS`; fresh production build and real-phone acceptance are `PASS`.
+
+CENTER's approximately 13/15 visible-row distribution is `USER-DEFERRED / NON-BLOCKING`. It is not a failure
+or blocker and requires no further work in the current slice.
 

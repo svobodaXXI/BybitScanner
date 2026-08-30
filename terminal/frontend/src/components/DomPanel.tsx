@@ -122,56 +122,54 @@ export function DomPanel({
 
   return (
     <section className="dom-panel workspace-panel" aria-label="DOM order book">
-      <div className="panel-header dom-control-header">
-        <div className="dom-compression-control">
-        {compressionEditing ? (
-          <input
-            autoFocus
-            aria-label="DOM compression"
-            className="dom-compression-input"
-            inputMode="numeric"
-            value={compressionDraft}
-            onFocus={(event) => event.currentTarget.select()}
-            onChange={(event) => setCompressionDraft(event.target.value)}
-            onBlur={() => {
-              const next = Number.parseInt(compressionDraft, 10);
-              if (Number.isFinite(next) && next >= 1 && next <= 100) {
-                onCompressionChange(next);
-              } else {
-                setCompressionDraft(String(compression));
-              }
-              setCompressionEditing(false);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.currentTarget.blur();
-              }
-              if (event.key === "Escape") {
-                setCompressionDraft(String(compression));
-                setCompressionEditing(false);
-              }
-            }}
-          />
-        ) : (
-          <button
-            aria-label="DOM compression"
-            className="dom-compression-button"
-            type="button"
-            onClick={() => {
-              setCompressionDraft(String(compression));
-              setCompressionEditing(true);
-            }}
-          >
-            x{compression}
-          </button>
-        )}
-        </div>
-      </div>
       <div
         className="dom-ladder-viewport"
         ref={ladderViewportRef}
         style={{ "--dom-row-height": `${viewportGeometry.rowHeightPx}px` } as CSSProperties}
       >
+        <div className="dom-compression-control">
+          {compressionEditing ? (
+            <input
+              autoFocus
+              aria-label="DOM compression"
+              className="dom-compression-input"
+              inputMode="numeric"
+              value={compressionDraft}
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => setCompressionDraft(event.target.value)}
+              onBlur={() => {
+                const next = Number.parseInt(compressionDraft, 10);
+                if (Number.isFinite(next) && next >= 1 && next <= 100) {
+                  onCompressionChange(next);
+                } else {
+                  setCompressionDraft(String(compression));
+                }
+                setCompressionEditing(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.currentTarget.blur();
+                }
+                if (event.key === "Escape") {
+                  setCompressionDraft(String(compression));
+                  setCompressionEditing(false);
+                }
+              }}
+            />
+          ) : (
+            <button
+              aria-label="DOM compression"
+              className="dom-compression-button"
+              type="button"
+              onClick={() => {
+                setCompressionDraft(String(compression));
+                setCompressionEditing(true);
+              }}
+            >
+              x{compression}
+            </button>
+          )}
+        </div>
         <div
           className="dom-ladder"
           data-offset={offset}

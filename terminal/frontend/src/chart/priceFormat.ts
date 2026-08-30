@@ -5,6 +5,12 @@ export type ChartPriceFormat = {
   formatter: (price: number) => string;
 };
 
+const compactSmallPrice = (price: number, precision: number) => {
+  const formatted = price.toFixed(precision);
+  const match = formatted.match(/^(-?)0\.(0{2,})([1-9]\d*)$/);
+  return match ? `${match[1]}(${match[2].length})${match[3]}` : formatted;
+};
+
 export function chartPriceFormat(tickSize: number): ChartPriceFormat | null {
   if (!Number.isFinite(tickSize) || tickSize <= 0) return null;
   for (let precision = 0; precision <= 12; precision += 1) {
@@ -14,8 +20,7 @@ export function chartPriceFormat(tickSize: number): ChartPriceFormat | null {
         type: "custom",
         precision,
         minMove: tickSize,
-        formatter: (price: number) =>
-          price.toFixed(precision).replace(/^(-?)0\./, "$1."),
+        formatter: (price: number) => compactSmallPrice(price, precision),
       };
     }
   }

@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.88",
+  "revision": "1.89",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -4400,4 +4400,20 @@ book authority remains fail-closed.
 Fresh production build and real-phone acceptance are PASS. Crossing selections execute immediately without a
 pending Limit confirmation. Own active Limit dots are visible in the mobile DOM, each dot cancels only its
 concrete order, and two orders at one price render two independently cancellable dots.
+
+## MOBILE CHART AND DOM/TAPE LAYOUT ACCEPTANCE
+
+Revision 1.89 records real-phone acceptance of the bounded display-only slice. Chart labels use the accepted
+9px font; ordinary sub-1 prices retain the leading zero, while prices with at least two consecutive fractional
+leading zeros use compact chart-only notation such as `0.003367 -> (2)3367` and
+`0.0003367 -> (3)3367`. Authoritative numeric prices, tick-size precision, orders, DOM and execution remain
+unchanged.
+
+The mobile DOM fills its panel height, the x3 compression control remains usable as an overlay, unavailable
+status no longer obscures data, Smart Tape shares the accepted DOM Y alignment, and the live PnL indicator
+clears the side-panel collapse control. Focused DOM/Tape geometry tests are `31/31 PASS`, the fresh production
+build is `PASS`, and real-phone acceptance is `PASS`.
+
+After CENTER, the approximately 13/15 visible-row distribution is `USER-DEFERRED / NON-BLOCKING` by explicit
+user decision. It is not a failure or blocker for this accepted slice.
 

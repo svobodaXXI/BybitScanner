@@ -356,6 +356,9 @@ button {
   grid-template-rows: auto 1fr;
   min-height: 0;
 }
+.dom-panel {
+  grid-template-rows: minmax(0, 1fr);
+}
 .dom-panel,
 .dom-ladder-viewport,
 .dom-ladder {
@@ -417,6 +420,8 @@ button {
   --dom-price-column-width: 3.05rem;
 
   position: relative;
+  top: 0;
+  transform: none;
   user-select: none;
   touch-action: none;
   cursor: grab;
@@ -437,12 +442,19 @@ button {
   pointer-events: none;
 }
 .dom-unavailable {
-  display: grid;
-  min-height: 4rem;
-  place-items: center;
-  color: #7f8b97;
-  font-size: 0.58rem;
-  letter-spacing: 0.04em;
+  position: absolute;
+  z-index: 5;
+  top: 0.18rem;
+  left: 50%;
+  width: 0.45rem;
+  height: 0.45rem;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #e0b45b;
+  color: transparent;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  pointer-events: none;
 }
 .dom-row {
   display: grid;
@@ -1029,7 +1041,8 @@ button {
   border-color: var(--trade-sell);
 }
 .dom-ladder-viewport {
-  grid-row: 2;
+  position: relative;
+  grid-row: 1;
   min-height: 0;
   overflow: hidden;
 }
@@ -2421,14 +2434,14 @@ button {
     white-space: nowrap;
   }
 
-  .prints-header-spacer {
-    visibility: hidden;
-  }
-
   .dom-panel,
   .prints-panel {
     display: grid;
-    grid-template-rows: 2rem minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .prints-position-indicator {
+    top: 2.15rem;
   }
 
   .prints-field {
@@ -2684,23 +2697,12 @@ button {
   position: relative;
 }
 
-.dom-control-header {
-  box-sizing: border-box;
-  justify-content: flex-end;
-  height: 2rem;
-  min-height: 0;
-  min-width: 0;
-  padding: 0.18rem 0.25rem;
-}
-
 .dom-compression-control {
+  position: absolute;
+  z-index: 6;
+  top: 0.18rem;
+  right: 0.18rem;
   display: flex;
-}
-
-.dom-control-header .dom-compression-button,
-.dom-control-header .dom-compression-input {
-  width: 1.55rem;
-  height: 1.55rem;
 }
 
 .dom-compression-button,
@@ -3236,3 +3238,9 @@ button {
 }
 
 /* END COLLAPSIBLE DOM + SMART TAPE SIDE PANEL */
+
+@media (max-width: 620px) {
+  .market-sidecar .prints-position-indicator {
+    top: 2.15rem;
+  }
+}

@@ -186,7 +186,7 @@ export function ChartPanel({
           color: token("--chart-bg", "#10151b"),
         },
         textColor: token("--chart-text", "#8996a3"),
-        fontSize: 10,
+        fontSize: 9,
         attributionLogo: false,
       },
       grid: {
