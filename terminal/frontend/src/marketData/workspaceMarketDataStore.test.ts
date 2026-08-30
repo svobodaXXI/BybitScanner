@@ -78,6 +78,29 @@ describe("multiplexed Workspace market-data store", () => {
     store.dispose();
   });
 
+  it("cannot promote a candidate snapshot with a generation other than its ACK", () => {
+    const sockets: FakeSocket[] = [];
+    const store = new BackendWorkspaceMarketDataStore((url) => {
+      const socket = new FakeSocket(url);
+      sockets.push(socket);
+      return socket as unknown as WebSocket;
+    });
+    store.start();
+    sockets[0].message(snapshotEvent());
+    store.setSymbol("BTCUSDT", 8);
+    const candidate = {
+      ...snapshotEvent(), symbol: "BTCUSDT", stream_id: "stream-btc",
+      book: { ...snapshotEvent().book },
+    };
+    sockets[1].message({ ...candidate, workspace_generation: 7 });
+    expect(store.getSnapshot().book.symbol).toBe("ONGUSDT");
+    expect(store.getSnapshot().workspace?.generation).toBe(4);
+    sockets[1].message({ ...candidate, workspace_generation: 8 });
+    expect(store.getSnapshot().book.symbol).toBe("BTCUSDT");
+    expect(store.getSnapshot().workspace?.generation).toBe(8);
+    store.dispose();
+  });
+
   it("switches 5m to 1m and back only through complete atomic snapshots", () => {
     vi.useFakeTimers();
     const sockets: FakeSocket[] = [];

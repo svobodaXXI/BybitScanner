@@ -40,6 +40,7 @@ const workspaceStreamPath = (
 export class BackendWorkspaceMarketDataStore implements MarketDataPort {
   private symbol = "ONGUSDT";
   private timeframe: ChartTimeframe = "5m";
+  private expectedGeneration: number | null = null;
   private projection: WorkspaceProjectionState = { authority: null, snapshot: initialSnapshot() };
   private listeners = new Set<() => void>();
   private socket: WebSocket | null = null;
@@ -76,10 +77,12 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
     this.replaceConnection(false);
   };
 
-  setSymbol = (symbol: string) => {
+  setSymbol = (symbol: string, generation?: number) => {
     const normalized = symbol.trim().toUpperCase();
     if (!normalized || normalized === this.symbol) return;
     this.symbol = normalized;
+    this.expectedGeneration = Number.isInteger(generation) && Number(generation) > 0
+      ? Number(generation) : null;
     this.replaceConnection(false);
   };
 
@@ -110,7 +113,9 @@ export class BackendWorkspaceMarketDataStore implements MarketDataPort {
         this.requireFreshSnapshot(socket);
         return;
       }
-      const result = applyWorkspaceEvent(this.projection, event, symbol, interval);
+      const result = applyWorkspaceEvent(
+        this.projection, event, symbol, interval, Date.now(), this.expectedGeneration,
+      );
       if (result.decision === "RESNAPSHOT_REQUIRED") {
         this.requireFreshSnapshot(socket);
         return;

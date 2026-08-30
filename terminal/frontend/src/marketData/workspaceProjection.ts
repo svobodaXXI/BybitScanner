@@ -268,10 +268,15 @@ export function applyWorkspaceEvent(
   requestedSymbol: string,
   requestedInterval: string,
   browserReceivedAtMs = Date.now(),
+  expectedGeneration: number | null = null,
 ): ProjectionResult {
   const event = record(rawEvent);
   if (!event || typeof event.kind !== "string") return { decision: "RESNAPSHOT_REQUIRED", state: current };
   if (event.kind === "workspace_snapshot") {
+    if (
+      expectedGeneration !== null
+      && event.workspace_generation !== expectedGeneration
+    ) return { decision: "IGNORED_STALE", state: current };
     const eventSequence = positiveInteger(event.event_sequence);
     if (current.authority && event.stream_id === current.authority.streamId) {
       if (eventSequence === current.authority.eventSequence) {

@@ -123,16 +123,6 @@ export function DomPanel({
   return (
     <section className="dom-panel workspace-panel" aria-label="DOM order book">
       <div className="panel-header dom-control-header">
-        <button
-          className={`center-button${locked ? " locked" : ""}`}
-          type="button"
-          onClick={() => {
-            center();
-            setLocked(true);
-          }}
-        >
-          CENTER
-        </button>
         <div className="dom-compression-control">
         {compressionEditing ? (
           <input

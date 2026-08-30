@@ -18,7 +18,7 @@ export interface MarketDataPort {
   dispose(): void;
   getSnapshot(): MarketDataSnapshot;
   setTimeframe(timeframe: ChartTimeframe): void;
-  setSymbol(symbol: string): void;
+  setSymbol(symbol: string, generation?: number): void;
   start(): void;
   subscribe(listener: () => void): () => void;
 }
@@ -171,7 +171,7 @@ export class BackendSseMarketDataStore implements MarketDataPort {
     if (this.started) this.connectKlines();
   };
 
-  setSymbol = (symbol: string) => {
+  setSymbol = (symbol: string, _generation?: number) => {
     const normalized = symbol.trim().toUpperCase();
     if (!normalized || normalized === this.symbol) return;
     this.symbol = normalized;

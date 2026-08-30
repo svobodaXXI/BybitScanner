@@ -17,6 +17,10 @@ import {
 import type { ChartTimeframe } from "../marketData/timeframes";
 import { setMarketSymbol, setMarketTimeframe, useMarketData } from "../marketData/useMarketData";
 import { marketApiRoutes } from "../marketData/apiRoutes";
+import {
+  requestWorkspaceActivation,
+  type WorkspaceSemanticFailure,
+} from "../marketData/workspaceSwitch";
 import { TelegramMiniAppBridge } from "../telegram/TelegramMiniAppBridge";
 import {
   createLimitDraft,
@@ -49,6 +53,8 @@ export function App() {
   });
   const [timeframe, setTimeframe] = useState<ChartTimeframe>("5m");
   const [instruments, setInstruments] = useState<string[]>([]);
+  const [workspaceSwitchError, setWorkspaceSwitchError] = useState<WorkspaceSemanticFailure | null>(null);
+  const workspaceSwitchAttempt = useRef(0);
   const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [selectedVolumes, setSelectedVolumes] = useState({ Buy: "", Sell: "" });
@@ -79,14 +85,22 @@ export function App() {
       .catch(() => {});
     return () => controller.abort();
   }, []);
-  const switchWorkspaceSymbol = useCallback((nextSymbol: string) => {
+  const switchWorkspaceSymbol = useCallback(async (nextSymbol: string) => {
     if (nextSymbol === tradingSymbol) return;
+    const attempt = ++workspaceSwitchAttempt.current;
+    const result = await requestWorkspaceActivation(nextSymbol, marketApiRoutes.workspaceSymbol);
+    if (attempt !== workspaceSwitchAttempt.current) return;
+    if (!result.ok) {
+      setWorkspaceSwitchError(result.error);
+      return;
+    }
+    setWorkspaceSwitchError(null);
     setFastLimitIntent(null);
     dispatchLimitDraft({ type: "dismiss-all" });
     setLadderCenterPrice(null);
     setPositionSide("Flat");
     setPositionAverageEntry(null);
-    setMarketSymbol(nextSymbol);
+    setMarketSymbol(result.symbol, result.generation);
   }, [tradingSymbol]);
   useEffect(() => {
     if (!currentPaperState?.ok || selectedVolumeSymbol.current === tradingSymbol) return;
@@ -283,6 +297,16 @@ export function App() {
 
   return (
     <main className="workspace-shell">
+      {workspaceSwitchError && (
+        <output
+          aria-live="polite"
+          data-error-code={workspaceSwitchError.code}
+          data-error-stage={workspaceSwitchError.stage}
+          role="alert"
+        >
+          {workspaceSwitchError.message}
+        </output>
+      )}
       <TelegramMiniAppBridge />
       <section className="workspace-grid" aria-label="Trading workspace">
         <div

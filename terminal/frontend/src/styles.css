@@ -2685,7 +2685,7 @@ button {
 
 .dom-control-header {
   box-sizing: border-box;
-  justify-content: space-between;
+  justify-content: flex-end;
   height: 2rem;
   min-height: 0;
   min-width: 0;

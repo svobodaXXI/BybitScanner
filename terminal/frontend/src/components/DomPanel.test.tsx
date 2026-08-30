@@ -33,7 +33,7 @@ function renderDom(onCompressionChange = vi.fn()) {
 }
 
 describe("DOM compression editor", () => {
-  it("uses the reserved top track for explicit CENTER and compression controls", () => {
+  it("keeps the reserved top track without exposing a CENTER control", () => {
     const { container } = render(
       <DomPanel
         book={book}
@@ -47,7 +47,7 @@ describe("DOM compression editor", () => {
     const panel = container.querySelector(".dom-panel")!;
     const header = panel.firstElementChild;
     expect(header).toHaveClass("dom-control-header");
-    expect(header).toContainElement(screen.getByRole("button", { name: "CENTER" }));
+    expect(screen.queryByRole("button", { name: "CENTER" })).not.toBeInTheDocument();
     expect(header).toContainElement(screen.getByRole("button", { name: "DOM compression" }));
     expect(header?.nextElementSibling).toHaveClass("dom-ladder-viewport");
   });

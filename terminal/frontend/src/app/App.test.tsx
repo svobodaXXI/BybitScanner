@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { expect, it, vi } from "vitest";
 import { App } from "./App";
+import { setMarketSymbol } from "../marketData/useMarketData";
 
 vi.mock("../components/AccountMenu", () => ({ AccountMenu: () => null }));
 vi.mock("../components/DomPanel", () => ({
@@ -11,7 +12,13 @@ vi.mock("../components/ModePanel", () => ({ ModePanel: () => null }));
 vi.mock("../components/TapePanel", () => ({
   TapePanel: () => <div data-testid="tape-panel" />,
 }));
-vi.mock("../components/WorkspaceHeader", () => ({ WorkspaceHeader: () => <div data-testid="chart-workspace-controls" /> }));
+vi.mock("../components/WorkspaceHeader", () => ({
+  WorkspaceHeader: ({ onSymbolSelect }: { onSymbolSelect: (symbol: string) => void }) => (
+    <div data-testid="chart-workspace-controls">
+      <button onClick={() => onSymbolSelect("ETHUSDT")} type="button">Select ETHUSDT</button>
+    </div>
+  ),
+}));
 vi.mock("../telegram/TelegramMiniAppBridge", () => ({
   TelegramMiniAppBridge: () => null,
 }));
@@ -103,4 +110,45 @@ it("collapses and restores one DOM plus Smart Tape side panel", () => {
   expect(sidePanel).not.toHaveClass("is-hidden");
   expect(screen.getByTestId("tape-panel")).toBe(tapePanel);
   expect(screen.getByTestId("dom-panel")).toBe(domPanel);
+});
+
+it("changes the local symbol only after the backend authoritative switch succeeds", async () => {
+  vi.mocked(setMarketSymbol).mockClear();
+  let switchAttempts = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url === "/api/instruments") {
+      return {
+        ok: true,
+        json: async () => ({ instruments: [
+          { symbol: "BTCUSDT" },
+          { symbol: "ETHUSDT" },
+        ] }),
+      };
+    }
+    if (url === "/api/workspace/symbol") {
+      switchAttempts += 1;
+      return switchAttempts === 1
+        ? { ok: false, json: async () => ({
+          ok: false,
+          workspace_error: {
+            code: "candidate_not_ready", stage: "candidate_readiness",
+            requested_symbol: "ETHUSDT", active_symbol: "BTCUSDT",
+            retryable: true, request_id: "switch-1", message: "Candidate is not ready",
+          },
+        }) }
+        : { ok: true, json: async () => ({ ok: true, symbol: "ETHUSDT", generation: 8 }) };
+    }
+    return { ok: false, json: async () => ({}) };
+  }));
+  render(<App />);
+
+  fireEvent.click(screen.getByRole("button", { name: "Select ETHUSDT" }));
+  expect(setMarketSymbol).not.toHaveBeenCalled();
+  await waitFor(() => expect(switchAttempts).toBe(1));
+  expect(setMarketSymbol).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveAttribute("data-error-code", "candidate_not_ready");
+
+  fireEvent.click(screen.getByRole("button", { name: "Select ETHUSDT" }));
+  await waitFor(() => expect(setMarketSymbol).toHaveBeenCalledWith("ETHUSDT", 8));
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
