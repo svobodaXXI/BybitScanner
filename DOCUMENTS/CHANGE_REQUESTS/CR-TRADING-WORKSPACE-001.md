@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.81",
+  "revision": "1.82",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Advance and verify live Trading Workspace market data and PAPER execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -3911,3 +3911,24 @@ bounded. Revision 1.81 records fresh desktop and real-phone Chrome re-acceptance
 tunnel as PASS for ONGUSDT 5m→1m→5m. Chart and DOM remained bounded, candles stayed visible, DOM and Smart Tape
 remained live, and `LIVE BOOK UNAVAILABLE` did not recur. M8 is
 `COMPLETE / REAL-PHONE + TUNNEL ACCEPTANCE PASS`; payload reduction and device success remain distinct evidence.
+
+## 88. M9 — Workspace Operability / Diagnostics — architecture/documentation checkpoint
+
+Status: `DOCUMENTED / IMPLEMENTATION NOT YET CLAIMED`
+
+Purpose: make Workspace failures diagnosable and operationally deterministic without reopening the completed M0–M8 market-data architecture.
+
+Binding invariants:
+
+1. Preserve semantic root causes across subsystem boundaries. Generic `ValueError`, `LookupError`, `unsupported_symbol`, bare HTTP 409, or transport-only `ECONNABORTED` must not erase the actual failure class.
+2. Introduce typed Workspace failure semantics for unsupported instrument, candidate-not-ready, instrument/bootstrap failure, inactive Workspace, unknown stream, and upstream market-data failure.
+3. User-facing/API failure envelopes must carry structured fields sufficient for diagnosis, including `code`, `stage`, `requested_symbol`, `active_symbol`, `retryable`, and a request/correlation identity where applicable.
+4. Add read-only Workspace diagnostic state exposing requested/active symbol, generation, pending switch, readiness/component state, latest structured error, and relevant upstream/subscription state.
+5. `WorkspaceController` remains the sole authoritative symbol owner. Frontend authoritative symbol transition occurs only after backend activation acknowledgement for the new generation; failed candidate activation preserves the previous active Workspace.
+6. Reconnect policy must distinguish transport-retryable failures from semantic fatal/non-retryable failures. Blind fixed one-second retry loops for semantic failures are prohibited.
+7. Provide one deterministic developer doctor command that checks registry support, switch/activation, readiness, stream availability, and structured failure output for a requested symbol/interval.
+8. Add registry→Workspace contract verification so a symbol advertised as Workspace-supported must be activatable by the Workspace transport contract; intentionally unsupported symbols must not be presented as supported.
+9. Preserve PAPER semantics, full authoritative L2, M0–M8 generation/sequence/readiness guarantees, and unrelated user-owned dirty work.
+10. Do not rewrite the server framework or create a second market-data owner. M9 is a thin operability/control-plane slice over the existing architecture.
+
+Expected implementation surfaces are bounded to semantic exceptions/error envelopes, read-only diagnostics, switch acknowledgement semantics, reconnect classification, the doctor command, and focused contract/regression checks.

@@ -690,20 +690,29 @@ Do not jump ahead.
 Current checkpoint:
 
 ```text
-WORKSPACE SYMBOL SWITCHING — BACKEND AUTHORITY FIX AUTOMATED PASS / REAL-PHONE TRANSPORT ACCEPTANCE FAIL
+M8 — COMPLETE / REAL-PHONE ACCEPTANCE PASS
 ```
 
-Open next work item:
+Completed corrective migration:
 
 ```text
-MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM — ARCHITECTURE CORRECTION
+M0–M8 — MARKET DATA HUB + MULTIPLEXED WORKSPACE STREAM
+IMPLEMENTED / VERIFIED / REAL-PHONE ACCEPTED
 ```
 
-Open Positions real-phone acceptance remains `PASS`, and the backend symbol-authority/generation correction has
-automated proof. The real-phone ONG result is nevertheless a transport acceptance failure: Chart, DOM and Tape were
-blank despite a live READY backend. Section 10 is now the owning corrective architecture and M0 is its exact next
-implementation step. The Hub and multiplexed stream are not implemented. Aggressive DOM Limit confirmation and
-Done/Enter focus progression remain separately deferred.
+The former instruction to begin M0 is superseded. `InstrumentRegistry`, `MarketDataHub`, `WorkspaceController`, efficient snapshot/delta client projection, the multiplexed Workspace WebSocket, atomic frontend generation projection, deterministic chaos/regression coverage, and real-phone acceptance are complete through M8.
+
+Open next bounded work item:
+
+```text
+M9 — WORKSPACE OPERABILITY / DIAGNOSTICS
+```
+
+M9 must preserve semantic root causes, expose read-only diagnostic state, keep `WorkspaceController` as sole symbol authority, make frontend symbol transition depend on backend activation acknowledgement/new generation, classify reconnect behavior, provide a deterministic developer doctor command, and verify registry→Workspace support consistency.
+
+M9 does not authorize a market-data rewrite, a second state owner, or any change to PAPER/trading semantics. Implementation remains separately gated after this architecture/documentation checkpoint.
+
+Aggressive DOM Limit confirmation and Done/Enter focus progression remain separately deferred.
 
 ## 15. Engineering completion criterion
 

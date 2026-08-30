@@ -2,11 +2,11 @@
 
 Version:
 
-7.65
+7.66
 
 Date:
 
-2026-08-26
+2026-08-30
 
 Document Type:
 
@@ -5536,3 +5536,32 @@ ASSISTANT_EFFICIENCY:
 ACTIVE
 
 # END_OF_DOCUMENT
+
+---
+
+# TRADING_WORKSPACE_CURRENT_CHECKPOINT_2026_08_30
+
+Status:
+
+ACTIVE
+
+Authority note:
+
+For Trading Workspace current mission recovery, this checkpoint supersedes older Trading Workspace next-step text in this document when that older text conflicts with the active ChangeRequest or `TRADING_WORKSPACE_MASTER_ROADMAP.md`.
+
+Current authoritative state:
+
+* `CR-TRADING-WORKSPACE-001` revision `1.82`;
+* M0–M8 Market Data Hub / multiplexed Workspace migration: COMPLETE;
+* M8 desktop + real-phone acceptance: PASS;
+* next bounded work item: `M9 — Workspace Operability / Diagnostics`;
+* M9 is architecture/documentation-authorized only at this checkpoint; implementation completion is not claimed;
+* `WorkspaceController` remains sole symbol authority;
+* semantic root causes must survive to the diagnostic/API boundary;
+* previous active Workspace must remain authoritative until candidate activation ACK/new generation succeeds;
+* reconnect behavior must distinguish transport-retryable from semantic non-retryable failure;
+* local dirty implementation remains user-owned and must not be staged, reset, restored, or committed by this documentation checkpoint.
+
+Exact next action:
+
+Implement M9 only after the documentation checkpoint is reviewed and accepted, beginning with typed semantic failure classes + structured diagnostics while preserving M0–M8 behavior.
