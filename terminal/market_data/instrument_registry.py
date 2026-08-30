@@ -10,6 +10,7 @@ from typing import Mapping, Protocol
 from terminal.domain.models import Category, Symbol
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.exchange.normalization import PayloadNormalizationError, normalize_instrument
+from terminal.market_data.workspace_errors import UnsupportedWorkspaceInstrument
 
 
 class InstrumentRegistryError(RuntimeError):
@@ -63,11 +64,20 @@ class InstrumentRegistry:
             return self._snapshot
 
     def get(self, symbol: str) -> InstrumentSnapshot:
-        normalized = Symbol(symbol).value
+        try:
+            normalized = Symbol(symbol).value
+        except (TypeError, ValueError) as exc:
+            raise UnsupportedWorkspaceInstrument(
+                "Unsupported Workspace instrument",
+                requested_symbol=symbol if isinstance(symbol, str) else None,
+            ) from exc
         with self._publish_lock:
             instrument = self._snapshot.by_symbol.get(normalized)
         if instrument is None:
-            raise LookupError(f"unsupported Workspace instrument: {normalized}")
+            raise UnsupportedWorkspaceInstrument(
+                f"Unsupported Workspace instrument: {normalized}",
+                requested_symbol=normalized,
+            )
         return instrument
 
     def supports(self, symbol: str) -> bool:

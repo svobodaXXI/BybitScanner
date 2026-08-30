@@ -13,6 +13,9 @@ from typing import Callable
 from uuid import uuid4
 
 from terminal.market_data.client_projection import ClientMarketProjection
+from terminal.market_data.workspace_errors import (
+    UnknownWorkspaceStream, UpstreamWorkspaceMarketDataFailure,
+)
 
 
 WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -100,7 +103,10 @@ class WorkspaceStreamSession:
                 or trades is None or trades.get("kind") != "trade_bootstrap"
                 or candles is None or candles.get("kind") != "candle_bootstrap"
             ):
-                raise WorkspaceStreamError("active Workspace is not snapshot-ready")
+                raise UpstreamWorkspaceMarketDataFailure(
+                    "Active Workspace projection is not snapshot-ready",
+                    requested_symbol=self.symbol, active_symbol=self.symbol,
+                )
             self._projection.assert_current()
             components = {
                 "book": book.get("state", "NOT_READY"),
@@ -215,7 +221,11 @@ class WorkspaceStreamBroker:
             if stream_id is not None:
                 session = self._sessions.get(stream_id)
                 if session is None or session.symbol != normalized or session.interval != interval:
-                    raise LookupError("unknown Workspace stream")
+                    raise UnknownWorkspaceStream(
+                        "Workspace stream identity is unknown or does not match",
+                        requested_symbol=normalized,
+                        active_symbol=session.symbol if session is not None else None,
+                    )
                 if stream_id in self._attached:
                     raise WorkspaceStreamError("Workspace stream is already attached")
                 self._attached.add(stream_id)

@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 import websocket
 import requests
@@ -45,6 +46,14 @@ from terminal.market_data.workspace_stream import (
     websocket_accept, websocket_text_frame,
 )
 from terminal.market_data.workspace_controller import WorkspaceController
+from terminal.market_data.workspace_errors import (
+    InactiveWorkspace,
+    UnsupportedWorkspaceInstrument,
+    WorkspaceCandidateNotReady,
+    WorkspaceInstrumentBootstrapFailure,
+    WorkspaceSemanticError,
+    UpstreamWorkspaceMarketDataFailure,
+)
 from terminal.runtime.paper_runtime import PaperRuntime
 
 
@@ -1010,18 +1019,29 @@ class WorkspaceMarketDataManager:
     def _activate_hub_context(
         self, previous: SymbolContext, replacement: SymbolContext,
     ) -> None:
-        self._provider.set_buffer(replacement.public_orderbook)
-        previous.public_orderbook.set_update_consumer(None)
-        replacement.public_orderbook.set_update_consumer(
-            self._runtime.enqueue_book_update,
-        )
+        try:
+            replacement.public_orderbook.set_update_consumer(
+                self._runtime.enqueue_book_update,
+            )
+            self._provider.set_buffer(replacement.public_orderbook)
+            previous.public_orderbook.set_update_consumer(None)
+        except Exception:
+            replacement.public_orderbook.set_update_consumer(None)
+            self._provider.set_buffer(previous.public_orderbook)
+            previous.public_orderbook.set_update_consumer(
+                self._runtime.enqueue_book_update,
+            )
+            raise
 
     def switch(self, symbol: str) -> MarketDataSession:
         if self._controller is not None:
-            try:
-                return self._controller.switch(symbol, self._readiness_timeout)
-            except LookupError as exc:
-                raise ValueError("unsupported symbol") from exc
+            return self._controller.switch(symbol, self._readiness_timeout)
+        if not isinstance(symbol, str) or not symbol.strip():
+            raise UnsupportedWorkspaceInstrument(
+                "Unsupported Workspace instrument",
+                requested_symbol=symbol if isinstance(symbol, str) else None,
+                active_symbol=self._active.symbol,
+            )
         normalized = symbol.strip().upper()
         with self._switch_lock:
             with self._lock:
@@ -1029,33 +1049,61 @@ class WorkspaceMarketDataManager:
                     return self._active
                 try:
                     tick_size = self._instruments.get(normalized).tick_size
-                except LookupError:
-                    raise ValueError("unsupported symbol")
-            replacement = (
-                self._hub.subscribe(normalized)
-                if self._hub is not None
-                else self._session_factory(normalized, tick_size)
-            )
+                except UnsupportedWorkspaceInstrument as exc:
+                    if exc.active_symbol is None:
+                        raise UnsupportedWorkspaceInstrument(
+                            str(exc), requested_symbol=normalized,
+                            active_symbol=self._active.symbol,
+                        ) from exc
+                    raise
+                except LookupError as exc:
+                    raise UnsupportedWorkspaceInstrument(
+                        f"Unsupported Workspace instrument: {normalized}",
+                        requested_symbol=normalized, active_symbol=self._active.symbol,
+                    ) from exc
+            try:
+                replacement = self._session_factory(normalized, tick_size)
+            except Exception as exc:
+                raise WorkspaceInstrumentBootstrapFailure(
+                    f"Workspace instrument bootstrap failed: {normalized}",
+                    requested_symbol=normalized, active_symbol=self._active.symbol,
+                ) from exc
             try:
                 ready = replacement.wait_until_ready(self._readiness_timeout)
-            except BaseException:
-                if self._hub is None:
-                    replacement.close()
-                raise
+            except Exception as exc:
+                replacement.close()
+                raise UpstreamWorkspaceMarketDataFailure(
+                    "Workspace candidate readiness failed at the upstream boundary",
+                    requested_symbol=normalized, active_symbol=self._active.symbol,
+                ) from exc
             if not ready:
-                if self._hub is None:
-                    replacement.close()
-                raise TimeoutError("market-data candidate did not become READY")
+                replacement.close()
+                raise WorkspaceCandidateNotReady(
+                    "Workspace candidate did not reach composite readiness",
+                    requested_symbol=normalized, active_symbol=self._active.symbol,
+                )
             with self._lock:
                 previous = self._active
+                try:
+                    replacement.public_orderbook.set_update_consumer(
+                        self._runtime.enqueue_book_update,
+                    )
+                    self._provider.set_buffer(replacement.public_orderbook)
+                    previous.public_orderbook.set_update_consumer(None)
+                except Exception as exc:
+                    replacement.public_orderbook.set_update_consumer(None)
+                    self._provider.set_buffer(previous.public_orderbook)
+                    previous.public_orderbook.set_update_consumer(
+                        self._runtime.enqueue_book_update,
+                    )
+                    replacement.close()
+                    raise UpstreamWorkspaceMarketDataFailure(
+                        "Workspace activation failed at the market-data boundary",
+                        requested_symbol=normalized, active_symbol=previous.symbol,
+                    ) from exc
                 self._generation += 1
                 replacement.generation = self._generation
                 self._active = replacement
-                self._provider.set_buffer(replacement.public_orderbook)
-                previous.public_orderbook.set_update_consumer(None)
-                replacement.public_orderbook.set_update_consumer(
-                    self._runtime.enqueue_book_update,
-                )
             if self._hub is None:
                 previous.close()
             return replacement
@@ -1066,7 +1114,10 @@ class WorkspaceMarketDataManager:
         normalized = symbol.strip().upper()
         with self._lock:
             if normalized != self._active.symbol:
-                raise LookupError("inactive symbol")
+                raise InactiveWorkspace(
+                    "Requested instrument is not the active Workspace",
+                    requested_symbol=normalized, active_symbol=self._active.symbol,
+                )
             return self._active, self._generation
 
     def is_current(self, session: MarketDataSession, generation: int) -> bool:
@@ -1214,8 +1265,8 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 opened = self.server.market_data.workspace_streams.open(
                     symbol, interval, stream_id=stream_id, after_sequence=after_sequence,
                 )
-            except LookupError:
-                self._json_response(409, {"ok": False, "error": "workspace_stream_unavailable"})
+            except WorkspaceSemanticError as exc:
+                self._workspace_error_response(exc)
                 return
             except WorkspaceStreamError:
                 self._json_response(503, {"ok": False, "error": "workspace_not_ready"})
@@ -1581,11 +1632,8 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             try:
                 payload = self._payload(WORKSPACE_SYMBOL_FIELDS)
                 market = self.server.market_data.switch(payload["symbol"])
-            except ValueError:
-                self._json_response(400, {"ok": False, "error": "unsupported_symbol"})
-                return
-            except TimeoutError:
-                self._json_response(503, {"ok": False, "error": "workspace_symbol_not_ready"})
+            except WorkspaceSemanticError as exc:
+                self._workspace_error_response(exc)
                 return
             self._json_response(200, {
                 "ok": True,
@@ -1754,6 +1802,20 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def _workspace_error_response(self, error: WorkspaceSemanticError) -> None:
+        status = (
+            400 if isinstance(error, UnsupportedWorkspaceInstrument)
+            else 409 if isinstance(error, InactiveWorkspace)
+            else 404 if error.code == "unknown_stream"
+            else 503
+        )
+        request_id = self.headers.get("X-Request-ID", "").strip() or uuid4().hex
+        self._json_response(status, {
+            "ok": False,
+            "error": error.code,
+            "workspace_error": error.envelope(request_id=request_id),
+        })
 
     def log_message(self, format: str, *args) -> None:
         return

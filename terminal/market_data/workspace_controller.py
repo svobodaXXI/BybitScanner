@@ -8,6 +8,13 @@ from dataclasses import dataclass
 from typing import Callable
 
 from terminal.market_data.hub import MarketDataHub, SymbolContext
+from terminal.market_data.workspace_errors import (
+    InactiveWorkspace,
+    UnsupportedWorkspaceInstrument,
+    UpstreamWorkspaceMarketDataFailure,
+    WorkspaceCandidateNotReady,
+    WorkspaceInstrumentBootstrapFailure,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,14 +86,22 @@ class WorkspaceController:
         with self._lock:
             if not readiness.ready:
                 self._fail_locked("initial_workspace_not_ready")
-                raise TimeoutError("Initial Workspace did not reach composite readiness")
+                raise WorkspaceCandidateNotReady(
+                    "Initial Workspace did not reach composite readiness",
+                    requested_symbol=self._requested_symbol,
+                    active_symbol=self._active.symbol,
+                )
             self._switch_state = "READY"
             self._last_switch_error = None
             return self._active
 
     def switch(self, symbol: str, timeout: float) -> SymbolContext:
         if not isinstance(symbol, str) or not symbol.strip():
-            raise LookupError("unsupported Workspace symbol")
+            raise UnsupportedWorkspaceInstrument(
+                "Unsupported Workspace instrument",
+                requested_symbol=symbol if isinstance(symbol, str) else None,
+                active_symbol=self._active.symbol,
+            )
         normalized = symbol.strip().upper()
         with self._switch_lock:
             self._expire_warm()
@@ -101,9 +116,20 @@ class WorkspaceController:
             try:
                 existed = self._hub.has_context(normalized)
                 candidate = self._hub.subscribe(normalized)
+            except LookupError as exc:
+                error = UnsupportedWorkspaceInstrument(
+                    f"Unsupported Workspace instrument: {normalized}",
+                    requested_symbol=normalized, active_symbol=self._active.symbol,
+                )
+                self._fail(error.code)
+                raise error from exc
             except Exception as exc:
-                self._fail(type(exc).__name__)
-                raise
+                error = WorkspaceInstrumentBootstrapFailure(
+                    f"Workspace instrument bootstrap failed: {normalized}",
+                    requested_symbol=normalized, active_symbol=self._active.symbol,
+                )
+                self._fail(error.code)
+                raise error from exc
             with self._lock:
                 was_warm = self._warm.get(candidate.symbol, (None, 0))[0] is candidate
                 if was_warm:
@@ -118,19 +144,26 @@ class WorkspaceController:
                 if not existed:
                     self._hub.discard(candidate)
                 self._fail("workspace_candidate_not_ready")
-                raise TimeoutError("Workspace candidate did not reach composite readiness")
+                raise WorkspaceCandidateNotReady(
+                    "Workspace candidate did not reach composite readiness",
+                    requested_symbol=normalized, active_symbol=self._active.symbol,
+                )
             with self._lock:
                 previous = self._active
                 try:
                     self._on_activate(previous, candidate)
                 except Exception as exc:
                     self._pending = None
-                    self._fail_locked(type(exc).__name__)
+                    error = UpstreamWorkspaceMarketDataFailure(
+                        "Workspace activation failed at the market-data boundary",
+                        requested_symbol=normalized, active_symbol=previous.symbol,
+                    )
+                    self._fail_locked(error.code)
                     if was_warm:
                         self._retain_warm_locked(candidate)
                     if not existed:
                         self._hub.discard(candidate)
-                    raise
+                    raise error from exc
                 self._active_generation += 1
                 candidate.generation = self._active_generation
                 self._active = candidate
@@ -180,7 +213,10 @@ class WorkspaceController:
         normalized = symbol.strip().upper()
         with self._lock:
             if normalized != self._active.symbol:
-                raise LookupError("inactive Workspace symbol")
+                raise InactiveWorkspace(
+                    "Requested instrument is not the active Workspace",
+                    requested_symbol=normalized, active_symbol=self._active.symbol,
+                )
             return self._active, self._active_generation
 
     def is_current(self, context: SymbolContext, generation: int) -> bool:

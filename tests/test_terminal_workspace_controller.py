@@ -4,6 +4,12 @@ import unittest
 
 from terminal.market_data.hub import SymbolContext
 from terminal.market_data.workspace_controller import WorkspaceController
+from terminal.market_data.workspace_errors import (
+    UnsupportedWorkspaceInstrument,
+    UpstreamWorkspaceMarketDataFailure,
+    WorkspaceCandidateNotReady,
+    WorkspaceInstrumentBootstrapFailure,
+)
 
 
 class _Book:
@@ -154,8 +160,9 @@ def test_initial_workspace_fails_closed_until_composite_ready():
     assert controller.state().switch_state == "SYNCING"
     try:
         controller.ensure_initial_ready(0.005)
-    except TimeoutError:
-        pass
+    except WorkspaceCandidateNotReady as error:
+        assert error.code == "candidate_not_ready"
+        assert error.active_symbol == "BTCUSDT"
     else:
         raise AssertionError("unready initial Workspace was accepted")
     assert controller.state().switch_state == "FAILED"
@@ -173,8 +180,9 @@ def test_timeout_preserves_previous_and_discards_new_candidate():
 
     try:
         controller.switch("ONGUSDT", 0.005)
-    except TimeoutError:
-        pass
+    except WorkspaceCandidateNotReady as error:
+        assert error.requested_symbol == "ONGUSDT"
+        assert error.active_symbol == "BTCUSDT"
     else:
         raise AssertionError("unready candidate became active")
 
@@ -194,23 +202,64 @@ def test_malformed_symbol_and_book_identity_fail_closed():
     for symbol in (None, "   "):
         try:
             controller.switch(symbol, 0.01)
-        except LookupError:
+        except UnsupportedWorkspaceInstrument:
             pass
         else:
             raise AssertionError("malformed symbol was accepted")
     try:
         controller.switch("ETHUSDT", 0.01)
-    except LookupError:
-        pass
+    except UnsupportedWorkspaceInstrument as error:
+        assert error.envelope(request_id="request-1") == {
+            "code": "unsupported_instrument",
+            "stage": "instrument_lookup",
+            "requested_symbol": "ETHUSDT",
+            "active_symbol": "BTCUSDT",
+            "retryable": False,
+            "request_id": "request-1",
+            "message": "Unsupported Workspace instrument: ETHUSDT",
+        }
     else:
         raise AssertionError("unsupported symbol was accepted")
     assert controller.state().switch_state == "FAILED"
-    assert controller.state().last_switch_error == "LookupError"
+    assert controller.state().last_switch_error == "unsupported_instrument"
     btc.public_orderbook.snapshot = lambda: {
         "state": "READY", "bids": [1], "asks": [2],
         "version": "bad", "updateId": 2, "sequence": 3,
     }
     assert controller.readiness(btc).book_ready is False
+
+
+def test_bootstrap_and_activation_failures_preserve_previous_active():
+    btc = _context("BTCUSDT", True)
+
+    class _FailingHub(_Hub):
+        def subscribe(self, symbol: str) -> SymbolContext:
+            raise RuntimeError("socket bootstrap failed")
+
+    controller = WorkspaceController(_FailingHub(btc, {}), btc, lambda old, new: None)
+    try:
+        controller.switch("ETHUSDT", 0.01)
+    except WorkspaceInstrumentBootstrapFailure as error:
+        assert error.code == "instrument_bootstrap_failure"
+        assert error.stage == "instrument_bootstrap"
+    else:
+        raise AssertionError("bootstrap failure lost its semantic class")
+    assert controller.get_active("BTCUSDT") == (btc, 1)
+
+    ong = _context("ONGUSDT", True)
+    hub = _Hub(btc, {"ONGUSDT": ong})
+    controller = WorkspaceController(
+        hub, btc, lambda old, new: (_ for _ in ()).throw(RuntimeError("provider failed")),
+    )
+    try:
+        controller.switch("ONGUSDT", 0.01)
+    except UpstreamWorkspaceMarketDataFailure as error:
+        assert error.code == "upstream_market_data_failure"
+        assert error.active_symbol == "BTCUSDT"
+    else:
+        raise AssertionError("activation failure lost its semantic class")
+    assert controller.get_active("BTCUSDT") == (btc, 1)
+    assert controller.state().active_generation == 1
 
 
 def test_warm_context_reuse_and_bounded_eviction():
@@ -254,6 +303,7 @@ TESTS = (
     test_initial_workspace_fails_closed_until_composite_ready,
     test_timeout_preserves_previous_and_discards_new_candidate,
     test_malformed_symbol_and_book_identity_fail_closed,
+    test_bootstrap_and_activation_failures_preserve_previous_active,
     test_warm_context_reuse_and_bounded_eviction,
     test_expired_warm_context_is_discarded_before_next_switch_decision,
 )

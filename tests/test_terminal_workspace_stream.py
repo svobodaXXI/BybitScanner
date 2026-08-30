@@ -13,6 +13,7 @@ from terminal.market_data.workspace_stream import (
     WorkspaceStreamSession,
     websocket_accept, websocket_text_frame,
 )
+from terminal.market_data.workspace_errors import UnknownWorkspaceStream
 from terminal.runtime.paper_http_server import PaperHttpHandler
 
 
@@ -131,8 +132,9 @@ class WorkspaceStreamTests(unittest.TestCase):
         self.assertEqual(resumed.events, ())
         broker.detach(opened.session.stream_id)
         replacement = broker.open("BTCUSDT", "5")
-        with self.assertRaises(LookupError):
+        with self.assertRaises(UnknownWorkspaceStream) as raised:
             broker.open("BTCUSDT", "5", stream_id=opened.session.stream_id, after_sequence=0)
+        self.assertEqual(raised.exception.code, "unknown_stream")
         self.assertNotEqual(opened.session.stream_id, replacement.session.stream_id)
 
     def test_websocket_handshake_and_large_text_frame(self):

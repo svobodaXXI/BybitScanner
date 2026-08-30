@@ -14,6 +14,7 @@ from terminal.domain.models import (
 )
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
+from terminal.market_data.workspace_errors import WorkspaceCandidateNotReady
 from terminal.runtime.paper_http_server import (
     PaperHttpHandler,
     MarketDataSession,
@@ -378,8 +379,8 @@ def test_workspace_switch_timeout_preserves_ready_active_session_and_provider():
 
     try:
         manager.switch("ETHUSDT")
-    except TimeoutError:
-        pass
+    except WorkspaceCandidateNotReady as error:
+        assert error.envelope(request_id="switch-1")["retryable"] is True
     else:
         raise AssertionError("unready candidate switch did not fail closed")
 
@@ -387,6 +388,83 @@ def test_workspace_switch_timeout_preserves_ready_active_session_and_provider():
     assert btc.closed is False
     assert provider.buffer is btc.public_orderbook
     assert manager.get_active("BTCUSDT") == (btc, 1)
+
+
+def test_workspace_switch_http_preserves_structured_semantic_failure():
+    btc = _SwitchSession("BTCUSDT", True)
+    manager = WorkspaceMarketDataManager(
+        _instrument_registry([{"symbol": "BTCUSDT", "tick_size": "0.5"}]),
+        _SwitchProvider(btc.public_orderbook), _SwitchRuntime(), btc,
+        readiness_timeout=0.01,
+    )
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.market_data = manager
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{server.server_port}/api/workspace/symbol",
+        data=json.dumps({"symbol": "NOTUSDT"}).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-Request-ID": "switch-42"},
+        method="POST",
+    )
+    try:
+        try:
+            urllib.request.urlopen(request)
+        except urllib.error.HTTPError as error:
+            assert error.code == 400
+            payload = json.load(error)
+        else:
+            raise AssertionError("unsupported instrument request succeeded")
+        assert payload["error"] == "unsupported_instrument"
+        assert payload["workspace_error"] == {
+            "code": "unsupported_instrument",
+            "stage": "instrument_lookup",
+            "requested_symbol": "NOTUSDT",
+            "active_symbol": "BTCUSDT",
+            "retryable": False,
+            "request_id": "switch-42",
+            "message": "Unsupported Workspace instrument: NOTUSDT",
+        }
+        assert manager.get_active("BTCUSDT") == (btc, 1)
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+def test_workspace_activation_failure_rolls_back_provider_and_active_generation():
+    btc = _SwitchSession("BTCUSDT", True)
+    eth = _SwitchSession("ETHUSDT", True, btc)
+    provider = _SwitchProvider(btc.public_orderbook)
+    original_set_consumer = btc.public_orderbook.set_update_consumer
+    calls = 0
+
+    def fail_once(consumer) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("consumer detach failed")
+        original_set_consumer(consumer)
+
+    btc.public_orderbook.set_update_consumer = fail_once
+    manager = WorkspaceMarketDataManager(
+        _instrument_registry([
+            {"symbol": "BTCUSDT", "tick_size": "0.5"},
+            {"symbol": "ETHUSDT", "tick_size": "0.05"},
+        ]),
+        provider, _SwitchRuntime(), btc,
+        session_factory=lambda symbol, tick_size: eth,
+        readiness_timeout=0.01,
+    )
+    try:
+        manager.switch("ETHUSDT")
+    except Exception as error:
+        assert error.code == "upstream_market_data_failure"
+    else:
+        raise AssertionError("activation failure was accepted")
+    assert provider.buffer is btc.public_orderbook
+    assert manager.get_active("BTCUSDT") == (btc, 1)
+    assert eth.closed is True
 
 
 def test_workspace_candidate_wait_does_not_block_current_read_only_consumers():
@@ -1261,6 +1339,8 @@ def load_tests(loader, tests, pattern):
             test_workspace_consumers_follow_active_generation_across_rapid_symbol_return,
             test_inflight_stale_trade_request_fails_closed_after_generation_changes,
             test_workspace_switch_timeout_preserves_ready_active_session_and_provider,
+            test_workspace_switch_http_preserves_structured_semantic_failure,
+            test_workspace_activation_failure_rolls_back_provider_and_active_generation,
             test_workspace_candidate_wait_does_not_block_current_read_only_consumers,
             test_health_get_returns_exact_paper_status,
             test_threaded_http_serializes_concurrent_paper_mutations,
