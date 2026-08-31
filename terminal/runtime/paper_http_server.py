@@ -83,6 +83,41 @@ LIMIT_FIELDS = {
 LIMIT_CANCEL_FIELDS = {"client_action_id", "symbol", "order_id"}
 LIMIT_AMEND_FIELDS = {"client_action_id", "symbol", "order_id", "limit_price"}
 STOP_MUTATION_FIELDS = {"client_action_id", "symbol", "trigger_price"}
+ACCOUNT_DESCRIPTOR_FIELDS = {"id", "display_name", "provider", "environment", "status"}
+
+
+def safe_account_catalog(value: object) -> dict[str, object]:
+    """Validate and allow-list the credential-free account transport shape."""
+    if not isinstance(value, dict):
+        raise ValueError("account catalog must be an object")
+    active_account_id = value.get("active_account_id")
+    generation = value.get("session_generation")
+    accounts = value.get("accounts")
+    if (
+        not isinstance(active_account_id, str)
+        or not active_account_id
+        or isinstance(generation, bool)
+        or not isinstance(generation, int)
+        or generation < 1
+        or not isinstance(accounts, list)
+        or not accounts
+    ):
+        raise ValueError("invalid account catalog authority")
+    projected_accounts: list[dict[str, str]] = []
+    for account in accounts:
+        if not isinstance(account, dict) or not ACCOUNT_DESCRIPTOR_FIELDS.issubset(account):
+            raise ValueError("invalid account descriptor")
+        projected = {field: account[field] for field in ACCOUNT_DESCRIPTOR_FIELDS}
+        if any(not isinstance(item, str) or not item for item in projected.values()):
+            raise ValueError("invalid account descriptor value")
+        projected_accounts.append(projected)
+    if active_account_id not in {account["id"] for account in projected_accounts}:
+        raise ValueError("active account is absent from catalog")
+    return {
+        "active_account_id": active_account_id,
+        "session_generation": generation,
+        "accounts": projected_accounts,
+    }
 STOP_DELETE_FIELDS = {"client_action_id", "symbol"}
 WORKSPACE_SYMBOL_FIELDS = {"symbol"}
 NATIVE_KLINE_INTERVALS = ("1", "5", "15", "60", "D")
@@ -1272,6 +1307,17 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/instruments":
             self._json_response(200, {"ok": True, "instruments": self.server.market_data.instruments})
+            return
+
+        if parsed.path == "/api/accounts":
+            try:
+                catalog = safe_account_catalog(
+                    self.server.runtime.call(lambda runtime: runtime.account_catalog())
+                )
+            except (RuntimeError, TimeoutError, TypeError, ValueError):
+                self._json_response(503, {"ok": False, "error": "account_catalog_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **catalog})
             return
 
         if parsed.path == "/api/workspace/state":

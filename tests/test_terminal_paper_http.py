@@ -907,6 +907,118 @@ def test_health_get_returns_exact_paper_status():
             runtime.close()
 
 
+def test_accounts_get_returns_authoritative_credential_free_catalog():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
+        response = {}
+
+        def get_accounts():
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/accounts"
+            ) as result:
+                response["status"] = result.status
+                response["body"] = json.load(result)
+
+        client = threading.Thread(target=get_accounts)
+        client.start()
+        try:
+            server.handle_request()
+            client.join(timeout=5)
+            assert response == {"status": 200, "body": {
+                "ok": True,
+                "active_account_id": "paper",
+                "session_generation": 1,
+                "accounts": [{
+                    "id": "paper",
+                    "display_name": "Paper / Virtual",
+                    "provider": "PAPER",
+                    "environment": "PAPER",
+                    "status": "READY",
+                }],
+            }}
+            serialized = json.dumps(response["body"]).lower()
+            assert "secret" not in serialized
+            assert "credential" not in serialized
+        finally:
+            server.server_close()
+            runtime.close()
+
+
+def test_accounts_get_fails_closed_for_broken_catalog():
+    class BrokenCatalogRuntime:
+        def call(self, operation):
+            return None
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = BrokenCatalogRuntime()
+    response = {}
+
+    def get_accounts():
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}/api/accounts"
+            )
+        except urllib.error.HTTPError as error:
+            response["status"] = error.code
+            response["body"] = json.load(error)
+
+    client = threading.Thread(target=get_accounts)
+    client.start()
+    try:
+        server.handle_request()
+        client.join(timeout=5)
+        assert response == {
+            "status": 503,
+            "body": {"ok": False, "error": "account_catalog_unavailable"},
+        }
+    finally:
+        server.server_close()
+
+
+def test_accounts_get_allow_lists_fields_and_drops_credential_material():
+    class CatalogRuntime:
+        def call(self, operation):
+            return {
+                "active_account_id": "paper",
+                "session_generation": 1,
+                "api_secret": "must-not-cross-boundary",
+                "accounts": [{
+                    "id": "paper",
+                    "display_name": "Paper / Virtual",
+                    "provider": "PAPER",
+                    "environment": "PAPER",
+                    "status": "READY",
+                    "credentialRef": "internal-only",
+                }],
+            }
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = CatalogRuntime()
+    response = {}
+
+    def get_accounts():
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/accounts"
+        ) as result:
+            response.update(json.load(result))
+
+    client = threading.Thread(target=get_accounts)
+    client.start()
+    try:
+        server.handle_request()
+        client.join(timeout=5)
+        serialized = json.dumps(response).lower()
+        assert "secret" not in serialized
+        assert "credential" not in serialized
+        assert set(response["accounts"][0]) == {
+            "id", "display_name", "provider", "environment", "status",
+        }
+    finally:
+        server.server_close()
+
+
 def test_threaded_http_serializes_concurrent_paper_mutations():
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime_owner(Path(temp) / "paper.sqlite3")

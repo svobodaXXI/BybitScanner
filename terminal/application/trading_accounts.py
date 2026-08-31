@@ -114,6 +114,23 @@ class TradingAccountManager:
             raise RuntimeError("trading account context is not the active account")
         return self.active_account
 
+    def catalog_projection(self) -> dict[str, object]:
+        """Return the credential-free, read-only transport account catalog."""
+        return {
+            "active_account_id": self.active_account_id.value,
+            "session_generation": self.session_token.generation,
+            "accounts": [
+                {
+                    "id": account.id.value,
+                    "display_name": account.display_name,
+                    "provider": account.provider.value,
+                    "environment": account.environment.value,
+                    "status": account.status.value,
+                }
+                for account in self.accounts
+            ],
+        }
+
 
 def paper_account_manager() -> TradingAccountManager:
     account_id = TradingAccountId("paper")

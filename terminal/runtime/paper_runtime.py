@@ -137,6 +137,9 @@ class PaperRuntime:
         """Compatibility projection; TradingAccountManager remains authoritative."""
         return self._account_manager.active_account_id
 
+    def account_catalog(self) -> dict[str, object]:
+        return self._account_manager.catalog_projection()
+
     def process_orderbook_update(self, notified_book_update_id: str) -> int:
         if not notified_book_update_id:
             raise ValueError("book_update_id must be non-empty")

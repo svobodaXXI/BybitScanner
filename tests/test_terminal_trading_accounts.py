@@ -1,4 +1,5 @@
 import unittest
+import json
 from dataclasses import fields
 
 from terminal.application.trading_accounts import (
@@ -48,6 +49,25 @@ class TradingAccountManagerTests(unittest.TestCase):
         self.assertNotIn("secret", representation)
         self.assertNotIn("credential", representation)
         self.assertNotIn("api_key", representation)
+
+    def test_catalog_projection_is_authoritative_and_credential_free(self) -> None:
+        projection = paper_account_manager().catalog_projection()
+
+        self.assertEqual(projection, {
+            "active_account_id": "paper",
+            "session_generation": 1,
+            "accounts": [{
+                "id": "paper",
+                "display_name": "Paper / Virtual",
+                "provider": "PAPER",
+                "environment": "PAPER",
+                "status": "READY",
+            }],
+        })
+        serialized = json.dumps(projection).lower()
+        self.assertNotIn("secret", serialized)
+        self.assertNotIn("credential", serialized)
+        self.assertNotIn("api_key", serialized)
 
     def test_duplicate_account_id_is_rejected(self) -> None:
         account = _paper_account()

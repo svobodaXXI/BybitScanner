@@ -1,4 +1,5 @@
 export const marketApiRoutes = {
+  accounts: "/api/accounts",
   instruments: "/api/instruments",
   book: (symbol: string) => `/api/public-orderbook/stream?symbol=${encodeURIComponent(symbol)}`,
   candles: (symbol: string, interval: string) =>

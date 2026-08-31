@@ -734,25 +734,7 @@ export function ModePanel({
                 </div>
               );
             })}
-            <div className="paper-account-control">
-              <button
-                aria-expanded={accountOpen}
-                aria-label="Open account selection"
-                className="account-switch-button"
-                onClick={onAccountToggle}
-                type="button"
-              >
-                <span className="account-switch-key" aria-hidden="true">
-                  <span className="account-key-head" />
-                  <span className="account-key-shaft" />
-                </span>
-                <span className="account-switch-label">
-                  <strong>PAPER</strong>
-                  <small>NON-LIVE</small>
-                </span>
-              </button>
-              {accountOpen ? <AccountMenu /> : null}
-            </div>
+            <AccountMenu open={accountOpen} onToggle={onAccountToggle} />
 
             {limitsInventorySide ? (
               <section
