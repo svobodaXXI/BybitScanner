@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import time
 import hashlib
+import hmac
+from uuid import uuid4
 from decimal import Decimal
 from pathlib import Path
 from typing import Callable
@@ -25,9 +27,11 @@ from terminal.application.pretrade_guard import NotionalIntent, OrderKind, PreTr
 from terminal.application.pretrade_guard import WorkingVolumeIntent
 from terminal.application.trading_application import TradingApplication
 from terminal.application.trading_accounts import (
+    TradingAccount,
     TradingAccountEnvironment,
     TradingAccountManager,
     TradingAccountProvider,
+    TradingAccountStatus,
     paper_account_manager,
 )
 from terminal.domain.models import (
@@ -35,9 +39,12 @@ from terminal.domain.models import (
     TradingAccountId,
 )
 from terminal.exchange.events import InstrumentSnapshot
+from terminal.exchange.bybit_account_validation import BybitAccountValidator
+from terminal.exchange.bybit_v5_adapter import BybitCredentials
 from terminal.market_data.book_provider import MarketBookProvider
 from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
 from terminal.persistence.sqlite_store import ExecutionApplyResult, SQLiteStore
+from terminal.persistence.credential_store import DpapiCredentialStore, StoredBybitAccount
 from terminal.runtime.paper_context import (
     PaperCommandContextProvider,
     working_volume_usdt,
@@ -75,8 +82,19 @@ class PaperRuntime:
         instrument_snapshot: InstrumentSnapshot,
         instrument_provider: Callable[[str], InstrumentSnapshot] | None = None,
         account_manager: TradingAccountManager | None = None,
+        credential_store: DpapiCredentialStore | None = None,
+        account_validator: BybitAccountValidator | None = None,
     ) -> None:
         self._account_manager = account_manager or paper_account_manager()
+        self._credential_store = credential_store
+        self._account_validator = account_validator
+        self._stored_bybit_accounts = list(credential_store.load()) if credential_store else []
+        for stored in self._stored_bybit_accounts:
+            self._account_manager.register_inactive(TradingAccount(
+                TradingAccountId(stored.id), stored.display_name,
+                TradingAccountProvider.BYBIT, TradingAccountEnvironment(stored.environment),
+                TradingAccountStatus.DISCONNECTED,
+            ))
         active_account = self._account_manager.active_account
         if (
             active_account.provider is not TradingAccountProvider.PAPER
@@ -139,6 +157,31 @@ class PaperRuntime:
 
     def account_catalog(self) -> dict[str, object]:
         return self._account_manager.catalog_projection()
+
+    def add_bybit_account(self, display_name: str, api_key: str, api_secret: str) -> dict[str, object]:
+        if not self._credential_store or not self._account_validator:
+            raise RuntimeError("account_provisioning_unavailable")
+        if not all(isinstance(value, str) and value.strip() for value in (display_name, api_key, api_secret)):
+            raise ValueError("invalid_account_payload")
+        display_name, api_key, api_secret = display_name.strip(), api_key.strip(), api_secret.strip()
+        for stored in self._stored_bybit_accounts:
+            if hmac.compare_digest(stored.api_key, api_key) and hmac.compare_digest(stored.api_secret, api_secret):
+                return {"account_id": stored.id, "created": False}
+        validated = self._account_validator.validate(BybitCredentials(api_key, api_secret))
+        account_id = f"bybit-{uuid4().hex}"
+        stored = StoredBybitAccount(
+            account_id, display_name, validated.environment, api_key, api_secret,
+            validated.read_only,
+        )
+        updated = (*self._stored_bybit_accounts, stored)
+        self._credential_store.save(updated)
+        self._account_manager.register_inactive(TradingAccount(
+            TradingAccountId(account_id), display_name, TradingAccountProvider.BYBIT,
+            TradingAccountEnvironment(validated.environment),
+            TradingAccountStatus.READ_ONLY if validated.read_only else TradingAccountStatus.READY,
+        ))
+        self._stored_bybit_accounts.append(stored)
+        return {"account_id": account_id, "created": True}
 
     def process_orderbook_update(self, notified_book_update_id: str) -> int:
         if not notified_book_update_id:

@@ -34,4 +34,56 @@ describe("AccountMenu", () => {
     await waitFor(() => expect(screen.getAllByText("UNAVAILABLE").length).toBeGreaterThan(0));
     expect(screen.getByRole("alert")).toHaveTextContent("Account catalog unavailable");
   });
+
+  it("submits credentials once, refreshes catalog, and clears the dialog on success", async () => {
+    const withBybit = { ...catalog, accounts: [...catalog.accounts, {
+      id: "bybit-1", display_name: "Main", provider: "BYBIT", environment: "MAINNET", status: "READY",
+    }] };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => catalog })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, account_id: "bybit-1", created: true }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => withBybit });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AccountMenu open onToggle={vi.fn()} />);
+    await screen.findByText("Current");
+    fireEvent.click(screen.getByRole("button", { name: "+ Add account" }));
+    fireEvent.change(screen.getByLabelText("Account name"), { target: { value: "Main" } });
+    fireEvent.change(screen.getByLabelText("API Key"), { target: { value: "key" } });
+    fireEvent.change(screen.getByLabelText("API Secret"), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    await screen.findByText("Main");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls[1][1].body).toContain('"api_secret":"secret"');
+    expect(screen.getAllByText("Current")).toHaveLength(1);
+  });
+
+  it("keeps the dialog open and uses a normalized safe error message", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => catalog })
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false, error: "bybit_validation_failed" }) }));
+    render(<AccountMenu open onToggle={vi.fn()} />);
+    await screen.findByText("Current");
+    fireEvent.click(screen.getByRole("button", { name: "+ Add account" }));
+    for (const [label, value] of [["Account name", "Main"], ["API Key", "key"], ["API Secret", "secret"]]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Add account" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Bybit rejected these credentials.");
+    expect(screen.getByLabelText("API Secret")).toHaveValue("secret");
+  });
+
+  it("visually classifies non-tradable and unverified account statuses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+      ...catalog,
+      accounts: [
+        ...catalog.accounts,
+        { id: "read", display_name: "Read only", provider: "BYBIT", environment: "MAINNET", status: "READ_ONLY" },
+        { id: "cold", display_name: "Needs validation", provider: "BYBIT", environment: "TESTNET", status: "DISCONNECTED" },
+      ],
+    }) }));
+    render(<AccountMenu open onToggle={vi.fn()} />);
+    expect((await screen.findByText("Read only")).closest("article")).toHaveClass("status-read_only");
+    expect(screen.getByText("Needs validation").closest("article")).toHaveClass("status-disconnected");
+    expect(screen.getAllByText("Current")).toHaveLength(1);
+  });
 });

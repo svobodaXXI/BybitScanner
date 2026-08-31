@@ -9,6 +9,8 @@ from decimal import Decimal
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from terminal.domain.models import (
     Category, OrderId, OrderSide, Price, Quantity, Symbol, TradingAccountId,
 )
@@ -26,6 +28,9 @@ from terminal.runtime.paper_http_server import (
     WorkspaceMarketDataManager,
 )
 from terminal.runtime.paper_runtime import PaperRuntime
+from terminal.exchange.bybit_account_validation import ValidatedBybitAccount
+from terminal.exchange.bybit_account_validation import AccountValidationError
+from terminal.persistence.credential_store import CredentialStoreError, DpapiCredentialStore
 
 
 class _SwitchBook:
@@ -557,7 +562,7 @@ class StaticBookProvider:
         return "BTCUSDT:20:10", self.get_book(symbol)
 
 
-def _runtime_owner(path: Path) -> SerializedPaperRuntime:
+def _runtime_owner(path: Path, *, credential_store=None, account_validator=None) -> SerializedPaperRuntime:
     instrument = InstrumentSnapshot(
         Category.LINEAR, "BTCUSDT", "LinearPerpetual", "Trading",
         "BTC", "USDT", "USDT", Decimal("0.5"), Decimal("1000000"),
@@ -569,6 +574,8 @@ def _runtime_owner(path: Path) -> SerializedPaperRuntime:
         book_provider=StaticBookProvider(),
         instrument_snapshot=instrument,
         instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
+        credential_store=credential_store,
+        account_validator=account_validator,
     ))
 
 
@@ -1017,6 +1024,164 @@ def test_accounts_get_allow_lists_fields_and_drops_credential_material():
         }
     finally:
         server.server_close()
+
+
+def test_add_bybit_account_persists_inactive_account_without_generation_change():
+    class Protector:
+        def protect(self, value): return value[::-1]
+        def unprotect(self, value): return value[::-1]
+
+    class Validator:
+        def validate(self, credentials):
+            return ValidatedBybitAccount("TESTNET", True)
+
+    with tempfile.TemporaryDirectory() as temp:
+        credential_path = Path(temp) / "accounts.dpapi"
+        runtime = _runtime_owner(
+            Path(temp) / "paper.sqlite3",
+            credential_store=DpapiCredentialStore(credential_path, Protector()),
+            account_validator=Validator(),
+        )
+        try:
+            created = runtime.call(lambda owner: owner.add_bybit_account("Test", "key", "secret"))
+            replayed = runtime.call(lambda owner: owner.add_bybit_account("Test", "key", "secret"))
+            catalog = runtime.call(lambda owner: owner.account_catalog())
+            assert created["created"] is True
+            assert replayed == {"account_id": created["account_id"], "created": False}
+            assert catalog["active_account_id"] == "paper"
+            assert catalog["session_generation"] == 1
+            assert len(catalog["accounts"]) == 2
+            assert catalog["accounts"][1]["environment"] == "TESTNET"
+            assert catalog["accounts"][1]["status"] == "READ_ONLY"
+            serialized = json.dumps(catalog).lower()
+            assert "secret" not in serialized and '"api_key"' not in serialized
+        finally:
+            runtime.close()
+
+
+def test_fresh_trading_capable_validation_is_ready_but_restart_is_disconnected():
+    class Protector:
+        def protect(self, value): return value[::-1]
+        def unprotect(self, value): return value[::-1]
+
+    class Validator:
+        def validate(self, credentials): return ValidatedBybitAccount("MAINNET", False)
+
+    class MustNotValidateOnStartup:
+        def validate(self, credentials): raise AssertionError("startup must not claim fresh validation")
+
+    with tempfile.TemporaryDirectory() as temp:
+        credential_path = Path(temp) / "accounts.dpapi"
+        database_path = Path(temp) / "paper.sqlite3"
+        runtime = _runtime_owner(
+            database_path,
+            credential_store=DpapiCredentialStore(credential_path, Protector()),
+            account_validator=Validator(),
+        )
+        try:
+            runtime.call(lambda owner: owner.add_bybit_account("Main", "key", "secret"))
+            fresh = runtime.call(lambda owner: owner.account_catalog())
+            assert fresh["accounts"][1]["status"] == "READY"
+            assert fresh["active_account_id"] == "paper"
+            assert fresh["session_generation"] == 1
+        finally:
+            runtime.close()
+
+        restarted = _runtime_owner(
+            database_path,
+            credential_store=DpapiCredentialStore(credential_path, Protector()),
+            account_validator=MustNotValidateOnStartup(),
+        )
+        try:
+            catalog = restarted.call(lambda owner: owner.account_catalog())
+            assert catalog["accounts"][1]["status"] == "DISCONNECTED"
+            assert catalog["active_account_id"] == "paper"
+            assert catalog["session_generation"] == 1
+            serialized = json.dumps(catalog).lower()
+            assert "secret" not in serialized and '"api_key"' not in serialized
+        finally:
+            restarted.close()
+
+
+def test_account_post_never_echoes_credentials_on_validation_failure():
+    class Runtime:
+        def call(self, operation):
+            raise AccountValidationError("internal detail must stay private")
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = Runtime()
+    response = {}
+
+    def post():
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/accounts",
+            data=json.dumps({"display_name": "Main", "api_key": "submitted-key", "api_secret": "submitted-secret"}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            urllib.request.urlopen(request)
+        except urllib.error.HTTPError as error:
+            response.update(json.load(error))
+
+    client = threading.Thread(target=post)
+    client.start()
+    try:
+        server.handle_request()
+        client.join(timeout=5)
+        assert response == {"ok": False, "error": "bybit_validation_failed"}
+        assert "submitted" not in json.dumps(response)
+    finally:
+        server.server_close()
+
+
+def test_account_post_rejects_malformed_payload_without_runtime_call():
+    class Runtime:
+        def call(self, operation):
+            raise AssertionError("runtime must not receive malformed credentials")
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = Runtime()
+    response = {}
+
+    def post():
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{server.server_port}/api/accounts",
+            data=json.dumps({"display_name": "Main", "api_key": "key"}).encode(),
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        try:
+            urllib.request.urlopen(request)
+        except urllib.error.HTTPError as error:
+            response["status"] = error.code
+            response["body"] = json.load(error)
+
+    client = threading.Thread(target=post)
+    client.start()
+    try:
+        server.handle_request()
+        client.join(timeout=5)
+        assert response == {"status": 400, "body": {"ok": False, "error": "invalid_account_payload"}}
+    finally:
+        server.server_close()
+
+
+def test_storage_failure_does_not_add_account():
+    class FailingStore:
+        def load(self): return ()
+        def save(self, accounts): raise CredentialStoreError("write failed")
+
+    class Validator:
+        def validate(self, credentials): return ValidatedBybitAccount("MAINNET", False)
+
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3", credential_store=FailingStore(), account_validator=Validator())
+        try:
+            with pytest.raises(CredentialStoreError):
+                runtime.call(lambda owner: owner.add_bybit_account("Main", "key", "secret"))
+            catalog = runtime.call(lambda owner: owner.account_catalog())
+            assert [item["id"] for item in catalog["accounts"]] == ["paper"]
+        finally:
+            runtime.close()
 
 
 def test_threaded_http_serializes_concurrent_paper_mutations():

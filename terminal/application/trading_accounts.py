@@ -114,6 +114,13 @@ class TradingAccountManager:
             raise RuntimeError("trading account context is not the active account")
         return self.active_account
 
+    def register_inactive(self, account: TradingAccount) -> None:
+        if not isinstance(account, TradingAccount):
+            raise TypeError("registered account must be TradingAccount")
+        if account.id in self._accounts:
+            raise ValueError("trading account id is already registered")
+        self._accounts[account.id] = account
+
     def catalog_projection(self) -> dict[str, object]:
         """Return the credential-free, read-only transport account catalog."""
         return {

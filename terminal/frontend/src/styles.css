@@ -1316,6 +1316,13 @@ button {
   display: grid;
   gap: 0.2rem;
 }
+.account-card.status-read_only,
+.account-card.status-disconnected {
+  border-color: #8c7138;
+  background: #252014;
+}
+.account-card.status-read_only small,
+.account-card.status-disconnected small { color: #e0b862; }
 .account-card {
   padding: 0.65rem;
   border: 1px solid #3c7757;

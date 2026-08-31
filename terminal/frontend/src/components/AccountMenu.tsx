@@ -38,6 +38,18 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
   const [name, setName] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+
+  const refreshCatalog = async () => {
+    const response = await fetch(marketApiRoutes.accounts);
+    if (!response.ok) throw new Error("account catalog unavailable");
+    const payload: unknown = await response.json();
+    const candidate = (payload as { ok?: unknown }).ok === true ? payload : null;
+    if (!validCatalog(candidate)) throw new Error("invalid account catalog");
+    setCatalog(candidate);
+    setCatalogError(false);
+  };
 
   useEffect(() => {
     const controller = new AbortController();
@@ -65,6 +77,40 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
     setName("");
     setApiKey("");
     setApiSecret("");
+    setSubmitError("");
+  };
+
+  const submitAccount = async () => {
+    setSubmitting(true);
+    setSubmitError("");
+    try {
+      const response = await fetch(marketApiRoutes.accounts, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: name.trim(), api_key: apiKey.trim(), api_secret: apiSecret }),
+      });
+      const payload = await response.json() as { ok?: boolean; error?: string };
+      if (!response.ok || payload.ok !== true) {
+        const messages: Record<string, string> = {
+          bybit_validation_failed: "Bybit rejected these credentials.",
+          credential_storage_failed: "Secure credential storage is unavailable.",
+          invalid_account_payload: "Complete all account fields.",
+        };
+        setSubmitError(messages[payload.error ?? ""] ?? "Account could not be added.");
+        return;
+      }
+      closeAdd();
+      try {
+        await refreshCatalog();
+      } catch {
+        setCatalog(null);
+        setCatalogError(true);
+      }
+    } catch {
+      setSubmitError("Account could not be added.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -89,7 +135,7 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
         <section className="account-menu" aria-label="Accounts">
           <header><strong>Accounts</strong></header>
           {catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts.map((account) => (
-            <article className={`account-card ${account.environment.toLowerCase()}`} key={account.id}>
+            <article className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}`} key={account.id}>
               <strong>{account.display_name}</strong>
               <small>{account.provider} · {account.environment} · {account.status}</small>
               {account.id === catalog.active_account_id ? <span>Current</span> : null}
@@ -107,8 +153,10 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
             <label>Account name<input value={name} onChange={(event) => setName(event.target.value)} /></label>
             <label>API Key<input value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
             <label>API Secret<input autoComplete="new-password" type="password" value={apiSecret} onChange={(event) => setApiSecret(event.target.value)} /></label>
-            <p>API connection will be enabled in the next step</p>
-            <button disabled type="button">Add account</button>
+            {submitError ? <p role="alert">{submitError}</p> : null}
+            <button disabled={submitting || !name.trim() || !apiKey.trim() || !apiSecret.trim()} onClick={submitAccount} type="button">
+              {submitting ? "Validating…" : "Add account"}
+            </button>
           </section>
         </div>
       ) : null}

@@ -57,6 +57,8 @@ from terminal.market_data.workspace_errors import (
     UpstreamWorkspaceMarketDataFailure,
 )
 from terminal.runtime.paper_runtime import PaperRuntime
+from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
+from terminal.persistence.credential_store import CredentialStoreError, DpapiCredentialStore
 
 
 LOGGER = logging.getLogger(__name__)
@@ -83,6 +85,7 @@ LIMIT_FIELDS = {
 LIMIT_CANCEL_FIELDS = {"client_action_id", "symbol", "order_id"}
 LIMIT_AMEND_FIELDS = {"client_action_id", "symbol", "order_id", "limit_price"}
 STOP_MUTATION_FIELDS = {"client_action_id", "symbol", "trigger_price"}
+ACCOUNT_CREATE_FIELDS = {"display_name", "api_key", "api_secret"}
 ACCOUNT_DESCRIPTOR_FIELDS = {"id", "display_name", "provider", "environment", "status"}
 
 
@@ -1714,6 +1717,27 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        if self.path == "/api/accounts":
+            try:
+                payload = self._payload(ACCOUNT_CREATE_FIELDS)
+                result = self.server.runtime.call(lambda runtime: runtime.add_bybit_account(
+                    payload["display_name"], payload["api_key"], payload["api_secret"],
+                ))
+            except AccountValidationError:
+                self._json_response(422, {"ok": False, "error": "bybit_validation_failed"})
+                return
+            except CredentialStoreError:
+                self._json_response(503, {"ok": False, "error": "credential_storage_failed"})
+                return
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_account_payload"})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "account_provisioning_unavailable"})
+                return
+            self._json_response(201 if result["created"] else 200, {"ok": True, **result})
+            return
+
         if self.path == "/api/workspace/symbol":
             try:
                 payload = self._payload(WORKSPACE_SYMBOL_FIELDS)
@@ -1981,6 +2005,8 @@ def main() -> None:
         book_provider=book_provider,
         instrument_snapshot=instrument_snapshot,
         instrument_provider=lambda symbol: instruments.get(symbol),
+        credential_store=DpapiCredentialStore(database_path.with_suffix(".credentials.dpapi")),
+        account_validator=BybitAccountValidator(),
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(
