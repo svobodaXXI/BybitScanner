@@ -6168,11 +6168,10 @@ Version 7.83 records real-phone `PASS` for active-symbol-first ordering, active-
 order, Close All placement and its final red-border emphasis. Execution semantics remain unchanged. Open Positions
 UX is `ACCEPTED / COMPLETE`; the next Terminal implementation item is STOP + TAKE PROFIT on PAPER.
 
-## READ-ONLY LIVE RECONCILIATION ARCHITECTURE CHECKPOINT
+## READ-ONLY LIVE RECONCILIATION ACCEPTED CHECKPOINT
 
-Version 7.84 records human approval and the subsequently authorized production implementation of ChangeRequest
-revision 2.0. Secure Bybit provisioning at commit `41c38cff5cb16fd912b9632d5274fb1880ddc3b0` remains the latest committed
-runtime checkpoint; the current uncommitted slice adds account-wide read-only LIVE reconciliation.
+Version 7.84 records `REAL-PHONE / REAL-BYBIT READ-ONLY RECONCILIATION ACCEPTED / PASS` for ChangeRequest revision
+2.0 at implementation commit `b748350ca5d8ddb03c465272ab287af2880ddec9`.
 
 The approved target adds one L3 account-wide discovery orchestrator above the existing L2 symbol-scoped
 `ReconciliationCoordinator`; it does not create a parallel reconciliation stack. It reuses backend DPAPI
@@ -6181,7 +6180,27 @@ and atomically publishes only a complete current per-account refresh generation.
 `DISCONNECTED` until fresh validation and complete read reconciliation; stale, mismatched or failed refreshes
 cannot promote status. PAPER remains active and `paper_accounts` remains PAPER-only.
 
-Targeted backend/security and frontend tests plus the production build pass. Exact next action is manual
-real-interface acceptance of the rebuilt account catalog refresh/status presentation. Account switching, private
-streams and LIVE mutations remain out of scope.
+After the production build, a real saved Bybit MAINNET account successfully completed Refresh/Reconnect. Fresh
+validation plus account-wide reconciliation reached `READY`; the UI displayed real Equity and Wallet, 33 positions
+and 13 active orders. `Paper / Virtual` remained the sole `Current` account, `active_account_id` did not switch,
+no LIVE mutations were performed, and no credential exposure was observed.
+
+Exact next stage: `ACTIVE ACCOUNT SWITCHING + ACCOUNT-SCOPED WORKSPACE ACTIVATION`, without LIVE mutations.
+Private streams and LIVE mutations remain outside this accepted checkpoint.
+
+## ACTIVE ACCOUNT SWITCHING ARCHITECTURE CHECKPOINT
+
+Version 7.85 records ChangeRequest revision 2.1 as a human-approved documentation-only bounded architecture
+amendment. Revision 2.0 at commit `b748350ca5d8ddb03c465272ab287af2880ddec9` remains the last implemented and
+real-phone/real-Bybit accepted runtime checkpoint.
+
+The amendment separates permanent PAPER storage identity `TradingAccountId("paper")` from dynamic
+`TradingAccountManager` session authority; defines an atomic eligible-target switch with exactly one generation
+increment; introduces one account/session-scoped Workspace projection router; requires frontend stale-result
+rejection by `account_id + session_generation`; and places every mutation endpoint behind a backend gate allowing
+only active `PAPER / PAPER / READY`. LIVE and READ_ONLY sessions remain view-only. Existing public market data and
+Workspace-symbol authority are reused unchanged.
+
+Exact next action requires separate explicit authorization for production implementation of `ACTIVE ACCOUNT
+SWITCHING + ACCOUNT-SCOPED WORKSPACE ACTIVATION`. No LIVE mutation implementation is authorized.
 

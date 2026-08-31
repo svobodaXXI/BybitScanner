@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "2.0",
+  "revision": "2.1",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -370,10 +370,10 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "ACCOUNT_WIDE_READ_ONLY_LIVE_RECONCILIATION_IMPLEMENTED_AUTOMATED_PASS",
-  "implementation_status": "REVISION_2_0_IMPLEMENTED_VERIFIED_MANUAL_ACCEPTANCE_PENDING",
-  "next_phase": "VERIFY",
-  "next_phase_authorization": "REVISION_2_0_PRODUCTION_IMPLEMENTATION_AUTHORIZED",
+  "current_checkpoint": "ACTIVE_ACCOUNT_SWITCHING_ACCOUNT_SCOPED_WORKSPACE_ARCHITECTURE_RECORDED",
+  "implementation_status": "REVISION_2_1_DOCUMENTATION_ONLY_IMPLEMENTATION_NOT_AUTHORIZED",
+  "next_phase": "IMPLEMENT",
+  "next_phase_authorization": "SEPARATE_EXPLICIT_PRODUCTION_IMPLEMENTATION_AUTHORIZATION_REQUIRED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -470,7 +470,8 @@
     {"revision": "1.79", "reason": "Implemented and verified M7 as deterministic bounded backend and frontend chaos/regression coverage for authority isolation, sequence and resnapshot boundaries, replay and queue pressure, reconnect/resume, component escalation and mixed projection churn while preserving legacy SSE, full PAPER L2 and command/order semantics; M8 device and transport acceptance remains not started", "date": "2026-08-30"},
     {"revision": "1.80", "reason": "Kept M8 open after production/tunnel real-browser 5m-to-1m acceptance exposed a reproducible Chart/DOM viewport feedback loop plus a coincident tunnel WebSocket abort; implemented and built a bounded stable-viewport shell correction and atomic 5m-to-1m-to-5m regression while requiring fresh tunnel/browser and real-phone re-acceptance before PASS", "date": "2026-08-30"},
     {"revision": "1.81", "reason": "Completed M8 after rebuilt production assets passed desktop and real-phone Chrome acceptance through the active lhr.life tunnel for ONGUSDT 5m-to-1m-to-5m with bounded Chart and DOM, visible candles, live DOM and Smart Tape, and no recurrence of LIVE BOOK UNAVAILABLE", "date": "2026-08-30"},
-    {"revision": "2.0", "reason": "Human-approved bounded architecture amendment defining account-wide read-only LIVE discovery above the existing symbol-scoped ReconciliationCoordinator, separate account-scoped LIVE projections, per-account refresh generation, atomic stale-safe publication, credential-free transport and mutation prohibition without authorizing implementation", "date": "2026-08-31"}
+    {"revision": "2.0", "reason": "Implemented and accepted account-wide read-only LIVE reconciliation after a production build and real-phone test against a saved Bybit MAINNET account: fresh Refresh/Reconnect reached READY, showed real Equity and Wallet plus 33 positions and 13 active orders, preserved Paper as the sole Current account without switching, performed no LIVE mutations and exposed no credentials; next stage is active-account switching plus account-scoped Workspace activation without LIVE mutations", "date": "2026-08-31"},
+    {"revision": "2.1", "reason": "Human-approved documentation-only bounded architecture amendment separating immutable PAPER storage identity from active session authority, defining one account-scoped Workspace projection router, atomic eligible account switching, session-aware stale rejection, a backend PAPER-only mutation gate, read-only LIVE views and unchanged public symbol/market-data authority; production implementation remains separately authorization-gated", "date": "2026-08-31"}
   ]
 }
 ```
@@ -4599,5 +4600,76 @@ Implementation acceptance requires regressions for persisted DISCONNECTED startu
 validation, environment mismatch, validation/discovery/store/coordinator failure, PAPER authority preservation,
 account and generation isolation, stale-result rejection, cross-account contamination, mutation-adapter absence,
 credential-free transport and frontend refresh/status rendering. Production implementation was explicitly
-authorized on 2026-08-31; automated verification does not replace manual real-interface frontend acceptance.
+authorized on 2026-08-31.
+
+Revision 2.0 is `REAL-PHONE / REAL-BYBIT READ-ONLY RECONCILIATION ACCEPTED / PASS`. After the production build,
+a real saved Bybit MAINNET account successfully completed Refresh/Reconnect and fresh validation plus account-wide
+reconciliation reached `READY`. The UI displayed real Equity and Wallet together with 33 positions and 13 active
+orders. `Paper / Virtual` remained the sole `Current` account, `active_account_id` did not switch, no LIVE mutation
+was performed, and no credential exposure was observed. The next stage is `ACTIVE ACCOUNT SWITCHING +
+ACCOUNT-SCOPED WORKSPACE ACTIVATION`, still without LIVE mutations.
+
+## ACTIVE ACCOUNT SWITCHING + ACCOUNT-SCOPED WORKSPACE ARCHITECTURE AMENDMENT
+
+Revision 2.1 is a documentation-only bounded amendment. It resolves the conflict found between immutable PAPER
+persistence identity and dynamic active-account/session authority. It does not authorize production implementation.
+
+### Identity, authority and atomic switch
+
+`TradingAccountId("paper")` is the permanent PAPER storage identity. PAPER limits, positions, protection,
+inventory and close paths always use that key and never derive a storage key from `active_account_id`.
+`TradingAccountManager` remains the sole owner of `active_account_id`, `session_generation` and the immutable
+`AccountSessionToken`; current status and active/current selection remain separate axes.
+
+The switch transaction validates the target, captures the current session token, requires a complete current LIVE
+snapshot for a Bybit target, then atomically changes manager authority and increments `session_generation` exactly
+once. Failure changes neither active account nor generation. PAPER `READY` and Bybit `READY` are eligible; Bybit
+`READ_ONLY` is eligible only for a read-only Workspace. `DISCONNECTED`, `RECONCILING` and `ERROR` are rejected with
+Refresh/Reconnect required. The credential-free switch request contains only the opaque account id; the response
+contains the new active account id, session generation and normalized safe status/error.
+
+### Account-scoped projection router
+
+One backend Workspace read router selects projections exclusively from the active session. PAPER reads existing
+PAPER projections under the immutable paper key. Bybit reads only the current complete LIVE snapshot for that
+account. Its normalized envelope contains account id, provider, environment, status, session generation,
+projection generation/version, positions, orders and wallet/account summary where applicable. PAPER and LIVE facts
+must never mix. Every response carries account id and session generation; the frontend rejects it if either no
+longer matches its current `AccountSessionToken`.
+
+The global `paperTradingStore` ownership must be replaced or generalized into a session-aware Workspace/account
+projection store keyed by `account_id + session_generation`. Successful switching immediately makes the prior
+projection inaccessible; late HTTP or WebSocket results from that session are discarded, so the UI cannot display
+one frame of the previous account. LIVE positions and orders are read-only views with symbol navigation only and no
+PAPER close/cancel affordances.
+
+### Mutation and market-data boundaries
+
+All existing trading mutation endpoints share one authoritative backend gate. Mutation is permitted only when the
+active account is provider `PAPER`, environment `PAPER`, status `READY`. Market BUY/SELL, Limit create/amend/cancel,
+STOP, TAKE, per-position close, Close All and every other current mutation fail closed for any LIVE or read-only
+session with a normalized error such as `live_mutations_disabled`; no Bybit mutation adapter is invoked. Frontend
+controls are also hidden or disabled for LIVE, but are never the security boundary.
+
+Account switching creates no market-data owner. Chart, candles, DOM, prints/trades, ticker and public order book
+remain under the existing Workspace symbol authority and its independent symbol generation. A valid current symbol
+is preserved on account switch. Selecting a LIVE position/order symbol uses the existing Workspace-symbol switch
+path. Account session generation, LIVE refresh generation and public symbol generation are distinct authority
+dimensions: stale switch responses, account projections, LIVE refresh results, PAPER async results and symbol
+results are each rejected against their own captured token/generation.
+
+### UX and acceptance gate
+
+The backend `active_account_id` alone projects Current. The active account sorts first; all other accounts retain
+stable order and status. Exactly one golden key appears beside the active account name. Selecting a non-current
+card enters `IDLE -> CONFIRMING -> SWITCHING -> ACTIVE(new token)` or `FAILED(old token remains authoritative)`;
+the dialog names account and environment, and duplicate taps are blocked while switching.
+
+Implementation acceptance requires regressions proving immutable PAPER storage identity; PAPER-to-LIVE-to-PAPER
+projection restoration without mixed facts; every backend mutation blocked for LIVE and READ_ONLY; eligible and
+ineligible target behavior; exactly-once generation increment and unchanged failed-switch generation; stale switch,
+projection, refresh, PAPER and symbol-result rejection; active-first ordering and one golden key; read-only LIVE
+positions/orders without mutation actions; existing symbol navigation and public market-data reuse; credential-free
+transport; and absence of any mutation-adapter call. Production implementation requires separate explicit human
+authorization after this documentation checkpoint.
 
