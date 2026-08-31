@@ -140,6 +140,8 @@ def safe_account_catalog(value: object) -> dict[str, object]:
 STOP_DELETE_FIELDS = {"client_action_id", "symbol"}
 WORKSPACE_SYMBOL_FIELDS = {"symbol"}
 NATIVE_KLINE_INTERVALS = ("1", "5", "15", "60", "D")
+BYBIT_WEBSOCKET_CONNECT_TIMEOUT = 10.0
+INITIAL_WORKSPACE_READINESS_TIMEOUT = 30.0
 SUPPORTED_KLINE_INTERVALS = ("15s", *NATIVE_KLINE_INTERVALS)
 
 
@@ -1069,14 +1071,18 @@ def create_bybit_websocket_connection(url: str, *, timeout: float):
         username=unquote(parsed.username) if parsed.username else None,
         password=unquote(parsed.password) if parsed.password else None,
     )
-    proxy_socket.settimeout(timeout)
+    proxy_socket.settimeout(BYBIT_WEBSOCKET_CONNECT_TIMEOUT)
     active_socket = proxy_socket
     try:
         proxy_socket.connect((target.hostname, target.port or 443))
         active_socket = ssl.create_default_context().wrap_socket(
             proxy_socket, server_hostname=target.hostname,
         )
-        return websocket.create_connection(url, timeout=timeout, socket=active_socket)
+        connection = websocket.create_connection(
+            url, timeout=BYBIT_WEBSOCKET_CONNECT_TIMEOUT, socket=active_socket,
+        )
+        connection.settimeout(timeout)
+        return connection
     except BaseException:
         active_socket.close()
         raise
@@ -1115,7 +1121,8 @@ class WorkspaceMarketDataManager:
                  runtime: SerializedPaperRuntime, initial: MarketDataSession, *,
                  hub: MarketDataHub | None = None,
                  session_factory: Callable[[str, Decimal], MarketDataSession] | None = None,
-                 readiness_timeout: float = 15.0) -> None:
+                 readiness_timeout: float = 15.0,
+                 initial_readiness_timeout: float | None = None) -> None:
         self._instruments = instruments
         self._provider = provider
         self._runtime = runtime
@@ -1125,6 +1132,11 @@ class WorkspaceMarketDataManager:
         self._active.generation = self._generation
         self._session_factory = session_factory or create_market_data_session
         self._readiness_timeout = readiness_timeout
+        self._initial_readiness_timeout = (
+            readiness_timeout
+            if initial_readiness_timeout is None
+            else initial_readiness_timeout
+        )
         self._lock = threading.RLock()
         self._switch_lock = threading.Lock()
         self._controller = (
@@ -1308,8 +1320,10 @@ class WorkspaceMarketDataManager:
 
     def ensure_initial_ready(self) -> MarketDataSession:
         if self._controller is not None:
-            return self._controller.ensure_initial_ready(self._readiness_timeout)
-        if not self._active.wait_until_ready(self._readiness_timeout):
+            return self._controller.ensure_initial_ready(
+                self._initial_readiness_timeout,
+            )
+        if not self._active.wait_until_ready(self._initial_readiness_timeout):
             raise TimeoutError("Initial market data did not become READY")
         return self._active
 
@@ -2129,7 +2143,12 @@ def main() -> None:
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(
-        instruments, book_provider, runtime, initial_market, hub=hub,
+        instruments,
+        book_provider,
+        runtime,
+        initial_market,
+        hub=hub,
+        initial_readiness_timeout=INITIAL_WORKSPACE_READINESS_TIMEOUT,
     )
     market_data.ensure_initial_ready()
 

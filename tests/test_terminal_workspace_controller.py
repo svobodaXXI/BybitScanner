@@ -180,6 +180,34 @@ def test_initial_workspace_fails_closed_until_composite_ready():
     assert controller.state().switch_state == "READY"
 
 
+def test_initial_workspace_accepts_slow_bootstrap_inside_bounded_budget():
+    context = _context("BTCUSDT", False)
+    controller = WorkspaceController(
+        _Hub(context, {}), context, lambda old, new: None, poll_interval=0.001,
+    )
+    timer = threading.Timer(0.02, _make_ready, args=(context,))
+    timer.start()
+    try:
+        assert controller.ensure_initial_ready(0.05) is context
+    finally:
+        timer.join(timeout=1)
+    assert controller.state().switch_state == "READY"
+
+
+def test_initial_workspace_rejects_bootstrap_beyond_bounded_budget():
+    context = _context("BTCUSDT", False)
+    controller = WorkspaceController(
+        _Hub(context, {}), context, lambda old, new: None, poll_interval=0.001,
+    )
+    try:
+        controller.ensure_initial_ready(0.01)
+    except WorkspaceCandidateNotReady:
+        pass
+    else:
+        raise AssertionError("bootstrap beyond readiness budget was accepted")
+    assert controller.state().switch_state == "FAILED"
+
+
 def test_timeout_preserves_previous_and_discards_new_candidate():
     btc = _context("BTCUSDT", True)
     ong = _context("ONGUSDT", False)

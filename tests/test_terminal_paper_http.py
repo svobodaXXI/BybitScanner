@@ -19,6 +19,7 @@ from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.workspace_errors import WorkspaceCandidateNotReady
 from terminal.runtime.paper_http_server import (
+    BYBIT_WEBSOCKET_CONNECT_TIMEOUT,
     PaperHttpHandler,
     MarketDataSession,
     PublicKlineBuffer,
@@ -65,6 +66,10 @@ def test_bybit_websocket_uses_configured_socks_proxy(monkeypatch):
     captured = {}
     secure_socket = object()
 
+    class Connection:
+        def settimeout(self, timeout):
+            captured["read_timeout"] = timeout
+
     class ProxySocket:
         def set_proxy(self, *args, **kwargs):
             captured["set_proxy"] = (args, kwargs)
@@ -80,7 +85,7 @@ def test_bybit_websocket_uses_configured_socks_proxy(monkeypatch):
 
     def connect(url, **kwargs):
         captured.update({"url": url, **kwargs})
-        return object()
+        return Connection()
 
     monkeypatch.setenv(
         "BYBITSCANNER_BYBIT_PROXY", "socks5h://127.0.0.1:10808",
@@ -96,9 +101,10 @@ def test_bybit_websocket_uses_configured_socks_proxy(monkeypatch):
     monkeypatch.setattr("terminal.runtime.paper_http_server.websocket.create_connection", connect)
     create_bybit_websocket_connection("wss://stream.bybit.com/v5/public/linear", timeout=1)
     assert captured["url"] == "wss://stream.bybit.com/v5/public/linear"
-    assert captured["timeout"] == 1
+    assert captured["timeout"] == BYBIT_WEBSOCKET_CONNECT_TIMEOUT
     assert captured["socket"] is secure_socket
-    assert captured["socket_timeout"] == 1
+    assert captured["socket_timeout"] == BYBIT_WEBSOCKET_CONNECT_TIMEOUT
+    assert captured["read_timeout"] == 1
     assert captured["connect"] == ("stream.bybit.com", 443)
     assert captured["wrap_socket"] == (proxy_socket, "stream.bybit.com")
     assert captured["set_proxy"][1] == {
@@ -116,6 +122,46 @@ def test_configured_bybit_proxy_fails_clearly_when_unavailable(monkeypatch):
 
     with pytest.raises(RuntimeError, match="must be a socks5"):
         validate_bybit_proxy("socks5h://127.0.0.1:not-a-port")
+
+
+def test_bybit_websocket_connect_timeout_remains_bounded(monkeypatch):
+    class Socket:
+        closed = False
+
+        def set_proxy(self, *args, **kwargs):
+            return None
+
+        def settimeout(self, timeout):
+            assert timeout == BYBIT_WEBSOCKET_CONNECT_TIMEOUT
+
+        def connect(self, address):
+            raise TimeoutError("SOCKS handshake exceeded connect budget")
+
+        def close(self):
+            self.closed = True
+
+    proxy_socket = Socket()
+    monkeypatch.setenv("BYBITSCANNER_BYBIT_PROXY", "socks5h://127.0.0.1:10808")
+    monkeypatch.setattr("terminal.runtime.paper_http_server.socks.socksocket", lambda: proxy_socket)
+    with pytest.raises(TimeoutError, match="exceeded connect budget"):
+        create_bybit_websocket_connection(
+            "wss://stream.bybit.com/v5/public/linear", timeout=1,
+        )
+    assert proxy_socket.closed is True
+
+
+def test_direct_websocket_preserves_existing_fast_path(monkeypatch):
+    captured = {}
+    connection = object()
+    monkeypatch.delenv("BYBITSCANNER_BYBIT_PROXY", raising=False)
+    monkeypatch.delenv("ALL_PROXY", raising=False)
+    monkeypatch.delenv("all_proxy", raising=False)
+    monkeypatch.setattr(
+        "terminal.runtime.paper_http_server.websocket.create_connection",
+        lambda url, **kwargs: captured.update({"url": url, **kwargs}) or connection,
+    )
+    assert create_bybit_websocket_connection("wss://stream.bybit.com", timeout=1) is connection
+    assert captured == {"url": "wss://stream.bybit.com", "timeout": 1}
 
 
 def test_bybit_websocket_closes_tls_socket_when_handshake_fails(monkeypatch):
