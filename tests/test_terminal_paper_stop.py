@@ -8,8 +8,6 @@ from decimal import Decimal
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
-import pytest
-
 from terminal.api.models import (
     ClientActionId,
     MarketCommandRequest,
@@ -61,12 +59,12 @@ def _serialized_paper_stop_long_crud_projection_revision_and_quantity():
 
             amended, amended_state = owner.call(lambda runtime: (
                 runtime.amend_stop(PaperStopMutationRequest(
-                    ClientActionId("stop-amend-long"), "BTCUSDT", Decimal("63900.24"),
+                    ClientActionId("stop-amend-long"), "BTCUSDT", Decimal("65000.24"),
                 )),
                 runtime.paper_state("BTCUSDT"),
             ))
             assert amended.reason_code == "amended"
-            assert amended_state["protection"]["stop_loss"] == "63900.5"
+            assert amended_state["protection"]["stop_loss"] == "65000.5"
             assert amended_state["protection"]["effective_quantity"] == quantity
             assert amended_state["state_revision"] == state["state_revision"] + 1
 
@@ -110,30 +108,29 @@ def _paper_stop_short_direction_and_tick_normalization():
             runtime.create_stop(PaperStopMutationRequest(
                 ClientActionId("stop-create-short"), "BTCUSDT", Decimal("64500.24"),
             ))
+            runtime.amend_stop(PaperStopMutationRequest(
+                ClientActionId("stop-amend-short"), "BTCUSDT", Decimal("63000.24"),
+            ))
             state = runtime.paper_state("BTCUSDT")
-            assert state["protection"]["stop_loss"] == "64500.0"
+            assert state["protection"]["stop_loss"] == "63000.0"
             assert state["protection"]["effective_quantity"] == state["position_quantity"]
         finally:
             runtime.close()
 
 
-def _paper_stop_rejects_flat_wrong_direction_and_duplicate_leg():
+def _paper_stop_rejects_flat_and_duplicate_leg(test_case: unittest.TestCase):
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
-            with pytest.raises(ValueError, match="open position"):
+            with test_case.assertRaisesRegex(ValueError, "open position"):
                 runtime.create_stop(PaperStopMutationRequest(
                     ClientActionId("stop-flat"), "BTCUSDT", Decimal("64000"),
                 ))
             _open(runtime, OrderSide.BUY, "open-for-validation")
-            with pytest.raises(ValueError, match="below"):
-                runtime.create_stop(PaperStopMutationRequest(
-                    ClientActionId("stop-wrong-direction"), "BTCUSDT", Decimal("65000"),
-                ))
             runtime.create_stop(PaperStopMutationRequest(
-                ClientActionId("stop-first"), "BTCUSDT", Decimal("64000"),
+                ClientActionId("stop-first"), "BTCUSDT", Decimal("65000"),
             ))
-            with pytest.raises(PersistenceError, match="already exists"):
+            with test_case.assertRaisesRegex(PersistenceError, "already exists"):
                 runtime.create_stop(PaperStopMutationRequest(
                     ClientActionId("stop-second"), "BTCUSDT", Decimal("63900"),
                 ))
@@ -221,8 +218,8 @@ class PaperStopTests(unittest.TestCase):
     def test_short_direction_and_tick_normalization(self):
         _paper_stop_short_direction_and_tick_normalization()
 
-    def test_flat_wrong_direction_and_duplicate_leg_are_rejected(self):
-        _paper_stop_rejects_flat_wrong_direction_and_duplicate_leg()
+    def test_flat_and_duplicate_leg_are_rejected(self):
+        _paper_stop_rejects_flat_and_duplicate_leg(self)
 
     def test_schema_v9_migration(self):
         _schema_v9_migrates_paper_protection_action_journal()

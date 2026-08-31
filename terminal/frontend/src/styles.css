@@ -3202,6 +3202,27 @@ button {
   touch-action: manipulation;
 }
 
+.stop-line.stop:is(
+  [data-protection-mode="CREATE"],
+  [data-protection-mode="EDIT"]
+) .stop-line-confirm {
+  width: 1.7rem;
+  height: 1.6rem;
+}
+
+.stop-line.stop:is(
+  [data-protection-mode="CREATE"],
+  [data-protection-mode="EDIT"]
+) .stop-line-confirm::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  width: 2.75rem;
+  height: 2.75rem;
+  transform: translateY(-50%);
+}
+
 .stop-line.take .stop-line-actions button {
   color: #38c7bd;
 }

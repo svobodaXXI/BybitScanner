@@ -78,14 +78,12 @@ def normalize_paper_protection_trigger(
     )
     if not (instrument.min_price <= normalized <= instrument.max_price):
         raise ValueError("protection trigger is outside instrument limits")
-    expects_below = (
-        (leg == "stop" and position.side is PositionSide.LONG)
-        or (leg == "take" and position.side is PositionSide.SHORT)
-    )
-    if expects_below and normalized >= position.average_entry:
-        raise ValueError(f"{leg.upper()} must be below authoritative average entry")
-    if not expects_below and normalized <= position.average_entry:
-        raise ValueError(f"{leg.upper()} must be above authoritative average entry")
+    if leg == "take":
+        expects_below = position.side is PositionSide.SHORT
+        if expects_below and normalized >= position.average_entry:
+            raise ValueError("TAKE must be below authoritative average entry")
+        if not expects_below and normalized <= position.average_entry:
+            raise ValueError("TAKE must be above authoritative average entry")
     return normalized
 
 

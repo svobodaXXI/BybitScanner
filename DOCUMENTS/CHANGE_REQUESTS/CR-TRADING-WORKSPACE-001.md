@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.98",
+  "revision": "1.99",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -4524,4 +4524,18 @@ symbol first, active-row highlight, stable ordering of other rows, Close All bes
 Close All border. Close All execution, confirmation and reconciliation semantics are unchanged. The ChangeRequest
 remains `IN_PROGRESS / IMPLEMENT`; the next blockers are STOP and TAKE PROFIT on PAPER, followed by real-account/API
 management and real execution/reconciliation.
+
+## STOP UNRESTRICTED PLACEMENT AND DEFERRED EDIT-DRAG CHECKPOINT
+
+Revision 1.99 records unrestricted manual PAPER STOP create/amend on either side of authoritative Average Entry
+for both LONG and SHORT while preserving closing-only execution, current-position quantity bounds and atomic FLAT
+protection cleanup. STOP CREATE and EDIT confirmation controls are real-phone accepted with matched visible
+check/cancel sizing, alignment and retained enlarged transparent confirmation touch targets. TAKE semantics remain
+unchanged.
+
+`OPEN / DEFERRED`: on a real phone, STOP EDIT mode entered through the pencil persists correctly, but the subsequent
+touch used to grab and drag the editable line is intermittently unreliable, approximately every other attempt. No
+root cause is proven. Further diagnosis and correction of this second-touch drag interaction are explicitly
+deferred by the user and do not revoke the accepted STOP create/amend confirmation or unrestricted placement
+semantics recorded above.
 

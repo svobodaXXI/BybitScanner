@@ -73,7 +73,7 @@ class PaperStopTriggerTests(unittest.TestCase):
 
     def test_long_stop_closes_current_quantity_and_clears_all_protection_atomically(self):
         self.open_position(OrderSide.BUY, "long-open")
-        self.create_stop("long-stop", "64000")
+        self.create_stop("long-stop", "65000")
         key = self.runtime._context.context_for("BTCUSDT").pretrade.position_key
         current = self.runtime.store.get_protection_projection(key)
         self.runtime.store.upsert_protection_projection(
@@ -84,7 +84,7 @@ class PaperStopTriggerTests(unittest.TestCase):
         expected_quantity = Decimal(before["position_quantity"])
         execution_count = len(self.runtime.store.load_executions())
 
-        self.book.move(update_id="BTCUSDT:2", bid="63999.5", ask="64000.5")
+        self.book.move(update_id="BTCUSDT:2", bid="64999.5", ask="65000.5")
         applied = self.runtime.process_orderbook_update("BTCUSDT:2")
         after = self.runtime.paper_state("BTCUSDT")
 
@@ -104,11 +104,11 @@ class PaperStopTriggerTests(unittest.TestCase):
 
     def test_short_stop_closes_without_reversing(self):
         self.open_position(OrderSide.SELL, "short-open")
-        self.create_stop("short-stop", "64500")
+        self.create_stop("short-stop", "64000")
         before = self.runtime.paper_state("BTCUSDT")
         expected_quantity = Decimal(before["position_quantity"])
 
-        self.book.move(update_id="BTCUSDT:4", bid="64500", ask="64500.5")
+        self.book.move(update_id="BTCUSDT:4", bid="64000", ask="64000.5")
         self.assertEqual(self.runtime.process_orderbook_update("BTCUSDT:4"), 1)
         after = self.runtime.paper_state("BTCUSDT")
 

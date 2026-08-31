@@ -36,6 +36,7 @@ export function StopLine({
       className={`stop-line ${leg.toLowerCase()} ${draft ? "draft" : "active"}`}
       data-protection-line
       data-protection-leg={leg}
+      data-protection-mode={mode}
       data-stop-line={leg === "STOP" ? "" : undefined}
       role={draft ? "slider" : undefined}
       aria-valuenow={draft ? Number(price) : undefined}
