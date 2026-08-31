@@ -176,6 +176,119 @@ def candidate_root(task_id: str, *, git: Git | None = None) -> Path:
     return directory / "candidate"
 
 
+def _run_with_index(
+    root: Path, index: Path, *args: str, input_bytes: bytes | None = None
+) -> subprocess.CompletedProcess[bytes]:
+    environment = os.environ.copy()
+    environment["GIT_INDEX_FILE"] = str(index)
+    return subprocess.run(
+        ("git", *args), cwd=root, env=environment, input=input_bytes,
+        capture_output=True, check=False,
+    )
+
+
+def _completed_output(result: subprocess.CompletedProcess[bytes], operation: str) -> str:
+    if result.returncode:
+        detail = (result.stderr or result.stdout).decode(errors="replace").strip()
+        raise TransactionError(operation + " failed" + (f": {detail}" if detail else ""))
+    return result.stdout.decode(errors="replace").strip()
+
+
+def candidate_tree(task_id: str, *, git: Git | None = None) -> str:
+    """Build and return the exact H-plus-candidate Git tree without changing a real index."""
+    active = git or Git(Path.cwd())
+    root = repository_root(active)
+    active = Git(root)
+    directory, metadata = _load(root, task_id, active)
+    blockers = _validate(root, active, metadata)
+    if blockers:
+        raise TransactionError("transaction is stale: " + ", ".join(blockers))
+    candidates = directory / "candidate"
+    descriptor, temporary_name = tempfile.mkstemp(prefix="tree-", suffix=".index", dir=directory)
+    os.close(descriptor)
+    index = Path(temporary_name)
+    index.unlink()
+    try:
+        _completed_output(
+            _run_with_index(root, index, "read-tree", metadata["head"]),
+            "candidate tree initialization",
+        )
+        for record in metadata["files"]:
+            relative = record["path"]
+            target = candidates / relative
+            if not target.is_file():
+                raise TransactionError(f"transaction candidate is missing: {relative}")
+            blob = _completed_output(
+                _run_with_index(root, index, "hash-object", "-w", "--stdin", input_bytes=target.read_bytes()),
+                f"candidate blob creation for {relative}",
+            )
+            mode_value = require_ok(
+                active.run("ls-tree", metadata["head"], "--", relative),
+                f"candidate mode discovery for {relative}",
+            )
+            mode = mode_value.split(None, 1)[0] if mode_value else "100644"
+            _completed_output(
+                _run_with_index(
+                    root, index, "update-index", "--add", "--cacheinfo", mode, blob, relative
+                ),
+                f"candidate tree update for {relative}",
+            )
+        return _completed_output(_run_with_index(root, index, "write-tree"), "candidate tree creation")
+    finally:
+        index.unlink(missing_ok=True)
+
+
+def create_isolated_worktree(task_id: str, *, git: Git | None = None) -> tuple[Path, str]:
+    """Create a detached H worktree and overlay the exact task-only candidate."""
+    active = git or Git(Path.cwd())
+    root = repository_root(active)
+    active = Git(root)
+    directory, metadata = _load(root, task_id, active)
+    tree = candidate_tree(task_id, git=active)
+    target = directory / "verification-worktree"
+    if target.exists():
+        raise TransactionError(f"isolated worktree residual already exists: {target}")
+    result = active.run("worktree", "add", "--detach", str(target), metadata["head"])
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise TransactionError(
+            f"isolated worktree creation failed at {target}" + (f": {detail}" if detail else "")
+        )
+    try:
+        for record in metadata["files"]:
+            relative = record["path"]
+            source = directory / "candidate" / relative
+            destination = target / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(source.read_bytes())
+    except Exception:
+        remove_isolated_worktree(target, git=active)
+        raise
+    return target, tree
+
+
+def remove_isolated_worktree(path: Path, *, git: Git | None = None) -> None:
+    """Remove only the exact temporary worktree, failing with its residual path."""
+    active = git or Git(Path.cwd())
+    root = repository_root(active)
+    active = Git(root)
+    resolved = path.resolve()
+    tasks_root = (_git_dir(root, active) / "bybitscanner" / "tasks").resolve()
+    try:
+        resolved.relative_to(tasks_root)
+    except ValueError as exc:
+        raise TransactionError(f"refusing to remove worktree outside task metadata: {resolved}") from exc
+    if resolved.name != "verification-worktree":
+        raise TransactionError(f"refusing to remove non-verification worktree: {resolved}")
+    result = active.run("worktree", "remove", "--force", str(resolved))
+    if result.returncode or resolved.exists():
+        detail = (result.stderr or result.stdout).strip()
+        raise TransactionError(
+            f"isolated worktree cleanup failed; residual path: {resolved}"
+            + (f"; {detail}" if detail else "")
+        )
+
+
 def _validate(root: Path, git: Git, metadata: dict) -> list[str]:
     blockers: list[str] = []
     try:

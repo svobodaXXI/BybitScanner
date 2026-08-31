@@ -4,16 +4,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-from .task_transaction import candidate_root, derive_candidate, inspect, load_transaction
+from .task_transaction import (
+    candidate_root, candidate_tree, create_isolated_worktree, derive_candidate, inspect,
+    load_transaction, remove_isolated_worktree,
+)
 from .workflow import (
     Git, compact, fingerprints, index_snapshot, normalize_task_paths, receipt_path,
-    repository_root, require_ok,
+    repository_root, require_ok, resolve_inside,
 )
 
 
@@ -23,14 +27,42 @@ def _run_check(root: Path, label: str, command: Sequence[str]) -> tuple[str, boo
     return label, result.returncode == 0, detail
 
 
+def _link_frontend_dependencies(root: Path, verification_root: Path) -> bool:
+    source = root / "terminal" / "frontend" / "node_modules"
+    target = verification_root / "terminal" / "frontend" / "node_modules"
+    if not source.is_dir() or target.exists():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        target.symlink_to(source, target_is_directory=True)
+    except OSError as exc:
+        if os.name != "nt":
+            raise RuntimeError(f"frontend dependency link creation failed at {target}: {exc}") from exc
+        completed = subprocess.run(
+            ("cmd.exe", "/d", "/c", "mklink", "/J", str(target), str(source)),
+            text=True, capture_output=True, check=False,
+        )
+        if completed.returncode:
+            detail = (completed.stderr or completed.stdout).strip()
+            raise RuntimeError(
+                f"frontend dependency link creation failed at {target}"
+                + (f": {detail}" if detail else "")
+            ) from exc
+    return True
+
+
 def verify(
-    path_values: Sequence[str], *, git: Git | None = None, transaction_id: str | None = None
+    path_values: Sequence[str], *, git: Git | None = None, transaction_id: str | None = None,
+    additional_commands: Sequence[dict[str, object]] = (),
 ) -> tuple[bool, str]:
     probe = git or Git(Path.cwd())
     checks: list[dict[str, object]] = []
+    isolated_path: Path | None = None
     try:
         root = repository_root(probe)
         active_git = git or Git(root)
+        target = receipt_path(root, active_git)
+        target.unlink(missing_ok=True)
         paths, files = normalize_task_paths(root, path_values)
         branch = require_ok(active_git.run("branch", "--show-current"), "branch discovery")
         head = require_ok(active_git.run("rev-parse", "HEAD"), "HEAD discovery")
@@ -39,6 +71,8 @@ def verify(
         transaction_receipt = None
         transaction_post_fingerprints = None
         transaction_index = None
+        verification_root = root
+        isolated_tree = None
         if transaction_id:
             transaction_index = index_snapshot(root, active_git)
             transaction_post_fingerprints = fingerprints(root, files)
@@ -79,15 +113,20 @@ def verify(
             }
             checks.append({"name": "task-delta-proof", "status": "PASS", "detail": ""})
             checks.append({"name": "inverse-proof", "status": "PASS", "detail": ""})
-        python_files = [str(root / p) for p in files if p.endswith(".py")]
+            isolated_path, isolated_tree = create_isolated_worktree(transaction_id, git=active_git)
+            verification_root = isolated_path
+            if fingerprints(verification_root, files) != all_candidate_fingerprints:
+                raise RuntimeError("isolated candidate overlay does not match derived candidate")
+            checks.append({"name": "isolated-candidate-overlay", "status": "PASS", "detail": ""})
+        python_files = [str(verification_root / p) for p in files if p.endswith(".py")]
         test_files = [p for p in files if p.startswith("tests/") and p.endswith(".py")]
         if python_files:
-            label, passed, detail = _run_check(root, "python-compile", (sys.executable, "-m", "py_compile", *python_files))
+            label, passed, detail = _run_check(verification_root, "python-compile", (sys.executable, "-m", "py_compile", *python_files))
             checks.append({"name": label, "status": "PASS" if passed else "FAIL", "detail": detail})
         for test_file in test_files:
             label = f"focused-test:{Path(test_file).name}"
             module = test_file[:-3].replace("/", ".")
-            name, passed, detail = _run_check(root, label, (sys.executable, "-m", "unittest", module))
+            name, passed, detail = _run_check(verification_root, label, (sys.executable, "-m", "unittest", module))
             checks.append({"name": name, "status": "PASS" if passed else "FAIL", "detail": detail})
         contract_prefixes = (
             "terminal/api/", "terminal/application/pretrade_guard.py",
@@ -98,14 +137,58 @@ def verify(
         )
         if any(path.startswith(contract_prefixes) for path in paths):
             label, passed, detail = _run_check(
-                root, "trading-contract-consistency",
+                verification_root, "trading-contract-consistency",
                 (sys.executable, "-m", "tools.dev.contract_consistency"),
             )
             checks.append({"name": label, "status": "PASS" if passed else "FAIL", "detail": detail})
-        diff = active_git.run("diff", "--check", "--", *paths)
+        executed_commands: list[dict[str, object]] = []
+        command_specs = list(additional_commands)
+        if any(path.startswith("terminal/frontend/src/") for path in paths):
+            if transaction_id and _link_frontend_dependencies(root, verification_root):
+                checks.append({"name": "frontend-dependency-link", "status": "PASS", "detail": ""})
+            command_specs.append({
+                "label": "frontend-build", "cwd": "terminal/frontend",
+                "argv": ["npm.cmd" if os.name == "nt" else "npm", "run", "build"],
+            })
+        for number, spec in enumerate(command_specs, start=1):
+            if not isinstance(spec, dict):
+                raise ValueError("additional verification command must be an object")
+            argv = spec.get("argv")
+            cwd_value = spec.get("cwd", ".")
+            label_value = spec.get("label", f"additional-check:{number}")
+            if (
+                not isinstance(argv, list) or not argv or not all(isinstance(item, str) and item for item in argv)
+                or not isinstance(cwd_value, str) or not isinstance(label_value, str) or not label_value
+            ):
+                raise ValueError("additional verification command requires label, cwd and non-empty argv")
+            command_cwd = resolve_inside(
+                verification_root, cwd_value, label="additional verification command cwd"
+            )
+            if not command_cwd.is_dir():
+                raise ValueError(f"additional verification command cwd is missing: {cwd_value}")
+            name, passed, detail = _run_check(command_cwd, label_value, tuple(argv))
+            checks.append({"name": name, "status": "PASS" if passed else "FAIL", "detail": detail})
+            executed_commands.append({"label": label_value, "cwd": cwd_value, "argv": argv})
+        if transaction_receipt:
+            changed_result = Git(verification_root).run("diff", "--name-only", "-z")
+            changed_files = {item for item in require_ok(
+                changed_result, "isolated tracked-file inspection"
+            ).split("\0") if item}
+            expected_changes = set(transaction_receipt["candidate_files"])
+            checks.append({
+                "name": "isolated-tracked-scope",
+                "status": "PASS" if changed_files == expected_changes else "FAIL",
+                "detail": "" if changed_files == expected_changes else (
+                    "tracked files differ from candidate scope: " + ", ".join(sorted(changed_files))
+                ),
+            })
+        diff = Git(verification_root).run("diff", "--check", "--", *paths)
         checks.append({"name": "diff-check", "status": "PASS" if diff.returncode == 0 else "FAIL", "detail": (diff.stderr or diff.stdout).strip()})
         failed = [str(item["name"]) for item in checks if item["status"] != "PASS"]
         if failed:
+            if isolated_path is not None:
+                remove_isolated_worktree(isolated_path, git=active_git)
+                isolated_path = None
             return False, compact("FAIL", paths, [str(x["name"]) for x in checks], failed, ())
         if transaction_receipt:
             state = inspect(transaction_id or "", git=active_git)
@@ -115,7 +198,20 @@ def verify(
                 raise RuntimeError("transaction task-file content changed during verification")
             if index_snapshot(root, active_git) != transaction_index:
                 raise RuntimeError("real Git index changed during transaction verification")
+            if fingerprints(verification_root, files) != all_candidate_fingerprints:
+                raise RuntimeError("isolated candidate changed during verification")
+            if candidate_tree(transaction_id or "", git=active_git) != isolated_tree:
+                raise RuntimeError("candidate tree changed during isolated verification")
+            remove_isolated_worktree(isolated_path or Path(), git=active_git)
+            isolated_path = None
             checks.append({"name": "real-index-unchanged", "status": "PASS", "detail": ""})
+            checks.append({"name": "isolated-worktree-cleanup", "status": "PASS", "detail": ""})
+            transaction_receipt["candidate_tree"] = isolated_tree
+            transaction_receipt["isolated_verification"] = {
+                "status": "PASS", "base_head": head, "candidate_tree": isolated_tree,
+                "commands": executed_commands, "cleanup": "PASS",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            }
         receipt = {
             "schema": 2 if transaction_receipt else 1,
             "status": "PASS",
@@ -129,20 +225,35 @@ def verify(
         }
         if transaction_receipt:
             receipt["transaction"] = transaction_receipt
-        target = receipt_path(root, active_git)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return True, compact("PASS", paths, [str(x["name"]) for x in checks], (), ())
     except (OSError, RuntimeError, ValueError) as exc:
-        return False, compact("FAIL", list(path_values), [str(x["name"]) for x in checks], (), (str(exc),))
+        blockers = [str(exc)]
+        if isolated_path is not None:
+            try:
+                remove_isolated_worktree(isolated_path, git=git or Git(Path.cwd()))
+            except (OSError, RuntimeError, ValueError) as cleanup_exc:
+                blockers.append(str(cleanup_exc))
+        return False, compact("FAIL", list(path_values), [str(x["name"]) for x in checks], (), blockers)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--path", action="append", required=True, dest="paths")
     parser.add_argument("--transaction", dest="transaction_id")
+    parser.add_argument(
+        "--check-command", action="append", default=[],
+        help='JSON object: {"label":"...","cwd":"...","argv":["command","arg"]}',
+    )
     args = parser.parse_args(argv)
-    passed, output = verify(args.paths, transaction_id=args.transaction_id)
+    try:
+        commands = [json.loads(value) for value in args.check_command]
+    except json.JSONDecodeError as exc:
+        parser.error(f"invalid --check-command JSON: {exc}")
+    passed, output = verify(
+        args.paths, transaction_id=args.transaction_id, additional_commands=commands
+    )
     print(output)
     return 0 if passed else 1
 

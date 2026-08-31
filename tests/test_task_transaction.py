@@ -8,7 +8,8 @@ import unittest
 from pathlib import Path
 
 from tools.dev.task_transaction import (
-    TransactionError, begin, candidate_root, derive_candidate, inspect, load_transaction,
+    TransactionError, begin, candidate_root, candidate_tree, create_isolated_worktree,
+    derive_candidate, inspect, load_transaction, remove_isolated_worktree,
 )
 from tools.dev.workflow import Git
 
@@ -51,6 +52,21 @@ class TaskTransactionTests(unittest.TestCase):
         directory, metadata = load_transaction("lookup", git=self.git)
         self.assertEqual(metadata["task_id"], "lookup")
         self.assertEqual(candidate_root("lookup", git=self.git), directory / "candidate")
+
+    def test_isolated_worktree_matches_candidate_and_cleans_without_real_mutation(self):
+        begin(["sample.txt"], git=self.git, task_id="isolated")
+        task_bytes = b"alpha\nbeta task\ngamma\n"
+        self.path.write_bytes(task_bytes)
+        derive_candidate("isolated", git=self.git)
+        index_before = (self.root / ".git" / "index").read_bytes()
+        worktree_before = self.path.read_bytes()
+        isolated, tree = create_isolated_worktree("isolated", git=self.git)
+        self.assertEqual((isolated / "sample.txt").read_bytes(), task_bytes)
+        self.assertEqual(tree, candidate_tree("isolated", git=self.git))
+        remove_isolated_worktree(isolated, git=self.git)
+        self.assertFalse(isolated.exists())
+        self.assertEqual(self.path.read_bytes(), worktree_before)
+        self.assertEqual((self.root / ".git" / "index").read_bytes(), index_before)
 
     def test_dirty_independent_task_hunk_yields_task_only_and_inverse_proof(self):
         self.path.write_bytes(b"alpha user\nbeta\ngamma\n")

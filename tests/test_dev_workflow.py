@@ -52,6 +52,33 @@ class FakeGit(Git):
         return CommandResult(0)
 
 
+class ControlledGit(Git):
+    def __init__(
+        self, root: Path, *, fail_reconciliation: bool = False,
+        mutate_on_reconciliation: Path | None = None, index_tree_override: str | None = None,
+    ):
+        super().__init__(root)
+        self.fail_reconciliation = fail_reconciliation
+        self.mutate_on_reconciliation = mutate_on_reconciliation
+        self.index_tree_override = index_tree_override
+        self.events: list[str] = []
+
+    def run(self, *args: str) -> CommandResult:
+        if args[0] == "write-tree" and self.index_tree_override is not None:
+            return CommandResult(0, self.index_tree_override + "\n")
+        if args[0] == "read-tree":
+            self.events.append("read-tree")
+            if self.fail_reconciliation:
+                return CommandResult(1, stderr="forced reconciliation failure")
+            result = super().run(*args)
+            if result.returncode == 0 and self.mutate_on_reconciliation is not None:
+                self.mutate_on_reconciliation.write_bytes(b"concurrent mutation\n")
+            return result
+        if args[0] == "push":
+            self.events.append("push")
+        return super().run(*args)
+
+
 class DevWorkflowTests(unittest.TestCase):
     def make_repo(self) -> tuple[tempfile.TemporaryDirectory, Path]:
         temporary = tempfile.TemporaryDirectory()
@@ -256,9 +283,19 @@ class TransactionWorkflowTests(unittest.TestCase):
         begin(["task.txt", "unrelated.txt"], git=git, task_id="clean-flow")
         (root / "task.txt").write_bytes(b"alpha\nbeta task\ngamma\n")
         passed, output = verify(
-            ["task.txt", "unrelated.txt"], git=git, transaction_id="clean-flow"
+            ["task.txt", "unrelated.txt"], git=git, transaction_id="clean-flow",
+            additional_commands=[{
+                "label": "candidate-content", "cwd": ".",
+                "argv": [sys.executable, "-c", "from pathlib import Path; assert Path('task.txt').read_bytes() == b'alpha\\nbeta task\\ngamma\\n'"],
+            }],
         )
         self.assertTrue(passed, output)
+        receipt = json.loads((root / ".git/bybitscanner/latest-pass.json").read_text(encoding="utf-8"))
+        isolated = receipt["transaction"]["isolated_verification"]
+        self.assertEqual(isolated["status"], "PASS")
+        self.assertEqual(isolated["cleanup"], "PASS")
+        self.assertEqual(isolated["candidate_tree"], receipt["transaction"]["candidate_tree"])
+        self.assertFalse((root / ".git/bybitscanner/tasks/clean-flow/verification-worktree").exists())
         expected = (candidate_root("clean-flow", git=git) / "task.txt").read_bytes()
         passed, output = checkpoint("clean transaction", git=git)
         self.assertTrue(passed, output)
@@ -276,6 +313,23 @@ class TransactionWorkflowTests(unittest.TestCase):
             text=True, capture_output=True, check=True,
         ).stdout.strip()
         self.assertEqual(remote, self.head(root))
+        self.assertEqual(
+            subprocess.run(("git", "write-tree"), cwd=root, text=True, capture_output=True, check=True).stdout.strip(),
+            subprocess.run(("git", "rev-parse", "HEAD^{tree}"), cwd=root, text=True, capture_output=True, check=True).stdout.strip(),
+        )
+        self.assertEqual(
+            subprocess.run(
+                ("git", "diff", "--cached", "--name-only"), cwd=root,
+                text=True, capture_output=True, check=True,
+            ).stdout,
+            "",
+        )
+        begin(["task.txt"], git=git, task_id="next-flow")
+        (root / "task.txt").write_bytes(b"alpha\nbeta task\ngamma next\n")
+        passed, output = verify(["task.txt"], git=git, transaction_id="next-flow")
+        self.assertTrue(passed, output)
+        passed, output = checkpoint("next transaction", git=git)
+        self.assertTrue(passed, output)
 
     def test_mixed_transaction_preserves_combined_worktree_and_real_index(self):
         temporary, root, _ = self.make_repo()
@@ -288,15 +342,37 @@ class TransactionWorkflowTests(unittest.TestCase):
         (root / "unrelated.txt").write_bytes(b"unrelated user\n")
         (root / "untracked.txt").write_bytes(b"untracked user\n")
         index_before = (root / ".git" / "index").read_bytes()
-        passed, output = verify(["task.txt"], git=git, transaction_id="mixed-flow")
+        passed, output = verify(
+            ["task.txt"], git=git, transaction_id="mixed-flow",
+            additional_commands=[{
+                "label": "isolated-mixed-content", "cwd": ".",
+                "argv": [
+                    sys.executable, "-c",
+                    "from pathlib import Path; assert Path('task.txt').read_bytes() == b'alpha\\nbeta\\ngamma task\\n'; assert Path('unrelated.txt').read_text().replace('\\r\\n', '\\n') == 'original\\n'; assert not Path('untracked.txt').exists()",
+                ],
+            }],
+        )
         self.assertTrue(passed, output)
         candidate = (candidate_root("mixed-flow", git=git) / "task.txt").read_bytes()
         self.assertEqual(candidate, b"alpha\nbeta\ngamma task\n")
         self.assertEqual((root / ".git" / "index").read_bytes(), index_before)
-        passed, output = checkpoint("mixed transaction", git=git)
+        controlled = ControlledGit(root)
+        passed, output = checkpoint("mixed transaction", git=controlled)
         self.assertTrue(passed, output)
         self.assertEqual((root / "task.txt").read_bytes(), combined)
-        self.assertEqual((root / ".git" / "index").read_bytes(), index_before)
+        self.assertNotEqual((root / ".git" / "index").read_bytes(), index_before)
+        self.assertLess(controlled.events.index("read-tree"), controlled.events.index("push"))
+        self.assertEqual(
+            subprocess.run(("git", "write-tree"), cwd=root, text=True, capture_output=True, check=True).stdout.strip(),
+            subprocess.run(("git", "rev-parse", "HEAD^{tree}"), cwd=root, text=True, capture_output=True, check=True).stdout.strip(),
+        )
+        self.assertEqual(
+            subprocess.run(
+                ("git", "diff", "--cached", "--name-only"), cwd=root,
+                text=True, capture_output=True, check=True,
+            ).stdout,
+            "",
+        )
         self.assertEqual(
             subprocess.run(("git", "show", "HEAD:task.txt"), cwd=root, capture_output=True, check=True).stdout,
             candidate,
@@ -308,6 +384,89 @@ class TransactionWorkflowTests(unittest.TestCase):
         self.assertIn("alpha user", remaining)
         self.assertEqual((root / "unrelated.txt").read_bytes(), b"unrelated user\n")
         self.assertEqual((root / "untracked.txt").read_bytes(), b"untracked user\n")
+        self.assertFalse((root / ".git/bybitscanner/tasks/mixed-flow/verification-worktree").exists())
+
+    def test_user_wip_dependency_passes_combined_but_fails_isolated_candidate(self):
+        temporary, root, _ = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        git = Git(root)
+        (root / "task.txt").write_bytes(b"alpha user\nbeta\ngamma\n")
+        begin(["task.txt"], git=git, task_id="wip-dependency")
+        combined = b"alpha user\nbeta\ngamma task\n"
+        (root / "task.txt").write_bytes(combined)
+        command = [
+            sys.executable, "-c",
+            "from pathlib import Path; assert b'alpha user' in Path('task.txt').read_bytes()",
+        ]
+        combined_result = subprocess.run(command, cwd=root, capture_output=True, check=False)
+        self.assertEqual(combined_result.returncode, 0)
+        passed, output = verify(
+            ["task.txt"], git=git, transaction_id="wip-dependency",
+            additional_commands=[{
+                "label": "candidate-independent", "cwd": ".",
+                "argv": [sys.executable, "-c", "raise SystemExit(0)"],
+            }],
+        )
+        self.assertTrue(passed, output)
+        self.assertTrue((root / ".git/bybitscanner/latest-pass.json").is_file())
+        head_before = self.head(root)
+        worktree_before = (root / "task.txt").read_bytes()
+        index_before = (root / ".git" / "index").read_bytes()
+        passed, output = verify(
+            ["task.txt"], git=git, transaction_id="wip-dependency",
+            additional_commands=[{"label": "requires-user-wip", "cwd": ".", "argv": command}],
+        )
+        self.assertFalse(passed)
+        self.assertIn("requires-user-wip", output)
+        self.assertEqual(self.head(root), head_before)
+        self.assertEqual((root / "task.txt").read_bytes(), worktree_before)
+        self.assertEqual((root / ".git" / "index").read_bytes(), index_before)
+        self.assertFalse((root / ".git/bybitscanner/tasks/wip-dependency/verification-worktree").exists())
+        self.assertFalse((root / ".git/bybitscanner/latest-pass.json").exists())
+        passed, output = checkpoint("forbidden", git=git)
+        self.assertFalse(passed)
+        self.assertIn("receipt is missing", output)
+
+    def test_frontend_scope_runs_targeted_command_and_production_build_in_candidate(self):
+        temporary, root, _ = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        git = Git(root)
+        frontend = root / "terminal" / "frontend"
+        source = frontend / "src" / "task.txt"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"base\n")
+        (frontend / "package.json").write_text(
+            json.dumps({
+                "scripts": {
+                    "build": "node -e \"process.exit(0)\""
+                }
+            }),
+            encoding="utf-8",
+        )
+        subprocess.run(
+            ("git", "add", "terminal/frontend/package.json", "terminal/frontend/src/task.txt"),
+            cwd=root, check=True,
+        )
+        subprocess.run(("git", "commit", "-qm", "frontend fixture"), cwd=root, check=True)
+        subprocess.run(("git", "push", "origin", "main"), cwd=root, check=True, capture_output=True)
+        begin(["terminal/frontend/src/task.txt"], git=git, task_id="frontend-flow")
+        source.write_bytes(b"task\n")
+        passed, output = verify(
+            ["terminal/frontend/src/task.txt"], git=git, transaction_id="frontend-flow",
+            additional_commands=[{
+                "label": "frontend-targeted", "cwd": "terminal/frontend",
+                "argv": [
+                    sys.executable, "-c",
+                    "from pathlib import Path; assert Path('src/task.txt').read_bytes() == b'task\\n'",
+                ],
+            }],
+        )
+        self.assertTrue(passed, output)
+        receipt = json.loads((root / ".git/bybitscanner/latest-pass.json").read_text(encoding="utf-8"))
+        names = [item["name"] for item in receipt["checks"]]
+        self.assertIn("frontend-targeted", names)
+        self.assertIn("frontend-build", names)
+        self.assertFalse((root / ".git/bybitscanner/tasks/frontend-flow/verification-worktree").exists())
 
     def test_overlap_fails_before_commit(self):
         temporary, root, _ = self.make_repo()
@@ -371,6 +530,57 @@ class TransactionWorkflowTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("unexpected staged files", output)
         self.assertEqual(self.head(root), old_head)
+
+    def test_index_tree_mismatch_fails_before_transaction_commit(self):
+        temporary, root, _ = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        git = Git(root)
+        begin(["task.txt"], git=git, task_id="index-tree-mismatch")
+        (root / "task.txt").write_bytes(b"alpha\nbeta task\ngamma\n")
+        passed, output = verify(["task.txt"], git=git, transaction_id="index-tree-mismatch")
+        self.assertTrue(passed, output)
+        old_head = self.head(root)
+        controlled = ControlledGit(root, index_tree_override="0" * 40)
+        passed, output = checkpoint("must fail", git=controlled)
+        self.assertFalse(passed)
+        self.assertIn("index tree does not match current HEAD", output)
+        self.assertEqual(self.head(root), old_head)
+        self.assertNotIn("read-tree", controlled.events)
+        self.assertNotIn("push", controlled.events)
+
+    def test_reconciliation_failure_stops_after_local_commit_before_push(self):
+        temporary, root, _ = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        git = Git(root)
+        begin(["task.txt"], git=git, task_id="reconcile-fail")
+        combined = b"alpha\nbeta task\ngamma\n"
+        (root / "task.txt").write_bytes(combined)
+        passed, output = verify(["task.txt"], git=git, transaction_id="reconcile-fail")
+        self.assertTrue(passed, output)
+        old_head = self.head(root)
+        controlled = ControlledGit(root, fail_reconciliation=True)
+        passed, output = checkpoint("local reconciliation failure", git=controlled)
+        self.assertFalse(passed)
+        local_commit = self.head(root)
+        self.assertNotEqual(local_commit, old_head)
+        self.assertIn(f"local commit {local_commit} created; real-index reconciliation failed", output)
+        self.assertEqual((root / "task.txt").read_bytes(), combined)
+        self.assertEqual(controlled.events, ["read-tree"])
+
+    def test_worktree_change_during_reconciliation_stops_before_push(self):
+        temporary, root, _ = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        git = Git(root)
+        begin(["task.txt"], git=git, task_id="worktree-race")
+        (root / "task.txt").write_bytes(b"alpha\nbeta task\ngamma\n")
+        passed, output = verify(["task.txt"], git=git, transaction_id="worktree-race")
+        self.assertTrue(passed, output)
+        controlled = ControlledGit(root, mutate_on_reconciliation=root / "task.txt")
+        passed, output = checkpoint("worktree race", git=controlled)
+        self.assertFalse(passed)
+        local_commit = self.head(root)
+        self.assertIn(f"local commit {local_commit} created; working tree changed during index reconciliation", output)
+        self.assertEqual(controlled.events, ["read-tree"])
 
     def test_push_failure_reports_exact_local_commit(self):
         temporary, root, origin = self.make_repo()

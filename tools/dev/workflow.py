@@ -95,6 +95,48 @@ def index_snapshot(root: Path, git: Git) -> tuple[str, bytes]:
         return "missing", b""
 
 
+def index_tree(git: Git) -> str:
+    """Return the tree represented by the real index without modifying it."""
+    return require_ok(git.run("write-tree"), "real index tree discovery")
+
+
+def worktree_change_paths(git: Git) -> list[str]:
+    """Return all tracked-worktree and untracked paths without refreshing the index."""
+    result = git.run(
+        "--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=all"
+    )
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(
+            "working-tree path discovery failed" + (f": {detail}" if detail else "")
+        )
+    raw = result.stdout
+    records = raw.split("\0")
+    paths: list[str] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if len(record) < 4 or record[2] != " ":
+            raise RuntimeError("unexpected porcelain status record")
+        paths.append(record[3:])
+        if record[0] in "RC" or record[1] in "RC":
+            index += 1  # porcelain -z stores the original rename/copy path next
+    return sorted(set(paths))
+
+
+def resolve_inside(root: Path, value: str, *, label: str) -> Path:
+    """Resolve a relative path and reject any escape from its declared root."""
+    candidate = (root / value).resolve()
+    try:
+        candidate.relative_to(root.resolve())
+    except ValueError as exc:
+        raise ValueError(f"{label} escapes its allowed root") from exc
+    return candidate
+
+
 def receipt_path(root: Path, git: Git) -> Path:
     raw = require_ok(git.run("rev-parse", "--git-dir"), "Git directory discovery")
     directory = Path(raw)

@@ -9,10 +9,10 @@ import tempfile
 from pathlib import Path
 from typing import Sequence
 
-from .task_transaction import candidate_root, inspect, load_transaction
+from .task_transaction import candidate_root, candidate_tree, inspect, load_transaction
 from .workflow import (
-    Git, CommandResult, compact, fingerprints, index_snapshot, read_receipt,
-    repository_root, require_ok,
+    Git, CommandResult, compact, fingerprints, index_snapshot, index_tree, read_receipt,
+    repository_root, require_ok, worktree_change_paths,
 )
 
 
@@ -45,6 +45,13 @@ def _transaction_commit(
         raise RuntimeError("verification receipt transaction baseline does not match")
     if metadata["scope"] != receipt["task_paths"]:
         raise RuntimeError("verification receipt transaction scope does not match")
+    isolated = transaction.get("isolated_verification", {})
+    if (
+        isolated.get("status") != "PASS" or isolated.get("cleanup") != "PASS"
+        or isolated.get("base_head") != receipt["head"]
+        or isolated.get("candidate_tree") != transaction.get("candidate_tree")
+    ):
+        raise RuntimeError("verification receipt lacks current isolated candidate PASS evidence")
     state = inspect(task_id, git=git)
     if state["status"] != "OK":
         raise RuntimeError("transaction is stale: " + ", ".join(state["blockers"]))
@@ -52,6 +59,8 @@ def _transaction_commit(
     candidates = candidate_root(task_id, git=git)
     if fingerprints(candidates, files) != transaction["candidate_fingerprints"]:
         raise RuntimeError("verification receipt is stale: verified candidate changed")
+    if candidate_tree(task_id, git=git) != transaction["candidate_tree"]:
+        raise RuntimeError("verification receipt is stale: verified candidate tree changed")
     proofs = transaction.get("proofs", {})
     if not set(files).issubset(proofs) or any(value.get("status") != "PASS" for value in proofs.values()):
         raise RuntimeError("verification receipt candidate proof state is invalid")
@@ -62,9 +71,16 @@ def _transaction_commit(
     staged = sorted(item for item in staged_raw.split("\0") if item)
     if staged:
         raise RuntimeError("unexpected staged files: " + ", ".join(staged))
-    checks.extend(("receipt-current", "transaction-current", "candidate-current", "real-index-clean"))
+    head_tree = require_ok(git.run("rev-parse", f"{receipt['head']}^{{tree}}"), "HEAD tree discovery")
+    if index_tree(git) != head_tree:
+        raise RuntimeError("real Git index tree does not match current HEAD")
+    checks.extend((
+        "receipt-current", "transaction-current", "candidate-current",
+        "real-index-clean", "real-index-head-aligned",
+    ))
     real_index = index_snapshot(root, git)
-    worktree = {path: (root / path).read_bytes() for path in receipt["files"]}
+    protected_paths = sorted(set(receipt["files"]) | set(worktree_change_paths(git)))
+    worktree = fingerprints(root, protected_paths)
 
     descriptor, temporary_name = tempfile.mkstemp(prefix="checkpoint-", suffix=".index", dir=directory)
     os.close(descriptor)
@@ -96,7 +112,7 @@ def _transaction_commit(
             raise RuntimeError("candidate staged files do not exactly match verification receipt")
         if index_snapshot(root, git) != real_index:
             raise RuntimeError("real Git index changed before commit")
-        if any((root / path).read_bytes() != value for path, value in worktree.items()):
+        if fingerprints(root, protected_paths) != worktree:
             raise RuntimeError("working tree changed before commit")
         checks.extend(("alternate-index", "candidate-diff-check", "precommit-atomicity"))
         before = require_ok(git.run("rev-parse", "HEAD"), "pre-commit HEAD discovery")
@@ -113,8 +129,8 @@ def _transaction_commit(
         alternate_index.unlink(missing_ok=True)
 
     if index_snapshot(root, git) != real_index:
-        raise RuntimeError(f"local commit {after} created but real Git index changed")
-    if any((root / path).read_bytes() != value for path, value in worktree.items()):
+        raise RuntimeError(f"local commit {after} created but real Git index changed before reconciliation")
+    if fingerprints(root, protected_paths) != worktree:
         raise RuntimeError(f"local commit {after} created but working tree changed")
     parent = require_ok(git.run("rev-parse", f"{after}^"), "commit parent discovery")
     if parent != receipt["head"]:
@@ -131,7 +147,35 @@ def _transaction_commit(
         )
         if completed.returncode or completed.stdout != (candidates / path).read_bytes():
             raise RuntimeError(f"local commit {after} content does not match verified candidate: {path}")
-    checks.extend(("real-index-unchanged", "worktree-unchanged", "committed-candidate"))
+    committed_tree = require_ok(git.run("rev-parse", f"{after}^{{tree}}"), "committed tree discovery")
+    if committed_tree != transaction["candidate_tree"]:
+        raise RuntimeError(f"local commit {after} tree does not match isolated verified candidate")
+    reconciliation = git.run("read-tree", after)
+    if reconciliation.returncode:
+        detail = (reconciliation.stderr or reconciliation.stdout).strip()
+        raise RuntimeError(
+            f"local commit {after} created; real-index reconciliation failed"
+            + (f": {detail}" if detail else "")
+        )
+    if index_tree(git) != committed_tree:
+        raise RuntimeError(f"local commit {after} created; real index does not match new HEAD")
+    staged_after = {
+        item for item in require_ok(
+            git.run("diff", "--cached", "--name-only", "-z"),
+            "post-commit staged-file inspection",
+        ).split("\0") if item
+    }
+    if staged_after:
+        raise RuntimeError(
+            f"local commit {after} created; real index reconciliation left staged files: "
+            + ", ".join(sorted(staged_after))
+        )
+    if fingerprints(root, protected_paths) != worktree:
+        raise RuntimeError(f"local commit {after} created; working tree changed during index reconciliation")
+    checks.extend((
+        "committed-candidate", "real-index-reconciled", "real-index-head-aligned",
+        "worktree-unchanged",
+    ))
     return after
 
 
@@ -186,6 +230,8 @@ def _matches_transaction_commit(
         )
         if completed.returncode or completed.stdout != (candidates / path).read_bytes():
             return False
+    if require_ok(git.run("rev-parse", f"{current_head}^{{tree}}"), "committed tree discovery") != transaction.get("candidate_tree"):
+        return False
     return True
 
 
@@ -212,6 +258,24 @@ def checkpoint(message: str, *, git: Git | None = None) -> tuple[bool, str]:
                 and _matches_transaction_commit(root, active_git, receipt, message, head)
             ):
                 checks.append("completed-commit")
+                staged_retry = {
+                    item for item in require_ok(
+                        active_git.run("diff", "--cached", "--name-only", "-z"),
+                        "retry staged-file inspection",
+                    ).split("\0") if item
+                }
+                if staged_retry:
+                    raise RuntimeError(
+                        f"local commit {head} exists; real index is not clean for push retry"
+                    )
+                retry_tree = require_ok(
+                    active_git.run("rev-parse", f"{head}^{{tree}}"), "retry HEAD tree discovery"
+                )
+                if index_tree(active_git) != retry_tree:
+                    raise RuntimeError(
+                        f"local commit {head} exists; real index is not aligned for push retry"
+                    )
+                checks.append("real-index-head-aligned")
                 push = active_git.run("push", "origin", branch)
                 if push.returncode:
                     detail = (push.stderr or push.stdout).strip()
