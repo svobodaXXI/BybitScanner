@@ -132,7 +132,9 @@ def test_paper_limit_executor_no_cross_makes_no_persistence_mutation():
                 match_event_id="book-update-1",
             )
 
-            persisted = store.get_paper_limit(order.order_id.value)
+            persisted = store.get_paper_limit(
+                order.order_id.value, TradingAccountId("paper"),
+            )
             assert result is None
             assert persisted is not None
             assert persisted.filled_quantity == Decimal("0")
@@ -165,7 +167,9 @@ def test_paper_limit_executor_applies_partial_actual_quantity():
             assert result.execution_event.execution_price == Decimal("100")
             assert result.execution_event.is_maker is True
             assert result.execution_event.execution_fee == Decimal("0.100")
-            persisted = store.get_paper_limit(order.order_id.value)
+            persisted = store.get_paper_limit(
+                order.order_id.value, TradingAccountId("paper"),
+            )
             assert persisted is not None
             assert persisted.filled_quantity == Decimal("1")
             assert persisted.status == "partially_filled"
@@ -194,11 +198,15 @@ def test_paper_limit_executor_applies_full_actual_quantity():
 
             assert result is not None
             assert result.execution_event.execution_quantity == Decimal("2")
-            persisted = store.get_paper_limit(order.order_id.value)
+            persisted = store.get_paper_limit(
+                order.order_id.value, TradingAccountId("paper"),
+            )
             assert persisted is not None
             assert persisted.filled_quantity == Decimal("2")
             assert persisted.status == "filled"
-            assert store.load_active_paper_limits(Symbol("BTCUSDT")) == ()
+            assert store.load_active_paper_limits(
+                TradingAccountId("paper"), Symbol("BTCUSDT"),
+            ) == ()
         finally:
             store.close()
 

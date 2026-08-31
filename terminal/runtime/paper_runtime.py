@@ -24,6 +24,12 @@ from terminal.application.normalization import normalize_limit_price
 from terminal.application.pretrade_guard import NotionalIntent, OrderKind, PreTradeIntent
 from terminal.application.pretrade_guard import WorkingVolumeIntent
 from terminal.application.trading_application import TradingApplication
+from terminal.application.trading_accounts import (
+    TradingAccountEnvironment,
+    TradingAccountManager,
+    TradingAccountProvider,
+    paper_account_manager,
+)
 from terminal.domain.models import (
     ExecutionId, OrderId, OrderSide, PositionSide, Quantity, Symbol,
     TradingAccountId,
@@ -68,7 +74,18 @@ class PaperRuntime:
         book_provider: MarketBookProvider,
         instrument_snapshot: InstrumentSnapshot,
         instrument_provider: Callable[[str], InstrumentSnapshot] | None = None,
+        account_manager: TradingAccountManager | None = None,
     ) -> None:
+        self._account_manager = account_manager or paper_account_manager()
+        active_account = self._account_manager.active_account
+        if (
+            active_account.provider is not TradingAccountProvider.PAPER
+            or active_account.environment is not TradingAccountEnvironment.PAPER
+            or active_account.id != TradingAccountId("paper")
+        ):
+            raise RuntimeError("PAPER runtime requires the authoritative paper account")
+        account_id = self._account_manager.active_account_id
+
         self.store = SQLiteStore.open(database_path)
         engine = ExecutionEngine(self.store)
         self._book_provider = book_provider
@@ -87,7 +104,6 @@ class PaperRuntime:
             clock_ms=lambda: int(time.time() * 1000),
         )
 
-        account_id = TradingAccountId("paper")
         self.store.initialize_paper_account(
             account_id,
             Decimal("5000"),
@@ -99,6 +115,7 @@ class PaperRuntime:
             account_id=account_id,
             instrument=instrument_snapshot,
             instrument_provider=instrument_provider,
+            active_account_id_provider=lambda: self._account_manager.active_account_id,
         )
 
         application = TradingApplication(
@@ -114,7 +131,11 @@ class PaperRuntime:
         self.api = TerminalCommandApi(application, context_provider)
         self._guard = application.guard
         self._context = context_provider
-        self._account_id = account_id
+
+    @property
+    def _account_id(self) -> TradingAccountId:
+        """Compatibility projection; TradingAccountManager remains authoritative."""
+        return self._account_manager.active_account_id
 
     def process_orderbook_update(self, notified_book_update_id: str) -> int:
         if not notified_book_update_id:
@@ -133,7 +154,7 @@ class PaperRuntime:
         # duplicate therefore cannot replay fills if one order raises midway.
         self._last_processed_book_update_id = book_update_id
         applied = 0
-        for order in self.store.load_active_paper_limits(book.symbol):
+        for order in self.store.load_active_paper_limits(self._account_id, book.symbol):
             result = self._limit_executor.execute(
                 order=order,
                 book=book,
@@ -270,7 +291,9 @@ class PaperRuntime:
                     "quantity": str(item.quantity),
                     "time_in_force": TimeInForce.GTC.value,
                 }
-                for item in self.store.load_active_paper_limits(Symbol(normalized_symbol))
+                for item in self.store.load_active_paper_limits(
+                    account_id, Symbol(normalized_symbol),
+                )
             ],
             "protection": protection_projection,
         }
@@ -387,7 +410,7 @@ class PaperRuntime:
         symbol = request.symbol.strip().upper()
         if symbol != self._context.instrument.symbol:
             raise ValueError("unsupported PAPER symbol")
-        existing = self.store.get_paper_limit(request.order_id)
+        existing = self.store.get_paper_limit(request.order_id, self._account_id)
         if existing is not None and existing.symbol.value != symbol:
             raise ValueError("order symbol does not match")
         fingerprint = _fingerprint(symbol, request.order_id)
@@ -395,6 +418,7 @@ class PaperRuntime:
             client_action_id=request.client_action_id.value,
             request_fingerprint=fingerprint,
             order_id=OrderId(request.order_id),
+            trading_account_id=self._account_id,
             updated_at_ms=int(time.time() * 1000),
         )
         return PaperLimitMutationResult(
@@ -405,7 +429,7 @@ class PaperRuntime:
 
     def amend_limit(self, request: PaperLimitAmendRequest) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()
-        existing = self.store.get_paper_limit(request.order_id)
+        existing = self.store.get_paper_limit(request.order_id, self._account_id)
         if existing is None or existing.status != "open":
             raise ValueError("PAPER limit is missing or inactive")
         if existing.symbol.value != symbol:
@@ -437,6 +461,7 @@ class PaperRuntime:
             client_action_id=request.client_action_id.value,
             request_fingerprint=fingerprint,
             order_id=existing.order_id,
+            trading_account_id=self._account_id,
             price=admitted.normalized_limit_price,
             updated_at_ms=int(time.time() * 1000),
         )

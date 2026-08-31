@@ -1091,13 +1091,61 @@ def test_duplicate_book_update_does_not_repeat_partial_limit_fill():
             runtime.call(lambda _: None)
 
             order = runtime.call(
-                lambda owner: owner.store.get_paper_limit("paper-runtime-limit-1")
+                lambda owner: owner.store.get_paper_limit(
+                    "paper-runtime-limit-1", TradingAccountId("paper"),
+                )
             )
             assert order is not None
             assert order.filled_quantity == Decimal("10")
             assert order.status == "partially_filled"
             state = runtime.call(lambda owner: owner.paper_state("BTCUSDT"))
             assert state["state_revision"] == 2
+        finally:
+            runtime.close()
+
+
+def test_runtime_matcher_and_state_ignore_foreign_account_limit():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        try:
+            def create_limits(owner: PaperRuntime) -> None:
+                for suffix, account in (
+                    ("active", TradingAccountId("paper")),
+                    ("foreign", TradingAccountId("paper-b")),
+                ):
+                    owner.store.create_paper_limit(
+                        client_action_id=f"matcher-{suffix}",
+                        request_fingerprint=f"matcher-fingerprint-{suffix}",
+                        order_id=OrderId(f"matcher-order-{suffix}"),
+                        order_link_id=f"matcher-link-{suffix}",
+                        trading_account_id=account,
+                        symbol=Symbol("BTCUSDT"),
+                        side=OrderSide.BUY,
+                        price=Decimal("65000"),
+                        quantity=Decimal("1"),
+                        created_at_ms=900,
+                    )
+
+            runtime.call(create_limits)
+            before = runtime.call(lambda owner: owner.paper_state("BTCUSDT"))
+            assert [item["order_id"] for item in before["active_limit_orders"]] == [
+                "matcher-order-active"
+            ]
+
+            runtime.enqueue_book_update("BTCUSDT:20:10")
+            runtime.call(lambda _: None)
+
+            active = runtime.call(lambda owner: owner.store.get_paper_limit(
+                "matcher-order-active", TradingAccountId("paper"),
+            ))
+            foreign = runtime.call(lambda owner: owner.store.get_paper_limit(
+                "matcher-order-foreign", TradingAccountId("paper-b"),
+            ))
+            after = runtime.call(lambda owner: owner.paper_state("BTCUSDT"))
+            assert active is not None and active.status == "filled"
+            assert foreign is not None and foreign.status == "open"
+            assert after["active_limit_orders"] == []
+            assert after["position_quantity"] == "1"
         finally:
             runtime.close()
 
@@ -1126,7 +1174,9 @@ def test_full_limit_fill_advances_revision_with_order_and_position_atomically():
 
             state = runtime.call(lambda owner: owner.paper_state("BTCUSDT"))
             order = runtime.call(
-                lambda owner: owner.store.get_paper_limit("paper-runtime-full-1")
+                lambda owner: owner.store.get_paper_limit(
+                    "paper-runtime-full-1", TradingAccountId("paper"),
+                )
             )
             assert order is not None
             assert order.status == "filled"

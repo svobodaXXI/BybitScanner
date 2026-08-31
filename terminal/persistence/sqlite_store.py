@@ -934,7 +934,9 @@ class SQLiteStore:
         if existing_action is not None:
             if existing_action[0] != "create" or existing_action[1] != request_fingerprint:
                 raise DuplicateIdentity("client action identity was reused with different intent")
-            existing = self.get_paper_limit(str(existing_action[2]))
+            existing = self.get_paper_limit(
+                str(existing_action[2]), trading_account_id,
+            )
             if existing is None:
                 raise PersistenceError("durable create action references no PAPER limit")
             return existing, False
@@ -961,9 +963,12 @@ class SQLiteStore:
 
     def cancel_paper_limit(
         self, *, client_action_id: str, request_fingerprint: str,
-        order_id: OrderId, updated_at_ms: int,
+        order_id: OrderId, trading_account_id: TradingAccountId, updated_at_ms: int,
     ) -> tuple[PaperLimitOrderRecord | None, bool]:
         self._assert_owner()
+        current = self._get_paper_limit_by_id(order_id.value)
+        if current is not None and current.trading_account_id != trading_account_id:
+            raise ValueError("PAPER limit account does not match active account")
         action = self._connection.execute(
             "SELECT operation, request_fingerprint, order_id FROM paper_limit_actions WHERE client_action_id = ?",
             (client_action_id,),
@@ -971,31 +976,32 @@ class SQLiteStore:
         if action is not None:
             if action[0] != "cancel" or action[1] != request_fingerprint:
                 raise DuplicateIdentity("client action identity was reused with different intent")
-            return self.get_paper_limit(order_id.value), False
+            return self.get_paper_limit(order_id.value, trading_account_id), False
         with self._transaction():
             self._connection.execute(
                 "INSERT INTO paper_limit_actions VALUES (?, 'cancel', ?, NULL, ?)",
                 (client_action_id, request_fingerprint, updated_at_ms),
             )
             cursor = self._connection.execute(
-                "UPDATE paper_limit_orders SET status = 'cancelled', updated_at_ms = ? WHERE order_id = ? AND status IN ('open', 'partially_filled')",
-                (updated_at_ms, order_id.value),
+                "UPDATE paper_limit_orders SET status = 'cancelled', updated_at_ms = ? WHERE order_id = ? AND trading_account_id = ? AND status IN ('open', 'partially_filled')",
+                (updated_at_ms, order_id.value, trading_account_id.value),
             )
             if cursor.rowcount == 1:
                 row = self._connection.execute(
-                    "SELECT trading_account_id, symbol FROM paper_limit_orders WHERE order_id = ?",
-                    (order_id.value,),
+                    "SELECT trading_account_id, symbol FROM paper_limit_orders WHERE order_id = ? AND trading_account_id = ?",
+                    (order_id.value, trading_account_id.value),
                 ).fetchone()
                 if row is None:
                     raise PersistenceError("cancelled PAPER limit is unavailable")
                 self._advance_paper_state_revision(
                     TradingAccountId(str(row[0])), Symbol(str(row[1])),
                 )
-        return self.get_paper_limit(order_id.value), cursor.rowcount == 1
+        return self.get_paper_limit(order_id.value, trading_account_id), cursor.rowcount == 1
 
     def amend_paper_limit(
         self, *, client_action_id: str, request_fingerprint: str,
-        order_id: OrderId, price: Decimal, updated_at_ms: int,
+        order_id: OrderId, trading_account_id: TradingAccountId,
+        price: Decimal, updated_at_ms: int,
     ) -> tuple[PaperLimitOrderRecord, bool]:
         self._assert_owner()
         action = self._connection.execute(
@@ -1005,12 +1011,14 @@ class SQLiteStore:
         if action is not None:
             if action[0] != "amend" or action[1] != request_fingerprint or action[2] != order_id.value:
                 raise DuplicateIdentity("client action identity was reused with different intent")
-            existing = self.get_paper_limit(order_id.value)
+            existing = self.get_paper_limit(order_id.value, trading_account_id)
             if existing is None:
                 raise PersistenceError("durable amend action references no PAPER limit")
             return existing, False
 
-        current = self.get_paper_limit(order_id.value)
+        current = self._get_paper_limit_by_id(order_id.value)
+        if current is not None and current.trading_account_id != trading_account_id:
+            raise ValueError("PAPER limit account does not match active account")
         if current is None or current.status not in {"open", "partially_filled"}:
             raise PersistenceError("PAPER limit is missing or inactive")
 
@@ -1018,8 +1026,8 @@ class SQLiteStore:
         with self._transaction():
             if changed:
                 cursor = self._connection.execute(
-                    "UPDATE paper_limit_orders SET price = ?, updated_at_ms = ? WHERE order_id = ? AND status IN ('open', 'partially_filled')",
-                    (_decimal_text(price), updated_at_ms, order_id.value),
+                    "UPDATE paper_limit_orders SET price = ?, updated_at_ms = ? WHERE order_id = ? AND trading_account_id = ? AND status IN ('open', 'partially_filled')",
+                    (_decimal_text(price), updated_at_ms, order_id.value, trading_account_id.value),
                 )
                 if cursor.rowcount != 1:
                     raise PersistenceError("PAPER limit is missing or inactive")
@@ -1031,23 +1039,35 @@ class SQLiteStore:
                 self._advance_paper_state_revision(
                     current.trading_account_id, current.symbol,
                 )
-        amended = self.get_paper_limit(order_id.value)
+        amended = self.get_paper_limit(order_id.value, trading_account_id)
         if amended is None:
             raise PersistenceError("amended PAPER limit is unavailable")
         return amended, changed
 
-    def get_paper_limit(self, order_id: str) -> PaperLimitOrderRecord | None:
+    def _get_paper_limit_by_id(self, order_id: str) -> PaperLimitOrderRecord | None:
         self._assert_owner()
         row = self._connection.execute(
             "SELECT * FROM paper_limit_orders WHERE order_id = ?", (order_id,),
         ).fetchone()
         return _paper_limit_from_row(row) if row is not None else None
 
-    def load_active_paper_limits(self, symbol: Symbol) -> tuple[PaperLimitOrderRecord, ...]:
+    def get_paper_limit(
+        self, order_id: str, trading_account_id: TradingAccountId,
+    ) -> PaperLimitOrderRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM paper_limit_orders WHERE order_id = ? AND trading_account_id = ?",
+            (order_id, trading_account_id.value),
+        ).fetchone()
+        return _paper_limit_from_row(row) if row is not None else None
+
+    def load_active_paper_limits(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> tuple[PaperLimitOrderRecord, ...]:
         self._assert_owner()
         rows = self._connection.execute(
-            "SELECT * FROM paper_limit_orders WHERE symbol = ? AND status IN ('open', 'partially_filled') ORDER BY created_at_ms, order_id",
-            (symbol.value,),
+            "SELECT * FROM paper_limit_orders WHERE trading_account_id = ? AND symbol = ? AND status IN ('open', 'partially_filled') ORDER BY created_at_ms, order_id",
+            (trading_account_id.value, symbol.value),
         )
         return tuple(_paper_limit_from_row(row) for row in rows)
 

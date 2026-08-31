@@ -432,12 +432,13 @@ class TerminalPersistenceTests(unittest.TestCase):
 
         with self.open_store() as store:
             self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
-            order = store.get_paper_limit("order-1")
+            order = store.get_paper_limit("order-1", TradingAccountId("paper"))
             self.assertIsNotNone(order)
             amended, changed = store.amend_paper_limit(
                 client_action_id="amend-1",
                 request_fingerprint="fingerprint-amend-1",
                 order_id=OrderId("order-1"),
+                trading_account_id=TradingAccountId("paper"),
                 price=Decimal("64100"),
                 updated_at_ms=2000,
             )
@@ -490,6 +491,7 @@ class TerminalPersistenceTests(unittest.TestCase):
                 client_action_id="noop-amend-1",
                 request_fingerprint="noop-amend-fingerprint-1",
                 order_id=OrderId("revision-order-1"),
+                trading_account_id=account_id,
                 price=Decimal("64000"),
                 updated_at_ms=2000,
             )
@@ -498,6 +500,63 @@ class TerminalPersistenceTests(unittest.TestCase):
 
         with self.open_store() as reopened:
             self.assertEqual(reopened.get_paper_state_revision(account_id, symbol), 1)
+
+    def test_paper_limits_are_isolated_by_account_and_symbol(self):
+        account_a = TradingAccountId("paper-a")
+        account_b = TradingAccountId("paper-b")
+        symbol = Symbol("BTCUSDT")
+
+        with self.open_store() as store:
+            for suffix, account in (("a", account_a), ("b", account_b)):
+                store.create_paper_limit(
+                    client_action_id=f"create-{suffix}",
+                    request_fingerprint=f"fingerprint-{suffix}",
+                    order_id=OrderId(f"order-{suffix}"),
+                    order_link_id=f"link-{suffix}",
+                    trading_account_id=account,
+                    symbol=symbol,
+                    side=OrderSide.BUY,
+                    price=Decimal("64000"),
+                    quantity=Decimal("1"),
+                    created_at_ms=1000,
+                )
+
+            self.assertEqual(
+                [item.order_id.value for item in store.load_active_paper_limits(
+                    account_a, symbol,
+                )],
+                ["order-a"],
+            )
+            self.assertEqual(
+                [item.order_id.value for item in store.load_active_paper_limits(
+                    account_b, symbol,
+                )],
+                ["order-b"],
+            )
+            self.assertIsNone(store.get_paper_limit("order-b", account_a))
+
+            with self.assertRaisesRegex(ValueError, "account does not match"):
+                store.amend_paper_limit(
+                    client_action_id="cross-amend",
+                    request_fingerprint="cross-amend-fingerprint",
+                    order_id=OrderId("order-b"),
+                    trading_account_id=account_a,
+                    price=Decimal("64100"),
+                    updated_at_ms=2000,
+                )
+            with self.assertRaisesRegex(ValueError, "account does not match"):
+                store.cancel_paper_limit(
+                    client_action_id="cross-cancel",
+                    request_fingerprint="cross-cancel-fingerprint",
+                    order_id=OrderId("order-b"),
+                    trading_account_id=account_a,
+                    updated_at_ms=2000,
+                )
+
+            order_b = store.get_paper_limit("order-b", account_b)
+            self.assertIsNotNone(order_b)
+            self.assertEqual(order_b.price, Decimal("64000"))
+            self.assertEqual(order_b.status, "open")
 
     def test_incompatible_schema_fails_closed_without_recreate(self):
         connection = sqlite3.connect(self.database_path)

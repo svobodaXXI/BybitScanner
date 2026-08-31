@@ -40,6 +40,7 @@ class PaperCommandContextProvider:
     account_id: TradingAccountId
     instrument: InstrumentSnapshot
     instrument_provider: Callable[[str], InstrumentSnapshot] | None = None
+    active_account_id_provider: Callable[[], TradingAccountId] | None = None
     _instruments: dict[str, InstrumentSnapshot] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
@@ -58,6 +59,11 @@ class PaperCommandContextProvider:
         return resolved
 
     def context_for(self, symbol: str) -> ServerCommandContext:
+        if (
+            self.active_account_id_provider is not None
+            and self.account_id != self.active_account_id_provider()
+        ):
+            raise RuntimeError("PAPER context account is not the active trading account")
         normalized_symbol = symbol.strip().upper()
         instrument = self._instrument_for(normalized_symbol)
 

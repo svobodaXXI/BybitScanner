@@ -3,6 +3,8 @@ from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
+
 from terminal.api.models import (
     ClientActionId,
     CloseAllCommandRequest,
@@ -17,6 +19,14 @@ from terminal.api.models import (
     TimeInForce,
 )
 from terminal.domain.models import Category, OrderSide, Price, Quantity, Symbol
+from terminal.domain.models import TradingAccountId
+from terminal.application.trading_accounts import (
+    TradingAccount,
+    TradingAccountEnvironment,
+    TradingAccountManager,
+    TradingAccountProvider,
+    TradingAccountStatus,
+)
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_runtime import PaperRuntime
@@ -71,6 +81,25 @@ def _runtime(path: Path) -> PaperRuntime:
     )
 
 
+def test_paper_runtime_rejects_non_paper_active_account() -> None:
+    account = TradingAccount(
+        TradingAccountId("other"), "Other Paper", TradingAccountProvider.PAPER,
+        TradingAccountEnvironment.PAPER, TradingAccountStatus.READY,
+    )
+    manager = TradingAccountManager((account,), active_account_id=account.id)
+
+    with tempfile.TemporaryDirectory() as temp:
+        database_path = Path(temp) / "paper.sqlite3"
+        with pytest.raises(RuntimeError, match="authoritative paper account"):
+            PaperRuntime(
+                database_path,
+                book_provider=StaticBookProvider(),
+                instrument_snapshot=_instrument(),
+                account_manager=manager,
+            )
+        assert not database_path.exists()
+
+
 def test_composed_paper_runtime_market_buy_completes():
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime(Path(temp) / "paper.sqlite3")
@@ -108,6 +137,7 @@ def test_full_close_uses_authoritative_remaining_quantity_and_flat_repeat_is_noo
             )
             assert opened.status is CommandResultStatus.COMPLETED
             before_close = runtime.paper_state("BTCUSDT")
+            assert before_close["account_id"] == "paper"
             assert before_close["position_side"] == "Long"
             assert before_close["average_entry"] is not None
 
@@ -241,7 +271,9 @@ def test_paper_limit_amend_reprices_in_place_and_is_durable_idempotent():
             assert after["quantity"] == before["quantity"]
             assert after["time_in_force"] == "GTC"
             assert after["price"] == "64100.0"
-            assert len(runtime.store.load_active_paper_limits(Symbol("BTCUSDT"))) == 1
+            assert len(runtime.store.load_active_paper_limits(
+                TradingAccountId("paper"), Symbol("BTCUSDT"),
+            )) == 1
 
             try:
                 runtime.amend_limit(PaperLimitAmendRequest(
