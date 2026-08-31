@@ -73,5 +73,9 @@ review_queue/
 *.bak*
 
 paper_runtime.credentials.dpapi
+paper_runtime.credentials.dpapi*
 
 paper_runtime.live_accounts.sqlite3*
+
+# Machine-local PAPER backend launcher configuration
+start_paper_backend.local.bat

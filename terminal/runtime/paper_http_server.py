@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import queue
+import socket
+import ssl
 import threading
 import time
 from collections import deque
@@ -14,11 +16,12 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
-import websocket
 import requests
+import socks
+import websocket
 
 from terminal.api.models import (
     CloseAllCommandRequest,
@@ -1016,12 +1019,73 @@ class SerializedPaperRuntime:
             runtime.close()
 
 
+def configure_bybit_proxy_environment() -> str:
+    """Apply the optional Bybit proxy to this process and its child processes."""
+    if "BYBITSCANNER_BYBIT_PROXY" in os.environ:
+        proxy = os.environ["BYBITSCANNER_BYBIT_PROXY"].strip()
+        if proxy:
+            os.environ["ALL_PROXY"] = proxy
+            os.environ["all_proxy"] = proxy
+        else:
+            os.environ.pop("ALL_PROXY", None)
+            os.environ.pop("all_proxy", None)
+        return proxy
+    return os.environ.get("ALL_PROXY", os.environ.get("all_proxy", "")).strip()
+
+
+def validate_bybit_proxy(proxy: str, *, timeout: float = 3.0) -> None:
+    if not proxy:
+        return
+    parsed = urlparse(proxy)
+    try:
+        port = parsed.port
+    except ValueError:
+        port = None
+    if parsed.scheme not in {"socks5", "socks5h"} or not parsed.hostname or not port:
+        raise RuntimeError(
+            "BYBITSCANNER_BYBIT_PROXY must be a socks5:// or socks5h:// URL with a port"
+        )
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=timeout):
+            return
+    except OSError as exc:
+        raise RuntimeError(
+            f"Configured Bybit SOCKS proxy is unavailable at {parsed.hostname}:{port}"
+        ) from exc
+
+
+def create_bybit_websocket_connection(url: str, *, timeout: float):
+    proxy = configure_bybit_proxy_environment()
+    if not proxy:
+        return websocket.create_connection(url, timeout=timeout)
+    parsed = urlparse(proxy)
+    target = urlparse(url)
+    proxy_socket = socks.socksocket()
+    proxy_socket.set_proxy(
+        socks.SOCKS5,
+        parsed.hostname,
+        parsed.port,
+        rdns=parsed.scheme == "socks5h",
+        username=unquote(parsed.username) if parsed.username else None,
+        password=unquote(parsed.password) if parsed.password else None,
+    )
+    proxy_socket.settimeout(timeout)
+    active_socket = proxy_socket
+    try:
+        proxy_socket.connect((target.hostname, target.port or 443))
+        active_socket = ssl.create_default_context().wrap_socket(
+            proxy_socket, server_hostname=target.hostname,
+        )
+        return websocket.create_connection(url, timeout=timeout, socket=active_socket)
+    except BaseException:
+        active_socket.close()
+        raise
+
+
 def create_bybit_rest_session() -> requests.Session:
     session = requests.Session()
     session.trust_env = False
-    proxy = os.environ.get(
-        "BYBITSCANNER_BYBIT_PROXY", "socks5h://127.0.0.1:10808",
-    )
+    proxy = configure_bybit_proxy_environment()
     if proxy:
         session.proxies.update({"http": proxy, "https": proxy})
     return session
@@ -2036,11 +2100,16 @@ def main() -> None:
     )
     database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
     port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
+    validate_bybit_proxy(configure_bybit_proxy_environment())
     rest_session = create_bybit_rest_session()
     instruments = InstrumentRegistry(rest_session)
     instruments.refresh()
     instrument_snapshot = instruments.get("ONGUSDT")
-    hub = MarketDataHub(instruments, create_symbol_context)
+    hub = MarketDataHub(
+        instruments,
+        create_symbol_context,
+        connection_factory=create_bybit_websocket_connection,
+    )
     initial_market = hub.subscribe("ONGUSDT")
     hub.start()
     book_provider = LiveOrderBookProvider(
