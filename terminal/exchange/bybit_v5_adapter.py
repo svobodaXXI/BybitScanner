@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Mapping
 
 from terminal.domain.models import TradingAccountId
@@ -79,6 +80,14 @@ class BybitCredentials:
         return "BybitCredentials(<redacted>)"
 
 
+@dataclass(frozen=True, slots=True)
+class BybitWalletSnapshot:
+    wallet_balance_usdt: Decimal
+    total_equity_usdt: Decimal
+    available_balance_usdt: Decimal
+    exchange_time_ms: int | None
+
+
 HttpFactory = Callable[..., Any]
 WebSocketFactory = Callable[..., Any]
 OrderCallback = Callable[[OrderEvent], None]
@@ -133,6 +142,10 @@ class BybitV5ReadAdapter:
                 testnet=self._testnet,
                 api_key=self._credentials.api_key,
                 api_secret=self._credentials.api_secret,
+                timeout=10,
+                force_retry=False,
+                max_retries=1,
+                log_requests=False,
             )
         return self._http_session
 
@@ -145,6 +158,34 @@ class BybitV5ReadAdapter:
             openOnly=0,
             limit=50,
         )
+
+    def list_all_active_orders(self) -> tuple[OrderEvent, ...]:
+        return self._paginated_events(
+            method_name="get_open_orders", normalizer=normalize_order,
+            category="linear", settleCoin="USDT", openOnly=0, limit=50,
+        )
+
+    def list_open_positions(self) -> tuple[PositionEvent, ...]:
+        positions = self._paginated_events(
+            method_name="get_positions", normalizer=normalize_position,
+            category="linear", settleCoin="USDT", limit=200,
+        )
+        return tuple(position for position in positions if position.size > 0)
+
+    def get_wallet_snapshot(self) -> BybitWalletSnapshot:
+        response = self._read("get_wallet_balance", accountType="UNIFIED", coin="USDT")
+        try:
+            accounts = response["result"]["list"]
+            account = accounts[0]
+            coin = next(item for item in account["coin"] if item["coin"] == "USDT")
+            return BybitWalletSnapshot(
+                _finite_decimal(coin["walletBalance"]),
+                _finite_decimal(account["totalEquity"]),
+                _finite_decimal(account["totalAvailableBalance"]),
+                int(response["time"]) if response.get("time") is not None else None,
+            )
+        except (KeyError, IndexError, StopIteration, TypeError, ValueError) as exc:
+            raise MalformedResponse("wallet response is incomplete") from exc
 
     def list_order_history(
         self,
@@ -418,6 +459,16 @@ def _validate_response_code(response: Mapping[str, Any]) -> None:
     if ret_code == _RATE_LIMIT_CODE:
         raise RateLimitError("Bybit read rate limit exceeded")
     raise BybitResponseError(ret_code, ret_msg)
+
+
+def _finite_decimal(value: Any) -> Decimal:
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("invalid decimal") from exc
+    if not result.is_finite():
+        raise ValueError("decimal must be finite")
+    return result
 
 
 def _response_items(

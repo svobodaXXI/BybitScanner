@@ -34,6 +34,7 @@ from terminal.application.trading_accounts import (
     TradingAccountStatus,
     paper_account_manager,
 )
+from terminal.application.live_account_reconciliation import LiveAccountReconciler
 from terminal.domain.models import (
     ExecutionId, OrderId, OrderSide, PositionSide, Quantity, Symbol,
     TradingAccountId,
@@ -45,6 +46,7 @@ from terminal.market_data.book_provider import MarketBookProvider
 from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
 from terminal.persistence.sqlite_store import ExecutionApplyResult, SQLiteStore
 from terminal.persistence.credential_store import DpapiCredentialStore, StoredBybitAccount
+from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.runtime.paper_context import (
     PaperCommandContextProvider,
     working_volume_usdt,
@@ -84,10 +86,13 @@ class PaperRuntime:
         account_manager: TradingAccountManager | None = None,
         credential_store: DpapiCredentialStore | None = None,
         account_validator: BybitAccountValidator | None = None,
+        live_account_store: LiveAccountProjectionStore | None = None,
+        live_adapter_factory=None,
     ) -> None:
         self._account_manager = account_manager or paper_account_manager()
         self._credential_store = credential_store
         self._account_validator = account_validator
+        self._live_account_store = live_account_store
         self._stored_bybit_accounts = list(credential_store.load()) if credential_store else []
         for stored in self._stored_bybit_accounts:
             self._account_manager.register_inactive(TradingAccount(
@@ -95,6 +100,17 @@ class PaperRuntime:
                 TradingAccountProvider.BYBIT, TradingAccountEnvironment(stored.environment),
                 TradingAccountStatus.DISCONNECTED,
             ))
+        self._live_account_reconciler = (
+            LiveAccountReconciler(
+                self._account_manager,
+                self._stored_bybit_account,
+                account_validator,
+                live_account_store,
+                **({"adapter_factory": live_adapter_factory} if live_adapter_factory else {}),
+            )
+            if credential_store and account_validator and live_account_store
+            else None
+        )
         active_account = self._account_manager.active_account
         if (
             active_account.provider is not TradingAccountProvider.PAPER
@@ -157,6 +173,22 @@ class PaperRuntime:
 
     def account_catalog(self) -> dict[str, object]:
         return self._account_manager.catalog_projection()
+
+    def _stored_bybit_account(self, account_id: str) -> StoredBybitAccount:
+        for stored in self._stored_bybit_accounts:
+            if hmac.compare_digest(stored.id, account_id):
+                return stored
+        raise LookupError("stored Bybit account is unavailable")
+
+    def refresh_live_account(self, account_id: str) -> dict[str, object]:
+        if self._live_account_reconciler is None:
+            raise RuntimeError("live_account_reconciliation_unavailable")
+        return self._live_account_reconciler.refresh(account_id)
+
+    def live_account_summary(self, account_id: str) -> dict[str, object] | None:
+        if self._live_account_reconciler is None:
+            raise RuntimeError("live_account_reconciliation_unavailable")
+        return self._live_account_reconciler.summary(account_id)
 
     def add_bybit_account(self, display_name: str, api_key: str, api_secret: str) -> dict[str, object]:
         if not self._credential_store or not self._account_validator:
@@ -586,6 +618,8 @@ class PaperRuntime:
 
     def close(self) -> None:
         self.store.close()
+        if self._live_account_store is not None:
+            self._live_account_store.close()
 
 
 def _fingerprint(*values: str) -> str:

@@ -15,6 +15,15 @@ type AccountCatalog = {
   accounts: AccountDescriptor[];
 };
 
+type LiveAccountSummary = {
+  account_id: string;
+  status: string;
+  wallet_balance_usdt: string;
+  total_equity_usdt: string;
+  position_count: number;
+  order_count: number;
+};
+
 function validCatalog(value: unknown): value is AccountCatalog {
   if (!value || typeof value !== "object") return false;
   const catalog = value as Partial<AccountCatalog>;
@@ -40,6 +49,9 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
   const [apiSecret, setApiSecret] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [summaries, setSummaries] = useState<Record<string, LiveAccountSummary>>({});
+  const [refreshingAccount, setRefreshingAccount] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<Record<string, string>>({});
 
   const refreshCatalog = async () => {
     const response = await fetch(marketApiRoutes.accounts);
@@ -113,6 +125,23 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
     }
   };
 
+  const refreshLiveAccount = async (accountId: string) => {
+    setRefreshingAccount(accountId);
+    setRefreshError((current) => ({ ...current, [accountId]: "" }));
+    try {
+      const response = await fetch(marketApiRoutes.accountRefresh(accountId), { method: "POST" });
+      const payload = await response.json() as { ok?: boolean; summary?: LiveAccountSummary };
+      if (!response.ok || payload.ok !== true || !payload.summary) throw new Error("refresh failed");
+      setSummaries((current) => ({ ...current, [accountId]: payload.summary! }));
+      await refreshCatalog();
+    } catch {
+      setRefreshError((current) => ({ ...current, [accountId]: "Refresh failed; account is not ready." }));
+      try { await refreshCatalog(); } catch { setCatalogError(true); }
+    } finally {
+      setRefreshingAccount(null);
+    }
+  };
+
   return (
     <div className="paper-account-control">
       <button
@@ -139,6 +168,17 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
               <strong>{account.display_name}</strong>
               <small>{account.provider} · {account.environment} · {account.status}</small>
               {account.id === catalog.active_account_id ? <span>Current</span> : null}
+              {summaries[account.id] ? <small className="account-live-summary">
+                Equity {summaries[account.id].total_equity_usdt} USDT · Wallet {summaries[account.id].wallet_balance_usdt} USDT<br />
+                {summaries[account.id].position_count} positions · {summaries[account.id].order_count} orders
+              </small> : null}
+              {refreshError[account.id] ? <small className="account-refresh-error" role="alert">{refreshError[account.id]}</small> : null}
+              {account.provider === "BYBIT" ? <button
+                className="account-refresh-button"
+                disabled={refreshingAccount === account.id}
+                onClick={() => void refreshLiveAccount(account.id)}
+                type="button"
+              >{refreshingAccount === account.id ? "Refreshing…" : account.status === "DISCONNECTED" || account.status === "ERROR" ? "Reconnect" : "Refresh"}</button> : null}
             </article>
           ))}
           <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add account</button>

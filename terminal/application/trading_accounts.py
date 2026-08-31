@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Iterable
 
@@ -120,6 +120,17 @@ class TradingAccountManager:
         if account.id in self._accounts:
             raise ValueError("trading account id is already registered")
         self._accounts[account.id] = account
+
+    def account(self, account_id: TradingAccountId) -> TradingAccount:
+        try:
+            return self._accounts[account_id]
+        except KeyError as exc:
+            raise LookupError("trading account is not registered") from exc
+
+    def update_status(self, account_id: TradingAccountId, status: TradingAccountStatus) -> None:
+        if not isinstance(status, TradingAccountStatus):
+            raise TypeError("account status must be TradingAccountStatus")
+        self._accounts[account_id] = replace(self.account(account_id), status=status)
 
     def catalog_projection(self) -> dict[str, object]:
         """Return the credential-free, read-only transport account catalog."""

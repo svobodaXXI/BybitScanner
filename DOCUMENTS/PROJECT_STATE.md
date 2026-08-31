@@ -6168,3 +6168,20 @@ Version 7.83 records real-phone `PASS` for active-symbol-first ordering, active-
 order, Close All placement and its final red-border emphasis. Execution semantics remain unchanged. Open Positions
 UX is `ACCEPTED / COMPLETE`; the next Terminal implementation item is STOP + TAKE PROFIT on PAPER.
 
+## READ-ONLY LIVE RECONCILIATION ARCHITECTURE CHECKPOINT
+
+Version 7.84 records human approval and the subsequently authorized production implementation of ChangeRequest
+revision 2.0. Secure Bybit provisioning at commit `41c38cff5cb16fd912b9632d5274fb1880ddc3b0` remains the latest committed
+runtime checkpoint; the current uncommitted slice adds account-wide read-only LIVE reconciliation.
+
+The approved target adds one L3 account-wide discovery orchestrator above the existing L2 symbol-scoped
+`ReconciliationCoordinator`; it does not create a parallel reconciliation stack. It reuses backend DPAPI
+credentials and `BybitV5ReadAdapter`, introduces separate account-scoped LIVE wallet/positions/orders projections,
+and atomically publishes only a complete current per-account refresh generation. Persisted accounts remain
+`DISCONNECTED` until fresh validation and complete read reconciliation; stale, mismatched or failed refreshes
+cannot promote status. PAPER remains active and `paper_accounts` remains PAPER-only.
+
+Targeted backend/security and frontend tests plus the production build pass. Exact next action is manual
+real-interface acceptance of the rebuilt account catalog refresh/status presentation. Account switching, private
+streams and LIVE mutations remain out of scope.
+

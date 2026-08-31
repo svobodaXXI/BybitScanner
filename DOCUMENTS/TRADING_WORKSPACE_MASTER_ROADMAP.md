@@ -735,6 +735,14 @@ selection/switching with mutations locked during transition, and reuse the estab
 execution architecture with fail-closed `UNKNOWN`/`RECONCILING`, authoritative exchange reconciliation, no blind
 retry and a real-money security/acceptance gate.
 
+The exact next real-account stage is the revision 2.0 account-wide read-only reconciliation architecture in
+`CR-TRADING-WORKSPACE-001`. One L3 account discovery orchestrator sits above—not beside—the existing L2
+symbol-scoped `ReconciliationCoordinator`. It uses `CredentialStore` plus the existing `BybitV5ReadAdapter`,
+publishes a separate account-scoped LIVE wallet/positions/orders snapshot atomically under a monotonic per-account
+refresh generation, rejects stale completion, and keeps persisted accounts non-ready until fresh validation and
+complete discovery succeed. `paper_accounts` remains PAPER-only. Production implementation was explicitly
+authorized on 2026-08-31. This stage has no switching, private WebSocket, mutation adapter or LIVE trading authority.
+
 CENTER approximately 13/15 and Done/Enter focus progression are `USER-DEFERRED / NON-BLOCKING`.
 Robot/AUTOPILOT, Android, MetaScalp, VPS, Scanner and strategy work remain outside this sequence.
 

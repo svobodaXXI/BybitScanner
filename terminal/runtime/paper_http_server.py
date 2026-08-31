@@ -59,6 +59,8 @@ from terminal.market_data.workspace_errors import (
 from terminal.runtime.paper_runtime import PaperRuntime
 from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
 from terminal.persistence.credential_store import CredentialStoreError, DpapiCredentialStore
+from terminal.persistence.live_account_store import LiveAccountProjectionStore
+from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
 
 
 LOGGER = logging.getLogger(__name__)
@@ -86,6 +88,17 @@ LIMIT_CANCEL_FIELDS = {"client_action_id", "symbol", "order_id"}
 LIMIT_AMEND_FIELDS = {"client_action_id", "symbol", "order_id", "limit_price"}
 STOP_MUTATION_FIELDS = {"client_action_id", "symbol", "trigger_price"}
 ACCOUNT_CREATE_FIELDS = {"display_name", "api_key", "api_secret"}
+
+
+def _account_route_id(path: str, action: str) -> str | None:
+    prefix = "/api/accounts/"
+    suffix = f"/{action}"
+    if not path.startswith(prefix) or not path.endswith(suffix):
+        return None
+    account_id = path[len(prefix):-len(suffix)]
+    if not account_id or "/" in account_id or not account_id.startswith("bybit-"):
+        return None
+    return account_id
 ACCOUNT_DESCRIPTOR_FIELDS = {"id", "display_name", "provider", "environment", "status"}
 
 
@@ -1323,6 +1336,21 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **catalog})
             return
 
+        account_summary_id = _account_route_id(parsed.path, "summary")
+        if account_summary_id is not None:
+            try:
+                summary = self.server.runtime.call(
+                    lambda runtime: runtime.live_account_summary(account_summary_id)
+                )
+            except (LookupError, ValueError):
+                self._json_response(404, {"ok": False, "error": "account_not_found"})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "account_summary_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "summary": summary})
+            return
+
         if parsed.path == "/api/workspace/state":
             self._json_response(200, {
                 "ok": True,
@@ -1717,6 +1745,25 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        account_refresh_id = _account_route_id(urlparse(self.path).path, "refresh")
+        if account_refresh_id is not None:
+            try:
+                summary = self.server.runtime.call(
+                    lambda runtime: runtime.refresh_live_account(account_refresh_id),
+                    timeout=30.0,
+                )
+            except (LookupError, ValueError):
+                self._json_response(404, {"ok": False, "error": "account_not_found"})
+                return
+            except LiveAccountReconciliationError:
+                self._json_response(502, {"ok": False, "error": "live_account_reconciliation_failed"})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "live_account_reconciliation_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "summary": summary})
+            return
+
         if self.path == "/api/accounts":
             try:
                 payload = self._payload(ACCOUNT_CREATE_FIELDS)
@@ -2007,6 +2054,9 @@ def main() -> None:
         instrument_provider=lambda symbol: instruments.get(symbol),
         credential_store=DpapiCredentialStore(database_path.with_suffix(".credentials.dpapi")),
         account_validator=BybitAccountValidator(),
+        live_account_store=LiveAccountProjectionStore(
+            database_path.with_suffix(".live_accounts.sqlite3")
+        ),
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(

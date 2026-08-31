@@ -86,4 +86,42 @@ describe("AccountMenu", () => {
     expect(screen.getByText("Needs validation").closest("article")).toHaveClass("status-disconnected");
     expect(screen.getAllByText("Current")).toHaveLength(1);
   });
+
+  it("reconciles an inactive Bybit account without switching PAPER", async () => {
+    const disconnected = { ...catalog, accounts: [...catalog.accounts, {
+      id: "bybit-1", display_name: "Main", provider: "BYBIT", environment: "MAINNET", status: "DISCONNECTED",
+    }] };
+    const ready = { ...disconnected, accounts: [disconnected.accounts[0], { ...disconnected.accounts[1], status: "READY" }] };
+    const summary = {
+      account_id: "bybit-1", status: "READY", wallet_balance_usdt: "99",
+      total_equity_usdt: "101", position_count: 2, order_count: 3,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => disconnected })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, summary }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ready });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<AccountMenu open onToggle={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Reconnect" }));
+    expect(await screen.findByText(/Equity 101 USDT/)).toBeInTheDocument();
+    expect(screen.getByText(/2 positions · 3 orders/)).toBeInTheDocument();
+    expect(screen.getAllByText("Current")).toHaveLength(1);
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/accounts/bybit-1/refresh");
+    expect(fetchMock.mock.calls[1][1]).toEqual({ method: "POST" });
+  });
+
+  it("keeps failed reconciliation visibly non-ready", async () => {
+    const disconnected = { ...catalog, accounts: [...catalog.accounts, {
+      id: "bybit-1", display_name: "Main", provider: "BYBIT", environment: "MAINNET", status: "DISCONNECTED",
+    }] };
+    const failed = { ...disconnected, accounts: [disconnected.accounts[0], { ...disconnected.accounts[1], status: "ERROR" }] };
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => disconnected })
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false, error: "live_account_reconciliation_failed" }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => failed }));
+    render(<AccountMenu open onToggle={vi.fn()} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Reconnect" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Refresh failed; account is not ready.");
+    expect(screen.getByText("BYBIT · MAINNET · ERROR")).toBeInTheDocument();
+  });
 });

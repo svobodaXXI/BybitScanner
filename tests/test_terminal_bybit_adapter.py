@@ -169,6 +169,9 @@ class FakeHTTP:
     def get_instruments_info(self, **kwargs):
         return self._call("get_instruments_info", kwargs)
 
+    def get_wallet_balance(self, **kwargs):
+        return self._call("get_wallet_balance", kwargs)
+
 
 class FakeWebSocket:
     def __init__(self):
@@ -188,6 +191,37 @@ class FakeWebSocket:
 
 
 class BybitNormalizationTests(unittest.TestCase):
+    def test_account_wide_reads_use_usdt_linear_scope_and_normalize_wallet(self):
+        http = FakeHTTP()
+        http.responses = {
+            "get_open_orders": response([order_payload()]),
+            "get_positions": response([position_payload(), position_payload(symbol="ETHUSDT", size="0", side="")]),
+            "get_wallet_balance": {
+                "retCode": 0, "retMsg": "OK", "time": 4321,
+                "result": {"list": [{
+                    "totalEquity": "101.25", "totalAvailableBalance": "80.5",
+                    "coin": [{"coin": "USDT", "walletBalance": "99.75"}],
+                }]},
+            },
+        }
+        factory_calls = []
+        adapter = BybitV5ReadAdapter(
+            ACCOUNT, BybitCredentials("key", "secret"), testnet=True,
+            http_factory=lambda **kwargs: factory_calls.append(kwargs) or http,
+        )
+        self.assertEqual(len(adapter.list_all_active_orders()), 1)
+        self.assertEqual(len(adapter.list_open_positions()), 1)
+        wallet = adapter.get_wallet_snapshot()
+        self.assertEqual(wallet.wallet_balance_usdt, Decimal("99.75"))
+        self.assertEqual(wallet.total_equity_usdt, Decimal("101.25"))
+        self.assertEqual(wallet.available_balance_usdt, Decimal("80.5"))
+        self.assertEqual(wallet.exchange_time_ms, 4321)
+        self.assertEqual(factory_calls[0]["timeout"], 10)
+        self.assertFalse(factory_calls[0]["force_retry"])
+        self.assertFalse(factory_calls[0]["log_requests"])
+        self.assertEqual(http.calls[0][1]["settleCoin"], "USDT")
+        self.assertEqual(http.calls[1][1]["settleCoin"], "USDT")
+
     def test_ordinary_and_partially_filled_limit_normalization(self):
         ordinary = normalize_order(order_payload(), ACCOUNT)
         partial = normalize_order(

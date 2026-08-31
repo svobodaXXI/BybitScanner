@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "1.99",
+  "revision": "2.0",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -370,10 +370,10 @@
     {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "WORKSPACE_SYMBOL_SWITCHING_PHONE_REFINEMENT_IMPLEMENTED_AUTOMATED_PASS",
-  "implementation_status": "LAYOUT_AND_DOM_DOTS_REFINEMENT_TARGETED_PASS_BUILD_PASS_MANUAL_ACCEPTANCE_PENDING",
+  "current_checkpoint": "ACCOUNT_WIDE_READ_ONLY_LIVE_RECONCILIATION_IMPLEMENTED_AUTOMATED_PASS",
+  "implementation_status": "REVISION_2_0_IMPLEMENTED_VERIFIED_MANUAL_ACCEPTANCE_PENDING",
   "next_phase": "VERIFY",
-  "next_phase_authorization": "PRODUCTION_IMPLEMENTATION_OF_REVISION_1_42_SECTION_50_AUTHORIZED",
+  "next_phase_authorization": "REVISION_2_0_PRODUCTION_IMPLEMENTATION_AUTHORIZED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -469,7 +469,8 @@
     {"revision": "1.78", "reason": "Implemented and verified M6 as one frontend atomic Workspace projection over the M5 multiplexed WebSocket with complete snapshot gating, strict symbol/generation/sequence authority, bounded book/trade/candle updates, resume and fail-closed fresh resnapshot while preserving backend legacy SSE, full PAPER L2 and command semantics", "date": "2026-08-30"},
     {"revision": "1.79", "reason": "Implemented and verified M7 as deterministic bounded backend and frontend chaos/regression coverage for authority isolation, sequence and resnapshot boundaries, replay and queue pressure, reconnect/resume, component escalation and mixed projection churn while preserving legacy SSE, full PAPER L2 and command/order semantics; M8 device and transport acceptance remains not started", "date": "2026-08-30"},
     {"revision": "1.80", "reason": "Kept M8 open after production/tunnel real-browser 5m-to-1m acceptance exposed a reproducible Chart/DOM viewport feedback loop plus a coincident tunnel WebSocket abort; implemented and built a bounded stable-viewport shell correction and atomic 5m-to-1m-to-5m regression while requiring fresh tunnel/browser and real-phone re-acceptance before PASS", "date": "2026-08-30"},
-    {"revision": "1.81", "reason": "Completed M8 after rebuilt production assets passed desktop and real-phone Chrome acceptance through the active lhr.life tunnel for ONGUSDT 5m-to-1m-to-5m with bounded Chart and DOM, visible candles, live DOM and Smart Tape, and no recurrence of LIVE BOOK UNAVAILABLE", "date": "2026-08-30"}
+    {"revision": "1.81", "reason": "Completed M8 after rebuilt production assets passed desktop and real-phone Chrome acceptance through the active lhr.life tunnel for ONGUSDT 5m-to-1m-to-5m with bounded Chart and DOM, visible candles, live DOM and Smart Tape, and no recurrence of LIVE BOOK UNAVAILABLE", "date": "2026-08-30"},
+    {"revision": "2.0", "reason": "Human-approved bounded architecture amendment defining account-wide read-only LIVE discovery above the existing symbol-scoped ReconciliationCoordinator, separate account-scoped LIVE projections, per-account refresh generation, atomic stale-safe publication, credential-free transport and mutation prohibition without authorizing implementation", "date": "2026-08-31"}
   ]
 }
 ```
@@ -4538,4 +4539,65 @@ touch used to grab and drag the editable line is intermittently unreliable, appr
 root cause is proven. Further diagnosis and correction of this second-touch drag interaction are explicitly
 deferred by the user and do not revoke the accepted STOP create/amend confirmation or unrestricted placement
 semantics recorded above.
+
+## ACCOUNT-WIDE READ-ONLY LIVE RECONCILIATION ARCHITECTURE AMENDMENT
+
+Revision 2.0 records the approved bounded architecture and its subsequently authorized production implementation.
+The current `ReconciliationCoordinator` remains the sole L2 symbol/leg authority: it consumes one complete
+`RecoveryBundle` for one `PositionKey(account, category, symbol, positionIdx)`, applies normalized facts through
+the existing `ExecutionEngine`, and commits the existing position/checkpoint projections. It must not be bypassed
+by a second symbol reconciliation implementation and must not be misused as an account-wide discovery API.
+
+One L3 read-only account reconciliation orchestrator may be added above that coordinator. Its bounded ownership is:
+
+1. load one saved Bybit account's credentials only through the backend `CredentialStore`;
+2. capture an immutable refresh token containing `account_id`, a monotonic per-account `refresh_generation`, and
+   the unchanged `TradingAccountManager.session_token` observed when the refresh begins;
+3. freshly validate credentials and require the validated environment to equal the persisted routing environment;
+4. use the existing `BybitV5ReadAdapter`, extended narrowly with normalized account-wallet, all-linear-positions
+   and all-linear-open-orders reads; raw authenticated Bybit payloads do not cross the adapter;
+5. assemble one complete account discovery snapshot before any publish;
+6. route each discovered symbol/position leg that requires durable execution-state convergence through the existing
+   `ReconciliationCoordinator`; no coordinator call may receive mixed-account or incomplete fabricated evidence;
+7. atomically publish the account summary only if the refresh token is still current; otherwise discard the late
+   result without status or projection mutation.
+
+The account discovery snapshot is account-scoped and contains only allow-listed normalized fields: account id,
+environment, validation-derived permission mode, reconciliation status, refresh generation, exchange evidence
+timestamp when available, USDT `walletBalance`, total equity and available balance as distinct Decimal values,
+normalized open-position summaries, normalized open-order summaries, counts and safe failure code. `walletBalance`
+remains the future Working Volume authority; total equity and available balance do not replace it.
+
+LIVE account summaries require a separate persistence/projection boundary. The existing `paper_accounts` table is
+PAPER-only and must not store LIVE wallet state. Durable LIVE rows and every nested position/order key include the
+real `trading_account_id`; no LIVE evidence may be written under `paper`. Publishing a new generation replaces one
+account's prior account-wide snapshot atomically. Store or coordinator failure leaves the account non-ready and
+does not expose a partial new snapshot.
+
+Status transitions are fail-closed:
+
+```text
+persisted startup                         -> DISCONNECTED
+refresh start                            -> RECONCILING
+fresh validation + complete discovery
+  trading-capable key                    -> READY
+  read-only key                          -> READ_ONLY
+validation/environment/snapshot failure  -> ERROR
+stale refresh completion                 -> discarded; cannot promote status
+```
+
+Inactive refresh never changes `active_account_id` or account session generation. It invokes no mutation adapter,
+starts no private WebSocket and grants no trading authority. Future account switching must consume only a current,
+complete account snapshot and remains separately gated.
+
+The bounded HTTP surface is credential-free: one refresh command scoped by opaque account id and one read summary
+projection. Responses expose normalized status/summary/error codes only—never credentials, credential references,
+raw Bybit responses or exception text. Frontend may show Refresh/Reconnect, status, wallet/equity summary and
+position/order counts for an inactive account; it must not mark that account Current or expose trading controls.
+
+Implementation acceptance requires regressions for persisted DISCONNECTED startup, READY versus READ_ONLY fresh
+validation, environment mismatch, validation/discovery/store/coordinator failure, PAPER authority preservation,
+account and generation isolation, stale-result rejection, cross-account contamination, mutation-adapter absence,
+credential-free transport and frontend refresh/status rendering. Production implementation was explicitly
+authorized on 2026-08-31; automated verification does not replace manual real-interface frontend acceptance.
 

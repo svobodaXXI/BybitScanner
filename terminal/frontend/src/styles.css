@@ -1317,12 +1317,16 @@ button {
   gap: 0.2rem;
 }
 .account-card.status-read_only,
-.account-card.status-disconnected {
+.account-card.status-disconnected,
+.account-card.status-error,
+.account-card.status-reconciling {
   border-color: #8c7138;
   background: #252014;
 }
 .account-card.status-read_only small,
-.account-card.status-disconnected small { color: #e0b862; }
+.account-card.status-disconnected small,
+.account-card.status-error small,
+.account-card.status-reconciling small { color: #e0b862; }
 .account-card {
   padding: 0.65rem;
   border: 1px solid #3c7757;
@@ -1330,6 +1334,9 @@ button {
   background: #14231c;
 }
 .account-card span { color: #70d49a; font-size: 0.65rem; }
+.account-refresh-button { justify-self: start; cursor: pointer; }
+.account-live-summary { color: #b9c5d0 !important; }
+.account-refresh-error { color: #e88888 !important; }
 .account-add-button { cursor: pointer !important; color: #d7e0e8 !important; }
 .account-dialog-backdrop {
   position: fixed;

@@ -1,5 +1,7 @@
 export const marketApiRoutes = {
   accounts: "/api/accounts",
+  accountRefresh: (accountId: string) => `/api/accounts/${encodeURIComponent(accountId)}/refresh`,
+  accountSummary: (accountId: string) => `/api/accounts/${encodeURIComponent(accountId)}/summary`,
   instruments: "/api/instruments",
   book: (symbol: string) => `/api/public-orderbook/stream?symbol=${encodeURIComponent(symbol)}`,
   candles: (symbol: string, interval: string) =>
