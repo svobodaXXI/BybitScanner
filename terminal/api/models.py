@@ -113,6 +113,35 @@ class MarketCommandRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class LiveMarketCommandRequest:
+    client_action_id: ClientActionId
+    account_id: str
+    session_generation: int
+    symbol: str
+    side: OrderSide
+    volume: VolumeRequest
+    sizing_reference_price: Decimal
+    slippage_type: str
+    slippage_value: Decimal
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.account_id, str) or not self.account_id:
+            raise ValueError("account_id must be non-empty")
+        if isinstance(self.session_generation, bool) or self.session_generation < 1:
+            raise ValueError("session_generation must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class LiveMarketCommandResult:
+    client_action_id: str
+    status: CommandResultStatus
+    reason_code: str
+    command_id: str | None = None
+    order_link_id: str | None = None
+    reconciliation_required: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class FullCloseCommandRequest:
     client_action_id: ClientActionId
     symbol: str

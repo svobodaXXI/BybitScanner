@@ -10,6 +10,13 @@ export type AccountWorkspaceProjection = {
   session_generation: number;
   projection_generation: number;
   read_only: boolean;
+  capabilities?: {
+    market: boolean;
+    limit: boolean;
+    stop: boolean;
+    take: boolean;
+    full_close: boolean;
+  };
   wallet_balance_usdt: string;
   total_equity_usdt: string;
   available_balance_usdt: string;

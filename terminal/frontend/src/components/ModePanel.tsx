@@ -4,6 +4,7 @@ import {
   type FullCloseCommandRequest,
   HANDLED_REASON_CODES,
   type MarketCommandRequest,
+  type LiveMarketCommandRequest,
   type MarketSide,
   type PaperLimitAmendRequest,
   type PaperLimitMutationResponse,
@@ -31,6 +32,7 @@ import {
 } from "../orders/limitDraft";
 import { isValidSelectedVolume, type SelectedSideVolumes } from "../orders/selectedVolume";
 import { executePaperMarketCommand } from "../orders/paperMarketCommand";
+import { createLiveMarketAction, executeLiveMarketCommand } from "../orders/liveMarketCommand";
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 import { AccountMenu } from "./AccountMenu";
 import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
@@ -91,6 +93,7 @@ export function ModePanel({
   onAccountToggle = () => {},
   accountWorkspaceProjection = null,
   mutationsAllowed = true,
+  liveMarketAllowed = false,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -107,7 +110,7 @@ export function ModePanel({
   dispatchLimitDraft: Dispatch<LimitDraftAction>;
   onLimitDraftConfirm: () => void;
   onFastLimitHoldChange?: (
-    intent: { side: MarketSide } | null,
+    intent: { side: MarketSide; volumeUsdt: string } | null,
   ) => void;
   selectedVolumes?: SelectedSideVolumes;
   onSelectedVolumeChange?: (side: MarketSide, value: string) => void;
@@ -137,6 +140,7 @@ export function ModePanel({
   onAccountToggle?: () => void;
   accountWorkspaceProjection?: AccountWorkspaceProjection | null;
   mutationsAllowed?: boolean;
+  liveMarketAllowed?: boolean;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -161,6 +165,11 @@ export function ModePanel({
   const holdTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [amendPrices, setAmendPrices] = useState<Record<string, string>>({});
   const previousLimitDraft = useRef(limitDraftState.draft);
+  const [liveConfirmation, setLiveConfirmation] = useState<LiveMarketCommandRequest | null>(null);
+
+  useEffect(() => {
+    setLiveConfirmation(null);
+  }, [accountWorkspaceProjection?.account_id, accountWorkspaceProjection?.session_generation]);
 
   useEffect(() => {
       const engagedWv = Number(paperState?.engaged_wv);
@@ -322,15 +331,47 @@ export function ModePanel({
         commandResult.status === "completed"
           ? `PAPER ${side.toUpperCase()} completed`
           : commandResult.reason_code === HANDLED_REASON_CODES[0]
-            ? "Сумма слишком мала для шага объёма"
-            : `${side.toUpperCase()} отменено`,
+            ? "РЎСѓРјРјР° СЃР»РёС€РєРѕРј РјР°Р»Р° РґР»СЏ С€Р°РіР° РѕР±СЉС‘РјР°"
+            : `${side.toUpperCase()} РѕС‚РјРµРЅРµРЅРѕ`,
       );
 
       } catch {
-        setExecutionStatus(`${side.toUpperCase()} отменено`);
+        setExecutionStatus(`${side.toUpperCase()} РѕС‚РјРµРЅРµРЅРѕ`);
         await refreshPaperState();
       }
     });
+  };
+
+  const beginMarket = (side: MarketSide, amount: string) => {
+    if (mutationsAllowed) {
+      void submitPaperMarket(side, amount);
+      return;
+    }
+    const numericAmount = Number(amount);
+    if (!liveMarketAllowed || !accountWorkspaceProjection || !amount.trim()
+      || !Number.isFinite(numericAmount) || numericAmount <= 0) return;
+    setLiveConfirmation(createLiveMarketAction({
+      accountId: accountWorkspaceProjection.account_id,
+      sessionGeneration: accountWorkspaceProjection.session_generation,
+      symbol, side, amount, sizingReferencePrice,
+    }));
+  };
+
+  const confirmLiveMarket = async () => {
+    const action = liveConfirmation;
+    if (!action) return;
+    const result = await executeLiveMarketCommand(action, {
+      currentAuthority: () => accountWorkspaceProjection ? {
+        accountId: accountWorkspaceProjection.account_id,
+        sessionGeneration: accountWorkspaceProjection.session_generation,
+      } : null,
+    });
+    if (!result) return;
+    setLiveConfirmation(null);
+    setExecutionStatus(result.status === "unknown"
+      ? "LIVE result ambiguous вЂ” reconciling; do not retry"
+      : result.status === "accepted_pending" ? "LIVE accepted вЂ” awaiting REST evidence"
+      : `LIVE ${result.status}: ${result.reason_code}`);
   };
 
   const submitFullClose = async () => {
@@ -347,11 +388,11 @@ export function ModePanel({
       });
       const result = (await response.json()) as CommandMutationResponse;
       setExecutionStatus(
-        result.status === "completed" ? "PAPER позиция закрыта" : "Закрытие отменено",
+        result.status === "completed" ? "PAPER РїРѕР·РёС†РёСЏ Р·Р°РєСЂС‹С‚Р°" : "Р—Р°РєСЂС‹С‚РёРµ РѕС‚РјРµРЅРµРЅРѕ",
       );
       if (result.status === "completed") applyPaperState(result.paper_state);
       } catch {
-        setExecutionStatus("Закрытие отменено");
+        setExecutionStatus("Р—Р°РєСЂС‹С‚РёРµ РѕС‚РјРµРЅРµРЅРѕ");
         await refreshPaperState();
       }
     });
@@ -361,9 +402,9 @@ export function ModePanel({
     if (!onLimitCancel) return;
     try {
       const result = await onLimitCancel(orderId);
-      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT отменён" : "Отмена LIMIT не выполнена");
+      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT РѕС‚РјРµРЅС‘РЅ" : "РћС‚РјРµРЅР° LIMIT РЅРµ РІС‹РїРѕР»РЅРµРЅР°");
     } catch {
-      setExecutionStatus("Отмена LIMIT не выполнена");
+      setExecutionStatus("РћС‚РјРµРЅР° LIMIT РЅРµ РІС‹РїРѕР»РЅРµРЅР°");
     }
   };
 
@@ -404,10 +445,10 @@ export function ModePanel({
         body: JSON.stringify(request),
       });
       const result = (await response.json()) as PaperLimitMutationResponse;
-      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT изменён" : "Изменение LIMIT не выполнено");
+      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT РёР·РјРµРЅС‘РЅ" : "РР·РјРµРЅРµРЅРёРµ LIMIT РЅРµ РІС‹РїРѕР»РЅРµРЅРѕ");
       if (result.status === "completed") applyPaperState(result.paper_state);
       } catch {
-        setExecutionStatus("Изменение LIMIT не выполнено");
+        setExecutionStatus("РР·РјРµРЅРµРЅРёРµ LIMIT РЅРµ РІС‹РїРѕР»РЅРµРЅРѕ");
         await refreshPaperState();
       }
     });
@@ -460,16 +501,18 @@ export function ModePanel({
         <div className="paper-market-actions-shell" {...tradingInputFocus.boundaryProps}>
         <fieldset
           aria-label="Manual trading controls"
-          className={`paper-market-actions${mutationsAllowed ? "" : " is-read-only"}`}
-          disabled={!mutationsAllowed}
+          className={`paper-market-actions${mutationsAllowed || liveMarketAllowed ? "" : " is-read-only"}`}
+          disabled={!mutationsAllowed && !liveMarketAllowed}
         >
           <div className="paper-trade-side-group" aria-label="PAPER trade sides">
             <div className="paper-market-side paper-market-buy-side">
               <TradingControlButton
-                onTap={() => void submitPaperMarket("Buy", selectedVolumes.Buy)}
+                onTap={() => beginMarket("Buy", selectedVolumes.Buy)}
                 onHoldStart={() => {
-                  navigator.vibrate?.(20);
-                  onFastLimitHoldChange({ side: "Buy" });
+                  if (mutationsAllowed) {
+                    navigator.vibrate?.(20);
+                    onFastLimitHoldChange({ side: "Buy", volumeUsdt: selectedVolumes.Buy || oneWvUsdt });
+                  }
                 }}
                 onHoldEnd={() => onFastLimitHoldChange(null)}
                 onCancel={() => onFastLimitHoldChange(null)}
@@ -496,10 +539,12 @@ export function ModePanel({
 
             <div className="paper-market-side paper-market-sell-side">
               <TradingControlButton
-                onTap={() => void submitPaperMarket("Sell", selectedVolumes.Sell)}
+                onTap={() => beginMarket("Sell", selectedVolumes.Sell)}
                 onHoldStart={() => {
-                  navigator.vibrate?.(20);
-                  onFastLimitHoldChange({ side: "Sell" });
+                  if (mutationsAllowed) {
+                    navigator.vibrate?.(20);
+                    onFastLimitHoldChange({ side: "Sell", volumeUsdt: selectedVolumes.Sell || oneWvUsdt });
+                  }
                 }}
                 onHoldEnd={() => onFastLimitHoldChange(null)}
                 onCancel={() => onFastLimitHoldChange(null)}
@@ -552,8 +597,8 @@ export function ModePanel({
 
                     onTap={() => setCloseConfirmOpen(true)}
                     type="button"
-                    aria-label="Закрыть позицию"
-                    title="Закрыть позицию"
+                    aria-label="Р—Р°РєСЂС‹С‚СЊ РїРѕР·РёС†РёСЋ"
+                    title="Р—Р°РєСЂС‹С‚СЊ РїРѕР·РёС†РёСЋ"
                   >
                     <svg
                       className="paper-close-icon"
@@ -666,6 +711,7 @@ export function ModePanel({
           <div className="paper-protection-stack">
             <TradingControlButton
               className="paper-stop-button"
+              disabled={!mutationsAllowed}
               type="button"
               aria-pressed={stopActive}
               onTap={() => {
@@ -691,6 +737,7 @@ export function ModePanel({
             ) : null}
             <TradingControlButton
               className="paper-take-button"
+              disabled={!mutationsAllowed}
               type="button"
               aria-pressed={takeActive}
               onTap={onTakeTap}
@@ -794,7 +841,7 @@ export function ModePanel({
                         disabled={!canSubmit}
                         onTap={onLimitDraftConfirm}
                       >
-                        ✓
+                        вњ“
                       </TradingControlButton>
                     </div>
                   );
@@ -942,7 +989,7 @@ export function ModePanel({
                       }
                       onTap={() => openSideCancelConfirmation(side)}
                     >
-                      ×
+                      Г—
                     </TradingControlButton>
                   </div>
                 );
@@ -963,7 +1010,7 @@ export function ModePanel({
                       }
                       onTap={() => openSideCancelConfirmation(limitsInventorySide)}
                     >
-                      ×
+                      Г—
                     </TradingControlButton>
                   </header>
                   <div className="paper-limits-order-list">
@@ -980,7 +1027,7 @@ export function ModePanel({
                           }
                           onTap={() => void cancelLimit(order.order_id)}
                         >
-                          ×
+                          Г—
                         </TradingControlButton>
                       </div>
                     ))}
@@ -992,6 +1039,18 @@ export function ModePanel({
               <AccountMenu open={accountOpen} onToggle={onAccountToggle} workspaceProjection={accountWorkspaceProjection} />
             </div>
           </div>
+
+          {liveConfirmation ? (
+            <div className="paper-limit-popup-backdrop" role="presentation">
+              <div className="paper-limit-popup" role="dialog" aria-label="Confirm LIVE Market order">
+                <strong>Main Bybit / LIVE</strong>
+                <p>{liveConfirmation.side.toUpperCase()} MARKET {liveConfirmation.symbol}</p>
+                <p>{liveConfirmation.volume.amount} USDT В· slippage {liveConfirmation.slippage_value}%</p>
+                <button type="button" onClick={() => void confirmLiveMarket()}>CONFIRM LIVE MARKET</button>
+                <button type="button" onClick={() => setLiveConfirmation(null)}>CANCEL</button>
+              </div>
+            </div>
+          ) : null}
         </div>
         </>
       ) : null}

@@ -124,6 +124,12 @@ export function App() {
     && accountProjection?.provider === "PAPER"
     && accountProjection.environment === "PAPER"
     && accountProjection.status === "READY";
+  const liveMarketAllowed = !accountWorkspace.switching
+    && accountProjection?.provider === "BYBIT"
+    && accountProjection.environment === "MAINNET"
+    && accountProjection.status === "READY"
+    && accountProjection.read_only === false
+    && accountProjection.capabilities?.market === true;
   useEffect(() => {
     paperTradingStore.setAccountSession(
       mutationsAllowed ? accountProjection.account_id : null,
@@ -831,6 +837,7 @@ export function App() {
           onAccountToggle={() => setAccountOpen((open) => !open)}
           accountWorkspaceProjection={accountProjection}
           mutationsAllowed={mutationsAllowed}
+          liveMarketAllowed={liveMarketAllowed}
         />
       </section>
     </main>

@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -348,6 +348,25 @@ SCHEMA_V10_MIGRATION_STATEMENTS = (
     """,
 )
 
+SCHEMA_V11_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE live_market_actions (
+        trading_account_id TEXT NOT NULL,
+        session_generation INTEGER NOT NULL,
+        client_action_id TEXT NOT NULL,
+        request_fingerprint TEXT NOT NULL,
+        command_id TEXT NOT NULL UNIQUE,
+        order_link_id TEXT NOT NULL UNIQUE,
+        dispatch_started INTEGER NOT NULL DEFAULT 0,
+        created_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (trading_account_id, session_generation, client_action_id),
+        FOREIGN KEY (command_id) REFERENCES trading_commands(command_id),
+        CHECK (session_generation >= 1),
+        CHECK (dispatch_started IN (0, 1))
+    ) WITHOUT ROWID
+    """,
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -359,4 +378,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V8_MIGRATION_STATEMENTS
     + SCHEMA_V9_MIGRATION_STATEMENTS
     + SCHEMA_V10_MIGRATION_STATEMENTS
+    + SCHEMA_V11_MIGRATION_STATEMENTS
 )

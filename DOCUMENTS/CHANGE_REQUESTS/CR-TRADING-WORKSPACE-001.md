@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "2.1",
+  "revision": "2.2",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -51,6 +51,7 @@
     ,"Implement backend-secured Bybit API credential management and safely reconciled configured-account switching without exposing API Secret to the frontend"
     ,"Extend the established Terminal execution and reconciliation architecture to the selected real account for Market, Limit, STOP and TAKE without blind retry"
     ,"Complete the real-money security, reconciliation and acceptance gate before Manual Terminal v1 closure"
+    ,"Implement the first default-off LIVE execution slice for explicitly confirmed manual MARKET BUY and MARKET SELL on the active writable Bybit MAINNET account, with durable idempotency, account/session fencing, single-attempt dispatch, REST-only reconciliation, an authoritative acceptance-notional ceiling and no LIVE Limit, STOP, TAKE or full-close capability"
     ,"Record the human-approved planning-only future direction for an autonomous Android manual Trading Workspace without authorizing implementation or selecting a final Android stack"
   ],
   "prohibited_scope": [
@@ -365,15 +366,15 @@
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
     {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
-    {"id": "IMPLEMENT", "status": "REVISION_2_1_PRODUCTION_IMPLEMENTATION_COMPLETE"},
-    {"id": "VERIFY", "status": "REVISION_2_1_AUTOMATED_AND_REAL_PHONE_ACCEPTANCE_PASS"},
-    {"id": "RECORD", "status": "REVISION_2_1_CLOSURE_RECORDED"}
+    {"id": "IMPLEMENT", "status": "REVISION_2_2_LIVE_MARKET_FOUNDATION_AUTHORIZED"},
+    {"id": "VERIFY", "status": "REVISION_2_2_PENDING"},
+    {"id": "RECORD", "status": "REVISION_2_2_PENDING"}
   ],
-  "current_phase": "RECORD",
-  "current_checkpoint": "REVISION_2_1_PRODUCTION_IMPLEMENTED_REAL_PHONE_ACCEPTED",
-  "implementation_status": "REVISION_2_1_COMPLETE_REAL_PHONE_ACCEPTED",
-  "next_phase": "CLOSED",
-  "next_phase_authorization": "NO_FURTHER_REVISION_2_1_WORK_REQUIRED",
+  "current_phase": "IMPLEMENT",
+  "current_checkpoint": "REVISION_2_2_LIVE_MARKET_EXECUTION_FOUNDATION_AUTHORIZED",
+  "implementation_status": "REVISION_2_2_IMPLEMENTATION_AUTHORIZED_NOT_YET_VERIFIED",
+  "next_phase": "VERIFY",
+  "next_phase_authorization": "AFTER_SCOPED_IMPLEMENTATION_WITH_REAL_DISPATCH_DEFAULT_OFF",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -471,7 +472,8 @@
     {"revision": "1.80", "reason": "Kept M8 open after production/tunnel real-browser 5m-to-1m acceptance exposed a reproducible Chart/DOM viewport feedback loop plus a coincident tunnel WebSocket abort; implemented and built a bounded stable-viewport shell correction and atomic 5m-to-1m-to-5m regression while requiring fresh tunnel/browser and real-phone re-acceptance before PASS", "date": "2026-08-30"},
     {"revision": "1.81", "reason": "Completed M8 after rebuilt production assets passed desktop and real-phone Chrome acceptance through the active lhr.life tunnel for ONGUSDT 5m-to-1m-to-5m with bounded Chart and DOM, visible candles, live DOM and Smart Tape, and no recurrence of LIVE BOOK UNAVAILABLE", "date": "2026-08-30"},
     {"revision": "2.0", "reason": "Implemented and accepted account-wide read-only LIVE reconciliation after a production build and real-phone test against a saved Bybit MAINNET account: fresh Refresh/Reconnect reached READY, showed real Equity and Wallet plus 33 positions and 13 active orders, preserved Paper as the sole Current account without switching, performed no LIVE mutations and exposed no credentials; next stage is active-account switching plus account-scoped Workspace activation without LIVE mutations", "date": "2026-08-31"},
-    {"revision": "2.1", "reason": "Human-approved documentation-only bounded architecture amendment separating immutable PAPER storage identity from active session authority, defining one account-scoped Workspace projection router, atomic eligible account switching, session-aware stale rejection, a backend PAPER-only mutation gate, read-only LIVE views and unchanged public symbol/market-data authority; production implementation remains separately authorization-gated", "date": "2026-08-31"}
+    {"revision": "2.1", "reason": "Human-approved documentation-only bounded architecture amendment separating immutable PAPER storage identity from active session authority, defining one account-scoped Workspace projection router, atomic eligible account switching, session-aware stale rejection, a backend PAPER-only mutation gate, read-only LIVE views and unchanged public symbol/market-data authority; production implementation remains separately authorization-gated", "date": "2026-08-31"},
+    {"revision": "2.2", "reason": "Human-authorized first safe LIVE execution slice limited to explicit manual MARKET BUY and MARKET SELL for the active writable Bybit MAINNET session, with durable command identity and idempotency, account/session fencing, persist-before-dispatch, default-off dual real-money gates, backend acceptance-notional ceiling, single-attempt mutation, UNKNOWN safety barrier and REST-only reconciliation; LIVE Limit, STOP, TAKE, full close, private WebSocket, autonomous dispatch and real-order acceptance remain unauthorized", "date": "2026-09-01"}
   ]
 }
 ```
@@ -4706,4 +4708,44 @@ Accounts modal, 500-ms hold shows refreshed balances, and the account name remai
 Real-phone acceptance confirms startup restore, read-only LIVE controls, Accounts backdrop/close behavior, removal
 of oversized Workspace LIVE cards, original upper trading-control geometry and a continuous full-width lower-row
 divider. No PAPER/LIVE state mixing or LIVE mutation-adapter invocation was observed.
+
+### Revision 2.2 LIVE MARKET execution foundation authorization
+
+Revision 2.2 authorizes only manual confirmed MARKET BUY and MARKET SELL for the active writable Bybit MAINNET
+account. `TradingAccountManager` remains the sole account/session authority. Every request carries
+`client_action_id`, `account_id`, `session_generation`, symbol, side, volume, sizing reference price and slippage;
+the backend validates the exact active READY, non-read-only session and rechecks its captured session token
+immediately before irreversible dispatch.
+
+A narrow application coordinator above `TradingApplication` and `BybitV5MutationAdapter` owns the mutation. It
+atomically binds `(account_id, session_generation, client_action_id)` to one durable command and canonical
+Bybit-compatible `orderLinkId`, persists before dispatch, permits at most one adapter invocation, treats ACK as
+accepted-pending rather than filled, and never blindly retries an ambiguous mutation. Timeout or transport
+ambiguity becomes `UNKNOWN`, blocks conflicting exposure-changing LIVE MARKET work and requires REST-only
+correlation of order history, execution history, active orders and current position against the original
+`orderLinkId`. Late dispatch or reconciliation results may update only their captured account/session projection.
+
+Backend real-money dispatch requires both a LIVE MARKET capability gate and a separate MAINNET authorization gate,
+plus the mutation adapter's existing lower-level gates. All gates default OFF. A separately configured positive
+acceptance-notional ceiling is authoritative and rejects, rather than resizes, an oversized request. Startup,
+reconnect, refresh and reconciliation cannot place an order. Automated tests must use fakes and must never enable a
+real exchange dispatch.
+
+`/api/market` and all PAPER execution, persistence and projection behavior remain unchanged. LIVE uses the separate
+`/api/live/market` boundary and explicit confirmation with one stable `client_action_id`. Only MARKET BUY/SELL may
+be capability-enabled for a READY writable active LIVE session; LIVE Limit, fast-Limit hold, STOP, TAKE, per-position
+close and full-close remain disabled and backend-blocked. Private WebSocket and real-money acceptance are outside
+this revision.
+
+
+## REVISION 2.2 REAL-PHONE ACCEPTANCE CHECKPOINT
+Date: 2026-09-02
+- Main Bybit restored as READY.
+- LIVE BUY/SELL capability gating verified.
+- Explicit LIVE confirmation verified on real phone.
+- Zero-ceiling fail-closed behavior verified: acceptance_notional_exceeded.
+- Mobile blocked-result feedback made visible.
+- SQLite live_market_actions remained empty during zero-ceiling test.
+- REAL BYBIT ORDER SENT: NO.
+- LIVE Market foundation acceptance: PASS for safe non-dispatch path.
 

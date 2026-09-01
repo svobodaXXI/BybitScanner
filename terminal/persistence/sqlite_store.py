@@ -42,6 +42,7 @@ from .schema import (
     SCHEMA_V8_MIGRATION_STATEMENTS,
     SCHEMA_V9_MIGRATION_STATEMENTS,
     SCHEMA_V10_MIGRATION_STATEMENTS,
+    SCHEMA_V11_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -112,6 +113,18 @@ class SubmitEligibility:
     command_id: CommandId
     order_link_id: str
     committed_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class LiveMarketActionRecord:
+    trading_account_id: TradingAccountId
+    session_generation: int
+    client_action_id: str
+    request_fingerprint: str
+    command_id: CommandId
+    order_link_id: str
+    dispatch_started: bool
+    created_at_ms: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -384,6 +397,11 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 10:
+            SQLiteStore._validate_required_tables(connection, version=10)
+            SQLiteStore._migrate_v10_to_v11(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
         if version == 9:
             SQLiteStore._validate_required_tables(connection, version=9)
             SQLiteStore._migrate_v9_to_v10(connection)
@@ -576,6 +594,19 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v10_to_v11(connection)
+
+    @staticmethod
+    def _migrate_v10_to_v11(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V11_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 11")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -612,6 +643,8 @@ class SQLiteStore:
             required.add("paper_state_revisions")
         if version >= 10:
             required.add("paper_protection_actions")
+        if version >= 11:
+            required.add("live_market_actions")
         actual = {
             row[0]
             for row in connection.execute(
@@ -1126,6 +1159,120 @@ class SQLiteStore:
             raise DuplicateIdentity("command_id or order_link_id already exists") from exc
 
         return SubmitEligibility(record.command_id, record.order_link_id, record.version)
+
+    def claim_live_market_action(
+        self, record: CommandRecord, *, session_generation: int,
+        client_action_id: str, request_fingerprint: str,
+    ) -> tuple[LiveMarketActionRecord, bool]:
+        """Atomically bind one logical LIVE action to one durable command identity."""
+        self._assert_owner()
+        existing = self.get_live_market_action(
+            record.trading_account_id, session_generation, client_action_id,
+        )
+        if existing is not None:
+            if existing.request_fingerprint != request_fingerprint:
+                raise DuplicateIdentity("client_action_id was reused with different LIVE intent")
+            return existing, False
+        try:
+            with self._transaction():
+                self._connection.execute(
+                    """INSERT INTO trading_commands (
+                        command_id, order_link_id, trading_account_id, category, symbol,
+                        position_idx, command_kind, side, requested_notional,
+                        normalized_price, normalized_quantity, origin, controller,
+                        current_state, version, exchange_order_id, created_at_ms, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        record.command_id.value, record.order_link_id,
+                        record.trading_account_id.value, record.category.value,
+                        record.symbol.value, record.position_idx, record.command_kind,
+                        record.side.value, _decimal_text(record.requested_notional.value),
+                        _optional_decimal(record.normalized_price),
+                        _optional_decimal(record.normalized_quantity), record.origin.value,
+                        record.controller.value, record.current_state.value, record.version,
+                        None, record.created_at_ms, record.updated_at_ms,
+                    ),
+                )
+                self._connection.execute(
+                    "INSERT INTO command_state_history (command_id, previous_state, next_state, reason, occurred_at_ms) VALUES (?, NULL, ?, ?, ?)",
+                    (record.command_id.value, record.current_state.value,
+                     "durable LIVE client action claimed", record.updated_at_ms),
+                )
+                self._connection.execute(
+                    "INSERT INTO live_market_actions VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+                    (record.trading_account_id.value, session_generation, client_action_id,
+                     request_fingerprint, record.command_id.value, record.order_link_id,
+                     record.created_at_ms),
+                )
+        except sqlite3.IntegrityError:
+            existing = self.get_live_market_action(
+                record.trading_account_id, session_generation, client_action_id,
+            )
+            if existing is None or existing.request_fingerprint != request_fingerprint:
+                raise DuplicateIdentity("LIVE action identity conflict")
+            return existing, False
+        return self.get_live_market_action(
+            record.trading_account_id, session_generation, client_action_id,
+        ), True
+
+    def get_live_market_action(
+        self, account_id: TradingAccountId, session_generation: int, client_action_id: str,
+    ) -> LiveMarketActionRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM live_market_actions WHERE trading_account_id = ? AND session_generation = ? AND client_action_id = ?",
+            (account_id.value, session_generation, client_action_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return LiveMarketActionRecord(
+            TradingAccountId(row["trading_account_id"]), int(row["session_generation"]),
+            row["client_action_id"], row["request_fingerprint"],
+            CommandId(row["command_id"]), row["order_link_id"],
+            bool(row["dispatch_started"]), int(row["created_at_ms"]),
+        )
+
+    def begin_live_market_dispatch(self, action: LiveMarketActionRecord, *, occurred_at_ms: int) -> CommandRecord | None:
+        """Claim the sole irreversible dispatch attempt and persist SUBMITTING atomically."""
+        self._assert_owner()
+        with self._transaction():
+            cursor = self._connection.execute(
+                "UPDATE live_market_actions SET dispatch_started = 1 WHERE trading_account_id = ? AND session_generation = ? AND client_action_id = ? AND dispatch_started = 0",
+                (action.trading_account_id.value, action.session_generation, action.client_action_id),
+            )
+            if cursor.rowcount != 1:
+                return None
+            command = self.get_command(action.command_id)
+            if command is None or command.current_state is not CommandState.ADMITTED:
+                raise PersistenceError("claimed LIVE command is not dispatchable")
+            self._connection.execute(
+                "UPDATE trading_commands SET current_state = ?, version = ?, updated_at_ms = ? WHERE command_id = ? AND current_state = ? AND version = ?",
+                (CommandState.SUBMITTING.value, command.version + 1, occurred_at_ms,
+                 command.command_id.value, CommandState.ADMITTED.value, command.version),
+            )
+            self._connection.execute(
+                "INSERT INTO command_state_history (command_id, previous_state, next_state, reason, occurred_at_ms) VALUES (?, ?, ?, ?, ?)",
+                (command.command_id.value, CommandState.ADMITTED.value,
+                 CommandState.SUBMITTING.value, "single LIVE mutation attempt durably started",
+                 occurred_at_ms),
+            )
+        return self.get_command(action.command_id)
+
+    def has_unresolved_live_market_action(
+        self, account_id: TradingAccountId, session_generation: int,
+    ) -> bool:
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT 1 FROM live_market_actions a
+               JOIN trading_commands c ON c.command_id = a.command_id
+               WHERE a.trading_account_id = ? AND a.session_generation = ?
+                 AND c.current_state IN (?, ?, ?, ?)
+               LIMIT 1""",
+            (account_id.value, session_generation, CommandState.SUBMITTING.value,
+             CommandState.ACKNOWLEDGED.value, CommandState.UNKNOWN.value,
+             CommandState.RECONCILING.value),
+        ).fetchone()
+        return row is not None
 
     def transition_command_state(
         self,

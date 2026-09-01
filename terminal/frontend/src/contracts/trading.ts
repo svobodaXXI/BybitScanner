@@ -23,6 +23,19 @@ export type MarketCommandRequest = {
   slippage_value: string;
 };
 
+export type LiveMarketCommandRequest = MarketCommandRequest & {
+  account_id: string;
+  session_generation: number;
+};
+
+export type LiveMarketCommandResponse = {
+  status: "accepted_pending" | "completed" | "blocked" | "rejected" | "unknown";
+  reason_code: string;
+  command_id: string | null;
+  order_link_id: string | null;
+  reconciliation_required: boolean;
+};
+
 export type FullCloseCommandRequest = {
   client_action_id: string;
   symbol: string;

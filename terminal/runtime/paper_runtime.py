@@ -18,7 +18,9 @@ from terminal.api.models import (
     PaperLimitMutationResult, PaperLimitOrderProjection, PaperOpenPositionProjection,
     PaperOpenPositionsResponse, PaperStopDeleteRequest, PaperStopMutationRequest,
     PaperStopMutationResult, TimeInForce, to_primitive,
+    LiveMarketCommandRequest,
 )
+from terminal.application.live_market_execution import LiveMarketMutationCoordinator, LiveMarketMutationGates
 from terminal.api.projections import project_protection
 from terminal.application.protection import normalize_paper_protection_trigger
 from terminal.application.execution_engine import ExecutionEngine
@@ -42,7 +44,8 @@ from terminal.domain.models import (
 )
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.exchange.bybit_account_validation import BybitAccountValidator
-from terminal.exchange.bybit_v5_adapter import BybitCredentials
+from terminal.exchange.bybit_v5_adapter import BybitCredentials, BybitV5ReadAdapter
+from terminal.exchange.bybit_v5_mutation_adapter import BybitEnvironment, BybitV5MutationAdapter
 from terminal.market_data.book_provider import MarketBookProvider
 from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
 from terminal.persistence.sqlite_store import ExecutionApplyResult, SQLiteStore
@@ -96,6 +99,10 @@ class PaperRuntime:
         live_account_store: LiveAccountProjectionStore | None = None,
         active_account_preference_store: ActiveAccountPreferenceStore | None = None,
         live_adapter_factory=None,
+        live_mutation_adapter_factory=BybitV5MutationAdapter,
+        live_market_mutations_enabled: bool = False,
+        live_mainnet_authorized: bool = False,
+        live_acceptance_notional_ceiling: Decimal = Decimal("0"),
     ) -> None:
         self._account_manager = account_manager or paper_account_manager()
         self._paper_account_id = TradingAccountId("paper")
@@ -103,6 +110,9 @@ class PaperRuntime:
         self._account_validator = account_validator
         self._live_account_store = live_account_store
         self._active_account_preference_store = active_account_preference_store
+        self._live_market_mutations_enabled = live_market_mutations_enabled
+        self._live_mainnet_authorized = live_mainnet_authorized
+        self._instrument_provider = instrument_provider or (lambda _symbol: instrument_snapshot)
         self._stored_bybit_accounts = list(credential_store.load()) if credential_store else []
         for stored in self._stored_bybit_accounts:
             self._account_manager.register_inactive(TradingAccount(
@@ -173,6 +183,37 @@ class PaperRuntime:
         )
 
         self.api = TerminalCommandApi(application, context_provider)
+        self._live_market = LiveMarketMutationCoordinator(
+            self._account_manager, self.store,
+            lambda account_id: live_mutation_adapter_factory(
+                BybitCredentials(
+                    self._stored_bybit_account(account_id.value).api_key,
+                    self._stored_bybit_account(account_id.value).api_secret,
+                ),
+                environment=BybitEnvironment.MAINNET,
+                mutations_enabled=live_market_mutations_enabled,
+                live_authorized=live_mainnet_authorized,
+            ),
+            instrument_provider=self._instrument_provider,
+            book_provider=self._book_provider,
+            writable_account_provider=self._is_stored_account_writable,
+            read_adapter_provider=lambda account_id: (live_adapter_factory or BybitV5ReadAdapter)(
+                account_id,
+                BybitCredentials(
+                    self._stored_bybit_account(account_id.value).api_key,
+                    self._stored_bybit_account(account_id.value).api_secret,
+                ),
+                testnet=False,
+            ),
+            projection_refresher=(
+                self._live_account_reconciler.refresh
+                if self._live_account_reconciler is not None else None
+            ),
+            gates=LiveMarketMutationGates(
+                live_market_mutations_enabled, live_mainnet_authorized,
+                live_acceptance_notional_ceiling,
+            ),
+        )
         self._guard = application.guard
         self._context = context_provider
         self._restore_preferred_account()
@@ -276,7 +317,14 @@ class PaperRuntime:
             "environment": account.environment.value,
             "status": account.status.value,
             "session_generation": token.generation,
-            "read_only": account.provider is TradingAccountProvider.BYBIT,
+            "read_only": False,
+            "capabilities": {
+                "market": account.provider is TradingAccountProvider.PAPER,
+                "limit": account.provider is TradingAccountProvider.PAPER,
+                "stop": account.provider is TradingAccountProvider.PAPER,
+                "take": account.provider is TradingAccountProvider.PAPER,
+                "full_close": account.provider is TradingAccountProvider.PAPER,
+            },
         }
         if account.provider is TradingAccountProvider.PAPER:
             state = self.paper_state(symbol)
@@ -298,6 +346,17 @@ class PaperRuntime:
             raise RuntimeError("live_account_snapshot_unavailable")
         return {
             **envelope,
+            "read_only": snapshot.read_only,
+            "capabilities": {
+                "market": bool(
+                    not snapshot.read_only
+                    and account.environment is TradingAccountEnvironment.MAINNET
+                    and account.status is TradingAccountStatus.READY
+                    and self._live_market_mutations_enabled
+                    and self._live_mainnet_authorized
+                ),
+                "limit": False, "stop": False, "take": False, "full_close": False,
+            },
             "projection_generation": snapshot.refresh_generation,
             "wallet_balance_usdt": str(snapshot.wallet_balance_usdt),
             "total_equity_usdt": str(snapshot.total_equity_usdt),
@@ -327,6 +386,13 @@ class PaperRuntime:
     def market(self, request):
         self.require_paper_mutations()
         return self.api.market(request)
+
+    def live_market(self, request: LiveMarketCommandRequest):
+        return self._live_market.submit(request)
+
+    def _is_stored_account_writable(self, account_id: TradingAccountId) -> bool:
+        stored = self._stored_bybit_account(account_id.value)
+        return stored.environment == TradingAccountEnvironment.MAINNET.value and not stored.read_only
 
     def full_close(self, request):
         self.require_paper_mutations()

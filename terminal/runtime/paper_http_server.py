@@ -30,6 +30,7 @@ from terminal.api.models import (
     CommandResultStatus,
     FullCloseCommandRequest,
     LimitCommandRequest,
+    LiveMarketCommandRequest,
     MarketCommandRequest,
     PaperLimitCancelRequest,
     PaperLimitAmendRequest,
@@ -61,6 +62,7 @@ from terminal.market_data.workspace_errors import (
 )
 from terminal.runtime.paper_runtime import PaperRuntime
 from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
+from terminal.exchange.bybit_v5_mutation_adapter import BybitV5MutationAdapter
 from terminal.persistence.credential_store import CredentialStoreError, DpapiCredentialStore
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
@@ -81,6 +83,7 @@ MARKET_FIELDS = {
     "slippage_type",
     "slippage_value",
 }
+LIVE_MARKET_FIELDS = MARKET_FIELDS | {"account_id", "session_generation"}
 VOLUME_FIELDS = {"unit", "amount"}
 FULL_CLOSE_FIELDS = {"client_action_id", "symbol"}
 CLOSE_ALL_FIELDS = {"client_action_id"}
@@ -1864,6 +1867,30 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **result})
             return
 
+        if urlparse(self.path).path == "/api/live/market":
+            try:
+                payload = self._payload(LIVE_MARKET_FIELDS)
+                volume = payload["volume"]
+                if not isinstance(volume, dict) or set(volume) != VOLUME_FIELDS:
+                    raise ValueError("invalid volume fields")
+                request = LiveMarketCommandRequest(
+                    ClientActionId(payload["client_action_id"]), payload["account_id"],
+                    payload["session_generation"], payload["symbol"], OrderSide(payload["side"]),
+                    VolumeRequest(VolumeUnit(volume["unit"]), _decimal(volume["amount"])),
+                    _decimal(payload["sizing_reference_price"]), payload["slippage_type"],
+                    _decimal(payload["slippage_value"]),
+                )
+                result = self.server.runtime.call(lambda runtime: runtime.live_market(request))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, to_primitive(_validation_error()))
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "live_market_unavailable"})
+                return
+            status_code = 200 if result.status not in {CommandResultStatus.BLOCKED, CommandResultStatus.REJECTED} else 409
+            self._json_response(status_code, {"ok": result.status not in {CommandResultStatus.BLOCKED}, **to_primitive(result)})
+            return
+
         mutation_paths = {
             "/api/market", "/api/limit", "/api/limit/amend", "/api/limit/cancel",
             "/api/stop", "/api/stop/amend", "/api/stop/delete",
@@ -2168,6 +2195,10 @@ def create_configured_paper_runtime(
     live_account_store_factory=LiveAccountProjectionStore,
     active_account_preference_store_factory=ActiveAccountPreferenceStore,
     live_adapter_factory=None,
+    live_mutation_adapter_factory=BybitV5MutationAdapter,
+    live_market_mutations_enabled: bool = False,
+    live_mainnet_authorized: bool = False,
+    live_acceptance_notional_ceiling: Decimal = Decimal("0"),
     account_manager=None,
 ) -> PaperRuntime:
     return PaperRuntime(
@@ -2186,6 +2217,10 @@ def create_configured_paper_runtime(
             database_path.with_suffix(".active_account.json")
         ),
         live_adapter_factory=live_adapter_factory,
+        live_mutation_adapter_factory=live_mutation_adapter_factory,
+        live_market_mutations_enabled=live_market_mutations_enabled,
+        live_mainnet_authorized=live_mainnet_authorized,
+        live_acceptance_notional_ceiling=live_acceptance_notional_ceiling,
         account_manager=account_manager,
     )
 
@@ -2218,6 +2253,9 @@ def main() -> None:
         book_provider=book_provider,
         instrument_snapshot=instrument_snapshot,
         instrument_provider=lambda symbol: instruments.get(symbol),
+        live_market_mutations_enabled=os.environ.get("LIVE_MARKET_MUTATIONS_ENABLED", "").lower() == "true",
+        live_mainnet_authorized=os.environ.get("LIVE_MAINNET_AUTHORIZED", "").lower() == "true",
+        live_acceptance_notional_ceiling=Decimal(os.environ.get("LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING", "0")),
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(

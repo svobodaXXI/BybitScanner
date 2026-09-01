@@ -1192,7 +1192,7 @@ button {
   }
 
   .paper-execution-status {
-    display: none;
+    display: block;
   }
 
 }
@@ -1572,7 +1572,7 @@ button {
   }
 
   .paper-execution-status {
-    display: none;
+    display: block;
   }
 }
 

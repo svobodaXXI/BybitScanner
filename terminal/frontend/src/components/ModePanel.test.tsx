@@ -9,7 +9,11 @@ import {
 } from "../orders/limitDraft";
 import { ModePanel as ModePanelView, type WorkspaceMode } from "./ModePanel";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 const paperState = (overrides = {}) => ({
   state_revision: 1,
@@ -35,6 +39,7 @@ function ModePanel(props: {
   onPositionSideChange: (side: PaperState["position_side"]) => void;
 }) {
   const [ownedPaperState, setOwnedPaperState] = useState<PaperState | null>(null);
+  const [selectedVolumes, setSelectedVolumes] = useState({ Buy: "", Sell: "" });
   const [limitDraftState, dispatchLimitDraft] = useReducer(
     limitDraftReducer,
     EMPTY_LIMIT_DRAFT_STATE,
@@ -47,6 +52,14 @@ function ModePanel(props: {
   useEffect(() => {
     void refreshPaperState();
   }, [refreshPaperState]);
+
+  useEffect(() => {
+    if (!ownedPaperState?.ok || selectedVolumes.Buy || selectedVolumes.Sell) return;
+    setSelectedVolumes({
+      Buy: ownedPaperState.one_wv_usdt,
+      Sell: ownedPaperState.one_wv_usdt,
+    });
+  }, [ownedPaperState, selectedVolumes]);
 
   return (
     <ModePanelView
@@ -61,6 +74,10 @@ function ModePanel(props: {
       limitDraftState={limitDraftState}
       dispatchLimitDraft={dispatchLimitDraft}
       onLimitDraftConfirm={vi.fn()}
+      selectedVolumes={selectedVolumes}
+      onSelectedVolumeChange={(side, value) =>
+        setSelectedVolumes((current) => ({ ...current, [side]: value }))
+      }
     />
   );
 }
@@ -79,6 +96,7 @@ describe("ModePanel PAPER Market amounts", () => {
   const renderLimitPopup = (onLimitDraftConfirm = vi.fn()) => {
     const state = paperState() as PaperState;
     const PopupHarness = () => {
+      const [selectedVolumes, setSelectedVolumes] = useState({ Buy: "250", Sell: "250" });
       const [limitDraftState, dispatchLimitDraft] = useReducer(
         limitDraftReducer,
         EMPTY_LIMIT_DRAFT_STATE,
@@ -97,6 +115,10 @@ describe("ModePanel PAPER Market amounts", () => {
             limitDraftState={limitDraftState}
             dispatchLimitDraft={dispatchLimitDraft}
             onLimitDraftConfirm={onLimitDraftConfirm}
+            selectedVolumes={selectedVolumes}
+            onSelectedVolumeChange={(side, value) =>
+              setSelectedVolumes((current) => ({ ...current, [side]: value }))
+            }
             onPositionSideChange={vi.fn()}
           />
           {limitDraftState.draft ? (
@@ -114,8 +136,8 @@ describe("ModePanel PAPER Market amounts", () => {
       );
     };
     render(<PopupHarness />);
-    fireEvent.click(screen.getByRole("button", { name: "LIMITS 0" }));
-    return screen.getByRole("dialog", { name: "New Limit" });
+    fireEvent.click(screen.getByRole("button", { name: "BUY LIMITS 0" }));
+    return screen.getByRole("dialog", { name: "New Buy Limit" });
   };
 
   it("activates BUY fast-Limit hold with haptic feedback at 200 ms", () => {
@@ -154,32 +176,28 @@ describe("ModePanel PAPER Market amounts", () => {
       side: "Buy",
       volumeUsdt: "250",
     });
-    vi.useRealTimers();
   });
 
-  it("opens the short-tap popup with normalized LONG and SHORT defaults", () => {
+  it("opens the BUY short-tap popup with the normalized LONG default", () => {
     const popup = renderLimitPopup();
-    const longRow = within(popup).getByText("LONG / L").closest(".paper-limit-popup-row");
-    const shortRow = within(popup).getByText("SHORT / S").closest(".paper-limit-popup-row");
-
-    expect(longRow).toHaveTextContent("LONG / L250 USDT62965");
-    expect(shortRow).toHaveTextContent("SHORT / S250 USDT65535");
-    expect(within(popup).getByRole("button", { name: "Confirm LONG / L Limit" })).toBeDisabled();
-    expect(within(popup).getByRole("button", { name: "Confirm SHORT / S Limit" })).toBeDisabled();
+    expect(within(popup).getByLabelText("LONG Limit volume")).toHaveValue(250);
+    expect(within(popup).getByLabelText("LONG Limit price")).toHaveValue("62965");
+    expect(within(popup).getByRole("button", { name: "Confirm LONG Limit" })).toBeEnabled();
+    expect(within(popup).queryByText("SHORT")).not.toBeInTheDocument();
   });
 
   it("keeps the popup open for inside interaction", () => {
     const popup = renderLimitPopup();
     fireEvent.pointerDown(popup);
-    fireEvent.click(within(popup).getByText("LONG / L"));
+    fireEvent.click(within(popup).getByText("LONG"));
 
-    expect(screen.getByRole("dialog", { name: "New Limit" })).toBeInTheDocument();
-    expect(within(popup).getByText("LONG / L").closest(".paper-limit-popup-row")).toHaveClass("selected");
+    expect(screen.getByRole("dialog", { name: "New Buy Limit" })).toBeInTheDocument();
+    expect(within(popup).getByText("LONG").closest(".paper-limit-popup-row")).toHaveClass("selected");
   });
 
   it("keeps the pending line and popup on one normalized draft price", () => {
     const popup = renderLimitPopup();
-    fireEvent.click(within(popup).getByText("LONG / L"));
+    fireEvent.click(within(popup).getByText("LONG"));
     const line = screen.getByRole("slider", {
       name: "Pending Buy Limit at 62965",
     });
@@ -193,18 +211,18 @@ describe("ModePanel PAPER Market amounts", () => {
     fireEvent.pointerMove(line, { pointerId: 1, clientY: 140 });
 
     expect(
-      screen.getByRole("slider", { name: "Pending Buy Limit at 63000" }),
+      screen.getByRole("slider", { name: "Pending Buy Limit at 63000.4" }),
     ).toBeInTheDocument();
-    expect(within(popup).getByText("LONG / L").closest(".paper-limit-popup-row")).toHaveTextContent("63000");
+    expect(within(popup).getByLabelText("LONG Limit price")).toHaveValue("63000.4");
   });
 
   it("routes popup and chart checkmarks to one submit callback", () => {
     const onSubmit = vi.fn();
     const popup = renderLimitPopup(onSubmit);
-    fireEvent.click(within(popup).getByText("LONG / L"));
+    fireEvent.click(within(popup).getByText("LONG"));
 
     fireEvent.click(
-      within(popup).getByRole("button", { name: "Confirm LONG / L Limit" }),
+      within(popup).getByRole("button", { name: "Confirm LONG Limit" }),
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Confirm pending Buy Limit" }),
@@ -215,18 +233,18 @@ describe("ModePanel PAPER Market amounts", () => {
 
   it("closes outside and dismisses the selected shared draft", () => {
     const popup = renderLimitPopup();
-    fireEvent.click(within(popup).getByText("LONG / L"));
+    fireEvent.click(within(popup).getByText("LONG"));
     fireEvent.pointerDown(document.querySelector(".paper-limit-popup-backdrop")!);
 
-    expect(screen.queryByRole("dialog", { name: "New Limit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "New Buy Limit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("slider", { name: /Pending Buy Limit/ })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "LIMITS 0" }));
-    const reopened = screen.getByRole("dialog", { name: "New Limit" });
-    expect(within(reopened).getByText("LONG / L").closest(".paper-limit-popup-row")).not.toHaveClass("selected");
+    fireEvent.click(screen.getByRole("button", { name: "BUY LIMITS 0" }));
+    const reopened = screen.getByRole("dialog", { name: "New Buy Limit" });
+    expect(within(reopened).getByText("LONG").closest(".paper-limit-popup-row")).toHaveClass("selected");
   });
 
-  it("shows LIMITS N from authoritative active orders", () => {
+  it("shows side-specific LIMITS N from authoritative active orders", () => {
     const state = paperState({ active_limit_orders: [activeLimit] }) as PaperState;
     render(
       <ModePanelView
@@ -245,7 +263,8 @@ describe("ModePanel PAPER Market amounts", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "LIMITS 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "BUY LIMITS 1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "SELL LIMITS 0" })).toBeInTheDocument();
   });
 
   it("opens symbol-wide Limit cancellation confirmation from the separate cross", () => {
@@ -269,13 +288,13 @@ describe("ModePanel PAPER Market amounts", () => {
 
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Cancel all Limit orders for BTCUSDT",
+        name: "Cancel all Buy Limit orders for BTCUSDT",
       }),
     );
 
     expect(
       screen.getByRole("dialog", {
-        name: "Cancel all Limit orders for BTCUSDT?",
+        name: "Cancel all LONG Limit orders for BTCUSDT?",
       }),
     ).toBeInTheDocument();
   });
@@ -290,8 +309,8 @@ describe("ModePanel PAPER Market amounts", () => {
 
     render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getAllByDisplayValue("250")).toHaveLength(3));
-    expect(screen.getByText("313 USDT")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByDisplayValue("250")).toHaveLength(2));
+    expect(document.querySelector(".paper-wv-position")).toHaveTextContent("313USDT");
     fireEvent.change(screen.getByLabelText("BUY amount"), {
       target: { value: "300" },
     });
@@ -299,7 +318,7 @@ describe("ModePanel PAPER Market amounts", () => {
     expect(screen.getByLabelText("SELL amount")).toHaveValue(250);
   });
 
-  it("submits USDT notional and preserves an edited amount after refresh", async () => {
+  it("submits USDT notional and preserves an edited amount", async () => {
     let paperStateReads = 0;
     const fetchMock = vi.fn((url: string, _options?: RequestInit) => {
       if (url.startsWith("/api/paper-state")) {
@@ -322,18 +341,15 @@ describe("ModePanel PAPER Market amounts", () => {
 
     render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="64250" onPositionSideChange={vi.fn()} />);
     const buyAmount = await screen.findByLabelText("BUY amount");
+    await waitFor(() => expect(buyAmount).toHaveValue(250));
     fireEvent.change(buyAmount, { target: { value: "300" } });
     fireEvent.click(screen.getByRole("button", { name: "BUY" }));
 
     expect(await screen.findByText("PAPER BUY completed")).toBeInTheDocument();
     expect(buyAmount).toHaveValue(300);
     await waitFor(() =>
-      expect(screen.getByLabelText("SELL amount")).toHaveValue(260),
+      expect(screen.getByLabelText("SELL amount")).toHaveValue(250),
     );
-    expect(document.querySelector(".paper-wv-position")).toHaveTextContent(
-      "300USDT",
-    );
-
     const [, options] = fetchMock.mock.calls.find(
       ([requestUrl]) => requestUrl === "/api/market",
     )!;
@@ -357,10 +373,13 @@ describe("ModePanel PAPER Market amounts", () => {
 
     render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
     const sellAmount = await screen.findByLabelText("SELL amount");
+    await waitFor(() => expect(sellAmount).toHaveValue(250));
     fireEvent.change(sellAmount, { target: { value: amount } });
     fireEvent.click(screen.getByRole("button", { name: "SELL" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => url.startsWith("/api/paper-state"))).toBe(true),
+    );
     expect(fetchMock.mock.calls.some(([url]) => url === "/api/market")).toBe(false);
   });
 
@@ -400,7 +419,7 @@ describe("ModePanel PAPER Market amounts", () => {
     expect(await screen.findByText(`${side} отменено`)).toBeInTheDocument();
   });
 
-  it("submits backend-authoritative Full Close and refreshes zero exposure", async () => {
+  it("submits backend-authoritative Full Close after confirmation", async () => {
     let stateReads = 0;
     const fetchMock = vi.fn((url: string, _options?: RequestInit) => {
       if (url.startsWith("/api/paper-state")) {
@@ -410,6 +429,8 @@ describe("ModePanel PAPER Market amounts", () => {
           json: vi.fn().mockResolvedValue(paperState({
             engaged_wv: stateReads === 1 ? "1.2" : "0.0",
             engaged_notional_usdt: stateReads === 1 ? "300" : "0",
+            position_side: stateReads === 1 ? "Long" : "Flat",
+            position_quantity: stateReads === 1 ? "0.005" : "0",
           })),
         });
       }
@@ -421,12 +442,16 @@ describe("ModePanel PAPER Market amounts", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
-    await screen.findByText("300 USDT");
+    await waitFor(() =>
+      expect(document.querySelector(".paper-wv-position")).toHaveTextContent("300USDT"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Закрыть позицию" }));
+    const closeDialog = screen.getByRole("dialog", { name: "Закрыть позицию?" });
+    fireEvent.click(
+      within(closeDialog).getByRole("button", { name: "ЗАКРЫТЬ ПОЗИЦИЮ" }),
+    );
 
     expect(await screen.findByText("PAPER позиция закрыта")).toBeInTheDocument();
-    expect(screen.getByText("0 USDT")).toBeInTheDocument();
-    expect(screen.getByText("⚔️ 0.0")).toBeInTheDocument();
     const [, options] = fetchMock.mock.calls.find(
       ([requestUrl]) => requestUrl === "/api/full-close",
     )!;
@@ -436,50 +461,36 @@ describe("ModePanel PAPER Market amounts", () => {
     });
   });
 
-  it("creates and cancels an authoritative GTC PAPER limit", async () => {
-    let active = false;
-    let price = "64000";
-    const fetchMock = vi.fn((url: string, options?: RequestInit) => {
-      if (url.startsWith("/api/paper-state")) return Promise.resolve({
-        ok: true,
-        json: vi.fn().mockResolvedValue(paperState({
-          active_limit_orders: active ? [{
-            order_id: "paper-limit-1", order_link_id: "link-1", symbol: "BTCUSDT",
-            side: "Buy", price, quantity: "0.005", time_in_force: "GTC",
-          }] : [],
-        })),
-      });
-      if (url === "/api/limit") active = true;
-      if (url === "/api/limit/amend") {
-        price = JSON.parse(options!.body as string).limit_price;
-      }
-      if (url === "/api/limit/cancel") active = false;
-      return Promise.resolve({
-        ok: true,
-        json: vi.fn().mockResolvedValue({ status: "completed", reason_code: "completed" }),
-      });
+  it("cancels authoritative Buy GTC PAPER limits from the side-specific control", async () => {
+    const state = paperState({ active_limit_orders: [activeLimit] }) as PaperState;
+    const onLimitCancel = vi.fn().mockResolvedValue({
+      status: "completed",
+      reason_code: "completed",
     });
-    vi.stubGlobal("fetch", fetchMock);
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
-    await screen.findAllByDisplayValue("250");
-    fireEvent.change(screen.getByLabelText("LIMIT price"), { target: { value: "64000" } });
-    fireEvent.change(screen.getByLabelText("LIMIT amount"), { target: { value: "321" } });
-    fireEvent.click(screen.getByRole("button", { name: "Создать LIMIT" }));
-    expect(await screen.findByText("Buy 0.005 @ 64000 GTC")).toBeInTheDocument();
-    const createOptions = fetchMock.mock.calls.find(([url]) => url === "/api/limit")![1];
-    expect(JSON.parse(createOptions!.body as string)).toMatchObject({
-      side: "Buy", limit_price: "64000", time_in_force: "GTC",
-      volume: { unit: "usdt", amount: "321" },
+    render(
+      <ModePanelView
+        mode="TERMINAL"
+        onModeChange={vi.fn()}
+        symbol="BTCUSDT"
+        paperState={state}
+        activeLimitOrders={state.active_limit_orders}
+        refreshPaperState={vi.fn()}
+        sizingReferencePrice="64250"
+        authoritativeTickSize="0.5"
+        limitDraftState={EMPTY_LIMIT_DRAFT_STATE}
+        dispatchLimitDraft={vi.fn()}
+        onLimitDraftConfirm={vi.fn()}
+        onLimitCancel={onLimitCancel}
+        onPositionSideChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel all Buy Limit orders for BTCUSDT" }));
+    const cancelDialog = screen.getByRole("dialog", {
+      name: "Cancel all LONG Limit orders for BTCUSDT?",
     });
-    fireEvent.change(screen.getByLabelText("Новая цена paper-limit-1"), { target: { value: "64100" } });
-    fireEvent.click(screen.getByRole("button", { name: "Изменить paper-limit-1" }));
-    expect(await screen.findByText("Buy 0.005 @ 64100 GTC")).toBeInTheDocument();
-    const amendOptions = fetchMock.mock.calls.find(([url]) => url === "/api/limit/amend")![1];
-    expect(JSON.parse(amendOptions!.body as string)).toMatchObject({
-      symbol: "BTCUSDT", order_id: "paper-limit-1", limit_price: "64100",
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Отменить paper-limit-1" }));
-    await waitFor(() => expect(screen.queryByText("Buy 0.005 @ 64100 GTC")).not.toBeInTheDocument());
+    fireEvent.click(within(cancelDialog).getByRole("button", { name: "CANCEL" }));
+    await waitFor(() => expect(onLimitCancel).toHaveBeenCalledWith("paper-limit-1"));
   });
 
   it.each([["0", "321"], ["64000", "0"]])(
@@ -488,9 +499,10 @@ describe("ModePanel PAPER Market amounts", () => {
       vi.stubGlobal("fetch", fetchMock);
       render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
       await screen.findAllByDisplayValue("250");
-      fireEvent.change(screen.getByLabelText("LIMIT price"), { target: { value: price } });
-      fireEvent.change(screen.getByLabelText("LIMIT amount"), { target: { value: amount } });
-      fireEvent.click(screen.getByRole("button", { name: "Создать LIMIT" }));
+      fireEvent.click(screen.getByRole("button", { name: "BUY LIMITS 0" }));
+      fireEvent.change(screen.getByLabelText("LONG Limit price"), { target: { value: price } });
+      fireEvent.change(screen.getByLabelText("LONG Limit volume"), { target: { value: amount } });
+      fireEvent.click(screen.getByRole("button", { name: "Confirm LONG Limit" }));
       expect(fetchMock.mock.calls.some(([url]) => url === "/api/limit")).toBe(false);
     },
   );
