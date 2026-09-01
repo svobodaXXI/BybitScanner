@@ -1,0 +1,4 @@
+@echo off
+rem Copy this file to start_paper_backend.local.bat for a machine-local proxy override.
+rem Leave the value empty on machines that connect to Bybit directly.
+set "BYBITSCANNER_BYBIT_PROXY=socks5h://127.0.0.1:10808"

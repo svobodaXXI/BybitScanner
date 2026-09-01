@@ -10,11 +10,26 @@ Vite frontend и выбранный HTTPS tunnel. Закрытие любого 
 
 ## 1. PAPER backend
 
-Из `C:\BybitScanner`:
+Из корня проекта запустить штатный Windows launcher:
 
 ```powershell
-python -m terminal.runtime.paper_http_server
+.\start_paper_backend.bat
 ```
+
+Launcher использует Python из `venv`, а machine-local файл `start_paper_backend.local.bat`, если он существует,
+загружает только в локальное окружение backend-процесса. Для ноутбука создать ignored файл рядом с launcher:
+
+```bat
+@echo off
+set "BYBITSCANNER_BYBIT_PROXY=socks5h://127.0.0.1:10808"
+```
+
+`start_paper_backend.local.bat` игнорируется Git и не должен добавляться в commit.
+
+Настройка автоматически передаётся как `ALL_PROXY` текущему backend и его дочерним процессам, но не записывается
+в User/System environment Windows. Если SOCKS endpoint настроен, но недоступен, backend завершается до запуска
+market-data workers с понятной ошибкой. На компьютере без proxy файл не нужен. Чтобы явно отключить унаследованный
+`ALL_PROXY`, задать `BYBITSCANNER_BYBIT_PROXY` пустым; другой SOCKS endpoint задаётся тем же параметром.
 
 Backend должен слушать `http://127.0.0.1:8765`. В другом окне проверить:
 
