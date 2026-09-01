@@ -60,6 +60,7 @@ from terminal.runtime.paper_runtime import PaperRuntime
 from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
 from terminal.persistence.credential_store import CredentialStoreError, DpapiCredentialStore
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
+from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
 from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
 
 
@@ -96,7 +97,11 @@ def _account_route_id(path: str, action: str) -> str | None:
     if not path.startswith(prefix) or not path.endswith(suffix):
         return None
     account_id = path[len(prefix):-len(suffix)]
-    if not account_id or "/" in account_id or not account_id.startswith("bybit-"):
+    if (
+        not account_id or "/" in account_id
+        or (action != "activate" and not account_id.startswith("bybit-"))
+        or (action == "activate" and account_id != "paper" and not account_id.startswith("bybit-"))
+    ):
         return None
     return account_id
 ACCOUNT_DESCRIPTOR_FIELDS = {"id", "display_name", "provider", "environment", "status"}
@@ -1336,6 +1341,21 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **catalog})
             return
 
+        if parsed.path == "/api/workspace/account":
+            symbols = parse_qs(parsed.query).get("symbol", [])
+            if len(symbols) != 1:
+                self._json_response(400, {"ok": False, "error": "symbol_required"})
+                return
+            try:
+                projection = self.server.runtime.call(
+                    lambda runtime: runtime.workspace_account_projection(symbols[0])
+                )
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "workspace_account_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
         account_summary_id = _account_route_id(parsed.path, "summary")
         if account_summary_id is not None:
             try:
@@ -1745,6 +1765,40 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        account_activate_id = _account_route_id(urlparse(self.path).path, "activate")
+        if account_activate_id is not None:
+            try:
+                result = self.server.runtime.call(
+                    lambda runtime: runtime.activate_account(account_activate_id)
+                )
+            except LookupError:
+                self._json_response(404, {"ok": False, "error": "account_not_found"})
+                return
+            except RuntimeError as exc:
+                error = str(exc)
+                if error not in {"account_activation_not_ready", "live_account_snapshot_unavailable"}:
+                    error = "account_activation_failed"
+                self._json_response(409, {"ok": False, "error": error})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "account_activation_failed"})
+                return
+            self._json_response(200, {"ok": True, **result})
+            return
+
+        mutation_paths = {
+            "/api/market", "/api/limit", "/api/limit/amend", "/api/limit/cancel",
+            "/api/stop", "/api/stop/amend", "/api/stop/delete",
+            "/api/take", "/api/take/amend", "/api/take/delete",
+            "/api/full-close", "/api/close-all",
+        }
+        if urlparse(self.path).path in mutation_paths:
+            try:
+                self.server.runtime.call(lambda runtime: runtime.require_paper_mutations())
+            except Exception:
+                self._json_response(409, {"ok": False, "error": "live_mutations_disabled"})
+                return
+
         account_refresh_id = _account_route_id(urlparse(self.path).path, "refresh")
         if account_refresh_id is not None:
             try:
@@ -1893,7 +1947,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             result, state = self.server.runtime.call(
                 lambda runtime: (
-                    runtime.api.full_close(request),
+                    runtime.full_close(request),
                     runtime.paper_state(request.symbol),
                 )
             )
@@ -1966,7 +2020,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
         result, state = self.server.runtime.call(
             lambda runtime: (
-                runtime.api.market(request),
+                runtime.market(request),
                 runtime.paper_state(request.symbol),
             )
         )
@@ -2029,6 +2083,35 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         return
 
 
+def create_configured_paper_runtime(
+    database_path: Path, *, book_provider, instrument_snapshot, instrument_provider,
+    credential_store_factory=DpapiCredentialStore,
+    account_validator_factory=BybitAccountValidator,
+    live_account_store_factory=LiveAccountProjectionStore,
+    active_account_preference_store_factory=ActiveAccountPreferenceStore,
+    live_adapter_factory=None,
+    account_manager=None,
+) -> PaperRuntime:
+    return PaperRuntime(
+        database_path,
+        book_provider=book_provider,
+        instrument_snapshot=instrument_snapshot,
+        instrument_provider=instrument_provider,
+        credential_store=credential_store_factory(
+            database_path.with_suffix(".credentials.dpapi")
+        ),
+        account_validator=account_validator_factory(),
+        live_account_store=live_account_store_factory(
+            database_path.with_suffix(".live_accounts.sqlite3")
+        ),
+        active_account_preference_store=active_account_preference_store_factory(
+            database_path.with_suffix(".active_account.json")
+        ),
+        live_adapter_factory=live_adapter_factory,
+        account_manager=account_manager,
+    )
+
+
 def main() -> None:
     logging.basicConfig(
         level=os.environ.get("BYBITSCANNER_LOG_LEVEL", "INFO").upper(),
@@ -2047,16 +2130,11 @@ def main() -> None:
         initial_market.public_orderbook,
         rest_session=rest_session,
     )
-    runtime = SerializedPaperRuntime(lambda: PaperRuntime(
+    runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
         database_path,
         book_provider=book_provider,
         instrument_snapshot=instrument_snapshot,
         instrument_provider=lambda symbol: instruments.get(symbol),
-        credential_store=DpapiCredentialStore(database_path.with_suffix(".credentials.dpapi")),
-        account_validator=BybitAccountValidator(),
-        live_account_store=LiveAccountProjectionStore(
-            database_path.with_suffix(".live_accounts.sqlite3")
-        ),
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(

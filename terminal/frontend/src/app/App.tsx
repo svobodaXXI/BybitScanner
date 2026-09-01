@@ -4,6 +4,7 @@ import { DomPanel } from "../components/DomPanel";
 import { ModePanel, type WorkspaceMode } from "../components/ModePanel";
 import { TapePanel } from "../components/TapePanel";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
+import { useAccountWorkspace } from "../accountWorkspace/accountWorkspaceStore";
 import type {
   PaperLimitAmendRequest,
   PaperLimitCancelRequest,
@@ -117,8 +118,31 @@ export function App() {
   const market = useMarketData();
   const tradingSymbol = market.book.symbol;
   const { paperState, pendingActions } = usePaperTrading(tradingSymbol);
+  const accountWorkspace = useAccountWorkspace(tradingSymbol);
+  const accountProjection = accountWorkspace.projection;
+  const mutationsAllowed = !accountWorkspace.switching
+    && accountProjection?.provider === "PAPER"
+    && accountProjection.environment === "PAPER"
+    && accountProjection.status === "READY";
+  useEffect(() => {
+    paperTradingStore.setAccountSession(
+      mutationsAllowed ? accountProjection.account_id : null,
+      mutationsAllowed ? accountProjection.session_generation : null,
+    );
+  }, [accountProjection, mutationsAllowed]);
+  const applyPaperStateForSession = paperTradingStore.captureApplyPaperState();
   const currentPaperState =
-    paperState?.symbol === tradingSymbol ? paperState : null;
+    mutationsAllowed && paperState?.symbol === tradingSymbol ? paperState : null;
+  useEffect(() => {
+    if (mutationsAllowed) return;
+    setFastLimitIntent(null);
+    dispatchLimitDraft({ type: "dismiss-all" });
+    dispatchStopDraft({ type: "clear" });
+    dispatchTakeDraft({ type: "clear" });
+    setProtectionSettings(null);
+    setPositionSide("Flat");
+    setPositionAverageEntry(null);
+  }, [accountProjection?.account_id, accountProjection?.session_generation, mutationsAllowed]);
   useEffect(() => {
     const controller = new AbortController();
     void fetch(marketApiRoutes.instruments, { signal: controller.signal })
@@ -273,6 +297,7 @@ export function App() {
 
   const createFastLimitDraft = useCallback(
     (price: string) => {
+      if (!mutationsAllowed) return;
       const volumeUsdt = fastLimitIntent ? selectedVolumes[fastLimitIntent.side] : "";
       if (
         !fastLimitIntent ||
@@ -301,6 +326,7 @@ export function App() {
       fastLimitIntent,
       market.book.health,
       market.tickSize,
+      mutationsAllowed,
       selectedVolumes,
       sizingReferencePrice,
       tradingSymbol,
@@ -308,6 +334,7 @@ export function App() {
   );
 
   const submitLimitDraft = useCallback((draftId?: string) => {
+    if (!mutationsAllowed) return;
     const drafts =
       limitDraftState.drafts ??
       (limitDraftState.draft ? [limitDraftState.draft] : []);
@@ -324,14 +351,15 @@ export function App() {
       dispatch: dispatchLimitDraft,
       createClientActionId: () =>
         globalThis.crypto?.randomUUID?.() ?? `paper-limit-${Date.now()}`,
-      applyPaperState: paperTradingStore.applyPaperState,
+      applyPaperState: applyPaperStateForSession,
     });
     return paperTradingStore
       .runMutation(`CREATE_LIMIT:${attempt.clientActionId}`, () => attempt.promise)
       .then(() => undefined);
-  }, [limitDraftState.draft, limitDraftState.drafts, selectedVolumes]);
+  }, [limitDraftState.draft, limitDraftState.drafts, mutationsAllowed, selectedVolumes]);
 
   const submitDomLimit = useCallback(async (price: string) => {
+    if (!mutationsAllowed) return;
     if (!fastLimitIntent || market.tickSize === null) return;
     const volumeUsdt = selectedVolumes[fastLimitIntent.side];
     if (!isValidSelectedVolume(volumeUsdt)) return;
@@ -375,7 +403,7 @@ export function App() {
               slippage_type: "Percent",
               slippage_value: "0.5",
             },
-            { applyPaperState: paperTradingStore.applyPaperState },
+            { applyPaperState: applyPaperStateForSession },
           );
         } catch {
           await paperTradingStore.refresh();
@@ -387,7 +415,7 @@ export function App() {
     const attempt = domLimitController.current.submit(intent, {
       createClientActionId: () =>
         globalThis.crypto?.randomUUID?.() ?? `paper-dom-limit-${Date.now()}`,
-      applyPaperState: paperTradingStore.applyPaperState,
+      applyPaperState: applyPaperStateForSession,
     });
     const outcome = await paperTradingStore.runMutation(
       `CREATE_LIMIT:${attempt.clientActionId}`,
@@ -401,12 +429,14 @@ export function App() {
     bestBid,
     fastLimitIntent,
     market.tickSize,
+    mutationsAllowed,
     selectedVolumes,
     sizingReferencePrice,
     tradingSymbol,
   ]);
 
   const cancelPaperLimit = useCallback(async (orderId: string) => {
+    if (!mutationsAllowed) throw new Error("live_mutations_disabled");
     const request: PaperLimitCancelRequest = {
       client_action_id: `paper-limit-cancel-${Date.now()}`,
       symbol: tradingSymbol,
@@ -415,16 +445,17 @@ export function App() {
     return paperTradingStore.runMutation(`CANCEL_LIMIT:${orderId}`, async () => {
       try {
         return await executePaperLimitCancel(request, {
-          applyPaperState: paperTradingStore.applyPaperState,
+          applyPaperState: applyPaperStateForSession,
         });
       } catch (error) {
         await paperTradingStore.refresh();
         throw error;
       }
     });
-  }, [tradingSymbol]);
+  }, [mutationsAllowed, tradingSymbol]);
 
   const amendPaperLimit = useCallback(async (orderId: string, price: string) => {
+    if (!mutationsAllowed) throw new Error("live_mutations_disabled");
     const request: PaperLimitAmendRequest = {
       client_action_id: globalThis.crypto?.randomUUID?.() ?? `paper-limit-amend-${Date.now()}`,
       symbol: tradingSymbol,
@@ -433,14 +464,14 @@ export function App() {
     };
     try {
       const result = await paperTradingStore.runMutation(`AMEND_LIMIT:${orderId}`, () =>
-        executePaperLimitAmend(request, { applyPaperState: paperTradingStore.applyPaperState }),
+        executePaperLimitAmend(request, { applyPaperState: applyPaperStateForSession }),
       );
       if (result.status !== "completed") throw new Error(result.reason_code);
     } catch (error) {
       await paperTradingStore.refresh();
       throw error;
     }
-  }, [tradingSymbol]);
+  }, [mutationsAllowed, tradingSymbol]);
 
   const beginStopDraft = useCallback((): "drafted" | "not-improved" | undefined => {
     if (!currentPaperState?.ok || market.tickSize === null) return;
@@ -588,7 +619,7 @@ export function App() {
           client_action_id: clientActionId,
           symbol: tradingSymbol,
           trigger_price: draft.price,
-        }, { applyPaperState: paperTradingStore.applyPaperState }),
+        }, { applyPaperState: applyPaperStateForSession }),
       );
       const authoritative = leg === "STOP"
         ? authoritativeStopPrice(result.paper_state)
@@ -617,7 +648,7 @@ export function App() {
         execute({
           client_action_id: clientActionId,
           symbol: tradingSymbol,
-        }, { applyPaperState: paperTradingStore.applyPaperState }),
+        }, { applyPaperState: applyPaperStateForSession }),
       );
     } catch {
       await paperTradingStore.refresh();
@@ -752,7 +783,7 @@ export function App() {
           }
           onLimitCancel={cancelPaperLimit}
           refreshPaperState={refreshPaperState}
-          applyPaperState={paperTradingStore.applyPaperState}
+          applyPaperState={applyPaperStateForSession}
           pendingActions={pendingActions}
           runPaperMutation={paperTradingStore.runMutation}
           sizingReferencePrice={sizingReferencePrice}
@@ -798,6 +829,8 @@ export function App() {
           onWorkspaceSymbolSelect={switchWorkspaceSymbol}
           accountOpen={accountOpen}
           onAccountToggle={() => setAccountOpen((open) => !open)}
+          accountWorkspaceProjection={accountProjection}
+          mutationsAllowed={mutationsAllowed}
         />
       </section>
     </main>

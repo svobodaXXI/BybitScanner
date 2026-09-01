@@ -365,15 +365,15 @@
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
     {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
-    {"id": "IMPLEMENT", "status": "PAPER_AUTHORITATIVE_STATE_SYNCHRONIZATION_IMPLEMENTED"},
-    {"id": "VERIFY", "status": "BOUNDED_STAGES_0_TO_7_STAGE_8_BLOCK_1_AND_FAST_DOM_RUNNABLE_CLIENT_SLICE_VERIFIED"},
-    {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
+    {"id": "IMPLEMENT", "status": "REVISION_2_1_PRODUCTION_IMPLEMENTATION_COMPLETE"},
+    {"id": "VERIFY", "status": "REVISION_2_1_AUTOMATED_AND_REAL_PHONE_ACCEPTANCE_PASS"},
+    {"id": "RECORD", "status": "REVISION_2_1_CLOSURE_RECORDED"}
   ],
-  "current_phase": "IMPLEMENT",
-  "current_checkpoint": "ACTIVE_ACCOUNT_SWITCHING_ACCOUNT_SCOPED_WORKSPACE_ARCHITECTURE_RECORDED",
-  "implementation_status": "REVISION_2_1_DOCUMENTATION_ONLY_IMPLEMENTATION_NOT_AUTHORIZED",
-  "next_phase": "IMPLEMENT",
-  "next_phase_authorization": "SEPARATE_EXPLICIT_PRODUCTION_IMPLEMENTATION_AUTHORIZATION_REQUIRED",
+  "current_phase": "RECORD",
+  "current_checkpoint": "REVISION_2_1_PRODUCTION_IMPLEMENTED_REAL_PHONE_ACCEPTED",
+  "implementation_status": "REVISION_2_1_COMPLETE_REAL_PHONE_ACCEPTED",
+  "next_phase": "CLOSED",
+  "next_phase_authorization": "NO_FURTHER_REVISION_2_1_WORK_REQUIRED",
   "related_commits": [
     {"phase": "BASELINE", "commit": "5b898963ef46bbd33771123ac169d7b8d52fc0e0"},
     {"phase": "SPEC_DOCUMENTATION_CHECKPOINT", "commit": "52f719351574d32aeb765fa833a27cc1e1bbbd25"},
@@ -4665,11 +4665,45 @@ stable order and status. Exactly one golden key appears beside the active accoun
 card enters `IDLE -> CONFIRMING -> SWITCHING -> ACTIVE(new token)` or `FAILED(old token remains authoritative)`;
 the dialog names account and environment, and duplicate taps are blocked while switching.
 
+### Revision 2.1 preferred-account restoration and Unified balance semantics
+
+Production implementation and real-phone correction were explicitly authorized after the documentation checkpoint.
+The backend persists only a versioned canonical preferred `account_id`; it never persists or restores
+`session_generation`. On startup the manager begins with PAPER authority. A preferred Bybit account is registered
+as `DISCONNECTED`, freshly reconciled to a complete account snapshot, required to become `READY` or `READ_ONLY`,
+and only then activated through `TradingAccountManager`, incrementing generation once. Failed reconciliation,
+unknown/deleted identity or an ineligible status leaves PAPER authoritative with its generation unchanged. This
+automatic restore does not require a second confirmation because it replays the user's previously confirmed
+preference; every new user-initiated switch still requires explicit confirmation.
+
+For Bybit Unified Trading Account wallet reads, normalized account-wide USD semantics are fixed as follows:
+Deposit/account funds use `result.list[0].totalWalletBalance`; the accepted second balance metric uses
+`result.list[0].totalEquity`. `totalAvailableBalance` and the allow-listed account/USDT raw candidates remain
+diagnostic provenance and are not substituted into the accepted two-value key peek. Coin-level `walletBalance`,
+unrealized PnL, margin balance and deprecated `availableToWithdraw`/`free` are not substituted for these values.
+
 Implementation acceptance requires regressions proving immutable PAPER storage identity; PAPER-to-LIVE-to-PAPER
 projection restoration without mixed facts; every backend mutation blocked for LIVE and READ_ONLY; eligible and
 ineligible target behavior; exactly-once generation increment and unchanged failed-switch generation; stale switch,
 projection, refresh, PAPER and symbol-result rejection; active-first ordering and one golden key; read-only LIVE
 positions/orders without mutation actions; existing symbol navigation and public market-data reuse; credential-free
-transport; and absence of any mutation-adapter call. Production implementation requires separate explicit human
-authorization after this documentation checkpoint.
+transport; and absence of any mutation-adapter call.
+
+### Revision 2.1 production implementation and real-phone closure
+
+Revision 2.1 is `PRODUCTION IMPLEMENTED / REAL-PHONE ACCEPTED / COMPLETE` on 2026-09-01. The accepted runtime keeps
+`TradingAccountManager` as sole active-account/session authority, immutable PAPER persistence identity, atomic
+eligible switching, versioned preferred-account restoration through fresh reconciliation, and account-scoped
+PAPER or complete LIVE Workspace projection without mixed facts. LIVE and READ_ONLY remain fail-closed at every
+backend mutation route and in the frontend while the public chart/DOM/tape pipeline remains independent from
+PAPER execution; active LIVE order-book updates do not enter PAPER matching/context processing.
+
+Frontend ownership rejects stale account/session and lower refresh-generation results, coalesces periodic REST-only
+LIVE refresh, and preserves the last valid account-scoped projection on failure. Accepted Unified balances are
+Deposit from account-wide `totalWalletBalance` and the second metric from account-wide `totalEquity`, with raw
+allow-listed provenance retained. Exactly one golden key identifies Current, short tap opens the dismissible
+Accounts modal, 500-ms hold shows refreshed balances, and the account name remains in the isolated lower limits row.
+Real-phone acceptance confirms startup restore, read-only LIVE controls, Accounts backdrop/close behavior, removal
+of oversized Workspace LIVE cards, original upper trading-control geometry and a continuous full-width lower-row
+divider. No PAPER/LIVE state mixing or LIVE mutation-adapter invocation was observed.
 

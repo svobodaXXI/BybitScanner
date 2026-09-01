@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
+import { accountWorkspaceStore } from "../accountWorkspace/accountWorkspaceStore";
+import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
+import {
+  dismissPopupFromBackdrop,
+  shieldPopupClickInteraction,
+  shieldPopupPointerInteraction,
+} from "../interactions/popupInteractionBoundary";
+import { TradingControlButton } from "../interactions/useTradingControlActivation";
 
 type AccountDescriptor = {
   id: string;
@@ -40,7 +48,13 @@ function validCatalog(value: unknown): value is AccountCatalog {
     );
 }
 
-export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+export function AccountMenu({
+  open, onToggle, workspaceProjection = null,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  workspaceProjection?: AccountWorkspaceProjection | null;
+}) {
   const [catalog, setCatalog] = useState<AccountCatalog | null>(null);
   const [catalogError, setCatalogError] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -49,9 +63,12 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
   const [apiSecret, setApiSecret] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [summaries, setSummaries] = useState<Record<string, LiveAccountSummary>>({});
+  const [balanceOpen, setBalanceOpen] = useState(false);
   const [refreshingAccount, setRefreshingAccount] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState<Record<string, string>>({});
+  const [confirmAccount, setConfirmAccount] = useState<AccountDescriptor | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState("");
 
   const refreshCatalog = async () => {
     const response = await fetch(marketApiRoutes.accounts);
@@ -61,6 +78,15 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
     if (!validCatalog(candidate)) throw new Error("invalid account catalog");
     setCatalog(candidate);
     setCatalogError(false);
+  };
+
+  const requestLiveAccountRefresh = async (accountId: string) => {
+    const response = await fetch(marketApiRoutes.accountRefresh(accountId), { method: "POST" });
+    const payload = await response.json() as { ok?: boolean; summary?: LiveAccountSummary };
+    if (!response.ok || payload.ok !== true || !payload.summary) {
+      throw new Error("account_reconciliation_failed");
+    }
+    return payload.summary;
   };
 
   useEffect(() => {
@@ -82,6 +108,15 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
       });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onToggle();
+    };
+    window.addEventListener("keydown", dismissOnEscape);
+    return () => window.removeEventListener("keydown", dismissOnEscape);
+  }, [onToggle, open]);
 
   const active = catalog?.accounts.find((account) => account.id === catalog.active_account_id) ?? null;
   const closeAdd = () => {
@@ -129,10 +164,7 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
     setRefreshingAccount(accountId);
     setRefreshError((current) => ({ ...current, [accountId]: "" }));
     try {
-      const response = await fetch(marketApiRoutes.accountRefresh(accountId), { method: "POST" });
-      const payload = await response.json() as { ok?: boolean; summary?: LiveAccountSummary };
-      if (!response.ok || payload.ok !== true || !payload.summary) throw new Error("refresh failed");
-      setSummaries((current) => ({ ...current, [accountId]: payload.summary! }));
+      await requestLiveAccountRefresh(accountId);
       await refreshCatalog();
     } catch {
       setRefreshError((current) => ({ ...current, [accountId]: "Refresh failed; account is not ready." }));
@@ -142,47 +174,137 @@ export function AccountMenu({ open, onToggle }: { open: boolean; onToggle: () =>
     }
   };
 
+  const activateAccount = async () => {
+    if (!confirmAccount || switching) return;
+    setSwitching(true);
+    setSwitchError("");
+    try {
+      if (confirmAccount.provider === "BYBIT"
+        && !["READY", "READ_ONLY"].includes(confirmAccount.status)) {
+        if (!["DISCONNECTED", "ERROR"].includes(confirmAccount.status)) {
+          throw new Error("account_activation_not_ready");
+        }
+        await requestLiveAccountRefresh(confirmAccount.id);
+      }
+      await accountWorkspaceStore.activate(confirmAccount.id);
+      setConfirmAccount(null);
+      try {
+        await refreshCatalog();
+      } catch {
+        setCatalog(null);
+        setCatalogError(true);
+      }
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "account_activation_failed";
+      setSwitchError(code === "account_reconciliation_failed"
+        ? "Reconnect failed; the previous account remains Current."
+        : code === "account_activation_not_ready"
+          ? "Refresh/Reconnect this account before switching."
+          : "Account switch failed; the previous account remains Current.");
+    } finally {
+      setSwitching(false);
+    }
+  };
+
   return (
     <div className="paper-account-control">
-      <button
+      <TradingControlButton
         aria-expanded={open}
         aria-label="Open account selection"
         className="account-switch-button"
-        onClick={onToggle}
-        type="button"
+        onHoldEnd={() => setBalanceOpen(false)}
+        onHoldStart={() => setBalanceOpen(true)}
+        onTap={onToggle}
       >
-        <span className="account-switch-key" aria-hidden="true">
+        {!open ? <span className="account-switch-key" aria-hidden="true">
           <span className="account-key-head" />
           <span className="account-key-shaft" />
-        </span>
+        </span> : null}
         <span className="account-switch-label">
-          <strong>{active?.display_name ?? (catalogError ? "UNAVAILABLE" : "LOADING")}</strong>
+          <strong>{active
+            ? active.provider === "PAPER" ? "PAPER" : active.display_name
+            : catalogError ? "UNAVAILABLE" : "LOADING"}</strong>
           <small>{active ? `${active.provider} · ${active.status}` : "ACCOUNT STATUS"}</small>
         </span>
-      </button>
+      </TradingControlButton>
+      {balanceOpen ? (
+        <div aria-label="Account balance" className="account-balance-popover" role="tooltip">
+          {workspaceProjection ? (
+            <>
+              <span><strong>Deposit</strong> {workspaceProjection.wallet_balance_usdt} USD</span>
+              <span><strong>Available</strong> {workspaceProjection.available_balance_usdt} USD</span>
+            </>
+          ) : (
+            <span>{catalogError || active?.status === "ERROR" || active?.status === "DISCONNECTED"
+              ? "Balance unavailable" : "Balance loading…"}</span>
+          )}
+        </div>
+      ) : null}
       {open ? (
-        <section className="account-menu" aria-label="Accounts">
-          <header><strong>Accounts</strong></header>
-          {catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts.map((account) => (
-            <article className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}`} key={account.id}>
-              <strong>{account.display_name}</strong>
-              <small>{account.provider} · {account.environment} · {account.status}</small>
-              {account.id === catalog.active_account_id ? <span>Current</span> : null}
-              {summaries[account.id] ? <small className="account-live-summary">
-                Equity {summaries[account.id].total_equity_usdt} USDT · Wallet {summaries[account.id].wallet_balance_usdt} USDT<br />
-                {summaries[account.id].position_count} positions · {summaries[account.id].order_count} orders
-              </small> : null}
-              {refreshError[account.id] ? <small className="account-refresh-error" role="alert">{refreshError[account.id]}</small> : null}
-              {account.provider === "BYBIT" ? <button
-                className="account-refresh-button"
-                disabled={refreshingAccount === account.id}
-                onClick={() => void refreshLiveAccount(account.id)}
-                type="button"
-              >{refreshingAccount === account.id ? "Refreshing…" : account.status === "DISCONNECTED" || account.status === "ERROR" ? "Reconnect" : "Refresh"}</button> : null}
-            </article>
-          ))}
-          <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add account</button>
-        </section>
+        <div
+          className="account-menu-backdrop"
+          data-testid="account-menu-backdrop"
+          onPointerDown={(event) => dismissPopupFromBackdrop(event, onToggle)}
+          role="presentation"
+        >
+          <section
+            aria-label="Accounts"
+            aria-modal="true"
+            className="account-menu"
+            onClick={shieldPopupClickInteraction}
+            onPointerDown={shieldPopupPointerInteraction}
+            role="dialog"
+          >
+            <header>
+              <strong>Accounts</strong>
+              <button aria-label="Close Accounts" className="account-menu-close" onClick={onToggle} type="button">×</button>
+            </header>
+            {catalogError || !catalog || !active ? <p role="alert">Account catalog unavailable</p> : catalog.accounts.map((account) => (
+              <article
+                className={`account-card ${account.environment.toLowerCase()} status-${account.status.toLowerCase()}`}
+                key={account.id}
+                onClick={() => account.id !== catalog.active_account_id && !switching && setConfirmAccount(account)}
+              >
+                <div className="account-card-title">
+                  <strong>{account.display_name}</strong>
+                  {account.id === catalog.active_account_id ? <span
+                    aria-label="Current account golden key"
+                    className="account-switch-key account-current-key"
+                    role="img"
+                  ><span className="account-key-head" /><span className="account-key-shaft" /></span> : null}
+                </div>
+                <small>{account.provider} · {account.environment} · {account.status}</small>
+                {account.id === catalog.active_account_id ? <span>Current</span> : null}
+                {refreshError[account.id] ? <small className="account-refresh-error" role="alert">{refreshError[account.id]}</small> : null}
+                {account.provider === "BYBIT" ? <button
+                  className="account-refresh-button"
+                  disabled={refreshingAccount === account.id}
+                  onClick={(event) => { event.stopPropagation(); void refreshLiveAccount(account.id); }}
+                  type="button"
+                >{refreshingAccount === account.id ? "Refreshing…" : account.status === "DISCONNECTED" || account.status === "ERROR" ? "Reconnect" : "Refresh"}</button> : null}
+              </article>
+            ))}
+            <button className="account-add-button" onClick={() => setAddOpen(true)} type="button">+ Add account</button>
+          </section>
+        </div>
+      ) : null}
+      {confirmAccount ? (
+        <div className="account-dialog-backdrop" role="presentation">
+          <section aria-label="Confirm account switch" aria-modal="true" className="account-dialog" role="dialog">
+            <header><strong>Switch workspace account?</strong></header>
+            <p>{confirmAccount.display_name}</p>
+            <small>{confirmAccount.provider} · {confirmAccount.environment} · {confirmAccount.status}</small>
+            <p>The entire account-scoped workspace will switch. LIVE trading remains disabled.</p>
+            {switchError ? <p role="alert">{switchError}</p> : null}
+            <div className="account-switch-confirm-actions">
+              <button className="account-switch-confirm-accept" disabled={switching || confirmAccount.status === "RECONCILING"} onClick={() => void activateAccount()} type="button">
+                {switching ? "Switching…" : ["DISCONNECTED", "ERROR"].includes(confirmAccount.status)
+                  ? "Reconnect & switch account" : "Switch account"}
+              </button>
+              <button className="account-switch-confirm-cancel" disabled={switching} onClick={() => { setConfirmAccount(null); setSwitchError(""); }} type="button">Cancel</button>
+            </div>
+          </section>
+        </div>
       ) : null}
       {addOpen ? (
         <div className="account-dialog-backdrop" role="presentation" onMouseDown={(event) => {

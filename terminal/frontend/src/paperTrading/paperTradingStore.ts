@@ -11,6 +11,7 @@ type PaperTradingSnapshot = {
 
 export class PaperTradingStore {
   private symbol: string | null = null;
+  private sessionKey: string | null = "paper:0";
   private snapshot: PaperTradingSnapshot = {
     paperState: null,
     pendingActions: new Set(),
@@ -35,8 +36,22 @@ export class PaperTradingStore {
     this.emit();
   };
 
-  applyPaperState = (state: PaperState) => {
-    if (!state.ok || state.symbol !== this.symbol) return false;
+  setAccountSession = (accountId: string | null, generation: number | null) => {
+    const next = accountId === "paper" && Number.isInteger(generation)
+      ? `${accountId}:${generation}`
+      : null;
+    if (this.sessionKey === next) return;
+    this.sessionKey = next;
+    this.refreshPending = this.refreshPromise !== null && next !== null;
+    this.snapshot = { ...this.snapshot, paperState: null };
+    this.emit();
+    if (next !== null && this.symbol !== null) void this.refresh();
+  };
+
+  private applyPaperStateForSession = (state: PaperState, sessionKey: string | null) => {
+    if (sessionKey === null || sessionKey !== this.sessionKey
+      || !state.ok || state.account_id !== "paper"
+      || state.symbol !== this.symbol) return false;
     const currentRevision = this.snapshot.paperState?.state_revision ?? -1;
     if (state.state_revision < currentRevision) return false;
     this.snapshot = { ...this.snapshot, paperState: state };
@@ -44,7 +59,15 @@ export class PaperTradingStore {
     return true;
   };
 
+  applyPaperState = (state: PaperState) => this.applyPaperStateForSession(state, this.sessionKey);
+
+  captureApplyPaperState = () => {
+    const sessionKey = this.sessionKey;
+    return (state: PaperState) => this.applyPaperStateForSession(state, sessionKey);
+  };
+
   refresh = () => {
+    if (this.sessionKey === null) return Promise.resolve();
     if (this.refreshPromise) {
       this.refreshPending = true;
       return this.refreshPromise;
@@ -73,7 +96,8 @@ export class PaperTradingStore {
     do {
       this.refreshPending = false;
       const symbol = this.symbol;
-      if (!symbol) return;
+      const sessionKey = this.sessionKey;
+      if (!symbol || sessionKey === null) return;
       const controller = new AbortController();
       const timeout = globalThis.setTimeout(
         () => controller.abort(),
@@ -83,15 +107,15 @@ export class PaperTradingStore {
         const response = await fetch(marketApiRoutes.paperState(symbol), {
           signal: controller.signal,
         });
-        if (response.ok) {
-          this.applyPaperState((await response.json()) as PaperState);
+        if (response.ok && sessionKey === this.sessionKey && symbol === this.symbol) {
+          this.applyPaperStateForSession((await response.json()) as PaperState, sessionKey);
         }
       } catch {
         // Preserve the last authoritative state; polling will reconcile later.
       } finally {
         globalThis.clearTimeout(timeout);
       }
-    } while (this.refreshPending);
+    } while (this.refreshPending && this.sessionKey !== null);
   }
 
   private publishPendingActions() {

@@ -26,6 +26,7 @@ class LiveAccountSnapshot:
     positions: tuple[dict[str, object], ...]
     orders: tuple[dict[str, object], ...]
     updated_at_ms: int
+    balance_provenance: dict[str, str | None] | None = None
 
     def transport(self, *, status: str) -> dict[str, object]:
         return {
@@ -42,6 +43,7 @@ class LiveAccountSnapshot:
             "positions": list(self.positions),
             "orders": list(self.orders),
             "updated_at_ms": self.updated_at_ms,
+            "balance_provenance": dict(self.balance_provenance or {}),
         }
 
 
@@ -64,10 +66,21 @@ class LiveAccountProjectionStore:
                     positions_json TEXT NOT NULL,
                     orders_json TEXT NOT NULL,
                     updated_at_ms INTEGER NOT NULL,
+                    balance_provenance_json TEXT NOT NULL DEFAULT '{}',
                     CHECK (refresh_generation >= 1),
                     CHECK (read_only IN (0, 1))
                 ) WITHOUT ROWID
             """)
+            columns = {
+                row[1] for row in self._connection.execute(
+                    "PRAGMA table_info(live_account_snapshots)"
+                )
+            }
+            if "balance_provenance_json" not in columns:
+                self._connection.execute(
+                    "ALTER TABLE live_account_snapshots "
+                    "ADD COLUMN balance_provenance_json TEXT NOT NULL DEFAULT '{}'"
+                )
             self._connection.commit()
         except (sqlite3.Error, OSError) as exc:
             raise LiveAccountStoreError("live_account_store_unavailable") from exc
@@ -86,6 +99,7 @@ class LiveAccountProjectionStore:
                 row[0], row[1], bool(row[2]), int(row[3]), Decimal(row[4]),
                 Decimal(row[5]), Decimal(row[6]), row[7],
                 tuple(json.loads(row[8])), tuple(json.loads(row[9])), int(row[10]),
+                dict(json.loads(row[11])) if len(row) > 11 else {},
             )
         except Exception as exc:
             raise LiveAccountStoreError("live_account_snapshot_corrupt") from exc
@@ -94,7 +108,7 @@ class LiveAccountProjectionStore:
         try:
             with self._connection:
                 cursor = self._connection.execute("""
-                    INSERT INTO live_account_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO live_account_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(account_id) DO UPDATE SET
                       environment=excluded.environment, read_only=excluded.read_only,
                       refresh_generation=excluded.refresh_generation,
@@ -103,7 +117,8 @@ class LiveAccountProjectionStore:
                       available_balance_usdt=excluded.available_balance_usdt,
                       exchange_time_ms=excluded.exchange_time_ms,
                       positions_json=excluded.positions_json, orders_json=excluded.orders_json,
-                      updated_at_ms=excluded.updated_at_ms
+                      updated_at_ms=excluded.updated_at_ms,
+                      balance_provenance_json=excluded.balance_provenance_json
                     WHERE excluded.refresh_generation > live_account_snapshots.refresh_generation
                 """, (
                     snapshot.account_id, snapshot.environment, int(snapshot.read_only),
@@ -112,6 +127,7 @@ class LiveAccountProjectionStore:
                     snapshot.exchange_time_ms,
                     json.dumps(snapshot.positions, separators=(",", ":")),
                     json.dumps(snapshot.orders, separators=(",", ":")), snapshot.updated_at_ms,
+                    json.dumps(snapshot.balance_provenance or {}, separators=(",", ":")),
                 ))
                 if cursor.rowcount != 1:
                     raise LiveAccountStoreError("stale_live_account_snapshot")

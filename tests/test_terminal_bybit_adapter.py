@@ -199,8 +199,16 @@ class BybitNormalizationTests(unittest.TestCase):
             "get_wallet_balance": {
                 "retCode": 0, "retMsg": "OK", "time": 4321,
                 "result": {"list": [{
-                    "totalEquity": "101.25", "totalAvailableBalance": "80.5",
-                    "coin": [{"coin": "USDT", "walletBalance": "99.75"}],
+                    "accountType": "UNIFIED", "totalWalletBalance": "99.75",
+                    "totalEquity": "101.25", "totalMarginBalance": "91.5",
+                    "totalAvailableBalance": "80.5", "accountIMRate": "0.12",
+                    "totalInitialMargin": "11", "totalPerpUPL": "-8.25",
+                    "coin": [{
+                        "coin": "USDT", "walletBalance": "12.34", "equity": "10.5",
+                        "availableToWithdraw": "", "availableToBorrow": "", "locked": "0",
+                        "unrealisedPnl": "-1.84", "spotBorrow": "0", "borrowAmount": "0",
+                        "usdValue": "10.5",
+                    }],
                 }]},
             },
         }
@@ -214,7 +222,11 @@ class BybitNormalizationTests(unittest.TestCase):
         wallet = adapter.get_wallet_snapshot()
         self.assertEqual(wallet.wallet_balance_usdt, Decimal("99.75"))
         self.assertEqual(wallet.total_equity_usdt, Decimal("101.25"))
-        self.assertEqual(wallet.available_balance_usdt, Decimal("80.5"))
+        self.assertEqual(wallet.available_balance_usdt, Decimal("101.25"))
+        self.assertNotEqual(wallet.wallet_balance_usdt, Decimal("12.34"))
+        self.assertEqual(wallet.balance_provenance["account.totalAvailableBalance"], "80.5")
+        self.assertEqual(wallet.balance_provenance["account.totalEquity"], "101.25")
+        self.assertEqual(wallet.balance_provenance["USDT.equity"], "10.5")
         self.assertEqual(wallet.exchange_time_ms, 4321)
         self.assertEqual(factory_calls[0]["timeout"], 10)
         self.assertFalse(factory_calls[0]["force_retry"])

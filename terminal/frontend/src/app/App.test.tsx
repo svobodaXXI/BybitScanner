@@ -62,12 +62,31 @@ it("removes a fully filled PAPER Limit after authoritative refresh", async () =>
     if (url === "/api/instruments") {
       return { ok: true, json: async () => ({ instruments: [{ symbol: "BTCUSDT" }] }) };
     }
+    if (url === "/api/workspace/account?symbol=BTCUSDT") {
+      return { ok: true, json: async () => ({
+        ok: true,
+        account_id: "paper",
+        provider: "PAPER",
+        environment: "PAPER",
+        status: "READY",
+        session_generation: 1,
+        projection_generation: 1,
+        read_only: false,
+        wallet_balance_usdt: "5000",
+        total_equity_usdt: "5000",
+        available_balance_usdt: "5000",
+        positions: [],
+        orders: [],
+        paper_state: null,
+      }) };
+    }
     requestCount += 1;
     return {
       ok: true,
       json: async () => ({
         ok: true,
         state_revision: requestCount,
+        account_id: "paper",
         symbol: "BTCUSDT",
         active_limit_orders: requestCount === 1 ? [{ order_id: "limit-1" }] : [],
       }),

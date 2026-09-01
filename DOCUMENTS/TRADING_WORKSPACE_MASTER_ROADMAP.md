@@ -746,17 +746,15 @@ Bybit MAINNET account refreshed to `READY` after fresh validation and complete a
 showed real Equity and Wallet plus 33 positions and 13 active orders, Paper remained the sole Current account,
 `active_account_id` did not switch, no LIVE mutations occurred and no credential exposure was observed.
 
-The exact next stage is `ACTIVE ACCOUNT SWITCHING + ACCOUNT-SCOPED WORKSPACE ACTIVATION`, without LIVE mutations.
-
-Revision 2.1 defines that next stage as a documentation-only bounded architecture amendment. PAPER persistence
-keeps the immutable `TradingAccountId("paper")` key while `TradingAccountManager` alone owns the active account and
-session generation. One account-scoped Workspace projection router selects either PAPER projections or one current
-complete LIVE snapshot and returns an explicit account/session envelope; the frontend owns projections by
-`account_id + session_generation` and rejects stale results. Switching is atomic, eligibility-gated and increments
-generation exactly once only on success. All mutations remain protected by one backend gate allowing only active
-`PAPER / PAPER / READY`; LIVE and READ_ONLY Workspaces are view-only. Account switching reuses the existing public
-Workspace-symbol and market-data stack, preserving a valid current symbol and using the existing symbol-switch path
-for position/order navigation. Production implementation requires separate explicit human authorization.
+`ACTIVE ACCOUNT SWITCHING + ACCOUNT-SCOPED WORKSPACE ACTIVATION` revision 2.1 is now
+`PRODUCTION IMPLEMENTED / REAL-PHONE ACCEPTED / COMPLETE`. PAPER persistence keeps immutable
+`TradingAccountId("paper")` identity while `TradingAccountManager` alone owns active account and session generation.
+Eligible switching, versioned preferred-account startup restoration, account/session-scoped projections, stale
+response rejection and periodic REST-only LIVE balance/inventory refresh passed focused verification and real-phone
+acceptance. The backend gate still allows mutations only for active `PAPER / PAPER / READY`; LIVE and READ_ONLY are
+view-only, never invoke the mutation adapter and never enter PAPER order processing. Public chart/DOM/tape remains
+independent of account execution ownership. The golden-key/Accounts UX and isolated mobile lower-row geometry are
+real-phone accepted. No further revision 2.1 implementation or acceptance action remains.
 
 CENTER approximately 13/15 and Done/Enter focus progression are `USER-DEFERRED / NON-BLOCKING`.
 Robot/AUTOPILOT, Android, MetaScalp, VPS, Scanner and strategy work remain outside this sequence.

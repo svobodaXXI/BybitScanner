@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import hashlib
 import hmac
+import logging
 from uuid import uuid4
 from decimal import Decimal
 from pathlib import Path
@@ -47,10 +48,16 @@ from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
 from terminal.persistence.sqlite_store import ExecutionApplyResult, SQLiteStore
 from terminal.persistence.credential_store import DpapiCredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
+from terminal.persistence.active_account_preference import (
+    ActiveAccountPreferenceError, ActiveAccountPreferenceStore,
+)
 from terminal.runtime.paper_context import (
     PaperCommandContextProvider,
     working_volume_usdt,
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class PaperOnlyAdapter:
@@ -87,12 +94,15 @@ class PaperRuntime:
         credential_store: DpapiCredentialStore | None = None,
         account_validator: BybitAccountValidator | None = None,
         live_account_store: LiveAccountProjectionStore | None = None,
+        active_account_preference_store: ActiveAccountPreferenceStore | None = None,
         live_adapter_factory=None,
     ) -> None:
         self._account_manager = account_manager or paper_account_manager()
+        self._paper_account_id = TradingAccountId("paper")
         self._credential_store = credential_store
         self._account_validator = account_validator
         self._live_account_store = live_account_store
+        self._active_account_preference_store = active_account_preference_store
         self._stored_bybit_accounts = list(credential_store.load()) if credential_store else []
         for stored in self._stored_bybit_accounts:
             self._account_manager.register_inactive(TradingAccount(
@@ -118,7 +128,7 @@ class PaperRuntime:
             or active_account.id != TradingAccountId("paper")
         ):
             raise RuntimeError("PAPER runtime requires the authoritative paper account")
-        account_id = self._account_manager.active_account_id
+        account_id = self._paper_account_id
 
         self.store = SQLiteStore.open(database_path)
         engine = ExecutionEngine(self.store)
@@ -165,11 +175,12 @@ class PaperRuntime:
         self.api = TerminalCommandApi(application, context_provider)
         self._guard = application.guard
         self._context = context_provider
+        self._restore_preferred_account()
 
     @property
     def _account_id(self) -> TradingAccountId:
-        """Compatibility projection; TradingAccountManager remains authoritative."""
-        return self._account_manager.active_account_id
+        """Immutable PAPER persistence identity, independent of active session authority."""
+        return self._paper_account_id
 
     def account_catalog(self) -> dict[str, object]:
         return self._account_manager.catalog_projection()
@@ -189,6 +200,137 @@ class PaperRuntime:
         if self._live_account_reconciler is None:
             raise RuntimeError("live_account_reconciliation_unavailable")
         return self._live_account_reconciler.summary(account_id)
+
+    def activate_account(self, account_id_text: str) -> dict[str, object]:
+        account_id = TradingAccountId(account_id_text)
+        target = self._account_manager.account(account_id)
+        if not self._account_manager.is_activation_eligible(account_id):
+            raise RuntimeError("account_activation_not_ready")
+        if target.provider is TradingAccountProvider.BYBIT:
+            if self._live_account_store is None:
+                raise RuntimeError("live_account_snapshot_unavailable")
+            snapshot = self._live_account_store.get(account_id_text)
+            if (
+                snapshot is None
+                or snapshot.environment != target.environment.value
+                or snapshot.read_only != (target.status is TradingAccountStatus.READ_ONLY)
+            ):
+                raise RuntimeError("live_account_snapshot_unavailable")
+        if self._active_account_preference_store is not None:
+            self._active_account_preference_store.save(account_id)
+        token = self._account_manager.activate(account_id)
+        return {
+            "active_account_id": token.active_account_id.value,
+            "session_generation": token.generation,
+            "status": target.status.value,
+        }
+
+    def _restore_preferred_account(self) -> None:
+        store = self._active_account_preference_store
+        if store is None:
+            return
+        try:
+            preferred = store.load()
+            if preferred is None:
+                LOGGER.info("account_restore no_preference path=%s active=paper", store.path)
+                return
+            LOGGER.info(
+                "account_restore preference_loaded account_id=%s path=%s",
+                preferred.value, store.path,
+            )
+            if preferred == self._paper_account_id:
+                LOGGER.info("account_restore paper_preference active=paper generation=1")
+                return
+            target = self._account_manager.account(preferred)
+            if target.provider is not TradingAccountProvider.BYBIT:
+                LOGGER.warning("account_restore fallback=paper reason=preferred_provider_not_bybit")
+                return
+            if self._live_account_reconciler is None:
+                LOGGER.warning("account_restore fallback=paper reason=reconciliation_unavailable")
+                return
+            LOGGER.info("account_restore reconnect_started account_id=%s", preferred.value)
+            snapshot = self._live_account_reconciler.refresh(preferred.value)
+            LOGGER.info(
+                "account_restore snapshot_ready account_id=%s status=%s refresh_generation=%s",
+                preferred.value, snapshot["status"], snapshot["refresh_generation"],
+            )
+            activated = self.activate_account(preferred.value)
+            LOGGER.info(
+                "account_restore activation_success account_id=%s status=%s session_generation=%s",
+                preferred.value, activated["status"], activated["session_generation"],
+            )
+        except (ActiveAccountPreferenceError, LookupError, RuntimeError) as exc:
+            # Startup restoration is best effort and fail-closed: PAPER remains authority.
+            LOGGER.warning(
+                "account_restore fallback=paper reason=%s",
+                str(exc) or type(exc).__name__,
+            )
+            return
+
+    def workspace_account_projection(self, symbol: str) -> dict[str, object]:
+        account = self._account_manager.active_account
+        token = self._account_manager.session_token
+        envelope: dict[str, object] = {
+            "account_id": account.id.value,
+            "provider": account.provider.value,
+            "environment": account.environment.value,
+            "status": account.status.value,
+            "session_generation": token.generation,
+            "read_only": account.provider is TradingAccountProvider.BYBIT,
+        }
+        if account.provider is TradingAccountProvider.PAPER:
+            state = self.paper_state(symbol)
+            positions = to_primitive(self.open_positions()).get("positions", [])
+            return {
+                **envelope,
+                "projection_generation": state["state_revision"],
+                "wallet_balance_usdt": state["equity_usdt"],
+                "total_equity_usdt": state["equity_usdt"],
+                "available_balance_usdt": state["equity_usdt"],
+                "positions": positions,
+                "orders": state["active_limit_orders"],
+                "paper_state": state,
+            }
+        if self._live_account_store is None:
+            raise RuntimeError("live_account_snapshot_unavailable")
+        snapshot = self._live_account_store.get(account.id.value)
+        if snapshot is None or snapshot.environment != account.environment.value:
+            raise RuntimeError("live_account_snapshot_unavailable")
+        return {
+            **envelope,
+            "projection_generation": snapshot.refresh_generation,
+            "wallet_balance_usdt": str(snapshot.wallet_balance_usdt),
+            "total_equity_usdt": str(snapshot.total_equity_usdt),
+            "available_balance_usdt": str(snapshot.available_balance_usdt),
+            "positions": list(snapshot.positions),
+            "orders": list(snapshot.orders),
+            "paper_state": None,
+            "balance_source_fields": {
+                "wallet_balance_usdt": "result.list[0].totalWalletBalance",
+                "total_equity_usdt": "result.list[0].totalEquity",
+                "available_balance_usdt": "result.list[0].totalEquity",
+                "account_type": "UNIFIED",
+                "unit": "USD",
+            },
+            "balance_provenance": dict(snapshot.balance_provenance or {}),
+        }
+
+    def require_paper_mutations(self) -> None:
+        active = self._account_manager.active_account
+        if not (
+            active.provider is TradingAccountProvider.PAPER
+            and active.environment is TradingAccountEnvironment.PAPER
+            and active.status is TradingAccountStatus.READY
+        ):
+            raise RuntimeError("live_mutations_disabled")
+
+    def market(self, request):
+        self.require_paper_mutations()
+        return self.api.market(request)
+
+    def full_close(self, request):
+        self.require_paper_mutations()
+        return self.api.full_close(request)
 
     def add_bybit_account(self, display_name: str, api_key: str, api_secret: str) -> dict[str, object]:
         if not self._credential_store or not self._account_validator:
@@ -218,6 +360,14 @@ class PaperRuntime:
     def process_orderbook_update(self, notified_book_update_id: str) -> int:
         if not notified_book_update_id:
             raise ValueError("book_update_id must be non-empty")
+        active_account = self._account_manager.active_account
+        if not (
+            active_account.id == self._paper_account_id
+            and active_account.provider is TradingAccountProvider.PAPER
+            and active_account.environment is TradingAccountEnvironment.PAPER
+            and active_account.status is TradingAccountStatus.READY
+        ):
+            return 0
         notified_symbol = notified_book_update_id.split(":", 1)[0].strip().upper()
         if not notified_symbol:
             return 0
@@ -424,6 +574,7 @@ class PaperRuntime:
         return PaperOpenPositionsResponse(account.trading_account_id.value, tuple(projected))
 
     def close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
+        self.require_paper_mutations()
         source_positions = self.store.load_open_position_projections(self._account_id)
         results = []
         for position in source_positions:
@@ -440,6 +591,7 @@ class PaperRuntime:
         )
 
     def create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
+        self.require_paper_mutations()
         symbol = request.symbol.strip().upper()
         if request.time_in_force is not TimeInForce.GTC:
             raise ValueError("PAPER Limit supports GTC only")
@@ -485,6 +637,7 @@ class PaperRuntime:
         )
 
     def cancel_limit(self, request: PaperLimitCancelRequest) -> PaperLimitMutationResult:
+        self.require_paper_mutations()
         symbol = request.symbol.strip().upper()
         if symbol != self._context.instrument.symbol:
             raise ValueError("unsupported PAPER symbol")
@@ -506,6 +659,7 @@ class PaperRuntime:
         )
 
     def amend_limit(self, request: PaperLimitAmendRequest) -> PaperLimitMutationResult:
+        self.require_paper_mutations()
         symbol = request.symbol.strip().upper()
         existing = self.store.get_paper_limit(request.order_id, self._account_id)
         if existing is None or existing.status != "open":
@@ -569,6 +723,7 @@ class PaperRuntime:
     def _delete_protection(
         self, leg: str, request: PaperStopDeleteRequest,
     ) -> PaperStopMutationResult:
+        self.require_paper_mutations()
         symbol = request.symbol.strip().upper()
         context = self._context.context_for(symbol)
         fingerprint = _fingerprint(symbol, "delete") if leg == "stop" else _fingerprint(symbol, leg, "delete")
@@ -590,6 +745,7 @@ class PaperRuntime:
     def _mutate_protection(
         self, leg: str, operation: str, request: PaperStopMutationRequest,
     ) -> PaperStopMutationResult:
+        self.require_paper_mutations()
         symbol = request.symbol.strip().upper()
         context = self._context.context_for(symbol)
         normalized = normalize_paper_protection_trigger(

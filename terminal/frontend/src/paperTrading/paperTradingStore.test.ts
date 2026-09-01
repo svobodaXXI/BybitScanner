@@ -69,6 +69,48 @@ describe("PaperTradingStore", () => {
     expect(store.getSnapshot().paperState?.state_revision).toBe(4);
   });
 
+  it("invalidates PAPER state and rejects a late poll after the account session changes", async () => {
+    const poll = deferred<Response>();
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(poll.promise));
+    const store = new PaperTradingStore();
+    store.setAccountSession("paper", 1);
+    store.setSymbol("ONGUSDT");
+
+    const refresh = store.refresh();
+    store.setAccountSession(null, null);
+    poll.resolve(response(state(7)));
+    await refresh;
+
+    expect(store.getSnapshot().paperState).toBeNull();
+    expect(store.applyPaperState(state(8))).toBe(false);
+  });
+
+  it("rejects a late mutation result after returning to a newer PAPER session", () => {
+    const store = new PaperTradingStore();
+    store.setAccountSession("paper", 1);
+    store.setSymbol("ONGUSDT");
+    const applyFromOldSession = store.captureApplyPaperState();
+
+    store.setAccountSession(null, null);
+    store.setAccountSession("paper", 3);
+
+    expect(applyFromOldSession(state(9))).toBe(false);
+    expect(store.getSnapshot().paperState).toBeNull();
+  });
+
+  it("refreshes the current symbol when a PAPER session becomes active", async () => {
+    const fetcher = vi.fn().mockResolvedValue(response(state(3)));
+    vi.stubGlobal("fetch", fetcher);
+    const store = new PaperTradingStore();
+    store.setAccountSession(null, null);
+    store.setSymbol("ONGUSDT");
+
+    store.setAccountSession("paper", 4);
+    await vi.waitFor(() => expect(store.getSnapshot().paperState?.state_revision).toBe(3));
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("accepts an equal revision so authoritative active orders replace stale content", () => {
     const store = new PaperTradingStore();
     const listener = vi.fn();

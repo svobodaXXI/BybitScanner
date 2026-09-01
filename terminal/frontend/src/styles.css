@@ -595,6 +595,60 @@ button {
   border: 1px solid #394653;
   box-shadow: 0 0.4rem 1rem rgb(0 0 0 / 45%);
 }
+.account-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding:
+    max(0.75rem, env(safe-area-inset-top))
+    max(0.75rem, env(safe-area-inset-right))
+    max(0.75rem, env(safe-area-inset-bottom))
+    max(0.75rem, env(safe-area-inset-left));
+  background: rgb(2 5 8 / 82%);
+  overscroll-behavior: contain;
+}
+.paper-account-control .account-menu-backdrop .account-menu {
+  position: relative;
+  inset: auto;
+  width: min(26rem, 100%);
+  max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #53606d;
+  border-radius: 0.5rem;
+  box-shadow: 0 0.85rem 2.4rem rgb(0 0 0 / 70%);
+}
+.account-menu > header {
+  position: sticky;
+  top: -0.55rem;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -0.55rem -1rem 0;
+  padding: 0.55rem 0.55rem 0.45rem 1rem;
+  background: #121820;
+  border-bottom: 1px solid #27313b;
+}
+.account-menu .account-menu-close {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  min-width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border: 1px solid #657383;
+  border-radius: 50%;
+  background: #202832;
+  color: #eef3f7;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+}
 .order-dot {
   width: 0.55rem;
   height: 0.55rem;
@@ -680,18 +734,46 @@ button {
   background: #202a34;
 }
 
+.paper-market-actions-shell {
+  display: block;
+  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .paper-market-actions {
   display: flex;
   flex-wrap: nowrap;
   gap: 0.45rem;
   align-items: center;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
+.paper-market-actions.is-read-only { opacity: 0.52; }
+.paper-market-actions.is-read-only button,
+.paper-market-actions.is-read-only input { cursor: not-allowed; }
 
 .paper-limits-shell {
   position: relative;
   display: inline-flex;
   align-items: stretch;
   gap: 0.18rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.paper-lower-actions-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: stretch;
+  gap: 0.3rem;
+  width: 100%;
+  min-width: 0;
+  padding-top: 0.25rem;
+  border-top: 1px solid #27313b;
 }
 
 .paper-limits-button,
@@ -1140,8 +1222,7 @@ button {
       2rem
       3.1rem;
     grid-template-areas:
-      "buy sell wv positions protection"
-      "limits limits limits limits limits";
+      "buy sell wv positions protection";
     align-items: start;
     width: 100%;
     margin: 0;
@@ -1311,11 +1392,12 @@ button {
   color: #d67a82;
   position: relative;
 }
-.account-menu header,
 .account-card {
   display: grid;
   gap: 0.2rem;
 }
+.account-card:not(.status-disconnected):not(.status-error):not(.status-reconciling) { cursor: pointer; }
+.account-card-title { display: flex; align-items: center; }
 .account-card.status-read_only,
 .account-card.status-disconnected,
 .account-card.status-error,
@@ -1335,13 +1417,12 @@ button {
 }
 .account-card span { color: #70d49a; font-size: 0.65rem; }
 .account-refresh-button { justify-self: start; cursor: pointer; }
-.account-live-summary { color: #b9c5d0 !important; }
 .account-refresh-error { color: #e88888 !important; }
 .account-add-button { cursor: pointer !important; color: #d7e0e8 !important; }
 .account-dialog-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 1000;
   display: grid;
   place-items: center;
   background: rgb(0 0 0 / 65%);
@@ -1358,6 +1439,46 @@ button {
 .account-dialog header { display: flex; justify-content: space-between; }
 .account-dialog label { display: grid; gap: 0.25rem; }
 .account-dialog input { padding: 0.55rem; color: #d7e0e8; background: #171d24; border: 1px solid #394653; }
+.account-switch-confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.55rem; }
+.account-switch-confirm-actions button {
+  min-height: 2.5rem; padding: 0.5rem 0.65rem; border-radius: 0.35rem;
+  font-size: 0.7rem; font-weight: 700; cursor: pointer;
+}
+.account-switch-confirm-accept { border: 1px solid #3c7757; background: #14231c; color: #8ce0ad; }
+.account-switch-confirm-cancel { border: 1px solid #53606d; background: #20262d; color: #d7e0e8; }
+.account-switch-confirm-actions button:disabled { cursor: default; opacity: 0.55; }
+.mode-panel-account-control {
+  display: flex;
+  align-self: end;
+  justify-content: flex-end;
+}
+.paper-account-control { position: relative; }
+.account-balance-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 0.35rem);
+  z-index: 12;
+  display: grid;
+  gap: 0.2rem;
+  min-width: max-content;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #8d7331;
+  border-radius: 0.4rem;
+  background: #17150f;
+  color: #e6d59a;
+  box-shadow: 0 0.35rem 1rem #0009;
+  font-size: 0.72rem;
+  pointer-events: none;
+}
+.account-balance-popover span { display: flex; justify-content: space-between; gap: 0.75rem; }
+.live-account-inventory {
+  display: grid; gap: 0.5rem; padding: 0.65rem; border: 1px solid #9d7b2d;
+  background: #17150f; color: #dce4eb;
+}
+.live-account-inventory header { display: flex; justify-content: space-between; gap: 0.5rem; }
+.live-account-inventory > div { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.live-account-inventory section { display: grid; gap: 0.25rem; max-height: 8rem; overflow: auto; }
+.live-account-inventory button { text-align: left; color: #dce4eb; background: #20262d; cursor: pointer; }
 
 .paper-stop-active-dot {
   display: inline-block;
@@ -1446,10 +1567,8 @@ button {
   /* LIMITS */
 
   .paper-limits-shell {
-    grid-area: limits;
+    grid-area: auto;
     min-width: 0;
-    padding-top: 0.25rem;
-    border-top: 1px solid #27313b;
   }
 
   .paper-execution-status {
@@ -2773,8 +2892,7 @@ button {
   .paper-market-actions {
     grid-template-columns: 6.74rem minmax(0, 1fr) 2rem 3.1rem;
     grid-template-areas:
-      "trades position positions protection"
-      "limits limits limits limits";
+      "trades position positions protection";
     column-gap: 0.24rem;
   }
 
@@ -2973,6 +3091,69 @@ button {
 .paper-open-positions > header h2 {
   margin: 0;
   font-size: 1rem;
+}
+
+.account-switch-key .account-key-head { border-color: #d9ad3d; }
+.account-switch-key .account-key-shaft,
+.account-switch-key .account-key-shaft::before,
+.account-switch-key .account-key-shaft::after { background: #d9ad3d; }
+
+@media (max-width: 620px) {
+  .paper-market-actions-shell {
+    width: 100%;
+  }
+
+  .paper-lower-actions-row {
+    grid-template-columns: minmax(0, 1fr) clamp(5.25rem, 25vw, 7rem);
+  }
+
+  .mode-panel-account-control,
+  .account-switch-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .account-switch-button {
+    justify-content: flex-start;
+    position: relative;
+    height: 1.55rem;
+    min-height: 1.55rem;
+    padding: 0 0.3rem;
+    overflow: visible;
+  }
+
+  .paper-limits-button,
+  .paper-limits-cancel-all {
+    box-sizing: border-box;
+    height: 1.55rem;
+    min-height: 1.55rem;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  .account-switch-button::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 2.75rem;
+  }
+
+  .account-switch-label {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .account-switch-label strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .account-switch-label small { display: none; }
 }
 
 .paper-open-positions-title {

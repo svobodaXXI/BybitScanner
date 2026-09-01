@@ -64,6 +64,7 @@ class LiveAccountReconciler:
                 wallet.available_balance_usdt, wallet.exchange_time_ms,
                 tuple(_position_projection(account_id_text, item) for item in positions),
                 tuple(_order_projection(account_id_text, item) for item in orders), now,
+                dict(wallet.balance_provenance),
             )
             self._store.publish(snapshot)
             status = TradingAccountStatus.READ_ONLY if validated.read_only else TradingAccountStatus.READY

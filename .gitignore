@@ -75,3 +75,4 @@ review_queue/
 paper_runtime.credentials.dpapi
 
 paper_runtime.live_accounts.sqlite3*
+paper_runtime.active_account.json

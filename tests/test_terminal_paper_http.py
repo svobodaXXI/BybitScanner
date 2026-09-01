@@ -31,6 +31,7 @@ from terminal.runtime.paper_runtime import PaperRuntime
 from terminal.exchange.bybit_account_validation import ValidatedBybitAccount
 from terminal.exchange.bybit_account_validation import AccountValidationError
 from terminal.persistence.credential_store import CredentialStoreError, DpapiCredentialStore
+from terminal.persistence.live_account_store import LiveAccountProjectionStore
 
 
 class _SwitchBook:
@@ -562,7 +563,11 @@ class StaticBookProvider:
         return "BTCUSDT:20:10", self.get_book(symbol)
 
 
-def _runtime_owner(path: Path, *, credential_store=None, account_validator=None) -> SerializedPaperRuntime:
+def _runtime_owner(
+    path: Path, *, credential_store=None, account_validator=None,
+    account_manager=None, live_account_store=None, live_account_store_path=None,
+    book_provider=None,
+) -> SerializedPaperRuntime:
     instrument = InstrumentSnapshot(
         Category.LINEAR, "BTCUSDT", "LinearPerpetual", "Trading",
         "BTC", "USDT", "USDT", Decimal("0.5"), Decimal("1000000"),
@@ -571,11 +576,16 @@ def _runtime_owner(path: Path, *, credential_store=None, account_validator=None)
     )
     return SerializedPaperRuntime(lambda: PaperRuntime(
         path,
-        book_provider=StaticBookProvider(),
+        book_provider=book_provider or StaticBookProvider(),
         instrument_snapshot=instrument,
         instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
         credential_store=credential_store,
         account_validator=account_validator,
+        account_manager=account_manager,
+        live_account_store=(
+            LiveAccountProjectionStore(live_account_store_path)
+            if live_account_store_path is not None else live_account_store
+        ),
     ))
 
 

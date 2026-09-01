@@ -6188,19 +6188,21 @@ no LIVE mutations were performed, and no credential exposure was observed.
 Exact next stage: `ACTIVE ACCOUNT SWITCHING + ACCOUNT-SCOPED WORKSPACE ACTIVATION`, without LIVE mutations.
 Private streams and LIVE mutations remain outside this accepted checkpoint.
 
-## ACTIVE ACCOUNT SWITCHING ARCHITECTURE CHECKPOINT
+## ACTIVE ACCOUNT SWITCHING REVISION 2.1 ACCEPTED CHECKPOINT
 
-Version 7.85 records ChangeRequest revision 2.1 as a human-approved documentation-only bounded architecture
-amendment. Revision 2.0 at commit `b748350ca5d8ddb03c465272ab287af2880ddec9` remains the last implemented and
-real-phone/real-Bybit accepted runtime checkpoint.
+Version 7.86 records ChangeRequest revision 2.1 as `PRODUCTION IMPLEMENTED / REAL-PHONE ACCEPTED / COMPLETE` on
+2026-09-01. Active-account switching, account/session-scoped Workspace projection, versioned preferred-account
+startup restore, account-scoped LIVE persistence, stale-response rejection and periodic REST-only balance refresh
+are implemented. `TradingAccountManager` remains sole active/session authority and PAPER storage identity remains
+`TradingAccountId("paper")`.
 
-The amendment separates permanent PAPER storage identity `TradingAccountId("paper")` from dynamic
-`TradingAccountManager` session authority; defines an atomic eligible-target switch with exactly one generation
-increment; introduces one account/session-scoped Workspace projection router; requires frontend stale-result
-rejection by `account_id + session_generation`; and places every mutation endpoint behind a backend gate allowing
-only active `PAPER / PAPER / READY`. LIVE and READ_ONLY sessions remain view-only. Existing public market data and
-Workspace-symbol authority are reused unchanged.
+LIVE and READ_ONLY controls and every backend mutation route remain fail-closed; no LIVE mutation adapter is used.
+Public chart/DOM/tape continues independently, while active LIVE order-book updates bypass PAPER execution/context.
+Accepted Unified balance semantics use account-wide `totalWalletBalance` for Deposit and `totalEquity` for the
+second key-peek metric. Real-phone acceptance also covers startup reconnect/activation, Accounts modal behavior,
+one golden key plus account name, refreshed hold peek, no PAPER/LIVE mixing, original upper-control geometry,
+isolated lower limits/account row and its continuous full-width divider.
 
-Exact next action requires separate explicit authorization for production implementation of `ACTIVE ACCOUNT
-SWITCHING + ACCOUNT-SCOPED WORKSPACE ACTIVATION`. No LIVE mutation implementation is authorized.
+Revision 2.1 has no remaining implementation or real-phone acceptance action. Private streams and LIVE mutations
+remain outside this completed read-only checkpoint and require separate future authority.
 

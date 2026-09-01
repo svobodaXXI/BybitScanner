@@ -72,8 +72,7 @@ export function useTradingControlActivation({
       if (held.current) {
         held.current = false;
         onHoldEnd?.();
-        if (event.pointerType !== "mouse")
-          suppressCompatibilityClick.current = true;
+        suppressCompatibilityClick.current = true;
       } else if (event.pointerType !== "mouse") {
         suppressCompatibilityClick.current = true;
         onTap?.();

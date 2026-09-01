@@ -132,6 +132,26 @@ class TradingAccountManager:
             raise TypeError("account status must be TradingAccountStatus")
         self._accounts[account_id] = replace(self.account(account_id), status=status)
 
+    def activate(self, account_id: TradingAccountId) -> AccountSessionToken:
+        account = self.account(account_id)
+        if not self.is_activation_eligible(account_id):
+            raise RuntimeError("account_activation_not_ready")
+        if account_id == self.active_account_id:
+            return self._session_token
+        self._session_token = AccountSessionToken(account_id, self._session_token.generation + 1)
+        return self._session_token
+
+    def is_activation_eligible(self, account_id: TradingAccountId) -> bool:
+        account = self.account(account_id)
+        return (
+            account.provider is TradingAccountProvider.PAPER
+            and account.environment is TradingAccountEnvironment.PAPER
+            and account.status is TradingAccountStatus.READY
+        ) or (
+            account.provider is TradingAccountProvider.BYBIT
+            and account.status in {TradingAccountStatus.READY, TradingAccountStatus.READ_ONLY}
+        )
+
     def catalog_projection(self) -> dict[str, object]:
         """Return the credential-free, read-only transport account catalog."""
         return {
@@ -145,7 +165,9 @@ class TradingAccountManager:
                     "environment": account.environment.value,
                     "status": account.status.value,
                 }
-                for account in self.accounts
+                for account in sorted(
+                    self.accounts, key=lambda item: item.id != self.active_account_id,
+                )
             ],
         }
 

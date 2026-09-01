@@ -53,4 +53,16 @@ describe("TradingControlButton pointer activation", () => {
     expect(onHoldEnd).toHaveBeenCalledOnce();
     expect(onTap).not.toHaveBeenCalled();
   });
+
+  it("suppresses the click generated after a mouse hold", () => {
+    vi.useFakeTimers();
+    const onTap = vi.fn();
+    render(<TradingControlButton holdMs={200} onHoldStart={vi.fn()} onTap={onTap}>KEY</TradingControlButton>);
+    const button = screen.getByRole("button", { name: "KEY" });
+    fireEvent.pointerDown(button, { button: 0, pointerId: 3, pointerType: "mouse" });
+    vi.advanceTimersByTime(200);
+    fireEvent.pointerUp(button, { pointerId: 3, pointerType: "mouse" });
+    fireEvent.click(button);
+    expect(onTap).not.toHaveBeenCalled();
+  });
 });

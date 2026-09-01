@@ -33,6 +33,7 @@ import { isValidSelectedVolume, type SelectedSideVolumes } from "../orders/selec
 import { executePaperMarketCommand } from "../orders/paperMarketCommand";
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 import { AccountMenu } from "./AccountMenu";
+import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
 import { StopSettings } from "./StopSettings";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
@@ -88,6 +89,8 @@ export function ModePanel({
   onWorkspaceSymbolSelect,
   accountOpen = false,
   onAccountToggle = () => {},
+  accountWorkspaceProjection = null,
+  mutationsAllowed = true,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -132,6 +135,8 @@ export function ModePanel({
   onWorkspaceSymbolSelect?: (symbol: string) => void;
   accountOpen?: boolean;
   onAccountToggle?: () => void;
+  accountWorkspaceProjection?: AccountWorkspaceProjection | null;
+  mutationsAllowed?: boolean;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -451,7 +456,13 @@ export function ModePanel({
       </nav>
 
       {mode === "TERMINAL" ? (
-        <div className="paper-market-actions" {...tradingInputFocus.boundaryProps}>
+        <>
+        <div className="paper-market-actions-shell" {...tradingInputFocus.boundaryProps}>
+        <fieldset
+          aria-label="Manual trading controls"
+          className={`paper-market-actions${mutationsAllowed ? "" : " is-read-only"}`}
+          disabled={!mutationsAllowed}
+        >
           <div className="paper-trade-side-group" aria-label="PAPER trade sides">
             <div className="paper-market-side paper-market-buy-side">
               <TradingControlButton
@@ -703,81 +714,6 @@ export function ModePanel({
             ) : null}
           </div>
 
-          <div className="paper-limits-shell">
-            {(["Buy", "Sell"] as const).map((side) => {
-              const orders = side === "Buy" ? longLimitOrders : shortLimitOrders;
-              return (
-                <div className="paper-limits-side-control" key={side}>
-                  <TradingControlButton
-                    type="button"
-                    className={`paper-limits-button ${side.toLowerCase()}`}
-                    aria-expanded={
-                      limitPresentationSide === side || limitsInventorySide === side
-                    }
-                    onTap={() => openLimitPresentation(side)}
-                    onHoldStart={() => openLimitsInventory(side)}
-                    holdMs={500}
-                  >
-                    {side.toUpperCase()} LIMITS <small>{orders.length}</small>
-                  </TradingControlButton>
-                  <TradingControlButton
-                    type="button"
-                    className={`paper-limits-cancel-all ${side.toLowerCase()}`}
-                    aria-label={`Cancel all ${side} Limit orders for ${symbol}`}
-                    disabled={
-                      orders.length === 0 || pendingActions.has(`CANCEL_SIDE:${side}`)
-                    }
-                    onTap={() => openSideCancelConfirmation(side)}
-                  >
-                    ×
-                  </TradingControlButton>
-                </div>
-              );
-            })}
-            <AccountMenu open={accountOpen} onToggle={onAccountToggle} />
-
-            {limitsInventorySide ? (
-              <section
-                className={`paper-limits-side-inventory ${limitsInventorySide.toLowerCase()}`}
-                aria-label={`Active ${limitsInventorySide} Limit orders for ${symbol}`}
-              >
-                <header>
-                  <strong>{limitsInventorySide.toUpperCase()} LIMITS</strong>
-                  <TradingControlButton
-                    type="button"
-                    aria-label={`Cancel all ${limitsInventorySide} Limit orders for ${symbol}`}
-                    disabled={
-                      pendingActions.has(`CANCEL_SIDE:${limitsInventorySide}`)
-                      || inventoryOrders.length === 0
-                    }
-                    onTap={() => openSideCancelConfirmation(limitsInventorySide)}
-                  >
-                    ×
-                  </TradingControlButton>
-                </header>
-                <div className="paper-limits-order-list">
-                  {inventoryOrders.map((order) => (
-                    <div className="paper-limits-order-row" key={order.order_id}>
-                      <span>{order.price}</span>
-                      <span>{limitNotionalUsdt(order).toFixed(2)} USDT</span>
-                      <TradingControlButton
-                        type="button"
-                        aria-label={`Cancel Limit ${order.order_id}`}
-                        disabled={
-                          pendingActions.has(`CANCEL_LIMIT:${order.order_id}`)
-                          || pendingActions.has(`CANCEL_SIDE:${order.side}`)
-                        }
-                        onTap={() => void cancelLimit(order.order_id)}
-                      >
-                        ×
-                      </TradingControlButton>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
-          </div>
-
           <p className="paper-execution-status" aria-live="polite">
             {executionStatus}
           </p>
@@ -978,7 +914,86 @@ export function ModePanel({
               </section>
             </div>
           ) : null}
+        </fieldset>
+          <div className="paper-lower-actions-row">
+            <fieldset className="paper-limits-shell" disabled={!mutationsAllowed}>
+              {(["Buy", "Sell"] as const).map((side) => {
+                const orders = side === "Buy" ? longLimitOrders : shortLimitOrders;
+                return (
+                  <div className="paper-limits-side-control" key={side}>
+                    <TradingControlButton
+                      type="button"
+                      className={`paper-limits-button ${side.toLowerCase()}`}
+                      aria-expanded={
+                        limitPresentationSide === side || limitsInventorySide === side
+                      }
+                      onTap={() => openLimitPresentation(side)}
+                      onHoldStart={() => openLimitsInventory(side)}
+                      holdMs={500}
+                    >
+                      {side.toUpperCase()} LIMITS <small>{orders.length}</small>
+                    </TradingControlButton>
+                    <TradingControlButton
+                      type="button"
+                      className={`paper-limits-cancel-all ${side.toLowerCase()}`}
+                      aria-label={`Cancel all ${side} Limit orders for ${symbol}`}
+                      disabled={
+                        orders.length === 0 || pendingActions.has(`CANCEL_SIDE:${side}`)
+                      }
+                      onTap={() => openSideCancelConfirmation(side)}
+                    >
+                      ×
+                    </TradingControlButton>
+                  </div>
+                );
+              })}
+              {limitsInventorySide ? (
+                <section
+                  className={`paper-limits-side-inventory ${limitsInventorySide.toLowerCase()}`}
+                  aria-label={`Active ${limitsInventorySide} Limit orders for ${symbol}`}
+                >
+                  <header>
+                    <strong>{limitsInventorySide.toUpperCase()} LIMITS</strong>
+                    <TradingControlButton
+                      type="button"
+                      aria-label={`Cancel all ${limitsInventorySide} Limit orders for ${symbol}`}
+                      disabled={
+                        pendingActions.has(`CANCEL_SIDE:${limitsInventorySide}`)
+                        || inventoryOrders.length === 0
+                      }
+                      onTap={() => openSideCancelConfirmation(limitsInventorySide)}
+                    >
+                      ×
+                    </TradingControlButton>
+                  </header>
+                  <div className="paper-limits-order-list">
+                    {inventoryOrders.map((order) => (
+                      <div className="paper-limits-order-row" key={order.order_id}>
+                        <span>{order.price}</span>
+                        <span>{limitNotionalUsdt(order).toFixed(2)} USDT</span>
+                        <TradingControlButton
+                          type="button"
+                          aria-label={`Cancel Limit ${order.order_id}`}
+                          disabled={
+                            pendingActions.has(`CANCEL_LIMIT:${order.order_id}`)
+                            || pendingActions.has(`CANCEL_SIDE:${order.side}`)
+                          }
+                          onTap={() => void cancelLimit(order.order_id)}
+                        >
+                          ×
+                        </TradingControlButton>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </fieldset>
+            <div className="mode-panel-account-control">
+              <AccountMenu open={accountOpen} onToggle={onAccountToggle} workspaceProjection={accountWorkspaceProjection} />
+            </div>
+          </div>
         </div>
+        </>
       ) : null}
     </section>
   );

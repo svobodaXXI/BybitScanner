@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Mapping
 
@@ -86,6 +86,7 @@ class BybitWalletSnapshot:
     total_equity_usdt: Decimal
     available_balance_usdt: Decimal
     exchange_time_ms: int | None
+    balance_provenance: Mapping[str, str | None] = field(default_factory=dict)
 
 
 HttpFactory = Callable[..., Any]
@@ -177,12 +178,29 @@ class BybitV5ReadAdapter:
         try:
             accounts = response["result"]["list"]
             account = accounts[0]
-            coin = next(item for item in account["coin"] if item["coin"] == "USDT")
+            if account["accountType"] != "UNIFIED":
+                raise ValueError("wallet account type is not unified")
+            coin = next(item for item in account.get("coin", ()) if item.get("coin") == "USDT")
+            provenance = {
+                f"account.{name}": str(account[name]) if account.get(name) is not None else None
+                for name in (
+                    "accountType", "totalWalletBalance", "totalEquity", "totalMarginBalance",
+                    "totalAvailableBalance", "accountIMRate", "totalInitialMargin", "totalPerpUPL",
+                )
+            }
+            provenance.update({
+                f"USDT.{name}": str(coin[name]) if coin.get(name) is not None else None
+                for name in (
+                    "walletBalance", "equity", "availableToWithdraw", "availableToBorrow",
+                    "locked", "unrealisedPnl", "spotBorrow", "borrowAmount", "usdValue",
+                )
+            })
             return BybitWalletSnapshot(
-                _finite_decimal(coin["walletBalance"]),
+                _finite_decimal(account["totalWalletBalance"]),
                 _finite_decimal(account["totalEquity"]),
-                _finite_decimal(account["totalAvailableBalance"]),
+                _finite_decimal(account["totalEquity"]),
                 int(response["time"]) if response.get("time") is not None else None,
+                provenance,
             )
         except (KeyError, IndexError, StopIteration, TypeError, ValueError) as exc:
             raise MalformedResponse("wallet response is incomplete") from exc
