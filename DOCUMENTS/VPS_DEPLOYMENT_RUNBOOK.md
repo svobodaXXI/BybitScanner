@@ -193,3 +193,40 @@ Current verified VPS state after checkpoint `8c6a5b6`:
 - DOM PASS;
 - Smart Tape PASS;
 - LIVE remains fail-closed.
+
+## Remote Codex phone workflow
+
+Verified on VPS:
+
+- Codex CLI: `0.152.1`
+- authenticated with ChatGPT
+- model: `gpt-5.6-sol`
+- project trust accepted
+- system `bubblewrap` installed and active
+- Codex starts without the previous missing-bubblewrap warning
+- read-only Git validation PASS:
+  - branch: `main`
+  - working tree: clean
+- `tmux 3.4` installed
+- persistent tmux session name: `codex`
+- session survives SSH client disconnect
+- server-side detach command:
+  - `tmux detach-client -s codex`
+- reattach command:
+  - `tmux attach -t codex`
+- `/root/.bash_aliases` contains:
+  - `alias cx='tmux new-session -A -s codex'`
+- `~/.bashrc` automatically sources `~/.bash_aliases`
+- mobile SSH client verified from phone
+- phone workflow PASS:
+  - phone -> SSH -> VPS -> `cx` -> persistent tmux -> Codex
+- closing the phone SSH app does not terminate the Codex tmux session
+- reconnect restores access to the persistent Codex session
+- home PC is not required for remote Codex development control
+
+Safety boundary:
+
+- LIVE remains fail-closed
+- LIVE mutation gates remain disabled
+- no real-money BUY/SELL/STOP/TAKE/close acceptance was performed
+- API Key / Secret must not be entered through the HTTP page
