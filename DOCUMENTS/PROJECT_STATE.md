@@ -6206,3 +6206,26 @@ isolated lower limits/account row and its continuous full-width divider.
 Revision 2.1 has no remaining implementation or real-phone acceptance action. Private streams and LIVE mutations
 remain outside this completed read-only checkpoint and require separate future authority.
 
+## LIVE MARKET REVISION 2.3 RESTART-SAFE RECOVERY CURRENT
+
+Authoritative base checkpoint is `8a71eb30583570674863d09687ac961a8696d333` (`feat: add safe live market
+execution foundation`). Revision 2.3 is the current bounded implementation slice. It adds SQLite-backed discovery
+of unresolved LIVE MARKET actions, treats persisted `SUBMITTING` as ambiguous, reconciles only through existing
+Bybit REST read paths and the original `orderLinkId`, preserves the original command across restarted session
+generations, blocks conflicting new LIVE MARKET exposure while unresolved, and fences projection refresh by the
+captured account/session token. Startup and explicit LIVE refresh invoke this read-only recovery; no recovery path
+dispatches a mutation.
+
+Automated acceptance uses newly constructed stores/coordinators over the same SQLite database and fake read
+adapters. Real-money gates remain default-off. LIVE Limit, STOP, TAKE, close, private streams, autonomous trading
+and real-money acceptance remain outside this slice. `REAL BYBIT ORDER SENT: NO`.
+
+## LIVE MARKET REVISION 2.4 FINAL PRE-DISPATCH VALIDATION CURRENT
+
+Revision 2.4 adds the final fail-closed boundary immediately before the sole LIVE MARKET mutation-adapter call.
+The coordinator revalidates active account/session, MAINNET READY writable status, symbol, BUY/SELL side,
+normalized quantity, canonical `orderLinkId`, bounded Bybit slippage and authoritative normalized notional against
+the configured ceiling, then repeats the account/session eligibility fence at dispatch. Tests use only a fake
+adapter and assert the exact payload or zero calls on every blocked path. Runtime real-money gates remain off;
+frontend and PAPER are unchanged. `REAL BYBIT ORDER SENT: NO`.
+

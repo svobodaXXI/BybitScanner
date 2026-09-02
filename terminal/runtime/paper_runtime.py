@@ -217,6 +217,7 @@ class PaperRuntime:
         self._guard = application.guard
         self._context = context_provider
         self._restore_preferred_account()
+        self._live_market.recover_unresolved()
 
     @property
     def _account_id(self) -> TradingAccountId:
@@ -235,7 +236,9 @@ class PaperRuntime:
     def refresh_live_account(self, account_id: str) -> dict[str, object]:
         if self._live_account_reconciler is None:
             raise RuntimeError("live_account_reconciliation_unavailable")
-        return self._live_account_reconciler.refresh(account_id)
+        snapshot = self._live_account_reconciler.refresh(account_id)
+        self._live_market.recover_unresolved(TradingAccountId(account_id))
+        return snapshot
 
     def live_account_summary(self, account_id: str) -> dict[str, object] | None:
         if self._live_account_reconciler is None:

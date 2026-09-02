@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_FLOOR
@@ -19,7 +20,8 @@ from terminal.application.trading_accounts import (
     TradingAccountProvider, TradingAccountStatus,
 )
 from terminal.domain.models import (
-    Category, Controller, Notional, Origin, Price, Quantity, Symbol, TradingAccountId,
+    Category, Controller, Notional, OrderSide, Origin, Price, Quantity, Symbol,
+    TradingAccountId,
 )
 from terminal.domain.states import CommandState
 from terminal.exchange.bybit_v5_mutation_adapter import (
@@ -67,25 +69,37 @@ class LiveMarketMutationCoordinator:
         self._clock_ms = clock_ms
         self._engine = ExecutionEngine(store)
         self.before_dispatch: Callable[[], object] | None = None
+        self.after_final_validation: Callable[[], object] | None = None
 
     def submit(self, request: LiveMarketCommandRequest) -> LiveMarketCommandResult:
         account_id = TradingAccountId(request.account_id)
         existing = self._store.get_live_market_action(
             account_id, request.session_generation, request.client_action_id.value,
         )
+        if existing is None:
+            existing = self._store.find_live_market_action(
+                account_id, request.client_action_id.value,
+            )
         fingerprint = _fingerprint(request)
         if existing is not None:
-            if existing.request_fingerprint != fingerprint:
+            if (
+                existing.session_generation == request.session_generation
+                and existing.request_fingerprint != fingerprint
+            ):
                 return _blocked(request, "client_action_conflict")
             command = self._store.get_command(existing.command_id)
-            command = self._reconcile_existing(request, command)
+            command = (
+                self._reconcile_existing(request, command)
+                if existing.session_generation == request.session_generation
+                else self._reconcile_action(existing, command)
+            )
             return _result(request, command, existing.order_link_id)
 
         token_or_result = self._eligibility(request, account_id)
         if isinstance(token_or_result, LiveMarketCommandResult):
             return token_or_result
         token = token_or_result
-        if self._store.has_unresolved_live_market_action(account_id, token.generation):
+        if self._store.load_unresolved_live_market_actions(account_id):
             return _blocked(request, "unresolved_live_market_command")
         instrument = self._instrument_provider(request.symbol.upper())
         authoritative_price = self._fresh_reference_price(request)
@@ -117,8 +131,24 @@ class LiveMarketMutationCoordinator:
 
         if self.before_dispatch is not None:
             self.before_dispatch()
-        if self._manager.session_token != token:
-            return _blocked(request, "stale_account_session", action.command_id.value, action.order_link_id)
+        validation_error = self._final_pre_dispatch_validation(
+            request, token, instrument, authoritative_price, normalized_quantity,
+            action.order_link_id,
+        )
+        if validation_error is not None:
+            return _blocked(
+                request, validation_error, action.command_id.value, action.order_link_id,
+            )
+        if self.after_final_validation is not None:
+            self.after_final_validation()
+        validation_error = self._final_pre_dispatch_validation(
+            request, token, instrument, authoritative_price, normalized_quantity,
+            action.order_link_id,
+        )
+        if validation_error is not None:
+            return _blocked(
+                request, validation_error, action.command_id.value, action.order_link_id,
+            )
         command = self._store.begin_live_market_dispatch(action, occurred_at_ms=self._clock_ms())
         if command is None:
             return _result(request, self._store.get_command(action.command_id), action.order_link_id)
@@ -142,6 +172,17 @@ class LiveMarketMutationCoordinator:
         # separate reconciliation step and must re-check this token.
         command = self._reconcile_existing(request, command)
         return _result(request, command, action.order_link_id)
+
+    def recover_unresolved(
+        self, account_id: TradingAccountId | None = None,
+    ) -> tuple[CommandRecord, ...]:
+        """Reconcile persisted LIVE actions through read adapters only."""
+        recovered = []
+        for action in self._store.load_unresolved_live_market_actions(account_id):
+            command = self._store.get_command(action.command_id)
+            if command is not None:
+                recovered.append(self._reconcile_action(action, command))
+        return tuple(recovered)
 
     def _eligibility(self, request, account_id):
         if not self._gates.live_market_mutations_enabled:
@@ -169,6 +210,63 @@ class LiveMarketMutationCoordinator:
         if request.volume.unit is not VolumeUnit.USDT:
             return _blocked(request, "live_market_requires_usdt")
         return AccountSessionToken(account_id, token.generation)
+
+    def _final_pre_dispatch_validation(
+        self, request, token, instrument, authoritative_price, normalized_quantity,
+        order_link_id,
+    ) -> str | None:
+        if self._manager.session_token != token:
+            return "stale_account_session"
+        account = self._manager.active_account
+        if not (
+            account.id == token.active_account_id
+            and account.provider is TradingAccountProvider.BYBIT
+            and account.environment is TradingAccountEnvironment.MAINNET
+            and account.status is TradingAccountStatus.READY
+            and self._writable_account_provider(account.id)
+        ):
+            return "live_account_not_writable_ready"
+        symbol = request.symbol.strip().upper() if isinstance(request.symbol, str) else ""
+        if (
+            not re.fullmatch(r"[A-Z0-9]+", symbol)
+            or symbol != instrument.symbol.upper()
+        ):
+            return "invalid_live_market_symbol"
+        if request.side not in {OrderSide.BUY, OrderSide.SELL}:
+            return "invalid_live_market_side"
+        expected_quantity = _normalize_quantity(request, instrument, authoritative_price)
+        if (
+            expected_quantity is None
+            or normalized_quantity != expected_quantity
+            or not normalized_quantity.is_finite()
+            or normalized_quantity <= 0
+        ):
+            return "invalid_live_market_size"
+        if not (
+            isinstance(order_link_id, str)
+            and len(order_link_id) == 36
+            and re.fullmatch(r"tw_[0-9a-f]{33}", order_link_id)
+        ):
+            return "invalid_live_order_link_id"
+        if request.slippage_type not in {"Percent", "TickSize"}:
+            return "invalid_live_market_slippage"
+        slippage = request.slippage_value
+        if not isinstance(slippage, Decimal) or not slippage.is_finite() or slippage <= 0:
+            return "invalid_live_market_slippage"
+        if request.slippage_type == "Percent" and not Decimal("0.01") <= slippage <= Decimal("10"):
+            return "invalid_live_market_slippage"
+        if request.slippage_type == "TickSize" and (
+            slippage != slippage.to_integral_value() or slippage > Decimal("10000")
+        ):
+            return "invalid_live_market_slippage"
+        authoritative_notional = normalized_quantity * authoritative_price
+        if (
+            not authoritative_notional.is_finite()
+            or authoritative_notional <= 0
+            or authoritative_notional > self._gates.acceptance_notional_ceiling
+        ):
+            return "acceptance_notional_exceeded"
+        return None
 
     def _fresh_reference_price(self, request) -> Decimal | None:
         if self._book_provider is None:
@@ -209,6 +307,49 @@ class LiveMarketMutationCoordinator:
             except Exception:
                 pass
         return resolved
+
+    def _reconcile_action(self, action, command):
+        if command is None or command.current_state not in {
+            CommandState.SUBMITTING, CommandState.ACKNOWLEDGED,
+            CommandState.UNKNOWN, CommandState.RECONCILING,
+        }:
+            return command
+        if self._read_adapter_provider is None:
+            return self._mark_reconciliation_required(command)
+        try:
+            adapter = self._read_adapter_provider(action.trading_account_id)
+            symbol = command.symbol.value
+            orders = (*adapter.list_active_orders(symbol), *adapter.list_order_history(symbol))
+            executions = adapter.list_executions(symbol)
+            adapter.get_position(symbol)
+        except Exception:
+            return self._mark_reconciliation_required(command)
+        resolved = self._engine.resolve_command(
+            command, order_evidence=tuple(orders), execution_evidence=tuple(executions),
+            occurred_at_ms=self._clock_ms(),
+        )
+        captured = AccountSessionToken(action.trading_account_id, action.session_generation)
+        if self._projection_refresher is not None and self._manager.session_token == captured:
+            try:
+                self._projection_refresher(action.trading_account_id.value)
+            except Exception:
+                pass
+        return resolved
+
+    def _mark_reconciliation_required(self, command):
+        if command.current_state is CommandState.SUBMITTING:
+            return self._engine.resolve_command(
+                command, order_evidence=(), execution_evidence=(),
+                occurred_at_ms=self._clock_ms(),
+            )
+        if command.current_state in {CommandState.ACKNOWLEDGED, CommandState.UNKNOWN}:
+            return self._store.transition_command_state(
+                command.command_id, command.current_state, CommandState.RECONCILING,
+                expected_version=command.version,
+                reason="restart-safe LIVE reconciliation requires authoritative REST evidence",
+                occurred_at_ms=self._clock_ms(),
+            )
+        return command
 
 
 def _normalize_quantity(request, instrument, price: Decimal) -> Decimal | None:

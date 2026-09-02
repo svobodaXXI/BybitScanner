@@ -1232,6 +1232,56 @@ class SQLiteStore:
             bool(row["dispatch_started"]), int(row["created_at_ms"]),
         )
 
+    def find_live_market_action(
+        self, account_id: TradingAccountId, client_action_id: str,
+    ) -> LiveMarketActionRecord | None:
+        """Find the original durable LIVE action across restarted sessions."""
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT * FROM live_market_actions
+               WHERE trading_account_id = ? AND client_action_id = ?
+               ORDER BY created_at_ms, session_generation LIMIT 1""",
+            (account_id.value, client_action_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return LiveMarketActionRecord(
+            TradingAccountId(row["trading_account_id"]), int(row["session_generation"]),
+            row["client_action_id"], row["request_fingerprint"],
+            CommandId(row["command_id"]), row["order_link_id"],
+            bool(row["dispatch_started"]), int(row["created_at_ms"]),
+        )
+
+    def load_unresolved_live_market_actions(
+        self, account_id: TradingAccountId | None = None,
+    ) -> tuple[LiveMarketActionRecord, ...]:
+        """Load durable LIVE actions whose exchange outcome still needs REST evidence."""
+        self._assert_owner()
+        parameters: list[object] = [
+            CommandState.SUBMITTING.value, CommandState.ACKNOWLEDGED.value,
+            CommandState.UNKNOWN.value, CommandState.RECONCILING.value,
+        ]
+        account_clause = ""
+        if account_id is not None:
+            account_clause = " AND a.trading_account_id = ?"
+            parameters.append(account_id.value)
+        rows = self._connection.execute(
+            f"""SELECT a.* FROM live_market_actions a
+                JOIN trading_commands c ON c.command_id = a.command_id
+                WHERE c.current_state IN (?, ?, ?, ?){account_clause}
+                ORDER BY a.created_at_ms, a.trading_account_id, a.session_generation""",
+            parameters,
+        ).fetchall()
+        return tuple(
+            LiveMarketActionRecord(
+                TradingAccountId(row["trading_account_id"]), int(row["session_generation"]),
+                row["client_action_id"], row["request_fingerprint"],
+                CommandId(row["command_id"]), row["order_link_id"],
+                bool(row["dispatch_started"]), int(row["created_at_ms"]),
+            )
+            for row in rows
+        )
+
     def begin_live_market_dispatch(self, action: LiveMarketActionRecord, *, occurred_at_ms: int) -> CommandRecord | None:
         """Claim the sole irreversible dispatch attempt and persist SUBMITTING atomically."""
         self._assert_owner()

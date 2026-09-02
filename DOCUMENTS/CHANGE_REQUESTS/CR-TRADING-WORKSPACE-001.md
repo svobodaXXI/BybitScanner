@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "2.2",
+  "revision": "2.4",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -52,6 +52,8 @@
     ,"Extend the established Terminal execution and reconciliation architecture to the selected real account for Market, Limit, STOP and TAKE without blind retry"
     ,"Complete the real-money security, reconciliation and acceptance gate before Manual Terminal v1 closure"
     ,"Implement the first default-off LIVE execution slice for explicitly confirmed manual MARKET BUY and MARKET SELL on the active writable Bybit MAINNET account, with durable idempotency, account/session fencing, single-attempt dispatch, REST-only reconciliation, an authoritative acceptance-notional ceiling and no LIVE Limit, STOP, TAKE or full-close capability"
+    ,"Implement restart-safe REST-only recovery for unresolved durable LIVE MARKET actions without mutation redispatch or new command identity"
+    ,"Implement the final fail-closed LIVE MARKET pre-dispatch validation boundary without enabling real exchange dispatch"
     ,"Record the human-approved planning-only future direction for an autonomous Android manual Trading Workspace without authorizing implementation or selecting a final Android stack"
   ],
   "prohibited_scope": [
@@ -4748,4 +4750,39 @@ Date: 2026-09-02
 - SQLite live_market_actions remained empty during zero-ceiling test.
 - REAL BYBIT ORDER SENT: NO.
 - LIVE Market foundation acceptance: PASS for safe non-dispatch path.
+
+### Revision 2.3 restart-safe LIVE MARKET recovery authorization
+
+Revision 2.3 extends only the accepted Revision 2.2 LIVE MARKET foundation. On startup and explicit LIVE account
+refresh, the runtime scans durable `live_market_actions` joined to unresolved commands. Persisted `SUBMITTING`,
+`ACKNOWLEDGED`, `UNKNOWN` and `RECONCILING` states are recovery work, never evidence that mutation was not sent.
+Recovery uses only active orders, order history, execution history and supplemental position reads through the
+existing Bybit read adapter, correlated to the original durable `command_id` and `orderLinkId`. No recovery path
+may obtain or call the mutation adapter.
+
+Insufficient or unavailable evidence remains fail-closed as `UNKNOWN` or `RECONCILING`; deterministic normalized
+evidence may resolve the original command to `OPEN`, `PARTIALLY_FILLED`, `FILLED` or `REJECTED`. Any unresolved
+action blocks a new exposure-changing LIVE MARKET action for the same account, including after a process restart.
+A repeated `(account_id, client_action_id)` across a newly constructed session returns the original durable command
+and `orderLinkId` and cannot redispatch. Durable command resolution may complete for its captured historical
+account/session, but projection refresh is permitted only when the captured `account_id + session_generation`
+still equals the active session token; stale recovery therefore cannot publish into a newer active session.
+
+Automated acceptance must reconstruct the coordinator and SQLite store over the same database, use fake Bybit
+reads, assert zero mutation-adapter calls for recovery/startup/reconnect/refresh, and keep every real-money gate
+fail-closed. LIVE Limit, STOP, TAKE, close, private WebSocket, autonomous trading and real-money acceptance remain
+outside this revision. `REAL BYBIT ORDER SENT: NO` is binding.
+
+### Revision 2.4 LIVE MARKET final pre-dispatch validation authorization
+
+Immediately before the sole mutation-adapter invocation, the coordinator must revalidate the captured active
+account/session token, Bybit MAINNET READY writable eligibility, canonical instrument symbol and BUY/SELL side,
+normalized positive quantity, generated canonical `orderLinkId`, supported bounded slippage type/value and
+authoritative normalized quantity times authoritative reference price against the configured acceptance-notional
+ceiling. The account/session and eligibility fence is checked again at the dispatch boundary so a change after
+validation cannot reach the adapter. Any failed check is blocked with zero mutation-adapter calls and no retry.
+
+Automated acceptance uses only the fake mutation adapter and proves its exact payload. Runtime real-money gates
+remain off and no real Bybit order is sent. LIVE Limit, STOP, TAKE, close, private WebSocket, UI and PAPER semantics
+remain outside this revision.
 

@@ -19,6 +19,7 @@ from terminal.application.trading_accounts import (
     TradingAccountStatus,
 )
 from terminal.domain.models import Category, ExecutionId, OrderId, OrderSide, TradingAccountId
+from terminal.domain.states import CommandState
 from terminal.exchange.bybit_v5_mutation_adapter import MutationDisposition, MutationKind, MutationOutcome
 from terminal.exchange.events import (
     ExecutionEvent, InstrumentSnapshot, NormalizedOrderStatus, NormalizedOrderType, OrderEvent,
@@ -36,6 +37,8 @@ class FakeMutationAdapter:
 
     def create_market_order(self, **kwargs):
         self.calls.append(kwargs)
+        if self.disposition == "crash":
+            raise SimulatedCrash()
         if self.disposition == "raise":
             raise TimeoutError("lost response")
         return MutationOutcome(
@@ -62,6 +65,10 @@ class FakeReadAdapter:
     def get_position(self, _symbol): return object()
 
 
+class SimulatedCrash(BaseException):
+    pass
+
+
 def instrument():
     return InstrumentSnapshot(
         category=__import__("terminal.domain.models", fromlist=["Category"]).Category.LINEAR,
@@ -74,11 +81,14 @@ def instrument():
     )
 
 
-def request(generation=1, *, account_id="bybit-main", action_id="action-1", amount="10"):
+def request(
+    generation=1, *, account_id="bybit-main", action_id="action-1", amount="10",
+    symbol="BTCUSDT", side=OrderSide.BUY, slippage_type="Percent", slippage_value="0.5",
+):
     return LiveMarketCommandRequest(
-        ClientActionId(action_id), account_id, generation, "BTCUSDT", OrderSide.BUY,
+        ClientActionId(action_id), account_id, generation, symbol, side,
         VolumeRequest(VolumeUnit.USDT, Decimal(amount)), Decimal("50000"),
-        "Percent", Decimal("0.5"),
+        slippage_type, Decimal(slippage_value),
     )
 
 
@@ -111,6 +121,26 @@ class LiveMarketExecutionTests(unittest.TestCase):
             clock_ms=lambda: 1000,
         )
 
+    def restart(self, read_adapter=None):
+        database_path = Path(self.temp.name) / "live.sqlite3"
+        self.store.close()
+        self.store = SQLiteStore.open(database_path)
+        self.manager = TradingAccountManager((TradingAccount(
+            ACCOUNT_ID, "Main Bybit", TradingAccountProvider.BYBIT,
+            TradingAccountEnvironment.MAINNET, TradingAccountStatus.READY,
+        ),), active_account_id=ACCOUNT_ID)
+        self.adapter = FakeMutationAdapter()
+        return self.coordinator(read_adapter)
+
+    def crash_while_submitting(self):
+        self.adapter.disposition = "crash"
+        with self.assertRaises(SimulatedCrash):
+            self.coordinator().submit(request())
+        action = self.store.get_live_market_action(ACCOUNT_ID, 1, "action-1")
+        self.assertIsNotNone(action)
+        self.assertIs(self.store.get_command(action.command_id).current_state, CommandState.SUBMITTING)
+        return action
+
     def test_ready_writable_ack_is_pending_and_duplicate_dispatches_once(self):
         coordinator = self.coordinator()
         first = coordinator.submit(request())
@@ -119,6 +149,12 @@ class LiveMarketExecutionTests(unittest.TestCase):
         self.assertEqual(second.command_id, first.command_id)
         self.assertEqual(second.order_link_id, first.order_link_id)
         self.assertEqual(len(self.adapter.calls), 1)
+        self.assertEqual(self.adapter.calls[0], {
+            "symbol": "BTCUSDT", "side": "Buy", "qty": Decimal("0.0002"),
+            "order_link_id": first.order_link_id, "reduce_only": False,
+            "slippage_tolerance_type": "Percent",
+            "slippage_tolerance": Decimal("0.5"),
+        })
 
     def test_concurrent_duplicate_dispatches_once(self):
         database_path = Path(self.temp.name) / "live.sqlite3"
@@ -198,6 +234,44 @@ class LiveMarketExecutionTests(unittest.TestCase):
         self.assertEqual(result.reason_code, "stale_account_session")
         self.assertEqual(len(self.adapter.calls), 0)
 
+    def test_account_switch_after_final_validation_fences_adapter(self):
+        paper = TradingAccount(
+            TradingAccountId("paper"), "Paper", TradingAccountProvider.PAPER,
+            TradingAccountEnvironment.PAPER, TradingAccountStatus.READY,
+        )
+        self.manager.register_inactive(paper)
+        coordinator = self.coordinator()
+        coordinator.after_final_validation = lambda: self.manager.activate(TradingAccountId("paper"))
+        result = coordinator.submit(request())
+        self.assertEqual(result.reason_code, "stale_account_session")
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_final_validation_blocks_invalid_payload_without_adapter(self):
+        invalid_requests = (
+            request(action_id="bad-symbol", symbol="ETHUSDT"),
+            request(action_id="bad-slippage-type", slippage_type="Unknown"),
+            request(action_id="bad-slippage-value", slippage_value="10.01"),
+            request(action_id="bad-tick-slippage", slippage_type="TickSize", slippage_value="1.5"),
+        )
+        expected = (
+            "invalid_live_market_symbol", "invalid_live_market_slippage",
+            "invalid_live_market_slippage", "invalid_live_market_slippage",
+        )
+        for item, reason in zip(invalid_requests, expected):
+            with self.subTest(reason=reason, action=item.client_action_id.value):
+                result = self.coordinator().submit(item)
+                self.assertEqual(result.reason_code, reason)
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_final_authoritative_notional_ceiling_rechecked_before_adapter(self):
+        coordinator = self.coordinator(ceiling="20")
+        coordinator.before_dispatch = lambda: setattr(
+            coordinator, "_gates", LiveMarketMutationGates(True, True, Decimal("9")),
+        )
+        result = coordinator.submit(request())
+        self.assertEqual(result.reason_code, "acceptance_notional_exceeded")
+        self.assertEqual(self.adapter.calls, [])
+
     def test_unknown_reconciliation_execution_resolves_original_filled(self):
         self.adapter.disposition = "raise"
         execution = ExecutionEvent(
@@ -246,6 +320,97 @@ class LiveMarketExecutionTests(unittest.TestCase):
         stale = coordinator.submit(request())
         self.assertEqual(stale.status.value, "unknown")
         self.assertEqual(stale.command_id, first.command_id)
+
+    def test_restart_submitting_found_by_original_link_without_mutation(self):
+        action = self.crash_while_submitting()
+        evidence = OrderEvent(
+            ACCOUNT_ID, Category.LINEAR, "BTCUSDT", OrderId("exchange-restart"),
+            action.order_link_id, 0, OrderSide.BUY, NormalizedOrderType.MARKET,
+            "Market", None, Decimal("0.0002"), Decimal("0"), Decimal("0.0002"),
+            None, NormalizedOrderStatus.OPEN, "New", False, False,
+            None, None, None, None, None, 1000, 1000,
+        )
+        coordinator = self.restart(FakeReadAdapter(orders=(evidence,)))
+        recovered = coordinator.recover_unresolved()
+        self.assertIs(recovered[0].current_state, CommandState.OPEN)
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_restart_submitting_without_evidence_remains_unknown(self):
+        action = self.crash_while_submitting()
+        coordinator = self.restart(FakeReadAdapter())
+        recovered = coordinator.recover_unresolved()
+        self.assertIs(recovered[0].current_state, CommandState.UNKNOWN)
+        self.assertEqual(recovered[0].command_id, action.command_id)
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_restart_unknown_execution_fills_and_same_action_never_redispatches(self):
+        self.adapter.disposition = "raise"
+        first = self.coordinator().submit(request())
+        action = self.store.get_live_market_action(ACCOUNT_ID, 1, "action-1")
+        execution = ExecutionEvent(
+            ACCOUNT_ID, Category.LINEAR, "BTCUSDT", ExecutionId("restart-exec"),
+            OrderId("restart-order"), action.order_link_id, OrderSide.BUY,
+            Decimal("50000"), Decimal("0.0002"), Decimal("0.01"),
+            Decimal("10"), False, 1001, None,
+        )
+        coordinator = self.restart(FakeReadAdapter(executions=(execution,)))
+        recovered = coordinator.recover_unresolved()
+        repeated = coordinator.submit(request(generation=2))
+        self.assertIs(recovered[0].current_state, CommandState.FILLED)
+        self.assertEqual(repeated.command_id, first.command_id)
+        self.assertEqual(repeated.order_link_id, first.order_link_id)
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_restart_acknowledged_open_and_unresolved_blocks_new_session(self):
+        first = self.coordinator().submit(request())
+        action = self.store.get_live_market_action(ACCOUNT_ID, 1, "action-1")
+        evidence = OrderEvent(
+            ACCOUNT_ID, Category.LINEAR, "BTCUSDT", OrderId("exchange-1"),
+            action.order_link_id, 0, OrderSide.BUY, NormalizedOrderType.MARKET,
+            "Market", None, Decimal("0.0002"), Decimal("0"), Decimal("0.0002"),
+            None, NormalizedOrderStatus.OPEN, "New", False, False,
+            None, None, None, None, None, 1000, 1000,
+        )
+        coordinator = self.restart(FakeReadAdapter(orders=(evidence,)))
+        self.assertIs(coordinator.recover_unresolved()[0].current_state, CommandState.OPEN)
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_restart_unresolved_blocks_conflicting_live_market(self):
+        self.crash_while_submitting()
+        coordinator = self.restart()
+        blocked = coordinator.submit(request(action_id="conflicting"))
+        self.assertEqual(blocked.reason_code, "unresolved_live_market_command")
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_restart_recovery_late_account_switch_never_refreshes_new_projection(self):
+        self.crash_while_submitting()
+        paper = TradingAccount(
+            TradingAccountId("paper"), "Paper", TradingAccountProvider.PAPER,
+            TradingAccountEnvironment.PAPER, TradingAccountStatus.READY,
+        )
+        coordinator = self.restart()
+        self.manager.register_inactive(paper)
+        refreshes = []
+        read = FakeReadAdapter(before_read=lambda: self.manager.activate(TradingAccountId("paper")))
+        coordinator._read_adapter_provider = lambda _account: read
+        coordinator._projection_refresher = refreshes.append
+        coordinator.recover_unresolved()
+        self.assertEqual(refreshes, [])
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_recovery_never_obtains_mutation_adapter(self):
+        self.crash_while_submitting()
+        coordinator = self.restart(FakeReadAdapter())
+        mutation_provider_calls = []
+
+        def forbidden_mutation_provider(account_id):
+            mutation_provider_calls.append(account_id)
+            raise AssertionError("recovery must not obtain a mutation adapter")
+
+        coordinator._mutation_adapter_provider = forbidden_mutation_provider
+        coordinator.recover_unresolved()
+        self.assertEqual(mutation_provider_calls, [])
+        self.assertEqual(self.adapter.calls, [])
 
 
 if __name__ == "__main__":
