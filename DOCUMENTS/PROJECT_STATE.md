@@ -6262,3 +6262,50 @@ required. PAPER behavior is unchanged, private WebSocket is absent, fake adapter
 BYBIT ORDER SENT: NO`. Shared frontend transport activation is still OPEN; no UI end-to-end acceptance is claimed
 for this backend slice.
 
+
+## VPS DEPLOYMENT / NGINX WEBSOCKET CHECKPOINT
+
+Authoritative deployment commit: `a339f93` (`ops: add nginx websocket proxy config`), based on application commit
+`6cf4177` (`feat: add live parity execution backend`).
+
+Production VPS:
+- Ubuntu 24.04;
+- project root `/root/BybitScanner`;
+- backend systemd unit `bybitscanner-terminal.service`;
+- backend binds only to `127.0.0.1:8765`;
+- nginx serves frontend from `/var/www/bybitscanner`;
+- public HTTP entrypoint is `http://91.84.98.100/`;
+- `/api/` is reverse-proxied to the loopback backend.
+
+The deployed frontend uses `BackendWorkspaceMarketDataStore` as the active market-data runtime and therefore opens
+a same-origin WebSocket at `/api/workspace/stream`. Direct public orderbook, kline and trade SSE endpoints were
+independently verified healthy through nginx, but they are not the primary runtime transport used by the current
+Workspace UI.
+
+Initial VPS nginx configuration proxied HTTP/SSE correctly but did not forward WebSocket Upgrade headers. This
+caused `/api/workspace/stream` to fail with HTTP `426 websocket_upgrade_required`, while Chart, DOM and Smart Tape
+remained empty despite healthy backend market data.
+
+The required nginx `/api/` proxy invariant is now:
+
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+
+Together with the existing disabled proxy buffering/cache and long read/send timeouts, this produced a verified
+`101 Switching Protocols` WebSocket handshake through the public nginx endpoint. Real-phone acceptance then
+confirmed Chart, DOM and Smart Tape all populated normally.
+
+The authoritative repository copy is:
+`deploy/nginx/bybitscanner.conf`
+
+On the VPS this file was verified byte-for-byte equivalent to:
+`/etc/nginx/sites-available/bybitscanner`
+
+VPS `main == origin/main` and the VPS Git working tree was clean after deployment of `a339f93`.
+
+Safety state remains unchanged:
+- LIVE mutation gates remain fail-closed;
+- no API credentials were entered through the HTTP page;
+- no BUY/SELL/STOP/TAKE or other real-money mutation/acceptance command was sent during this deployment work;
+- backend remains non-public on `127.0.0.1:8765`, with nginx as the public boundary.
