@@ -2,7 +2,7 @@
 
 Version:
 
-4.30
+4.31
 
 Date:
 
@@ -209,6 +209,20 @@ behavior, contract checks, mandatory E2E, verification, or governance.
 Start from the current local checkout and inspect actual targets before editing. Existing dirty and untracked work
 is user-owned unless proven otherwise. Never overwrite, reformat, stage, clean, restore, reset, move, delete,
 discard, commit, or push unrelated work.
+
+## 4.1 PC/VPS GIT SYNC PREFLIGHT — HARD GATE
+
+Before starting a new repository task on any development host, including the Windows PC or VPS:
+
+1. fetch current remote state from `origin`;
+2. compare local `HEAD` with `origin/main`;
+3. start new work only when local `HEAD` matches `origin/main`;
+4. if local state is `ahead`, `behind`, or `diverged`, stop before editing and resolve synchronization explicitly;
+5. preserve all dirty and untracked user-owned work while diagnosing synchronization;
+6. never use `reset --hard`, `clean`, force-push, discard, or equivalent destructive actions merely to make states match;
+7. if independent progress already exists on two hosts, preserve both histories first, then inspect and resolve them through an explicit merge, rebase, or other reviewed reconciliation path.
+
+The synchronization preflight is fail-closed: uncertainty about repository ancestry or remote freshness means `SAFE TO START: NO` until resolved.
 
 Destructive or broad Git/filesystem actions require explicit authority and verified exact targets. In particular,
 `reset`, `restore`, `clean`, and discard operations are prohibited without explicit authorization. Prefer minimal,
