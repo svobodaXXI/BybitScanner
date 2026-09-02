@@ -1,4 +1,4 @@
-"""Current-user DPAPI-backed persistence for Bybit credentials."""
+"""Platform-protected persistence for Bybit credentials."""
 
 from __future__ import annotations
 
@@ -6,6 +6,9 @@ import base64
 import ctypes
 import json
 import os
+import platform
+import shutil
+import subprocess
 from ctypes import wintypes
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -19,6 +22,11 @@ class CredentialStoreError(RuntimeError):
 class Protector(Protocol):
     def protect(self, value: bytes) -> bytes: ...
     def unprotect(self, value: bytes) -> bytes: ...
+
+
+class CredentialStore(Protocol):
+    def load(self) -> tuple[StoredBybitAccount, ...]: ...
+    def save(self, accounts: tuple[StoredBybitAccount, ...]) -> None: ...
 
 
 class _Blob(ctypes.Structure):
@@ -74,6 +82,44 @@ class WindowsDpapiProtector:
         return self._transform(value, "CryptUnprotectData")
 
 
+class SystemdCredsProtector:
+    """Protect credentials with systemd's persistent host credential key."""
+
+    _CREDENTIAL_NAME = "bybitscanner-trading-accounts"
+
+    def __init__(self, executable: str = "systemd-creds") -> None:
+        resolved = shutil.which(executable)
+        if platform.system() != "Linux" or resolved is None:
+            raise CredentialStoreError("systemd_creds_unavailable")
+        self._executable = resolved
+
+    def _run(self, operation: str, value: bytes) -> bytes:
+        command = [self._executable, f"--name={self._CREDENTIAL_NAME}"]
+        if operation == "encrypt":
+            command.append("--with-key=host")
+        command.extend((operation, "-", "-"))
+        try:
+            result = subprocess.run(
+                command,
+                input=value,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise CredentialStoreError(f"systemd_creds_{operation}_failed") from exc
+        if result.returncode != 0 or not result.stdout:
+            raise CredentialStoreError(f"systemd_creds_{operation}_failed")
+        return result.stdout
+
+    def protect(self, value: bytes) -> bytes:
+        return self._run("encrypt", value)
+
+    def unprotect(self, value: bytes) -> bytes:
+        return self._run("decrypt", value)
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class StoredBybitAccount:
     id: str
@@ -122,3 +168,29 @@ class DpapiCredentialStore:
             os.replace(temporary, self._path)
         except Exception as exc:
             raise CredentialStoreError("credential_store_write_failed") from exc
+
+
+def create_credential_store(
+    path: Path,
+    *,
+    platform_name: str | None = None,
+    windows_protector_factory=WindowsDpapiProtector,
+    linux_protector_factory=SystemdCredsProtector,
+) -> DpapiCredentialStore:
+    selected = platform_name or platform.system()
+    if selected == "Windows":
+        protector = windows_protector_factory()
+    elif selected == "Linux":
+        protector = linux_protector_factory()
+    else:
+        raise CredentialStoreError("credential_protection_platform_unsupported")
+    return DpapiCredentialStore(path, protector)
+
+
+def credential_store_path(database_path: Path, *, platform_name: str | None = None) -> Path:
+    selected = platform_name or platform.system()
+    if selected == "Windows":
+        return database_path.with_suffix(".credentials.dpapi")
+    if selected == "Linux":
+        return database_path.with_suffix(".credentials.systemd")
+    raise CredentialStoreError("credential_protection_platform_unsupported")

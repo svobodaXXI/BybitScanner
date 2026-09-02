@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "2.5",
+  "revision": "2.6",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -4833,4 +4833,18 @@ runtime authorization. `LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT` defaults to false,
 not constrained by this acceptance-only one-shot policy. LIVE Limit, STOP, TAKE, close, private WebSocket and PAPER
 semantics remain outside this revision. Verification uses only fake mutation adapters. `REAL BYBIT ORDER SENT: NO`
 for Revision 2.5; the failed two-order Revision 2.4 historical checkpoint remains unchanged.
+
+### Revision 2.6 LIVE execution parity backend authorization
+
+Revision 2.6 reuses the existing `TradingApplication`, `ExecutionEngine`, normalized REST evidence and
+`BybitV5MutationAdapter` for LIVE LIMIT create, price amend/move, cancel, full-position STOP/TAKE set/amend/delete,
+and reduce-only full close. A single LIVE coordinator supplies authoritative REST command context and rechecks the
+captured active account/session at every irreversible adapter boundary. Any stale account/session, non-MAINNET,
+non-READY or non-writable account is blocked before adapter dispatch. A pending or ambiguous command blocks a
+conflicting mutation until REST reconciliation resolves it; no mutation is retried.
+
+The separate `LIVE_PARITY_MUTATIONS_ENABLED` gate and existing `LIVE_MAINNET_AUTHORIZED` gate both default OFF.
+PAPER routes and semantics remain unchanged, and no private WebSocket is introduced. This slice exposes bounded
+backend LIVE parity routes; shared frontend transport activation remains an explicit open item so account/session
+authority is never inferred or omitted. Automated verification uses fake adapters only. `REAL BYBIT ORDER SENT: NO`.
 

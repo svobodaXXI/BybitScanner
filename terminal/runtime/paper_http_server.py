@@ -25,6 +25,8 @@ import websocket
 
 from terminal.api.models import (
     CloseAllCommandRequest,
+    AmendCommandRequest,
+    CancelCommandRequest,
     ClientActionId,
     CommandResult,
     CommandResultStatus,
@@ -36,6 +38,7 @@ from terminal.api.models import (
     PaperLimitAmendRequest,
     PaperStopDeleteRequest,
     PaperStopMutationRequest,
+    ProtectionCommandRequest,
     TimeInForce,
     VolumeRequest,
     VolumeUnit,
@@ -63,7 +66,9 @@ from terminal.market_data.workspace_errors import (
 from terminal.runtime.paper_runtime import PaperRuntime
 from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
 from terminal.exchange.bybit_v5_mutation_adapter import BybitV5MutationAdapter
-from terminal.persistence.credential_store import CredentialStoreError, DpapiCredentialStore
+from terminal.persistence.credential_store import (
+    CredentialStoreError, create_credential_store, credential_store_path,
+)
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
 from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
@@ -84,6 +89,7 @@ MARKET_FIELDS = {
     "slippage_value",
 }
 LIVE_MARKET_FIELDS = MARKET_FIELDS | {"account_id", "session_generation"}
+LIVE_AUTHORITY_FIELDS = {"account_id", "session_generation"}
 VOLUME_FIELDS = {"unit", "amount"}
 FULL_CLOSE_FIELDS = {"client_action_id", "symbol"}
 CLOSE_ALL_FIELDS = {"client_action_id"}
@@ -94,6 +100,14 @@ LIMIT_FIELDS = {
 LIMIT_CANCEL_FIELDS = {"client_action_id", "symbol", "order_id"}
 LIMIT_AMEND_FIELDS = {"client_action_id", "symbol", "order_id", "limit_price"}
 STOP_MUTATION_FIELDS = {"client_action_id", "symbol", "trigger_price"}
+LIVE_LIMIT_FIELDS = LIMIT_FIELDS | LIVE_AUTHORITY_FIELDS
+LIVE_LIMIT_AMEND_FIELDS = LIMIT_AMEND_FIELDS | LIVE_AUTHORITY_FIELDS
+LIVE_LIMIT_CANCEL_FIELDS = LIMIT_CANCEL_FIELDS | LIVE_AUTHORITY_FIELDS
+LIVE_PROTECTION_FIELDS = {
+    "client_action_id", "account_id", "session_generation", "symbol",
+    "take_profit", "stop_loss", "tp_trigger_by", "sl_trigger_by",
+}
+LIVE_FULL_CLOSE_FIELDS = FULL_CLOSE_FIELDS | LIVE_AUTHORITY_FIELDS
 ACCOUNT_CREATE_FIELDS = {"display_name", "api_key", "api_secret"}
 
 
@@ -1891,6 +1905,85 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(status_code, {"ok": result.status not in {CommandResultStatus.BLOCKED}, **to_primitive(result)})
             return
 
+        live_parity_paths = {
+            "/api/live/limit", "/api/live/limit/amend", "/api/live/limit/cancel",
+            "/api/live/stop", "/api/live/stop/amend", "/api/live/stop/delete",
+            "/api/live/take", "/api/live/take/amend", "/api/live/take/delete",
+            "/api/live/full-close",
+        }
+        if urlparse(self.path).path in live_parity_paths:
+            try:
+                fields = {
+                    "/api/live/limit": LIVE_LIMIT_FIELDS,
+                    "/api/live/limit/amend": LIVE_LIMIT_AMEND_FIELDS,
+                    "/api/live/limit/cancel": LIVE_LIMIT_CANCEL_FIELDS,
+                    "/api/live/stop": LIVE_PROTECTION_FIELDS,
+                    "/api/live/stop/amend": LIVE_PROTECTION_FIELDS,
+                    "/api/live/stop/delete": LIVE_PROTECTION_FIELDS,
+                    "/api/live/take": LIVE_PROTECTION_FIELDS,
+                    "/api/live/take/amend": LIVE_PROTECTION_FIELDS,
+                    "/api/live/take/delete": LIVE_PROTECTION_FIELDS,
+                    "/api/live/full-close": LIVE_FULL_CLOSE_FIELDS,
+                }[urlparse(self.path).path]
+                payload = self._payload(fields)
+                account_id = payload["account_id"]
+                session_generation = payload["session_generation"]
+                path = urlparse(self.path).path
+                if path == "/api/live/limit":
+                    volume = payload["volume"]
+                    if not isinstance(volume, dict) or set(volume) != VOLUME_FIELDS:
+                        raise ValueError("invalid volume fields")
+                    request = LimitCommandRequest(
+                        ClientActionId(payload["client_action_id"]), payload["symbol"],
+                        OrderSide(payload["side"]),
+                        VolumeRequest(VolumeUnit(volume["unit"]), _decimal(volume["amount"])),
+                        _decimal(payload["sizing_reference_price"]),
+                        _decimal(payload["limit_price"]), TimeInForce(payload["time_in_force"]),
+                    )
+                    action = lambda api: api.limit(request)
+                elif path == "/api/live/limit/amend":
+                    request = AmendCommandRequest(
+                        ClientActionId(payload["client_action_id"]), payload["symbol"],
+                        order_id=payload["order_id"], changed_price=_decimal(payload["limit_price"]),
+                    )
+                    action = lambda api: api.amend(request)
+                elif path == "/api/live/limit/cancel":
+                    request = CancelCommandRequest(
+                        ClientActionId(payload["client_action_id"]), payload["symbol"],
+                        order_id=payload["order_id"],
+                    )
+                    action = lambda api: api.cancel(request)
+                elif path.startswith("/api/live/stop") or path.startswith("/api/live/take"):
+                    request = ProtectionCommandRequest(
+                        ClientActionId(payload["client_action_id"]), payload["symbol"],
+                        _optional_decimal(payload["take_profit"]),
+                        _optional_decimal(payload["stop_loss"]),
+                        payload["tp_trigger_by"], payload["sl_trigger_by"],
+                    )
+                    action = lambda api: api.protection(request)
+                else:
+                    request = FullCloseCommandRequest(
+                        ClientActionId(payload["client_action_id"]), payload["symbol"],
+                    )
+                    action = lambda api: api.full_close(request)
+                result = self.server.runtime.call(
+                    lambda runtime: runtime.live_execute(
+                        account_id, session_generation, payload["client_action_id"], action,
+                    )
+                )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, to_primitive(_validation_error()))
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "live_parity_unavailable"})
+                return
+            status_code = 200 if result.status not in {
+                CommandResultStatus.BLOCKED, CommandResultStatus.REJECTED,
+                CommandResultStatus.UNAVAILABLE, CommandResultStatus.VALIDATION_ERROR,
+            } else 409
+            self._json_response(status_code, {"ok": status_code == 200, **to_primitive(result)})
+            return
+
         mutation_paths = {
             "/api/market", "/api/limit", "/api/limit/amend", "/api/limit/cancel",
             "/api/stop", "/api/stop/amend", "/api/stop/delete",
@@ -2190,7 +2283,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
 
 def create_configured_paper_runtime(
     database_path: Path, *, book_provider, instrument_snapshot, instrument_provider,
-    credential_store_factory=DpapiCredentialStore,
+    credential_store_factory=create_credential_store,
     account_validator_factory=BybitAccountValidator,
     live_account_store_factory=LiveAccountProjectionStore,
     active_account_preference_store_factory=ActiveAccountPreferenceStore,
@@ -2200,6 +2293,7 @@ def create_configured_paper_runtime(
     live_mainnet_authorized: bool = False,
     live_acceptance_notional_ceiling: Decimal = Decimal("0"),
     live_acceptance_single_flight: bool = False,
+    live_parity_mutations_enabled: bool = False,
     account_manager=None,
 ) -> PaperRuntime:
     return PaperRuntime(
@@ -2207,9 +2301,7 @@ def create_configured_paper_runtime(
         book_provider=book_provider,
         instrument_snapshot=instrument_snapshot,
         instrument_provider=instrument_provider,
-        credential_store=credential_store_factory(
-            database_path.with_suffix(".credentials.dpapi")
-        ),
+        credential_store=credential_store_factory(credential_store_path(database_path)),
         account_validator=account_validator_factory(),
         live_account_store=live_account_store_factory(
             database_path.with_suffix(".live_accounts.sqlite3")
@@ -2223,6 +2315,7 @@ def create_configured_paper_runtime(
         live_mainnet_authorized=live_mainnet_authorized,
         live_acceptance_notional_ceiling=live_acceptance_notional_ceiling,
         live_acceptance_single_flight=live_acceptance_single_flight,
+        live_parity_mutations_enabled=live_parity_mutations_enabled,
         account_manager=account_manager,
     )
 
@@ -2259,6 +2352,7 @@ def main() -> None:
         live_mainnet_authorized=os.environ.get("LIVE_MAINNET_AUTHORIZED", "").lower() == "true",
         live_acceptance_notional_ceiling=Decimal(os.environ.get("LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING", "0")),
         live_acceptance_single_flight=os.environ.get("LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT", "").lower() == "true",
+        live_parity_mutations_enabled=os.environ.get("LIVE_PARITY_MUTATIONS_ENABLED", "").lower() == "true",
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(
@@ -2292,6 +2386,12 @@ def _decimal(value: object) -> Decimal:
     if not result.is_finite():
         raise ValueError("decimal value must be finite")
     return result
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    return _decimal(value)
 
 
 def _validation_error() -> CommandResult:

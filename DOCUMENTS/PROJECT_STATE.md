@@ -6249,3 +6249,16 @@ Targeted verification uses fake mutation adapters only. No real acceptance is re
 NO` for Revision 2.5. Runtime real-money gates remain fail-closed. LIVE Limit, STOP, TAKE, close, private streams and
 PAPER are unchanged and outside this slice.
 
+## LIVE EXECUTION PARITY REVISION 2.6 BACKEND CURRENT
+
+Revision 2.6 connects the canonical `TradingApplication` and `ExecutionEngine` to the existing single-attempt
+`BybitV5MutationAdapter` for LIVE LIMIT create/amend/cancel, full-position STOP/TAKE set/amend/delete, and MARKET
+full close constrained to `reduceOnly=true`. The coordinator builds fresh REST command context, preserves durable
+command identity, fences the active writable MAINNET READY account/session again at the adapter boundary, and
+requires REST reconciliation for unresolved outcomes without blind retry.
+
+`LIVE_PARITY_MUTATIONS_ENABLED=false` by default and the independent `LIVE_MAINNET_AUTHORIZED` gate remains
+required. PAPER behavior is unchanged, private WebSocket is absent, fake adapters are used in tests, and `REAL
+BYBIT ORDER SENT: NO`. Shared frontend transport activation is still OPEN; no UI end-to-end acceptance is claimed
+for this backend slice.
+
