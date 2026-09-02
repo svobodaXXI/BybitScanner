@@ -94,6 +94,7 @@ export function ModePanel({
   accountWorkspaceProjection = null,
   mutationsAllowed = true,
   liveMarketAllowed = false,
+  liveLimitAllowed = false,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -114,7 +115,7 @@ export function ModePanel({
   ) => void;
   selectedVolumes?: SelectedSideVolumes;
   onSelectedVolumeChange?: (side: MarketSide, value: string) => void;
-  onLimitCancel?: (orderId: string) => Promise<PaperLimitMutationResponse>;
+  onLimitCancel?: (orderId: string) => Promise<{ status: string } | null>;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
   onStopTap?: () => "drafted" | "not-improved" | undefined | void;
@@ -141,6 +142,7 @@ export function ModePanel({
   accountWorkspaceProjection?: AccountWorkspaceProjection | null;
   mutationsAllowed?: boolean;
   liveMarketAllowed?: boolean;
+  liveLimitAllowed?: boolean;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -409,7 +411,9 @@ export function ModePanel({
     if (!onLimitCancel) return;
     try {
       const result = await onLimitCancel(orderId);
-      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT РѕС‚РјРµРЅС‘РЅ" : "РћС‚РјРµРЅР° LIMIT РЅРµ РІС‹РїРѕР»РЅРµРЅР°");
+      setExecutionStatus(result?.status === "completed" || result?.status === "accepted_pending"
+        ? `${mutationsAllowed ? "PAPER" : "LIVE"} LIMIT cancellation submitted`
+        : "LIMIT cancellation failed or requires reconciliation");
     } catch {
       setExecutionStatus("РћС‚РјРµРЅР° LIMIT РЅРµ РІС‹РїРѕР»РЅРµРЅР°");
     }
@@ -425,7 +429,7 @@ export function ModePanel({
 
       for (const order of orders) {
         const result = await onLimitCancel(order.order_id);
-        if (result.status === "completed") {
+        if (result?.status === "completed" || result?.status === "accepted_pending") {
           completed += 1;
         }
       }
@@ -970,7 +974,7 @@ export function ModePanel({
           ) : null}
         </fieldset>
           <div className="paper-lower-actions-row">
-            <fieldset className="paper-limits-shell" disabled={!mutationsAllowed}>
+            <fieldset className="paper-limits-shell" disabled={!mutationsAllowed && !liveLimitAllowed}>
               {(["Buy", "Sell"] as const).map((side) => {
                 const orders = side === "Buy" ? longLimitOrders : shortLimitOrders;
                 return (

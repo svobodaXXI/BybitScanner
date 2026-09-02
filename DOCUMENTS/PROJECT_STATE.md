@@ -6263,6 +6263,17 @@ BYBIT ORDER SENT: NO`. Shared frontend transport activation is still OPEN; no UI
 for this backend slice.
 
 
+## LIVE LIMIT REVISION 2.7 FRONTEND CURRENT
+
+Revision 2.7 connects the existing Limit create/amend/cancel controls to the separate LIVE parity endpoints only
+for an active writable `BYBIT / MAINNET / READY` account whose projection advertises `capabilities.limit=true`.
+Every attempt captures account/session authority and one stable action identity; stale responses are discarded,
+ambiguous attempts remain locked, and accepted results refresh the REST-only LIVE account projection without
+optimistic order state.
+
+PAPER behavior, fast DOM crossing, LIVE STOP, TAKE and full close remain unchanged. All LIVE mutation gates remain
+default-off, tests use mocked transport, `REAL BYBIT ORDER SENT: NO`, and browser/real-phone acceptance is pending.
+
 ## VPS DEPLOYMENT / NGINX WEBSOCKET CHECKPOINT
 
 Authoritative deployment commit: `a339f93` (`ops: add nginx websocket proxy config`), based on application commit

@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "2.6",
+  "revision": "2.7",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -54,6 +54,7 @@
     ,"Implement the first default-off LIVE execution slice for explicitly confirmed manual MARKET BUY and MARKET SELL on the active writable Bybit MAINNET account, with durable idempotency, account/session fencing, single-attempt dispatch, REST-only reconciliation, an authoritative acceptance-notional ceiling and no LIVE Limit, STOP, TAKE or full-close capability"
     ,"Implement restart-safe REST-only recovery for unresolved durable LIVE MARKET actions without mutation redispatch or new command identity"
     ,"Implement the final fail-closed LIVE MARKET pre-dispatch validation boundary without enabling real exchange dispatch"
+    ,"Activate the capability-gated frontend LIVE Limit create, amend and cancel transport with captured account/session authority, single-attempt ownership and REST-only projection refresh while all runtime mutation gates remain default-off"
     ,"Record the human-approved planning-only future direction for an autonomous Android manual Trading Workspace without authorizing implementation or selecting a final Android stack"
   ],
   "prohibited_scope": [
@@ -368,13 +369,13 @@
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
     {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
-    {"id": "IMPLEMENT", "status": "REVISION_2_2_LIVE_MARKET_FOUNDATION_AUTHORIZED"},
-    {"id": "VERIFY", "status": "REVISION_2_2_PENDING"},
-    {"id": "RECORD", "status": "REVISION_2_2_PENDING"}
+    {"id": "IMPLEMENT", "status": "REVISION_2_7_LIVE_LIMIT_FRONTEND_IMPLEMENTED"},
+    {"id": "VERIFY", "status": "REVISION_2_7_AUTOMATED_VERIFICATION_PENDING"},
+    {"id": "RECORD", "status": "REVISION_2_7_PENDING"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "REVISION_2_2_LIVE_MARKET_EXECUTION_FOUNDATION_AUTHORIZED",
-  "implementation_status": "REVISION_2_2_IMPLEMENTATION_AUTHORIZED_NOT_YET_VERIFIED",
+  "current_checkpoint": "REVISION_2_7_LIVE_LIMIT_FRONTEND_IMPLEMENTED",
+  "implementation_status": "REVISION_2_7_AUTOMATED_VERIFICATION_PENDING",
   "next_phase": "VERIFY",
   "next_phase_authorization": "AFTER_SCOPED_IMPLEMENTATION_WITH_REAL_DISPATCH_DEFAULT_OFF",
   "related_commits": [
@@ -4847,4 +4848,16 @@ The separate `LIVE_PARITY_MUTATIONS_ENABLED` gate and existing `LIVE_MAINNET_AUT
 PAPER routes and semantics remain unchanged, and no private WebSocket is introduced. This slice exposes bounded
 backend LIVE parity routes; shared frontend transport activation remains an explicit open item so account/session
 authority is never inferred or omitted. Automated verification uses fake adapters only. `REAL BYBIT ORDER SENT: NO`.
+
+### Revision 2.7 capability-gated LIVE Limit frontend activation
+
+Revision 2.7 activates only LIVE Limit create, amend and cancel on the existing Terminal controls when the current
+account projection is active writable `BYBIT / MAINNET / READY` and advertises `capabilities.limit=true`. Requests
+capture `account_id + session_generation`, use one stable `client_action_id` per frontend attempt and call only the
+separate `/api/live/limit*` routes. Stale account/session responses are discarded; ambiguous attempts remain locked,
+and accepted results trigger the existing REST-only LIVE account refresh without optimistic order projection.
+
+PAPER routes and behavior remain unchanged. Fast DOM hold/crossing, LIVE STOP, TAKE and full close are not activated
+by this slice. Runtime mutation gates remain default OFF, tests use mocked transport, and no real-money acceptance is
+authorized. Browser and real-phone acceptance remain pending after automated verification and a fresh build.
 
