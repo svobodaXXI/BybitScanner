@@ -2,11 +2,11 @@
 
 Version:
 
-4.31
+4.32
 
 Date:
 
-2026-08-30
+2026-09-03
 
 Document Type:
 
@@ -544,9 +544,47 @@ The helper `tools/dev/migrations/update_workspace_docs_m9.py` records the exact 
 Trading Workspace authority from M8 completion to the M9 operability/diagnostics checkpoint. It is a historical,
 reproducible migration helper, not a general-purpose updater and not current state authority.
 
+## 8.9 NEW STRATEGY IDEA CAPTURE — HARD RULE
+
+For every new trading idea, chart observation, case study or strategy-mechanics refinement supplied by the user,
+load `.agents/skills/strategy-hypothesis-capture/SKILL.md` and the current
+`DOCUMENTS/TRADING_STRATEGY_SPEC.md`. Capture the idea only through this research path:
+
+```text
+Observation / Case Study
+  -> Formalized Setup
+  -> Hypothesis H-xxx
+  -> Required Dataset
+  -> Validation Method
+  -> Promotion Criterion
+  -> Kill Criterion
+  -> Research Backlog
+```
+
+First determine whether the input is a new observation, a variant of an existing hypothesis, a new setup, a
+risk/entry/exit-mechanics refinement or a duplicate. Reuse or minimally extend an existing hypothesis when its
+setup identity and falsifiable claim still own the idea. Allocate the next free H-ID only when the generalized
+claim or setup is materially distinct.
+
+Never:
+
+* turn one chart or anecdote directly into a production strategy;
+* claim proven edge or profitability without the required validation;
+* rewrite the whole `TRADING_STRATEGY_SPEC.md` for one observation;
+* mix `BASELINE`, `ACCEPTED DESIGN`, `HYPOTHESIS` or `NEEDS VALIDATION` authority states;
+* promote example-specific prices, percentages or visual boundaries into universal parameters.
+
+Apply only the smallest targeted patch needed to preserve the observation, measurable generalized rule,
+invariants, required data, validation and backlog routing. A chart remains evidence of the observation, not proof
+of the generalized claim. Preserve repository authority, reference-case storage rules, dirty-work protection,
+verification and commit/push authorization boundaries.
+
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.32` adds the mandatory New Strategy Idea Capture workflow and routes new observations through the repository
+skill and a minimal targeted strategy-spec patch without promoting anecdotal evidence into trading authority.
 
 `4.29` hardens rule enforcement after a repeated enforcement failure: repository authority is normative over
 assistant memory, committed authority should be read directly instead of transported through the user, existing-rule
