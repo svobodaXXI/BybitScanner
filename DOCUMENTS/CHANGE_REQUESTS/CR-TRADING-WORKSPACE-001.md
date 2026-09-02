@@ -4782,7 +4782,39 @@ authoritative normalized quantity times authoritative reference price against th
 ceiling. The account/session and eligibility fence is checked again at the dispatch boundary so a change after
 validation cannot reach the adapter. Any failed check is blocked with zero mutation-adapter calls and no retry.
 
-Automated acceptance uses only the fake mutation adapter and proves its exact payload. Runtime real-money gates
-remain off and no real Bybit order is sent. LIVE Limit, STOP, TAKE, close, private WebSocket, UI and PAPER semantics
-remain outside this revision.
+Automated implementation verification uses only the fake mutation adapter and proves its exact payload. Runtime
+real-money gates remain off except during a separately explicit real acceptance window. LIVE Limit, STOP, TAKE,
+close, private WebSocket, UI and PAPER semantics remain outside this revision.
+
+## REVISION 2.4 REAL LIVE MARKET ACCEPTANCE CHECKPOINT
+
+Date: 2026-09-02
+
+Status: `FAIL — TWO DISTINCT ACCEPTANCE ORDERS SENT`
+
+The requested one-order acceptance invariant was not met. Two separate UI confirmations created two different
+durable `client_action_id`, `command_id` and `orderLinkId` identities. This was not a retry or redispatch of one
+command: each command has exactly one durable `SUBMITTING` transition and one exchange acknowledgement.
+
+Both orders were `MARKET SELL ONGUSDT`, normalized quantity `51 ONG`, with approximate requested notional
+`5.10 USDT` each:
+
+- `cmd_542e94a282974379aab93b53785eb0c6` / `tw_542e94a282974379aab93b53785eb0c6a` /
+  exchange order `20cb9f26-e473-430e-b84c-d99502709f99`: REST order history `FILLED`, cumulative filled quantity
+  `51`, average fill price `0.09924`; execution `2a554e02-fd93-5856-ba99-5a4b9dfc5e06`, quantity `51`, value
+  `5.06124 USDT`, fee `0.00177144 USDT`.
+- `cmd_cd078103629841c898a027f50861bfed` / `tw_cd078103629841c898a027f50861bfed4` /
+  exchange order `ab13d849-c747-4843-8b8a-38d7c6c8baaa`: REST order history `FILLED`, cumulative filled quantity
+  `51`, average fill price `0.09937`; execution `0c9943a5-a677-5d1e-bf62-42c077bf5631`, quantity `51`, value
+  `5.06787 USDT`, fee `0.00177376 USDT`.
+
+Fresh REST position evidence after reconciliation was `ONGUSDT LONG 161`, average entry `0.10670773`, mark price
+approximately `0.09956`. This position snapshot is recorded as final observed account state; it is not attributed
+only to these two fills because other account activity may coexist.
+
+Immediately after discovery, the backend was restarted fail-closed with
+`LIVE_MARKET_MUTATIONS_ENABLED=false`, `LIVE_MAINNET_AUTHORIZED=false` and
+`LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING=0`; Workspace capability `market=false` was confirmed. `REAL BYBIT ORDER
+SENT: YES — TWO ORDERS`. Revision 2.4 real acceptance is not PASS. No further real dispatch is authorized by this
+checkpoint.
 

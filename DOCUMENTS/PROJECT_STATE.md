@@ -6220,12 +6220,19 @@ Automated acceptance uses newly constructed stores/coordinators over the same SQ
 adapters. Real-money gates remain default-off. LIVE Limit, STOP, TAKE, close, private streams, autonomous trading
 and real-money acceptance remain outside this slice. `REAL BYBIT ORDER SENT: NO`.
 
-## LIVE MARKET REVISION 2.4 FINAL PRE-DISPATCH VALIDATION CURRENT
+## LIVE MARKET REVISION 2.4 REAL ACCEPTANCE FAILED CLOSED
 
-Revision 2.4 adds the final fail-closed boundary immediately before the sole LIVE MARKET mutation-adapter call.
-The coordinator revalidates active account/session, MAINNET READY writable status, symbol, BUY/SELL side,
-normalized quantity, canonical `orderLinkId`, bounded Bybit slippage and authoritative normalized notional against
-the configured ceiling, then repeats the account/session eligibility fence at dispatch. Tests use only a fake
-adapter and assert the exact payload or zero calls on every blocked path. Runtime real-money gates remain off;
-frontend and PAPER are unchanged. `REAL BYBIT ORDER SENT: NO`.
+Revision 2.4 implementation adds the final fail-closed boundary immediately before the sole LIVE MARKET
+mutation-adapter call and its automated scoped verification remains PASS. The real acceptance attempt on
+2026-09-02 did not satisfy the required one-order invariant: two distinct UI confirmations created two independent
+`MARKET SELL ONGUSDT` commands of `51 ONG` each, approximate requested notional `5.10 USDT` each. Both have
+unambiguous REST order/execution evidence as `FILLED`; each command dispatched exactly once, so this was not a
+retry of one durable action. Fresh final observed position evidence was `ONGUSDT LONG 161` at average entry
+`0.10670773`.
+
+The backend was immediately returned to `LIVE_MARKET_MUTATIONS_ENABLED=false`,
+`LIVE_MAINNET_AUTHORIZED=false`, `LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING=0`, and Workspace capability
+`market=false` was confirmed. `REAL BYBIT ORDER SENT: YES — TWO ORDERS`. Revision 2.4 real acceptance status is
+`FAIL`; no further real dispatch is authorized. LIVE Limit, STOP, TAKE, close, private streams, frontend and PAPER
+remain unchanged and outside this checkpoint.
 
