@@ -112,6 +112,7 @@ class LiveMarketExecutionTests(unittest.TestCase):
             live_market_mutations_enabled=gate_overrides.get("enabled", True),
             live_mainnet_authorized=gate_overrides.get("authorized", True),
             acceptance_notional_ceiling=Decimal(gate_overrides.get("ceiling", "20")),
+            acceptance_single_flight=gate_overrides.get("single_flight", False),
         )
         return LiveMarketMutationCoordinator(
             self.manager, self.store, lambda _account: self.adapter,
@@ -205,6 +206,25 @@ class LiveMarketExecutionTests(unittest.TestCase):
         coordinator = self.coordinator()
         self.assertEqual(coordinator.submit(request()).status.value, "rejected")
         self.assertEqual(coordinator.submit(request()).status.value, "rejected")
+        self.assertEqual(len(self.adapter.calls), 1)
+
+    def test_acceptance_single_flight_blocks_distinct_action_after_first_filled(self):
+        coordinator = self.coordinator(single_flight=True)
+        first = coordinator.submit(request())
+        action = self.store.get_live_market_action(ACCOUNT_ID, 1, "action-1")
+        execution = ExecutionEvent(
+            ACCOUNT_ID, Category.LINEAR, "BTCUSDT", ExecutionId("acceptance-exec"),
+            OrderId("exchange-1"), action.order_link_id, OrderSide.BUY,
+            Decimal("50000"), Decimal("0.0002"), Decimal("0.01"),
+            Decimal("10"), False, 1001, None,
+        )
+        read = FakeReadAdapter(executions=(execution,))
+        coordinator._read_adapter_provider = lambda _account: read
+        resolved = coordinator.submit(request())
+        second = coordinator.submit(request(action_id="action-2"))
+        self.assertEqual(first.status.value, "accepted_pending")
+        self.assertEqual(resolved.status.value, "completed")
+        self.assertEqual(second.reason_code, "acceptance_permit_consumed")
         self.assertEqual(len(self.adapter.calls), 1)
 
     def test_feature_gates_and_ceiling_block_before_adapter(self):

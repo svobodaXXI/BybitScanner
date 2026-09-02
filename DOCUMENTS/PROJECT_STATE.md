@@ -6236,3 +6236,16 @@ The backend was immediately returned to `LIVE_MARKET_MUTATIONS_ENABLED=false`,
 `FAIL`; no further real dispatch is authorized. LIVE Limit, STOP, TAKE, close, private streams, frontend and PAPER
 remain unchanged and outside this checkpoint.
 
+## LIVE MARKET REVISION 2.5 SINGLE-FLIGHT GUARD CURRENT
+
+Revision 2.5 adds an acceptance-only, default-off single-flight permit above the existing LIVE MARKET dispatch
+boundary. The first confirmed action is synchronously single-flighted in the frontend and consumes the backend
+permit when durable dispatch ownership is acquired; a double-tap cannot create another request or
+`client_action_id`, and a later distinct action remains blocked even after the first command is `FILLED`. Only an
+explicitly newly authorized runtime can restore the permit. With the acceptance flag off, ordinary future LIVE
+MARKET trading retains its existing behavior.
+
+Targeted verification uses fake mutation adapters only. No real acceptance is repeated and `REAL BYBIT ORDER SENT:
+NO` for Revision 2.5. Runtime real-money gates remain fail-closed. LIVE Limit, STOP, TAKE, close, private streams and
+PAPER are unchanged and outside this slice.
+

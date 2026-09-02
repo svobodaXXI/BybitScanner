@@ -2199,6 +2199,7 @@ def create_configured_paper_runtime(
     live_market_mutations_enabled: bool = False,
     live_mainnet_authorized: bool = False,
     live_acceptance_notional_ceiling: Decimal = Decimal("0"),
+    live_acceptance_single_flight: bool = False,
     account_manager=None,
 ) -> PaperRuntime:
     return PaperRuntime(
@@ -2221,6 +2222,7 @@ def create_configured_paper_runtime(
         live_market_mutations_enabled=live_market_mutations_enabled,
         live_mainnet_authorized=live_mainnet_authorized,
         live_acceptance_notional_ceiling=live_acceptance_notional_ceiling,
+        live_acceptance_single_flight=live_acceptance_single_flight,
         account_manager=account_manager,
     )
 
@@ -2256,6 +2258,7 @@ def main() -> None:
         live_market_mutations_enabled=os.environ.get("LIVE_MARKET_MUTATIONS_ENABLED", "").lower() == "true",
         live_mainnet_authorized=os.environ.get("LIVE_MAINNET_AUTHORIZED", "").lower() == "true",
         live_acceptance_notional_ceiling=Decimal(os.environ.get("LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING", "0")),
+        live_acceptance_single_flight=os.environ.get("LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT", "").lower() == "true",
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(

@@ -166,6 +166,8 @@ export function ModePanel({
   const [amendPrices, setAmendPrices] = useState<Record<string, string>>({});
   const previousLimitDraft = useRef(limitDraftState.draft);
   const [liveConfirmation, setLiveConfirmation] = useState<LiveMarketCommandRequest | null>(null);
+  const [liveConfirmationSubmitting, setLiveConfirmationSubmitting] = useState(false);
+  const liveDispatchActionIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     setLiveConfirmation(null);
@@ -350,16 +352,21 @@ export function ModePanel({
     const numericAmount = Number(amount);
     if (!liveMarketAllowed || !accountWorkspaceProjection || !amount.trim()
       || !Number.isFinite(numericAmount) || numericAmount <= 0) return;
-    setLiveConfirmation(createLiveMarketAction({
+    const action = createLiveMarketAction({
       accountId: accountWorkspaceProjection.account_id,
       sessionGeneration: accountWorkspaceProjection.session_generation,
       symbol, side, amount, sizingReferencePrice,
-    }));
+    });
+    liveDispatchActionIdRef.current = null;
+    setLiveConfirmationSubmitting(false);
+    setLiveConfirmation(action);
   };
 
   const confirmLiveMarket = async () => {
     const action = liveConfirmation;
-    if (!action) return;
+    if (!action || liveDispatchActionIdRef.current === action.client_action_id) return;
+    liveDispatchActionIdRef.current = action.client_action_id;
+    setLiveConfirmationSubmitting(true);
     const result = await executeLiveMarketCommand(action, {
       currentAuthority: () => accountWorkspaceProjection ? {
         accountId: accountWorkspaceProjection.account_id,
@@ -1046,7 +1053,9 @@ export function ModePanel({
                 <strong>Main Bybit / LIVE</strong>
                 <p>{liveConfirmation.side.toUpperCase()} MARKET {liveConfirmation.symbol}</p>
                 <p>{liveConfirmation.volume.amount} USDT В· slippage {liveConfirmation.slippage_value}%</p>
-                <button type="button" onClick={() => void confirmLiveMarket()}>CONFIRM LIVE MARKET</button>
+                <button type="button" disabled={liveConfirmationSubmitting} onClick={() => void confirmLiveMarket()}>
+                  {liveConfirmationSubmitting ? "LIVE MARKET SUBMITTING" : "CONFIRM LIVE MARKET"}
+                </button>
                 <button type="button" onClick={() => setLiveConfirmation(null)}>CANCEL</button>
               </div>
             </div>

@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "2.4",
+  "revision": "2.5",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -4817,4 +4817,20 @@ Immediately after discovery, the backend was restarted fail-closed with
 `LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING=0`; Workspace capability `market=false` was confirmed. `REAL BYBIT ORDER
 SENT: YES — TWO ORDERS`. Revision 2.4 real acceptance is not PASS. No further real dispatch is authorized by this
 checkpoint.
+
+### Revision 2.5 LIVE single-flight acceptance guard authorization
+
+Revision 2.5 adds an opt-in one-shot guard only for a separately authorized LIVE MARKET acceptance window. The
+frontend synchronously consumes the confirmation action before its first request, so a repeated tap or double-tap
+cannot create another `client_action_id` or another `/api/live/market` dispatch. At the backend dispatch boundary,
+the acceptance permit is consumed immediately after durable dispatch ownership is acquired and before the sole
+mutation-adapter call. While acceptance single-flight mode remains enabled, every later distinct LIVE MARKET action
+is blocked even if the first command has already reconciled to `FILLED`; replay of the original durable action
+continues to return its original command without redispatch.
+
+The permit exists only in the explicitly constructed authorized runtime and can be restored only by a new explicit
+runtime authorization. `LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT` defaults to false, so ordinary future LIVE trading is
+not constrained by this acceptance-only one-shot policy. LIVE Limit, STOP, TAKE, close, private WebSocket and PAPER
+semantics remain outside this revision. Verification uses only fake mutation adapters. `REAL BYBIT ORDER SENT: NO`
+for Revision 2.5; the failed two-order Revision 2.4 historical checkpoint remains unchanged.
 

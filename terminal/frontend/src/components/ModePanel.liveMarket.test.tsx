@@ -24,6 +24,35 @@ function renderLive(onFastLimitHoldChange = vi.fn()) {
 }
 
 describe("ModePanel LIVE MARKET capability", () => {
+  it("single-flights a double confirmation tap with one client action", async () => {
+    let release!: () => void;
+    const response = new Promise<{ json: () => Promise<object> }>((resolve) => {
+      release = () => resolve({ json: async () => ({
+        status: "accepted_pending", reason_code: "accepted_pending",
+        command_id: "cmd", order_link_id: "tw", reconciliation_required: false,
+      }) });
+    });
+    const fetcher = vi.fn().mockReturnValue(response);
+    vi.stubGlobal("fetch", fetcher);
+    renderLive();
+    fireEvent.click(screen.getByRole("button", { name: "BUY" }));
+    const confirm = screen.getByRole("button", { name: "CONFIRM LIVE MARKET" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    const liveCalls = fetcher.mock.calls.filter((call) => call[0] === "/api/live/market");
+    expect(liveCalls).toHaveLength(1);
+    const body = JSON.parse(liveCalls[0][1].body);
+    expect(new Set(liveCalls.map((call) => JSON.parse(call[1].body).client_action_id))).toEqual(
+      new Set([body.client_action_id]),
+    );
+    expect(body.client_action_id).toEqual(expect.any(String));
+    expect(screen.getByRole("button", { name: "LIVE MARKET SUBMITTING" })).toBeDisabled();
+    release();
+    await waitFor(() => expect(screen.queryByRole("dialog", {
+      name: "Confirm LIVE Market order",
+    })).not.toBeInTheDocument());
+  });
+
   it("confirms explicit account/session action and keeps LIVE Limit disabled", async () => {
     const fetcher = vi.fn().mockResolvedValue({ json: async () => ({
       status: "accepted_pending", reason_code: "accepted_pending",

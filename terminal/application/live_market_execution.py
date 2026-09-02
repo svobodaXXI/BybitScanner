@@ -36,6 +36,7 @@ class LiveMarketMutationGates:
     live_market_mutations_enabled: bool = False
     live_mainnet_authorized: bool = False
     acceptance_notional_ceiling: Decimal = Decimal("0")
+    acceptance_single_flight: bool = False
 
 
 class LiveMarketMutationCoordinator:
@@ -68,6 +69,7 @@ class LiveMarketMutationCoordinator:
         self._identity_factory = identity_factory or CommandIdentityFactory()
         self._clock_ms = clock_ms
         self._engine = ExecutionEngine(store)
+        self._acceptance_permit_consumed = False
         self.before_dispatch: Callable[[], object] | None = None
         self.after_final_validation: Callable[[], object] | None = None
 
@@ -99,6 +101,8 @@ class LiveMarketMutationCoordinator:
         if isinstance(token_or_result, LiveMarketCommandResult):
             return token_or_result
         token = token_or_result
+        if self._gates.acceptance_single_flight and self._acceptance_permit_consumed:
+            return _blocked(request, "acceptance_permit_consumed")
         if self._store.load_unresolved_live_market_actions(account_id):
             return _blocked(request, "unresolved_live_market_command")
         instrument = self._instrument_provider(request.symbol.upper())
@@ -152,6 +156,8 @@ class LiveMarketMutationCoordinator:
         command = self._store.begin_live_market_dispatch(action, occurred_at_ms=self._clock_ms())
         if command is None:
             return _result(request, self._store.get_command(action.command_id), action.order_link_id)
+        if self._gates.acceptance_single_flight:
+            self._acceptance_permit_consumed = True
 
         try:
             outcome = self._mutation_adapter_provider(account_id).create_market_order(

@@ -103,6 +103,7 @@ class PaperRuntime:
         live_market_mutations_enabled: bool = False,
         live_mainnet_authorized: bool = False,
         live_acceptance_notional_ceiling: Decimal = Decimal("0"),
+        live_acceptance_single_flight: bool = False,
     ) -> None:
         self._account_manager = account_manager or paper_account_manager()
         self._paper_account_id = TradingAccountId("paper")
@@ -211,7 +212,7 @@ class PaperRuntime:
             ),
             gates=LiveMarketMutationGates(
                 live_market_mutations_enabled, live_mainnet_authorized,
-                live_acceptance_notional_ceiling,
+                live_acceptance_notional_ceiling, live_acceptance_single_flight,
             ),
         )
         self._guard = application.guard
