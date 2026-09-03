@@ -1,9 +1,10 @@
-import json
+﻿import json
 import tempfile
 import unittest
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 from terminal.application.trading_accounts import (
     TradingAccount, TradingAccountEnvironment, TradingAccountProvider,
@@ -21,6 +22,7 @@ from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLe
 from terminal.runtime.paper_http_server import (
     SerializedPaperRuntime, create_configured_paper_runtime,
 )
+from terminal.runtime.paper_runtime import _live_working_volume_projection
 
 
 class CredentialStore:
@@ -41,14 +43,23 @@ class ReadAdapter:
         assert account_id == TradingAccountId("bybit-one") and testnet is False
     def get_wallet_snapshot(self):
         return BybitWalletSnapshot(
-            Decimal("332.3"), Decimal("80.37"), Decimal("61.25"), 1234,
+            Decimal("332.3"), Decimal("1234"), Decimal("61.25"), 1234,
             {
                 "account.totalWalletBalance": "332.3",
-                "account.totalEquity": "80.37",
+                "account.totalEquity": "1234",
                 "account.totalAvailableBalance": "61.25",
             },
         )
-    def list_open_positions(self): return ()
+    def list_open_positions(self):
+        return (SimpleNamespace(
+            position_key=SimpleNamespace(
+                trading_account_id=TradingAccountId("bybit-one"),
+                symbol=SimpleNamespace(value="BTCUSDT"),
+            ),
+            side=SimpleNamespace(value="Short"), size=Decimal("-2"),
+            average_entry=Decimal("100"), mark_price=Decimal("90"),
+            unrealized_pnl=Decimal("20"), updated_at_ms=1200,
+        ),)
     def list_all_active_orders(self): return ()
 
 
@@ -110,6 +121,31 @@ def runtime_owner(
 
 
 class ActiveAccountRestoreTests(unittest.TestCase):
+    def test_live_working_volume_uses_wallet_and_paper_entry_notional_semantics(self):
+        wallet_balance = Decimal("1234")
+        one_wv, positions = _live_working_volume_projection(wallet_balance, (
+            {"symbol": "BTCUSDT", "side": "Long", "size": "2", "average_entry": "100"},
+            {"symbol": "ETHUSDT", "side": "Short", "size": "-3", "average_entry": "50"},
+        ))
+
+        self.assertEqual(one_wv, Decimal("61"))
+        self.assertEqual(positions[0]["engaged_notional_usdt"], "200")
+        self.assertEqual(positions[0]["engaged_wv"], str(Decimal("200") / Decimal("61")))
+        self.assertEqual(positions[1]["engaged_notional_usdt"], "150")
+        self.assertEqual(positions[1]["engaged_wv"], str(Decimal("150") / Decimal("61")))
+
+    def test_live_working_volume_fails_closed_for_invalid_basis_or_position(self):
+        one_wv, positions = _live_working_volume_projection(Decimal("19"), (
+            {"symbol": "BTCUSDT", "side": "Long", "size": "2", "average_entry": "100"},
+            {"symbol": "ETHUSDT", "side": "Short", "size": "-3", "average_entry": "invalid"},
+        ))
+
+        self.assertIsNone(one_wv)
+        self.assertEqual(positions[0]["engaged_notional_usdt"], "200")
+        self.assertIsNone(positions[0]["engaged_wv"])
+        self.assertIsNone(positions[1]["engaged_notional_usdt"])
+        self.assertIsNone(positions[1]["engaged_wv"])
+
     def test_successful_activation_persists_only_canonical_identity(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -158,7 +194,7 @@ class ActiveAccountRestoreTests(unittest.TestCase):
                     self.assertEqual(catalog["session_generation"], 2)
                     self.assertEqual(catalog["accounts"][0]["status"], expected)
                     self.assertEqual(projection["wallet_balance_usdt"], "332.3")
-                    self.assertEqual(projection["total_equity_usdt"], "80.37")
+                    self.assertEqual(projection["total_equity_usdt"], "1234")
                     self.assertEqual(projection["available_balance_usdt"], "61.25")
                     self.assertEqual(len({
                         projection["wallet_balance_usdt"],
@@ -175,6 +211,18 @@ class ActiveAccountRestoreTests(unittest.TestCase):
                         projection["balance_provenance"]["account.totalAvailableBalance"],
                         "61.25",
                     )
+                    self.assertEqual(projection["one_wv_usdt"], "16")
+                    self.assertEqual(projection["positions"][0]["engaged_notional_usdt"], "200")
+                    self.assertEqual(
+                        projection["positions"][0]["engaged_wv"],
+                        str(Decimal("200") / Decimal("16")),
+                    )
+                    self.assertEqual(
+                        projection["working_volume_source_fields"]["one_wv_usdt"],
+                        "wallet_balance_usdt * 0.05, rounded down to 1 USDT",
+                    )
+                    self.assertEqual(projection["account_id"], catalog["active_account_id"])
+                    self.assertEqual(projection["session_generation"], catalog["session_generation"])
                 finally:
                     runtime.close()
 

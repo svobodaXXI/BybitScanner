@@ -825,7 +825,8 @@ Primary objective:
 
 Define and authorize a separate durable Trading Terminal / Trading Workspace implementation mission.
 Approved SPEC revision 1.4 and execution/reconciliation model revision 1.7 remain authoritative. Human-approved
-intermediate CONTEXT revision 1.8 binds active-account USDT walletBalance WV authority, One-Way Mode, no
+intermediate CONTEXT revision 1.8's wallet-based WV authority is restored as the current
+runtime-aligned active-account Wallet WV authority, with rounding down to whole USDT; One-Way Mode, no
 automatic mode switching, reconcile-and-adopt external state, Manual takeover, Emergency Close,
 external-order-aware Full Close and conservative negative correlation. CONTEXT remains incomplete/in progress
 and IMPLEMENT remains unauthorized.
@@ -4874,7 +4875,7 @@ Previous checkpoint preserved — Trading Workspace upper workspace / DOM / prin
 Previous checkpoint preserved — Trading Workspace human execution/risk decisions record (v7.41 to v7.42):
 
 * advanced `CR-TRADING-WORKSPACE-001` to revision 1.8 and checkpoint `MANUAL_LIVE_TRADING_V1_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED`;
-* bound USDT walletBalance WV authority, One-Way Mode, no automatic mode switching, external-state adoption, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative correlation;
+* recorded the USDT walletBalance WV authority; the later temporary current-equity alignment is superseded by the current Wallet-based contract; retained One-Way Mode, no automatic mode switching, external-state adoption, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative correlation;
 * preserved exact refresh/cache and numeric retry/backoff/search-horizon parameters as later research/design work;
 * kept CONTEXT active and incomplete, Robot implementation out of scope and IMPLEMENT not started or authorized.
 

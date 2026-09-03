@@ -20,6 +20,7 @@ export type AccountWorkspaceProjection = {
   wallet_balance_usdt: string;
   total_equity_usdt: string;
   available_balance_usdt: string;
+  one_wv_usdt?: string | null;
   balance_source_fields?: {
     wallet_balance_usdt: string;
     total_equity_usdt: string;
@@ -28,6 +29,7 @@ export type AccountWorkspaceProjection = {
     unit: "USD";
   };
   balance_provenance?: Record<string, string | null>;
+  working_volume_source_fields?: Record<string, string>;
   positions: Array<Record<string, unknown>>;
   orders: Array<Record<string, unknown>>;
   paper_state: Record<string, unknown> | null;

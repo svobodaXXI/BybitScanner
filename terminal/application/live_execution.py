@@ -1,4 +1,4 @@
-"""Account-fenced LIVE parity facade over the existing TradingApplication."""
+﻿"""Account-fenced LIVE parity facade over the existing TradingApplication."""
 
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ class _LiveContextProvider:
             from terminal.domain.models import OrderSide
             side = OrderSide.BUY
         return ServerCommandContext(
-            context, instrument, position, working_volume_usdt(snapshot.total_equity_usdt), side,
+            context, instrument, position, working_volume_usdt(snapshot.wallet_balance_usdt), side,
         )
 
     def order_for(self, symbol: str, order_id: str | None, order_link_id: str | None):

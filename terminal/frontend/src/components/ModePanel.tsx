@@ -35,6 +35,7 @@ import { executePaperMarketCommand } from "../orders/paperMarketCommand";
 import { createLiveMarketAction, executeLiveMarketCommand } from "../orders/liveMarketCommand";
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 import { AccountMenu } from "./AccountMenu";
+import { LiveAccountInventory } from "./LiveAccountInventory";
 import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
 import { StopSettings } from "./StopSettings";
 
@@ -148,6 +149,7 @@ export function ModePanel({
   const [executionStatus, setExecutionStatus] = useState("");
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [openPositionsVisible, setOpenPositionsVisible] = useState(false);
+  const [activeAccountLabel, setActiveAccountLabel] = useState<{ id: string; name: string } | null>(null);
   const [limitPresentationSide, setLimitPresentationSide] =
     useState<MarketSide | null>(null);
   const [limitsInventorySide, setLimitsInventorySide] =
@@ -510,11 +512,11 @@ export function ModePanel({
       {mode === "TERMINAL" ? (
         <>
         <div className="paper-market-actions-shell" {...tradingInputFocus.boundaryProps}>
-        <fieldset
+        <div
           aria-label="Manual trading controls"
           className={`paper-market-actions${mutationsAllowed || liveMarketAllowed ? "" : " is-read-only"}`}
-          disabled={!mutationsAllowed && !liveMarketAllowed}
         >
+          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed}>
           <div className="paper-trade-side-group" aria-label="PAPER trade sides">
             <div className="paper-market-side paper-market-buy-side">
               <TradingControlButton
@@ -682,19 +684,17 @@ export function ModePanel({
             ) : null}
           </div>
 
+          </fieldset>
           <div className="paper-utility-stack" aria-label="PAPER utility controls">
             <button
               className="paper-position-list-button"
               type="button"
-              aria-label="?????? ???????? ???????"
-              title="?????? ???????? ???????"
+              aria-label="Открытые позиции"
+              title="Открытые позиции"
               onClick={() => setOpenPositionsVisible(true)}
             >
-              <span />
-              <span />
-              <span />
+              <span /><span /><span />
             </button>
-
             <button
               className="paper-autopilot-button"
               type="button"
@@ -719,6 +719,7 @@ export function ModePanel({
               </svg>            </button>
           </div>
 
+          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed}>
           <div className="paper-protection-stack">
             <TradingControlButton
               className="paper-stop-button"
@@ -907,7 +908,7 @@ export function ModePanel({
             </div>
           ) : null}
 
-          {openPositionsVisible ? (
+          {openPositionsVisible && accountWorkspaceProjection?.provider === "PAPER" ? (
             <OpenPositionsOverlay
               activeSymbol={symbol}
               onClose={() => setOpenPositionsVisible(false)}
@@ -917,6 +918,19 @@ export function ModePanel({
               }}
               runPaperMutation={runPaperMutation}
               applyPaperState={applyPaperState}
+            />
+          ) : null}
+          {openPositionsVisible && accountWorkspaceProjection?.provider !== "PAPER" ? (
+            <LiveAccountInventory
+              activeAccountName={activeAccountLabel && activeAccountLabel.id === accountWorkspaceProjection?.account_id
+                ? activeAccountLabel.name : ""}
+              activeSymbol={symbol}
+              onClose={() => setOpenPositionsVisible(false)}
+              onNavigate={(nextSymbol) => {
+                setOpenPositionsVisible(false);
+                onWorkspaceSymbolSelect?.(nextSymbol);
+              }}
+              projection={accountWorkspaceProjection}
             />
           ) : null}
 
@@ -972,7 +986,8 @@ export function ModePanel({
               </section>
             </div>
           ) : null}
-        </fieldset>
+          </fieldset>
+        </div>
           <div className="paper-lower-actions-row">
             <fieldset className="paper-limits-shell" disabled={!mutationsAllowed && !liveLimitAllowed}>
               {(["Buy", "Sell"] as const).map((side) => {
@@ -1046,8 +1061,15 @@ export function ModePanel({
                 </section>
               ) : null}
             </fieldset>
-            <div className="mode-panel-account-control">
-              <AccountMenu open={accountOpen} onToggle={onAccountToggle} workspaceProjection={accountWorkspaceProjection} />
+            <div className="workspace-display-navigation" aria-label="Workspace account">
+              <div className="mode-panel-account-control">
+                <AccountMenu
+                  open={accountOpen}
+                  onToggle={onAccountToggle}
+                  workspaceProjection={accountWorkspaceProjection}
+                  onActiveAccountChange={setActiveAccountLabel}
+                />
+              </div>
             </div>
           </div>
 

@@ -21,7 +21,7 @@
     "Define subsystem boundaries among BybitScanner, Trading Terminal and Trading Robot",
     "Define durable signal deep-link and SignalSnapshot requirements",
     "Define shared chart-engine, market entry, order overlay, SL/TP, close cleanup and reconciliation requirements",
-    "Define Working Volume as exactly five percent of own account equity before leverage",
+    "Define Working Volume as exactly five percent of active-account Wallet before leverage, rounded down to whole USDT",
     "Reserve future robot observation and manual-control transfer compatibility without implementing it",
     "Prepare later human review and explicit implementation authorization",
     "Implement the human-authorized Stage 8 Block 1 React 19, TypeScript and Vite frontend foundation under terminal/frontend",
@@ -113,7 +113,7 @@
     "Terminal remains usable when Scanner is stopped and is local-first but deployment-neutral for later VPS operation",
     "Telegram is the primary entry point and old signal deep links resolve durable SignalSnapshot history indefinitely",
     "Terminal and Signal Editor share one reusable chart engine",
-    "Working Volume is exactly five percent or one twentieth of the active trading account USDT walletBalance before leverage, rounded down to the nearest ten USDT",
+    "Working Volume is exactly five percent or one twentieth of the active trading account current Wallet before leverage, rounded down to whole USDT",
     "Bybit-confirmed state controls active visual state and execution feedback",
     "Full position close includes confirmed market close, ticker-wide order and protection cleanup, and reconciliation before success",
     "Semi-transparent means not confirmed by Bybit in the displayed state; opaque means exchange-confirmed",
@@ -141,7 +141,7 @@
     ,"Telegram menu, deep-link and command knowledge never grants trading or Scanner-control authority without the researched authorization boundary"
     ,"Terminal provides account-profile management and clearly identifies the active Bybit trading account and its current USDT deposit or equity value"
     ,"Trading state, reconciliation, analytics and future Robot state are isolated by trading account; account switching disables mutations until selected-account loading and reconciliation complete"
-    ,"One Working Volume is account-scoped, leverage-independent and equals five percent of active-account USDT walletBalance rounded down to the nearest ten USDT"
+    ,"One Working Volume is account-scoped, leverage-independent and equals five percent of active-account Wallet rounded down to whole USDT"
     ,"Future Robot-controlled aggregate exposure is limited to nineteen Working Volumes per trading account, excluding MANUAL-controlled exposure unless a later approved policy changes that boundary"
     ,"Trading Results reports selected-period realized PnL in both USDT and percentage of a defined period deposit or equity reference without treating external cash flows as trading performance"
     ,"Trading credentials belong only to the Terminal backend security boundary; API Secret is never returned to the frontend or stored in Scanner, chart, Telegram or frontend-readable durable state"
@@ -254,7 +254,7 @@
     ,"Exact Telegram allowlist, session and authorization checks for Terminal, AUTOPILOT and Scanner control"
     ,"Encrypted credential-storage, key rotation, validation diagnostics and trading-account profile lifecycle design"
     ,"USDT walletBalance refresh timing and account-switch reconciliation state machine"
-    ,"Working Volume behavior below the ten-USDT rounding quantum and its interaction with exchange minimum quantity and insufficient balance"
+    ,"Working Volume behavior below the one-USDT rounding quantum and its interaction with exchange minimum quantity and insufficient balance"
     ,"Concurrency and exposure reservation semantics for simultaneous future Robot commands and ownership handoffs near the nineteen-WV limit"
     ,"Selected-period percentage-PnL accounting for deposits, withdrawals, transfers, equity changes, period boundaries and timezone"
     ,"Final working/calculation depth beyond the preferred orderbook.50 starting candidate, exact sequence-gap rules, correlation window, confidence thresholds and same-sequence multi-message treatment"
@@ -286,7 +286,7 @@
     ,"Close Position is a multi-step reducing, observation, cleanup and REST-reconciliation workflow ending only at position zero with required symbol orders and protection removed"
     ,"Private WebSocket is realtime transport rather than durable truth; startup, reconnect and uncertain mutations use required REST positions, open orders, histories, executions and wallet/account state before streams resume synchronization"
     ,"A durable local TradingCommand correlation identity is persisted before or transactionally with submission; timeout-after-submit reconciles the original order before any exposure-increasing retry"
-    ,"Active-account USDT walletBalance is the binding WV base and excludes leverage, totalAvailableBalance, totalEquity, non-USDT asset value and unrealized-PnL-expanded buying capacity"
+    ,"Active-account account-wide Wallet (`totalWalletBalance`) is the binding WV base and excludes leverage, totalEquity, totalAvailableBalance and frontend-derived buying-capacity substitutes"
     ,"WV sizing converts selected WV to target USDT and then floors instrument quantity to authoritative qtyStep while validating minOrderQty, minNotionalValue and maximum constraints without increasing requested exposure"
     ,"Insufficient normalized volume is a pre-submit business rejection REJECTED_INSUFFICIENT_VOLUME with user feedback Недостаточный объём; Terminal and future Robot never auto-increase exposure to satisfy exchange minima"
     ,"Limit and protection draft prices use authoritative tickSize normalization visible before confirmation; safe rounding direction remains order-specific design work"
@@ -477,7 +477,8 @@
     {"revision": "2.0", "reason": "Implemented and accepted account-wide read-only LIVE reconciliation after a production build and real-phone test against a saved Bybit MAINNET account: fresh Refresh/Reconnect reached READY, showed real Equity and Wallet plus 33 positions and 13 active orders, preserved Paper as the sole Current account without switching, performed no LIVE mutations and exposed no credentials; next stage is active-account switching plus account-scoped Workspace activation without LIVE mutations", "date": "2026-08-31"},
     {"revision": "2.1", "reason": "Human-approved documentation-only bounded architecture amendment separating immutable PAPER storage identity from active session authority, defining one account-scoped Workspace projection router, atomic eligible account switching, session-aware stale rejection, a backend PAPER-only mutation gate, read-only LIVE views and unchanged public symbol/market-data authority; production implementation remains separately authorization-gated", "date": "2026-08-31"},
     {"revision": "2.2", "reason": "Human-authorized first safe LIVE execution slice limited to explicit manual MARKET BUY and MARKET SELL for the active writable Bybit MAINNET session, with durable command identity and idempotency, account/session fencing, persist-before-dispatch, default-off dual real-money gates, backend acceptance-notional ceiling, single-attempt mutation, UNKNOWN safety barrier and REST-only reconciliation; LIVE Limit, STOP, TAKE, full close, private WebSocket, autonomous dispatch and real-order acceptance remain unauthorized", "date": "2026-09-01"},
-    {"revision": "2.8", "reason": "Human-authorized corrective contract amendment mapping normalized Unified available_balance_usdt to result.list[0].totalAvailableBalance while preserving totalWalletBalance, totalEquity, provenance, position, execution, capability, gate and fencing semantics", "date": "2026-09-03"}
+    {"revision": "2.8", "reason": "Human-authorized corrective contract amendment mapping normalized Unified available_balance_usdt to result.list[0].totalAvailableBalance while preserving totalWalletBalance, totalEquity, provenance, position, execution, capability, gate and fencing semantics", "date": "2026-09-03"},
+    {"revision": "2.9", "reason": "Human-authorized corrective Working Volume contract: one WV is five percent of active-account account-wide Wallet (totalWalletBalance), rounded down to whole USDT; totalEquity, totalAvailableBalance and leverage are not WV bases", "date": "2026-09-03"}
   ]
 }
 ```
@@ -752,9 +753,9 @@ Working Volume remains independent of leverage and is calculated separately for 
 
 `raw_1_WV = USDT_deposit × 5%`
 
-`1_WV = floor(raw_1_WV / 10) × 10 USDT`
+`1_WV = floor(raw_1_WV) USDT`
 
-Thus deposits of 2,000, 2,150, 3,780 and 9,999 USDT yield respectively 100, 100, 180 and 490 USDT per
+Thus Wallet values of 2,000, 2,150, 3,780 and 9,999 USDT yield respectively 100, 107, 189 and 499 USDT per
 WV. Leverage never multiplies or otherwise alters WV. The authoritative meaning of the calculation-base
 USDT deposit/equity remains a CONTEXT/accounting decision. The approved `⚔ N.N` position display and its
 popover remain: actual engaged USDT volume, current/reference 1-WV value and displayed WV count. Its
@@ -785,7 +786,7 @@ encrypted storage deferred to CONTEXT.
 
 Revision 1.4 remains the approved product authority. Working Volume is account-scoped and independent
 of leverage: `raw_1_WV = USDT_deposit × 5%`, then
-`1_WV = floor(raw_1_WV / 10) × 10 USDT`. Leverage never multiplies WV; `⚔ N.N` is one-decimal
+`1_WV = floor(raw_1_WV) USDT`. Leverage never multiplies WV; `? N.N` is one-decimal
 presentation only and actual USDT state is authoritative. Account isolation, immutable entry provenance,
 exclusive MANUAL/ROBOT control, human close override, the future 19-WV per-account Robot limit and the
 current exclusion of MANUAL exposure from that Robot-specific limit are unchanged. Robot remains out of
@@ -935,8 +936,8 @@ Approved SPEC revision 1.4 remains authoritative: USDT Linear Perpetual is the p
 semi-transparent means requested/local but not exchange-confirmed and opaque means exchange-confirmed;
 full close removes all remaining ticker Limit orders and SL/TP/protection and reconciles; leverage never
 participates in WV; `⚔ N.N` is display-only; normalization must never silently increase selected exposure.
-Revision 1.6 did not silently replace the approved deposit/equity wording. Later explicit human authority in
-revision 1.8 binds active-account USDT `walletBalance` as the Manual v1 WV base.
+Revision 1.6 did not silently replace the approved deposit/equity wording. The current authoritative runtime-alignment
+decision supersedes revision 1.8's former wallet binding and binds current active-account USDT equity as the WV base.
 
 ### B. Researched and preferred directions
 
@@ -945,16 +946,16 @@ Manual v1 to One-Way Mode with `positionIdx=0`; independent simultaneous LONG an
 instant reversal are prohibited. Terminal inspects actual account/symbol position state and never silently
 changes the user's Bybit position mode. Exact compatible account setup and diagnostics remain required.
 
-For Working Volume, revision 1.8 binds the previously researched interpretation:
+For Working Volume, the current authoritative runtime-alignment decision binds:
 
-`WV_BASE = active trading account USDT walletBalance`
+`WV_BASE = active trading account account-wide Wallet (`totalWalletBalance`)`
 
-`raw_1_WV = USDT walletBalance × 5%`
+`raw_1_WV = current Wallet ? 5%`
 
-`1_WV = floor(raw_1_WV / 10) × 10 USDT`
+`1_WV = floor(raw_1_WV) USDT`
 
-This excludes cross-asset `totalEquity`, `totalAvailableBalance`, leverage-adjusted buying power and direct
-unrealized-PnL expansion. Leverage remains irrelevant. Exact wallet refresh/cache timing remains open.
+This excludes `totalEquity`, `totalAvailableBalance`, leverage-adjusted buying power and any frontend-derived
+substitute. Leverage remains irrelevant. Wallet refresh/reconciliation remains authoritative.
 
 Full-position exchange-side TP/SL remains the preferred v1 protection direction where final Bybit,
 account and position-mode compatibility permits. Protection should survive loss of Terminal/frontend
@@ -1164,16 +1165,15 @@ production work or begin IMPLEMENT.
 
 ### A. Binding Working Volume authority
 
-For Manual Live Trading v1, the authoritative Working Volume base is the active trading account's USDT
-`walletBalance`:
+For Manual Live Trading v1, the authoritative Working Volume base is the active trading account's account-wide
+Wallet (`totalWalletBalance` in the normalized LIVE account projection):
 
-`raw_1_WV = USDT walletBalance * 5%`.
+`raw_1_WV = current Wallet * 5%`.
 
-The approved rounding rule then rounds one WV down to whole tens of USDT. For example, a 3,787-USDT
-`walletBalance` produces raw WV 189.35 USDT and binding one WV 180 USDT. Leverage never multiplies WV.
-`totalAvailableBalance`, `totalEquity`, BTC/USDC or other asset value and unrealized-PnL-expanded buying
-capacity are not WV base. Future sizing uses current authoritative realized `walletBalance` according to a
-later refresh/cache policy; this checkpoint does not choose that policy numerically.
+The approved rounding rule rounds one WV down to whole USDT. For example, Wallet 342.75 USDT produces raw WV 17.1375 USDT and binding one WV 17 USDT. Leverage never multiplies WV.
+`totalEquity`, `totalAvailableBalance`, leverage-adjusted buying capacity and frontend estimates are not the
+WV base. Future sizing uses current authoritative account Wallet from the account reconciliation projection;
+this checkpoint does not choose that policy numerically.
 
 ### B. Binding One-Way Mode and mode handling
 

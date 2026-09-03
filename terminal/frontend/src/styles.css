@@ -753,6 +753,7 @@ button {
 .paper-market-actions.is-read-only { opacity: 0.52; }
 .paper-market-actions.is-read-only button,
 .paper-market-actions.is-read-only input { cursor: not-allowed; }
+.paper-mutation-boundary { display: contents; }
 
 .paper-limits-shell {
   position: relative;
@@ -775,6 +776,8 @@ button {
   padding-top: 0.25rem;
   border-top: 1px solid #27313b;
 }
+
+.workspace-display-navigation { min-width: 0; }
 
 .paper-limits-button,
 .paper-limits-cancel-all {
@@ -3104,7 +3107,7 @@ button {
   }
 
   .paper-lower-actions-row {
-    grid-template-columns: minmax(0, 1fr) clamp(5.25rem, 25vw, 7rem);
+    grid-template-columns: minmax(0, 1fr) minmax(5.25rem, 25vw, 7rem);
   }
 
   .mode-panel-account-control,
@@ -3112,6 +3115,8 @@ button {
     width: 100%;
     min-width: 0;
   }
+
+  .workspace-display-navigation { width: 100%; }
 
   .account-switch-button {
     justify-content: flex-start;
@@ -3155,6 +3160,33 @@ button {
 
   .account-switch-label small { display: none; }
 }
+
+.live-positions-surface { position: fixed; inset: 0; z-index: 140; display: grid; background: #0b1015; }
+.live-positions-surface > section { display: grid; grid-template-rows: auto auto minmax(0, 1fr); width: min(42rem, 100%); min-height: 0; margin: 0 auto; padding: max(0.75rem, env(safe-area-inset-top)) 0.75rem max(0.75rem, env(safe-area-inset-bottom)); }
+.live-positions-surface header { display: flex; align-items: center; gap: 0.7rem; padding-bottom: 0.75rem; }
+.live-positions-surface header button { width: 2.6rem; height: 2.6rem; border: 1px solid #394653; border-radius: 0.4rem; background: #171d24; color: #d8e0e7; font-size: 1.6rem; }
+.live-positions-surface h2 { margin: 0; font-size: 1.05rem; }
+.live-positions-surface header span { color: #91a0ad; font-size: 0.72rem; }
+.live-positions-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.35rem; margin-bottom: 0.7rem; }
+.live-positions-summary span { display: grid; gap: 0.15rem; padding: 0.5rem; border: 1px solid #303c47; border-radius: 0.4rem; color: #91a0ad; font-size: 0.68rem; }
+.live-positions-summary strong { overflow-wrap: anywhere; color: #e0e6eb; font-size: 0.78rem; }
+.live-positions-scroll { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.live-positions-scroll > p { color: #91a0ad; text-align: center; }
+.live-position-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; gap: 0.25rem 0.6rem; margin-bottom: 0.45rem; padding: 0.7rem; border: 1px solid #303c47; border-radius: 0.45rem; background: #151d24; color: #d8e0e7; text-align: left; }
+.live-position-select { position: absolute; inset: 0; z-index: 1; width: 100%; border: 0; background: transparent; touch-action: manipulation; }
+.live-position-row > span { position: relative; z-index: 2; pointer-events: none; }
+.live-position-row.active-symbol { border-color: #708392; }
+.live-position-row.active-separated { margin-bottom: 0.85rem; }
+.live-position-primary { display: flex; gap: 0.45rem; align-items: baseline; }
+.live-position-primary b { color: #8f9ba6; font-size: 0.7rem; }
+.live-position-row.long .live-position-primary b, .live-position-pnl.profit { color: var(--trade-buy); }
+.live-position-row.short .live-position-primary b, .live-position-pnl.loss { color: var(--trade-sell); }
+.live-position-pnl { display: grid; justify-items: end; align-content: start; text-align: right; white-space: nowrap; }
+.live-position-pnl strong { font-size: 0.82rem; }
+.live-position-pnl small { font-size: 0.68rem; font-weight: 700; }
+.live-position-details, .live-position-mark { color: #91a0ad; font-size: 0.7rem; }
+.live-position-details { grid-column: 1 / -1; }
+.live-position-mark { grid-column: 1 / -1; display: flex; justify-content: space-between; gap: 0.6rem; text-align: right; }
 
 .paper-open-positions-title {
   display: flex;

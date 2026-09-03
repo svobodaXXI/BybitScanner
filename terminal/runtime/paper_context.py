@@ -25,12 +25,12 @@ from terminal.exchange.events import (
 from terminal.persistence.sqlite_store import SQLiteStore
 
 
-def working_volume_usdt(equity_usdt: Decimal) -> Decimal:
+def working_volume_usdt(wallet_balance_usdt: Decimal) -> Decimal:
     one_wv = (
-        equity_usdt * Decimal("0.05") / Decimal("10")
-    ).to_integral_value(rounding=ROUND_DOWN) * Decimal("10")
+        wallet_balance_usdt * Decimal("0.05")
+    ).to_integral_value(rounding=ROUND_DOWN)
     if one_wv <= 0:
-        raise ValueError("paper equity is too small for working-volume sizing")
+        raise ValueError("wallet balance is too small for working-volume sizing")
     return one_wv
 
 

@@ -49,11 +49,12 @@ function validCatalog(value: unknown): value is AccountCatalog {
 }
 
 export function AccountMenu({
-  open, onToggle, workspaceProjection = null,
+  open, onToggle, workspaceProjection = null, onActiveAccountChange,
 }: {
   open: boolean;
   onToggle: () => void;
   workspaceProjection?: AccountWorkspaceProjection | null;
+  onActiveAccountChange?: (account: { id: string; name: string } | null) => void;
 }) {
   const [catalog, setCatalog] = useState<AccountCatalog | null>(null);
   const [catalogError, setCatalogError] = useState(false);
@@ -123,6 +124,9 @@ export function AccountMenu({
   }, [onToggle, open]);
 
   const active = catalog?.accounts.find((account) => account.id === catalog.active_account_id) ?? null;
+  useEffect(() => {
+    onActiveAccountChange?.(active ? { id: active.id, name: active.display_name } : null);
+  }, [active?.display_name, active?.id, onActiveAccountChange]);
   const closeAdd = () => {
     setAddOpen(false);
     setName("");

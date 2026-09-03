@@ -22,6 +22,17 @@ export const positionPnlPercent = (
 export const formatPositionPnlPercent = (value: number) =>
   `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value).toFixed(2)}%`;
 
+export const positionPnlPercentFromEntryNotional = (
+  unrealizedPnl: number,
+  size: number,
+  averageEntryPrice: number,
+) => {
+  const entryNotional = Math.abs(size * averageEntryPrice);
+  if (!Number.isFinite(unrealizedPnl) || !Number.isFinite(entryNotional) || entryNotional <= 0) return null;
+  const value = unrealizedPnl / entryNotional * 100;
+  return Number.isFinite(value) ? value : null;
+};
+
 export const tickSizePrecision = (tickSize: string) => {
   const normalized = tickSize.trim().toLowerCase();
   const [coefficient, exponentText] = normalized.split("e");

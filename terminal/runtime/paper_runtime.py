@@ -68,6 +68,33 @@ from terminal.runtime.paper_context import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _live_working_volume_projection(
+    wallet_balance_usdt: Decimal, source_positions: tuple[dict[str, object], ...],
+) -> tuple[Decimal | None, list[dict[str, object]]]:
+    try:
+        one_wv = working_volume_usdt(wallet_balance_usdt)
+    except (ArithmeticError, ValueError):
+        one_wv = None
+    positions = []
+    for source in source_positions:
+        position = dict(source)
+        engaged_notional = None
+        engaged_wv = None
+        try:
+            size = Decimal(str(position["size"]))
+            average_entry = Decimal(str(position["average_entry"]))
+            if size.is_finite() and average_entry.is_finite() and average_entry > 0:
+                engaged_notional = abs(size * average_entry)
+                if one_wv is not None:
+                    engaged_wv = engaged_notional / one_wv
+        except (ArithmeticError, KeyError, TypeError, ValueError):
+            pass
+        position["engaged_notional_usdt"] = str(engaged_notional) if engaged_notional is not None else None
+        position["engaged_wv"] = str(engaged_wv) if engaged_wv is not None else None
+        positions.append(position)
+    return one_wv, positions
+
+
 class PaperOnlyAdapter:
     """Fail closed if any non-PAPER mutation path is reached."""
 
@@ -403,6 +430,9 @@ class PaperRuntime:
         snapshot = self._live_account_store.get(account.id.value)
         if snapshot is None or snapshot.environment != account.environment.value:
             raise RuntimeError("live_account_snapshot_unavailable")
+        one_wv, positions = _live_working_volume_projection(
+            snapshot.wallet_balance_usdt, snapshot.positions,
+        )
         return {
             **envelope,
             "read_only": snapshot.read_only,
@@ -439,7 +469,8 @@ class PaperRuntime:
             "wallet_balance_usdt": str(snapshot.wallet_balance_usdt),
             "total_equity_usdt": str(snapshot.total_equity_usdt),
             "available_balance_usdt": str(snapshot.available_balance_usdt),
-            "positions": list(snapshot.positions),
+            "one_wv_usdt": str(one_wv) if one_wv is not None else None,
+            "positions": positions,
             "orders": list(snapshot.orders),
             "paper_state": None,
             "balance_source_fields": {
@@ -450,6 +481,11 @@ class PaperRuntime:
                 "unit": "USD",
             },
             "balance_provenance": dict(snapshot.balance_provenance or {}),
+            "working_volume_source_fields": {
+                "one_wv_usdt": "wallet_balance_usdt * 0.05, rounded down to 1 USDT",
+                "engaged_notional_usdt": "abs(position.size * position.average_entry)",
+                "engaged_wv": "engaged_notional_usdt / one_wv_usdt",
+            },
         }
 
     def require_paper_mutations(self) -> None:
