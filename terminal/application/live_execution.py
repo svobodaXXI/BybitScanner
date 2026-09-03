@@ -1,4 +1,4 @@
-﻿"""Account-fenced LIVE parity facade over the existing TradingApplication."""
+"""Account-fenced LIVE parity facade over the existing TradingApplication."""
 
 from __future__ import annotations
 

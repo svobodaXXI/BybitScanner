@@ -756,8 +756,7 @@ Working Volume remains independent of leverage and is calculated separately for 
 `1_WV = floor(raw_1_WV) USDT`
 
 Thus Wallet values of 2,000, 2,150, 3,780 and 9,999 USDT yield respectively 100, 107, 189 and 499 USDT per
-WV. Leverage never multiplies or otherwise alters WV. The authoritative meaning of the calculation-base
-USDT deposit/equity remains a CONTEXT/accounting decision. The approved `⚔ N.N` position display and its
+WV. Leverage never multiplies or otherwise alters WV. The authoritative calculation base is the active-account account-wide Wallet (`totalWalletBalance`). The approved `⚔ N.N` position display and its
 popover remain: actual engaged USDT volume, current/reference 1-WV value and displayed WV count. Its
 one-decimal rounding is presentation-only and never accounting truth.
 
@@ -786,7 +785,7 @@ encrypted storage deferred to CONTEXT.
 
 Revision 1.4 remains the approved product authority. Working Volume is account-scoped and independent
 of leverage: `raw_1_WV = USDT_deposit × 5%`, then
-`1_WV = floor(raw_1_WV) USDT`. Leverage never multiplies WV; `? N.N` is one-decimal
+`1_WV = floor(raw_1_WV) USDT`. Leverage never multiplies WV; `⚔ N.N` is one-decimal
 presentation only and actual USDT state is authoritative. Account isolation, immutable entry provenance,
 exclusive MANUAL/ROBOT control, human close override, the future 19-WV per-account Robot limit and the
 current exclusion of MANUAL exposure from that Robot-specific limit are unchanged. Robot remains out of
@@ -937,7 +936,7 @@ semi-transparent means requested/local but not exchange-confirmed and opaque mea
 full close removes all remaining ticker Limit orders and SL/TP/protection and reconciles; leverage never
 participates in WV; `⚔ N.N` is display-only; normalization must never silently increase selected exposure.
 Revision 1.6 did not silently replace the approved deposit/equity wording. The current authoritative runtime-alignment
-decision supersedes revision 1.8's former wallet binding and binds current active-account USDT equity as the WV base.
+decision restores active-account account-wide Wallet (`totalWalletBalance`) as the WV base and supersedes the temporary current-equity alignment.
 
 ### B. Researched and preferred directions
 
@@ -950,7 +949,7 @@ For Working Volume, the current authoritative runtime-alignment decision binds:
 
 `WV_BASE = active trading account account-wide Wallet (`totalWalletBalance`)`
 
-`raw_1_WV = current Wallet ? 5%`
+`raw_1_WV = current Wallet × 5%`
 
 `1_WV = floor(raw_1_WV) USDT`
 
