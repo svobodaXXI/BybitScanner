@@ -1224,19 +1224,26 @@ def test_add_bybit_account_persists_inactive_account_without_generation_change()
             replayed = runtime.call(lambda owner: owner.add_bybit_account("Test", "key", "secret"))
             catalog = runtime.call(lambda owner: owner.account_catalog())
             assert created["created"] is True
-            assert replayed == {"account_id": created["account_id"], "created": False}
+            assert created["account"] == {
+                "id": created["account_id"],
+                "display_name": "Test",
+                "provider": "BYBIT",
+                "environment": "TESTNET",
+                "status": "DISCONNECTED",
+            }
+            assert replayed == {**created, "created": False}
             assert catalog["active_account_id"] == "paper"
             assert catalog["session_generation"] == 1
             assert len(catalog["accounts"]) == 2
             assert catalog["accounts"][1]["environment"] == "TESTNET"
-            assert catalog["accounts"][1]["status"] == "READ_ONLY"
+            assert catalog["accounts"][1]["status"] == "DISCONNECTED"
             serialized = json.dumps(catalog).lower()
             assert "secret" not in serialized and '"api_key"' not in serialized
         finally:
             runtime.close()
 
 
-def test_fresh_trading_capable_validation_is_ready_but_restart_is_disconnected():
+def test_fresh_trading_capable_validation_stays_disconnected_without_reconciliation():
     class Protector:
         def protect(self, value): return value[::-1]
         def unprotect(self, value): return value[::-1]
@@ -1258,7 +1265,7 @@ def test_fresh_trading_capable_validation_is_ready_but_restart_is_disconnected()
         try:
             runtime.call(lambda owner: owner.add_bybit_account("Main", "key", "secret"))
             fresh = runtime.call(lambda owner: owner.account_catalog())
-            assert fresh["accounts"][1]["status"] == "READY"
+            assert fresh["accounts"][1]["status"] == "DISCONNECTED"
             assert fresh["active_account_id"] == "paper"
             assert fresh["session_generation"] == 1
         finally:

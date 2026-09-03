@@ -64,7 +64,7 @@ describe("AccountWorkspaceStore", () => {
     store.setSymbol("BTCUSDT");
     await vi.waitFor(() => expect(store.getSnapshot().projection).toEqual(initial));
     const liveRefresh = store.refreshActiveLive();
-    const switching = store.activate("paper");
+    const switching = store.activate("paper", { accountId: "bybit-1", generation: 2 });
     resolveRefresh({ ok: true, json: async () => ({ ok: true }) });
     await liveRefresh;
     await switching;
@@ -119,7 +119,7 @@ describe("AccountWorkspaceStore", () => {
     vi.stubGlobal("fetch", fetchMock);
     const store = new AccountWorkspaceStore();
     store.setSymbol("BTCUSDT");
-    const activation = store.activate("bybit-1");
+    const activation = store.activate("bybit-1", { accountId: "paper", generation: 1 });
     await activation;
     expect(store.getSnapshot().projection?.account_id).toBe("bybit-1");
     resolveOld({ ok: true, json: async () => projection("paper", 1) });
@@ -132,8 +132,9 @@ describe("AccountWorkspaceStore", () => {
     let resolveSwitch!: (value: unknown) => void;
     vi.stubGlobal("fetch", vi.fn().mockReturnValue(new Promise((resolve) => { resolveSwitch = resolve; })));
     const store = new AccountWorkspaceStore();
-    const first = store.activate("bybit-1");
-    await expect(store.activate("paper")).rejects.toThrow("account_switch_in_progress");
+    const first = store.activate("bybit-1", { accountId: "paper", generation: 1 });
+    await expect(store.activate("paper", { accountId: "paper", generation: 1 }))
+      .rejects.toThrow("account_switch_in_progress");
     resolveSwitch({ ok: false, json: async () => ({ ok: false }) });
     await expect(first).rejects.toThrow();
   });
@@ -149,7 +150,8 @@ describe("AccountWorkspaceStore", () => {
     store.setSymbol("BTCUSDT");
     await vi.waitFor(() => expect(store.getSnapshot().projection?.account_id).toBe("paper"));
 
-    await expect(store.activate("bybit-1")).rejects.toThrow("stale_account_switch");
+    await expect(store.activate("bybit-1", { accountId: "paper", generation: 2 }))
+      .rejects.toThrow("stale_account_switch");
     expect(store.getSnapshot().projection?.account_id).toBe("paper");
     expect(store.getSnapshot().switching).toBe(false);
   });
@@ -162,7 +164,8 @@ describe("AccountWorkspaceStore", () => {
       .mockRejectedValueOnce(new Error("network")));
     const store = new AccountWorkspaceStore();
 
-    await expect(store.activate("bybit-1")).resolves.toMatchObject({
+    await expect(store.activate("bybit-1", { accountId: "paper", generation: 1 }))
+      .resolves.toMatchObject({
       active_account_id: "bybit-1", session_generation: 2,
     });
     expect(store.getSnapshot()).toEqual({ projection: null, switching: false });
@@ -178,7 +181,8 @@ describe("AccountWorkspaceStore", () => {
     store.setSymbol("BTCUSDT");
     await vi.waitFor(() => expect(store.getSnapshot().projection?.account_id).toBe("paper"));
 
-    await expect(store.activate("Main Bybit")).rejects.toThrow("account_not_found");
+    await expect(store.activate("Main Bybit", { accountId: "paper", generation: 5 }))
+      .rejects.toThrow("account_not_found");
     expect(store.getSnapshot().projection?.account_id).toBe("paper");
     expect(store.getSnapshot().projection?.session_generation).toBe(5);
   });

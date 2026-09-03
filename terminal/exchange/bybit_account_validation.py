@@ -45,7 +45,21 @@ class BybitAccountValidator:
                 read_only = result.get("readOnly")
                 if read_only not in {0, 1}:
                     continue
-                successes.append(ValidatedBybitAccount(environment, read_only == 1))
+                permissions = result.get("permissions")
+                if not isinstance(permissions, Mapping):
+                    continue
+                contract_trade = permissions.get("ContractTrade")
+                if not isinstance(contract_trade, list) or any(
+                    not isinstance(permission, str) for permission in contract_trade
+                ):
+                    continue
+                can_write_contracts = {"Order", "Position"}.issubset(contract_trade)
+                effective_read_only = (
+                    read_only == 1
+                    or environment == "TESTNET"
+                    or not can_write_contracts
+                )
+                successes.append(ValidatedBybitAccount(environment, effective_read_only))
             except Exception:
                 continue
         if len(successes) != 1:

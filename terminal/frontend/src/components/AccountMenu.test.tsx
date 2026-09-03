@@ -171,7 +171,10 @@ describe("AccountMenu", () => {
     }] };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, json: async () => catalog })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, account_id: "bybit-1", created: true }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({
+        ok: true, account_id: "bybit-1", created: true,
+        account: { id: "bybit-1", display_name: "Main", provider: "BYBIT", environment: "MAINNET", status: "READY" },
+      }) })
       .mockResolvedValueOnce({ ok: true, json: async () => withBybit });
     vi.stubGlobal("fetch", fetchMock);
     render(<AccountMenu open onToggle={vi.fn()} />);
@@ -294,7 +297,13 @@ describe("AccountMenu", () => {
       "/api/accounts/bybit-canonical-42/refresh", { method: "POST" },
     );
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/accounts/bybit-canonical-42/activate", { method: "POST" },
+      "/api/accounts/bybit-canonical-42/activate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_active_account_id: "paper", expected_session_generation: 1,
+        }),
+      },
     );
     expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain(
       "/api/accounts/Main%20Bybit/activate",
@@ -355,7 +364,13 @@ describe("AccountMenu", () => {
     const accountList = screen.getByRole("dialog", { name: "Accounts" });
     expect(within(accountList).getByText("Main").closest("article")).toHaveTextContent("Current");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/accounts/bybit-1/activate");
-    expect(fetchMock.mock.calls[1][1]).toEqual({ method: "POST" });
+    expect(fetchMock.mock.calls[1][1]).toEqual({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expected_active_account_id: "paper", expected_session_generation: 1,
+      }),
+    });
   });
 
   it("does not restore stale Current UI when catalog reload fails after a successful switch", async () => {

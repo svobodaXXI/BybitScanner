@@ -59,14 +59,24 @@ export class AccountWorkspaceStore {
     void this.refresh();
   }
 
-  async activate(accountId: string) {
+  async activate(
+    accountId: string,
+    expected: { accountId: string; generation: number },
+  ) {
     if (this.snapshot.switching) throw new Error("account_switch_in_progress");
     const attempt = ++this.switchAttempt;
     ++this.refreshAttempt;
     this.snapshot = { ...this.snapshot, switching: true };
     this.emit();
     try {
-      const response = await fetch(marketApiRoutes.accountActivate(accountId), { method: "POST" });
+      const response = await fetch(marketApiRoutes.accountActivate(accountId), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_active_account_id: expected.accountId,
+          expected_session_generation: expected.generation,
+        }),
+      });
       const result = await response.json() as {
         ok?: boolean; active_account_id?: string; session_generation?: number; error?: string;
       };

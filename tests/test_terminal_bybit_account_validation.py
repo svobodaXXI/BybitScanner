@@ -21,7 +21,10 @@ class BybitAccountValidatorTests(unittest.TestCase):
         def factory(**kwargs):
             calls.append(kwargs)
             if kwargs["testnet"]:
-                return Session({"retCode": 0, "result": {"apiKey": "key", "readOnly": 1}})
+                return Session({"retCode": 0, "result": {
+                    "apiKey": "key", "readOnly": 1,
+                    "permissions": {"ContractTrade": []},
+                }})
             return Session(error=TimeoutError())
         result = BybitAccountValidator(factory).validate(BybitCredentials("key", "secret"))
         self.assertEqual(result.environment, "TESTNET")
@@ -32,6 +35,23 @@ class BybitAccountValidatorTests(unittest.TestCase):
         invalid = lambda **kwargs: Session({"retCode": 10003, "retMsg": "invalid"})
         with self.assertRaisesRegex(AccountValidationError, "bybit_validation_failed"):
             BybitAccountValidator(invalid).validate(BybitCredentials("key", "secret"))
-        valid = lambda **kwargs: Session({"retCode": 0, "result": {"apiKey": "key", "readOnly": 0}})
+        valid = lambda **kwargs: Session({"retCode": 0, "result": {
+            "apiKey": "key", "readOnly": 0,
+            "permissions": {"ContractTrade": ["Order", "Position"]},
+        }})
         with self.assertRaisesRegex(AccountValidationError, "bybit_validation_failed"):
             BybitAccountValidator(valid).validate(BybitCredentials("key", "secret"))
+
+    def test_validator_requires_both_contract_permissions_for_mainnet_write_access(self):
+        def factory(**kwargs):
+            if kwargs["testnet"]:
+                return Session(error=TimeoutError())
+            return Session({"retCode": 0, "result": {
+                "apiKey": "key", "readOnly": 0,
+                "permissions": {"ContractTrade": ["Order"]},
+            }})
+
+        result = BybitAccountValidator(factory).validate(BybitCredentials("key", "secret"))
+
+        self.assertEqual(result.environment, "MAINNET")
+        self.assertTrue(result.read_only)

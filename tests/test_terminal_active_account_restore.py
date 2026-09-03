@@ -61,6 +61,14 @@ def manager_with_ready_bybit():
     return manager
 
 
+def activate_current(runtime, account_id):
+    return runtime.call(lambda owner: owner.activate_account(
+        account_id,
+        owner._account_manager.session_token.active_account_id.value,
+        owner._account_manager.session_token.generation,
+    ))
+
+
 class StaticBookProvider:
     def get_book(self, symbol: Symbol) -> NormalizedOrderBook:
         return NormalizedOrderBook(
@@ -113,7 +121,7 @@ class ActiveAccountRestoreTests(unittest.TestCase):
                 database_path, account_manager=manager_with_ready_bybit(),
             )
             try:
-                result = runtime.call(lambda owner: owner.activate_account("bybit-one"))
+                result = activate_current(runtime, "bybit-one")
                 self.assertEqual(result["session_generation"], 2)
                 self.assertEqual(json.loads(preference_path.read_text()), {
                     "version": 1, "preferred_account_id": "bybit-one",
@@ -187,7 +195,7 @@ class ActiveAccountRestoreTests(unittest.TestCase):
             runtime = runtime_owner(database_path, account_manager=manager)
             try:
                 with self.assertRaisesRegex(RuntimeError, "account_activation_not_ready"):
-                    runtime.call(lambda owner: owner.activate_account("bybit-one"))
+                    activate_current(runtime, "bybit-one")
                 self.assertEqual(preference.load(), TradingAccountId("paper"))
                 self.assertEqual(manager.session_token.generation, 1)
                 self.assertEqual(manager.active_account_id, TradingAccountId("paper"))

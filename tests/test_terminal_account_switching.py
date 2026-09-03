@@ -39,6 +39,14 @@ def publish_live(store):
     ))
 
 
+def activate_current(runtime, account_id):
+    return runtime.call(lambda owner: owner.activate_account(
+        account_id,
+        owner._account_manager.session_token.active_account_id.value,
+        owner._account_manager.session_token.generation,
+    ))
+
+
 class AccountSwitchingTests(unittest.TestCase):
     def test_orderbook_paper_processing_tracks_authoritative_active_account(self):
         class MutableBookProvider:
@@ -94,7 +102,7 @@ class AccountSwitchingTests(unittest.TestCase):
                     )
                     self.assertEqual(context.calls, 1)
 
-                    runtime.call(lambda owner: owner.activate_account("bybit-one"))
+                    activate_current(runtime, "bybit-one")
                     live_generation = manager.session_token.generation
                     books.update_id = "BTCUSDT:2:2"
                     execution_count = runtime.call(lambda owner: len(owner.store.load_executions()))
@@ -109,7 +117,7 @@ class AccountSwitchingTests(unittest.TestCase):
                     )
                     self.assertEqual(manager.session_token.generation, live_generation)
 
-                    runtime.call(lambda owner: owner.activate_account("paper"))
+                    activate_current(runtime, "paper")
                     resumed_generation = manager.session_token.generation
                     self.assertEqual(
                         runtime.call(lambda owner: owner.process_orderbook_update(books.update_id)),
@@ -174,11 +182,11 @@ class AccountSwitchingTests(unittest.TestCase):
             )
             try:
                 paper_before = runtime.call(lambda owner: owner.workspace_account_projection("BTCUSDT"))
-                live = runtime.call(lambda owner: owner.activate_account("bybit-one"))
+                live = activate_current(runtime, "bybit-one")
                 live_projection = runtime.call(lambda owner: owner.workspace_account_projection("BTCUSDT"))
                 with self.assertRaisesRegex(RuntimeError, "live_mutations_disabled"):
                     runtime.call(lambda owner: owner.require_paper_mutations())
-                paper = runtime.call(lambda owner: owner.activate_account("paper"))
+                paper = activate_current(runtime, "paper")
                 paper_after = runtime.call(lambda owner: owner.workspace_account_projection("BTCUSDT"))
                 self.assertEqual(live, {
                     "active_account_id": "bybit-one", "session_generation": 2, "status": "READY",
@@ -227,7 +235,7 @@ class AccountSwitchingTests(unittest.TestCase):
                 live_account_store_path=live_path,
             )
             try:
-                switched = runtime.call(lambda owner: owner.activate_account("bybit-one"))
+                switched = activate_current(runtime, "bybit-one")
                 projected = runtime.call(
                     lambda owner: owner.workspace_account_projection("BTCUSDT")
                 )

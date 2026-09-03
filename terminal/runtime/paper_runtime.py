@@ -31,6 +31,7 @@ from terminal.application.pretrade_guard import NotionalIntent, OrderKind, PreTr
 from terminal.application.pretrade_guard import WorkingVolumeIntent
 from terminal.application.trading_application import TradingApplication
 from terminal.application.trading_accounts import (
+    AccountSessionToken,
     TradingAccount,
     TradingAccountEnvironment,
     TradingAccountManager,
@@ -38,7 +39,10 @@ from terminal.application.trading_accounts import (
     TradingAccountStatus,
     paper_account_manager,
 )
-from terminal.application.live_account_reconciliation import LiveAccountReconciler
+from terminal.application.live_account_reconciliation import (
+    LiveAccountReconciler,
+    LiveAccountReconciliationError,
+)
 from terminal.domain.models import (
     ExecutionId, OrderId, OrderSide, PositionSide, Quantity, Symbol,
     TradingAccountId,
@@ -281,8 +285,19 @@ class PaperRuntime:
             raise RuntimeError("live_account_reconciliation_unavailable")
         return self._live_account_reconciler.summary(account_id)
 
-    def activate_account(self, account_id_text: str) -> dict[str, object]:
+    def activate_account(
+        self,
+        account_id_text: str,
+        expected_active_account_id_text: str,
+        expected_session_generation: int,
+    ) -> dict[str, object]:
         account_id = TradingAccountId(account_id_text)
+        expected_token = AccountSessionToken(
+            TradingAccountId(expected_active_account_id_text),
+            expected_session_generation,
+        )
+        if self._account_manager.session_token != expected_token:
+            raise RuntimeError("stale_account_session")
         target = self._account_manager.account(account_id)
         if not self._account_manager.is_activation_eligible(account_id):
             raise RuntimeError("account_activation_not_ready")
@@ -298,7 +313,7 @@ class PaperRuntime:
                 raise RuntimeError("live_account_snapshot_unavailable")
         if self._active_account_preference_store is not None:
             self._active_account_preference_store.save(account_id)
-        token = self._account_manager.activate(account_id)
+        token = self._account_manager.activate_if_current(account_id, expected_token)
         return {
             "active_account_id": token.active_account_id.value,
             "session_generation": token.generation,
@@ -334,7 +349,12 @@ class PaperRuntime:
                 "account_restore snapshot_ready account_id=%s status=%s refresh_generation=%s",
                 preferred.value, snapshot["status"], snapshot["refresh_generation"],
             )
-            activated = self.activate_account(preferred.value)
+            current_token = self._account_manager.session_token
+            activated = self.activate_account(
+                preferred.value,
+                current_token.active_account_id.value,
+                current_token.generation,
+            )
             LOGGER.info(
                 "account_restore activation_success account_id=%s status=%s session_generation=%s",
                 preferred.value, activated["status"], activated["session_generation"],
@@ -469,7 +489,12 @@ class PaperRuntime:
         display_name, api_key, api_secret = display_name.strip(), api_key.strip(), api_secret.strip()
         for stored in self._stored_bybit_accounts:
             if hmac.compare_digest(stored.api_key, api_key) and hmac.compare_digest(stored.api_secret, api_secret):
-                return {"account_id": stored.id, "created": False}
+                if self._live_account_reconciler is not None:
+                    try:
+                        self.refresh_live_account(stored.id)
+                    except LiveAccountReconciliationError:
+                        pass
+                return self._account_setup_result(stored.id, created=False)
         validated = self._account_validator.validate(BybitCredentials(api_key, api_secret))
         account_id = f"bybit-{uuid4().hex}"
         stored = StoredBybitAccount(
@@ -481,10 +506,29 @@ class PaperRuntime:
         self._account_manager.register_inactive(TradingAccount(
             TradingAccountId(account_id), display_name, TradingAccountProvider.BYBIT,
             TradingAccountEnvironment(validated.environment),
-            TradingAccountStatus.READ_ONLY if validated.read_only else TradingAccountStatus.READY,
+            TradingAccountStatus.DISCONNECTED,
         ))
         self._stored_bybit_accounts.append(stored)
-        return {"account_id": account_id, "created": True}
+        if self._live_account_reconciler is not None:
+            try:
+                self.refresh_live_account(account_id)
+            except LiveAccountReconciliationError:
+                pass
+        return self._account_setup_result(account_id, created=True)
+
+    def _account_setup_result(self, account_id_text: str, *, created: bool) -> dict[str, object]:
+        account = self._account_manager.account(TradingAccountId(account_id_text))
+        return {
+            "account_id": account.id.value,
+            "created": created,
+            "account": {
+                "id": account.id.value,
+                "display_name": account.display_name,
+                "provider": account.provider.value,
+                "environment": account.environment.value,
+                "status": account.status.value,
+            },
+        }
 
     def process_orderbook_update(self, notified_book_update_id: str) -> int:
         if not notified_book_update_id:

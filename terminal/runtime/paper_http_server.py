@@ -109,6 +109,7 @@ LIVE_PROTECTION_FIELDS = {
 }
 LIVE_FULL_CLOSE_FIELDS = FULL_CLOSE_FIELDS | LIVE_AUTHORITY_FIELDS
 ACCOUNT_CREATE_FIELDS = {"display_name", "api_key", "api_secret"}
+ACCOUNT_ACTIVATE_FIELDS = {"expected_active_account_id", "expected_session_generation"}
 
 
 def _account_route_id(path: str, action: str) -> str | None:
@@ -1863,15 +1864,26 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         account_activate_id = _account_route_id(urlparse(self.path).path, "activate")
         if account_activate_id is not None:
             try:
+                payload = self._payload(ACCOUNT_ACTIVATE_FIELDS)
                 result = self.server.runtime.call(
-                    lambda runtime: runtime.activate_account(account_activate_id)
+                    lambda runtime: runtime.activate_account(
+                        account_activate_id,
+                        payload["expected_active_account_id"],
+                        payload["expected_session_generation"],
+                    )
                 )
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_account_switch_payload"})
+                return
             except LookupError:
                 self._json_response(404, {"ok": False, "error": "account_not_found"})
                 return
             except RuntimeError as exc:
                 error = str(exc)
-                if error not in {"account_activation_not_ready", "live_account_snapshot_unavailable"}:
+                if error not in {
+                    "account_activation_not_ready", "live_account_snapshot_unavailable",
+                    "stale_account_session",
+                }:
                     error = "account_activation_failed"
                 self._json_response(409, {"ok": False, "error": error})
                 return

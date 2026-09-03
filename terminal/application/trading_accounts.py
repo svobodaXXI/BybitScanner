@@ -141,6 +141,18 @@ class TradingAccountManager:
         self._session_token = AccountSessionToken(account_id, self._session_token.generation + 1)
         return self._session_token
 
+    def activate_if_current(
+        self,
+        account_id: TradingAccountId,
+        expected_token: AccountSessionToken,
+    ) -> AccountSessionToken:
+        """Atomically activate only while the caller's captured authority is current."""
+        if not isinstance(expected_token, AccountSessionToken):
+            raise TypeError("expected account session token is required")
+        if self._session_token != expected_token:
+            raise RuntimeError("stale_account_session")
+        return self.activate(account_id)
+
     def is_activation_eligible(self, account_id: TradingAccountId) -> bool:
         account = self.account(account_id)
         return (

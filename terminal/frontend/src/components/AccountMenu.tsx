@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import { accountWorkspaceStore } from "../accountWorkspace/accountWorkspaceStore";
 import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
@@ -69,6 +69,7 @@ export function AccountMenu({
   const [confirmAccount, setConfirmAccount] = useState<AccountDescriptor | null>(null);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState("");
+  const submitInFlight = useRef(false);
 
   const refreshCatalog = async () => {
     const response = await fetch(marketApiRoutes.accounts);
@@ -128,6 +129,8 @@ export function AccountMenu({
   };
 
   const submitAccount = async () => {
+    if (submitInFlight.current) return;
+    submitInFlight.current = true;
     setSubmitting(true);
     setSubmitError("");
     try {
@@ -136,8 +139,10 @@ export function AccountMenu({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ display_name: name.trim(), api_key: apiKey.trim(), api_secret: apiSecret }),
       });
-      const payload = await response.json() as { ok?: boolean; error?: string };
-      if (!response.ok || payload.ok !== true) {
+      const payload = await response.json() as {
+        ok?: boolean; error?: string; account?: AccountDescriptor;
+      };
+      if (!response.ok || payload.ok !== true || !payload.account) {
         const messages: Record<string, string> = {
           bybit_validation_failed: "Bybit rejected these credentials.",
           credential_storage_failed: "Secure credential storage is unavailable.",
@@ -156,6 +161,7 @@ export function AccountMenu({
     } catch {
       setSubmitError("Account could not be added.");
     } finally {
+      submitInFlight.current = false;
       setSubmitting(false);
     }
   };
@@ -186,7 +192,11 @@ export function AccountMenu({
         }
         await requestLiveAccountRefresh(confirmAccount.id);
       }
-      await accountWorkspaceStore.activate(confirmAccount.id);
+      if (!catalog) throw new Error("stale_account_session");
+      await accountWorkspaceStore.activate(confirmAccount.id, {
+        accountId: catalog.active_account_id,
+        generation: catalog.session_generation,
+      });
       setConfirmAccount(null);
       try {
         await refreshCatalog();
@@ -198,9 +208,14 @@ export function AccountMenu({
       const code = error instanceof Error ? error.message : "account_activation_failed";
       setSwitchError(code === "account_reconciliation_failed"
         ? "Reconnect failed; the previous account remains Current."
+        : code === "stale_account_session"
+          ? "Account selection changed; review Current account and try again."
         : code === "account_activation_not_ready"
           ? "Refresh/Reconnect this account before switching."
           : "Account switch failed; the previous account remains Current.");
+      if (code === "stale_account_session") {
+        try { await refreshCatalog(); } catch { setCatalogError(true); }
+      }
     } finally {
       setSwitching(false);
     }
