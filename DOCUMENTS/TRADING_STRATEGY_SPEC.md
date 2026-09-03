@@ -105,14 +105,13 @@ behavior. No detector owns sizing, STOP, TAKE or execution, and no strategy rela
 `ACCEPTED DESIGN` from `CR-TRADING-WORKSPACE-001`:
 
 ```text
-raw_1_WV = authoritative USDT wallet balance/equity base × 5%
-1_WV     = floor(raw_1_WV / 10) × 10 USDT
+raw_1_WV = active-account account-wide Wallet (`totalWalletBalance`) × 5%
+1_WV     = floor(raw_1_WV) USDT
 ```
 
-One Working Volume (`WV`) is therefore 5% of the authoritative own-USDT capital base before leverage, rounded down
-to whole tens of USDT. Leverage never multiplies or otherwise redefines WV. The exact equity source and refresh
-semantics must follow the active account contract; current Manual v1 authority uses active-account USDT
-`walletBalance`.
+One Working Volume (`WV`) is therefore 5% of the active-account account-wide Wallet before leverage, rounded down
+to whole USDT. Leverage never multiplies or otherwise redefines WV. `totalEquity`, `totalAvailableBalance`,
+leverage-adjusted buying power and frontend-derived estimates are not the WV base.
 
 Entry quantity is derived from intended WV notional and entry/reference price, then normalized by authoritative
 instrument constraints such as `qtyStep`, minimum quantity and minimum notional. Normalization must not silently
@@ -135,6 +134,41 @@ For every position-building method:
 
 `NEEDS VALIDATION`: risk per idea, portfolio heat below the 19-WV exposure ceiling, correlation limits, daily loss
 limits, drawdown stops and liquidation-distance constraints.
+
+## 2.3 Pre-trade market eligibility and delisting gate
+
+`ACCEPTED DESIGN`: before every future AUTOPILOT exposure-increasing entry, the robot must perform a fresh
+market-eligibility check for the exact Bybit instrument and market/category.
+
+The check must detect authoritative Bybit announcements or exchange state concerning:
+
+* announced delisting or contract removal;
+* announced trading suspension or termination;
+* scheduled forced settlement;
+* contract migration or replacement affecting the current instrument;
+* current instrument status that makes normal new trading unavailable.
+
+Announcements must be matched to the exact symbol and relevant market/category. A Spot delisting of the same asset
+does not by itself mean that its USDT Linear Perpetual is being delisted.
+
+If a relevant future delisting, termination, forced settlement or equivalent shutdown is known, AUTOPILOT must
+reject all new exposure in that instrument. Pattern quality, confirmation score, expected reward and available
+capital may not override this gate.
+
+The decision record should preserve the matched symbol, market/category, announcement identity or source,
+announcement timestamp, effective event timestamp when available, and the resulting eligibility decision.
+
+`ACCEPTED DESIGN`: inability to establish sufficiently fresh authoritative delisting/eligibility evidence is
+fail-closed for autonomous exposure-increasing entry. The fact that a symbol is still quoted or temporarily
+tradeable does not override an already-published future delisting or forced-settlement announcement.
+
+If a relevant delisting/shutdown announcement is discovered while a ROBOT-controlled position is already open,
+AUTOPILOT must stop adding exposure and raise a separate risk-management event for orderly exit before the exchange
+deadline. Exact exit timing and safety buffer are `NEEDS VALIDATION`.
+
+`NEEDS VALIDATION`: authoritative Bybit announcement source/API or feed, polling cadence, cache lifetime,
+acceptable evidence freshness, event taxonomy, symbol matching, amended/cancelled announcement handling and the
+required exit buffer before effective delisting/settlement time.
 
 ---
 
