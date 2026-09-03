@@ -445,7 +445,7 @@ class PaperRuntime:
             "balance_source_fields": {
                 "wallet_balance_usdt": "result.list[0].totalWalletBalance",
                 "total_equity_usdt": "result.list[0].totalEquity",
-                "available_balance_usdt": "result.list[0].totalEquity",
+                "available_balance_usdt": "result.list[0].totalAvailableBalance",
                 "account_type": "UNIFIED",
                 "unit": "USD",
             },

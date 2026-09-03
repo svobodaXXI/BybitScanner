@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "2.7",
+  "revision": "2.8",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -476,7 +476,8 @@
     {"revision": "1.81", "reason": "Completed M8 after rebuilt production assets passed desktop and real-phone Chrome acceptance through the active lhr.life tunnel for ONGUSDT 5m-to-1m-to-5m with bounded Chart and DOM, visible candles, live DOM and Smart Tape, and no recurrence of LIVE BOOK UNAVAILABLE", "date": "2026-08-30"},
     {"revision": "2.0", "reason": "Implemented and accepted account-wide read-only LIVE reconciliation after a production build and real-phone test against a saved Bybit MAINNET account: fresh Refresh/Reconnect reached READY, showed real Equity and Wallet plus 33 positions and 13 active orders, preserved Paper as the sole Current account without switching, performed no LIVE mutations and exposed no credentials; next stage is active-account switching plus account-scoped Workspace activation without LIVE mutations", "date": "2026-08-31"},
     {"revision": "2.1", "reason": "Human-approved documentation-only bounded architecture amendment separating immutable PAPER storage identity from active session authority, defining one account-scoped Workspace projection router, atomic eligible account switching, session-aware stale rejection, a backend PAPER-only mutation gate, read-only LIVE views and unchanged public symbol/market-data authority; production implementation remains separately authorization-gated", "date": "2026-08-31"},
-    {"revision": "2.2", "reason": "Human-authorized first safe LIVE execution slice limited to explicit manual MARKET BUY and MARKET SELL for the active writable Bybit MAINNET session, with durable command identity and idempotency, account/session fencing, persist-before-dispatch, default-off dual real-money gates, backend acceptance-notional ceiling, single-attempt mutation, UNKNOWN safety barrier and REST-only reconciliation; LIVE Limit, STOP, TAKE, full close, private WebSocket, autonomous dispatch and real-order acceptance remain unauthorized", "date": "2026-09-01"}
+    {"revision": "2.2", "reason": "Human-authorized first safe LIVE execution slice limited to explicit manual MARKET BUY and MARKET SELL for the active writable Bybit MAINNET session, with durable command identity and idempotency, account/session fencing, persist-before-dispatch, default-off dual real-money gates, backend acceptance-notional ceiling, single-attempt mutation, UNKNOWN safety barrier and REST-only reconciliation; LIVE Limit, STOP, TAKE, full close, private WebSocket, autonomous dispatch and real-order acceptance remain unauthorized", "date": "2026-09-01"},
+    {"revision": "2.8", "reason": "Human-authorized corrective contract amendment mapping normalized Unified available_balance_usdt to result.list[0].totalAvailableBalance while preserving totalWalletBalance, totalEquity, provenance, position, execution, capability, gate and fencing semantics", "date": "2026-09-03"}
   ]
 }
 ```
@@ -4682,9 +4683,9 @@ automatic restore does not require a second confirmation because it replays the 
 preference; every new user-initiated switch still requires explicit confirmation.
 
 For Bybit Unified Trading Account wallet reads, normalized account-wide USD semantics are fixed as follows:
-Deposit/account funds use `result.list[0].totalWalletBalance`; the accepted second balance metric uses
-`result.list[0].totalEquity`. `totalAvailableBalance` and the allow-listed account/USDT raw candidates remain
-diagnostic provenance and are not substituted into the accepted two-value key peek. Coin-level `walletBalance`,
+Deposit/account funds use `result.list[0].totalWalletBalance`; total equity uses `result.list[0].totalEquity`; and
+available balance uses `result.list[0].totalAvailableBalance`. The allow-listed account/USDT raw candidates remain
+diagnostic provenance and are not substituted across these three normalized fields. Coin-level `walletBalance`,
 unrealized PnL, margin balance and deprecated `availableToWithdraw`/`free` are not substituted for these values.
 
 Implementation acceptance requires regressions proving immutable PAPER storage identity; PAPER-to-LIVE-to-PAPER
@@ -4705,8 +4706,8 @@ PAPER execution; active LIVE order-book updates do not enter PAPER matching/cont
 
 Frontend ownership rejects stale account/session and lower refresh-generation results, coalesces periodic REST-only
 LIVE refresh, and preserves the last valid account-scoped projection on failure. Accepted Unified balances are
-Deposit from account-wide `totalWalletBalance` and the second metric from account-wide `totalEquity`, with raw
-allow-listed provenance retained. Exactly one golden key identifies Current, short tap opens the dismissible
+Deposit from account-wide `totalWalletBalance`, Equity from account-wide `totalEquity`, and Available from
+account-wide `totalAvailableBalance`, with raw allow-listed provenance retained. Exactly one golden key identifies Current, short tap opens the dismissible
 Accounts modal, 500-ms hold shows refreshed balances, and the account name remains in the isolated lower limits row.
 Real-phone acceptance confirms startup restore, read-only LIVE controls, Accounts backdrop/close behavior, removal
 of oversized Workspace LIVE cards, original upper trading-control geometry and a continuous full-width lower-row

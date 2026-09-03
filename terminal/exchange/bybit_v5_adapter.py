@@ -198,7 +198,7 @@ class BybitV5ReadAdapter:
             return BybitWalletSnapshot(
                 _finite_decimal(account["totalWalletBalance"]),
                 _finite_decimal(account["totalEquity"]),
-                _finite_decimal(account["totalEquity"]),
+                _finite_decimal(account["totalAvailableBalance"]),
                 int(response["time"]) if response.get("time") is not None else None,
                 provenance,
             )

@@ -222,8 +222,17 @@ class BybitNormalizationTests(unittest.TestCase):
         wallet = adapter.get_wallet_snapshot()
         self.assertEqual(wallet.wallet_balance_usdt, Decimal("99.75"))
         self.assertEqual(wallet.total_equity_usdt, Decimal("101.25"))
-        self.assertEqual(wallet.available_balance_usdt, Decimal("101.25"))
+        self.assertEqual(wallet.available_balance_usdt, Decimal("80.5"))
+        self.assertEqual(
+            len({
+                wallet.wallet_balance_usdt,
+                wallet.total_equity_usdt,
+                wallet.available_balance_usdt,
+            }),
+            3,
+        )
         self.assertNotEqual(wallet.wallet_balance_usdt, Decimal("12.34"))
+        self.assertEqual(wallet.balance_provenance["account.totalWalletBalance"], "99.75")
         self.assertEqual(wallet.balance_provenance["account.totalAvailableBalance"], "80.5")
         self.assertEqual(wallet.balance_provenance["account.totalEquity"], "101.25")
         self.assertEqual(wallet.balance_provenance["USDT.equity"], "10.5")

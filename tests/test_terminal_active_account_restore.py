@@ -41,8 +41,12 @@ class ReadAdapter:
         assert account_id == TradingAccountId("bybit-one") and testnet is False
     def get_wallet_snapshot(self):
         return BybitWalletSnapshot(
-            Decimal("332.3"), Decimal("80.37"), Decimal("80.37"), 1234,
-            {"account.totalWalletBalance": "332.3", "account.totalEquity": "80.37"},
+            Decimal("332.3"), Decimal("80.37"), Decimal("61.25"), 1234,
+            {
+                "account.totalWalletBalance": "332.3",
+                "account.totalEquity": "80.37",
+                "account.totalAvailableBalance": "61.25",
+            },
         )
     def list_open_positions(self): return ()
     def list_all_active_orders(self): return ()
@@ -154,9 +158,23 @@ class ActiveAccountRestoreTests(unittest.TestCase):
                     self.assertEqual(catalog["session_generation"], 2)
                     self.assertEqual(catalog["accounts"][0]["status"], expected)
                     self.assertEqual(projection["wallet_balance_usdt"], "332.3")
-                    self.assertEqual(projection["available_balance_usdt"], "80.37")
+                    self.assertEqual(projection["total_equity_usdt"], "80.37")
+                    self.assertEqual(projection["available_balance_usdt"], "61.25")
+                    self.assertEqual(len({
+                        projection["wallet_balance_usdt"],
+                        projection["total_equity_usdt"],
+                        projection["available_balance_usdt"],
+                    }), 3)
                     self.assertEqual(projection["projection_generation"], 8)
                     self.assertEqual(projection["balance_source_fields"]["account_type"], "UNIFIED")
+                    self.assertEqual(
+                        projection["balance_source_fields"]["available_balance_usdt"],
+                        "result.list[0].totalAvailableBalance",
+                    )
+                    self.assertEqual(
+                        projection["balance_provenance"]["account.totalAvailableBalance"],
+                        "61.25",
+                    )
                 finally:
                     runtime.close()
 

@@ -6198,8 +6198,8 @@ are implemented. `TradingAccountManager` remains sole active/session authority a
 
 LIVE and READ_ONLY controls and every backend mutation route remain fail-closed; no LIVE mutation adapter is used.
 Public chart/DOM/tape continues independently, while active LIVE order-book updates bypass PAPER execution/context.
-Accepted Unified balance semantics use account-wide `totalWalletBalance` for Deposit and `totalEquity` for the
-second key-peek metric. Real-phone acceptance also covers startup reconnect/activation, Accounts modal behavior,
+Accepted Unified balance semantics use account-wide `totalWalletBalance` for Deposit, `totalEquity` for Equity,
+and `totalAvailableBalance` for Available. Real-phone acceptance also covers startup reconnect/activation, Accounts modal behavior,
 one golden key plus account name, refreshed hold peek, no PAPER/LIVE mixing, original upper-control geometry,
 isolated lower limits/account row and its continuous full-width divider.
 
