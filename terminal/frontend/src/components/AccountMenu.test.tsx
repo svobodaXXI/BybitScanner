@@ -165,6 +165,26 @@ describe("AccountMenu", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Account catalog unavailable");
   });
 
+  it("recovers the catalog when Accounts opens after the initial request failed", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce({ ok: true, json: async () => catalog });
+    vi.stubGlobal("fetch", fetchMock);
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <AccountMenu open={open} onToggle={() => setOpen((current) => !current)} />;
+    }
+    render(<Harness />);
+    await waitFor(() => expect(screen.getByText("UNAVAILABLE")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Open account selection" }));
+
+    expect(await screen.findByText("Current")).toBeInTheDocument();
+    expect(screen.queryByText("Account catalog unavailable")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open account selection" })).toHaveTextContent("PAPER");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("submits credentials once, refreshes catalog, and clears the dialog on success", async () => {
     const withBybit = { ...catalog, accounts: [...catalog.accounts, {
       id: "bybit-1", display_name: "Main", provider: "BYBIT", environment: "MAINNET", status: "READY",

@@ -36,16 +36,24 @@ export type AccountWorkspaceProjection = {
 type Snapshot = {
   projection: AccountWorkspaceProjection | null;
   switching: boolean;
+  bootstrapUnavailable: boolean;
 };
 
+const BOOTSTRAP_MAX_ATTEMPTS = 3;
+const BOOTSTRAP_RETRY_DELAY_MS = 1_000;
+
 export class AccountWorkspaceStore {
-  private snapshot: Snapshot = { projection: null, switching: false };
+  private snapshot: Snapshot = { projection: null, switching: false, bootstrapUnavailable: false };
   private listeners = new Set<() => void>();
   private symbol: string | null = null;
   private authority: { accountId: string; generation: number } | null = null;
   private switchAttempt = 0;
   private refreshAttempt = 0;
   private liveRefreshInFlight = false;
+  private bootstrapAttempts = 0;
+  private bootstrapRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private bootstrapGeneration = 0;
+  private stopped = false;
 
   getSnapshot = () => this.snapshot;
   subscribe = (listener: () => void) => {
@@ -54,9 +62,26 @@ export class AccountWorkspaceStore {
   };
 
   setSymbol(symbol: string) {
-    if (this.symbol === symbol) return;
+    const symbolChanged = this.symbol !== symbol;
+    this.stopped = false;
+    if (!symbolChanged && this.snapshot.projection) return;
     this.symbol = symbol;
-    void this.refresh();
+    this.cancelBootstrapRetry();
+    const generation = ++this.bootstrapGeneration;
+    this.bootstrapAttempts = 0;
+    this.snapshot = { ...this.snapshot, bootstrapUnavailable: false };
+    if (symbolChanged && this.snapshot.projection) {
+      void this.refresh();
+      return;
+    }
+    void this.runBootstrapAttempt(generation);
+  }
+
+  dispose() {
+    this.stopped = true;
+    ++this.bootstrapGeneration;
+    ++this.refreshAttempt;
+    this.cancelBootstrapRetry();
   }
 
   async activate(
@@ -90,7 +115,7 @@ export class AccountWorkspaceStore {
         throw new Error("stale_account_switch");
       }
       this.authority = { accountId: result.active_account_id, generation: result.session_generation! };
-      this.snapshot = { projection: null, switching: false };
+      this.snapshot = { projection: null, switching: false, bootstrapUnavailable: false };
       this.emit();
       try {
         await this.refresh();
@@ -107,32 +132,34 @@ export class AccountWorkspaceStore {
     }
   }
 
-  async refresh() {
+  async refresh(): Promise<boolean> {
     const symbol = this.symbol;
-    if (!symbol) return;
+    if (!symbol || this.stopped) return false;
     const attempt = ++this.refreshAttempt;
     const captured = this.authority;
     const response = await fetch(marketApiRoutes.workspaceAccount(symbol));
-    if (!response.ok) return;
+    if (!response.ok) return false;
     const result = await response.json() as AccountWorkspaceProjection;
-    if (attempt !== this.refreshAttempt || result.ok !== true) return;
+    if (attempt !== this.refreshAttempt || result.ok !== true || this.stopped) return false;
     if (captured && (
       this.authority !== captured
       || result.account_id !== captured.accountId
       || result.session_generation !== captured.generation
-    )) return;
+    )) return false;
     if (this.authority && (
       result.account_id !== this.authority.accountId
       || result.session_generation !== this.authority.generation
-    )) return;
+    )) return false;
     const current = this.snapshot.projection;
     if (current
       && current.account_id === result.account_id
       && current.session_generation === result.session_generation
-      && result.projection_generation < current.projection_generation) return;
+      && result.projection_generation < current.projection_generation) return false;
     this.authority = { accountId: result.account_id, generation: result.session_generation };
-    this.snapshot = { ...this.snapshot, projection: result };
+    this.snapshot = { ...this.snapshot, projection: result, bootstrapUnavailable: false };
     this.emit();
+    this.cancelBootstrapRetry();
+    return true;
   }
 
   async refreshActiveLive() {
@@ -161,6 +188,34 @@ export class AccountWorkspaceStore {
   private emit() {
     for (const listener of this.listeners) listener();
   }
+
+  private async runBootstrapAttempt(generation: number) {
+    if (this.stopped || generation !== this.bootstrapGeneration
+      || this.snapshot.projection || this.bootstrapAttempts >= BOOTSTRAP_MAX_ATTEMPTS) return;
+    ++this.bootstrapAttempts;
+    let recovered = false;
+    try {
+      recovered = await this.refresh();
+    } catch {
+      recovered = false;
+    }
+    if (recovered || this.stopped || generation !== this.bootstrapGeneration
+      || this.snapshot.projection) return;
+    if (this.bootstrapAttempts >= BOOTSTRAP_MAX_ATTEMPTS) {
+      this.snapshot = { ...this.snapshot, bootstrapUnavailable: true };
+      this.emit();
+      return;
+    }
+    this.bootstrapRetryTimer = setTimeout(() => {
+      this.bootstrapRetryTimer = null;
+      void this.runBootstrapAttempt(generation);
+    }, BOOTSTRAP_RETRY_DELAY_MS);
+  }
+
+  private cancelBootstrapRetry() {
+    if (this.bootstrapRetryTimer) clearTimeout(this.bootstrapRetryTimer);
+    this.bootstrapRetryTimer = null;
+  }
 }
 
 export const accountWorkspaceStore = new AccountWorkspaceStore();
@@ -171,11 +226,13 @@ export function useAccountWorkspace(symbol: string) {
   );
   useEffect(() => {
     accountWorkspaceStore.setSymbol(symbol);
-    void accountWorkspaceStore.refresh();
     const timer = window.setInterval(() => {
       void accountWorkspaceStore.refreshActiveLive();
     }, 30_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      accountWorkspaceStore.dispose();
+    };
   }, [symbol]);
   return snapshot;
 }

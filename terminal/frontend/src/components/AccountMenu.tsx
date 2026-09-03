@@ -70,15 +70,23 @@ export function AccountMenu({
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState("");
   const submitInFlight = useRef(false);
+  const catalogRequestInFlight = useRef<Promise<void> | null>(null);
 
-  const refreshCatalog = async () => {
-    const response = await fetch(marketApiRoutes.accounts);
-    if (!response.ok) throw new Error("account catalog unavailable");
-    const payload: unknown = await response.json();
-    const candidate = (payload as { ok?: unknown }).ok === true ? payload : null;
-    if (!validCatalog(candidate)) throw new Error("invalid account catalog");
-    setCatalog(candidate);
-    setCatalogError(false);
+  const refreshCatalog = () => {
+    if (catalogRequestInFlight.current) return catalogRequestInFlight.current;
+    const request = (async () => {
+      const response = await fetch(marketApiRoutes.accounts);
+      if (!response.ok) throw new Error("account catalog unavailable");
+      const payload: unknown = await response.json();
+      const candidate = (payload as { ok?: unknown }).ok === true ? payload : null;
+      if (!validCatalog(candidate)) throw new Error("invalid account catalog");
+      setCatalog(candidate);
+      setCatalogError(false);
+    })().finally(() => {
+      if (catalogRequestInFlight.current === request) catalogRequestInFlight.current = null;
+    });
+    catalogRequestInFlight.current = request;
+    return request;
   };
 
   const requestLiveAccountRefresh = async (accountId: string) => {
@@ -91,24 +99,19 @@ export function AccountMenu({
   };
 
   useEffect(() => {
-    const controller = new AbortController();
-    void fetch(marketApiRoutes.accounts, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("account catalog unavailable");
-        const payload: unknown = await response.json();
-        const candidate = (payload as { ok?: unknown }).ok === true ? payload : null;
-        if (!validCatalog(candidate)) throw new Error("invalid account catalog");
-        setCatalog(candidate);
-        setCatalogError(false);
-      })
-      .catch((error: unknown) => {
-        if ((error as { name?: string }).name !== "AbortError") {
-          setCatalog(null);
-          setCatalogError(true);
-        }
-      });
-    return () => controller.abort();
+    void refreshCatalog().catch(() => {
+      setCatalog(null);
+      setCatalogError(true);
+    });
   }, []);
+
+  useEffect(() => {
+    if (!open || (catalog && !catalogError)) return;
+    void refreshCatalog().catch(() => {
+      setCatalog(null);
+      setCatalogError(true);
+    });
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

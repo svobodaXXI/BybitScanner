@@ -13,6 +13,71 @@ const projection = (accountId: string, generation: number) => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe("AccountWorkspaceStore", () => {
+  it("retries a failed bootstrap, publishes the projection, and stops retrying after success", async () => {
+    vi.useFakeTimers();
+    const recovered = projection("paper", 1);
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce({ ok: true, json: async () => recovered });
+    vi.stubGlobal("fetch", fetchMock);
+    const store = new AccountWorkspaceStore();
+
+    store.setSymbol("BTCUSDT");
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(store.getSnapshot()).toEqual({
+      projection: recovered, switching: false, bootstrapUnavailable: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    store.dispose();
+    vi.useRealTimers();
+  });
+
+  it("stops a pending bootstrap retry when disposed", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network"));
+    vi.stubGlobal("fetch", fetchMock);
+    const store = new AccountWorkspaceStore();
+
+    store.setSymbol("BTCUSDT");
+    await vi.advanceTimersByTimeAsync(0);
+    store.dispose();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().projection).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("bounds bootstrap retries and marks the unavailable state", async () => {
+    vi.useFakeTimers();
+    const recovered = projection("paper", 1);
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("network"))
+      .mockRejectedValueOnce(new Error("network"))
+      .mockRejectedValueOnce(new Error("network"))
+      .mockResolvedValueOnce({ ok: true, json: async () => recovered });
+    vi.stubGlobal("fetch", fetchMock);
+    const store = new AccountWorkspaceStore();
+
+    store.setSymbol("BTCUSDT");
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(store.getSnapshot().bootstrapUnavailable).toBe(true);
+
+    store.setSymbol("BTCUSDT");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.getSnapshot()).toEqual({
+      projection: recovered, switching: false, bootstrapUnavailable: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    store.dispose();
+    vi.useRealTimers();
+  });
+
   it("refreshes an active LIVE snapshot and publishes the newer equity generation", async () => {
     const initial = projection("bybit-1", 2);
     const updated = { ...initial, projection_generation: 2, total_equity_usdt: "80",
@@ -168,7 +233,9 @@ describe("AccountWorkspaceStore", () => {
       .resolves.toMatchObject({
       active_account_id: "bybit-1", session_generation: 2,
     });
-    expect(store.getSnapshot()).toEqual({ projection: null, switching: false });
+    expect(store.getSnapshot()).toEqual({
+      projection: null, switching: false, bootstrapUnavailable: false,
+    });
   });
 
   it("preserves frontend ownership when activation is not found", async () => {
