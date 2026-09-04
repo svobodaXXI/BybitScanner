@@ -51,6 +51,14 @@ def _link_frontend_dependencies(root: Path, verification_root: Path) -> bool:
     return True
 
 
+def _unlink_frontend_dependencies(verification_root: Path) -> None:
+    target = verification_root / "terminal" / "frontend" / "node_modules"
+    if target.is_symlink():
+        target.unlink()
+    elif os.name == "nt" and target.exists():
+        os.rmdir(target)
+
+
 def verify(
     path_values: Sequence[str], *, git: Git | None = None, transaction_id: str | None = None,
     additional_commands: Sequence[dict[str, object]] = (),
@@ -58,6 +66,7 @@ def verify(
     probe = git or Git(Path.cwd())
     checks: list[dict[str, object]] = []
     isolated_path: Path | None = None
+    frontend_dependencies_linked = False
     try:
         root = repository_root(probe)
         active_git = git or Git(root)
@@ -145,6 +154,7 @@ def verify(
         command_specs = list(additional_commands)
         if any(path.startswith("terminal/frontend/src/") for path in paths):
             if transaction_id and _link_frontend_dependencies(root, verification_root):
+                frontend_dependencies_linked = True
                 checks.append({"name": "frontend-dependency-link", "status": "PASS", "detail": ""})
             command_specs.append({
                 "label": "frontend-build", "cwd": "terminal/frontend",
@@ -187,6 +197,9 @@ def verify(
         failed = [str(item["name"]) for item in checks if item["status"] != "PASS"]
         if failed:
             if isolated_path is not None:
+                if frontend_dependencies_linked:
+                    _unlink_frontend_dependencies(isolated_path)
+                    frontend_dependencies_linked = False
                 remove_isolated_worktree(isolated_path, git=active_git)
                 isolated_path = None
             return False, compact("FAIL", paths, [str(x["name"]) for x in checks], failed, ())
@@ -202,6 +215,9 @@ def verify(
                 raise RuntimeError("isolated candidate changed during verification")
             if candidate_tree(transaction_id or "", git=active_git) != isolated_tree:
                 raise RuntimeError("candidate tree changed during isolated verification")
+            if frontend_dependencies_linked:
+                _unlink_frontend_dependencies(isolated_path or Path())
+                frontend_dependencies_linked = False
             remove_isolated_worktree(isolated_path or Path(), git=active_git)
             isolated_path = None
             checks.append({"name": "real-index-unchanged", "status": "PASS", "detail": ""})
@@ -232,6 +248,8 @@ def verify(
         blockers = [str(exc)]
         if isolated_path is not None:
             try:
+                if frontend_dependencies_linked:
+                    _unlink_frontend_dependencies(isolated_path)
                 remove_isolated_worktree(isolated_path, git=git or Git(Path.cwd()))
             except (OSError, RuntimeError, ValueError) as cleanup_exc:
                 blockers.append(str(cleanup_exc))

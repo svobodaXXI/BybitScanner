@@ -28,7 +28,7 @@ from terminal.persistence.sqlite_store import (
     CommandRecord, LiveLimitRuntimeAttribution, PersistenceError, SQLiteStore,
 )
 from terminal.runtime.paper_http_server import PaperHttpHandler
-from tools.dev.live_limit_acceptance import _parser, _request
+from tools.dev.live_limit_acceptance import _parser, _request, _rehearse
 
 
 ACCOUNT = TradingAccountId("bybit-main")
@@ -247,6 +247,163 @@ class LiveLimitAdminTests(unittest.TestCase):
     def test_cli_arm_has_no_implicit_safety_values(self):
         with self.assertRaises(SystemExit):
             _parser().parse_args(["arm", "--acceptance-session-id", "only-one-value"])
+
+    def _rehearsal_args(self, backend=None):
+        prefix = ["--backend", backend] if backend else []
+        return _parser().parse_args(prefix + [
+            "rehearse", "--acceptance-session-id", "rehearsal-1",
+            "--account-id", ACCOUNT.value, "--environment", "MAINNET",
+            "--symbol", SYMBOL.value, "--capability", LIVE_LIMIT_ACCEPTANCE_CAPABILITY,
+            "--max-create-count", "1", "--aggregate-notional-ceiling", "5.20",
+            "--per-order-ceiling", "5.20", "--expires-at-ms", "2000",
+            "--operator-authorization-reference", "CR-r3.2/rehearsal",
+            "--authorized-build-sha", "build-1",
+            "--authorized-database-identity", self.store.database_identity,
+            "--authorized-session-generation", "1",
+        ])
+
+    def _apply_arm_request(self, payload):
+        return self._arm(payload["acceptance_session_id"], **{
+            "account_id": payload["account_id"],
+            "environment": payload["environment"], "symbol": payload["symbol"],
+            "capability": payload["capability"],
+            "max_create_count": payload["max_create_count"],
+            "aggregate_notional_ceiling": Decimal(payload["aggregate_notional_ceiling"]),
+            "per_order_ceiling": Decimal(payload["per_order_ceiling"]),
+            "expires_at_ms": payload["expires_at_ms"],
+            "operator_authorization_reference": payload["operator_authorization_reference"],
+            "authorized_build_sha": payload["authorized_build_sha"],
+            "authorized_database_identity": payload["authorized_database_identity"],
+            "authorized_session_generation": payload["authorized_session_generation"],
+        })
+
+    def test_rehearsal_inspects_arms_diagnoses_revokes_with_gates_off(self):
+        calls = []
+
+        def requester(backend, path, token, payload=None):
+            calls.append((path, payload))
+            if path.endswith("/arm"):
+                self._apply_arm_request(payload)
+                return {"ok": True}
+            if path.endswith("/revoke"):
+                self.admin.revoke(**payload)
+                return {"ok": True}
+            return self.admin.diagnostics()
+
+        result = _rehearse(self._rehearsal_args(), "operator-token", requester)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["live_gates"], "OFF")
+        self.assertEqual(result["exchange_mutation"], "NOT_REQUESTED")
+        self.assertEqual([path for path, _ in calls], [
+            "/api/operator/live-limit-acceptance",
+            "/api/operator/live-limit-acceptance/arm",
+            "/api/operator/live-limit-acceptance",
+            "/api/operator/live-limit-acceptance/revoke",
+            "/api/operator/live-limit-acceptance",
+        ])
+        self.assertEqual(self.admin.diagnostics()["current_acceptance_session"]["state"], "REVOKED")
+
+    def test_rehearsal_uses_authenticated_operator_http_path_end_to_end(self):
+        state = {"sessions": []}
+
+        class Target:
+            def live_limit_acceptance_diagnostics(self):
+                sessions = tuple(state["sessions"])
+                return {
+                    "live_gates": {
+                        "live_mainnet_authorized": False,
+                        "live_limit_mutations_enabled": False,
+                        "live_market_mutations_enabled": False,
+                        "live_parity_mutations_enabled": False,
+                    },
+                    "live_capabilities": {"market": False, "limit": False, "parity": False},
+                    "acceptance_sessions": sessions,
+                    "current_acceptance_session": sessions[0] if sessions else None,
+                }
+
+            def arm_live_limit_acceptance(self, **payload):
+                session = {
+                    "acceptance_session_id": payload["acceptance_session_id"],
+                    "state": "ARMED", "authority_matches_runtime": True,
+                }
+                state["sessions"] = [session]
+                return session
+
+            def revoke_live_limit_acceptance(self, **payload):
+                state["sessions"][0]["state"] = "REVOKED"
+                return state["sessions"][0]
+
+        class Runtime:
+            def call(self, operation):
+                return operation(Target())
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = Runtime()
+        token = "test-operator-token-with-32-characters"
+        server.operator_token = token
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        backend = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            result = _rehearse(self._rehearsal_args(backend), token, _request)
+            self.assertEqual(result["workflow"][-1], "FINAL_DIAGNOSTICS_CONFIRMED")
+            self.assertEqual(state["sessions"][0]["state"], "REVOKED")
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_rehearsal_refuses_before_arm_when_any_live_gate_is_on(self):
+        calls = []
+        diagnostics = self.admin.diagnostics()
+        diagnostics["live_gates"]["live_limit_mutations_enabled"] = True
+
+        def requester(backend, path, token, payload=None):
+            calls.append(path)
+            return diagnostics
+
+        with self.assertRaisesRegex(RuntimeError, "every LIVE mutation gate"):
+            _rehearse(self._rehearsal_args(), "operator-token", requester)
+        self.assertEqual(calls, ["/api/operator/live-limit-acceptance"])
+        self.assertEqual(self.admin.diagnostics()["acceptance_sessions"], ())
+
+    def test_rehearsal_revokes_if_post_arm_diagnostics_fail(self):
+        calls = []
+
+        def requester(backend, path, token, payload=None):
+            calls.append(path)
+            if path.endswith("/arm"):
+                self._apply_arm_request(payload)
+                return {"ok": True}
+            if path.endswith("/revoke"):
+                self.admin.revoke(**payload)
+                return {"ok": True}
+            if calls.count("/api/operator/live-limit-acceptance") == 2:
+                raise RuntimeError("diagnostics unavailable")
+            return self.admin.diagnostics()
+
+        with self.assertRaisesRegex(RuntimeError, "diagnostics unavailable"):
+            _rehearse(self._rehearsal_args(), "operator-token", requester)
+        self.assertIn("/api/operator/live-limit-acceptance/revoke", calls)
+        self.assertEqual(self.admin.diagnostics()["current_acceptance_session"]["state"], "REVOKED")
+
+    def test_rehearsal_revokes_after_ambiguous_arm_response(self):
+        calls = []
+
+        def requester(backend, path, token, payload=None):
+            calls.append(path)
+            if path.endswith("/arm"):
+                self._apply_arm_request(payload)
+                raise RuntimeError("arm response lost")
+            if path.endswith("/revoke"):
+                self.admin.revoke(**payload)
+                return {"ok": True}
+            return self.admin.diagnostics()
+
+        with self.assertRaisesRegex(RuntimeError, "arm response lost"):
+            _rehearse(self._rehearsal_args(), "operator-token", requester)
+        self.assertEqual(calls[-1], "/api/operator/live-limit-acceptance/revoke")
+        self.assertEqual(self.admin.diagnostics()["current_acceptance_session"]["state"], "REVOKED")
 
     def test_operator_http_requires_token_and_returns_non_secret_diagnostics(self):
         diagnostics = self.admin.diagnostics()

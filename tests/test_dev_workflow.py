@@ -501,6 +501,26 @@ class TransactionWorkflowTests(unittest.TestCase):
         self.assertIn("frontend-build", names)
         self.assertFalse((root / ".git/bybitscanner/tasks/frontend-flow/verification-worktree").exists())
 
+    def test_frontend_dependency_link_cleanup_preserves_source(self):
+        from tools.dev.verify import _link_frontend_dependencies, _unlink_frontend_dependencies
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / "root"
+        verification_root = Path(temporary.name) / "verification"
+        source = root / "terminal/frontend/node_modules"
+        source.mkdir(parents=True)
+        marker = source / "dependency.txt"
+        marker.write_text("preserve", encoding="utf-8")
+
+        self.assertTrue(_link_frontend_dependencies(root, verification_root))
+        linked = verification_root / "terminal/frontend/node_modules"
+        self.assertTrue(linked.exists())
+        _unlink_frontend_dependencies(verification_root)
+
+        self.assertFalse(linked.exists())
+        self.assertEqual(marker.read_text(encoding="utf-8"), "preserve")
+
     def test_overlap_fails_before_commit(self):
         temporary, root, _ = self.make_repo()
         self.addCleanup(temporary.cleanup)

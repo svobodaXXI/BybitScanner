@@ -1,24 +1,33 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { Dispatch, ReactNode } from "react";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import type { LimitDraftAction, LimitDraft } from "../orders/limitDraft";
 
-const { liveProjection, refreshActiveLive } = vi.hoisted(() => ({
-  refreshActiveLive: vi.fn(async () => {}),
-  liveProjection: {
+const { liveProjection, liveProjectionState, refreshActiveLive } = vi.hoisted(() => {
+  const projection = {
     ok: true, account_id: "bybit-main", provider: "BYBIT", environment: "MAINNET",
     status: "READY", session_generation: 8, projection_generation: 3, read_only: false,
     capabilities: { market: false, limit: true, stop: false, take: false, full_close: false },
     wallet_balance_usdt: "10", total_equity_usdt: "10", available_balance_usdt: "10",
     positions: [], orders: [], paper_state: null,
-  },
-}));
+  };
+  return {
+    refreshActiveLive: vi.fn(async () => {}),
+    liveProjection: projection,
+    liveProjectionState: { current: projection },
+  };
+});
+
+beforeEach(() => {
+  liveProjectionState.current = liveProjection;
+  refreshActiveLive.mockClear();
+});
 
 vi.mock("../accountWorkspace/accountWorkspaceStore", () => ({
   accountWorkspaceStore: { refreshActiveLive },
   useAccountWorkspace: () => ({
     switching: false,
-    projection: liveProjection,
+    projection: liveProjectionState.current,
   }),
 }));
 vi.mock("../marketData/useMarketData", () => ({
@@ -97,4 +106,72 @@ it("sends exactly one LIVE Limit request after volume becomes valid", async () =
   await waitFor(() => expect(fetchMock.mock.calls.filter(
     ([url, options]) => url === "/api/live/limit" && options?.method === "POST",
   )).toHaveLength(1));
+});
+
+it("does not resubmit a submitting LIVE Limit draft after projection refresh", async () => {
+  let resolveLimit: (() => void) | undefined;
+  const fetchMock = vi.fn((url: string, _options?: RequestInit) => url === "/api/live/limit"
+    ? new Promise<{ ok: boolean; json: () => Promise<object> }>((resolve) => {
+        resolveLimit = () => resolve({
+          ok: true,
+          json: async () => ({
+            status: "accepted_pending", reason_code: "accepted_pending",
+            command_id: "c1", reconciliation_required: true,
+          }),
+        });
+      })
+    : Promise.resolve({ ok: true, json: async () => ({ instruments: [] }) }));
+  vi.stubGlobal("fetch", fetchMock);
+  const view = render(<App />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set valid volume" }));
+  const confirm = screen.getByRole("button", { name: "Chart confirm" });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  fireEvent.click(confirm);
+  await waitFor(() => expect(fetchMock.mock.calls.filter(
+    ([url, options]) => url === "/api/live/limit" && options?.method === "POST",
+  )).toHaveLength(1));
+
+  await act(async () => {
+    liveProjectionState.current = { ...liveProjection, projection_generation: 4 };
+    view.rerender(<App />);
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Attempt confirmation" }));
+  expect(fetchMock.mock.calls.filter(
+    ([url, options]) => url === "/api/live/limit" && options?.method === "POST",
+  )).toHaveLength(1);
+
+  await act(async () => resolveLimit?.());
+});
+
+it("allows a new identity for a deliberate retry after definitive rejection", async () => {
+  let limitCalls = 0;
+  const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+    if (url !== "/api/live/limit") return { ok: true, json: async () => ({ instruments: [] }) };
+    limitCalls += 1;
+    return {
+      ok: true,
+      json: async () => limitCalls === 1
+        ? { status: "blocked", reason_code: "rejected", command_id: null, reconciliation_required: false }
+        : { status: "accepted_pending", reason_code: "accepted_pending", command_id: "c2", reconciliation_required: true },
+    };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  render(<App />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set valid volume" }));
+  const confirm = screen.getByRole("button", { name: "Chart confirm" });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  fireEvent.click(confirm);
+  await waitFor(() => expect(confirm).toBeEnabled());
+  fireEvent.click(confirm);
+  await waitFor(() => expect(fetchMock.mock.calls.filter(
+    ([url, options]) => url === "/api/live/limit" && options?.method === "POST",
+  )).toHaveLength(2));
+  const bodies = fetchMock.mock.calls
+    .filter(([url, options]) => url === "/api/live/limit" && options?.method === "POST")
+    .map(([, options]) => JSON.parse(String(options?.body)) as { client_action_id: string });
+  expect(bodies[0].client_action_id).not.toBe(bodies[1].client_action_id);
 });

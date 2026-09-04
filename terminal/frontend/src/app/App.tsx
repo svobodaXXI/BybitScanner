@@ -379,6 +379,7 @@ export function App() {
       setLimitSubmissionFeedback("Limit confirmation unavailable: draft no longer exists.");
       return;
     }
+    if (draft.status === "submitting" || draft.status === "ambiguous") return;
     const volumeUsdt = selectedVolumes[draft.side];
     if (!isValidSelectedVolume(volumeUsdt)) {
       setLimitSubmissionFeedback("Enter a positive USDT Limit volume before confirming.");
