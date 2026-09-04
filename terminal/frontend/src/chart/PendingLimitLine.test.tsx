@@ -57,4 +57,40 @@ describe("PendingLimitLine", () => {
       name: "Confirm pending Sell Limit",
     })).toHaveClass("pending-limit-confirm");
   });
+
+  it("keeps invalid-volume confirmation disabled and emits no touch activation", () => {
+    const onConfirm = vi.fn();
+    render(
+      <PendingLimitLine
+        side="Buy"
+        price="0.1"
+        top={120}
+        onDragClientY={vi.fn()}
+        onConfirm={onConfirm}
+        confirmDisabled
+      />,
+    );
+    const confirm = screen.getByRole("button", { name: "Confirm pending Buy Limit" });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm, { detail: 0 });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("submits one valid touch confirmation and suppresses its compatibility click", () => {
+    const onConfirm = vi.fn();
+    render(
+      <PendingLimitLine
+        side="Buy"
+        price="0.1"
+        top={120}
+        onDragClientY={vi.fn()}
+        onConfirm={onConfirm}
+      />,
+    );
+    const confirm = screen.getByRole("button", { name: "Confirm pending Buy Limit" });
+    fireEvent.pointerDown(confirm, { button: 0, pointerId: 10, pointerType: "touch" });
+    fireEvent.pointerUp(confirm, { pointerId: 10, pointerType: "touch" });
+    fireEvent.click(confirm, { detail: 0 });
+    expect(onConfirm).toHaveBeenCalledOnce();
+  });
 });

@@ -97,3 +97,35 @@ it("positions confirm-all popup directly above the shared green button", () => {
     bottom: "54.4px",
   });
 });
+
+it("disables a pending Limit confirmation when its side volume is invalid", () => {
+  const onPendingLimitConfirm = vi.fn();
+  render(
+    <ChartPanel
+      candles={[]}
+      tickSize={0.5}
+      pendingLimitVolumeValid={{ Buy: false, Sell: true }}
+      onPendingLimitConfirm={onPendingLimitConfirm}
+      pendingLimitDrafts={[{
+        draftId: "draft-invalid-volume",
+        symbol: "BTCUSDT",
+        side: "Buy",
+        origin: "limits-popup",
+        volume: { unit: "usdt", amount: "" },
+        sizingReferencePrice: "100",
+        price: "99",
+        authoritativeTickSize: "0.5",
+        status: "draft",
+        clientActionId: null,
+        rejectionReason: null,
+      }]}
+    />,
+  );
+
+  const confirm = screen.getByRole("button", {
+    name: "Confirm pending Buy Limit",
+  });
+  expect(confirm).toBeDisabled();
+  fireEvent.click(confirm);
+  expect(onPendingLimitConfirm).not.toHaveBeenCalled();
+});

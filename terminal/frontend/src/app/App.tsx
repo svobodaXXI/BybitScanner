@@ -106,6 +106,7 @@ export function App() {
   const [positionSide, setPositionSide] = useState<"Long" | "Short" | "Flat">("Flat");
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [selectedVolumes, setSelectedVolumes] = useState({ Buy: "", Sell: "" });
+  const [limitSubmissionFeedback, setLimitSubmissionFeedback] = useState<string | null>(null);
   const selectedVolumeSymbol = useRef<string | null>(null);
   const [fastLimitIntent, setFastLimitIntent] = useState<{ side: "Buy" | "Sell" } | null>(null);
   const [limitDraftState, dispatchLimitDraft] = useReducer(
@@ -364,16 +365,25 @@ export function App() {
   );
 
   const submitLimitDraft = useCallback((draftId?: string) => {
-    if (!mutationsAllowed && !liveLimitAllowed) return;
+    if (!mutationsAllowed && !liveLimitAllowed) {
+      setLimitSubmissionFeedback("Limit confirmation unavailable: account authority changed.");
+      return;
+    }
     const drafts =
       limitDraftState.drafts ??
       (limitDraftState.draft ? [limitDraftState.draft] : []);
     const draft = draftId
       ? drafts.find((candidate) => candidate.draftId === draftId) ?? null
       : limitDraftState.draft;
-    if (!draft) return;
+    if (!draft) {
+      setLimitSubmissionFeedback("Limit confirmation unavailable: draft no longer exists.");
+      return;
+    }
     const volumeUsdt = selectedVolumes[draft.side];
-    if (!isValidSelectedVolume(volumeUsdt)) return;
+    if (!isValidSelectedVolume(volumeUsdt)) {
+      setLimitSubmissionFeedback("Enter a positive USDT Limit volume before confirming.");
+      return;
+    }
     if (liveLimitAllowed) {
       const attemptKey = `CREATE_LIMIT:${draft.draftId}`;
       const existingAttempt = liveLimitAttempts.current.get(attemptKey);
@@ -382,7 +392,11 @@ export function App() {
       const normalizedPrice = normalizeLimitDraftPrice(
         draft.price, draft.authoritativeTickSize, draft.side,
       );
-      if (!authority || normalizedPrice === null) return;
+      if (!authority || normalizedPrice === null) {
+        setLimitSubmissionFeedback("Limit confirmation unavailable: refresh the account or correct the price.");
+        return;
+      }
+      setLimitSubmissionFeedback(null);
       const clientActionId = globalThis.crypto?.randomUUID?.() ?? `live-limit-${Date.now()}`;
       dispatchLimitDraft({ type: "start-submitting", clientActionId, draftId: draft.draftId });
       const liveAttempt = executeLiveLimitCreate(liveLimitCreateRequest({
@@ -407,6 +421,7 @@ export function App() {
       liveLimitAttempts.current.set(attemptKey, liveAttempt);
       return liveAttempt;
     }
+    setLimitSubmissionFeedback(null);
     const attempt = limitSubmitController.current.submit({
       ...draft,
       volume: { unit: "usdt", amount: volumeUsdt },
@@ -774,6 +789,11 @@ export function App() {
           {workspaceSwitchError.message}
         </output>
       )}
+      {limitSubmissionFeedback && (
+        <output aria-live="polite" role="status">
+          {limitSubmissionFeedback}
+        </output>
+      )}
       <TelegramMiniAppBridge />
       <section className="workspace-grid" aria-label="Trading workspace">
         <div
@@ -793,6 +813,10 @@ export function App() {
             limitDraftState.drafts ??
             (limitDraftState.draft ? [limitDraftState.draft] : [])
           }
+          pendingLimitVolumeValid={{
+            Buy: isValidSelectedVolume(selectedVolumes.Buy),
+            Sell: isValidSelectedVolume(selectedVolumes.Sell),
+          }}
           onPendingLimitSelect={(draftId) =>
             dispatchLimitDraft({ type: "select", draftId })
           }

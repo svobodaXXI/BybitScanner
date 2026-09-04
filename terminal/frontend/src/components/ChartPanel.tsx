@@ -47,7 +47,7 @@ import {
 import { chartPriceFormat } from "../chart/priceFormat";
 import { createFrameBatcher } from "../chart/frameBatcher";
 import type { Candle } from "../contracts/marketData";
-import type { PaperLimitOrder } from "../contracts/trading";
+import type { MarketSide, PaperLimitOrder } from "../contracts/trading";
 import type { LimitDraft } from "../orders/limitDraft";
 import { normalizedLimitDraftPrice } from "../orders/limitDraft";
 import { PendingLimitLine } from "../chart/PendingLimitLine";
@@ -108,6 +108,7 @@ export function ChartPanel({
   activeLimitOrders = [],
   pendingLimitDraft = null,
   pendingLimitDrafts,
+  pendingLimitVolumeValid = { Buy: true, Sell: true },
   onPendingLimitSelect,
   onPendingLimitDismiss,
   onPendingLimitDismissAll,
@@ -141,6 +142,7 @@ export function ChartPanel({
   activeLimitOrders?: readonly PaperLimitOrder[];
   pendingLimitDraft?: LimitDraft | null;
   pendingLimitDrafts?: readonly LimitDraft[];
+  pendingLimitVolumeValid?: Readonly<Record<MarketSide, boolean>>;
   onPendingLimitSelect?: (draftId: string) => void;
   onPendingLimitDismiss?: (draftId: string) => void;
   onPendingLimitDismissAll?: () => void;
@@ -938,6 +940,7 @@ export function ChartPanel({
               }}
               onConfirm={() => onPendingLimitConfirm?.(draft.draftId)}
               confirmDisabled={
+                !pendingLimitVolumeValid[draft.side] ||
                 draft.status === "submitting" ||
                 draft.status === "ambiguous"
               }
