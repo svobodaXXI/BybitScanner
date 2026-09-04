@@ -6275,6 +6275,22 @@ optimistic order state.
 PAPER behavior, fast DOM crossing, LIVE STOP, TAKE and full close remain unchanged. All LIVE mutation gates remain
 default-off, tests use mocked transport, `REAL BYBIT ORDER SENT: NO`, and browser/real-phone acceptance is pending.
 
+## LIVE LIMIT ACCEPTANCE PAUSED FOR PC-TO-VPS SYNCHRONIZATION
+
+ChangeRequest authority is `CR-TRADING-WORKSPACE-001` revision `3.1`. Dedicated default-off LIVE Limit gates and
+the `5.20 USDT` acceptance ceiling are implemented, verified and synchronized at `fce3d39`; invalid/empty-volume
+pending confirmation gating is implemented, verified and synchronized at `5ece02c` (`main == origin/main`).
+
+Real-phone evidence: `Main Bybit / BYBIT / MAINNET / READY` was active with capabilities `market=false`,
+`limit=true`, `stop=false`, `take=false`, `full_close=false`; BUY LIMITS and SELL LIMITS were active; a pending LIVE
+Limit draft could be created; and its confirmation was correctly disabled for empty or zero volume (`PASS`). After
+entering `5.20 USDT`, confirmation still did not become active. No real LIVE Limit order was submitted.
+
+Revision 2.7 LIVE Limit real-money acceptance remains `INCOMPLETE`. Implementation is stopped and the immediate
+operational action is repository synchronization from PC to VPS. After synchronization, the exact next product
+action is narrow diagnosis of the unresolved positive-volume enablement failure; this checkpoint authorizes no
+diagnosis, patch or broader LIVE capability.
+
 ## VPS DEPLOYMENT / NGINX WEBSOCKET CHECKPOINT
 
 Authoritative deployment commit: `a339f93` (`ops: add nginx websocket proxy config`), based on application commit

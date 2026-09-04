@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "3.0",
+  "revision": "3.1",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -479,7 +479,8 @@
     {"revision": "2.2", "reason": "Human-authorized first safe LIVE execution slice limited to explicit manual MARKET BUY and MARKET SELL for the active writable Bybit MAINNET session, with durable command identity and idempotency, account/session fencing, persist-before-dispatch, default-off dual real-money gates, backend acceptance-notional ceiling, single-attempt mutation, UNKNOWN safety barrier and REST-only reconciliation; LIVE Limit, STOP, TAKE, full close, private WebSocket, autonomous dispatch and real-order acceptance remain unauthorized", "date": "2026-09-01"},
     {"revision": "2.8", "reason": "Human-authorized corrective contract amendment mapping normalized Unified available_balance_usdt to result.list[0].totalAvailableBalance while preserving totalWalletBalance, totalEquity, provenance, position, execution, capability, gate and fencing semantics", "date": "2026-09-03"},
     {"revision": "2.9", "reason": "Human-authorized corrective Working Volume contract: one WV is five percent of active-account account-wide Wallet (totalWalletBalance), rounded down to whole USDT; totalEquity, totalAvailableBalance and leverage are not WV bases", "date": "2026-09-03"},
-    {"revision": "3.0", "reason": "Human-authorized dedicated default-off LIVE Limit acceptance boundary with an independent positive requested-notional ceiling; Limit create/amend/cancel no longer require or enable the broader parity gate, while Market, STOP, TAKE and full close remain independently disabled", "date": "2026-09-04"}
+    {"revision": "3.0", "reason": "Human-authorized dedicated default-off LIVE Limit acceptance boundary with an independent positive requested-notional ceiling; Limit create/amend/cancel no longer require or enable the broader parity gate, while Market, STOP, TAKE and full close remain independently disabled", "date": "2026-09-04"},
+    {"revision": "3.1", "reason": "Record incomplete revision 2.7 LIVE Limit real-phone acceptance before PC-to-VPS synchronization: empty-volume confirmation is correctly disabled, but entering 5.20 USDT does not activate confirmation; no real Limit order was submitted", "date": "2026-09-04"}
   ]
 }
 ```
@@ -4877,4 +4878,22 @@ the dedicated Limit gate does not advertise or authorize LIVE Market, STOP, TAKE
 durable idempotency, UNKNOWN handling, REST-only reconciliation and frontend-as-non-security-boundary remain
 unchanged. Real-money gates remain default-off and this implementation sends no real Bybit mutation.
 Focused fake-adapter and runtime-projection tests pass; real-phone LIVE Limit acceptance remains pending.
+
+### Revision 3.1 LIVE Limit real-phone acceptance incomplete
+
+The dedicated LIVE Limit acceptance boundary is implemented, verified and synchronized at commit `fce3d39`.
+The frontend prevents an actionable pending-Limit confirmation when its side volume is empty or non-positive;
+that correction is implemented, verified and synchronized at commit `5ece02c`.
+
+Real-phone acceptance used active `Main Bybit / BYBIT / MAINNET / READY` authority with capabilities
+`market=false`, `limit=true`, `stop=false`, `take=false`, `full_close=false` and the dedicated acceptance ceiling
+`5.20 USDT`. BUY LIMITS and SELL LIMITS were active, and a pending LIVE Limit draft could be created. The pending
+line confirmation was correctly disabled for empty or zero volume: `PASS`. After entering `5.20 USDT`, however,
+the confirmation still did not become active. This observation is unresolved and is not diagnosed by this
+checkpoint.
+
+No LIVE Limit create, amend or cancel request reached real Bybit during this acceptance attempt. Revision 2.7
+LIVE Limit real-money acceptance therefore remains `INCOMPLETE`. Implementation is stopped for PC-to-VPS
+repository synchronization; the exact next product action after synchronization is narrow diagnosis of why a
+positive `5.20 USDT` volume does not enable the pending-line confirmation, without broadening LIVE capabilities.
 
