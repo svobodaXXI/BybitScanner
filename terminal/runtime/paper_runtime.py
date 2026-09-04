@@ -137,6 +137,8 @@ class PaperRuntime:
         live_acceptance_notional_ceiling: Decimal = Decimal("0"),
         live_acceptance_single_flight: bool = False,
         live_parity_mutations_enabled: bool = False,
+        live_limit_mutations_enabled: bool = False,
+        live_limit_acceptance_notional_ceiling: Decimal = Decimal("0"),
     ) -> None:
         self._account_manager = account_manager or paper_account_manager()
         self._paper_account_id = TradingAccountId("paper")
@@ -147,6 +149,7 @@ class PaperRuntime:
         self._live_market_mutations_enabled = live_market_mutations_enabled
         self._live_mainnet_authorized = live_mainnet_authorized
         self._live_parity_mutations_enabled = live_parity_mutations_enabled
+        self._live_limit_mutations_enabled = live_limit_mutations_enabled
         self._instrument_provider = instrument_provider or (lambda _symbol: instrument_snapshot)
         self._stored_bybit_accounts = list(credential_store.load()) if credential_store else []
         for stored in self._stored_bybit_accounts:
@@ -258,7 +261,7 @@ class PaperRuntime:
                         self._stored_bybit_account(account_id.value).api_secret,
                     ),
                     environment=BybitEnvironment.MAINNET,
-                    mutations_enabled=live_parity_mutations_enabled,
+                    mutations_enabled=(live_parity_mutations_enabled or live_limit_mutations_enabled),
                     live_authorized=live_mainnet_authorized,
                 ),
                 read_adapter_provider=lambda account_id: (live_adapter_factory or BybitV5ReadAdapter)(
@@ -273,6 +276,7 @@ class PaperRuntime:
                 writable_account_provider=self._is_stored_account_writable,
                 gates=LiveParityMutationGates(
                     live_parity_mutations_enabled, live_mainnet_authorized,
+                    live_limit_mutations_enabled, live_limit_acceptance_notional_ceiling,
                 ),
                 clock_ms=lambda: int(time.time() * 1000),
             ) if self._live_account_store is not None else None
@@ -447,7 +451,7 @@ class PaperRuntime:
                 "limit": bool(
                     not snapshot.read_only and account.environment is TradingAccountEnvironment.MAINNET
                     and account.status is TradingAccountStatus.READY
-                    and self._live_parity_mutations_enabled and self._live_mainnet_authorized
+                    and self._live_limit_mutations_enabled and self._live_mainnet_authorized
                 ),
                 "stop": bool(
                     not snapshot.read_only and account.environment is TradingAccountEnvironment.MAINNET
@@ -508,6 +512,20 @@ class PaperRuntime:
         if self._live_execution is None:
             raise RuntimeError("live_parity_unavailable")
         return self._live_execution.execute(account_id, session_generation, client_action_id, operation)
+
+    def live_limit_create(self, account_id: str, session_generation: int, request):
+        if self._live_execution is None:
+            raise RuntimeError("live_parity_unavailable")
+        return self._live_execution.execute_limit_create(account_id, session_generation, request)
+
+    def live_limit_amend_cancel(
+        self, account_id: str, session_generation: int, client_action_id: str, operation,
+    ):
+        if self._live_execution is None:
+            raise RuntimeError("live_parity_unavailable")
+        return self._live_execution.execute_limit_amend_cancel(
+            account_id, session_generation, client_action_id, operation,
+        )
 
     def _is_stored_account_writable(self, account_id: TradingAccountId) -> bool:
         stored = self._stored_bybit_account(account_id.value)

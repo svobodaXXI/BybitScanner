@@ -100,7 +100,7 @@ class StaticBookProvider:
 def runtime_owner(
     path: Path, *, credential_store=None, account_validator=None,
     active_account_preference_store=None, live_adapter_factory=None,
-    account_manager=None, **_kwargs,
+    account_manager=None, **runtime_kwargs,
 ) -> SerializedPaperRuntime:
     instrument = InstrumentSnapshot(
         Category.LINEAR, "BTCUSDT", "LinearPerpetual", "Trading",
@@ -117,10 +117,39 @@ def runtime_owner(
             active_account_preference_store or ActiveAccountPreferenceStore(preference_path),
         live_adapter_factory=live_adapter_factory,
         account_manager=account_manager,
+        **runtime_kwargs,
     ))
 
 
 class ActiveAccountRestoreTests(unittest.TestCase):
+    def test_limit_only_gate_advertises_no_other_live_mutation_capability(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database_path = Path(temp) / "paper.sqlite3"
+            live = LiveAccountProjectionStore(database_path.with_suffix(".live_accounts.sqlite3"))
+            live.publish(LiveAccountSnapshot(
+                "bybit-one", "MAINNET", False, 1, Decimal("1000"), Decimal("1000"),
+                Decimal("1000"), 1, (), (), 2,
+            ))
+            live.close()
+            runtime = runtime_owner(
+                database_path, account_manager=manager_with_ready_bybit(),
+                live_mainnet_authorized=True, live_limit_mutations_enabled=True,
+                live_limit_acceptance_notional_ceiling=Decimal("10"),
+                live_market_mutations_enabled=False,
+                live_parity_mutations_enabled=False,
+            )
+            try:
+                activate_current(runtime, "bybit-one")
+                projection = runtime.call(
+                    lambda owner: owner.workspace_account_projection("BTCUSDT")
+                )
+                self.assertEqual(projection["capabilities"], {
+                    "market": False, "limit": True, "stop": False,
+                    "take": False, "full_close": False,
+                })
+            finally:
+                runtime.close()
+
     def test_live_working_volume_uses_wallet_and_paper_entry_notional_semantics(self):
         wallet_balance = Decimal("1234")
         one_wv, positions = _live_working_volume_projection(wallet_balance, (

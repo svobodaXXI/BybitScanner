@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "2.9",
+  "revision": "3.0",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -369,13 +369,13 @@
     {"id": "TASK", "status": "COMPLETED_HUMAN_AUTHORIZED"},
     {"id": "SPEC", "status": "REVISION_1_4_APPROVED_HUMAN_AUTHORIZED_DOCUMENTATION_CHECKPOINT_ONLY"},
     {"id": "CONTEXT", "status": "AUTHORIZED_RESEARCH_IN_PROGRESS"},
-    {"id": "IMPLEMENT", "status": "REVISION_2_7_LIVE_LIMIT_FRONTEND_IMPLEMENTED"},
-    {"id": "VERIFY", "status": "REVISION_2_7_AUTOMATED_VERIFICATION_PENDING"},
-    {"id": "RECORD", "status": "REVISION_2_7_PENDING"}
+    {"id": "IMPLEMENT", "status": "REVISION_3_0_LIMIT_ONLY_ACCEPTANCE_GATE_IMPLEMENTED"},
+    {"id": "VERIFY", "status": "REVISION_3_0_AUTOMATED_PASS_REAL_ACCEPTANCE_PENDING"},
+    {"id": "RECORD", "status": "REVISION_3_0_RECORDED"}
   ],
   "current_phase": "IMPLEMENT",
-  "current_checkpoint": "REVISION_2_7_LIVE_LIMIT_FRONTEND_IMPLEMENTED",
-  "implementation_status": "REVISION_2_7_AUTOMATED_VERIFICATION_PENDING",
+  "current_checkpoint": "REVISION_3_0_LIMIT_ONLY_ACCEPTANCE_GATE_IMPLEMENTED",
+  "implementation_status": "REVISION_3_0_AUTOMATED_PASS_REAL_ACCEPTANCE_PENDING",
   "next_phase": "VERIFY",
   "next_phase_authorization": "AFTER_SCOPED_IMPLEMENTATION_WITH_REAL_DISPATCH_DEFAULT_OFF",
   "related_commits": [
@@ -478,7 +478,8 @@
     {"revision": "2.1", "reason": "Human-approved documentation-only bounded architecture amendment separating immutable PAPER storage identity from active session authority, defining one account-scoped Workspace projection router, atomic eligible account switching, session-aware stale rejection, a backend PAPER-only mutation gate, read-only LIVE views and unchanged public symbol/market-data authority; production implementation remains separately authorization-gated", "date": "2026-08-31"},
     {"revision": "2.2", "reason": "Human-authorized first safe LIVE execution slice limited to explicit manual MARKET BUY and MARKET SELL for the active writable Bybit MAINNET session, with durable command identity and idempotency, account/session fencing, persist-before-dispatch, default-off dual real-money gates, backend acceptance-notional ceiling, single-attempt mutation, UNKNOWN safety barrier and REST-only reconciliation; LIVE Limit, STOP, TAKE, full close, private WebSocket, autonomous dispatch and real-order acceptance remain unauthorized", "date": "2026-09-01"},
     {"revision": "2.8", "reason": "Human-authorized corrective contract amendment mapping normalized Unified available_balance_usdt to result.list[0].totalAvailableBalance while preserving totalWalletBalance, totalEquity, provenance, position, execution, capability, gate and fencing semantics", "date": "2026-09-03"},
-    {"revision": "2.9", "reason": "Human-authorized corrective Working Volume contract: one WV is five percent of active-account account-wide Wallet (totalWalletBalance), rounded down to whole USDT; totalEquity, totalAvailableBalance and leverage are not WV bases", "date": "2026-09-03"}
+    {"revision": "2.9", "reason": "Human-authorized corrective Working Volume contract: one WV is five percent of active-account account-wide Wallet (totalWalletBalance), rounded down to whole USDT; totalEquity, totalAvailableBalance and leverage are not WV bases", "date": "2026-09-03"},
+    {"revision": "3.0", "reason": "Human-authorized dedicated default-off LIVE Limit acceptance boundary with an independent positive requested-notional ceiling; Limit create/amend/cancel no longer require or enable the broader parity gate, while Market, STOP, TAKE and full close remain independently disabled", "date": "2026-09-04"}
   ]
 }
 ```
@@ -4860,4 +4861,20 @@ and accepted results trigger the existing REST-only LIVE account refresh without
 PAPER routes and behavior remain unchanged. Fast DOM hold/crossing, LIVE STOP, TAKE and full close are not activated
 by this slice. Runtime mutation gates remain default OFF, tests use mocked transport, and no real-money acceptance is
 authorized. Browser and real-phone acceptance remain pending after automated verification and a fresh build.
+
+### Revision 3.0 dedicated LIVE Limit acceptance boundary
+
+Revision 3.0 replaces the unsafe requirement to enable the broad LIVE parity gate for revision 2.7 acceptance.
+`LIVE_LIMIT_MUTATIONS_ENABLED` and `LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING` are independent and default off/zero.
+LIVE Limit create requires the dedicated gate, the shared `LIVE_MAINNET_AUTHORIZED` gate, existing active writable
+`BYBIT / MAINNET / READY` account/session fencing, and requested USDT notional at or below a positive dedicated
+ceiling. Working Volume requests derive that requested notional from the authoritative wallet-based one-WV value.
+
+LIVE Limit amend and cancel require the same dedicated Limit gate and existing account/session, order-identity,
+single-attempt and reconciliation boundaries, but do not use the create ceiling because they do not create a new
+order intent. `LIVE_MARKET_MUTATIONS_ENABLED` and all Market acceptance controls remain independent. Enabling only
+the dedicated Limit gate does not advertise or authorize LIVE Market, STOP, TAKE or full close. PAPER behavior,
+durable idempotency, UNKNOWN handling, REST-only reconciliation and frontend-as-non-security-boundary remain
+unchanged. Real-money gates remain default-off and this implementation sends no real Bybit mutation.
+Focused fake-adapter and runtime-projection tests pass; real-phone LIVE Limit acceptance remains pending.
 

@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Callable
 from uuid import UUID, uuid5
 
-from terminal.api.models import CommandResult, CommandResultStatus
+from terminal.api.models import CommandResult, CommandResultStatus, LimitCommandRequest, VolumeUnit
 from terminal.api.rest import ServerCommandContext, TerminalCommandApi
 from terminal.application.execution_engine import ExecutionEngine
 from terminal.application.command_identity import CommandIdentityFactory
@@ -27,8 +27,10 @@ from terminal.runtime.paper_context import working_volume_usdt
 
 @dataclass(frozen=True, slots=True)
 class LiveParityMutationGates:
-    mutations_enabled: bool = False
+    parity_mutations_enabled: bool = False
     mainnet_authorized: bool = False
+    limit_mutations_enabled: bool = False
+    limit_acceptance_notional_ceiling: Decimal = Decimal("0")
 
 
 class _FencedExecutionPort:
@@ -143,6 +145,7 @@ class LiveExecutionCoordinator:
         self._gates = gates
         self._clock_ms = clock_ms
         self._captured: AccountSessionToken | None = None
+        self._mutation_scope = "parity"
         context = _LiveContextProvider(self)
         self._engine = ExecutionEngine(store)
         application = TradingApplication(
@@ -185,11 +188,32 @@ class LiveExecutionCoordinator:
         self, account_id_text: str, session_generation: int, client_action_id: str,
         operation: Callable[[TerminalCommandApi], CommandResult],
     ):
+        return self._execute(account_id_text, session_generation, client_action_id, "parity", operation)
+
+    def execute_limit_create(
+        self, account_id_text: str, session_generation: int, request: LimitCommandRequest,
+    ):
+        return self._execute(
+            account_id_text, session_generation, request.client_action_id.value, "limit",
+            lambda api: self._submit_limit_with_ceiling(api, request),
+        )
+
+    def execute_limit_amend_cancel(
+        self, account_id_text: str, session_generation: int, client_action_id: str,
+        operation: Callable[[TerminalCommandApi], CommandResult],
+    ):
+        return self._execute(account_id_text, session_generation, client_action_id, "limit", operation)
+
+    def _execute(
+        self, account_id_text: str, session_generation: int, client_action_id: str,
+        mutation_scope: str, operation: Callable[[TerminalCommandApi], CommandResult],
+    ):
         action_id = client_action_id
         try:
             account_id = TradingAccountId(account_id_text)
             token = AccountSessionToken(account_id, session_generation)
             self._captured = token
+            self._mutation_scope = mutation_scope
             self._require_dispatch_authority()
             stable_uuid = uuid5(
                 UUID("b55270c8-80c2-4c76-9aa0-15633ca9fdb5"),
@@ -200,15 +224,35 @@ class LiveExecutionCoordinator:
             return result
         except Exception as exc:
             code = str(exc) if str(exc) in {
-                "live_mutations_disabled", "live_mainnet_unauthorized", "inactive_account",
+                "live_mutations_disabled", "live_limit_disabled",
+                "live_limit_acceptance_notional_exceeded", "live_mainnet_unauthorized", "inactive_account",
                 "stale_account_session", "live_account_not_writable_ready",
             } else "live_parity_unavailable"
             return CommandResult(action_id, CommandResultStatus.BLOCKED, code, code, None, False)
         finally:
             self._captured = None
+            self._mutation_scope = "parity"
+
+    def _submit_limit_with_ceiling(
+        self, api: TerminalCommandApi, request: LimitCommandRequest,
+    ) -> CommandResult:
+        account_id = self._require_dispatch_authority()
+        ceiling = self._gates.limit_acceptance_notional_ceiling
+        snapshot = self._live_account_store.get(account_id.value)
+        if snapshot is None:
+            raise RuntimeError("live_limit_acceptance_notional_exceeded")
+        requested_notional = request.volume.amount
+        if request.volume.unit is VolumeUnit.WORKING_VOLUME:
+            requested_notional *= working_volume_usdt(snapshot.wallet_balance_usdt)
+        if not ceiling.is_finite() or ceiling <= 0 or requested_notional > ceiling:
+            raise RuntimeError("live_limit_acceptance_notional_exceeded")
+        return api.limit(request)
 
     def _require_dispatch_authority(self) -> TradingAccountId:
-        if not self._gates.mutations_enabled:
+        if self._mutation_scope == "limit":
+            if not self._gates.limit_mutations_enabled:
+                raise RuntimeError("live_limit_disabled")
+        elif not self._gates.parity_mutations_enabled:
             raise RuntimeError("live_mutations_disabled")
         if not self._gates.mainnet_authorized:
             raise RuntimeError("live_mainnet_unauthorized")

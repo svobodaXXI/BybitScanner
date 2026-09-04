@@ -100,13 +100,18 @@ class LiveExecutionTests(unittest.TestCase):
     def tearDown(self):
         self.store.close(); self.live_store.close(); self.temp.cleanup()
 
-    def coordinator(self, *, enabled=True, authorized=True, read_adapter=None):
+    def coordinator(
+        self, *, parity_enabled=True, limit_enabled=False, authorized=True,
+        limit_ceiling="0", read_adapter=None,
+    ):
         return LiveExecutionCoordinator(
             self.manager, self.store, lambda _account: self.adapter,
             read_adapter_provider=lambda _account: read_adapter or ReadAdapter(),
             instrument_provider=lambda _symbol: instrument(), live_account_store=self.live_store,
             writable_account_provider=lambda _account: True,
-            gates=LiveParityMutationGates(enabled, authorized), clock_ms=lambda: 1000,
+            gates=LiveParityMutationGates(
+                parity_enabled, authorized, limit_enabled, Decimal(limit_ceiling),
+            ), clock_ms=lambda: 1000,
         )
 
     def test_limit_uses_trading_application_and_persists_before_single_adapter_call(self):
@@ -115,14 +120,16 @@ class LiveExecutionTests(unittest.TestCase):
             VolumeRequest(VolumeUnit.USDT, Decimal("100")), Decimal("50000"),
             Decimal("49000"), TimeInForce.GTC,
         )
-        result = self.coordinator().execute(ACCOUNT.value, 1, "limit-1", lambda api: api.limit(request))
+        result = self.coordinator(limit_enabled=True, limit_ceiling="100").execute_limit_create(
+            ACCOUNT.value, 1, request,
+        )
         self.assertEqual(result.status.value, "accepted_pending")
         self.assertEqual(len(self.adapter.calls), 1)
         self.assertEqual(self.adapter.calls[0][1]["price"], Decimal("49000"))
         self.assertEqual(len(self.store.load_unfinished_commands()), 1)
 
-        replay = self.coordinator().execute(
-            ACCOUNT.value, 1, "limit-1", lambda api: api.limit(request),
+        replay = self.coordinator(limit_enabled=True, limit_ceiling="100").execute_limit_create(
+            ACCOUNT.value, 1, request,
         )
         self.assertIn(replay.status.value, {"blocked", "persistence_failure"})
         self.assertEqual(len(self.adapter.calls), 1)
@@ -130,7 +137,7 @@ class LiveExecutionTests(unittest.TestCase):
     def test_stale_session_and_default_off_gates_are_zero_dispatch(self):
         request = FullCloseCommandRequest(ClientActionId("close"), "BTCUSDT")
         self.assertEqual(
-            self.coordinator(enabled=False).execute(ACCOUNT.value, 1, "close", lambda api: api.full_close(request)).reason_code,
+            self.coordinator(parity_enabled=False).execute(ACCOUNT.value, 1, "close", lambda api: api.full_close(request)).reason_code,
             "live_mutations_disabled",
         )
         self.assertEqual(
@@ -174,6 +181,75 @@ class LiveExecutionTests(unittest.TestCase):
                 result = self.coordinator().execute(ACCOUNT.value, 1, expected, action)
                 self.assertEqual(result.status.value, "accepted_pending")
                 self.assertEqual(len(self.adapter.calls), 1)
+
+    def test_limit_defaults_reject_without_dispatch(self):
+        request = LimitCommandRequest(
+            ClientActionId("limit-off"), "BTCUSDT", OrderSide.BUY,
+            VolumeRequest(VolumeUnit.USDT, Decimal("10")), Decimal("50000"),
+            Decimal("49000"), TimeInForce.GTC,
+        )
+        result = self.coordinator(parity_enabled=False).execute_limit_create(ACCOUNT.value, 1, request)
+        self.assertEqual(result.reason_code, "live_limit_disabled")
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_limit_gate_does_not_enable_parity_mutations(self):
+        coordinator = self.coordinator(
+            parity_enabled=False, limit_enabled=True, limit_ceiling="10",
+        )
+        actions = (
+            ("close", lambda api: api.full_close(FullCloseCommandRequest(
+                ClientActionId("close"), "BTCUSDT"))),
+            ("stop", lambda api: api.protection(ProtectionCommandRequest(
+                ClientActionId("stop"), "BTCUSDT", None, Decimal("48000")))),
+            ("take", lambda api: api.protection(ProtectionCommandRequest(
+                ClientActionId("take"), "BTCUSDT", Decimal("52000"), None))),
+        )
+        for action_id, action in actions:
+            with self.subTest(action_id):
+                result = coordinator.execute(ACCOUNT.value, 1, action_id, action)
+                self.assertEqual(result.reason_code, "live_mutations_disabled")
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_limit_create_enforces_positive_acceptance_ceiling(self):
+        def request(action_id, amount):
+            return LimitCommandRequest(
+                ClientActionId(action_id), "BTCUSDT", OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal(amount)), Decimal("50000"),
+                Decimal("49000"), TimeInForce.GTC,
+            )
+
+        disabled = self.coordinator(
+            parity_enabled=False, limit_enabled=True, limit_ceiling="0",
+        ).execute_limit_create(ACCOUNT.value, 1, request("zero", "1"))
+        above = self.coordinator(
+            parity_enabled=False, limit_enabled=True, limit_ceiling="100",
+        ).execute_limit_create(ACCOUNT.value, 1, request("above", "100.01"))
+        accepted = self.coordinator(
+            parity_enabled=False, limit_enabled=True, limit_ceiling="100",
+        ).execute_limit_create(ACCOUNT.value, 1, request("at", "100"))
+        self.assertEqual(disabled.reason_code, "live_limit_acceptance_notional_exceeded")
+        self.assertEqual(above.reason_code, "live_limit_acceptance_notional_exceeded")
+        self.assertEqual(accepted.status.value, "accepted_pending")
+        self.assertEqual(len(self.adapter.calls), 1)
+
+    def test_limit_amend_cancel_use_limit_gate_and_session_fence(self):
+        coordinator = self.coordinator(parity_enabled=False, limit_enabled=True)
+        amend = lambda api: api.amend(AmendCommandRequest(
+            ClientActionId("amend-limit"), "BTCUSDT", order_id="exchange-limit",
+            changed_price=Decimal("48500"),
+        ))
+        cancel = lambda api: api.cancel(CancelCommandRequest(
+            ClientActionId("cancel-limit"), "BTCUSDT", order_id="exchange-limit",
+        ))
+        amended = coordinator.execute_limit_amend_cancel(
+            ACCOUNT.value, 1, "amend-limit", amend,
+        )
+        stale = coordinator.execute_limit_amend_cancel(
+            ACCOUNT.value, 2, "cancel-limit", cancel,
+        )
+        self.assertEqual(amended.status.value, "accepted_pending")
+        self.assertEqual(stale.reason_code, "stale_account_session")
+        self.assertEqual(len(self.adapter.calls), 1)
 
 
 if __name__ == "__main__":

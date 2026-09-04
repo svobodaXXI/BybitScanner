@@ -1978,11 +1978,22 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                         ClientActionId(payload["client_action_id"]), payload["symbol"],
                     )
                     action = lambda api: api.full_close(request)
-                result = self.server.runtime.call(
-                    lambda runtime: runtime.live_execute(
-                        account_id, session_generation, payload["client_action_id"], action,
+                if path == "/api/live/limit":
+                    result = self.server.runtime.call(
+                        lambda runtime: runtime.live_limit_create(account_id, session_generation, request)
                     )
-                )
+                elif path in {"/api/live/limit/amend", "/api/live/limit/cancel"}:
+                    result = self.server.runtime.call(
+                        lambda runtime: runtime.live_limit_amend_cancel(
+                            account_id, session_generation, payload["client_action_id"], action,
+                        )
+                    )
+                else:
+                    result = self.server.runtime.call(
+                        lambda runtime: runtime.live_execute(
+                            account_id, session_generation, payload["client_action_id"], action,
+                        )
+                    )
             except (ValueError, TypeError, json.JSONDecodeError):
                 self._json_response(400, to_primitive(_validation_error()))
                 return
@@ -2306,6 +2317,8 @@ def create_configured_paper_runtime(
     live_acceptance_notional_ceiling: Decimal = Decimal("0"),
     live_acceptance_single_flight: bool = False,
     live_parity_mutations_enabled: bool = False,
+    live_limit_mutations_enabled: bool = False,
+    live_limit_acceptance_notional_ceiling: Decimal = Decimal("0"),
     account_manager=None,
 ) -> PaperRuntime:
     return PaperRuntime(
@@ -2328,6 +2341,8 @@ def create_configured_paper_runtime(
         live_acceptance_notional_ceiling=live_acceptance_notional_ceiling,
         live_acceptance_single_flight=live_acceptance_single_flight,
         live_parity_mutations_enabled=live_parity_mutations_enabled,
+        live_limit_mutations_enabled=live_limit_mutations_enabled,
+        live_limit_acceptance_notional_ceiling=live_limit_acceptance_notional_ceiling,
         account_manager=account_manager,
     )
 
@@ -2365,6 +2380,10 @@ def main() -> None:
         live_acceptance_notional_ceiling=Decimal(os.environ.get("LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING", "0")),
         live_acceptance_single_flight=os.environ.get("LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT", "").lower() == "true",
         live_parity_mutations_enabled=os.environ.get("LIVE_PARITY_MUTATIONS_ENABLED", "").lower() == "true",
+        live_limit_mutations_enabled=os.environ.get("LIVE_LIMIT_MUTATIONS_ENABLED", "").lower() == "true",
+        live_limit_acceptance_notional_ceiling=Decimal(
+            os.environ.get("LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING", "0")
+        ),
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(
