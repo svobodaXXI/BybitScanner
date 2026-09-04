@@ -58,7 +58,7 @@ export function projectLiveLimitOrders(
   symbol: string,
 ): PaperLimitOrder[] {
   return orders.flatMap((order) => {
-    if (order.symbol !== symbol || order.order_type !== "Limit"
+    if (order.symbol !== symbol || typeof order.order_type !== "string" || order.order_type.toLowerCase() !== "limit"
       || typeof order.order_id !== "string" || typeof order.side !== "string"
       || !["Buy", "Sell"].includes(order.side)
       || typeof order.price !== "string" || typeof order.quantity !== "string") return [];
