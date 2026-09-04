@@ -853,8 +853,7 @@ export function ModePanel({
                         disabled={!canSubmit}
                         onTap={onLimitDraftConfirm}
                       >
-                        вњ“
-                      </TradingControlButton>
+                        {"\u2713"}</TradingControlButton>
                     </div>
                   );
                 })()}
