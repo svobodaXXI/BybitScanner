@@ -32,9 +32,10 @@ describe("LIVE Limit transport", () => {
 
   it("projects only valid current-symbol LIVE Limit orders", () => {
     expect(projectLiveLimitOrders([
-      { symbol: "BTCUSDT", order_id: "one", side: "Buy", order_type: "limit", price: "49000", quantity: "0.01" },
-      { symbol: "ETHUSDT", order_id: "two", side: "Sell", order_type: "Limit", price: "4000", quantity: "1" },
-      { symbol: "BTCUSDT", order_id: "three", side: "Buy", order_type: "Market", price: "0", quantity: "0.01" },
+      { symbol: "BTCUSDT", order_id: "one", side: "Buy", order_type: "limit", status: "open", price: "49000", quantity: "0.01" },
+      { symbol: "ETHUSDT", order_id: "two", side: "Sell", order_type: "Limit", status: "open", price: "4000", quantity: "1" },
+      { symbol: "BTCUSDT", order_id: "three", side: "Buy", order_type: "Market", status: "open", price: "0", quantity: "0.01" },
+      { symbol: "BTCUSDT", order_id: "cancelled", side: "Buy", order_type: "limit", status: "cancelled", price: "48000", quantity: "0.01" },
     ], "BTCUSDT")).toEqual([expect.objectContaining({ order_id: "one", side: "Buy", price: "49000" })]);
   });
 

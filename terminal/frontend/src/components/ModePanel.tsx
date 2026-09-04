@@ -1014,7 +1014,7 @@ export function ModePanel({
                       }
                       onTap={() => openSideCancelConfirmation(side)}
                     >
-                      Г—
+                      {"\u00D7"}
                     </TradingControlButton>
                   </div>
                 );
@@ -1035,7 +1035,7 @@ export function ModePanel({
                       }
                       onTap={() => openSideCancelConfirmation(limitsInventorySide)}
                     >
-                      Г—
+                      {"\u00D7"}
                     </TradingControlButton>
                   </header>
                   <div className="paper-limits-order-list">
@@ -1052,7 +1052,7 @@ export function ModePanel({
                           }
                           onTap={() => void cancelLimit(order.order_id)}
                         >
-                          Г—
+                          {"\u00D7"}
                         </TradingControlButton>
                       </div>
                     ))}
