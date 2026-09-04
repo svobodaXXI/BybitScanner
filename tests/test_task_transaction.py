@@ -143,6 +143,43 @@ class TaskTransactionTests(unittest.TestCase):
         self.assertEqual(snapshot.read_bytes(), raw)
         self.assertEqual(dirty["files"][0]["baseline_sha256"], hashlib.sha256(raw).hexdigest())
 
+    def test_crlf_worktree_is_clean_and_candidate_tree_uses_git_normalization(self):
+        (self.root / ".gitattributes").write_bytes(b"*.txt text eol=crlf\n")
+        self.git_run("add", ".gitattributes")
+        self.git_run("add", "--renormalize", "sample.txt")
+        self.git_run("commit", "-qm", "declare line endings")
+        baseline = b"alpha\r\nbeta\r\ngamma\r\n"
+        self.path.write_bytes(baseline)
+
+        metadata = begin(["sample.txt"], git=self.git, task_id="crlf-clean")
+        self.assertEqual(metadata["files"][0]["initial"], "CLEAN_BASELINE")
+        self.assertIsNone(metadata["files"][0]["snapshot"])
+
+        changed = b"alpha\r\nbeta task\r\ngamma\r\n"
+        self.path.write_bytes(changed)
+        proofs = derive_candidate("crlf-clean", git=self.git)
+        self.assertEqual(proofs["sample.txt"].detail, "task change from Git-clean baseline")
+        self.assertEqual(self.candidate("crlf-clean"), changed)
+        tree = candidate_tree("crlf-clean", git=self.git)
+        committed = self.git_run("cat-file", "-p", f"{tree}:sample.txt").stdout
+        self.assertEqual(committed, b"alpha\nbeta task\ngamma\n")
+
+    def test_crlf_preexisting_dirty_bytes_remain_byte_exactly_protected(self):
+        (self.root / ".gitattributes").write_bytes(b"*.txt text eol=crlf\n")
+        self.git_run("add", ".gitattributes")
+        self.git_run("add", "--renormalize", "sample.txt")
+        self.git_run("commit", "-qm", "declare line endings")
+        dirty = b"alpha user\r\nbeta\r\ngamma\r\n"
+        self.path.write_bytes(dirty)
+        metadata = begin(["sample.txt"], git=self.git, task_id="crlf-dirty")
+        self.assertEqual(metadata["files"][0]["initial"], "PREEXISTING_DIRTY")
+        snapshot = self.transaction_dir("crlf-dirty") / metadata["files"][0]["snapshot"]
+        self.assertEqual(snapshot.read_bytes(), dirty)
+        self.path.write_bytes(b"alpha user\r\nbeta\r\ngamma task\r\n")
+        proofs = derive_candidate("crlf-dirty", git=self.git)
+        self.assertEqual(proofs["sample.txt"].detail, "inverse reconstruction is byte-exact")
+        self.assertEqual(self.candidate("crlf-dirty"), b"alpha\r\nbeta\r\ngamma task\r\n")
+
 
 if __name__ == "__main__":
     unittest.main()

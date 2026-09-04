@@ -68,6 +68,16 @@ def _read_worktree(root: Path, path: str) -> bytes | None:
     return target.read_bytes()
 
 
+def _worktree_matches_head(git: Git, path: str) -> bool:
+    """Compare through Git clean filters so platform EOL conversion is not task dirt."""
+    worktree_oid = require_ok(
+        git.run("hash-object", f"--path={path}", path),
+        f"worktree normalization for {path}",
+    )
+    head_oid = require_ok(git.run("rev-parse", f"HEAD:{path}"), f"HEAD blob discovery for {path}")
+    return worktree_oid == head_oid
+
+
 def _write_json_atomic(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
@@ -95,7 +105,7 @@ def begin(paths: Sequence[str], *, git: Git | None = None, task_id: str | None =
         baseline = _read_worktree(root, relative)
         if head is None and baseline is not None:
             initial = "PREEXISTING_UNTRACKED"
-        elif head is not None and baseline != head:
+        elif head is not None and not _worktree_matches_head(active, relative):
             initial = "PREEXISTING_DIRTY"
         else:
             initial = "CLEAN_BASELINE"
@@ -219,7 +229,10 @@ def candidate_tree(task_id: str, *, git: Git | None = None) -> str:
             if not target.is_file():
                 raise TransactionError(f"transaction candidate is missing: {relative}")
             blob = _completed_output(
-                _run_with_index(root, index, "hash-object", "-w", "--stdin", input_bytes=target.read_bytes()),
+                _run_with_index(
+                    root, index, "hash-object", "-w", f"--path={relative}", "--stdin",
+                    input_bytes=target.read_bytes(),
+                ),
                 f"candidate blob creation for {relative}",
             )
             mode_value = require_ok(
@@ -358,6 +371,18 @@ def _merge(current: bytes, base: bytes, other: bytes) -> bytes:
         return result.stdout
 
 
+def _align_line_endings(content: bytes, baseline: bytes) -> bytes:
+    """Render a text blob with the baseline's uniform EOL style for three-way proof."""
+    if b"\0" in content or b"\0" in baseline:
+        return content
+    baseline_without_crlf = baseline.replace(b"\r\n", b"")
+    if b"\r\n" in baseline and b"\n" not in baseline_without_crlf:
+        return content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    if b"\n" in baseline and b"\r\n" not in baseline:
+        return content.replace(b"\r\n", b"\n")
+    return content
+
+
 def derive_candidate(task_id: str, *, git: Git | None = None) -> dict[str, ProofResult]:
     active = git or Git(Path.cwd())
     root = repository_root(active)
@@ -379,6 +404,11 @@ def derive_candidate(task_id: str, *, git: Git | None = None) -> dict[str, Proof
                 raise TransactionError(f"tracked baseline assumption failed: {relative}")
             candidate = current
             proof = ProofResult("PASS", "task-created path")
+        elif record["initial"] == "CLEAN_BASELINE":
+            if current is None:
+                raise TransactionError(f"tracked path deletion is not supported in Phase 1: {relative}")
+            candidate = current
+            proof = ProofResult("PASS", "task change from Git-clean baseline")
         else:
             if record.get("snapshot"):
                 snapshot = directory / record["snapshot"]
@@ -390,6 +420,7 @@ def derive_candidate(task_id: str, *, git: Git | None = None) -> dict[str, Proof
                     raise TransactionError(f"baseline snapshot is corrupt: {relative}")
             else:
                 baseline = head
+            head = _align_line_endings(head, baseline)
             if current is None:
                 raise TransactionError(f"tracked path deletion is not supported in Phase 1: {relative}")
             candidate = _merge(head, baseline, current)
