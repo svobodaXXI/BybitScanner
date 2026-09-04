@@ -2384,6 +2384,8 @@ def main() -> None:
         live_limit_acceptance_notional_ceiling=Decimal(
             os.environ.get("LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING", "0")
         ),
+        live_limit_build_sha=os.environ.get("BYBITSCANNER_BUILD_SHA", ""),
+        deployment_identity=os.environ.get("BYBITSCANNER_DEPLOYMENT_IDENTITY", "local"),
     ))
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(

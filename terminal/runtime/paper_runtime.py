@@ -22,6 +22,9 @@ from terminal.api.models import (
 )
 from terminal.application.live_market_execution import LiveMarketMutationCoordinator, LiveMarketMutationGates
 from terminal.application.live_execution import LiveExecutionCoordinator, LiveParityMutationGates
+from terminal.application.live_limit_acceptance import (
+    LiveLimitAcceptanceService, RuntimeProcessIdentity,
+)
 from terminal.api.projections import project_protection
 from terminal.application.protection import normalize_paper_protection_trigger
 from terminal.application.execution_engine import ExecutionEngine
@@ -139,6 +142,8 @@ class PaperRuntime:
         live_parity_mutations_enabled: bool = False,
         live_limit_mutations_enabled: bool = False,
         live_limit_acceptance_notional_ceiling: Decimal = Decimal("0"),
+        live_limit_build_sha: str = "",
+        deployment_identity: str = "local",
     ) -> None:
         self._account_manager = account_manager or paper_account_manager()
         self._paper_account_id = TradingAccountId("paper")
@@ -179,6 +184,16 @@ class PaperRuntime:
         account_id = self._paper_account_id
 
         self.store = SQLiteStore.open(database_path)
+        live_limit_acceptance = (
+            LiveLimitAcceptanceService(
+                self._account_manager, self.store, build_sha=live_limit_build_sha,
+                process_identity=RuntimeProcessIdentity.capture(
+                    deployment_identity=deployment_identity,
+                ),
+                writable_account_provider=self._is_stored_account_writable,
+            )
+            if live_limit_build_sha.strip() else None
+        )
         engine = ExecutionEngine(self.store)
         self._book_provider = book_provider
         self._limit_executor = PaperLimitExecutor(
@@ -274,6 +289,7 @@ class PaperRuntime:
                 instrument_provider=self._instrument_provider,
                 live_account_store=self._live_account_store,
                 writable_account_provider=self._is_stored_account_writable,
+                live_limit_acceptance=live_limit_acceptance,
                 gates=LiveParityMutationGates(
                     live_parity_mutations_enabled, live_mainnet_authorized,
                     live_limit_mutations_enabled, live_limit_acceptance_notional_ceiling,

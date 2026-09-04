@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -448,6 +448,13 @@ SCHEMA_V12_MIGRATION_STATEMENTS = (
     """,
 )
 
+SCHEMA_V13_MIGRATION_STATEMENTS = (
+    "ALTER TABLE live_limit_actions ADD COLUMN outcome_disposition TEXT",
+    "ALTER TABLE live_limit_actions ADD COLUMN outcome_reason TEXT",
+    "ALTER TABLE live_limit_actions ADD COLUMN outcome_at_ms INTEGER",
+    "ALTER TABLE live_limit_actions ADD COLUMN outcome_code INTEGER",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -461,4 +468,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V10_MIGRATION_STATEMENTS
     + SCHEMA_V11_MIGRATION_STATEMENTS
     + SCHEMA_V12_MIGRATION_STATEMENTS
+    + SCHEMA_V13_MIGRATION_STATEMENTS
 )

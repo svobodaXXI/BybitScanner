@@ -19,10 +19,12 @@ from terminal.application.trading_accounts import (
     TradingAccountProvider,
     TradingAccountStatus,
 )
+from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.schema import SCHEMA_VERSION
 from terminal.persistence.sqlite_store import (
     CommandRecord,
     LiveLimitAdmissionResult,
+    LiveLimitAcceptanceSessionRecord,
     LiveLimitRuntimeAttribution,
     PersistenceError,
     SQLiteStore,
@@ -110,5 +112,19 @@ class LiveLimitAcceptanceService:
             record=record,
             reserved_notional=reserved_notional,
             runtime=self.runtime_attribution,
+            occurred_at_ms=occurred_at_ms,
+        )
+
+    def select_session(
+        self, *, account_id: TradingAccountId, session_generation: int, symbol: Symbol,
+        client_action_id: str, occurred_at_ms: int,
+    ) -> LiveLimitAcceptanceSessionRecord:
+        return self._store.select_live_limit_acceptance_session(
+            account_id=account_id,
+            environment=TradingAccountEnvironment.MAINNET.value,
+            symbol=symbol,
+            capability=LIVE_LIMIT_ACCEPTANCE_CAPABILITY,
+            session_generation=session_generation,
+            client_action_id=client_action_id,
             occurred_at_ms=occurred_at_ms,
         )

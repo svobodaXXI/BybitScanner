@@ -83,14 +83,25 @@ class TradingApplication:
     clock_ms: Callable[[], int] = field(default=lambda: int(time.time() * 1000))
     paper_market_executor: PaperMarketExecutor | None = None
 
-    def submit(self, intent: PreTradeIntent, context: PreTradeContext) -> ApplicationResult:
+    def prepare(
+        self, intent: PreTradeIntent, context: PreTradeContext,
+    ) -> tuple[PreTradeDecision, CommandRecord | None]:
+        """Run canonical admission/normalization and create identity without persistence."""
         self._require_enabled()
         decision = self.guard.evaluate(intent, context)
+        if not decision.admitted:
+            return decision, None
+        assert decision.request is not None
+        return decision, self._create_record(decision.request)
+
+    def submit(self, intent: PreTradeIntent, context: PreTradeContext) -> ApplicationResult:
+        decision, prepared = self.prepare(intent, context)
         if not decision.admitted:
             return ApplicationResult(decision, None, None)
         request = decision.request
         assert request is not None
-        command = self._persist_submitting(self._create_record(request))
+        assert prepared is not None
+        command = self._persist_submitting(prepared)
         if self.paper_market_executor is not None and request.order_kind is OrderKind.MARKET:
             paper = self.paper_market_executor.execute(
                 trading_account_id=request.trading_account_id,

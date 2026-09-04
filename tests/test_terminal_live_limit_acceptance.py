@@ -28,7 +28,9 @@ from terminal.domain.models import (
     Price, Quantity, Symbol, TradingAccountId,
 )
 from terminal.domain.states import CommandState
-from terminal.persistence.schema import SCHEMA_VERSION
+from terminal.persistence.schema import (
+    SCHEMA_STATEMENTS, SCHEMA_V13_MIGRATION_STATEMENTS, SCHEMA_VERSION,
+)
 from terminal.persistence.sqlite_store import (
     CommandRecord, DuplicateIdentity, LiveLimitAcceptanceSessionRecord,
     LiveLimitAcceptanceState, LiveLimitRuntimeAttribution, PersistenceError,
@@ -137,7 +139,7 @@ class LiveLimitAcceptanceTests(unittest.TestCase):
         with self.assertRaises(PersistenceError):
             self.admit("missing-session")
 
-    def test_schema_v11_migrates_additively_to_v12(self):
+    def test_schema_v11_migrates_additively_to_current(self):
         self.store.close()
         connection = sqlite3.connect(self.database_path)
         connection.execute("DROP TABLE live_limit_actions")
@@ -146,7 +148,7 @@ class LiveLimitAcceptanceTests(unittest.TestCase):
         connection.commit()
         connection.close()
         self.store = SQLiteStore.open(self.database_path)
-        self.assertEqual(self.store.settings().schema_version, 12)
+        self.assertEqual(self.store.settings().schema_version, SCHEMA_VERSION)
         tables = {
             row[0] for row in self.store._connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
@@ -154,6 +156,25 @@ class LiveLimitAcceptanceTests(unittest.TestCase):
         }
         self.assertIn("live_limit_acceptance_sessions", tables)
         self.assertIn("live_limit_actions", tables)
+
+    def test_schema_v12_migrates_additive_outcome_columns(self):
+        path = Path(self.temp.name) / "v12.sqlite3"
+        connection = sqlite3.connect(path)
+        for statement in SCHEMA_STATEMENTS[:-len(SCHEMA_V13_MIGRATION_STATEMENTS)]:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version = 12")
+        connection.commit()
+        connection.close()
+        with SQLiteStore.open(path) as migrated:
+            self.assertEqual(migrated.settings().schema_version, SCHEMA_VERSION)
+            columns = {
+                row[1] for row in migrated._connection.execute(
+                    "PRAGMA table_info(live_limit_actions)"
+                )
+            }
+        self.assertTrue({
+            "outcome_disposition", "outcome_reason", "outcome_at_ms", "outcome_code",
+        }.issubset(columns))
 
     def test_concurrent_same_identity_has_one_owner_and_no_duplicate_admission(self):
         self.arm()
