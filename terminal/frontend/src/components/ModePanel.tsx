@@ -719,7 +719,7 @@ export function ModePanel({
               </svg>            </button>
           </div>
 
-          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed}>
+          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed}>
           <div className="paper-protection-stack">
             <TradingControlButton
               className="paper-stop-button"
