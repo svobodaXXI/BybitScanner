@@ -6275,21 +6275,28 @@ optimistic order state.
 PAPER behavior, fast DOM crossing, LIVE STOP, TAKE and full close remain unchanged. All LIVE mutation gates remain
 default-off, tests use mocked transport, `REAL BYBIT ORDER SENT: NO`, and browser/real-phone acceptance is pending.
 
-## LIVE LIMIT ACCEPTANCE PAUSED FOR PC-TO-VPS SYNCHRONIZATION
+## LIVE LIMIT SYSTEMIC SAFETY REDESIGN AUTHORIZED / IMPLEMENTATION PENDING
 
-ChangeRequest authority is `CR-TRADING-WORKSPACE-001` revision `3.1`. Dedicated default-off LIVE Limit gates and
-the `5.20 USDT` acceptance ceiling are implemented, verified and synchronized at `fce3d39`; invalid/empty-volume
-pending confirmation gating is implemented, verified and synchronized at `5ece02c` (`main == origin/main`).
+ChangeRequest authority is `CR-TRADING-WORKSPACE-001` revision `3.2`. It supersedes the revision 3.1 conclusion
+that no LIVE Limit reached Bybit and the revision 3.0 per-request-only acceptance model. Read-only forensic
+reconciliation proves that two distinct `ONGUSDT BUY LIMIT` orders reached Bybit 320 ms apart with distinct
+`orderId` and raw-UUID `orderLinkId` values. Three executions filled total quantity `100 ONG` and total execution
+value `9.92100 USDT` before fees. This was not a proven same-identity duplicate dispatch; multiple independently
+valid identities were admitted. No corresponding durable local LIVE Limit action/command survived, and the exact
+originating frontend/runtime path and historical `client_action_id`/`command_id` correlation cannot be recovered.
 
-Real-phone evidence: `Main Bybit / BYBIT / MAINNET / READY` was active with capabilities `market=false`,
-`limit=true`, `stop=false`, `take=false`, `full_close=false`; BUY LIMITS and SELL LIMITS were active; a pending LIVE
-Limit draft could be created; and its confirmation was correctly disabled for empty or zero volume (`PASS`). After
-entering `5.20 USDT`, confirmation still did not become active. No real LIVE Limit order was submitted.
+Revision 3.2 authorizes implementation of the bounded backend safety redesign: a durable acceptance session scoped
+by acceptance session, account, environment, symbol and capability; initial future acceptance limits of one create
+and `5.20 USDT` aggregate/per-order for one account and `ONGUSDT`; atomic durable LIVE Limit action ownership and
+budget reservation before dispatch; canonical identity correlation; backend single-flight independent of the
+frontend; restart-safe `UNKNOWN` reconciliation with no blind resend; `execId` deduplication; non-increasing
+acceptance amend semantics; owned-order cancel for risk reduction; and persisted build/process/database dispatch
+attribution. Persistence, schema, build, database-path, account/session or identity ambiguity fails closed.
 
-Revision 2.7 LIVE Limit real-money acceptance remains `INCOMPLETE`. Implementation is stopped and the immediate
-operational action is repository synchronization from PC to VPS. After synchronization, the exact next product
-action is narrow diagnosis of the unresolved positive-volume enablement failure; this checkpoint authorizes no
-diagnosis, patch or broader LIVE capability.
+All LIVE mutation gates remain OFF. Implementation is authorized but not started. Automated verification, review,
+and a new separately explicit real-money acceptance authorization are required before any further LIVE mutation.
+PAPER/LIVE separation, existing Market/parity gates, account/session fencing, One-Way mode, normalization, no
+optimistic LIVE projection and current LIVE Market safety semantics remain unchanged.
 
 ## VPS DEPLOYMENT / NGINX WEBSOCKET CHECKPOINT
 

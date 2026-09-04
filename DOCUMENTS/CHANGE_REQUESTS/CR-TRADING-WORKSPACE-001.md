@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "3.1",
+  "revision": "3.2",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -55,6 +55,7 @@
     ,"Implement restart-safe REST-only recovery for unresolved durable LIVE MARKET actions without mutation redispatch or new command identity"
     ,"Implement the final fail-closed LIVE MARKET pre-dispatch validation boundary without enabling real exchange dispatch"
     ,"Activate the capability-gated frontend LIVE Limit create, amend and cancel transport with captured account/session authority, single-attempt ownership and REST-only projection refresh while all runtime mutation gates remain default-off"
+    ,"Implement the human-authorized LIVE Limit safety redesign after the proven revision 2.7 incident: backend-owned durable acceptance sessions and action ownership, canonical identity correlation, atomic create-count and aggregate-notional reservation, backend single-flight, restart-safe no-resend reconciliation, and persisted runtime/build/database attribution while preserving existing PAPER/LIVE, account/session and LIVE Market boundaries"
     ,"Record the human-approved planning-only future direction for an autonomous Android manual Trading Workspace without authorizing implementation or selecting a final Android stack"
   ],
   "prohibited_scope": [
@@ -480,7 +481,8 @@
     {"revision": "2.8", "reason": "Human-authorized corrective contract amendment mapping normalized Unified available_balance_usdt to result.list[0].totalAvailableBalance while preserving totalWalletBalance, totalEquity, provenance, position, execution, capability, gate and fencing semantics", "date": "2026-09-03"},
     {"revision": "2.9", "reason": "Human-authorized corrective Working Volume contract: one WV is five percent of active-account account-wide Wallet (totalWalletBalance), rounded down to whole USDT; totalEquity, totalAvailableBalance and leverage are not WV bases", "date": "2026-09-03"},
     {"revision": "3.0", "reason": "Human-authorized dedicated default-off LIVE Limit acceptance boundary with an independent positive requested-notional ceiling; Limit create/amend/cancel no longer require or enable the broader parity gate, while Market, STOP, TAKE and full close remain independently disabled", "date": "2026-09-04"},
-    {"revision": "3.1", "reason": "Record incomplete revision 2.7 LIVE Limit real-phone acceptance before PC-to-VPS synchronization: empty-volume confirmation is correctly disabled, but entering 5.20 USDT does not activate confirmation; no real Limit order was submitted", "date": "2026-09-04"}
+    {"revision": "3.1", "reason": "Record incomplete revision 2.7 LIVE Limit real-phone acceptance before PC-to-VPS synchronization: empty-volume confirmation is correctly disabled, but entering 5.20 USDT does not activate confirmation; no real Limit order was submitted", "date": "2026-09-04"},
+    {"revision": "3.2", "reason": "Human-authorized corrective safety redesign after forensic proof that two distinct ONGUSDT LIVE BUY Limit identities were accepted 320 ms apart and filled for 100 ONG / 9.92100 USDT: supersede per-request-only acceptance with one durable backend-owned acceptance session, one-create and 5.20-USDT aggregate limits, durable LIVE Limit identity ownership, no-resend restart reconciliation, and runtime/build/database attribution; implementation is authorized but all LIVE gates and any further real-money acceptance remain separately locked", "date": "2026-09-04"}
   ]
 }
 ```
@@ -4896,4 +4898,51 @@ No LIVE Limit create, amend or cancel request reached real Bybit during this acc
 LIVE Limit real-money acceptance therefore remains `INCOMPLETE`. Implementation is stopped for PC-to-VPS
 repository synchronization; the exact next product action after synchronization is narrow diagnosis of why a
 positive `5.20 USDT` volume does not enable the pending-line confirmation, without broadening LIVE capabilities.
+
+### Revision 3.2 LIVE Limit systemic safety redesign authorization
+
+Revision 3.2 supersedes the revision 3.1 conclusion that no LIVE Limit reached Bybit and supersedes the revision
+3.0 per-request-only acceptance model. Read-only forensic reconciliation proves that Bybit accepted two distinct
+`ONGUSDT BUY LIMIT` orders 320 ms apart. They had distinct `orderId` and distinct raw-UUID `orderLinkId` values,
+filled through three deduplicable executions for total quantity `100 ONG` and total execution value
+`9.92100 USDT` before fees. This was not a proven same-identity duplicate dispatch: multiple independently valid
+identities were admitted. No corresponding durable local LIVE Limit action/command survived, and the exact
+originating frontend/runtime path cannot be reconstructed. The historical raw UUID exchange identities cannot be
+retroactively correlated to original `client_action_id` or `command_id` values.
+
+Implementation is human-authorized only for the bounded safety redesign below. This authorization does not enable
+any LIVE gate and does not authorize another exchange mutation or real-money acceptance. All LIVE mutation gates
+remain OFF until implementation, exact-path automated verification, review, and a new separately explicit
+real-money acceptance authorization.
+
+The backend owns a durable LIVE Limit acceptance session scoped by
+`acceptance_session_id + trading_account_id + environment + symbol + capability`. The initial future acceptance
+configuration is exactly one writable account, `MAINNET`, `ONGUSDT`, and `LIVE LIMIT CREATE`, with
+`max_create_count=1`, `aggregate_notional_ceiling=5.20 USDT`, and `per_order_ceiling=5.20 USDT`. The session fails
+closed and becomes exhausted/locked after its first durably owned create or upon any `UNKNOWN`. A distinct identity
+is blocked whenever session count, aggregate budget, or backend single-flight ownership is exhausted; frontend
+suppression remains UX defense only and never owns safety.
+
+Before any external adapter dispatch, one atomic durable transaction must claim the LIVE Limit action and reserve
+its count/notional budget. Durable evidence must include `client_action_id`, canonical request fingerprint,
+`command_id`, canonical `orderLinkId`, exchange `orderId` when known, account/session authority,
+`acceptance_session_id`, dispatch and reconciliation state, reserved count/notional, build SHA, process-instance
+identity, database identity/path digest, and timestamps. Same identity plus the same fingerprint returns or
+reconciles the existing result without redispatch; the same identity with a different fingerprint fails. Budget
+reservation, action ownership, command identity, and backend single-flight acquisition are atomic. No reservation
+is automatically refunded after adapter dispatch begins or the result becomes `UNKNOWN`. A deterministic
+pre-dispatch failure may release a reservation only when durable state proves that no adapter call began.
+
+Restart recovery uses only the original persisted identity and authoritative Bybit REST/private order, execution
+and position evidence. It never blindly resends an ambiguous mutation, and executions are deduplicated by
+`execId`. Any unavailable or ambiguous persistence, relative or divergent database path, incompatible schema,
+unauthorized build mismatch, account/session mismatch, acceptance-session mismatch, or identity mismatch blocks
+dispatch fail closed. Runtime build SHA, process-instance identity and database identity/path digest are persisted
+before dispatch so the responsible binary, process and durable store are attributable.
+
+Acceptance-mode amend cannot increase exposure: an increase in quantity or reserved notional is blocked. Cancel
+of an owned active order remains available for risk reduction even when the create session is exhausted, subject
+to existing account/session, identity, single-attempt and reconciliation fencing. PAPER/LIVE separation, all
+independent Market/parity gates, One-Way `positionIdx=0`, canonical normalization, no optimistic LIVE projection,
+existing account/session fencing, and existing LIVE Market safety semantics remain unchanged.
 
