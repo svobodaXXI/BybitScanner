@@ -15,6 +15,8 @@ Routine scoped work must not require the complete deep-recovery set. Do not run 
 
 Generate a compact disposable bootstrap when useful with `python -m tools.dev.task_context --path EXACT_PATH` (repeat `--path` as needed; optional `--hint`). Its JSON output is derived, non-authoritative context and never replaces repository authority or governance gates.
 
+For implementation tasks, use `python -m tools.dev.task start --intent "SHORT INTENT" --path EXACT_PATH` before edits and `python -m tools.dev.task finish --task TASK_ID` afterward. This facade composes sync preflight, scoped authority routing, task transactions, exact-scope verification, user-owned-work guards, and the standard completion report; it does not replace their owning rules or tools.
+
 ## Communication bootstrap — hard rule
 
 Before the first project-specific user action or technical instruction in every BybitScanner ChatGPT chat, load the scoped communication and user-action authority from `DOCUMENTS/ASSISTANT_PROTOCOL.md`. This remains mandatory for Trading Workspace work in addition to its existing roadmap/ChangeRequest routing. If `ASSISTANT_PROTOCOL.md` changes during the current chat/session, reload its changed communication/workflow sections before issuing the next user action. Keep this bootstrap compact and scoped; it does not require full/deep recovery or duplication of the protocol.
