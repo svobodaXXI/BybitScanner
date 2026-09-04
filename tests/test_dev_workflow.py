@@ -7,11 +7,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.dev.checkpoint import checkpoint
 from tools.dev.task_transaction import begin, candidate_root
 from tools.dev.verify import verify
-from tools.dev.workflow import CommandResult, Git, fingerprints
+from tools.dev.workflow import CommandResult, Git, fingerprints, worktree_change_paths
 
 
 class FakeGit(Git):
@@ -110,6 +111,38 @@ class DevWorkflowTests(unittest.TestCase):
         self.assertEqual(receipt["task_paths"], ["task.py"])
         self.assertEqual(receipt["branch"], "main")
         self.assertTrue(receipt["checks"])
+
+    def test_git_run_decodes_utf8_output_independent_of_windows_code_page(self):
+        temporary, root = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        completed = subprocess.CompletedProcess(
+            args=("git", "status"), returncode=0,
+            stdout="?? отчёт.txt\0".encode("utf-8"), stderr=b"",
+        )
+        with patch("tools.dev.workflow.subprocess.run", return_value=completed) as run:
+            result = Git(root).run("status", "--porcelain=v1", "-z")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "?? отчёт.txt\0")
+        self.assertNotIn("text", run.call_args.kwargs)
+
+    def test_git_run_reports_invalid_utf8_without_none_output(self):
+        temporary, root = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        completed = subprocess.CompletedProcess(
+            args=("git", "status"), returncode=0, stdout=b"\xff\0", stderr=b"",
+        )
+        with patch("tools.dev.workflow.subprocess.run", return_value=completed):
+            result = Git(root).run("status", "--porcelain=v1", "-z")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("not valid UTF-8", result.stderr)
+
+    def test_worktree_change_paths_preserves_non_ascii_nul_delimited_filename(self):
+        temporary, root = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        filename = "отчёт 日本語.txt"
+        (root / filename).write_bytes(b"user work\n")
+        self.assertIn(filename, worktree_change_paths(Git(root)))
 
     def test_stale_head_is_rejected_before_staging(self):
         temporary, root = self.make_repo()

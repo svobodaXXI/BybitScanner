@@ -26,9 +26,18 @@ class Git:
 
     def run(self, *args: str) -> CommandResult:
         completed = subprocess.run(
-            ("git", *args), cwd=self.root, text=True, capture_output=True, check=False
+            ("git", *args), cwd=self.root, capture_output=True, check=False
         )
-        return CommandResult(completed.returncode, completed.stdout, completed.stderr)
+        try:
+            stdout = completed.stdout.decode("utf-8", errors="strict")
+            stderr = completed.stderr.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            return CommandResult(
+                completed.returncode or 1,
+                "",
+                f"git output is not valid UTF-8: {exc}",
+            )
+        return CommandResult(completed.returncode, stdout, stderr)
 
 
 def require_ok(result: CommandResult, operation: str) -> str:
