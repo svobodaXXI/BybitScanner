@@ -1018,6 +1018,37 @@ class SQLiteStore:
         try:
             with self._transaction():
                 self._connection.execute(
+                    """UPDATE live_limit_acceptance_sessions
+                       SET state='EXPIRED', updated_at_ms=?
+                       WHERE state='ARMED' AND expires_at_ms<=?""",
+                    (record.opened_at_ms, record.opened_at_ms),
+                )
+                conflict = self._connection.execute(
+                    """SELECT 1 FROM live_limit_acceptance_sessions
+                       WHERE trading_account_id=? AND environment=? AND symbol=?
+                         AND capability=? AND state='ARMED' LIMIT 1""",
+                    (record.trading_account_id.value, record.environment,
+                     record.symbol.value, record.capability),
+                ).fetchone()
+                if conflict is not None:
+                    raise PersistenceError("a conflicting LIVE Limit acceptance session is active")
+                unresolved_action = self._connection.execute(
+                    """SELECT 1 FROM live_limit_actions WHERE trading_account_id=?
+                       AND environment=? AND symbol=? AND capability=?
+                       AND (dispatch_state IN ('OWNED','DISPATCHING','UNKNOWN')
+                            OR reconciliation_state='REQUIRED') LIMIT 1""",
+                    (record.trading_account_id.value, record.environment,
+                     record.symbol.value, record.capability),
+                ).fetchone()
+                unresolved_operation = self._connection.execute(
+                    """SELECT 1 FROM live_limit_operations WHERE trading_account_id=?
+                       AND symbol=? AND (dispatch_state IN ('OWNED','DISPATCHING','UNKNOWN')
+                            OR reconciliation_state='REQUIRED') LIMIT 1""",
+                    (record.trading_account_id.value, record.symbol.value),
+                ).fetchone()
+                if unresolved_action is not None or unresolved_operation is not None:
+                    raise PersistenceError("unresolved LIVE Limit ownership blocks a new session")
+                self._connection.execute(
                     """INSERT INTO live_limit_acceptance_sessions (
                         acceptance_session_id, trading_account_id, environment, symbol,
                         capability, state, max_create_count, aggregate_notional_ceiling,
@@ -1047,6 +1078,60 @@ class SQLiteStore:
             raise PersistenceError("committed LIVE Limit acceptance session disappeared")
         return loaded
 
+    def list_live_limit_acceptance_sessions(
+        self, *, account_id: TradingAccountId | None = None,
+        symbol: Symbol | None = None,
+    ) -> tuple[LiveLimitAcceptanceSessionRecord, ...]:
+        self._assert_owner()
+        clauses = []
+        parameters: list[object] = []
+        if account_id is not None:
+            clauses.append("trading_account_id=?")
+            parameters.append(account_id.value)
+        if symbol is not None:
+            clauses.append("symbol=?")
+            parameters.append(symbol.value)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        rows = self._connection.execute(
+            f"SELECT * FROM live_limit_acceptance_sessions{where} ORDER BY opened_at_ms DESC",
+            tuple(parameters),
+        ).fetchall()
+        return tuple(_live_limit_session_from_row(row) for row in rows)
+
+    def expire_live_limit_acceptance_sessions(self, *, occurred_at_ms: int) -> int:
+        self._assert_owner()
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE live_limit_acceptance_sessions
+                   SET state='EXPIRED', updated_at_ms=?
+                   WHERE state='ARMED' AND expires_at_ms<=?""",
+                (occurred_at_ms, occurred_at_ms),
+            )
+        return cursor.rowcount
+
+    def revoke_live_limit_acceptance_session(
+        self, *, acceptance_session_id: str, account_id: TradingAccountId,
+        environment: str, symbol: Symbol, capability: str, occurred_at_ms: int,
+    ) -> LiveLimitAcceptanceSessionRecord:
+        self._assert_owner()
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE live_limit_acceptance_sessions
+                   SET state='REVOKED', updated_at_ms=?
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND environment=? AND symbol=? AND capability=? AND state='ARMED'""",
+                (occurred_at_ms, acceptance_session_id, account_id.value,
+                 environment, symbol.value, capability),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError("only an ARMED acceptance session can be revoked")
+        current = self.get_live_limit_acceptance_session(
+            acceptance_session_id, account_id, environment, symbol, capability,
+        )
+        if current is None:
+            raise PersistenceError("revoked acceptance session disappeared")
+        return current
+
     def get_live_limit_acceptance_session(
         self, acceptance_session_id: str, account_id: TradingAccountId,
         environment: str, symbol: Symbol, capability: str,
@@ -1067,6 +1152,7 @@ class SQLiteStore:
     ) -> LiveLimitAcceptanceSessionRecord:
         """Resolve replay ownership first, otherwise require one eligible ARMED session."""
         self._assert_owner()
+        self.expire_live_limit_acceptance_sessions(occurred_at_ms=occurred_at_ms)
         action_rows = self._connection.execute(
             """SELECT acceptance_session_id FROM live_limit_actions
                WHERE trading_account_id=? AND session_generation=? AND client_action_id=?

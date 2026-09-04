@@ -23,7 +23,7 @@ from terminal.api.models import (
 from terminal.application.live_market_execution import LiveMarketMutationCoordinator, LiveMarketMutationGates
 from terminal.application.live_execution import LiveExecutionCoordinator, LiveParityMutationGates
 from terminal.application.live_limit_acceptance import (
-    LiveLimitAcceptanceService, RuntimeProcessIdentity,
+    LiveLimitAcceptanceAdmin, LiveLimitAcceptanceService, RuntimeProcessIdentity,
 )
 from terminal.api.projections import project_protection
 from terminal.application.protection import normalize_paper_protection_trigger
@@ -155,6 +155,9 @@ class PaperRuntime:
         self._live_mainnet_authorized = live_mainnet_authorized
         self._live_parity_mutations_enabled = live_parity_mutations_enabled
         self._live_limit_mutations_enabled = live_limit_mutations_enabled
+        self._live_market_acceptance_notional_ceiling = live_acceptance_notional_ceiling
+        self._live_market_acceptance_single_flight = live_acceptance_single_flight
+        self._live_limit_acceptance_notional_ceiling = live_limit_acceptance_notional_ceiling
         self._instrument_provider = instrument_provider or (lambda _symbol: instrument_snapshot)
         self._stored_bybit_accounts = list(credential_store.load()) if credential_store else []
         for stored in self._stored_bybit_accounts:
@@ -184,15 +187,37 @@ class PaperRuntime:
         account_id = self._paper_account_id
 
         self.store = SQLiteStore.open(database_path)
+        runtime_process_identity = RuntimeProcessIdentity.capture(
+            deployment_identity=deployment_identity,
+        )
         live_limit_acceptance = (
             LiveLimitAcceptanceService(
                 self._account_manager, self.store, build_sha=live_limit_build_sha,
-                process_identity=RuntimeProcessIdentity.capture(
-                    deployment_identity=deployment_identity,
-                ),
+                process_identity=runtime_process_identity,
                 writable_account_provider=self._is_stored_account_writable,
             )
             if live_limit_build_sha.strip() else None
+        )
+        self._live_limit_admin = LiveLimitAcceptanceAdmin(
+            self._account_manager, self.store, build_sha=live_limit_build_sha,
+            process_identity=runtime_process_identity,
+            writable_account_provider=self._is_stored_account_writable,
+            gates_provider=lambda: {
+                "live_mainnet_authorized": self._live_mainnet_authorized,
+                "live_limit_mutations_enabled": self._live_limit_mutations_enabled,
+                "live_market_mutations_enabled": self._live_market_mutations_enabled,
+                "live_parity_mutations_enabled": self._live_parity_mutations_enabled,
+                "live_market_acceptance_notional_ceiling": str(
+                    self._live_market_acceptance_notional_ceiling
+                ),
+                "live_market_acceptance_single_flight": (
+                    self._live_market_acceptance_single_flight
+                ),
+                "live_limit_acceptance_notional_ceiling": str(
+                    self._live_limit_acceptance_notional_ceiling
+                ),
+                "live_limit_acceptance_service_available": live_limit_acceptance is not None,
+            },
         )
         engine = ExecutionEngine(self.store)
         self._book_provider = book_provider
@@ -543,6 +568,15 @@ class PaperRuntime:
         if self._live_execution is None:
             raise RuntimeError("live_parity_unavailable")
         return self._live_execution.execute_limit_cancel(account_id, session_generation, request)
+
+    def live_limit_acceptance_diagnostics(self):
+        return self._live_limit_admin.diagnostics()
+
+    def arm_live_limit_acceptance(self, **values):
+        return self._live_limit_admin.arm(**values)
+
+    def revoke_live_limit_acceptance(self, **values):
+        return self._live_limit_admin.revoke(**values)
 
     def _is_stored_account_writable(self, account_id: TradingAccountId) -> bool:
         stored = self._stored_bybit_account(account_id.value)

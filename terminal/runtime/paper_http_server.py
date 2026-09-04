@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import logging
 import os
 import queue
@@ -79,6 +80,18 @@ LOGGER = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"
 PORT = 8765
+OPERATOR_DIAGNOSTICS_PATH = "/api/operator/live-limit-acceptance"
+OPERATOR_ARM_PATH = "/api/operator/live-limit-acceptance/arm"
+OPERATOR_REVOKE_PATH = "/api/operator/live-limit-acceptance/revoke"
+OPERATOR_ARM_FIELDS = {
+    "acceptance_session_id", "account_id", "environment", "symbol", "capability",
+    "max_create_count", "aggregate_notional_ceiling", "per_order_ceiling",
+    "expires_at_ms", "operator_authorization_reference", "authorized_build_sha",
+    "authorized_database_identity", "authorized_session_generation",
+}
+OPERATOR_REVOKE_FIELDS = {
+    "acceptance_session_id", "account_id", "environment", "symbol", "capability",
+}
 MARKET_FIELDS = {
     "client_action_id",
     "symbol",
@@ -1412,6 +1425,20 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
 
+        if parsed.path == OPERATOR_DIAGNOSTICS_PATH:
+            if not self._operator_authorized():
+                self._json_response(403, {"ok": False, "error": "operator_unauthorized"})
+                return
+            try:
+                diagnostics = self.server.runtime.call(
+                    lambda runtime: runtime.live_limit_acceptance_diagnostics()
+                )
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "operator_diagnostics_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **diagnostics})
+            return
+
         if parsed.path == "/api/health":
             self._json_response(
                 200,
@@ -1861,6 +1888,42 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        if path in {OPERATOR_ARM_PATH, OPERATOR_REVOKE_PATH}:
+            if not self._operator_authorized():
+                self._json_response(403, {"ok": False, "error": "operator_unauthorized"})
+                return
+            try:
+                if path == OPERATOR_ARM_PATH:
+                    payload = self._payload(OPERATOR_ARM_FIELDS)
+                    result = self.server.runtime.call(lambda runtime: runtime.arm_live_limit_acceptance(
+                        acceptance_session_id=payload["acceptance_session_id"],
+                        account_id=payload["account_id"], environment=payload["environment"],
+                        symbol=payload["symbol"], capability=payload["capability"],
+                        max_create_count=_operator_integer(payload["max_create_count"]),
+                        aggregate_notional_ceiling=_decimal(payload["aggregate_notional_ceiling"]),
+                        per_order_ceiling=_decimal(payload["per_order_ceiling"]),
+                        expires_at_ms=_operator_integer(payload["expires_at_ms"]),
+                        operator_authorization_reference=payload["operator_authorization_reference"],
+                        authorized_build_sha=payload["authorized_build_sha"],
+                        authorized_database_identity=payload["authorized_database_identity"],
+                        authorized_session_generation=_operator_integer(
+                            payload["authorized_session_generation"]
+                        ),
+                    ))
+                else:
+                    payload = self._payload(OPERATOR_REVOKE_FIELDS)
+                    result = self.server.runtime.call(lambda runtime: runtime.revoke_live_limit_acceptance(
+                        **payload
+                    ))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_operator_payload"})
+                return
+            except Exception:
+                self._json_response(409, {"ok": False, "error": "operator_request_rejected"})
+                return
+            self._json_response(200, {"ok": True, "session": to_primitive(result)})
+            return
         account_activate_id = _account_route_id(urlparse(self.path).path, "activate")
         if account_activate_id is not None:
             try:
@@ -2283,6 +2346,11 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             raise ValueError("invalid request fields")
         return payload
 
+    def _operator_authorized(self) -> bool:
+        expected = getattr(self.server, "operator_token", "")
+        supplied = self.headers.get("X-BybitScanner-Operator-Token", "")
+        return bool(len(expected) >= 32 and supplied and hmac.compare_digest(expected, supplied))
+
     def _json_response(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
@@ -2325,6 +2393,8 @@ def create_configured_paper_runtime(
     live_parity_mutations_enabled: bool = False,
     live_limit_mutations_enabled: bool = False,
     live_limit_acceptance_notional_ceiling: Decimal = Decimal("0"),
+    live_limit_build_sha: str = "",
+    deployment_identity: str = "local",
     account_manager=None,
 ) -> PaperRuntime:
     return PaperRuntime(
@@ -2349,6 +2419,8 @@ def create_configured_paper_runtime(
         live_parity_mutations_enabled=live_parity_mutations_enabled,
         live_limit_mutations_enabled=live_limit_mutations_enabled,
         live_limit_acceptance_notional_ceiling=live_limit_acceptance_notional_ceiling,
+        live_limit_build_sha=live_limit_build_sha,
+        deployment_identity=deployment_identity,
         account_manager=account_manager,
     )
 
@@ -2405,6 +2477,7 @@ def main() -> None:
     market_data.ensure_initial_ready()
 
     server = ThreadingHTTPServer((HOST, port), PaperHttpHandler)
+    server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
     server.runtime = runtime
     server.market_data = market_data
 
@@ -2425,6 +2498,15 @@ def _decimal(value: object) -> Decimal:
     if not result.is_finite():
         raise ValueError("decimal value must be finite")
     return result
+
+
+def _operator_integer(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
+        raise ValueError("operator integer value is invalid")
+    parsed = Decimal(value)
+    if not parsed.is_finite() or parsed != parsed.to_integral_value():
+        raise ValueError("operator integer value must be finite and integral")
+    return int(parsed)
 
 
 def _optional_decimal(value: object) -> Decimal | None:
