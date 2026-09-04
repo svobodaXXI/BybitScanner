@@ -114,7 +114,7 @@ class LiveExecutionTests(unittest.TestCase):
             ), clock_ms=lambda: 1000,
         )
 
-    def test_limit_uses_trading_application_and_persists_before_single_adapter_call(self):
+    def test_limit_create_cannot_reach_adapter_before_durable_admission_wiring(self):
         request = LimitCommandRequest(
             ClientActionId("limit-1"), "BTCUSDT", OrderSide.BUY,
             VolumeRequest(VolumeUnit.USDT, Decimal("100")), Decimal("50000"),
@@ -123,16 +123,16 @@ class LiveExecutionTests(unittest.TestCase):
         result = self.coordinator(limit_enabled=True, limit_ceiling="100").execute_limit_create(
             ACCOUNT.value, 1, request,
         )
-        self.assertEqual(result.status.value, "accepted_pending")
-        self.assertEqual(len(self.adapter.calls), 1)
-        self.assertEqual(self.adapter.calls[0][1]["price"], Decimal("49000"))
-        self.assertEqual(len(self.store.load_unfinished_commands()), 1)
+        self.assertEqual(result.status.value, "blocked")
+        self.assertEqual(result.reason_code, "live_limit_durable_admission_required")
+        self.assertEqual(self.adapter.calls, [])
+        self.assertEqual(self.store.load_unfinished_commands(), ())
 
         replay = self.coordinator(limit_enabled=True, limit_ceiling="100").execute_limit_create(
             ACCOUNT.value, 1, request,
         )
-        self.assertIn(replay.status.value, {"blocked", "persistence_failure"})
-        self.assertEqual(len(self.adapter.calls), 1)
+        self.assertEqual(replay.reason_code, "live_limit_durable_admission_required")
+        self.assertEqual(self.adapter.calls, [])
 
     def test_stale_session_and_default_off_gates_are_zero_dispatch(self):
         request = FullCloseCommandRequest(ClientActionId("close"), "BTCUSDT")
@@ -229,8 +229,8 @@ class LiveExecutionTests(unittest.TestCase):
         ).execute_limit_create(ACCOUNT.value, 1, request("at", "100"))
         self.assertEqual(disabled.reason_code, "live_limit_acceptance_notional_exceeded")
         self.assertEqual(above.reason_code, "live_limit_acceptance_notional_exceeded")
-        self.assertEqual(accepted.status.value, "accepted_pending")
-        self.assertEqual(len(self.adapter.calls), 1)
+        self.assertEqual(accepted.reason_code, "live_limit_durable_admission_required")
+        self.assertEqual(self.adapter.calls, [])
 
     def test_limit_amend_cancel_use_limit_gate_and_session_fence(self):
         coordinator = self.coordinator(parity_enabled=False, limit_enabled=True)

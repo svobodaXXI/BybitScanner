@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -43,6 +44,7 @@ from .schema import (
     SCHEMA_V9_MIGRATION_STATEMENTS,
     SCHEMA_V10_MIGRATION_STATEMENTS,
     SCHEMA_V11_MIGRATION_STATEMENTS,
+    SCHEMA_V12_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -125,6 +127,76 @@ class LiveMarketActionRecord:
     order_link_id: str
     dispatch_started: bool
     created_at_ms: int
+
+
+class LiveLimitAcceptanceState(str, Enum):
+    ARMED = "ARMED"
+    EXHAUSTED = "EXHAUSTED"
+    EXPIRED = "EXPIRED"
+    REVOKED = "REVOKED"
+
+
+@dataclass(frozen=True, slots=True)
+class LiveLimitAcceptanceSessionRecord:
+    acceptance_session_id: str
+    trading_account_id: TradingAccountId
+    environment: str
+    symbol: Symbol
+    capability: str
+    state: LiveLimitAcceptanceState
+    max_create_count: int
+    aggregate_notional_ceiling: Decimal
+    per_order_ceiling: Decimal
+    reserved_count: int
+    reserved_notional: Decimal
+    opened_at_ms: int
+    expires_at_ms: int
+    authorized_build_sha: str
+    database_identity: str
+    operator_authorization_reference: str
+    authorized_session_generation: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class LiveLimitRuntimeAttribution:
+    build_sha: str
+    process_instance_id: str
+    process_started_at_ms: int
+    process_id: int
+    database_path: str
+    database_identity: str
+    schema_version: int
+    host_identity: str
+
+
+@dataclass(frozen=True, slots=True)
+class LiveLimitActionRecord:
+    acceptance_session_id: str
+    trading_account_id: TradingAccountId
+    environment: str
+    capability: str
+    session_generation: int
+    symbol: Symbol
+    operation: str
+    client_action_id: str
+    request_fingerprint: str
+    command_id: CommandId
+    order_link_id: str
+    exchange_order_id: OrderId | None
+    dispatch_state: str
+    reconciliation_state: str
+    reserved_count: int
+    reserved_notional: Decimal
+    runtime: LiveLimitRuntimeAttribution
+    created_at_ms: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class LiveLimitAdmissionResult:
+    action: LiveLimitActionRecord
+    created: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -349,6 +421,64 @@ def _paper_limit_from_row(row: sqlite3.Row) -> PaperLimitOrderRecord:
     )
 
 
+def _live_limit_session_from_row(row: sqlite3.Row) -> LiveLimitAcceptanceSessionRecord:
+    return LiveLimitAcceptanceSessionRecord(
+        acceptance_session_id=row["acceptance_session_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        environment=row["environment"],
+        symbol=Symbol(row["symbol"]),
+        capability=row["capability"],
+        state=LiveLimitAcceptanceState(row["state"]),
+        max_create_count=int(row["max_create_count"]),
+        aggregate_notional_ceiling=_load_decimal(row["aggregate_notional_ceiling"]),
+        per_order_ceiling=_load_decimal(row["per_order_ceiling"]),
+        reserved_count=int(row["reserved_count"]),
+        reserved_notional=_load_decimal(row["reserved_notional"]),
+        opened_at_ms=int(row["opened_at_ms"]),
+        expires_at_ms=int(row["expires_at_ms"]),
+        authorized_build_sha=row["authorized_build_sha"],
+        database_identity=row["database_identity"],
+        operator_authorization_reference=row["operator_authorization_reference"],
+        authorized_session_generation=int(row["authorized_session_generation"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
+def _live_limit_action_from_row(row: sqlite3.Row) -> LiveLimitActionRecord:
+    runtime = LiveLimitRuntimeAttribution(
+        build_sha=row["build_sha"],
+        process_instance_id=row["process_instance_id"],
+        process_started_at_ms=int(row["process_started_at_ms"]),
+        process_id=int(row["process_id"]),
+        database_path=row["database_path"],
+        database_identity=row["database_identity"],
+        schema_version=int(row["schema_version"]),
+        host_identity=row["host_identity"],
+    )
+    return LiveLimitActionRecord(
+        acceptance_session_id=row["acceptance_session_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        environment=row["environment"],
+        capability=row["capability"],
+        session_generation=int(row["session_generation"]),
+        symbol=Symbol(row["symbol"]),
+        operation=row["operation"],
+        client_action_id=row["client_action_id"],
+        request_fingerprint=row["request_fingerprint"],
+        command_id=CommandId(row["command_id"]),
+        order_link_id=row["order_link_id"],
+        exchange_order_id=(OrderId(row["exchange_order_id"])
+                           if row["exchange_order_id"] is not None else None),
+        dispatch_state=row["dispatch_state"],
+        reconciliation_state=row["reconciliation_state"],
+        reserved_count=int(row["reserved_count"]),
+        reserved_notional=_load_decimal(row["reserved_notional"]),
+        runtime=runtime,
+        created_at_ms=int(row["created_at_ms"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
 class SQLiteStore:
     """Synchronous store owned by one backend thread and writer."""
 
@@ -395,6 +525,11 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 11:
+            SQLiteStore._validate_required_tables(connection, version=11)
+            SQLiteStore._migrate_v11_to_v12(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 10:
@@ -607,6 +742,19 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v11_to_v12(connection)
+
+    @staticmethod
+    def _migrate_v11_to_v12(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V12_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 12")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -645,6 +793,8 @@ class SQLiteStore:
             required.add("paper_protection_actions")
         if version >= 11:
             required.add("live_market_actions")
+        if version >= 12:
+            required.update({"live_limit_acceptance_sessions", "live_limit_actions"})
         actual = {
             row[0]
             for row in connection.execute(
@@ -694,6 +844,458 @@ class SQLiteStore:
             busy_timeout_ms=int(self._connection.execute("PRAGMA busy_timeout").fetchone()[0]),
             synchronous=int(self._connection.execute("PRAGMA synchronous").fetchone()[0]),
         )
+
+    @property
+    def normalized_path(self) -> str:
+        """Stable absolute database path used in mutation provenance."""
+        self._assert_owner()
+        return str(self.path.resolve())
+
+    @property
+    def database_identity(self) -> str:
+        """Non-secret digest identifying the normalized persistence path."""
+        return hashlib.sha256(self.normalized_path.encode("utf-8")).hexdigest()
+
+    def create_live_limit_acceptance_session(
+        self, record: LiveLimitAcceptanceSessionRecord,
+    ) -> LiveLimitAcceptanceSessionRecord:
+        """Explicitly persist an operator-authorized session; never auto-arm one."""
+        self._assert_owner()
+        if record.state is not LiveLimitAcceptanceState.ARMED:
+            raise ValueError("a new LIVE Limit acceptance session must be ARMED explicitly")
+        if record.environment != "MAINNET" or record.capability != "LIVE_LIMIT_CREATE":
+            raise ValueError("LIVE Limit acceptance requires MAINNET LIVE_LIMIT_CREATE scope")
+        if record.max_create_count < 1:
+            raise ValueError("max_create_count must be positive")
+        _decimal_text(record.aggregate_notional_ceiling)
+        _decimal_text(record.per_order_ceiling)
+        _decimal_text(record.reserved_notional)
+        if record.aggregate_notional_ceiling <= 0 or record.per_order_ceiling <= 0:
+            raise ValueError("acceptance ceilings must be positive")
+        if record.per_order_ceiling > record.aggregate_notional_ceiling:
+            raise ValueError("per-order ceiling cannot exceed aggregate ceiling")
+        if record.reserved_count != 0 or record.reserved_notional != 0:
+            raise ValueError("a new acceptance session cannot begin with reservations")
+        if record.opened_at_ms < 0 or record.expires_at_ms <= record.opened_at_ms:
+            raise ValueError("acceptance session timestamps are invalid")
+        if record.updated_at_ms < record.opened_at_ms:
+            raise ValueError("acceptance session update timestamp is invalid")
+        if record.authorized_session_generation < 1:
+            raise ValueError("authorized session generation must be positive")
+        if record.database_identity != self.database_identity:
+            raise PersistenceError("acceptance session database identity mismatch")
+        required = (
+            record.acceptance_session_id, record.authorized_build_sha,
+            record.operator_authorization_reference,
+        )
+        if any(not value.strip() for value in required):
+            raise ValueError("acceptance session authorization fields must be non-empty")
+        try:
+            with self._transaction():
+                self._connection.execute(
+                    """INSERT INTO live_limit_acceptance_sessions (
+                        acceptance_session_id, trading_account_id, environment, symbol,
+                        capability, state, max_create_count, aggregate_notional_ceiling,
+                        per_order_ceiling, reserved_count, reserved_notional, opened_at_ms,
+                        expires_at_ms, authorized_build_sha, database_identity,
+                        operator_authorization_reference, authorized_session_generation,
+                        updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '0', ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        record.acceptance_session_id, record.trading_account_id.value,
+                        record.environment, record.symbol.value, record.capability,
+                        record.state.value, record.max_create_count,
+                        _decimal_text(record.aggregate_notional_ceiling),
+                        _decimal_text(record.per_order_ceiling), record.opened_at_ms,
+                        record.expires_at_ms, record.authorized_build_sha,
+                        record.database_identity, record.operator_authorization_reference,
+                        record.authorized_session_generation, record.updated_at_ms,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateIdentity("LIVE Limit acceptance session already exists") from exc
+        loaded = self.get_live_limit_acceptance_session(
+            record.acceptance_session_id, record.trading_account_id,
+            record.environment, record.symbol, record.capability,
+        )
+        if loaded is None:
+            raise PersistenceError("committed LIVE Limit acceptance session disappeared")
+        return loaded
+
+    def get_live_limit_acceptance_session(
+        self, acceptance_session_id: str, account_id: TradingAccountId,
+        environment: str, symbol: Symbol, capability: str,
+    ) -> LiveLimitAcceptanceSessionRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT * FROM live_limit_acceptance_sessions
+               WHERE acceptance_session_id=? AND trading_account_id=? AND environment=?
+                 AND symbol=? AND capability=?""",
+            (acceptance_session_id, account_id.value, environment, symbol.value, capability),
+        ).fetchone()
+        return _live_limit_session_from_row(row) if row is not None else None
+
+    def admit_live_limit_create(
+        self, *, acceptance_session_id: str, environment: str, capability: str,
+        session_generation: int, client_action_id: str, request_fingerprint: str,
+        record: CommandRecord, reserved_notional: Decimal,
+        runtime: LiveLimitRuntimeAttribution, occurred_at_ms: int,
+    ) -> LiveLimitAdmissionResult:
+        """Atomically own identity, budget and single-flight before dispatch is possible."""
+        self._assert_owner()
+        self._validate_live_limit_admission_inputs(
+            environment=environment, capability=capability,
+            session_generation=session_generation, client_action_id=client_action_id,
+            request_fingerprint=request_fingerprint, record=record,
+            reserved_notional=reserved_notional, runtime=runtime,
+            occurred_at_ms=occurred_at_ms,
+        )
+        try:
+            with self._transaction():
+                existing_row = self._connection.execute(
+                    """SELECT * FROM live_limit_actions WHERE acceptance_session_id=?
+                       AND trading_account_id=? AND session_generation=?
+                       AND client_action_id=?""",
+                    (acceptance_session_id, record.trading_account_id.value,
+                     session_generation, client_action_id),
+                ).fetchone()
+                if existing_row is not None:
+                    existing = _live_limit_action_from_row(existing_row)
+                    if existing.request_fingerprint != request_fingerprint:
+                        raise DuplicateIdentity(
+                            "client_action_id was reused with different LIVE Limit intent"
+                        )
+                    return LiveLimitAdmissionResult(existing, False)
+
+                session_row = self._connection.execute(
+                    """SELECT * FROM live_limit_acceptance_sessions
+                       WHERE acceptance_session_id=? AND trading_account_id=?
+                         AND environment=? AND symbol=? AND capability=?""",
+                    (acceptance_session_id, record.trading_account_id.value,
+                     environment, record.symbol.value, capability),
+                ).fetchone()
+                if session_row is None:
+                    raise PersistenceError("LIVE Limit acceptance scope is unavailable or mismatched")
+                session = _live_limit_session_from_row(session_row)
+                if session.state is not LiveLimitAcceptanceState.ARMED:
+                    raise PersistenceError("LIVE Limit acceptance session is not ARMED")
+                if occurred_at_ms < session.opened_at_ms or occurred_at_ms >= session.expires_at_ms:
+                    raise PersistenceError("LIVE Limit acceptance session is outside its time window")
+                if runtime.build_sha != session.authorized_build_sha:
+                    raise PersistenceError("LIVE Limit acceptance build mismatch")
+                if runtime.database_identity != session.database_identity:
+                    raise PersistenceError("LIVE Limit acceptance database mismatch")
+                if session_generation != session.authorized_session_generation:
+                    raise PersistenceError("LIVE Limit acceptance account session mismatch")
+                unresolved = self._connection.execute(
+                    """SELECT 1 FROM live_limit_actions
+                       WHERE acceptance_session_id=? AND trading_account_id=?
+                         AND environment=? AND symbol=? AND capability=?
+                         AND (dispatch_state IN ('OWNED','DISPATCHING','UNKNOWN')
+                              OR reconciliation_state='REQUIRED') LIMIT 1""",
+                    (acceptance_session_id, record.trading_account_id.value,
+                     environment, record.symbol.value, capability),
+                ).fetchone()
+                if unresolved is not None:
+                    raise PersistenceError("LIVE Limit acceptance session has an unresolved owner")
+                if reserved_notional > session.per_order_ceiling:
+                    raise PersistenceError("LIVE Limit per-order ceiling exceeded")
+                new_count = session.reserved_count + 1
+                new_notional = session.reserved_notional + reserved_notional
+                if new_count > session.max_create_count:
+                    raise PersistenceError("LIVE Limit acceptance create count exhausted")
+                if new_notional > session.aggregate_notional_ceiling:
+                    raise PersistenceError("LIVE Limit aggregate notional ceiling exceeded")
+
+                self._insert_command(record, "durable LIVE Limit acceptance ownership")
+                self._connection.execute(
+                    """INSERT INTO live_limit_actions (
+                        acceptance_session_id, trading_account_id, environment, capability,
+                        session_generation, symbol, operation, client_action_id,
+                        request_fingerprint, command_id, order_link_id, exchange_order_id,
+                        dispatch_state, reconciliation_state, reserved_count,
+                        reserved_notional, build_sha, process_instance_id,
+                        process_started_at_ms, process_id, database_path, database_identity,
+                        schema_version, host_identity, created_at_ms, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'CREATE', ?, ?, ?, ?, NULL,
+                              'OWNED', 'NOT_REQUIRED', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        acceptance_session_id, record.trading_account_id.value,
+                        environment, capability, session_generation, record.symbol.value,
+                        client_action_id, request_fingerprint, record.command_id.value,
+                        record.order_link_id, _decimal_text(reserved_notional),
+                        runtime.build_sha, runtime.process_instance_id,
+                        runtime.process_started_at_ms, runtime.process_id,
+                        runtime.database_path, runtime.database_identity,
+                        runtime.schema_version, runtime.host_identity,
+                        record.created_at_ms, record.updated_at_ms,
+                    ),
+                )
+                next_state = (
+                    LiveLimitAcceptanceState.EXHAUSTED.value
+                    if new_count >= session.max_create_count else session.state.value
+                )
+                cursor = self._connection.execute(
+                    """UPDATE live_limit_acceptance_sessions
+                       SET reserved_count=?, reserved_notional=?, state=?, updated_at_ms=?
+                       WHERE acceptance_session_id=? AND trading_account_id=?
+                         AND environment=? AND symbol=? AND capability=?
+                         AND state='ARMED' AND reserved_count=? AND reserved_notional=?""",
+                    (new_count, _decimal_text(new_notional), next_state, occurred_at_ms,
+                     acceptance_session_id, record.trading_account_id.value,
+                     environment, record.symbol.value, capability,
+                     session.reserved_count, _decimal_text(session.reserved_notional)),
+                )
+                if cursor.rowcount != 1:
+                    raise ConcurrentUpdate("LIVE Limit acceptance reservation changed concurrently")
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateIdentity("LIVE Limit durable identity conflict") from exc
+        action = self.get_live_limit_action(
+            acceptance_session_id, record.trading_account_id,
+            session_generation, client_action_id,
+        )
+        if action is None:
+            raise PersistenceError("committed LIVE Limit action disappeared")
+        return LiveLimitAdmissionResult(action, True)
+
+    def _validate_live_limit_admission_inputs(
+        self, *, environment: str, capability: str, session_generation: int,
+        client_action_id: str, request_fingerprint: str, record: CommandRecord,
+        reserved_notional: Decimal, runtime: LiveLimitRuntimeAttribution,
+        occurred_at_ms: int,
+    ) -> None:
+        if environment != "MAINNET" or capability != "LIVE_LIMIT_CREATE":
+            raise PersistenceError("LIVE Limit admission scope mismatch")
+        if session_generation < 1 or record.current_state is not CommandState.ADMITTED:
+            raise PersistenceError("LIVE Limit command/session state is not admissible")
+        try:
+            _decimal_text(reserved_notional)
+        except (TypeError, ValueError):
+            raise PersistenceError("LIVE Limit reserved notional is invalid") from None
+        if record.command_kind != "create_limit" or reserved_notional <= 0:
+            raise PersistenceError("LIVE Limit create request is invalid")
+        if record.requested_notional.value != reserved_notional:
+            raise PersistenceError("LIVE Limit reserved notional does not match command")
+        if occurred_at_ms != record.updated_at_ms:
+            raise PersistenceError("LIVE Limit admission timestamp mismatch")
+        if any(not value.strip() for value in (
+            client_action_id, request_fingerprint, runtime.build_sha,
+            runtime.process_instance_id, runtime.host_identity,
+        )):
+            raise PersistenceError("LIVE Limit identity/provenance is incomplete")
+        if runtime.process_started_at_ms < 0 or runtime.process_id <= 0:
+            raise PersistenceError("LIVE Limit process provenance is invalid")
+        if runtime.process_started_at_ms > occurred_at_ms:
+            raise PersistenceError("LIVE Limit process start is after admission")
+        if runtime.schema_version != SCHEMA_VERSION:
+            raise PersistenceError("LIVE Limit schema version mismatch")
+        if runtime.database_path != self.normalized_path:
+            raise PersistenceError("LIVE Limit database path mismatch")
+        if runtime.database_identity != self.database_identity:
+            raise PersistenceError("LIVE Limit database identity mismatch")
+
+    def _insert_command(self, record: CommandRecord, reason: str) -> None:
+        self._connection.execute(
+            """INSERT INTO trading_commands (
+                command_id, order_link_id, trading_account_id, category, symbol,
+                position_idx, command_kind, side, requested_notional,
+                normalized_price, normalized_quantity, origin, controller,
+                current_state, version, exchange_order_id, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (record.command_id.value, record.order_link_id,
+             record.trading_account_id.value, record.category.value,
+             record.symbol.value, record.position_idx, record.command_kind,
+             record.side.value, _decimal_text(record.requested_notional.value),
+             _optional_decimal(record.normalized_price),
+             _optional_decimal(record.normalized_quantity), record.origin.value,
+             record.controller.value, record.current_state.value, record.version,
+             None, record.created_at_ms, record.updated_at_ms),
+        )
+        self._connection.execute(
+            """INSERT INTO command_state_history
+               (command_id, previous_state, next_state, reason, occurred_at_ms)
+               VALUES (?, NULL, ?, ?, ?)""",
+            (record.command_id.value, record.current_state.value, reason, record.updated_at_ms),
+        )
+
+    def get_live_limit_action(
+        self, acceptance_session_id: str, account_id: TradingAccountId,
+        session_generation: int, client_action_id: str,
+    ) -> LiveLimitActionRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT * FROM live_limit_actions WHERE acceptance_session_id=?
+               AND trading_account_id=? AND session_generation=? AND client_action_id=?""",
+            (acceptance_session_id, account_id.value, session_generation, client_action_id),
+        ).fetchone()
+        return _live_limit_action_from_row(row) if row is not None else None
+
+    def begin_live_limit_dispatch(
+        self, action: LiveLimitActionRecord, *, runtime: LiveLimitRuntimeAttribution,
+        occurred_at_ms: int,
+    ) -> CommandRecord:
+        """Persist the irreversible boundary; caller may dispatch only after this returns."""
+        self._assert_owner()
+        with self._transaction():
+            persisted_row = self._connection.execute(
+                """SELECT * FROM live_limit_actions WHERE acceptance_session_id=?
+                   AND trading_account_id=? AND session_generation=? AND client_action_id=?""",
+                (action.acceptance_session_id, action.trading_account_id.value,
+                 action.session_generation, action.client_action_id),
+            ).fetchone()
+            if persisted_row is None:
+                raise PersistenceError("LIVE Limit action ownership is unavailable")
+            persisted = _live_limit_action_from_row(persisted_row)
+            if persisted != action or runtime != persisted.runtime:
+                raise PersistenceError("LIVE Limit dispatch identity/runtime attribution mismatch")
+            cursor = self._connection.execute(
+                """UPDATE live_limit_actions
+                   SET dispatch_state='DISPATCHING', reconciliation_state='REQUIRED', updated_at_ms=?
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND session_generation=? AND client_action_id=? AND dispatch_state='OWNED'""",
+                (occurred_at_ms, action.acceptance_session_id,
+                 action.trading_account_id.value, action.session_generation,
+                 action.client_action_id),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError("LIVE Limit action is not dispatchable")
+            command = self.get_command(action.command_id)
+            if command is None or command.current_state is not CommandState.ADMITTED:
+                raise PersistenceError("LIVE Limit command is not dispatchable")
+            command_cursor = self._connection.execute(
+                """UPDATE trading_commands SET current_state=?, version=version+1, updated_at_ms=?
+                   WHERE command_id=? AND current_state=? AND version=?""",
+                (CommandState.SUBMITTING.value, occurred_at_ms, action.command_id.value,
+                 CommandState.ADMITTED.value, command.version),
+            )
+            if command_cursor.rowcount != 1:
+                raise ConcurrentUpdate("LIVE Limit command changed before dispatch")
+            self._connection.execute(
+                """INSERT INTO command_state_history
+                   (command_id, previous_state, next_state, reason, occurred_at_ms)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (action.command_id.value, CommandState.ADMITTED.value,
+                 CommandState.SUBMITTING.value,
+                 "LIVE Limit adapter dispatch durably started", occurred_at_ms),
+            )
+        command = self.get_command(action.command_id)
+        if command is None:
+            raise PersistenceError("LIVE Limit dispatch command disappeared")
+        return command
+
+    def mark_live_limit_unknown(
+        self, action: LiveLimitActionRecord, *, occurred_at_ms: int,
+    ) -> None:
+        self._assert_owner()
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE live_limit_actions SET dispatch_state='UNKNOWN',
+                   reconciliation_state='REQUIRED', updated_at_ms=?
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND session_generation=? AND client_action_id=?
+                     AND dispatch_state='DISPATCHING'""",
+                (occurred_at_ms, action.acceptance_session_id,
+                 action.trading_account_id.value, action.session_generation,
+                 action.client_action_id),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError("LIVE Limit action cannot enter UNKNOWN")
+
+    def mark_live_limit_reconciled(
+        self, action: LiveLimitActionRecord, *, exchange_order_id: OrderId,
+        occurred_at_ms: int,
+    ) -> None:
+        """Record authoritative reconciliation without releasing acceptance budget."""
+        self._assert_owner()
+        with self._transaction():
+            command = self.get_command(action.command_id)
+            if command is None or command.current_state is not CommandState.SUBMITTING:
+                raise PersistenceError("LIVE Limit command cannot be acknowledged")
+            cursor = self._connection.execute(
+                """UPDATE live_limit_actions SET dispatch_state='ACKNOWLEDGED',
+                   reconciliation_state='RESOLVED', exchange_order_id=?, updated_at_ms=?
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND session_generation=? AND client_action_id=?
+                     AND dispatch_state IN ('DISPATCHING','UNKNOWN')""",
+                (exchange_order_id.value, occurred_at_ms, action.acceptance_session_id,
+                 action.trading_account_id.value, action.session_generation,
+                 action.client_action_id),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError("LIVE Limit action cannot be reconciled")
+            command_cursor = self._connection.execute(
+                """UPDATE trading_commands SET current_state=?, version=version+1,
+                   exchange_order_id=?, updated_at_ms=?
+                   WHERE command_id=? AND current_state=? AND version=?""",
+                (CommandState.ACKNOWLEDGED.value, exchange_order_id.value,
+                 occurred_at_ms, action.command_id.value,
+                 CommandState.SUBMITTING.value, command.version),
+            )
+            if command_cursor.rowcount != 1:
+                raise ConcurrentUpdate("LIVE Limit command changed during reconciliation")
+            self._connection.execute(
+                """INSERT INTO command_state_history
+                   (command_id, previous_state, next_state, reason, occurred_at_ms)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (action.command_id.value, CommandState.SUBMITTING.value,
+                 CommandState.ACKNOWLEDGED.value,
+                 "LIVE Limit order found by authoritative reconciliation",
+                 occurred_at_ms),
+            )
+
+    def release_live_limit_pre_dispatch_failure(
+        self, action: LiveLimitActionRecord, *, occurred_at_ms: int,
+    ) -> None:
+        """Release only when durable OWNED proves adapter dispatch never began."""
+        self._assert_owner()
+        with self._transaction():
+            current = self._connection.execute(
+                """SELECT dispatch_state, reserved_count, reserved_notional
+                   FROM live_limit_actions WHERE acceptance_session_id=?
+                     AND trading_account_id=? AND session_generation=?
+                     AND client_action_id=?""",
+                (action.acceptance_session_id, action.trading_account_id.value,
+                 action.session_generation, action.client_action_id),
+            ).fetchone()
+            if current is None or current["dispatch_state"] != "OWNED":
+                raise PersistenceError("reservation cannot be released after dispatch began")
+            self._connection.execute(
+                """UPDATE live_limit_actions SET dispatch_state='PRE_DISPATCH_FAILED',
+                   reconciliation_state='RESOLVED', updated_at_ms=?
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND session_generation=? AND client_action_id=?""",
+                (occurred_at_ms, action.acceptance_session_id,
+                 action.trading_account_id.value, action.session_generation,
+                 action.client_action_id),
+            )
+            session_row = self._connection.execute(
+                """SELECT reserved_count, reserved_notional
+                   FROM live_limit_acceptance_sessions
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND environment=? AND symbol=? AND capability=?""",
+                (action.acceptance_session_id, action.trading_account_id.value,
+                 action.environment, action.symbol.value, action.capability),
+            ).fetchone()
+            if session_row is None:
+                raise PersistenceError("LIVE Limit acceptance session disappeared")
+            next_count = int(session_row["reserved_count"]) - int(current["reserved_count"])
+            next_notional = (
+                _load_decimal(session_row["reserved_notional"])
+                - _load_decimal(current["reserved_notional"])
+            )
+            cursor = self._connection.execute(
+                """UPDATE live_limit_acceptance_sessions SET state='ARMED',
+                   reserved_count=?, reserved_notional=?, updated_at_ms=?
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND environment=? AND symbol=? AND capability=?
+                     AND reserved_count>=?""",
+                (next_count, _decimal_text(next_notional), occurred_at_ms,
+                 action.acceptance_session_id,
+                 action.trading_account_id.value, action.environment,
+                 action.symbol.value, action.capability, int(current["reserved_count"])),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError("LIVE Limit reservation release failed")
 
     def get_paper_account(
         self,

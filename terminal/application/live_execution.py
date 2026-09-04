@@ -47,7 +47,7 @@ class _FencedExecutionPort:
         return self._call("create_market_order", **payload)
 
     def create_limit_order(self, **payload):
-        return self._call("create_limit_order", **payload)
+        raise RuntimeError("live_limit_durable_admission_required")
 
     def amend_order(self, **payload):
         return self._call("amend_order", **payload)
@@ -225,6 +225,7 @@ class LiveExecutionCoordinator:
         except Exception as exc:
             code = str(exc) if str(exc) in {
                 "live_mutations_disabled", "live_limit_disabled",
+                "live_limit_durable_admission_required",
                 "live_limit_acceptance_notional_exceeded", "live_mainnet_unauthorized", "inactive_account",
                 "stale_account_session", "live_account_not_writable_ready",
             } else "live_parity_unavailable"
@@ -246,7 +247,7 @@ class LiveExecutionCoordinator:
             requested_notional *= working_volume_usdt(snapshot.wallet_balance_usdt)
         if not ceiling.is_finite() or ceiling <= 0 or requested_notional > ceiling:
             raise RuntimeError("live_limit_acceptance_notional_exceeded")
-        return api.limit(request)
+        raise RuntimeError("live_limit_durable_admission_required")
 
     def _require_dispatch_authority(self) -> TradingAccountId:
         if self._mutation_scope == "limit":

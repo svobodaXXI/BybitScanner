@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -367,6 +367,87 @@ SCHEMA_V11_MIGRATION_STATEMENTS = (
     """,
 )
 
+SCHEMA_V12_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE live_limit_acceptance_sessions (
+        acceptance_session_id TEXT NOT NULL,
+        trading_account_id TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        capability TEXT NOT NULL,
+        state TEXT NOT NULL,
+        max_create_count INTEGER NOT NULL,
+        aggregate_notional_ceiling TEXT NOT NULL,
+        per_order_ceiling TEXT NOT NULL,
+        reserved_count INTEGER NOT NULL DEFAULT 0,
+        reserved_notional TEXT NOT NULL DEFAULT '0',
+        opened_at_ms INTEGER NOT NULL,
+        expires_at_ms INTEGER NOT NULL,
+        authorized_build_sha TEXT NOT NULL,
+        database_identity TEXT NOT NULL,
+        operator_authorization_reference TEXT NOT NULL,
+        authorized_session_generation INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (
+            acceptance_session_id, trading_account_id, environment, symbol, capability
+        ),
+        CHECK (state IN ('ARMED', 'EXHAUSTED', 'EXPIRED', 'REVOKED')),
+        CHECK (max_create_count > 0),
+        CHECK (reserved_count >= 0 AND reserved_count <= max_create_count),
+        CHECK (opened_at_ms >= 0 AND expires_at_ms > opened_at_ms),
+        CHECK (authorized_session_generation >= 1),
+        CHECK (capability = 'LIVE_LIMIT_CREATE')
+    ) WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE live_limit_actions (
+        acceptance_session_id TEXT NOT NULL,
+        trading_account_id TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        capability TEXT NOT NULL,
+        session_generation INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        client_action_id TEXT NOT NULL,
+        request_fingerprint TEXT NOT NULL,
+        command_id TEXT NOT NULL UNIQUE,
+        order_link_id TEXT NOT NULL UNIQUE,
+        exchange_order_id TEXT UNIQUE,
+        dispatch_state TEXT NOT NULL,
+        reconciliation_state TEXT NOT NULL,
+        reserved_count INTEGER NOT NULL,
+        reserved_notional TEXT NOT NULL,
+        build_sha TEXT NOT NULL,
+        process_instance_id TEXT NOT NULL,
+        process_started_at_ms INTEGER NOT NULL,
+        process_id INTEGER NOT NULL,
+        database_path TEXT NOT NULL,
+        database_identity TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        host_identity TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (
+            acceptance_session_id, trading_account_id, session_generation, client_action_id
+        ),
+        FOREIGN KEY (command_id) REFERENCES trading_commands(command_id),
+        FOREIGN KEY (
+            acceptance_session_id, trading_account_id, environment, symbol, capability
+        ) REFERENCES live_limit_acceptance_sessions (
+            acceptance_session_id, trading_account_id, environment, symbol, capability
+        ),
+        CHECK (session_generation >= 1),
+        CHECK (operation IN ('CREATE', 'AMEND', 'CANCEL')),
+        CHECK (dispatch_state IN ('OWNED', 'DISPATCHING', 'PRE_DISPATCH_FAILED', 'ACKNOWLEDGED', 'UNKNOWN')),
+        CHECK (reconciliation_state IN ('NOT_REQUIRED', 'REQUIRED', 'RESOLVED')),
+        CHECK (reserved_count >= 0),
+        CHECK (schema_version > 0),
+        CHECK (process_id > 0),
+        CHECK (created_at_ms >= 0 AND updated_at_ms >= created_at_ms)
+    ) WITHOUT ROWID
+    """,
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -379,4 +460,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V9_MIGRATION_STATEMENTS
     + SCHEMA_V10_MIGRATION_STATEMENTS
     + SCHEMA_V11_MIGRATION_STATEMENTS
+    + SCHEMA_V12_MIGRATION_STATEMENTS
 )
