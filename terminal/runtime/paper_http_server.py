@@ -1982,10 +1982,16 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     result = self.server.runtime.call(
                         lambda runtime: runtime.live_limit_create(account_id, session_generation, request)
                     )
-                elif path in {"/api/live/limit/amend", "/api/live/limit/cancel"}:
+                elif path == "/api/live/limit/amend":
                     result = self.server.runtime.call(
-                        lambda runtime: runtime.live_limit_amend_cancel(
-                            account_id, session_generation, payload["client_action_id"], action,
+                        lambda runtime: runtime.live_limit_amend(
+                            account_id, session_generation, request,
+                        )
+                    )
+                elif path == "/api/live/limit/cancel":
+                    result = self.server.runtime.call(
+                        lambda runtime: runtime.live_limit_cancel(
+                            account_id, session_generation, request,
                         )
                     )
                 else:

@@ -24,7 +24,9 @@ from terminal.persistence.schema import SCHEMA_VERSION
 from terminal.persistence.sqlite_store import (
     CommandRecord,
     LiveLimitAdmissionResult,
+    LiveLimitActionRecord,
     LiveLimitAcceptanceSessionRecord,
+    LiveLimitOperationAdmissionResult,
     LiveLimitRuntimeAttribution,
     PersistenceError,
     SQLiteStore,
@@ -113,6 +115,34 @@ class LiveLimitAcceptanceService:
             reserved_notional=reserved_notional,
             runtime=self.runtime_attribution,
             occurred_at_ms=occurred_at_ms,
+        )
+
+    def admit_operation(
+        self, *, parent: LiveLimitActionRecord, record: CommandRecord,
+        operation: str, client_action_id: str, request_fingerprint: str,
+        requested_price: Decimal | None, requested_quantity: Decimal | None,
+        conservative_notional: Decimal | None, occurred_at_ms: int,
+    ) -> LiveLimitOperationAdmissionResult:
+        token = self._manager.session_token
+        if token.active_account_id != parent.trading_account_id:
+            raise PersistenceError("LIVE Limit operation account is not active")
+        if token.generation != parent.session_generation:
+            raise PersistenceError("LIVE Limit operation account session is stale")
+        account = self._manager.require_active(parent.trading_account_id)
+        if not (
+            account.provider is TradingAccountProvider.BYBIT
+            and account.environment is TradingAccountEnvironment.MAINNET
+            and account.status is TradingAccountStatus.READY
+            and self._writable_account_provider(account.id)
+        ):
+            raise PersistenceError("LIVE Limit operation account is not writable MAINNET READY")
+        return self._store.admit_live_limit_operation(
+            parent=parent, record=record, operation=operation,
+            client_action_id=client_action_id,
+            request_fingerprint=request_fingerprint,
+            requested_price=requested_price, requested_quantity=requested_quantity,
+            conservative_notional=conservative_notional,
+            runtime=self.runtime_attribution, occurred_at_ms=occurred_at_ms,
         )
 
     def select_session(

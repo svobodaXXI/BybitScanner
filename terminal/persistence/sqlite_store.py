@@ -30,7 +30,7 @@ from terminal.domain.models import (
     Symbol,
     TradingAccountId,
 )
-from terminal.domain.states import CommandState, transition_command
+from terminal.domain.states import COMMAND_TRANSITIONS, CommandState, transition_command
 
 from .schema import (
     SCHEMA_STATEMENTS,
@@ -46,6 +46,7 @@ from .schema import (
     SCHEMA_V11_MIGRATION_STATEMENTS,
     SCHEMA_V12_MIGRATION_STATEMENTS,
     SCHEMA_V13_MIGRATION_STATEMENTS,
+    SCHEMA_V14_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -201,6 +202,39 @@ class LiveLimitActionRecord:
 @dataclass(frozen=True, slots=True)
 class LiveLimitAdmissionResult:
     action: LiveLimitActionRecord
+    created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class LiveLimitOperationRecord:
+    acceptance_session_id: str
+    trading_account_id: TradingAccountId
+    session_generation: int
+    symbol: Symbol
+    client_action_id: str
+    command_id: CommandId
+    operation: str
+    parent_client_action_id: str
+    parent_order_link_id: str
+    parent_exchange_order_id: OrderId
+    request_fingerprint: str
+    requested_price: Decimal | None
+    requested_quantity: Decimal | None
+    conservative_notional: Decimal | None
+    dispatch_state: str
+    reconciliation_state: str
+    outcome_disposition: str | None
+    outcome_reason: str | None
+    outcome_code: int | None
+    outcome_at_ms: int | None
+    runtime: LiveLimitRuntimeAttribution
+    created_at_ms: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class LiveLimitOperationAdmissionResult:
+    operation: LiveLimitOperationRecord
     created: bool
 
 
@@ -399,6 +433,10 @@ def _decimal_text(value: Decimal) -> str:
     return str(value)
 
 
+def _optional_decimal_value(value: Decimal | None) -> str | None:
+    return _decimal_text(value) if value is not None else None
+
+
 def _load_decimal(value: str) -> Decimal:
     try:
         result = Decimal(value)
@@ -490,6 +528,44 @@ def _live_limit_action_from_row(row: sqlite3.Row) -> LiveLimitActionRecord:
     )
 
 
+def _live_limit_operation_from_row(row: sqlite3.Row) -> LiveLimitOperationRecord:
+    return LiveLimitOperationRecord(
+        acceptance_session_id=row["acceptance_session_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        session_generation=int(row["session_generation"]),
+        symbol=Symbol(row["symbol"]),
+        client_action_id=row["client_action_id"],
+        command_id=CommandId(row["command_id"]),
+        operation=row["operation"],
+        parent_client_action_id=row["parent_client_action_id"],
+        parent_order_link_id=row["parent_order_link_id"],
+        parent_exchange_order_id=OrderId(row["parent_exchange_order_id"]),
+        request_fingerprint=row["request_fingerprint"],
+        requested_price=(_load_decimal(row["requested_price"])
+                         if row["requested_price"] is not None else None),
+        requested_quantity=(_load_decimal(row["requested_quantity"])
+                            if row["requested_quantity"] is not None else None),
+        conservative_notional=(_load_decimal(row["conservative_notional"])
+                               if row["conservative_notional"] is not None else None),
+        dispatch_state=row["dispatch_state"],
+        reconciliation_state=row["reconciliation_state"],
+        outcome_disposition=row["outcome_disposition"],
+        outcome_reason=row["outcome_reason"],
+        outcome_code=(int(row["outcome_code"])
+                      if row["outcome_code"] is not None else None),
+        outcome_at_ms=(int(row["outcome_at_ms"])
+                       if row["outcome_at_ms"] is not None else None),
+        runtime=LiveLimitRuntimeAttribution(
+            row["build_sha"], row["process_instance_id"],
+            int(row["process_started_at_ms"]), int(row["process_id"]),
+            row["database_path"], row["database_identity"],
+            int(row["schema_version"]), row["host_identity"],
+        ),
+        created_at_ms=int(row["created_at_ms"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
 class SQLiteStore:
     """Synchronous store owned by one backend thread and writer."""
 
@@ -536,6 +612,11 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 13:
+            SQLiteStore._validate_required_tables(connection, version=13)
+            SQLiteStore._migrate_v13_to_v14(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 12:
@@ -784,6 +865,19 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v13_to_v14(connection)
+
+    @staticmethod
+    def _migrate_v13_to_v14(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V14_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 14")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -824,6 +918,8 @@ class SQLiteStore:
             required.add("live_market_actions")
         if version >= 12:
             required.update({"live_limit_acceptance_sessions", "live_limit_actions"})
+        if version >= 14:
+            required.add("live_limit_operations")
         actual = {
             row[0]
             for row in connection.execute(
@@ -1503,6 +1599,348 @@ class SQLiteStore:
             )
             if cursor.rowcount != 1:
                 raise PersistenceError("LIVE Limit reservation release failed")
+
+    def find_owned_live_limit_action(
+        self, *, account_id: TradingAccountId, session_generation: int,
+        symbol: Symbol, order_id: OrderId | None, order_link_id: str | None,
+    ) -> LiveLimitActionRecord:
+        """Resolve exactly one exchange-confirmed parent action for risk operations."""
+        self._assert_owner()
+        if (order_id is None) == (order_link_id is None):
+            raise ValueError("exactly one parent order identity is required")
+        clause = "exchange_order_id=?" if order_id else "order_link_id=?"
+        identity = order_id.value if order_id else order_link_id
+        rows = self._connection.execute(
+            f"""SELECT * FROM live_limit_actions WHERE trading_account_id=?
+                AND session_generation=? AND symbol=? AND {clause}""",
+            (account_id.value, session_generation, symbol.value, identity),
+        ).fetchall()
+        if len(rows) != 1:
+            raise PersistenceError("target order is not uniquely owned by a LIVE Limit action")
+        action = _live_limit_action_from_row(rows[0])
+        if (
+            action.exchange_order_id is None
+            or action.dispatch_state != "ACKNOWLEDGED"
+            or action.reconciliation_state != "RESOLVED"
+        ):
+            raise PersistenceError("target LIVE Limit ownership is not exchange-confirmed")
+        return action
+
+    def admit_live_limit_operation(
+        self, *, parent: LiveLimitActionRecord, record: CommandRecord,
+        operation: str, client_action_id: str, request_fingerprint: str,
+        requested_price: Decimal | None, requested_quantity: Decimal | None,
+        conservative_notional: Decimal | None,
+        runtime: LiveLimitRuntimeAttribution, occurred_at_ms: int,
+    ) -> LiveLimitOperationAdmissionResult:
+        """Atomically own one amend/cancel identity before any adapter call."""
+        self._assert_owner()
+        if operation not in {"AMEND", "CANCEL"}:
+            raise ValueError("unsupported LIVE Limit operation")
+        if record.current_state is not CommandState.ADMITTED:
+            raise PersistenceError("LIVE Limit operation command is not ADMITTED")
+        if record.trading_account_id != parent.trading_account_id or record.symbol != parent.symbol:
+            raise PersistenceError("LIVE Limit operation parent scope mismatch")
+        if record.command_kind != operation.lower():
+            raise PersistenceError("LIVE Limit operation command kind mismatch")
+        if runtime.database_path != self.normalized_path or runtime.database_identity != self.database_identity:
+            raise PersistenceError("LIVE Limit operation database provenance mismatch")
+        if runtime.schema_version != SCHEMA_VERSION or runtime.process_started_at_ms > occurred_at_ms:
+            raise PersistenceError("LIVE Limit operation runtime provenance mismatch")
+        values = (client_action_id, request_fingerprint, runtime.build_sha,
+                  runtime.process_instance_id, runtime.host_identity)
+        if any(not value.strip() for value in values):
+            raise PersistenceError("LIVE Limit operation identity/provenance is incomplete")
+        if operation == "AMEND":
+            if requested_price is None or requested_quantity is not None:
+                raise PersistenceError("acceptance amend must be price-only")
+            if conservative_notional is None:
+                raise PersistenceError("acceptance amend notional is unavailable")
+            _decimal_text(requested_price)
+            _decimal_text(conservative_notional)
+            if conservative_notional > parent.reserved_notional:
+                raise PersistenceError("acceptance amend would increase reserved exposure")
+        elif any(value is not None for value in (
+            requested_price, requested_quantity, conservative_notional,
+        )):
+            raise PersistenceError("acceptance cancel cannot change price, quantity or exposure")
+        try:
+            with self._transaction():
+                existing_row = self._connection.execute(
+                    """SELECT * FROM live_limit_operations WHERE acceptance_session_id=?
+                       AND trading_account_id=? AND session_generation=? AND client_action_id=?""",
+                    (parent.acceptance_session_id, parent.trading_account_id.value,
+                     parent.session_generation, client_action_id),
+                ).fetchone()
+                if existing_row is not None:
+                    existing = _live_limit_operation_from_row(existing_row)
+                    if existing.request_fingerprint != request_fingerprint:
+                        raise DuplicateIdentity(
+                            "LIVE Limit operation identity was reused with different intent"
+                        )
+                    return LiveLimitOperationAdmissionResult(existing, False)
+                parent_row = self._connection.execute(
+                    """SELECT * FROM live_limit_actions WHERE acceptance_session_id=?
+                       AND trading_account_id=? AND session_generation=? AND client_action_id=?""",
+                    (parent.acceptance_session_id, parent.trading_account_id.value,
+                     parent.session_generation, parent.client_action_id),
+                ).fetchone()
+                if parent_row is None or _live_limit_action_from_row(parent_row) != parent:
+                    raise PersistenceError("LIVE Limit parent ownership changed")
+                session = self.get_live_limit_acceptance_session(
+                    parent.acceptance_session_id, parent.trading_account_id,
+                    parent.environment, parent.symbol, parent.capability,
+                )
+                if session is None:
+                    raise PersistenceError("LIVE Limit acceptance session is unavailable")
+                if (
+                    session.authorized_build_sha != runtime.build_sha
+                    or session.database_identity != runtime.database_identity
+                    or session.authorized_session_generation != parent.session_generation
+                ):
+                    raise PersistenceError("LIVE Limit operation authorization mismatch")
+                unresolved = self._connection.execute(
+                    """SELECT 1 FROM live_limit_operations WHERE acceptance_session_id=?
+                       AND trading_account_id=? AND parent_client_action_id=?
+                       AND (dispatch_state IN ('OWNED','DISPATCHING','UNKNOWN')
+                            OR reconciliation_state='REQUIRED') LIMIT 1""",
+                    (parent.acceptance_session_id, parent.trading_account_id.value,
+                     parent.client_action_id),
+                ).fetchone()
+                if unresolved is not None:
+                    raise PersistenceError("owned LIVE Limit order has an unresolved operation")
+                self._insert_command(record, "durable LIVE Limit operation ownership")
+                self._connection.execute(
+                    """INSERT INTO live_limit_operations (
+                        acceptance_session_id, trading_account_id, session_generation,
+                        symbol, client_action_id, command_id, operation,
+                        parent_client_action_id, parent_order_link_id,
+                        parent_exchange_order_id, request_fingerprint, requested_price,
+                        requested_quantity, conservative_notional, dispatch_state,
+                        reconciliation_state, build_sha, process_instance_id,
+                        process_started_at_ms, process_id, database_path, database_identity,
+                        schema_version, host_identity, created_at_ms, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'OWNED',
+                              'NOT_REQUIRED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (parent.acceptance_session_id, parent.trading_account_id.value,
+                     parent.session_generation, parent.symbol.value, client_action_id,
+                     record.command_id.value, operation, parent.client_action_id,
+                     parent.order_link_id, parent.exchange_order_id.value,
+                     request_fingerprint, _optional_decimal_value(requested_price),
+                     _optional_decimal_value(requested_quantity),
+                     _optional_decimal_value(conservative_notional), runtime.build_sha,
+                     runtime.process_instance_id, runtime.process_started_at_ms,
+                     runtime.process_id, runtime.database_path, runtime.database_identity,
+                     runtime.schema_version, runtime.host_identity,
+                     occurred_at_ms, occurred_at_ms),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateIdentity("LIVE Limit operation durable identity conflict") from exc
+        current = self.get_live_limit_operation(
+            parent.acceptance_session_id, parent.trading_account_id,
+            parent.session_generation, client_action_id,
+        )
+        if current is None:
+            raise PersistenceError("committed LIVE Limit operation disappeared")
+        return LiveLimitOperationAdmissionResult(current, True)
+
+    def get_live_limit_operation(
+        self, acceptance_session_id: str, account_id: TradingAccountId,
+        session_generation: int, client_action_id: str,
+    ) -> LiveLimitOperationRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            """SELECT * FROM live_limit_operations WHERE acceptance_session_id=?
+               AND trading_account_id=? AND session_generation=? AND client_action_id=?""",
+            (acceptance_session_id, account_id.value, session_generation, client_action_id),
+        ).fetchone()
+        return _live_limit_operation_from_row(row) if row is not None else None
+
+    def find_live_limit_operation_by_identity(
+        self, account_id: TradingAccountId, session_generation: int,
+        client_action_id: str,
+    ) -> LiveLimitOperationRecord | None:
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM live_limit_operations WHERE trading_account_id=?
+               AND session_generation=? AND client_action_id=?""",
+            (account_id.value, session_generation, client_action_id),
+        ).fetchall()
+        if len(rows) > 1:
+            raise PersistenceError("LIVE Limit operation identity is ambiguous")
+        return _live_limit_operation_from_row(rows[0]) if rows else None
+
+    def load_unresolved_live_limit_operations(
+        self, account_id: TradingAccountId | None = None,
+    ) -> tuple[LiveLimitOperationRecord, ...]:
+        self._assert_owner()
+        clause = "" if account_id is None else " AND trading_account_id=?"
+        parameters = () if account_id is None else (account_id.value,)
+        rows = self._connection.execute(
+            f"""SELECT * FROM live_limit_operations
+                WHERE (dispatch_state IN ('OWNED','DISPATCHING','UNKNOWN')
+                       OR reconciliation_state='REQUIRED'){clause}
+                ORDER BY created_at_ms, client_action_id""",
+            parameters,
+        ).fetchall()
+        return tuple(_live_limit_operation_from_row(row) for row in rows)
+
+    def begin_live_limit_operation_dispatch(
+        self, operation: LiveLimitOperationRecord, *,
+        runtime: LiveLimitRuntimeAttribution, occurred_at_ms: int,
+    ) -> CommandRecord:
+        self._assert_owner()
+        if runtime != operation.runtime:
+            raise PersistenceError("LIVE Limit operation dispatch provenance mismatch")
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE live_limit_operations SET dispatch_state='DISPATCHING',
+                   reconciliation_state='REQUIRED', updated_at_ms=?
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND session_generation=? AND client_action_id=? AND dispatch_state='OWNED'""",
+                (occurred_at_ms, operation.acceptance_session_id,
+                 operation.trading_account_id.value, operation.session_generation,
+                 operation.client_action_id),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError("LIVE Limit operation is not dispatchable")
+            command = self.get_command(operation.command_id)
+            if command is None or command.current_state is not CommandState.ADMITTED:
+                raise PersistenceError("LIVE Limit operation command is not dispatchable")
+            self._transition_command_in_transaction(
+                command, CommandState.SUBMITTING,
+                "LIVE Limit operation adapter dispatch durably started", occurred_at_ms,
+            )
+        current = self.get_command(operation.command_id)
+        if current is None:
+            raise PersistenceError("LIVE Limit operation command disappeared")
+        return current
+
+    def record_live_limit_operation_outcome(
+        self, operation: LiveLimitOperationRecord, *, disposition: str,
+        reason: str, outcome_code: int | None, occurred_at_ms: int,
+    ) -> LiveLimitOperationRecord:
+        self._assert_owner()
+        if disposition not in {"acknowledged", "rejected", "unknown"}:
+            raise ValueError("unsupported LIVE Limit operation outcome")
+        state = "UNKNOWN" if disposition == "unknown" else "ACKNOWLEDGED"
+        reconciliation = "RESOLVED" if disposition == "rejected" else "REQUIRED"
+        command_state = {
+            "acknowledged": CommandState.ACKNOWLEDGED,
+            "rejected": CommandState.REJECTED,
+            "unknown": CommandState.UNKNOWN,
+        }[disposition]
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE live_limit_operations SET dispatch_state=?, reconciliation_state=?,
+                   outcome_disposition=?, outcome_reason=?, outcome_code=?, outcome_at_ms=?,
+                   updated_at_ms=? WHERE acceptance_session_id=? AND trading_account_id=?
+                   AND session_generation=? AND client_action_id=? AND dispatch_state='DISPATCHING'""",
+                (state, reconciliation, disposition, reason, outcome_code, occurred_at_ms,
+                 occurred_at_ms, operation.acceptance_session_id,
+                 operation.trading_account_id.value, operation.session_generation,
+                 operation.client_action_id),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError("LIVE Limit operation outcome is not recordable")
+            command = self.get_command(operation.command_id)
+            if command is None or command.current_state is not CommandState.SUBMITTING:
+                raise PersistenceError("LIVE Limit operation command is not SUBMITTING")
+            self._transition_command_in_transaction(command, command_state, reason, occurred_at_ms)
+        current = self.get_live_limit_operation(
+            operation.acceptance_session_id, operation.trading_account_id,
+            operation.session_generation, operation.client_action_id,
+        )
+        if current is None:
+            raise PersistenceError("LIVE Limit operation outcome disappeared")
+        return current
+
+    def resolve_live_limit_operation(
+        self, operation: LiveLimitOperationRecord, *, target_state: CommandState,
+        reason: str, occurred_at_ms: int,
+    ) -> LiveLimitOperationRecord:
+        self._assert_owner()
+        with self._transaction():
+            command = self.get_command(operation.command_id)
+            if command is None:
+                raise PersistenceError("LIVE Limit operation command is unavailable")
+            if command.current_state is not target_state:
+                if CommandState.RECONCILING in COMMAND_TRANSITIONS[command.current_state]:
+                    command = self._transition_command_in_transaction(
+                        command, CommandState.RECONCILING,
+                        "authoritative LIVE Limit operation reconciliation started",
+                        occurred_at_ms,
+                    )
+                if target_state not in COMMAND_TRANSITIONS[command.current_state]:
+                    raise PersistenceError("LIVE Limit operation evidence cannot resolve command")
+                self._transition_command_in_transaction(command, target_state, reason, occurred_at_ms)
+            cursor = self._connection.execute(
+                """UPDATE live_limit_operations SET dispatch_state='ACKNOWLEDGED',
+                   reconciliation_state='RESOLVED', updated_at_ms=?
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND session_generation=? AND client_action_id=?""",
+                (occurred_at_ms, operation.acceptance_session_id,
+                 operation.trading_account_id.value, operation.session_generation,
+                 operation.client_action_id),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceError("LIVE Limit operation reconciliation disappeared")
+        return self.get_live_limit_operation(
+            operation.acceptance_session_id, operation.trading_account_id,
+            operation.session_generation, operation.client_action_id,
+        )
+
+    def mark_live_limit_operation_unknown(
+        self, operation: LiveLimitOperationRecord, *, occurred_at_ms: int,
+    ) -> LiveLimitOperationRecord:
+        self._assert_owner()
+        with self._transaction():
+            command = self.get_command(operation.command_id)
+            if command is None:
+                raise PersistenceError("LIVE Limit operation command is unavailable")
+            if command.current_state is not CommandState.UNKNOWN:
+                self._transition_command_in_transaction(
+                    command, CommandState.UNKNOWN,
+                    "LIVE Limit operation remains ambiguous", occurred_at_ms,
+                )
+            self._connection.execute(
+                """UPDATE live_limit_operations SET dispatch_state='UNKNOWN',
+                   reconciliation_state='REQUIRED', updated_at_ms=?
+                   WHERE acceptance_session_id=? AND trading_account_id=?
+                     AND session_generation=? AND client_action_id=?""",
+                (occurred_at_ms, operation.acceptance_session_id,
+                 operation.trading_account_id.value, operation.session_generation,
+                 operation.client_action_id),
+            )
+        return self.get_live_limit_operation(
+            operation.acceptance_session_id, operation.trading_account_id,
+            operation.session_generation, operation.client_action_id,
+        )
+
+    def _transition_command_in_transaction(
+        self, command: CommandRecord, target: CommandState, reason: str,
+        occurred_at_ms: int,
+    ) -> CommandRecord:
+        transition_command(command.current_state, target)
+        cursor = self._connection.execute(
+            """UPDATE trading_commands SET current_state=?, version=version+1, updated_at_ms=?
+               WHERE command_id=? AND current_state=? AND version=?""",
+            (target.value, occurred_at_ms, command.command_id.value,
+             command.current_state.value, command.version),
+        )
+        if cursor.rowcount != 1:
+            raise ConcurrentUpdate("command changed during LIVE Limit operation")
+        self._connection.execute(
+            """INSERT INTO command_state_history
+               (command_id, previous_state, next_state, reason, occurred_at_ms)
+               VALUES (?, ?, ?, ?, ?)""",
+            (command.command_id.value, command.current_state.value,
+             target.value, reason, occurred_at_ms),
+        )
+        updated = self.get_command(command.command_id)
+        if updated is None:
+            raise PersistenceError("LIVE Limit operation command disappeared")
+        return updated
 
     def get_paper_account(
         self,

@@ -534,14 +534,15 @@ class PaperRuntime:
             raise RuntimeError("live_parity_unavailable")
         return self._live_execution.execute_limit_create(account_id, session_generation, request)
 
-    def live_limit_amend_cancel(
-        self, account_id: str, session_generation: int, client_action_id: str, operation,
-    ):
+    def live_limit_amend(self, account_id: str, session_generation: int, request):
         if self._live_execution is None:
             raise RuntimeError("live_parity_unavailable")
-        return self._live_execution.execute_limit_amend_cancel(
-            account_id, session_generation, client_action_id, operation,
-        )
+        return self._live_execution.execute_limit_amend(account_id, session_generation, request)
+
+    def live_limit_cancel(self, account_id: str, session_generation: int, request):
+        if self._live_execution is None:
+            raise RuntimeError("live_parity_unavailable")
+        return self._live_execution.execute_limit_cancel(account_id, session_generation, request)
 
     def _is_stored_account_writable(self, account_id: TradingAccountId) -> bool:
         stored = self._stored_bybit_account(account_id.value)

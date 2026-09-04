@@ -9,12 +9,16 @@ from decimal import Decimal
 from typing import Callable
 from uuid import UUID, uuid5
 
-from terminal.api.models import CommandResult, CommandResultStatus, LimitCommandRequest, VolumeUnit
+from terminal.api.models import (
+    AmendCommandRequest, CancelCommandRequest, CommandResult, CommandResultStatus,
+    LimitCommandRequest, VolumeUnit,
+)
 from terminal.api.rest import ServerCommandContext, TerminalCommandApi
 from terminal.application.execution_engine import ExecutionEngine
 from terminal.application.command_identity import CommandIdentityFactory
 from terminal.application.live_limit_acceptance import LiveLimitAcceptanceService
 from terminal.application.models import ProtectionEvidence, ReconciliationResult, TrustState
+from terminal.application.normalization import normalize_limit_price
 from terminal.application.pretrade_guard import (
     MutationGate, NotionalIntent, OrderKind, PreTradeContext, PreTradeGuard,
     PreTradeIntent, WorkingVolumeIntent,
@@ -23,14 +27,16 @@ from terminal.application.trading_accounts import (
     AccountSessionToken, TradingAccountEnvironment, TradingAccountManager,
     TradingAccountProvider, TradingAccountStatus,
 )
-from terminal.application.trading_application import TradingApplication
+from terminal.application.trading_application import AmendIntent, CancelIntent, TradingApplication
 from terminal.domain.models import Category, OrderId, PositionKey, PositionSide, Symbol, TradingAccountId
 from terminal.domain.states import CommandState, ConnectivityState
-from terminal.exchange.events import NormalizedPositionStatus, PositionEvent
+from terminal.exchange.events import NormalizedOrderStatus, NormalizedPositionStatus, PositionEvent
 from terminal.exchange.bybit_v5_mutation_adapter import (
     MutationDisposition, MutationKind, MutationOutcome,
 )
-from terminal.persistence.sqlite_store import LiveLimitActionRecord, PersistenceError, SQLiteStore
+from terminal.persistence.sqlite_store import (
+    LiveLimitActionRecord, LiveLimitOperationRecord, PersistenceError, SQLiteStore,
+)
 from terminal.runtime.paper_context import working_volume_usdt
 
 
@@ -173,6 +179,9 @@ class LiveExecutionCoordinator:
         """REST-only reconciliation; it never obtains the mutation adapter."""
         recovered = []
         live_limit_command_ids = set()
+        for operation in self._store.load_unresolved_live_limit_operations(account_id):
+            live_limit_command_ids.add(operation.command_id)
+            recovered.append(self._reconcile_live_limit_operation(operation))
         for action in self._store.load_unresolved_live_limit_actions(account_id):
             live_limit_command_ids.add(action.command_id)
             recovered.append(self._reconcile_live_limit_action(action))
@@ -218,15 +227,20 @@ class LiveExecutionCoordinator:
             lambda api: self._submit_limit_with_ceiling(api, request),
         )
 
-    def execute_limit_amend_cancel(
-        self, account_id_text: str, session_generation: int, client_action_id: str,
-        operation: Callable[[TerminalCommandApi], CommandResult],
+    def execute_limit_amend(
+        self, account_id_text: str, session_generation: int, request: AmendCommandRequest,
     ):
-        return CommandResult(
-            client_action_id, CommandResultStatus.BLOCKED,
-            "live_limit_amend_cancel_durable_ownership_required",
-            "LIVE Limit amend/cancel requires durable owned-order wiring",
-            None, False,
+        return self._execute(
+            account_id_text, session_generation, request.client_action_id.value, "limit",
+            lambda _api: self._submit_limit_operation(request, "AMEND"),
+        )
+
+    def execute_limit_cancel(
+        self, account_id_text: str, session_generation: int, request: CancelCommandRequest,
+    ):
+        return self._execute(
+            account_id_text, session_generation, request.client_action_id.value, "limit",
+            lambda _api: self._submit_limit_operation(request, "CANCEL"),
         )
 
     def _execute(
@@ -399,6 +413,154 @@ class LiveExecutionCoordinator:
             command.command_id.value, action.reconciliation_state == "REQUIRED",
         )
 
+    def _submit_limit_operation(
+        self, request: AmendCommandRequest | CancelCommandRequest, operation: str,
+    ) -> CommandResult:
+        account_id = self._require_dispatch_authority()
+        service = self._live_limit_acceptance
+        if service is None:
+            raise RuntimeError("live_limit_amend_cancel_durable_ownership_required")
+        token = self._captured
+        assert token is not None
+        symbol = Symbol(request.symbol)
+        replay = self._store.find_live_limit_operation_by_identity(
+            account_id, token.generation, request.client_action_id.value,
+        )
+        if replay is not None:
+            replay_parent = self._store.get_live_limit_action(
+                replay.acceptance_session_id, replay.trading_account_id,
+                replay.session_generation, replay.parent_client_action_id,
+            )
+            replay_command = self._store.get_command(replay_parent.command_id) if replay_parent else None
+            if replay_command is None:
+                raise PersistenceError("LIVE Limit replay parent command is unavailable")
+            _validate_live_limit_operation_replay(
+                replay, request, operation, self._instrument_provider(symbol.value),
+                replay_command.side,
+            )
+            return self._live_limit_operation_result(replay)
+        current = _LiveContextProvider(self).order_for(
+            symbol.value, request.order_id, request.order_link_id,
+        )
+        if current.status not in {
+            NormalizedOrderStatus.OPEN, NormalizedOrderStatus.PARTIALLY_FILLED_OPEN,
+        }:
+            raise PersistenceError("LIVE Limit target order is not active")
+        parent = self._store.find_owned_live_limit_action(
+            account_id=account_id, session_generation=token.generation,
+            symbol=symbol, order_id=OrderId(request.order_id) if request.order_id else None,
+            order_link_id=request.order_link_id,
+        )
+        stable_uuid = uuid5(
+            UUID("b55270c8-80c2-4c76-9aa0-15633ca9fdb5"),
+            f"{account_id.value}\0{token.generation}\0{request.client_action_id.value}",
+        )
+        self._application.identity_factory = CommandIdentityFactory(lambda: stable_uuid)
+        if operation == "AMEND":
+            assert isinstance(request, AmendCommandRequest)
+            if request.resulting_total_quantity is not None:
+                raise PersistenceError("acceptance amend quantity change is prohibited")
+            record, quantity, price = self._application.prepare_amend(AmendIntent(
+                account_id, symbol.value, current.side,
+                self._instrument_provider(symbol.value), current,
+                request.order_id, request.order_link_id,
+                request.resulting_total_quantity, request.changed_price,
+            ))
+            if quantity is not None or price is None:
+                raise PersistenceError("acceptance amend must be price-only")
+            conservative_notional = current.quantity * price
+            requested_price = price
+        else:
+            assert isinstance(request, CancelCommandRequest)
+            record = self._application.prepare_cancel(CancelIntent(
+                account_id, symbol.value, current.side, current,
+                request.order_id, request.order_link_id,
+            ))
+            conservative_notional = None
+            requested_price = None
+        fingerprint = _live_limit_operation_fingerprint(
+            parent, record, operation, requested_price, conservative_notional,
+        )
+        admission = service.admit_operation(
+            parent=parent, record=record, operation=operation,
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=fingerprint, requested_price=requested_price,
+            requested_quantity=None, conservative_notional=conservative_notional,
+            occurred_at_ms=record.updated_at_ms,
+        )
+        if not admission.created:
+            return self._live_limit_operation_result(admission.operation)
+        owned = admission.operation
+        self._store.begin_live_limit_operation_dispatch(
+            owned, runtime=service.runtime_attribution, occurred_at_ms=self._clock_ms(),
+        )
+        dispatch = self._store.get_live_limit_operation(
+            owned.acceptance_session_id, owned.trading_account_id,
+            owned.session_generation, owned.client_action_id,
+        )
+        if dispatch is None:
+            raise PersistenceError("LIVE Limit operation dispatch ownership disappeared")
+        try:
+            dispatch_account = self._require_dispatch_authority()
+            adapter = self._adapter_provider(dispatch_account)
+            if operation == "AMEND":
+                outcome = adapter.amend_order(
+                    symbol=dispatch.symbol.value,
+                    order_id=dispatch.parent_exchange_order_id.value,
+                    order_link_id=None, qty=None, price=dispatch.requested_price,
+                )
+            else:
+                outcome = adapter.cancel_order(
+                    symbol=dispatch.symbol.value,
+                    order_id=dispatch.parent_exchange_order_id.value,
+                    order_link_id=None,
+                )
+            if (
+                outcome.kind is not (
+                    MutationKind.AMEND if operation == "AMEND" else MutationKind.CANCEL
+                )
+                or
+                outcome.order_id not in {None, dispatch.parent_exchange_order_id.value}
+                or outcome.order_link_id not in {None, dispatch.parent_order_link_id}
+            ):
+                outcome = MutationOutcome(
+                    MutationKind.AMEND if operation == "AMEND" else MutationKind.CANCEL,
+                    MutationDisposition.UNKNOWN,
+                    reason="exchange response identity mismatch",
+                )
+        except Exception as exc:
+            outcome = MutationOutcome(
+                MutationKind.AMEND if operation == "AMEND" else MutationKind.CANCEL,
+                MutationDisposition.UNKNOWN,
+                reason=f"ambiguous adapter exception: {type(exc).__name__}",
+            )
+        persisted = self._store.record_live_limit_operation_outcome(
+            dispatch, disposition=outcome.disposition.value,
+            reason=outcome.reason or f"exchange {outcome.disposition.value}",
+            outcome_code=outcome.reject_code, occurred_at_ms=self._clock_ms(),
+        )
+        return self._live_limit_operation_result(persisted)
+
+    def _live_limit_operation_result(self, operation: LiveLimitOperationRecord) -> CommandResult:
+        command = self._store.get_command(operation.command_id)
+        if command is None:
+            raise PersistenceError("LIVE Limit operation command is unavailable")
+        if operation.outcome_disposition == "rejected":
+            return CommandResult(operation.client_action_id, CommandResultStatus.REJECTED,
+                                 "exchange_rejected", operation.outcome_reason or "exchange rejected",
+                                 command.command_id.value, False)
+        if operation.dispatch_state in {"DISPATCHING", "UNKNOWN"}:
+            return CommandResult(operation.client_action_id, CommandResultStatus.UNKNOWN,
+                                 "mutation_unknown", "mutation outcome requires reconciliation",
+                                 command.command_id.value, True)
+        status = (CommandResultStatus.COMPLETED
+                  if operation.reconciliation_state == "RESOLVED"
+                  else CommandResultStatus.ACCEPTED_PENDING)
+        return CommandResult(operation.client_action_id, status, status.value,
+                             "operation is durably owned and will not be redispatched",
+                             command.command_id.value,
+                             operation.reconciliation_state == "REQUIRED")
+
     def _reconcile_live_limit_action(self, action: LiveLimitActionRecord):
         """Use only persisted identity and read adapters; never acquire mutation authority."""
         if action.dispatch_state == "OWNED":
@@ -478,6 +640,83 @@ class LiveExecutionCoordinator:
                 action.session_generation, action.client_action_id,
             ) or action
 
+    def _reconcile_live_limit_operation(self, operation: LiveLimitOperationRecord):
+        """Resolve an owned risk operation from REST evidence without mutation access."""
+        if operation.dispatch_state == "OWNED":
+            return operation
+        try:
+            adapter = self._read_adapter_provider(operation.trading_account_id)
+            orders = (
+                *adapter.list_active_orders(operation.symbol.value),
+                *adapter.list_order_history(operation.symbol.value),
+            )
+            executions = adapter.list_executions(operation.symbol.value)
+            parent = self._store.get_live_limit_action(
+                operation.acceptance_session_id, operation.trading_account_id,
+                operation.session_generation, operation.parent_client_action_id,
+            )
+            parent_command = self._store.get_command(parent.command_id) if parent else None
+            if parent_command is None:
+                raise PersistenceError("LIVE Limit operation parent command is unavailable")
+            matching_orders = tuple(item for item in orders if (
+                item.trading_account_id == operation.trading_account_id
+                and item.category is Category.LINEAR
+                and item.symbol == operation.symbol.value
+                and item.position_idx == 0
+                and item.order_id == operation.parent_exchange_order_id
+                and item.order_link_id in {None, operation.parent_order_link_id}
+                and item.side is parent_command.side
+                and item.order_type.value == "limit"
+                and not item.reduce_only
+            ))
+            matching_executions = tuple(item for item in executions if (
+                item.trading_account_id == operation.trading_account_id
+                and item.category is Category.LINEAR
+                and item.symbol == operation.symbol.value
+                and item.order_id == operation.parent_exchange_order_id
+                and item.order_link_id in {None, operation.parent_order_link_id}
+            ))
+            for execution in matching_executions:
+                self._engine.apply_execution(execution)
+            evidence = _latest_consistent_order(matching_orders)
+            if evidence is None:
+                return self._store.mark_live_limit_operation_unknown(
+                    operation, occurred_at_ms=self._clock_ms(),
+                )
+            if operation.operation == "AMEND":
+                expected_quantity = (
+                    parent_command.normalized_quantity.value
+                    if parent_command and parent_command.normalized_quantity else None
+                )
+                if (
+                    evidence.price != operation.requested_price
+                    or evidence.quantity != expected_quantity
+                ):
+                    return self._store.mark_live_limit_operation_unknown(
+                        operation, occurred_at_ms=self._clock_ms(),
+                    )
+                target = CommandState.AMENDED
+            elif evidence.status is NormalizedOrderStatus.CANCELLED:
+                target = CommandState.CANCELLED
+            elif evidence.status is NormalizedOrderStatus.FILLED:
+                target = CommandState.FILLED
+            else:
+                return self._store.mark_live_limit_operation_unknown(
+                    operation, occurred_at_ms=self._clock_ms(),
+                )
+            return self._store.resolve_live_limit_operation(
+                operation, target_state=target,
+                reason="authoritative LIVE Limit operation evidence matched",
+                occurred_at_ms=self._clock_ms(),
+            )
+        except Exception:
+            try:
+                return self._store.mark_live_limit_operation_unknown(
+                    operation, occurred_at_ms=self._clock_ms(),
+                )
+            except Exception:
+                return operation
+
     def _require_dispatch_authority(self) -> TradingAccountId:
         if self._mutation_scope == "limit":
             if not self._gates.limit_mutations_enabled:
@@ -522,6 +761,29 @@ def _live_limit_fingerprint(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _live_limit_operation_fingerprint(
+    parent: LiveLimitActionRecord, record, operation: str,
+    requested_price: Decimal | None, conservative_notional: Decimal | None,
+) -> str:
+    payload = {
+        "acceptance_session_id": parent.acceptance_session_id,
+        "account_id": parent.trading_account_id.value,
+        "session_generation": parent.session_generation,
+        "symbol": parent.symbol.value,
+        "operation": operation,
+        "parent_client_action_id": parent.client_action_id,
+        "parent_order_link_id": parent.order_link_id,
+        "parent_exchange_order_id": parent.exchange_order_id.value,
+        "side": record.side.value,
+        "requested_price": str(requested_price) if requested_price is not None else None,
+        "conservative_notional": (
+            str(conservative_notional) if conservative_notional is not None else None
+        ),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _matches_persisted_limit_identity(
     action: LiveLimitActionRecord, order_id: OrderId, order_link_id: str | None,
 ) -> bool:
@@ -532,3 +794,41 @@ def _matches_persisted_limit_identity(
         and order_id == action.exchange_order_id
         and not order_link_id
     )
+
+
+def _validate_live_limit_operation_replay(
+    operation: LiveLimitOperationRecord,
+    request: AmendCommandRequest | CancelCommandRequest,
+    requested_operation: str, instrument, side,
+) -> None:
+    if (request.order_id is None) == (request.order_link_id is None):
+        raise PersistenceError("exactly one LIVE Limit operation order identity is required")
+    requested_identity_matches = (
+        (request.order_id is not None
+         and request.order_id == operation.parent_exchange_order_id.value)
+        or (request.order_link_id is not None
+            and request.order_link_id == operation.parent_order_link_id)
+    )
+    if (
+        operation.operation != requested_operation
+        or operation.symbol.value != request.symbol.strip().upper()
+        or not requested_identity_matches
+    ):
+        raise PersistenceError("LIVE Limit operation identity was reused with different intent")
+    if requested_operation == "AMEND":
+        assert isinstance(request, AmendCommandRequest)
+        normalized_price = (
+            normalize_limit_price(request.changed_price, instrument.tick_size, side)
+            if request.changed_price is not None else None
+        )
+        if request.resulting_total_quantity is not None or normalized_price != operation.requested_price:
+            raise PersistenceError("LIVE Limit operation identity was reused with different intent")
+
+
+def _latest_consistent_order(orders):
+    if not orders:
+        return None
+    latest_at = max(item.updated_at_ms for item in orders)
+    latest = tuple(item for item in orders if item.updated_at_ms == latest_at)
+    first = latest[0]
+    return first if all(item == first for item in latest[1:]) else None

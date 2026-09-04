@@ -7,9 +7,11 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
+from unittest import mock
 
 from terminal.api.models import (
-    AmendCommandRequest, CancelCommandRequest, ClientActionId, FullCloseCommandRequest,
+    AmendCommandRequest, CancelCommandRequest, ClientActionId, CommandResultStatus,
+    FullCloseCommandRequest,
     LimitCommandRequest, ProtectionCommandRequest, TimeInForce, VolumeRequest, VolumeUnit,
 )
 from terminal.application.live_execution import LiveExecutionCoordinator, LiveParityMutationGates
@@ -31,7 +33,8 @@ from terminal.exchange.events import (
 )
 from terminal.persistence.live_account_store import LiveAccountProjectionStore, LiveAccountSnapshot
 from terminal.persistence.sqlite_store import (
-    LiveLimitAcceptanceSessionRecord, LiveLimitAcceptanceState, SQLiteStore,
+    LiveLimitAcceptanceSessionRecord, LiveLimitAcceptanceState, PersistenceError,
+    SQLiteStore,
 )
 
 
@@ -298,7 +301,7 @@ class LiveExecutionTests(unittest.TestCase):
         self.assertEqual(accepted.reason_code, "live_limit_durable_admission_required")
         self.assertEqual(self.adapter.calls, [])
 
-    def test_limit_amend_cancel_fail_closed_until_durable_owned_order_wiring(self):
+    def test_limit_amend_cancel_without_acceptance_service_fails_closed(self):
         coordinator = self.coordinator(parity_enabled=False, limit_enabled=True)
         amend = lambda api: api.amend(AmendCommandRequest(
             ClientActionId("amend-limit"), "BTCUSDT", order_id="exchange-limit",
@@ -307,17 +310,22 @@ class LiveExecutionTests(unittest.TestCase):
         cancel = lambda api: api.cancel(CancelCommandRequest(
             ClientActionId("cancel-limit"), "BTCUSDT", order_id="exchange-limit",
         ))
-        amended = coordinator.execute_limit_amend_cancel(
-            ACCOUNT.value, 1, "amend-limit", amend,
+        amended = coordinator.execute_limit_amend(
+            ACCOUNT.value, 1, AmendCommandRequest(
+                ClientActionId("amend-limit"), "BTCUSDT", order_id="exchange-limit",
+                changed_price=Decimal("48500"),
+            ),
         )
-        stale = coordinator.execute_limit_amend_cancel(
-            ACCOUNT.value, 2, "cancel-limit", cancel,
+        stale = coordinator.execute_limit_cancel(
+            ACCOUNT.value, 2, CancelCommandRequest(
+                ClientActionId("cancel-limit"), "BTCUSDT", order_id="exchange-limit",
+            ),
         )
         self.assertEqual(
             amended.reason_code, "live_limit_amend_cancel_durable_ownership_required",
         )
         self.assertEqual(
-            stale.reason_code, "live_limit_amend_cancel_durable_ownership_required",
+            stale.reason_code, "stale_account_session",
         )
         self.assertEqual(self.adapter.calls, [])
 
@@ -413,6 +421,206 @@ class LiveExecutionTests(unittest.TestCase):
         )
         coordinator.execute_limit_create(ACCOUNT.value, 1, self.limit_request())
         return self.store.load_unresolved_live_limit_actions()[0]
+
+    def _owned_order_coordinator(self, *, operation_adapter=None, price="49000"):
+        self.arm()
+        service = self.acceptance_service()
+        self.coordinator(
+            parity_enabled=False, limit_enabled=True, limit_ceiling="100",
+            acceptance=service,
+        ).execute_limit_create(ACCOUNT.value, 1, self.limit_request())
+        action = self.store.load_unresolved_live_limit_actions()[0]
+        evidence = self._evidence_order(action.order_link_id)
+        if price != "49000":
+            evidence = OrderEvent(
+                evidence.trading_account_id, evidence.category, evidence.symbol,
+                evidence.order_id, evidence.order_link_id, evidence.position_idx,
+                evidence.side, evidence.order_type, evidence.raw_order_type,
+                Decimal(price), evidence.quantity, evidence.cumulative_filled_quantity,
+                evidence.leaves_quantity, evidence.average_price, evidence.status,
+                evidence.raw_status, evidence.reduce_only, evidence.close_on_trigger,
+                evidence.stop_order_type, evidence.trigger_price, evidence.take_profit,
+                evidence.stop_loss, evidence.tpsl_mode, evidence.created_at_ms,
+                evidence.updated_at_ms,
+            )
+        read = ReadAdapter(orders=(evidence,))
+        self.coordinator(
+            parity_enabled=False, limit_enabled=False, authorized=False,
+            read_adapter=read,
+        ).recover_unresolved(ACCOUNT)
+        self.adapter.calls.clear()
+        return self.coordinator(
+            parity_enabled=False, limit_enabled=True, limit_ceiling="100",
+            acceptance=service, read_adapter=read,
+            adapter=operation_adapter or self.adapter,
+        ), action, read
+
+    def test_owned_non_increasing_amend_is_single_attempt_and_replay_safe(self):
+        coordinator, action, _ = self._owned_order_coordinator()
+        request = AmendCommandRequest(
+            ClientActionId("amend-owned"), "BTCUSDT",
+            order_id="exchange-new", changed_price=Decimal("48000"),
+        )
+        first = coordinator.execute_limit_amend(ACCOUNT.value, 1, request)
+        replay = coordinator.execute_limit_amend(ACCOUNT.value, 1, request)
+        self.assertEqual(first.status, CommandResultStatus.ACCEPTED_PENDING)
+        self.assertEqual(replay.command_id, first.command_id)
+        self.assertEqual(len(self.adapter.calls), 1)
+        self.assertEqual(self.adapter.calls[0][0], MutationKind.AMEND)
+        self.assertEqual(self.adapter.calls[0][1]["order_id"], "exchange-new")
+        self.assertIsNone(self.adapter.calls[0][1]["order_link_id"])
+        operation = self.store.get_live_limit_operation(
+            action.acceptance_session_id, ACCOUNT, 1, "amend-owned",
+        )
+        self.assertEqual(operation.parent_order_link_id, action.order_link_id)
+
+    def test_exposure_increase_quantity_change_and_unowned_targets_are_zero_dispatch(self):
+        coordinator, _, _ = self._owned_order_coordinator()
+        cases = (
+            AmendCommandRequest(ClientActionId("increase"), "BTCUSDT",
+                                order_id="exchange-new", changed_price=Decimal("51000")),
+            AmendCommandRequest(ClientActionId("quantity"), "BTCUSDT",
+                                order_id="exchange-new", resulting_total_quantity=Decimal("0.003")),
+            AmendCommandRequest(ClientActionId("unowned"), "BTCUSDT",
+                                order_id="exchange-limit", changed_price=Decimal("48000")),
+        )
+        for request in cases:
+            result = coordinator.execute_limit_amend(ACCOUNT.value, 1, request)
+            self.assertEqual(result.status, CommandResultStatus.BLOCKED)
+        cancel = coordinator.execute_limit_cancel(
+            ACCOUNT.value, 1, CancelCommandRequest(
+                ClientActionId("unowned-cancel"), "BTCUSDT", order_id="exchange-limit",
+            ),
+        )
+        self.assertEqual(cancel.status, CommandResultStatus.BLOCKED)
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_same_operation_identity_different_fingerprint_is_rejected(self):
+        coordinator, _, _ = self._owned_order_coordinator()
+        coordinator.execute_limit_amend(ACCOUNT.value, 1, AmendCommandRequest(
+            ClientActionId("amend-same"), "BTCUSDT", order_id="exchange-new",
+            changed_price=Decimal("48000"),
+        ))
+        changed = coordinator.execute_limit_amend(ACCOUNT.value, 1, AmendCommandRequest(
+            ClientActionId("amend-same"), "BTCUSDT", order_id="exchange-new",
+            changed_price=Decimal("47000"),
+        ))
+        self.assertEqual(changed.status, CommandResultStatus.BLOCKED)
+        self.assertEqual(len(self.adapter.calls), 1)
+
+    def test_ambiguous_amend_is_unknown_and_restart_reconciliation_is_read_only(self):
+        ambiguous = MutationAdapter(raises=True)
+        coordinator, action, _ = self._owned_order_coordinator(operation_adapter=ambiguous)
+        request = AmendCommandRequest(
+            ClientActionId("amend-unknown"), "BTCUSDT", order_id="exchange-new",
+            changed_price=Decimal("48000"),
+        )
+        first = coordinator.execute_limit_amend(ACCOUNT.value, 1, request)
+        replay = coordinator.execute_limit_amend(ACCOUNT.value, 1, request)
+        self.assertEqual((first.status, replay.status),
+                         (CommandResultStatus.UNKNOWN, CommandResultStatus.UNKNOWN))
+        self.assertEqual(len(ambiguous.calls), 1)
+        amended_evidence = self._evidence_order(action.order_link_id)
+        amended_evidence = OrderEvent(
+            amended_evidence.trading_account_id, amended_evidence.category,
+            amended_evidence.symbol, amended_evidence.order_id,
+            amended_evidence.order_link_id, amended_evidence.position_idx,
+            amended_evidence.side, amended_evidence.order_type,
+            amended_evidence.raw_order_type, Decimal("48000"),
+            amended_evidence.quantity, amended_evidence.cumulative_filled_quantity,
+            amended_evidence.leaves_quantity, amended_evidence.average_price,
+            amended_evidence.status, amended_evidence.raw_status,
+            amended_evidence.reduce_only, amended_evidence.close_on_trigger,
+            amended_evidence.stop_order_type, amended_evidence.trigger_price,
+            amended_evidence.take_profit, amended_evidence.stop_loss,
+            amended_evidence.tpsl_mode, amended_evidence.created_at_ms,
+            amended_evidence.updated_at_ms,
+        )
+        self.coordinator(
+            parity_enabled=False, limit_enabled=False, authorized=False,
+            read_adapter=ReadAdapter(orders=(amended_evidence,)), adapter=ambiguous,
+        ).recover_unresolved(ACCOUNT)
+        operation = self.store.get_live_limit_operation("acceptance", ACCOUNT, 1, "amend-unknown")
+        self.assertEqual(operation.reconciliation_state, "RESOLVED")
+        self.assertEqual(len(ambiguous.calls), 1)
+
+    def test_owned_cancel_is_single_attempt_and_does_not_rearm_capacity(self):
+        coordinator, action, _ = self._owned_order_coordinator()
+        session_before = self.store.get_live_limit_acceptance_session(
+            "acceptance", ACCOUNT, "MAINNET", Symbol("BTCUSDT"),
+            LIVE_LIMIT_ACCEPTANCE_CAPABILITY,
+        )
+        request = CancelCommandRequest(
+            ClientActionId("cancel-owned"), "BTCUSDT", order_id="exchange-new",
+        )
+        first = coordinator.execute_limit_cancel(ACCOUNT.value, 1, request)
+        replay = coordinator.execute_limit_cancel(ACCOUNT.value, 1, request)
+        session_after = self.store.get_live_limit_acceptance_session(
+            "acceptance", ACCOUNT, "MAINNET", Symbol("BTCUSDT"),
+            LIVE_LIMIT_ACCEPTANCE_CAPABILITY,
+        )
+        self.assertEqual(first.status, CommandResultStatus.ACCEPTED_PENDING)
+        self.assertEqual(replay.command_id, first.command_id)
+        self.assertEqual(len(self.adapter.calls), 1)
+        self.assertEqual(self.adapter.calls[0][0], MutationKind.CANCEL)
+        self.assertEqual(
+            (session_after.state, session_after.reserved_count, session_after.reserved_notional),
+            (session_before.state, session_before.reserved_count, session_before.reserved_notional),
+        )
+
+    def test_ambiguous_cancel_reconciles_read_only_without_retry(self):
+        ambiguous = MutationAdapter(raises=True)
+        coordinator, action, _ = self._owned_order_coordinator(operation_adapter=ambiguous)
+        request = CancelCommandRequest(
+            ClientActionId("cancel-unknown"), "BTCUSDT", order_id="exchange-new",
+        )
+        result = coordinator.execute_limit_cancel(ACCOUNT.value, 1, request)
+        self.assertEqual(result.status, CommandResultStatus.UNKNOWN)
+        cancelled = self._evidence_order(
+            action.order_link_id, status=NormalizedOrderStatus.CANCELLED,
+            leaves="0",
+        )
+        self.coordinator(
+            parity_enabled=False, limit_enabled=False, authorized=False,
+            read_adapter=ReadAdapter(orders=(cancelled,)), adapter=ambiguous,
+        ).recover_unresolved(ACCOUNT)
+        operation = self.store.get_live_limit_operation(
+            "acceptance", ACCOUNT, 1, "cancel-unknown",
+        )
+        self.assertEqual(operation.reconciliation_state, "RESOLVED")
+        self.assertEqual(self.store.get_command(operation.command_id).current_state,
+                         CommandState.CANCELLED)
+        self.assertEqual(len(ambiguous.calls), 1)
+
+    def test_operation_provenance_mismatch_and_persistence_failure_are_zero_dispatch(self):
+        coordinator, _, read = self._owned_order_coordinator()
+        mismatched = LiveLimitAcceptanceService(
+            self.manager, self.store, build_sha="different-build",
+            process_identity=RuntimeProcessIdentity(
+                "other-process", 500, os.getpid(), "test-host/test-deployment",
+            ), writable_account_provider=lambda _: True,
+        )
+        result = self.coordinator(
+            parity_enabled=False, limit_enabled=True, limit_ceiling="100",
+            acceptance=mismatched, read_adapter=read,
+        ).execute_limit_cancel(
+            ACCOUNT.value, 1, CancelCommandRequest(
+                ClientActionId("cancel-mismatch"), "BTCUSDT", order_id="exchange-new",
+            ),
+        )
+        self.assertEqual(result.status, CommandResultStatus.BLOCKED)
+        self.assertEqual(self.adapter.calls, [])
+        with mock.patch.object(
+            self.store, "admit_live_limit_operation", side_effect=PersistenceError("failed"),
+        ):
+            failed = coordinator.execute_limit_cancel(
+                ACCOUNT.value, 1, CancelCommandRequest(
+                    ClientActionId("cancel-persistence"), "BTCUSDT",
+                    order_id="exchange-new",
+                ),
+            )
+        self.assertEqual(failed.status, CommandResultStatus.BLOCKED)
+        self.assertEqual(self.adapter.calls, [])
 
     def test_restart_unknown_uses_read_only_reconciliation_and_original_order_link(self):
         action = self._unknown_action()

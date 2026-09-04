@@ -29,7 +29,8 @@ from terminal.domain.models import (
 )
 from terminal.domain.states import CommandState
 from terminal.persistence.schema import (
-    SCHEMA_STATEMENTS, SCHEMA_V13_MIGRATION_STATEMENTS, SCHEMA_VERSION,
+    SCHEMA_STATEMENTS, SCHEMA_V13_MIGRATION_STATEMENTS,
+    SCHEMA_V14_MIGRATION_STATEMENTS, SCHEMA_VERSION,
 )
 from terminal.persistence.sqlite_store import (
     CommandRecord, DuplicateIdentity, LiveLimitAcceptanceSessionRecord,
@@ -142,6 +143,7 @@ class LiveLimitAcceptanceTests(unittest.TestCase):
     def test_schema_v11_migrates_additively_to_current(self):
         self.store.close()
         connection = sqlite3.connect(self.database_path)
+        connection.execute("DROP TABLE live_limit_operations")
         connection.execute("DROP TABLE live_limit_actions")
         connection.execute("DROP TABLE live_limit_acceptance_sessions")
         connection.execute("PRAGMA user_version = 11")
@@ -160,7 +162,8 @@ class LiveLimitAcceptanceTests(unittest.TestCase):
     def test_schema_v12_migrates_additive_outcome_columns(self):
         path = Path(self.temp.name) / "v12.sqlite3"
         connection = sqlite3.connect(path)
-        for statement in SCHEMA_STATEMENTS[:-len(SCHEMA_V13_MIGRATION_STATEMENTS)]:
+        previous = len(SCHEMA_V13_MIGRATION_STATEMENTS) + len(SCHEMA_V14_MIGRATION_STATEMENTS)
+        for statement in SCHEMA_STATEMENTS[:-previous]:
             connection.execute(statement)
         connection.execute("PRAGMA user_version = 12")
         connection.commit()
@@ -175,6 +178,21 @@ class LiveLimitAcceptanceTests(unittest.TestCase):
         self.assertTrue({
             "outcome_disposition", "outcome_reason", "outcome_at_ms", "outcome_code",
         }.issubset(columns))
+
+    def test_schema_v13_adds_live_limit_operations(self):
+        path = Path(self.temp.name) / "v13.sqlite3"
+        connection = sqlite3.connect(path)
+        for statement in SCHEMA_STATEMENTS[:-len(SCHEMA_V14_MIGRATION_STATEMENTS)]:
+            connection.execute(statement)
+        connection.execute("PRAGMA user_version = 13")
+        connection.commit()
+        connection.close()
+        with SQLiteStore.open(path) as migrated:
+            tables = {row[0] for row in migrated._connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+            self.assertEqual(migrated.settings().schema_version, SCHEMA_VERSION)
+        self.assertIn("live_limit_operations", tables)
 
     def test_concurrent_same_identity_has_one_owner_and_no_duplicate_admission(self):
         self.arm()

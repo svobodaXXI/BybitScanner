@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -455,6 +455,62 @@ SCHEMA_V13_MIGRATION_STATEMENTS = (
     "ALTER TABLE live_limit_actions ADD COLUMN outcome_code INTEGER",
 )
 
+SCHEMA_V14_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE live_limit_operations (
+        acceptance_session_id TEXT NOT NULL,
+        trading_account_id TEXT NOT NULL,
+        session_generation INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        client_action_id TEXT NOT NULL,
+        command_id TEXT NOT NULL UNIQUE,
+        operation TEXT NOT NULL,
+        parent_client_action_id TEXT NOT NULL,
+        parent_order_link_id TEXT NOT NULL,
+        parent_exchange_order_id TEXT NOT NULL,
+        request_fingerprint TEXT NOT NULL,
+        requested_price TEXT,
+        requested_quantity TEXT,
+        conservative_notional TEXT,
+        dispatch_state TEXT NOT NULL,
+        reconciliation_state TEXT NOT NULL,
+        outcome_disposition TEXT,
+        outcome_reason TEXT,
+        outcome_code INTEGER,
+        outcome_at_ms INTEGER,
+        build_sha TEXT NOT NULL,
+        process_instance_id TEXT NOT NULL,
+        process_started_at_ms INTEGER NOT NULL,
+        process_id INTEGER NOT NULL,
+        database_path TEXT NOT NULL,
+        database_identity TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        host_identity TEXT NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        PRIMARY KEY (
+            acceptance_session_id, trading_account_id,
+            session_generation, client_action_id
+        ),
+        FOREIGN KEY (command_id) REFERENCES trading_commands(command_id),
+        FOREIGN KEY (
+            acceptance_session_id, trading_account_id,
+            session_generation, parent_client_action_id
+        ) REFERENCES live_limit_actions (
+            acceptance_session_id, trading_account_id,
+            session_generation, client_action_id
+        ),
+        CHECK (operation IN ('AMEND', 'CANCEL')),
+        CHECK (dispatch_state IN ('OWNED', 'DISPATCHING', 'ACKNOWLEDGED', 'UNKNOWN')),
+        CHECK (reconciliation_state IN ('NOT_REQUIRED', 'REQUIRED', 'RESOLVED')),
+        CHECK (session_generation >= 1),
+        CHECK (process_id > 0),
+        CHECK (schema_version > 0),
+        CHECK (created_at_ms >= 0 AND updated_at_ms >= created_at_ms)
+    ) WITHOUT ROWID
+    """,
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -469,4 +525,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V11_MIGRATION_STATEMENTS
     + SCHEMA_V12_MIGRATION_STATEMENTS
     + SCHEMA_V13_MIGRATION_STATEMENTS
+    + SCHEMA_V14_MIGRATION_STATEMENTS
 )

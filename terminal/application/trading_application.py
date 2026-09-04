@@ -138,6 +138,23 @@ class TradingApplication:
 
     def amend(self, intent: AmendIntent) -> ApplicationResult:
         self._require_enabled()
+        record, quantity, price = self.prepare_amend(intent)
+        command = self._persist_submitting(record)
+        order_id, link_id = _selected_identity(intent.order_id, intent.order_link_id)
+        outcome = self.adapter.amend_order(
+            symbol=intent.symbol, order_id=order_id, order_link_id=link_id,
+            qty=quantity, price=price,
+        )
+        resolved = self.execution_engine.ingest_mutation_outcome(
+            command, outcome, occurred_at_ms=self.clock_ms()
+        )
+        return ApplicationResult(None, resolved, outcome)
+
+    def prepare_amend(
+        self, intent: AmendIntent,
+    ) -> tuple[CommandRecord, Decimal | None, Decimal | None]:
+        """Normalize an amend and create correlation without persistence or dispatch."""
+        self._require_enabled()
         _validate_scope(intent.trading_account_id, intent.symbol, intent.current_order)
         order_id, link_id = _selected_identity(intent.order_id, intent.order_link_id)
         _validate_selected_order_identity(intent.current_order, order_id, link_id)
@@ -158,15 +175,7 @@ class TradingApplication:
             current_state=CommandState.ADMITTED, version=1, exchange_order_id=None,
             created_at_ms=now, updated_at_ms=now,
         )
-        command = self._persist_submitting(record)
-        outcome = self.adapter.amend_order(
-            symbol=intent.symbol, order_id=order_id, order_link_id=link_id,
-            qty=quantity, price=price,
-        )
-        resolved = self.execution_engine.ingest_mutation_outcome(
-            command, outcome, occurred_at_ms=self.clock_ms()
-        )
-        return ApplicationResult(None, resolved, outcome)
+        return record, quantity, price
 
     def set_protection(
         self, intent: ManualProtectionIntent,
@@ -256,6 +265,20 @@ class TradingApplication:
 
     def cancel(self, intent: CancelIntent) -> ApplicationResult:
         self._require_enabled()
+        record = self.prepare_cancel(intent)
+        order_id, link_id = _selected_identity(intent.order_id, intent.order_link_id)
+        command = self._persist_submitting(record)
+        outcome = self.adapter.cancel_order(
+            symbol=intent.symbol, order_id=order_id, order_link_id=link_id,
+        )
+        resolved = self.execution_engine.ingest_mutation_outcome(
+            command, outcome, occurred_at_ms=self.clock_ms()
+        )
+        return ApplicationResult(None, resolved, outcome)
+
+    def prepare_cancel(self, intent: CancelIntent) -> CommandRecord:
+        """Validate a cancel and create correlation without persistence or dispatch."""
+        self._require_enabled()
         _validate_scope(intent.trading_account_id, intent.symbol, intent.current_order)
         order_id, link_id = _selected_identity(intent.order_id, intent.order_link_id)
         _validate_selected_order_identity(intent.current_order, order_id, link_id)
@@ -271,14 +294,7 @@ class TradingApplication:
             current_state=CommandState.ADMITTED, version=1, exchange_order_id=None,
             created_at_ms=now, updated_at_ms=now,
         )
-        command = self._persist_submitting(record)
-        outcome = self.adapter.cancel_order(
-            symbol=intent.symbol, order_id=order_id, order_link_id=link_id,
-        )
-        resolved = self.execution_engine.ingest_mutation_outcome(
-            command, outcome, occurred_at_ms=self.clock_ms()
-        )
-        return ApplicationResult(None, resolved, outcome)
+        return record
 
     def _require_enabled(self) -> None:
         if not self.mutations_enabled:
