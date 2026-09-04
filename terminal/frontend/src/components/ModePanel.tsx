@@ -514,9 +514,9 @@ export function ModePanel({
         <div className="paper-market-actions-shell" {...tradingInputFocus.boundaryProps}>
         <div
           aria-label="Manual trading controls"
-          className={`paper-market-actions${mutationsAllowed || liveMarketAllowed ? "" : " is-read-only"}`}
+          className={`paper-market-actions${mutationsAllowed || liveMarketAllowed || liveLimitAllowed ? "" : " is-read-only"}`}
         >
-          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed}>
+          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed}>
           <div className="paper-trade-side-group" aria-label="PAPER trade sides">
             <div className="paper-market-side paper-market-buy-side">
               <TradingControlButton
