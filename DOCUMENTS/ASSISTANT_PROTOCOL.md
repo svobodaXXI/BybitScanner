@@ -2,11 +2,11 @@
 
 Version:
 
-4.32
+4.33
 
 Date:
 
-2026-09-03
+2026-09-04
 
 Document Type:
 
@@ -160,6 +160,15 @@ operation objectively requires interactive paging; convenience, inspection, veri
 
 A handoff is prepared only when repository recovery is insufficient. Neither lifecycle replaces Git state,
 artifacts, authoritative documentation, or required checkpoints.
+
+## 2.5 COMMUNICATION_LANGUAGE_ROUTING_RULE
+
+```yaml
+technical_repo_communication: English
+user_confirmations_approvals_safety_actions: Russian
+preserve_literals: [code, commands, identifiers, error_strings, API_names, file_paths, protocol_literals]
+duplicate_bilingual_statement: forbidden
+```
 
 ---
 
@@ -582,6 +591,9 @@ verification and commit/push authorization boundaries.
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.33` adds compact language routing for English technical/repository communication and Russian user-directed
+confirmations, approvals, safety decisions, and required actions while preserving technical literals.
 
 `4.32` adds the mandatory New Strategy Idea Capture workflow and routes new observations through the repository
 skill and a minimal targeted strategy-spec patch without promoting anecdotal evidence into trading authority.

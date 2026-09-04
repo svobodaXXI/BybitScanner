@@ -105,6 +105,15 @@ NEXT_SLICE_NOT_AUTHORIZED
         self.assertEqual(value["git"]["last_safe_commit"], head)
         self.assertEqual(value["current"]["checkpoint"], "STAGE_8")
 
+    def test_communication_language_routing_is_machine_readable(self):
+        value = self.context("tools/dev/task.py")
+        self.assertEqual(value["communication"], {
+            "technical_repo": "English",
+            "user_confirmations_approvals_safety_actions": "Russian",
+            "preserve_literals": True,
+            "duplicate_bilingual_statement": False,
+        })
+
 
 if __name__ == "__main__":
     unittest.main()

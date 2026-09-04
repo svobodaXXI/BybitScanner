@@ -138,6 +138,12 @@ def build_task_context(
         "task": {"paths": exact_paths, "scope_kind": kind},
         "current": active,
         "workflow": {"lifecycle": "TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD", "assistant_protocol_version": _version(protocol)},
+        "communication": {
+            "technical_repo": "English",
+            "user_confirmations_approvals_safety_actions": "Russian",
+            "preserve_literals": True,
+            "duplicate_bilingual_statement": False,
+        },
         "authority_refs": _authority_refs(kind),
         "unresolved_constraints": constraints,
     }
