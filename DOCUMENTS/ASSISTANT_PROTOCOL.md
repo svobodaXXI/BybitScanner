@@ -2,11 +2,11 @@
 
 Version:
 
-4.33
+4.35
 
 Date:
 
-2026-09-04
+2026-09-05
 
 Document Type:
 
@@ -158,8 +158,9 @@ operation objectively requires interactive paging; convenience, inspection, veri
 - A new Codex session recovers from repository authority, not conversational memory.
 - If the user must change either lifecycle, name the exact one. Never say only “new context/session”.
 
-A handoff is prepared only when repository recovery is insufficient. Neither lifecycle replaces Git state,
-artifacts, authoritative documentation, or required checkpoints.
+A handoff is prepared only when repository recovery is insufficient. For an actual handoff, consult
+`.agents/references/session-handoff.md`; an interruption alone does not require loading it or producing an artifact.
+Neither lifecycle replaces Git state, artifacts, authoritative documentation or required checkpoints.
 
 ## 2.5 COMMUNICATION_LANGUAGE_ROUTING_RULE
 
@@ -182,12 +183,10 @@ or manually paste a bootstrap/handoff when authoritative state can be recovered 
 
 Recovery contract:
 
-1. inspect branch, HEAD, index/working-tree state, user task, and relevant dirty scope;
-2. obtain current state from `PROJECT_STATE.md` plus the applicable active Task/Spec or ChangeRequest;
-3. load only the scoped contracts, rules, architecture, paths, roadmap, and protocol sections required by the task;
-4. reuse authorities already loaded in the current chat/session;
-5. reread only when the relevant file/scope changed, authorities conflict, or context is uncertain;
-6. do not perform full/deep recovery, broad tree/snapshot output, Project Sync, or unrelated document reads without objective need.
+Follow `AGENTS.md` staged recovery, short-intent entry and applicability-driven skill routing. Codex discovers
+scope, owning references and necessary checks from the intended outcome and current checkout; the user is not
+responsible for supplying them. Reuse fresh authority already loaded and reload only changed or uncertain scope.
+Do not perform full/deep recovery, broad snapshots or Project Sync without the conditions defined by `AGENTS.md`.
 
 Current project priority, phase, pipeline health, and implementation state never belong in this protocol. Their
 authority is `PROJECT_STATE.md` and the applicable active Task/ChangeRequest.
@@ -199,7 +198,7 @@ Use the smallest reliable context footprint:
 - do not repeat unchanged files, established history, known requirements, successful checks, or already-loaded authority;
 - every read, search, status, diff, and test must have a concrete current-task necessity; do not repeat one when its
   relevant state has not changed;
-- use targeted searches and scoped status/diffs instead of broad output;
+- locate headings, symbols and owning references before reading; use targeted searches and scoped status/diffs instead of broad output;
 - do not explore alternative architectures when the current solution remains authoritative and no new evidence
   invalidates it;
 - on an unexpected blocker, localize the smallest failure boundary first; broad audit or research is escalation,
@@ -207,6 +206,9 @@ Use the smallest reliable context footprint:
 - report remaining-context estimates only on request or when loss of context is a real risk;
 - batch compatible tasks and related decisions when scope, risk, approval, validation, and governance allow it;
 - split work only for a concrete dependency, risk, approval/checkpoint, validation, safety, or governance reason.
+
+For an actual recovery-footprint comparison, reuse `tools.project_sync.governance.context_budget`; do not recreate
+its deterministic extraction or duplication measurement in prose or run it routinely.
 
 Optimize for useful result per Codex limit consumed. Economy never weakens correctness, safety, fail-closed
 behavior, contract checks, mandatory E2E, verification, or governance.
@@ -221,7 +223,10 @@ discard, commit, or push unrelated work.
 
 ## 4.1 PC/VPS GIT SYNC PREFLIGHT — HARD GATE
 
-Before starting a new repository task on any development host, including the Windows PC or VPS:
+Before starting a new repository task on any development host, including the Windows PC or VPS, apply the checks
+below. For edit tasks, `task start` performs this preflight and additionally requires branch `main`; consume its
+result instead of repeating a successful fetch/comparison. These checks concern the current host only and do not
+prove that another host or its running services are synchronized.
 
 1. fetch current remote state from `origin`;
 2. compare local `HEAD` with `origin/main`;
@@ -281,7 +286,7 @@ actually changes.
 Ordinary work follows:
 
 ```text
-Implementation → Validation → Git checkpoint
+Protected task start → Implementation → Targeted validation → Task finish / report → Authorized Git checkpoint
 ```
 
 Detailed Project Sync, Migration, Pipeline, approval, and architecture mechanics are owned by
@@ -331,10 +336,18 @@ not authorize image tools. Do not ask for image-generation permission during ord
 
 ## 7.1 MINIMAL_CODEX_DELTA_RULE
 
-Codex tasks/prompts must be practically minimally sufficient: exact scope, requested delta, critical constraints,
-necessary checks, and compact return format. Do not repeat ChangeRequest history, loaded documents, established
-architecture, unchanged requirements, or previous successful checks unless required by changed state, uncertainty,
-correctness, safety, or governance.
+Routine Codex prompts must contain only task intent and genuinely task-specific constraints or facts that cannot
+be inferred from repository authority. This applies both to user task entry and to prompts prepared by ChatGPT
+for Codex. Do not append standard recovery, file-discovery, skill, safety, dirty-file, testing, reporting or Git
+instructions. Do not require users to say "follow harness", name a skill, provide a test list or request protection
+of unrelated work; those obligations apply automatically. A task-specific checkpoint, inaccessible runtime fact,
+product choice or explicit restriction may be needed; carry it without expanding it into generic boilerplate.
+
+The short prompt does not remove TASK/SPEC, scope, acceptance, approval or verification requirements. Codex recovers
+or establishes them through the repository-owned workflow. `AGENTS.md` owns execution routing and skill selection;
+the harness enforces its implemented deterministic guards. Codex still reads the routed authority, runs the
+applicable governance gate, identifies missing checks and resolves ambiguity. Neither a short intent nor a harness
+PASS authorizes a material scope amendment, LIVE mutation, deployment or Git write.
 
 Batch approved compatible micro-tasks and related decisions. Do not interrupt implementation with serial
 micro-questions when one safe decision batch suffices. Full research, status, diff, and verbose logs are off by
@@ -345,7 +358,8 @@ targeted tests and checks that prove the current delta; run full suites only whe
 Default execution loop:
 
 ```text
-minimal inspection -> minimal patch -> targeted validation -> required build/runtime check -> STOP
+intent -> scoped recovery / skill selection -> protected task start + applicable gate
+       -> minimal patch -> targeted checks -> task finish / required build -> report
 ```
 
 When manual, browser, or real-phone acceptance is required, stop after automated prerequisites and wait for user
@@ -365,15 +379,35 @@ Long logs appear only when needed for diagnosis.
 
 ## 7.2 SCOPED_VERIFICATION_AND_CHECKPOINT_RULE
 
-After every implementation task, Codex runs once:
+For edits, complete the transaction started under `AGENTS.md`:
 
 ```text
-python -m tools.dev.verify --path EXACT_CHANGED_PATH [--path EXACT_CHANGED_PATH ...]
+python -m tools.dev.task finish --task TASK_ID
 ```
 
-The exact-path verifier routes required checks and records a PASS receipt in `.git/bybitscanner/`. Do not claim
-completion, acceptance, regression safety, or readiness without current claim-matched evidence. Automated PASS is
-not browser, live-data, touch, or real-phone acceptance.
+Task finish invokes the exact-scope verifier, checks the protected task delta, unrelated work and Git index, and
+records a PASS receipt in `.git/bybitscanner/`. This satisfies the verifier requirement; do not duplicate it with
+a standalone invocation unless new evidence or an independent verification purpose requires that invocation.
+Standalone `tools.dev.verify --path EXACT_PATH` supports repeated paths but does not substitute for task finish.
+Select focused tests by objective need and applicable authority; a routed build does not imply that tests ran.
+Do not claim completion, acceptance, regression safety or readiness without current claim-matched evidence.
+Automated PASS is not browser, live-data, touch or real-phone acceptance.
+
+For every material claim, identify the minimum sufficient evidence before checking; stop when it is sufficient.
+This applies without loading a skill and also to read-only work, which needs no edit transaction.
+
+| Claim | Minimum current evidence |
+| --- | --- |
+| Syntax/import or routed source correctness | Applicable compile, type, lint or exact-scope verifier result |
+| Critical deterministic behavior | Focused regression exercising the real invariant |
+| Frontend production bundle | Successful current `npm run build` |
+| Visual, touch, browser or device behavior | Acceptance in the required real environment, following §6.2 |
+| Safe checkpoint | Current PASS receipt plus the user-run checkpoint workflow |
+
+Keep unperformed manual acceptance `NOT YET ACCEPTED`. Evidence becomes stale after a material change to its
+files, diff, runtime or acceptance environment. Report failed required checks and partial successes without
+claiming completion. Expand evidence where execution, risk, PnL, sizing, reconciliation, persistence or robot safety
+requires it; economy never lowers that standard.
 
 `python -m tools.dev.checkpoint --message "..."` is exclusively user-run. Codex must never invoke it automatically.
 It must fail closed on a missing/stale receipt, changed branch/HEAD/content, or unexpected staged files; stage only
@@ -383,9 +417,18 @@ Codex does not stage, commit, or push unless the user explicitly authorizes Git-
 unrelated work at every checkpoint. Codex Desktop is the default interface; do not tell the user to launch Codex
 from PowerShell unless explicitly requested.
 
+Report the harness result plus material task-specific findings, checks, limitations and remaining acceptance.
+Do not make the user specify a report template. "No checkpoint" means stop after verification and report without
+Git writes or a checkpoint action request; leave the lifecycle's RECORD/Git checkpoint pending, not falsely complete.
+
 ---
 
 # 8. WORKFLOW RULE MAINTENANCE
+
+Consult `.agents/references/workflow-improvement.md` only for an explicit process audit, evidenced recurring
+friction, or a high-severity incident warranting prevention. Do not load it on ordinary tasks or turn routine
+completion into process-improvement work. Proposed permanent changes remain review-required; the checklist does
+not authorize implementation. Existing correction and rule-recording obligations below remain binding.
 
 ## 8.1 IMMEDIATE_WORKFLOW_RULE_RECORDING
 
@@ -480,11 +523,9 @@ never weakens fail-closed safety, correctness, governance, verification, or prot
 ## 8.4 CHATGPT PROJECT INSTRUCTIONS GUARDRAIL SYNC NOTE
 
 ChatGPT Project Instructions are manually maintained outside the repository and are not project authority.
-`ASSISTANT_PROTOCOL.md` remains canonical. To make critical guardrails available before repository recovery, keep a
-compact mirror there of: beginner-safe one-dependent-step guidance, no assumed runtime state, copy-ready payloads,
-exact-reply copy-ready handling, pager ban, user-owned work protection, Vite build-before-acceptance, and the
-systemic-regression escalation trigger. This is a manual sync recommendation, not a duplicated protocol or a new
-repository authority.
+If maintained, use a compact bootstrap pointer to `AGENTS.md` and this protocol, plus the short-intent entry model.
+Do not mirror workflow checklists into every task prompt. The canonical communication, safety and governance rules
+remain in the repository and must be loaded before project-specific user actions.
 
 
 ## 8.5 REPOSITORY AUTHORITY OVER MEMORY — HARD RULE
@@ -496,10 +537,7 @@ For BybitScanner work, the assistant must recover applicable workflow rules from
 `DOCUMENTS/ASSISTANT_PROTOCOL.md` before issuing project-specific user actions. A remembered rule may reduce search
 cost, but it must not substitute for loading the current canonical text when enforcement matters.
 
-If repository authority is available through an integrated GitHub/repository connector, the assistant must read the
-committed authority directly instead of asking the user to copy or paste committed file contents. User-provided
-PowerShell output is reserved for local-only reality that the remote repository cannot know, such as dirty/untracked
-state, running processes, ports, runtime logs, local configuration, and uncommitted changes.
+Read accessible authority directly; section 8.7 owns the no-user-as-file-transport rule.
 
 A failure to obey an already-explicit canonical rule is an `ENFORCEMENT FAILURE`, not a rule-definition gap. Do not
 respond by duplicating the same rule in more documents. Instead, identify why bootstrap/preflight/enforcement failed
@@ -557,7 +595,8 @@ reproducible migration helper, not a general-purpose updater and not current sta
 
 For every new trading idea, chart observation, case study or strategy-mechanics refinement supplied by the user,
 load `.agents/skills/strategy-hypothesis-capture/SKILL.md` and the current
-`DOCUMENTS/TRADING_STRATEGY_SPEC.md`. Capture the idea only through this research path:
+`DOCUMENTS/TRADING_STRATEGY_SPEC.md` automatically; no skill name or capture checklist is required in the prompt.
+A chart/UI screenshot without strategy meaning is not research capture. Capture an actual idea only through this research path:
 
 ```text
 Observation / Case Study
@@ -570,10 +609,8 @@ Observation / Case Study
   -> Research Backlog
 ```
 
-First determine whether the input is a new observation, a variant of an existing hypothesis, a new setup, a
-risk/entry/exit-mechanics refinement or a duplicate. Reuse or minimally extend an existing hypothesis when its
-setup identity and falsifiable claim still own the idea. Allocate the next free H-ID only when the generalized
-claim or setup is materially distinct.
+The skill owns classification, semantic deduplication, H-ID allocation, data/validation fields, source-image
+handling and the minimal patch procedure. Follow those steps without copying them into a generated Codex prompt.
 
 Never:
 
@@ -583,25 +620,16 @@ Never:
 * mix `BASELINE`, `ACCEPTED DESIGN`, `HYPOTHESIS` or `NEEDS VALIDATION` authority states;
 * promote example-specific prices, percentages or visual boundaries into universal parameters.
 
-Apply only the smallest targeted patch needed to preserve the observation, measurable generalized rule,
-invariants, required data, validation and backlog routing. A chart remains evidence of the observation, not proof
-of the generalized claim. Preserve repository authority, reference-case storage rules, dirty-work protection,
-verification and commit/push authorization boundaries.
+This is research-only capture, not authorization to change trading/runtime code. A chart remains evidence of the
+observation, not proof of the generalized claim. Root `AGENTS.md` and section 7.2 own the protected edit, verification
+and Git workflow; preserve reference-case storage rules and all approval boundaries.
 
 ---
 
 # 9. CURRENT REVISION RECORD
 
-`4.33` adds compact language routing for English technical/repository communication and Russian user-directed
-confirmations, approvals, safety decisions, and required actions while preserving technical literals.
-
-`4.32` adds the mandatory New Strategy Idea Capture workflow and routes new observations through the repository
-skill and a minimal targeted strategy-spec patch without promoting anecdotal evidence into trading authority.
-
-`4.29` hardens rule enforcement after a repeated enforcement failure: repository authority is normative over
-assistant memory, committed authority should be read directly instead of transported through the user, existing-rule
-violations trigger enforcement analysis rather than duplicate rules, critical rules prefer deterministic technical
-guards, and substantial multiline Windows edits prefer fail-closed machine-applied helpers. It also records the
-historical M9 documentation migration helper path. Detailed history remains in Git.
+`4.35` reduces active procedures to diagnosis, change review and strategy capture. Ordinary tasks use central
+recovery/evidence/harness rules without a procedural skill. Handoff and workflow-improvement checklists are narrowly
+consulted references; safety, approval, acceptance and Git boundaries are unchanged. Detailed history remains in Git.
 
 # END_OF_DOCUMENT

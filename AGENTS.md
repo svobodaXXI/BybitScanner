@@ -4,6 +4,18 @@ Canonical compact entry point for coding agents. It routes to project authority;
 
 This root `AGENTS.md` applies to the entire repository tree rooted at `C:\BybitScanner` and is a mandatory project-level instruction file for Codex.
 
+## Short-intent task entry
+
+Routine Codex prompts contain only the intended outcome plus genuinely task-specific constraints or facts that
+the repository cannot infer. Users do not have to supply recovery instructions, file lists, skills, safety
+checklists, verification commands, report templates, or Git boilerplate. Their omission never waives a requirement.
+
+Codex owns applicability decisions and scope discovery from current repository authority; the harness owns the
+deterministic checks it implements. Discover the smallest exact scope before starting the task transaction. The
+current CLI still requires agent-supplied `--path` arguments: short intent is the user interface, not a claim that
+the harness discovers paths or grants authorization. Ask only for missing decisions or facts that materially
+block safe progress. Preserve explicit task constraints and all existing approval gates.
+
 ## Staged recovery
 
 0. **Local reality:** read this file; inspect branch, HEAD, index/working-tree status, the user task, and relevant dirty scope.
@@ -12,10 +24,11 @@ This root `AGENTS.md` applies to the entire repository tree rooted at `C:\BybitS
 3. **Deep recovery:** broaden review to `PROJECT_STATE.md`, `PROJECT_TREE.md`, `PROJECT_RULES.md`, `ARCHITECTURE.md`, and `ASSISTANT_PROTOCOL.md` only when scope is unknown, authorities conflict, severe interruption requires reconstruction, or work is architecture-wide.
 
 Routine scoped work must not require the complete deep-recovery set. Do not run Project Sync merely to restore context.
+Stop recovery once scope, authority, constraints, affected state and the next safe action are established.
 
 Generate a compact disposable bootstrap when useful with `python -m tools.dev.task_context --path EXACT_PATH` (repeat `--path` as needed; optional `--hint`). Its JSON output is derived, non-authoritative context and never replaces repository authority or governance gates.
 
-For implementation tasks, use `python -m tools.dev.task start --intent "SHORT INTENT" --path EXACT_PATH` before edits and `python -m tools.dev.task finish --task TASK_ID` afterward. This facade composes sync preflight, scoped authority routing, task transactions, exact-scope verification, user-owned-work guards, and the standard completion report; it does not replace their owning rules or tools.
+For repository edits, including documentation and skills, use `python -m tools.dev.task start --intent "SHORT INTENT" --path EXACT_PATH` (repeat `--path` for the discovered scope) before edits and `python -m tools.dev.task finish --task TASK_ID` afterward. This facade composes sync preflight, scoped authority routing, task transactions, exact-scope verification, user-owned-work guards, and the standard completion report; it does not replace their owning rules or tools. Read-only work needs no edit transaction. On a gate failure, stop dependent work and resolve the cause; never bypass the harness or alter it merely to complete the task. If additional paths become necessary, stop before editing them and establish a protected transaction covering the revised authorized scope; material changes still require the normal approval.
 
 ## Communication bootstrap — hard rule
 
@@ -42,16 +55,21 @@ encoding/newlines, fail closed on mismatched anchors, and verify only the author
 
 ## Project skills
 
-First-party procedural skills live under `.agents/skills/`; read a skill body only when its workflow applies:
+Ordinary tasks require no procedural skill by default. Recovery, safety, evidence, verification, reporting and Git
+remain mandatory through central authority and the harness. Load a skill only for its distinct procedure:
 
-- context/recovery-intensive work: `.agents/skills/context-budget/SKILL.md`;
-- session, chat, or interrupted-work handoff: `.agents/skills/session-handoff/SKILL.md`;
-- non-trivial defect with an unknown cause: `.agents/skills/systematic-debugging/SKILL.md`;
-- before material completion, PASS, acceptance, or readiness claims: `.agents/skills/proof-before-done/SKILL.md`;
-- before accepting a high-risk or material behavioral change: `.agents/skills/change-review/SKILL.md`;
-- repeated workflow friction, recurring agent mistakes, or candidate process improvements: `.agents/skills/workflow-distiller/SKILL.md`.
+- **Diagnose an unknown cause:** `.agents/skills/systematic-debugging/SKILL.md` for non-trivial defects; skip proven local fixes.
+- **Review a change:** `.agents/skills/change-review/SKILL.md` when requested or before material/high-risk behavioral acceptance; not every completion or cosmetic edit.
+- **Capture strategy research:** `.agents/skills/strategy-hypothesis-capture/SKILL.md` for trading observations, cases or mechanics hypotheses; not chart/UI bug reports without strategy meaning.
 
-These skills describe how to work. They do not replace project authority, governance gates, or deterministic tools.
+Select by meaning and phase, without user invocation. A task may move from diagnosis to review, but do not load
+both eagerly or treat reviewing a diff as authority to implement a fix. Research capture never authorizes trading
+code changes. Inspecting instructions does not activate their domain procedure.
+
+Legacy SKILL.md compatibility stubs marked DEPRECATED or REFERENCE-ONLY are not active skills and must not be automatically loaded.
+
+Handoff and workflow-improvement checklists are references, not skills. Consult them only under
+`ASSISTANT_PROTOCOL.md` §§2.4 and 8; routine recovery/completion does not load them.
 
 ## Authority routing
 
@@ -86,7 +104,11 @@ Confirm existing components before adding modules, registries, paths, documents,
 
 Codex must not create synthetic/fake UI tests for behavior the user can immediately verify in the real interface. Do not add or run tests without objective necessity; add an automated test only when it protects critical logic, a material regression, or behavior that cannot be verified reliably and quickly by hand.
 
-After implementation, Codex must run `python -m tools.dev.verify` once with repeated `--path` arguments matching the exact task/changed paths. The verifier routes only the required scoped checks, avoids redundant broad/full tests, remains read-only with respect to Git/index, and writes its PASS receipt under `.git/bybitscanner/`.
+Finish the protected task through `tools.dev.task finish`; it invokes the exact-scope `tools.dev.verify`, verifies
+the task delta and unchanged index/user-owned work, and records the PASS receipt under `.git/bybitscanner/`.
+Do not run a second standalone verifier solely to satisfy duplicated prose. Standalone verification, when
+independently needed, uses `python -m tools.dev.verify` with repeated exact `--path` arguments; it does not replace
+task finish. Codex selects any necessary focused checks not routed by the verifier and reports only actual evidence.
 
 `python -m tools.dev.checkpoint --message "..."` is a user-run Git-write command. Codex must never invoke it automatically. It consumes the latest current PASS receipt, stages only its exact paths, checks the cached diff, commits, pushes to `origin`, and verifies the remote SHA; any mismatch or failure stops the workflow without touching unrelated work.
 

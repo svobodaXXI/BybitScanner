@@ -1,6 +1,6 @@
 ---
 name: strategy-hypothesis-capture
-description: Convert a BybitScanner user trading idea, chart observation, case study, or strategy refinement into the smallest repository-authoritative research update without claiming unvalidated edge or changing trading code.
+description: Capture BybitScanner trading observations or strategy hypotheses as minimal research updates, without unvalidated edge claims or trading code changes; exclude chart/UI bug reports without strategy meaning.
 ---
 
 # Strategy Hypothesis Capture
@@ -8,10 +8,9 @@ description: Convert a BybitScanner user trading idea, chart observation, case s
 Use this skill when the user supplies a new trading idea, ordinary-language market observation, chart screenshot,
 case study, or refinement to an existing setup, entry, risk, position-building, management or exit hypothesis.
 
-Read the current `DOCUMENTS/TRADING_STRATEGY_SPEC.md`, relevant repository definitions and the
-`NEW STRATEGY IDEA CAPTURE` section of `DOCUMENTS/ASSISTANT_PROTOCOL.md` before editing. Inspect current Git status
-and preserve unrelated/user-owned changes. Do not modify Scanner, trading, runtime, frontend or backend code under
-this workflow.
+Exclude chart/UI bug reports and screenshots without strategy meaning. Read the current
+`DOCUMENTS/TRADING_STRATEGY_SPEC.md` and relevant definitions under protocol §8.9. This procedure is research-only;
+no Scanner, trading, runtime, frontend or backend code changes.
 
 ## Classify before assigning an ID
 
@@ -64,25 +63,8 @@ renumber existing hypotheses or duplicate shared validation methodology. A typic
 definition, one registry row and one backlog item; an existing-hypothesis refinement may need only a subsection or
 sentence plus data/backlog fields. A duplicate may require no repository change.
 
-Example routing:
+## Research review
 
-```text
-User: "На этом графике после dump цена несколько раз отскакивает от mirror level..."
-  -> Observation / Case Study
-  -> compare with H-011 before allocating an ID
-  -> normalized mirror-zone, touch, volatility and cost features
-  -> validation and promotion/kill requirements
-  -> minimal targeted TRADING_STRATEGY_SPEC patch
-```
-
-## Verify and report
-
-After any change:
-
-1. run `git diff --check` for the exact changed paths;
-2. run `python -m tools.dev.verify` once with repeated exact `--path` arguments for all task-changed paths;
-3. inspect the scoped diff for authority-state mixing, unsupported profitability claims and accidental broad rewrite;
-4. show the diff summary and distinguish task files from unrelated dirty work.
-
-Do not commit or push without separate user authorization. Report the classification, H-ID decision, exact targeted
-patch, checks, changed paths and unresolved questions.
+Before completion, check the scoped research delta for mixed authority states, unsupported profitability claims,
+accidental broad rewriting and missing validation/invalidation criteria. Report the classification and H-ID decision,
+what research meaning changed, and unresolved source facts. Central authority owns the task workflow.
