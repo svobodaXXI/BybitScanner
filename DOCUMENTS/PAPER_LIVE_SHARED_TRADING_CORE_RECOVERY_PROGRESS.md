@@ -2,7 +2,7 @@
 
 Date: 2026-09-05
 Parent direction: `DOCUMENTS/PAPER_LIVE_SHARED_TRADING_CORE_RECOVERY.md`
-Status: SLICE 1 IMPLEMENTED ON GITHUB / LOCAL VERIFICATION PENDING
+Status: SLICE 1 PARTIALLY ACCEPTED / LIVE CHART CONFIRM BLOCKED
 
 ## Slice 1 objective
 
@@ -67,6 +67,62 @@ Added `terminal/frontend/src/orders/limitInteractionCore.test.ts` covering:
 - submitting draft volume lock;
 - fail-closed same-side candidate validation.
 
+The existing LIVE integration test harness was updated so test-driven volume changes update the draft itself instead of relying on the old mutable-selected-volume assumption.
+
+## Automated verification
+
+Local verification after pull:
+
+- `src/orders/limitInteractionCore.test.ts`: 7/7 PASS;
+- `src/app/App.liveLimitConfirm.test.tsx`: 16/16 PASS;
+- targeted total: 23/23 PASS;
+- production `tsc -b && vite build`: PASS;
+- built assets included `dist/assets/index-BCQ3MsJ9.js`.
+
+The first targeted run exposed 7 stale LIVE integration tests because their mocks changed only `selectedVolumes`; that harness was corrected to update draft-owned volume. The repeated targeted run then passed 23/23.
+
+## Real UI acceptance on 2026-09-05
+
+### PAPER
+
+PASS:
+
+- real PAPER Limit flow was exercised in the current preview;
+- pending Limit line appeared on chart;
+- chart checkmark confirmation succeeded.
+
+This confirms the previously reported PAPER chart-confirm regression is recovered for the exercised flow.
+
+### LIVE draft-only
+
+PASS:
+
+- on the LIVE account, hold BUY + second touch on chart created the pending dashed Limit line;
+- no LIVE exchange confirmation was intentionally required for this draft-creation acceptance.
+
+This confirms the previously reported LIVE hold + chart tap draft-creation regression is recovered.
+
+### LIVE chart confirmation
+
+FAIL / OPEN BLOCKER:
+
+- the dashed LIVE pending Limit line does not confirm when the chart checkmark is pressed in the real UI;
+- therefore Slice 1 is NOT fully accepted and the shared recovery is NOT complete;
+- automated LIVE integration tests passing do not override this real-UI failure.
+
+The next investigation must start after draft creation, along the real path:
+
+```text
+PendingLimitLine chart checkmark
+    -> onPendingLimitConfirm(draftId)
+    -> App.submitLimitDraft(draftId)
+    -> common draft confirmation eligibility
+    -> LIVE capability / current authority gate
+    -> executeLiveLimitCreate
+```
+
+Do not start the next session by changing the hold/tap gesture again: that part is now real-UI PASS.
+
 ## Safety
 
 No LIVE gate was relaxed.
@@ -77,14 +133,17 @@ No blind retry was introduced.
 
 LIVE account/session fencing, single-attempt ownership and reconciliation behavior remain unchanged.
 
-## Verification still required after pull
+The user should not repeatedly press the LIVE chart checkmark while the blocker is unresolved; diagnose the non-confirming path before any further real mutation acceptance.
 
-This GitHub-direct slice has not yet been compiled or executed in the user's local runtime. After pulling, required evidence is:
+## Next session
 
-1. focused frontend tests including `limitInteractionCore.test.ts`;
-2. existing Limit/PAPER/LIVE regression tests;
-3. production frontend build;
-4. real UI PAPER Limit create + chart confirm;
-5. LIVE hold BUY/SELL + chart tap draft-only acceptance with no confirmation / no exchange mutation.
+Resume from the current GitHub `main` and treat these facts as authoritative:
 
-If any automated verification fails, treat this slice as unaccepted and repair it before real acceptance.
+1. shared Limit core tests PASS;
+2. existing targeted LIVE Limit integration tests PASS;
+3. production frontend build PASS;
+4. PAPER chart Limit create + confirm real UI PASS;
+5. LIVE hold BUY + chart tap draft creation real UI PASS;
+6. LIVE dashed chart Limit checkmark confirmation real UI FAIL — current blocker.
+
+Investigate the chart-confirm path end-to-end and add a test that reproduces the real interaction boundary before changing execution behavior. Preserve PAPER/LIVE common semantics and keep provider-specific differences behind the execution/safety boundary.
