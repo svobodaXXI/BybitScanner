@@ -108,6 +108,7 @@ export function ChartPanel({
   activeLimitOrders = [],
   pendingLimitDraft = null,
   pendingLimitDrafts,
+  liveLimitDrafts = false,
   pendingLimitVolumeValid = { Buy: true, Sell: true },
   onPendingLimitSelect,
   onPendingLimitDismiss,
@@ -142,6 +143,7 @@ export function ChartPanel({
   activeLimitOrders?: readonly PaperLimitOrder[];
   pendingLimitDraft?: LimitDraft | null;
   pendingLimitDrafts?: readonly LimitDraft[];
+  liveLimitDrafts?: boolean;
   pendingLimitVolumeValid?: Readonly<Record<MarketSide, boolean>>;
   onPendingLimitSelect?: (draftId: string) => void;
   onPendingLimitDismiss?: (draftId: string) => void;
@@ -939,6 +941,8 @@ export function ChartPanel({
                 }
               }}
               onConfirm={() => onPendingLimitConfirm?.(draft.draftId)}
+              liveSubmitStatus={liveLimitDrafts && (draft.status === "submitting" || draft.status === "ambiguous")
+                ? draft.status : undefined}
               confirmDisabled={
                 !pendingLimitVolumeValid[draft.side] ||
                 draft.status === "submitting" ||

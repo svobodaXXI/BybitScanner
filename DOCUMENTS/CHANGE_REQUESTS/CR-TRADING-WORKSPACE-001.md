@@ -4946,3 +4946,99 @@ to existing account/session, identity, single-attempt and reconciliation fencing
 independent Market/parity gates, One-Way `positionIdx=0`, canonical normalization, no optimistic LIVE projection,
 existing account/session fencing, and existing LIVE Market safety semantics remain unchanged.
 
+
+---
+
+## 2026-09-05 LIVE LIMIT SUBMIT UX — REAL-PHONE ACCEPTANCE PARTIAL
+
+Status:
+
+`LIVE LIMIT CREATE UX ACCEPTED / LIVE CANCEL ROUTING DEFECT FOUND`
+
+Authoritative build at acceptance start:
+
+`2daeba73ac4d6decb5b46a4b45cd8880439e0023`
+
+Scope under test:
+
+- frontend immediate-submit feedback for confirmed LIVE Limit create;
+- first confirm must immediately show `SUBMITTING...`;
+- repeated confirm while the same attempt is in flight must not create a duplicate;
+- UNKNOWN/reconciliation behavior remains fail-closed;
+- existing active LIVE order rendering must remain intact.
+
+Automated implementation state before phone acceptance:
+
+- modified frontend files:
+  - `terminal/frontend/src/app/App.tsx`
+  - `terminal/frontend/src/app/App.liveLimitConfirm.test.tsx`
+  - `terminal/frontend/src/chart/PendingLimitLine.tsx`
+  - `terminal/frontend/src/chart/PendingLimitLine.test.tsx`
+  - `terminal/frontend/src/components/ChartPanel.tsx`
+- targeted frontend tests: 15 PASS;
+- production build: PASS;
+- exact-path verification: PASS;
+- no commit existed yet for these frontend changes.
+
+Controlled real-phone acceptance:
+
+- account: active writable Bybit MAINNET account;
+- symbol: `ONGUSDT`;
+- account session generation: `2`;
+- acceptance session: `live-limit-ong-ux-accept-003`;
+- capability: `LIVE_LIMIT_CREATE`;
+- max create count: `1`;
+- aggregate/per-order ceiling: `5.20 USDT`;
+- authorized build SHA matched runtime;
+- database identity matched runtime;
+- pre-dispatch unresolved action count: `0`;
+- pre-dispatch unresolved operation count: `0`;
+- acceptance state before submit: `ARMED`;
+- `authority_matches_runtime = true`.
+
+Observed result:
+
+- BUY volume was `5.20 USDT`;
+- pending BUY Limit was approximately `0.0949`, below the live market and non-marketable;
+- first real-phone tap on green confirm immediately displayed `SUBMITTING...`: PASS;
+- acceptance session consumed exactly one create:
+  - `reserved_count = 1`;
+  - `reserved_notional = 5.2`;
+  - state became `EXHAUSTED`;
+- post-submit unresolved action count: `0`;
+- post-submit unresolved operation count: `0`;
+- Terminal showed the created order as `BUY LIMITS 1`;
+- no evidence of a duplicate create was observed.
+
+Important unrelated inventory:
+
+- `SELL LIMITS 1` visible during acceptance was an existing user order created through MetaScalp and was not part of this acceptance.
+- That SELL order must not be modified as part of this work.
+
+Defect discovered during cleanup:
+
+- pressing the Terminal cancel control for the newly created LIVE BUY Limit did not use the LIVE cancel path;
+- UI reported `PAPER LIMIT cancellation failed`;
+- therefore LIVE Limit create routing is working, but the corresponding frontend cancel action is incorrectly routed/identified as PAPER;
+- this is the exact next implementation defect to fix before LIVE Limit lifecycle acceptance can be closed.
+
+Cleanup:
+
+- the controlled test BUY Limit was manually cancelled outside Terminal through the trading account tooling;
+- the unrelated MetaScalp SELL Limit was left untouched;
+- no unresolved LIVE action or operation remained in the acceptance diagnostics;
+- runtime was subsequently restarted with LIVE mutation gates explicitly fail-closed.
+
+Acceptance conclusion:
+
+- immediate `SUBMITTING...` feedback: PASS;
+- single-create acceptance fencing: PASS;
+- duplicate-create prevention evidence: PASS;
+- authoritative LIVE order appearance: PASS;
+- Terminal LIVE Limit cancel: FAIL;
+- overall LIVE Limit lifecycle acceptance: PARTIAL / NOT CLOSED.
+
+Exact next work item:
+
+`FIX LIVE LIMIT CANCEL ROUTING — active Main Bybit limit cancellation must use the LIVE cancel path and must never fall through to PAPER cancellation semantics.`
+

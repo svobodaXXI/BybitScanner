@@ -810,6 +810,7 @@ export function App() {
             currentPaperState?.ok ? currentPaperState.active_limit_orders : []
           }
           pendingLimitDraft={limitDraftState.draft}
+          liveLimitDrafts={accountProjection?.provider === "BYBIT"}
           pendingLimitDrafts={
             limitDraftState.drafts ??
             (limitDraftState.draft ? [limitDraftState.draft] : [])

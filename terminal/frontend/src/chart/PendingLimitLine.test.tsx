@@ -3,6 +3,25 @@ import { describe, expect, it, vi } from "vitest";
 import { PendingLimitLine } from "./PendingLimitLine";
 
 describe("PendingLimitLine", () => {
+  it.each([
+    ["submitting", "SUBMITTING…"],
+    ["ambiguous", "RECONCILING — DO NOT RETRY"],
+  ] as const)("shows LIVE %s and blocks touch and keyboard confirmation", (liveSubmitStatus, label) => {
+    const onConfirm = vi.fn();
+    render(<PendingLimitLine side="Buy" price="0.1" top={120}
+      onDragClientY={vi.fn()} onConfirm={onConfirm} liveSubmitStatus={liveSubmitStatus} />);
+    expect(screen.getByRole("status")).toHaveTextContent(label);
+    Object.assign(screen.getByRole("slider"), {
+      setPointerCapture: vi.fn(), hasPointerCapture: vi.fn(() => false), releasePointerCapture: vi.fn(),
+    });
+    const confirm = screen.getByRole("button", { name: "Confirm pending Buy Limit" });
+    expect(confirm).toBeDisabled();
+    fireEvent.pointerDown(confirm, { button: 0, pointerId: 10, pointerType: "touch" });
+    fireEvent.pointerUp(confirm, { pointerId: 10, pointerType: "touch" });
+    fireEvent.click(confirm, { detail: 0 });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it("renders one pending line and reports drag coordinates", () => {
     const onDragClientY = vi.fn();
     render(

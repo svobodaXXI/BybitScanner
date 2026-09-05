@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { Dispatch, ReactNode } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { LimitDraftAction, LimitDraft } from "../orders/limitDraft";
+import { PendingLimitLine } from "../chart/PendingLimitLine";
+import type { PaperLimitOrder } from "../contracts/trading";
 
 const { liveProjection, liveProjectionState, refreshActiveLive } = vi.hoisted(() => {
   const projection = {
@@ -9,7 +11,7 @@ const { liveProjection, liveProjectionState, refreshActiveLive } = vi.hoisted(()
     status: "READY", session_generation: 8, projection_generation: 3, read_only: false,
     capabilities: { market: false, limit: true, stop: false, take: false, full_close: false },
     wallet_balance_usdt: "10", total_equity_usdt: "10", available_balance_usdt: "10",
-    positions: [], orders: [], paper_state: null,
+    positions: [], orders: [] as Array<Record<string, unknown>>, paper_state: null,
   };
   return {
     refreshActiveLive: vi.fn(async () => {}),
@@ -50,29 +52,35 @@ vi.mock("../components/TapePanel", () => ({ TapePanel: () => null }));
 vi.mock("../components/WorkspaceHeader", () => ({ WorkspaceHeader: () => null }));
 vi.mock("../telegram/TelegramMiniAppBridge", () => ({ TelegramMiniAppBridge: () => null }));
 vi.mock("../components/ChartPanel", () => ({
-  ChartPanel: ({ pendingLimitDrafts = [], pendingLimitVolumeValid, onPendingLimitConfirm, workspaceControls }: {
+  ChartPanel: ({ pendingLimitDrafts = [], liveLimitDrafts, pendingLimitVolumeValid, onPendingLimitConfirm, workspaceControls }: {
     pendingLimitDrafts?: readonly LimitDraft[];
+    liveLimitDrafts?: boolean;
     pendingLimitVolumeValid: Readonly<Record<"Buy" | "Sell", boolean>>;
     onPendingLimitConfirm: (draftId: string) => void;
     workspaceControls?: ReactNode;
   }) => <div>{workspaceControls}{pendingLimitDrafts.map((draft) => (
-    <button key={draft.draftId} type="button" disabled={!pendingLimitVolumeValid[draft.side]}
-      onClick={() => onPendingLimitConfirm(draft.draftId)}>Chart confirm</button>
+    <PendingLimitLine key={draft.draftId} side={draft.side} price={draft.price} top={120}
+      onDragClientY={() => {}} confirmDisabled={!pendingLimitVolumeValid[draft.side]}
+      liveSubmitStatus={liveLimitDrafts && (draft.status === "submitting" || draft.status === "ambiguous")
+        ? draft.status : undefined}
+      onConfirm={() => onPendingLimitConfirm(draft.draftId)} />
   ))}</div>,
 }));
 vi.mock("../components/ModePanel", () => ({
-  ModePanel: ({ dispatchLimitDraft, onSelectedVolumeChange, onLimitDraftConfirm }: {
+  ModePanel: ({ dispatchLimitDraft, onSelectedVolumeChange, onLimitDraftConfirm, activeLimitOrders }: {
     dispatchLimitDraft: Dispatch<LimitDraftAction>;
     onSelectedVolumeChange: (side: "Buy", value: string) => void;
     onLimitDraftConfirm: () => void;
+    activeLimitOrders: readonly PaperLimitOrder[];
   }) => <div>
+    {activeLimitOrders.map((order) => <div key={order.order_id}>Active LIVE Limit {order.order_id}</div>)}
     <button type="button" onClick={() => dispatchLimitDraft({ type: "begin", draft: {
       draftId: "live-draft", symbol: "ONGUSDT", side: "Buy", origin: "limits-popup",
       volume: { unit: "usdt", amount: "" }, sizingReferencePrice: "0.1005", price: "0.09849",
       authoritativeTickSize: "0.00001", status: "draft", clientActionId: null, rejectionReason: null,
     } })}>Create draft</button>
     <button type="button" onClick={() => onSelectedVolumeChange("Buy", "5")}>Set valid volume</button>
-    <button type="button" onClick={onLimitDraftConfirm}>Attempt confirmation</button>
+    <button type="button" onClick={() => onLimitDraftConfirm()}>Attempt confirmation</button>
   </div>,
 }));
 
@@ -86,7 +94,7 @@ it("blocks an empty LIVE Limit volume with feedback and no mutation request", as
   render(<App />);
   await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
-  expect(screen.getByRole("button", { name: "Chart confirm" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Confirm pending Buy Limit" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "Attempt confirmation" }));
   expect(await screen.findByRole("status")).toHaveTextContent(/Limit confirmation|positive USDT/);
   expect(fetchMock.mock.calls.filter(([url, options]) => url === "/api/live/limit" && options?.method === "POST")).toHaveLength(0);
@@ -100,9 +108,13 @@ it("sends exactly one LIVE Limit request after volume becomes valid", async () =
   render(<App />);
   fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
   fireEvent.click(screen.getByRole("button", { name: "Set valid volume" }));
-  const confirm = screen.getByRole("button", { name: "Chart confirm" });
+  const confirm = screen.getByRole("button", { name: "Confirm pending Buy Limit" });
   await waitFor(() => expect(confirm).toBeEnabled());
   fireEvent.click(confirm);
+  expect(screen.getByRole("status")).toHaveTextContent("SUBMITTING…");
+  expect(confirm).toBeDisabled();
+  fireEvent.click(confirm);
+  fireEvent.click(screen.getByRole("button", { name: "Attempt confirmation" }));
   await waitFor(() => expect(fetchMock.mock.calls.filter(
     ([url, options]) => url === "/api/live/limit" && options?.method === "POST",
   )).toHaveLength(1));
@@ -126,7 +138,7 @@ it("does not resubmit a submitting LIVE Limit draft after projection refresh", a
   await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
   fireEvent.click(screen.getByRole("button", { name: "Set valid volume" }));
-  const confirm = screen.getByRole("button", { name: "Chart confirm" });
+  const confirm = screen.getByRole("button", { name: "Confirm pending Buy Limit" });
   await waitFor(() => expect(confirm).toBeEnabled());
   fireEvent.click(confirm);
   await waitFor(() => expect(fetchMock.mock.calls.filter(
@@ -162,10 +174,12 @@ it("allows a new identity for a deliberate retry after definitive rejection", as
   await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
   fireEvent.click(screen.getByRole("button", { name: "Set valid volume" }));
-  const confirm = screen.getByRole("button", { name: "Chart confirm" });
+  const confirm = screen.getByRole("button", { name: "Confirm pending Buy Limit" });
   await waitFor(() => expect(confirm).toBeEnabled());
   fireEvent.click(confirm);
   await waitFor(() => expect(confirm).toBeEnabled());
+  expect(limitCalls).toBe(1);
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
   fireEvent.click(confirm);
   await waitFor(() => expect(fetchMock.mock.calls.filter(
     ([url, options]) => url === "/api/live/limit" && options?.method === "POST",
@@ -174,4 +188,59 @@ it("allows a new identity for a deliberate retry after definitive rejection", as
     .filter(([url, options]) => url === "/api/live/limit" && options?.method === "POST")
     .map(([, options]) => JSON.parse(String(options?.body)) as { client_action_id: string });
   expect(bodies[0].client_action_id).not.toBe(bodies[1].client_action_id);
+});
+
+it.each(["unknown", "network failure"])("locks %s without resending after projection refresh", async (outcome) => {
+  const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => {
+    if (url !== "/api/live/limit") return { ok: true, json: async () => ({ instruments: [] }) };
+    if (outcome === "network failure") throw new Error("connection lost");
+    return { ok: true, json: async () => ({
+      status: "unknown", reason_code: "unknown", command_id: "original-command", reconciliation_required: true,
+    }) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const view = render(<App />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set valid volume" }));
+  // Two callbacks in one render window must still share the synchronous attempt guard.
+  act(() => {
+    fireEvent.click(screen.getByRole("button", { name: "Attempt confirmation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Attempt confirmation" }));
+  });
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("RECONCILING — DO NOT RETRY"));
+  await act(async () => {
+    liveProjectionState.current = { ...liveProjection, projection_generation: 4 };
+    view.rerender(<App />);
+  });
+  const confirm = screen.getByRole("button", { name: "Confirm pending Buy Limit" });
+  expect(confirm).toBeDisabled();
+  fireEvent.click(confirm);
+  fireEvent.click(screen.getByRole("button", { name: "Attempt confirmation" }));
+  expect(fetchMock.mock.calls.filter(([url]) => url === "/api/live/limit")).toHaveLength(1);
+  expect(screen.getByRole("status")).toHaveTextContent("RECONCILING — DO NOT RETRY");
+});
+
+it.each(["completed", "accepted_pending"])("%s removes the draft and refreshes authoritative LIVE orders", async (status) => {
+  refreshActiveLive.mockImplementationOnce(async () => {
+    liveProjectionState.current = { ...liveProjection, projection_generation: 4, orders: [{
+      order_id: "exchange-order", symbol: "ONGUSDT", side: "Buy", order_type: "Limit",
+      status: "open", price: "0.09849", quantity: "50",
+    }] };
+  });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => ({
+    ok: true, json: async () => url === "/api/live/limit"
+      ? { status, reason_code: status, command_id: "c1", reconciliation_required: status === "accepted_pending" }
+      : { instruments: [] },
+  })));
+  const view = render(<App />);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
+  fireEvent.click(screen.getByRole("button", { name: "Set valid volume" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm pending Buy Limit" }));
+  await waitFor(() => expect(refreshActiveLive).toHaveBeenCalledOnce());
+  view.rerender(<App />);
+  expect(screen.getByText("Active LIVE Limit exchange-order")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Confirm pending Buy Limit" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
 });

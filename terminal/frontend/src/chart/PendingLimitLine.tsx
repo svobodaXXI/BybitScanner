@@ -12,6 +12,7 @@ export function PendingLimitLine({
   onConfirm,
   selected = false,
   confirmDisabled = false,
+  liveSubmitStatus,
 }: {
   side: MarketSide;
   price: string;
@@ -23,10 +24,14 @@ export function PendingLimitLine({
   onConfirm?: () => void;
   selected?: boolean;
   confirmDisabled?: boolean;
+  liveSubmitStatus?: "submitting" | "ambiguous";
 }) {
+  const submitLabel = liveSubmitStatus === "submitting"
+    ? "SUBMITTING…"
+    : liveSubmitStatus === "ambiguous" ? "RECONCILING — DO NOT RETRY" : null;
   const confirmActivation = useTradingControlActivation({
     onTap: onConfirm,
-    disabled: confirmDisabled || !onConfirm,
+    disabled: !!submitLabel || confirmDisabled || !onConfirm,
   });
   const dismissActivation = useTradingControlActivation({ onTap: onDismiss });
 
@@ -64,11 +69,18 @@ export function PendingLimitLine({
       }}
     >
       <span>{price}</span>
+      {submitLabel && (
+        <output role="status" aria-live="polite" style={{
+          position: "absolute", right: "4rem", bottom: "1rem",
+          whiteSpace: "nowrap", background: "#11181f", padding: "0.2rem",
+          fontSize: "0.7rem", fontWeight: 700, pointerEvents: "none",
+        }}>{submitLabel}</output>
+      )}
       <button
         type="button"
         className="pending-limit-confirm"
         aria-label={`Confirm pending ${side} Limit`}
-        disabled={confirmDisabled || !onConfirm}
+        disabled={!!submitLabel || confirmDisabled || !onConfirm}
         {...confirmActivation}
       >
         ✓
