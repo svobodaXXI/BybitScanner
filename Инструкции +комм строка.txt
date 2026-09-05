@@ -9,17 +9,33 @@ python project_snapshot.py
 
 python main.py
 
-Backup_Stage_3.2_2026-07-23
 
 
-Следующая сессия начнется с:
-BybitScanner. Контрольная точка №2. Продолжаем с этапа 3.3
+Если на другом Windows-компьютере уже находится актуальная папка C:\BybitScanner со всеми файлами проекта и config.py, то запуск практически элементарный.
 
-Перед продолжением прислать чату GPT:
-PROJECT_STATE.md
-SNAPSHOT.md
-confirmation.py
+Начиная буквально с нуля:
 
-Паттерны команд
+Нажимаешь Пуск → вводишь PowerShell → открываешь Windows PowerShell.
+Переходишь в проект:
+cd C:\BybitScanner
+Если это новый компьютер, сначала проверяешь Python:
+python --version
 
-Актуализируй project_
+Нам нужен установленный Python. Сейчас проект разрабатывается на Python 3.12.
+
+При первом запуске на новом ПК устанавливаешь зависимости:
+python -m pip install -r requirements.txt
+
+Это делается один раз на новом компьютере.
+
+Запускаешь Telegram Review listener, чтобы работали кнопки. Для него лучше открыть второе окно PowerShell и выполнить:
+cd C:\BybitScanner
+python telegram_review.py
+
+Это окно оставляешь открытым.
+
+В первом PowerShell запускаешь сам сканер:
+cd C:\BybitScanner
+python main.py
+
+И всё. Пойдёт полный прогон.
