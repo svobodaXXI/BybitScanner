@@ -4953,7 +4953,7 @@ existing account/session fencing, and existing LIVE Market safety semantics rema
 
 Status:
 
-`LIVE LIMIT CREATE UX ACCEPTED / LIVE CANCEL ROUTING DEFECT FOUND`
+`LIVE LIMIT CREATE UX ACCEPTED / LIVE CANCEL ORCHESTRATION DEFECT CONFIRMED; FIX IMPLEMENTED`
 
 Authoritative build at acceptance start:
 
@@ -5017,10 +5017,11 @@ Important unrelated inventory:
 
 Defect discovered during cleanup:
 
-- pressing the Terminal cancel control for the newly created LIVE BUY Limit did not use the LIVE cancel path;
-- UI reported `PAPER LIMIT cancellation failed`;
-- therefore LIVE Limit create routing is working, but the corresponding frontend cancel action is incorrectly routed/identified as PAPER;
-- this is the exact next implementation defect to fix before LIVE Limit lifecycle acceptance can be closed.
+- pressing the Terminal cancel control for the newly created LIVE BUY Limit produced `PAPER LIMIT cancellation failed`;
+- that UI message alone did not prove that the HTTP request used a PAPER endpoint;
+- subsequent code inspection confirmed that the existing App handler already selected `/api/live/limit/cancel`;
+- the confirmed defect was PAPER-oriented orchestration, error handling and refresh semantics around LIVE side-cancel, not incorrect LIVE HTTP endpoint selection;
+- that frontend defect has since been fixed and regression-covered; real-phone LIVE Limit cancellation acceptance remains pending before the lifecycle can be closed.
 
 Cleanup:
 
@@ -5040,5 +5041,5 @@ Acceptance conclusion:
 
 Exact next work item:
 
-`FIX LIVE LIMIT CANCEL ROUTING — active Main Bybit limit cancellation must use the LIVE cancel path and must never fall through to PAPER cancellation semantics.`
+`REAL-PHONE LIVE LIMIT CANCEL ACCEPTANCE — verify that active Main Bybit Limit cancellation uses the corrected LIVE orchestration end-to-end, without PAPER messaging/semantics, duplicate mutation or unintended cancellation of unrelated external orders.`
 
