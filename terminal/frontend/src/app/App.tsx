@@ -32,6 +32,11 @@ import {
   limitDraftReducer,
   normalizeLimitDraftPrice,
 } from "../orders/limitDraft";
+import {
+  type LimitInteractionIntent,
+  limitDraftVolumeUsdt,
+  sideDraftVolumesValid,
+} from "../orders/limitInteractionCore";
 import { PaperLimitDraftSubmitController } from "../orders/limitDraftSubmission";
 import { executePaperLimitAmend, executePaperLimitCancel } from "../orders/paperLimitCommand";
 import {
@@ -107,8 +112,8 @@ export function App() {
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [selectedVolumes, setSelectedVolumes] = useState({ Buy: "", Sell: "" });
   const [limitSubmissionFeedback, setLimitSubmissionFeedback] = useState<string | null>(null);
-  const selectedVolumeSymbol = useRef<string | null>(null);
-  const [fastLimitIntent, setFastLimitIntent] = useState<{ side: "Buy" | "Sell" } | null>(null);
+  const selectedVolumeWorkspaceKey = useRef<string | null>(null);
+  const [fastLimitIntent, setFastLimitIntent] = useState<LimitInteractionIntent | null>(null);
   const [limitDraftState, dispatchLimitDraft] = useReducer(
     limitDraftReducer,
     EMPTY_LIMIT_DRAFT_STATE,
@@ -204,10 +209,13 @@ export function App() {
     setMarketSymbol(result.symbol, result.generation);
   }, [tradingSymbol]);
   useEffect(() => {
-    if (!currentPaperState?.ok || selectedVolumeSymbol.current === tradingSymbol) return;
-    selectedVolumeSymbol.current = tradingSymbol;
-    setSelectedVolumes({ Buy: currentPaperState.one_wv_usdt, Sell: currentPaperState.one_wv_usdt });
-  }, [currentPaperState, tradingSymbol]);
+    const oneWvUsdt = accountProjection?.one_wv_usdt ?? currentPaperState?.one_wv_usdt ?? null;
+    if (!accountProjection || !oneWvUsdt || !isValidSelectedVolume(oneWvUsdt)) return;
+    const workspaceKey = `${accountProjection.account_id}:${accountProjection.session_generation}:${tradingSymbol}`;
+    if (selectedVolumeWorkspaceKey.current === workspaceKey) return;
+    selectedVolumeWorkspaceKey.current = workspaceKey;
+    setSelectedVolumes({ Buy: oneWvUsdt, Sell: oneWvUsdt });
+  }, [accountProjection, currentPaperState, tradingSymbol]);
   const activeLimitOrders = currentPaperState?.ok
     ? currentPaperState.active_limit_orders
     : liveLimitAllowed && accountProjection
@@ -329,12 +337,11 @@ export function App() {
   const createFastLimitDraft = useCallback(
     (price: string) => {
       if (!mutationsAllowed && !liveLimitAllowed) return;
-      const volumeUsdt = fastLimitIntent ? selectedVolumes[fastLimitIntent.side] : "";
       if (
         !fastLimitIntent ||
         market.book.health !== "READY" ||
         market.tickSize === null ||
-        !isValidSelectedVolume(volumeUsdt)
+        !isValidSelectedVolume(fastLimitIntent.volumeUsdt)
       ) {
         return;
       }
@@ -346,7 +353,7 @@ export function App() {
           symbol: tradingSymbol,
           side: fastLimitIntent.side,
           origin: "chart-fast",
-          volume: { unit: "usdt", amount: volumeUsdt },
+          volume: { unit: "usdt", amount: fastLimitIntent.volumeUsdt },
           sizingReferencePrice,
           price,
           authoritativeTickSize: String(market.tickSize),
@@ -359,7 +366,6 @@ export function App() {
       market.tickSize,
       mutationsAllowed,
       liveLimitAllowed,
-      selectedVolumes,
       sizingReferencePrice,
       tradingSymbol,
     ],
@@ -381,7 +387,7 @@ export function App() {
       return;
     }
     if (draft.status === "submitting" || draft.status === "ambiguous") return;
-    const volumeUsdt = selectedVolumes[draft.side];
+    const volumeUsdt = limitDraftVolumeUsdt(draft);
     if (!isValidSelectedVolume(volumeUsdt)) {
       setLimitSubmissionFeedback("Enter a positive USDT Limit volume before confirming.");
       return;
@@ -424,10 +430,7 @@ export function App() {
       return liveAttempt;
     }
     setLimitSubmissionFeedback(null);
-    const attempt = limitSubmitController.current.submit({
-      ...draft,
-      volume: { unit: "usdt", amount: volumeUsdt },
-    }, {
+    const attempt = limitSubmitController.current.submit(draft, {
       dispatch: dispatchLimitDraft,
       createClientActionId: () =>
         globalThis.crypto?.randomUUID?.() ?? `paper-limit-${Date.now()}`,
@@ -436,12 +439,12 @@ export function App() {
     return paperTradingStore
       .runMutation(`CREATE_LIMIT:${attempt.clientActionId}`, () => attempt.promise)
       .then(() => undefined);
-  }, [accountWorkspace, currentLiveAuthority, limitDraftState.draft, limitDraftState.drafts, liveLimitAllowed, mutationsAllowed, selectedVolumes]);
+  }, [accountWorkspace, currentLiveAuthority, limitDraftState.draft, limitDraftState.drafts, liveLimitAllowed, mutationsAllowed]);
 
   const submitDomLimit = useCallback(async (price: string) => {
     if (!mutationsAllowed) return;
     if (!fastLimitIntent || market.tickSize === null) return;
-    const volumeUsdt = selectedVolumes[fastLimitIntent.side];
+    const volumeUsdt = fastLimitIntent.volumeUsdt;
     if (!isValidSelectedVolume(volumeUsdt)) return;
     const intent: PaperLimitCreateIntent = {
       symbol: tradingSymbol,
@@ -510,7 +513,6 @@ export function App() {
     fastLimitIntent,
     market.tickSize,
     mutationsAllowed,
-    selectedVolumes,
     sizingReferencePrice,
     tradingSymbol,
   ]);
@@ -779,6 +781,10 @@ export function App() {
     }
   }, [activeStopPrice, activeTakePrice, tradingSymbol]);
 
+  const visibleLimitDrafts =
+    limitDraftState.drafts ??
+    (limitDraftState.draft ? [limitDraftState.draft] : []);
+
   return (
     <main className="workspace-shell">
       {workspaceSwitchError && (
@@ -812,13 +818,10 @@ export function App() {
           }
           pendingLimitDraft={limitDraftState.draft}
           liveLimitDrafts={accountProjection?.provider === "BYBIT"}
-          pendingLimitDrafts={
-            limitDraftState.drafts ??
-            (limitDraftState.draft ? [limitDraftState.draft] : [])
-          }
+          pendingLimitDrafts={visibleLimitDrafts}
           pendingLimitVolumeValid={{
-            Buy: isValidSelectedVolume(selectedVolumes.Buy),
-            Sell: isValidSelectedVolume(selectedVolumes.Sell),
+            Buy: sideDraftVolumesValid(visibleLimitDrafts, "Buy", selectedVolumes.Buy),
+            Sell: sideDraftVolumesValid(visibleLimitDrafts, "Sell", selectedVolumes.Sell),
           }}
           onPendingLimitSelect={(draftId) =>
             dispatchLimitDraft({ type: "select", draftId })
@@ -927,11 +930,23 @@ export function App() {
           limitDraftState={limitDraftState}
           dispatchLimitDraft={dispatchLimitDraft}
           onLimitDraftConfirm={submitLimitDraft}
-          onFastLimitHoldChange={setFastLimitIntent}
-          selectedVolumes={selectedVolumes}
-          onSelectedVolumeChange={(side, value) =>
-            setSelectedVolumes((current) => updateSelectedVolume(current, side, value))
+          onFastLimitHoldChange={(intent) =>
+            setFastLimitIntent(intent ? { ...intent, origin: "chart-fast" } : null)
           }
+          selectedVolumes={selectedVolumes}
+          onSelectedVolumeChange={(side, value) => {
+            setSelectedVolumes((current) => updateSelectedVolume(current, side, value));
+            const popupDraft = visibleLimitDrafts.find(
+              (draft) => draft.origin === "limits-popup" && draft.side === side,
+            );
+            if (popupDraft) {
+              dispatchLimitDraft({
+                type: "update-volume",
+                draftId: popupDraft.draftId,
+                volume: { unit: "usdt", amount: value },
+              });
+            }
+          }}
           onPositionSideChange={setPositionSide}
           onPositionAverageEntryChange={setPositionAverageEntry}
           onStopTap={beginStopDraft}
