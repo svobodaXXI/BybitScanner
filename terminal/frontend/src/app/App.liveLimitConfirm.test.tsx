@@ -20,7 +20,10 @@ const { liveProjection, liveProjectionState, refreshActiveLive } = vi.hoisted(()
   };
 });
 
-const testMode = vi.hoisted(() => ({ realPanel: false }));
+const testMode = vi.hoisted(() => ({
+  realPanel: false,
+  chart: {} as { fastLimitActive?: boolean; onFastLimitPriceSelect?: (price: string) => void },
+}));
 
 beforeEach(() => {
   testMode.realPanel = false;
@@ -55,20 +58,25 @@ vi.mock("../components/TapePanel", () => ({ TapePanel: () => null }));
 vi.mock("../components/WorkspaceHeader", () => ({ WorkspaceHeader: () => null }));
 vi.mock("../telegram/TelegramMiniAppBridge", () => ({ TelegramMiniAppBridge: () => null }));
 vi.mock("../components/ChartPanel", () => ({
-  ChartPanel: ({ pendingLimitDrafts = [], liveLimitDrafts, pendingLimitVolumeValid, onPendingLimitConfirm, workspaceControls }: {
+  ChartPanel: ({ pendingLimitDrafts = [], liveLimitDrafts, pendingLimitVolumeValid, onPendingLimitConfirm, workspaceControls, fastLimitActive, onFastLimitPriceSelect }: {
     pendingLimitDrafts?: readonly LimitDraft[];
     liveLimitDrafts?: boolean;
     pendingLimitVolumeValid: Readonly<Record<"Buy" | "Sell", boolean>>;
     onPendingLimitConfirm: (draftId: string) => void;
     workspaceControls?: ReactNode;
-  }) => <div>{workspaceControls}{pendingLimitDrafts.map((draft) => (
+    fastLimitActive?: boolean;
+    onFastLimitPriceSelect?: (price: string) => void;
+  }) => {
+    testMode.chart = { fastLimitActive, onFastLimitPriceSelect };
+    return <div>{workspaceControls}{pendingLimitDrafts.map((draft) => (
     <PendingLimitLine key={draft.draftId} side={draft.side} price={draft.price} top={120}
       onDragClientY={() => {}} confirmDisabled={!pendingLimitVolumeValid[draft.side]}
       popupLinked={draft.origin === "limits-popup"}
       liveSubmitStatus={liveLimitDrafts && (draft.status === "submitting" || draft.status === "ambiguous")
         ? draft.status : undefined}
       onConfirm={() => onPendingLimitConfirm(draft.draftId)} />
-  ))}</div>,
+  ))}</div>;
+  },
 }));
 vi.mock("../components/ModePanel", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../components/ModePanel")>();
@@ -94,6 +102,35 @@ vi.mock("../components/ModePanel", async (importOriginal) => {
 
 import { App } from "./App";
 import { paperTradingStore } from "../paperTrading/paperTradingStore";
+
+it.each(["Buy", "Sell"] as const)("creates a LIVE %s chart draft only with current Limit capability and no submission", async (side) => {
+  testMode.realPanel = true;
+  const fetchMock = vi.fn(async (_url: string, _options?: RequestInit) => ({
+    ok: true, json: async () => ({ instruments: [] }),
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  const view = render(<App />);
+  await act(async () => {});
+  fireEvent.change(screen.getByLabelText(`${side.toUpperCase()} amount`), { target: { value: "5" } });
+  vi.useFakeTimers();
+  try {
+    fireEvent.pointerDown(screen.getByRole("button", { name: side.toUpperCase() }), {
+      button: 0, pointerId: 10, pointerType: "touch",
+    });
+    act(() => vi.advanceTimersByTime(200));
+    expect(testMode.chart.fastLimitActive).toBe(true);
+    act(() => testMode.chart.onFastLimitPriceSelect?.("0.09849"));
+    expect(screen.getByRole("slider", { name: `Pending ${side} Limit at 0.09849` })).toBeInTheDocument();
+
+    liveProjectionState.current = { ...liveProjection, capabilities: { ...liveProjection.capabilities, limit: false } };
+    view.rerender(<App />);
+    act(() => testMode.chart.onFastLimitPriceSelect?.("0.09848"));
+    expect(screen.queryByRole("slider", { name: `Pending ${side} Limit at 0.09848` })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === "POST")).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
 
 it("blocks an empty LIVE Limit volume with feedback and no mutation request", async () => {
   const fetchMock = vi.fn(async (_url: string, _options?: RequestInit) => (

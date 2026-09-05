@@ -3,6 +3,35 @@ import { describe, expect, it, vi } from "vitest";
 import { PendingLimitLine } from "./PendingLimitLine";
 
 describe("PendingLimitLine", () => {
+  it.each(["submitting", "ambiguous"] as const)(
+    "blocks dismissal when LIVE becomes %s, including an already-started touch",
+    (liveSubmitStatus) => {
+      const onDismiss = vi.fn();
+      const props = { side: "Buy" as const, price: "0.1", top: 120,
+        onDragClientY: vi.fn(), onDismiss };
+      const view = render(<PendingLimitLine {...props} />);
+      const dismiss = screen.getByRole("button", { name: "Dismiss pending Buy Limit" });
+      fireEvent.pointerDown(dismiss, { button: 0, pointerId: 10, pointerType: "touch" });
+
+      view.rerender(<PendingLimitLine {...props} liveSubmitStatus={liveSubmitStatus} />);
+      expect(dismiss).toBeDisabled();
+      fireEvent.pointerUp(dismiss, { pointerId: 10, pointerType: "touch" });
+      fireEvent.click(dismiss, { detail: 0 });
+      Object.assign(screen.getByRole("slider"), {
+        setPointerCapture: vi.fn(), hasPointerCapture: vi.fn(() => false),
+      });
+      fireEvent.pointerDown(dismiss, { button: 0, pointerId: 11, pointerType: "touch" });
+      fireEvent.pointerUp(dismiss, { pointerId: 11, pointerType: "touch" });
+      expect(onDismiss).not.toHaveBeenCalled();
+
+      view.rerender(<PendingLimitLine {...props} />);
+      expect(dismiss).toBeEnabled();
+      fireEvent.pointerDown(dismiss, { button: 0, pointerId: 12, pointerType: "touch" });
+      fireEvent.pointerUp(dismiss, { pointerId: 12, pointerType: "touch" });
+      expect(onDismiss).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each([
     ["submitting", "SUBMITTING…"],
     ["ambiguous", "RECONCILING — DO NOT RETRY"],

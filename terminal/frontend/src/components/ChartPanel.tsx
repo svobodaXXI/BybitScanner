@@ -1039,7 +1039,13 @@ export function ChartPanel({
                   type="button"
                   className="danger"
                   onClick={() => {
-                    const draftIds = visiblePendingLimitDrafts.map(
+                    // Read current render state at confirmation, not when the dialog opens.
+                    const dismissibleDrafts = visiblePendingLimitDrafts.filter(
+                      (draft) => !liveLimitDrafts || (
+                        draft.status !== "submitting" && draft.status !== "ambiguous"
+                      ),
+                    );
+                    const draftIds = dismissibleDrafts.map(
                       (draft) => draft.draftId,
                     );
                     const activeCandidate = activeLimitEdit.activeCandidate;
@@ -1048,7 +1054,7 @@ export function ChartPanel({
                       draftIds,
                       activeCandidate,
                       dismissDrafts: () => {
-                        for (const draft of visiblePendingLimitDrafts) {
+                        for (const draft of dismissibleDrafts) {
                           onPendingLimitDismiss?.(draft.draftId);
                         }
                       },

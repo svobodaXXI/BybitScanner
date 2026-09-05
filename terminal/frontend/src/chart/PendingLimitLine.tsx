@@ -37,7 +37,13 @@ export function PendingLimitLine({
     onTap: onConfirm,
     disabled: !!submitLabel || confirmDisabled || !onConfirm,
   });
-  const dismissActivation = useTradingControlActivation({ onTap: onDismiss });
+  const dismissDisabled = liveSubmitStatus === "submitting" || liveSubmitStatus === "ambiguous";
+  const dismissActivation = useTradingControlActivation({
+    disabled: dismissDisabled,
+    onTap: () => {
+      if (!dismissDisabled) onDismiss?.();
+    },
+  });
 
   if (top === null) return null;
 
@@ -96,6 +102,7 @@ export function PendingLimitLine({
             type="button"
             className="pending-limit-dismiss"
             aria-label={`Dismiss pending ${side} Limit`}
+            disabled={dismissDisabled}
             {...dismissActivation}
           >
             &times;

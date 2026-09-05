@@ -614,7 +614,7 @@ export function ModePanel({
               <TradingControlButton
                 onTap={() => beginMarket("Buy", selectedVolumes.Buy)}
                 onHoldStart={() => {
-                  if (mutationsAllowed) {
+                  if (mutationsAllowed || liveLimitAllowed) {
                     navigator.vibrate?.(20);
                     onFastLimitHoldChange({ side: "Buy", volumeUsdt: selectedVolumes.Buy || oneWvUsdt });
                   }
@@ -646,7 +646,7 @@ export function ModePanel({
               <TradingControlButton
                 onTap={() => beginMarket("Sell", selectedVolumes.Sell)}
                 onHoldStart={() => {
-                  if (mutationsAllowed) {
+                  if (mutationsAllowed || liveLimitAllowed) {
                     navigator.vibrate?.(20);
                     onFastLimitHoldChange({ side: "Sell", volumeUsdt: selectedVolumes.Sell || oneWvUsdt });
                   }
@@ -896,13 +896,6 @@ export function ModePanel({
                     ) ?? null;
                   const selected = draft !== null;
                   const selectedVolume = selectedVolumes[side];
-                  const tickPrecision = draft?.authoritativeTickSize?.includes(".")
-                    ? draft.authoritativeTickSize.split(".")[1].length
-                    : 0;
-                  const popupPrice =
-                    draft && Number.isFinite(Number(draft.price))
-                      ? Number(draft.price).toFixed(tickPrecision)
-                      : draft?.price ?? "";
                   const canSubmit = draft !== null
                     && isValidSelectedVolume(selectedVolume)
                     && normalizeLimitDraftPrice(
@@ -943,7 +936,7 @@ export function ModePanel({
                           });
                         }}
                         type="text"
-                        value={popupPrice}
+                        value={draft?.price ?? ""}
                       />
                       <TradingControlButton
                         type="button"

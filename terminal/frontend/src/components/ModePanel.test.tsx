@@ -141,7 +141,11 @@ describe("ModePanel PAPER Market amounts", () => {
     return screen.getByRole("dialog", { name: "New Buy Limit" });
   };
 
-  it("activates BUY fast-Limit hold with haptic feedback at 200 ms", () => {
+  it.each([
+    ["Buy", true, false], ["Sell", true, false],
+    ["Buy", false, true], ["Sell", false, true],
+    ["Buy", false, false], ["Sell", false, false],
+  ] as const)("gates %s fast-Limit hold with PAPER=%s LIVE Limit=%s", (side, mutationsAllowed, liveLimitAllowed) => {
     vi.useFakeTimers();
     const onFastLimitHoldChange = vi.fn();
     const vibrate = vi.fn();
@@ -165,16 +169,24 @@ describe("ModePanel PAPER Market amounts", () => {
         onLimitDraftConfirm={vi.fn()}
         onFastLimitHoldChange={onFastLimitHoldChange}
         onPositionSideChange={vi.fn()}
+        mutationsAllowed={mutationsAllowed}
+        liveLimitAllowed={liveLimitAllowed}
+        liveMarketAllowed
       />,
     );
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: "BUY" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: side.toUpperCase() }));
     vi.advanceTimersByTime(199);
     expect(onFastLimitHoldChange).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
+    if (!mutationsAllowed && !liveLimitAllowed) {
+      expect(onFastLimitHoldChange).not.toHaveBeenCalled();
+      expect(vibrate).not.toHaveBeenCalled();
+      return;
+    }
     expect(vibrate).toHaveBeenCalledWith(20);
     expect(onFastLimitHoldChange).toHaveBeenCalledWith({
-      side: "Buy",
+      side,
       volumeUsdt: "250",
     });
   });
@@ -182,7 +194,7 @@ describe("ModePanel PAPER Market amounts", () => {
   it("opens the BUY short-tap popup with the normalized LONG default", () => {
     const popup = renderLimitPopup();
     expect(within(popup).getByLabelText("LONG Limit volume")).toHaveValue(250);
-    expect(within(popup).getByLabelText("LONG Limit price")).toHaveValue("62965.0");
+    expect(within(popup).getByLabelText("LONG Limit price")).toHaveValue("62965");
     expect(within(popup).getByRole("button", { name: "Confirm LONG Limit" })).toBeEnabled();
     expect(within(popup).queryByText("SHORT")).not.toBeInTheDocument();
   });

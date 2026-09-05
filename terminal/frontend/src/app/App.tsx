@@ -328,7 +328,7 @@ export function App() {
 
   const createFastLimitDraft = useCallback(
     (price: string) => {
-      if (!mutationsAllowed) return;
+      if (!mutationsAllowed && !liveLimitAllowed) return;
       const volumeUsdt = fastLimitIntent ? selectedVolumes[fastLimitIntent.side] : "";
       if (
         !fastLimitIntent ||
@@ -358,6 +358,7 @@ export function App() {
       market.book.health,
       market.tickSize,
       mutationsAllowed,
+      liveLimitAllowed,
       selectedVolumes,
       sizingReferencePrice,
       tradingSymbol,
