@@ -156,6 +156,9 @@ export function ModePanel({
     useState<MarketSide | null>(null);
   const [cancelLimitSideConfirm, setCancelLimitSideConfirm] =
     useState<"Buy" | "Sell" | null>(null);
+  const liveCancelPending = useRef(false);
+  const cancelAuthority = useRef({ projection: accountWorkspaceProjection, allowed: liveLimitAllowed });
+  cancelAuthority.current = { projection: accountWorkspaceProjection, allowed: liveLimitAllowed };
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
     null,
   );
@@ -423,6 +426,37 @@ export function ModePanel({
 
   const cancelLimits = async (orders: PaperLimitOrder[]) => {
     if (orders.length === 0 || !onLimitCancel) return;
+
+    if (accountWorkspaceProjection?.provider === "BYBIT" || liveLimitAllowed || !mutationsAllowed) {
+      const captured = accountWorkspaceProjection;
+      const authorityMatches = () => {
+        const current = cancelAuthority.current;
+        return captured?.provider === "BYBIT" && current.allowed
+          && current.projection?.account_id === captured.account_id
+          && current.projection?.session_generation === captured.session_generation;
+      };
+      if (!authorityMatches() || liveCancelPending.current) return;
+      liveCancelPending.current = true;
+      try {
+        let submitted = 0;
+        for (const order of orders) {
+          if (!authorityMatches()) return;
+          const result = await onLimitCancel(order.order_id);
+          if (!authorityMatches()) return;
+          if (result?.status !== "completed" && result?.status !== "accepted_pending") {
+            setExecutionStatus("LIVE LIMIT cancellation failed or requires reconciliation");
+            return;
+          }
+          submitted += 1;
+        }
+        setExecutionStatus(`LIVE LIMIT cancellations submitted: ${submitted}/${orders.length}`);
+      } catch {
+        if (authorityMatches()) setExecutionStatus("LIVE LIMIT cancellation failed or requires reconciliation");
+      } finally {
+        liveCancelPending.current = false;
+      }
+      return;
+    }
 
     const side = orders[0].side;
     await runPaperMutation(`CANCEL_SIDE:${side}`, async () => {

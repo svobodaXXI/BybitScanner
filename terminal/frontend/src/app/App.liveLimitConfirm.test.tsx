@@ -1,5 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { Dispatch, ReactNode } from "react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import type { ComponentProps, Dispatch, ReactNode } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { LimitDraftAction, LimitDraft } from "../orders/limitDraft";
 import { PendingLimitLine } from "../chart/PendingLimitLine";
@@ -20,7 +20,10 @@ const { liveProjection, liveProjectionState, refreshActiveLive } = vi.hoisted(()
   };
 });
 
+const testMode = vi.hoisted(() => ({ realPanel: false }));
+
 beforeEach(() => {
+  testMode.realPanel = false;
   liveProjectionState.current = liveProjection;
   refreshActiveLive.mockClear();
 });
@@ -42,7 +45,7 @@ vi.mock("../marketData/useMarketData", () => ({
 vi.mock("../paperTrading/paperTradingStore", () => ({
   paperTradingStore: {
     setAccountSession: vi.fn(), captureApplyPaperState: () => vi.fn(), refresh: vi.fn(),
-    runMutation: vi.fn(), subscribe: vi.fn(() => () => {}), getSnapshot: () => ({ paperState: null, pendingActions: new Set() }),
+    runMutation: vi.fn(async (_key: string, operation: () => Promise<unknown>) => operation()), subscribe: vi.fn(() => () => {}), getSnapshot: () => ({ paperState: null, pendingActions: new Set() }),
   },
   usePaperTrading: () => ({ paperState: null, pendingActions: new Set() }),
 }));
@@ -66,8 +69,9 @@ vi.mock("../components/ChartPanel", () => ({
       onConfirm={() => onPendingLimitConfirm(draft.draftId)} />
   ))}</div>,
 }));
-vi.mock("../components/ModePanel", () => ({
-  ModePanel: ({ dispatchLimitDraft, onSelectedVolumeChange, onLimitDraftConfirm, activeLimitOrders }: {
+vi.mock("../components/ModePanel", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../components/ModePanel")>();
+  const DraftPanel = ({ dispatchLimitDraft, onSelectedVolumeChange, onLimitDraftConfirm, activeLimitOrders }: {
     dispatchLimitDraft: Dispatch<LimitDraftAction>;
     onSelectedVolumeChange: (side: "Buy", value: string) => void;
     onLimitDraftConfirm: () => void;
@@ -81,10 +85,14 @@ vi.mock("../components/ModePanel", () => ({
     } })}>Create draft</button>
     <button type="button" onClick={() => onSelectedVolumeChange("Buy", "5")}>Set valid volume</button>
     <button type="button" onClick={() => onLimitDraftConfirm()}>Attempt confirmation</button>
-  </div>,
-}));
+  </div>;
+  return { ModePanel: (props: ComponentProps<typeof actual.ModePanel>) => testMode.realPanel
+    ? <actual.ModePanel {...props} />
+    : <DraftPanel {...props as Parameters<typeof DraftPanel>[0]} /> };
+});
 
 import { App } from "./App";
+import { paperTradingStore } from "../paperTrading/paperTradingStore";
 
 it("blocks an empty LIVE Limit volume with feedback and no mutation request", async () => {
   const fetchMock = vi.fn(async (_url: string, _options?: RequestInit) => (
@@ -243,4 +251,80 @@ it.each(["completed", "accepted_pending"])("%s removes the draft and refreshes a
   expect(screen.getByText("Active LIVE Limit exchange-order")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Confirm pending Buy Limit" })).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+function setupCancel(status = "completed", deferred = false) {
+  testMode.realPanel = true;
+  liveProjectionState.current = { ...liveProjection, orders: [
+    { order_id: "test-buy", symbol: "ONGUSDT", side: "Buy", order_type: "Limit", status: "open", price: "0.098", quantity: "50" },
+    { order_id: "external-sell", symbol: "ONGUSDT", side: "Sell", order_type: "Limit", status: "open", price: "0.11", quantity: "50" },
+  ] };
+  let resolve!: (value: object) => void;
+  const response = new Promise<object>((done) => { resolve = done; });
+  const fetcher = vi.fn(async (url: string, _options?: RequestInit) => {
+    if (url === "/api/live/limit/cancel") {
+      if (status === "network-error") throw new Error("connection lost");
+      return { ok: true, json: async () => deferred ? response : {
+        status, reason_code: status, command_id: "cancel-command", reconciliation_required: status === "unknown",
+      } };
+    }
+    return { ok: true, json: async () => ({ instruments: [], accounts: [] }) };
+  });
+  vi.stubGlobal("fetch", fetcher);
+  vi.mocked(paperTradingStore.runMutation).mockClear();
+  vi.mocked(paperTradingStore.refresh).mockClear();
+  const view = render(<App />);
+  return { fetcher, view, resolve };
+}
+
+function cancelBuySide() {
+  // Exclude App's mount-time refresh; assert only cancellation side effects.
+  vi.mocked(paperTradingStore.refresh).mockClear();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel all Buy Limit orders for ONGUSDT" }));
+  const dialog = screen.getByRole("dialog", { name: "Cancel all LONG Limit orders for ONGUSDT?" });
+  fireEvent.click(within(dialog).getByRole("button", { name: "CANCEL" }));
+}
+
+it("routes the real LIVE side-cancel control only to LIVE and leaves the opposite side alone", async () => {
+  const { fetcher } = setupCancel();
+  await act(async () => {});
+  cancelBuySide();
+  await screen.findByText("LIVE LIMIT cancellations submitted: 1/1");
+  const posts = fetcher.mock.calls.filter(([, options]) => options?.method === "POST");
+  expect(posts).toHaveLength(1);
+  expect(posts[0][0]).toBe("/api/live/limit/cancel");
+  expect(JSON.parse(String(posts[0][1]?.body))).toMatchObject({
+    account_id: "bybit-main", session_generation: 8, order_id: "test-buy", symbol: "ONGUSDT",
+  });
+  expect(refreshActiveLive).toHaveBeenCalledOnce();
+  expect(paperTradingStore.runMutation).not.toHaveBeenCalled();
+  expect(paperTradingStore.refresh).not.toHaveBeenCalled();
+});
+
+it.each(["unknown", "network-error", "blocked"])("never falls back to PAPER on %s", async (status) => {
+  const { fetcher } = setupCancel(status);
+  await act(async () => {});
+  cancelBuySide();
+  await screen.findByText("LIVE LIMIT cancellation failed or requires reconciliation");
+  expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST").map(([url]) => url))
+    .toEqual(["/api/live/limit/cancel"]);
+  expect(paperTradingStore.runMutation).not.toHaveBeenCalled();
+  expect(paperTradingStore.refresh).not.toHaveBeenCalled();
+  expect(refreshActiveLive).not.toHaveBeenCalled();
+  expect(screen.queryByText("PAPER LIMIT cancellation failed")).not.toBeInTheDocument();
+});
+
+it("blocks repeated side cancellation while in flight and suppresses stale session feedback", async () => {
+  const { fetcher, view, resolve } = setupCancel("completed", true);
+  await act(async () => {});
+  cancelBuySide();
+  cancelBuySide();
+  expect(fetcher.mock.calls.filter(([url]) => url === "/api/live/limit/cancel")).toHaveLength(1);
+  await act(async () => {
+    liveProjectionState.current = { ...liveProjectionState.current, session_generation: 9 };
+    view.rerender(<App />);
+  });
+  await act(async () => resolve({ status: "completed", reason_code: "completed", command_id: "c", reconciliation_required: false }));
+  expect(screen.queryByText("LIVE LIMIT cancellations submitted: 1/1")).not.toBeInTheDocument();
+  expect(paperTradingStore.runMutation).not.toHaveBeenCalled();
 });
