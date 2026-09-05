@@ -2,7 +2,7 @@
 
 Version:
 
-4.35
+4.36
 
 Date:
 
@@ -359,7 +359,7 @@ Default execution loop:
 
 ```text
 intent -> scoped recovery / skill selection -> protected task start + applicable gate
-       -> minimal patch -> targeted checks -> task finish / required build -> report
+       -> (minimal patch -> cheap focused checks) -> task finish once / required build -> report
 ```
 
 When manual, browser, or real-phone acceptance is required, stop after automated prerequisites and wait for user
@@ -385,10 +385,20 @@ For edits, complete the transaction started under `AGENTS.md`:
 python -m tools.dev.task finish --task TASK_ID
 ```
 
-Task finish invokes the exact-scope verifier, checks the protected task delta, unrelated work and Git index, and
+Use `tools.dev.verify --focused --path EXACT_PATH` for development feedback, with repeated exact paths and
+objectively needed targeted tests (direct runner or `--check-command`). It checks local working content without
+the automatic frontend production build, removes any previous PASS receipt and never issues one. Focused mode
+cannot be combined with `--transaction` and cannot establish completion, isolated proof or checkpoint eligibility.
+Do not add a production build to each focused iteration.
+
+After the patch settles, task finish invokes final exact-scope verification, including the required frontend
+production build, checks the protected task delta, unrelated work and Git index, and
 records a PASS receipt in `.git/bybitscanner/`. This satisfies the verifier requirement; do not duplicate it with
 a standalone invocation unless new evidence or an independent verification purpose requires that invocation.
-Standalone `tools.dev.verify --path EXACT_PATH` supports repeated paths but does not substitute for task finish.
+Standalone `tools.dev.verify --path EXACT_PATH` retains final behavior but does not substitute for task finish.
+Run the final gate once; repeat only after resolving failure or changes that invalidate the evidence. No cached
+verification is implied. For §6.2 preview acceptance, use the current final build if served there; an isolated
+candidate build does not refresh the local preview artifact, which still requires a current build before acceptance.
 Select focused tests by objective need and applicable authority; a routed build does not imply that tests ran.
 Do not claim completion, acceptance, regression safety or readiness without current claim-matched evidence.
 Automated PASS is not browser, live-data, touch or real-phone acceptance.

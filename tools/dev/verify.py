@@ -1,4 +1,4 @@
-"""Run minimal checks for exact task paths and record a PASS receipt."""
+"""Run exact-path checks: focused development or final verification with a PASS receipt."""
 
 from __future__ import annotations
 
@@ -62,6 +62,7 @@ def _unlink_frontend_dependencies(verification_root: Path) -> None:
 def verify(
     path_values: Sequence[str], *, git: Git | None = None, transaction_id: str | None = None,
     additional_commands: Sequence[dict[str, object]] = (),
+    focused: bool = False,
 ) -> tuple[bool, str]:
     probe = git or Git(Path.cwd())
     checks: list[dict[str, object]] = []
@@ -71,7 +72,10 @@ def verify(
         root = repository_root(probe)
         active_git = git or Git(root)
         target = receipt_path(root, active_git)
-        target.unlink(missing_ok=True)
+        if not focused:
+            target.unlink(missing_ok=True)
+        if focused and transaction_id:
+            raise ValueError("focused checks cannot verify a transaction; use task finish for the final gate")
         paths, files = normalize_task_paths(root, path_values)
         branch = require_ok(active_git.run("branch", "--show-current"), "branch discovery")
         head = require_ok(active_git.run("rev-parse", "HEAD"), "HEAD discovery")
@@ -152,7 +156,7 @@ def verify(
             checks.append({"name": label, "status": "PASS" if passed else "FAIL", "detail": detail})
         executed_commands: list[dict[str, object]] = []
         command_specs = list(additional_commands)
-        if any(path.startswith("terminal/frontend/src/") for path in paths):
+        if not focused and any(path.startswith("terminal/frontend/src/") for path in paths):
             if transaction_id and _link_frontend_dependencies(root, verification_root):
                 frontend_dependencies_linked = True
                 checks.append({"name": "frontend-dependency-link", "status": "PASS", "detail": ""})
@@ -228,6 +232,8 @@ def verify(
                 "commands": executed_commands, "cleanup": "PASS",
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             }
+        if focused:
+            return True, compact("FOCUSED_PASS", paths, [str(x["name"]) for x in checks], (), ())
         receipt = {
             "schema": 2 if transaction_receipt else 1,
             "status": "PASS",
@@ -261,6 +267,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--path", action="append", required=True, dest="paths")
     parser.add_argument("--transaction", dest="transaction_id")
     parser.add_argument(
+        "--focused", action="store_true",
+        help="development checks only: no automatic production build or PASS receipt; not task finish",
+    )
+    parser.add_argument(
         "--check-command", action="append", default=[],
         help='JSON object: {"label":"...","cwd":"...","argv":["command","arg"]}',
     )
@@ -270,7 +280,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except json.JSONDecodeError as exc:
         parser.error(f"invalid --check-command JSON: {exc}")
     passed, output = verify(
-        args.paths, transaction_id=args.transaction_id, additional_commands=commands
+        args.paths, transaction_id=args.transaction_id, additional_commands=commands, focused=args.focused
     )
     print(output)
     return 0 if passed else 1

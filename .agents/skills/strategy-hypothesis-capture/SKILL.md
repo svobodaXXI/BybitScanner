@@ -67,4 +67,5 @@ sentence plus data/backlog fields. A duplicate may require no repository change.
 
 Before completion, check the scoped research delta for mixed authority states, unsupported profitability claims,
 accidental broad rewriting and missing validation/invalidation criteria. Report the classification and H-ID decision,
-what research meaning changed, and unresolved source facts. Central authority owns the task workflow.
+what research meaning changed, and unresolved source facts. Protocol §7.2 owns focused checks and the single final
+gate; research review does not add a separate verification cycle.

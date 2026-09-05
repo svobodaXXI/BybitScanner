@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -112,17 +112,70 @@ class DevWorkflowTests(unittest.TestCase):
         self.assertEqual(receipt["branch"], "main")
         self.assertTrue(receipt["checks"])
 
+    def test_focused_frontend_skips_build_runs_selected_check_and_cannot_checkpoint(self):
+        temporary, root = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        source = root / "terminal/frontend/src/task.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const value = 1;\n", encoding="utf-8")
+        git = FakeGit(root)
+        self.write_receipt(root, git)
+        receipt_path = root / ".git/bybitscanner/latest-pass.json"
+        receipt_before = receipt_path.read_bytes()
+        commands = [{"label": "selected-test", "argv": [sys.executable, "-V"]}]
+        with patch("tools.dev.verify._run_check", return_value=("selected-test", True, "")) as run:
+            passed, output = verify(["terminal/frontend/src/task.ts"], git=Git(root),
+                                    focused=True, additional_commands=commands)
+        self.assertTrue(passed, output)
+        self.assertIn("FOCUSED_PASS", output)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[1], "selected-test")
+        self.assertNotIn("frontend-build", output)
+        self.assertEqual(receipt_path.read_bytes(), receipt_before)
+
+    def test_focused_failure_and_transaction_request_never_issue_receipt(self):
+        temporary, root = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        with patch("tools.dev.verify._run_check", return_value=("python-compile", False, "bad syntax")):
+            passed, output = verify(["task.py"], git=Git(root), focused=True)
+        self.assertFalse(passed, output)
+        self.assertFalse((root / ".git/bybitscanner/latest-pass.json").exists())
+        with patch("tools.dev.verify.create_isolated_worktree") as isolate:
+            passed, output = verify(["task.py"], git=Git(root), focused=True, transaction_id="blocked")
+        self.assertFalse(passed)
+        self.assertIn("use task finish", output)
+        isolate.assert_not_called()
+
+    def test_focused_cli_routes_cheap_mode(self):
+        from tools.dev.verify import main
+        with patch("tools.dev.verify.verify", return_value=(True, "FOCUSED_PASS")) as run:
+            self.assertEqual(main(["--focused", "--path", "task.py"]), 0)
+        self.assertTrue(run.call_args.kwargs["focused"])
+
+    def test_final_frontend_build_failure_blocks_receipt(self):
+        temporary, root = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        source = root / "terminal/frontend/src/task.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const value = 1;\n", encoding="utf-8")
+        with patch("tools.dev.verify._run_check", return_value=("frontend-build", False, "failed")) as run:
+            passed, output = verify(["terminal/frontend/src/task.ts"], git=Git(root))
+        self.assertFalse(passed, output)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[1], "frontend-build")
+        self.assertFalse((root / ".git/bybitscanner/latest-pass.json").exists())
+
     def test_git_run_decodes_utf8_output_independent_of_windows_code_page(self):
         temporary, root = self.make_repo()
         self.addCleanup(temporary.cleanup)
         completed = subprocess.CompletedProcess(
             args=("git", "status"), returncode=0,
-            stdout="?? отчёт.txt\0".encode("utf-8"), stderr=b"",
+            stdout="?? РѕС‚С‡С‘С‚.txt\0".encode("utf-8"), stderr=b"",
         )
         with patch("tools.dev.workflow.subprocess.run", return_value=completed) as run:
             result = Git(root).run("status", "--porcelain=v1", "-z")
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout, "?? отчёт.txt\0")
+        self.assertEqual(result.stdout, "?? РѕС‚С‡С‘С‚.txt\0")
         self.assertNotIn("text", run.call_args.kwargs)
 
     def test_git_run_reports_invalid_utf8_without_none_output(self):
@@ -140,7 +193,7 @@ class DevWorkflowTests(unittest.TestCase):
     def test_worktree_change_paths_preserves_non_ascii_nul_delimited_filename(self):
         temporary, root = self.make_repo()
         self.addCleanup(temporary.cleanup)
-        filename = "отчёт 日本語.txt"
+        filename = "РѕС‚С‡С‘С‚ ж—Ґжњ¬иЄћ.txt"
         (root / filename).write_bytes(b"user work\n")
         self.assertIn(filename, worktree_change_paths(Git(root)))
 

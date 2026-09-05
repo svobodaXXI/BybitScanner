@@ -15,7 +15,7 @@ Check:
 - whether verification exercises the actual failure class, not a mock shortcut or assertion that mirrors implementation;
 - whether each material acceptance claim has current evidence for that exact scope and environment.
 
-Use the evidence criteria in `ASSISTANT_PROTOCOL.md` §7.2. Identify missing critical regression coverage or
+Use the focused/final evidence boundaries in `ASSISTANT_PROTOCOL.md` §7.2; review does not require rerunning a current final gate. Identify missing critical regression coverage or
 unsupported acceptance claims; do not demand a test for every line or equate build success with behavior/phone
 acceptance. Review does not replace completion evidence on tasks that need no review.
 

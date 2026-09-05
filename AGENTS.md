@@ -104,11 +104,18 @@ Confirm existing components before adding modules, registries, paths, documents,
 
 Codex must not create synthetic/fake UI tests for behavior the user can immediately verify in the real interface. Do not add or run tests without objective necessity; add an automated test only when it protects critical logic, a material regression, or behavior that cannot be verified reliably and quickly by hand.
 
-Finish the protected task through `tools.dev.task finish`; it invokes the exact-scope `tools.dev.verify`, verifies
+During development use `python -m tools.dev.verify --focused --path EXACT_PATH` (repeat paths), plus objectively
+needed targeted checks via `--check-command` or the test runner. Focused mode runs on local working content,
+omits the automatic frontend production build, invalidates any old PASS receipt and issues none. It is development
+feedback, not isolated transaction proof, completion or checkpoint authority; do not combine it with `--transaction`.
+
+After the patch settles, finish the protected task once through `tools.dev.task finish`; it invokes final
+exact-scope `tools.dev.verify`, including the required frontend production build, verifies
 the task delta and unchanged index/user-owned work, and records the PASS receipt under `.git/bybitscanner/`.
 Do not run a second standalone verifier solely to satisfy duplicated prose. Standalone verification, when
 independently needed, uses `python -m tools.dev.verify` with repeated exact `--path` arguments; it does not replace
-task finish. Codex selects any necessary focused checks not routed by the verifier and reports only actual evidence.
+task finish. Repeat the final gate only after resolving failure or relevant changes invalidate its evidence.
+Codex selects any necessary focused checks not routed by the verifier and reports only actual evidence.
 
 `python -m tools.dev.checkpoint --message "..."` is a user-run Git-write command. Codex must never invoke it automatically. It consumes the latest current PASS receipt, stages only its exact paths, checks the cached diff, commits, pushes to `origin`, and verifies the remote SHA; any mismatch or failure stops the workflow without touching unrelated work.
 

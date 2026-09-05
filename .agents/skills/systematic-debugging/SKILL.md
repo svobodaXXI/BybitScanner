@@ -9,7 +9,7 @@ description: Diagnose a non-trivial BybitScanner defect whose cause is unknown; 
 2. **Localize:** identify the smallest failing boundary from logs, state, data flow and callers.
 3. **Hypothesize:** name one falsifiable cause and the evidence that would support or refute it.
 4. **Experiment:** use the cheapest safe discriminating test before a production patch; an authorized, reversible diagnostic patch is acceptable.
-5. **Correct:** fix the evidenced cause with the smallest authorized change, then verify the failure class in proportion to risk.
+5. **Correct:** fix the evidenced cause with the smallest authorized change, exercise the failure class in the cheap focused loop under protocol §7.2, then use its final gate after the patch settles.
 
 Apply `ASSISTANT_PROTOCOL.md` §8.3 immediately when its systemic-regression conditions arise; do not wait for
 multiple failed fixes. Otherwise, roughly three failed attempts require stopping the patch loop and reassessing
