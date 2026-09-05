@@ -704,7 +704,8 @@ export function ChartPanel({
     pendingLimitDrafts ??
     (pendingLimitDraft ? [pendingLimitDraft] : []);
   const hasVisibleLimitCandidates =
-    visiblePendingLimitDrafts.length > 0 || activeLimitEdit.activeCandidate !== null;
+    visiblePendingLimitDrafts.length > 0 ||
+    activeLimitEdit.activeCandidate !== null;
   const deleteSelected = useCallback(() => {
     if (selectedId) {
       commit(drawings.filter((d) => d.id !== selectedId));
@@ -925,6 +926,8 @@ export function ChartPanel({
                 PRICE_SCALE_WIDTH_FALLBACK
               }
               selected={selected}
+              controlsVisible
+              popupLinked={draft.origin === "limits-popup"}
               onSelect={() => onPendingLimitSelect?.(draft.draftId)}
               onDismiss={() => onPendingLimitDismiss?.(draft.draftId)}
               onDragClientY={(clientY) => {
@@ -993,7 +996,9 @@ export function ChartPanel({
                   type="button"
                   className="confirm-all"
                   onClick={async () => {
-                    const draftIds = visiblePendingLimitDrafts.map((draft) => draft.draftId);
+                    const draftIds = visiblePendingLimitDrafts.map(
+                      (draft) => draft.draftId,
+                    );
                     const activeCandidate = activeLimitEdit.activeCandidate;
                     setConfirmAllPendingOpen(false);
                     await confirmVisibleLimitCandidates({
@@ -1034,13 +1039,19 @@ export function ChartPanel({
                   type="button"
                   className="danger"
                   onClick={() => {
-                    const draftIds = visiblePendingLimitDrafts.map((draft) => draft.draftId);
+                    const draftIds = visiblePendingLimitDrafts.map(
+                      (draft) => draft.draftId,
+                    );
                     const activeCandidate = activeLimitEdit.activeCandidate;
                     setDismissAllPendingOpen(false);
                     void cancelVisibleLimitCandidates({
                       draftIds,
                       activeCandidate,
-                      dismissDrafts: () => onPendingLimitDismissAll?.(),
+                      dismissDrafts: () => {
+                        for (const draft of visiblePendingLimitDrafts) {
+                          onPendingLimitDismiss?.(draft.draftId);
+                        }
+                      },
                       cancelEditedActive: () => activeLimitEdit.cancel(),
                     }).catch(() => {});
                   }}

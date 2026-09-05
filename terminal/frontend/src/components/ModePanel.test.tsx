@@ -129,7 +129,8 @@ describe("ModePanel PAPER Market amounts", () => {
               onDragClientY={() =>
                 dispatchLimitDraft({ type: "update-price", price: "63000.4" })
               }
-              onConfirm={onLimitDraftConfirm}
+              onConfirm={() => onLimitDraftConfirm(limitDraftState.draft?.draftId)}
+              popupLinked={limitDraftState.draft.origin === "limits-popup"}
             />
           ) : null}
         </>
@@ -181,7 +182,7 @@ describe("ModePanel PAPER Market amounts", () => {
   it("opens the BUY short-tap popup with the normalized LONG default", () => {
     const popup = renderLimitPopup();
     expect(within(popup).getByLabelText("LONG Limit volume")).toHaveValue(250);
-    expect(within(popup).getByLabelText("LONG Limit price")).toHaveValue("62965");
+    expect(within(popup).getByLabelText("LONG Limit price")).toHaveValue("62965.0");
     expect(within(popup).getByRole("button", { name: "Confirm LONG Limit" })).toBeEnabled();
     expect(within(popup).queryByText("SHORT")).not.toBeInTheDocument();
   });
@@ -213,28 +214,35 @@ describe("ModePanel PAPER Market amounts", () => {
     expect(
       screen.getByRole("slider", { name: "Pending Buy Limit at 63000.4" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: "New Buy Limit" }),
+    ).toBeInTheDocument();
     expect(within(popup).getByLabelText("LONG Limit price")).toHaveValue("63000.4");
   });
 
-  it("routes popup and chart checkmarks to one submit callback", () => {
+  it("routes popup and chart checkmarks to the same limits-popup draft identity", () => {
     const onSubmit = vi.fn();
     const popup = renderLimitPopup(onSubmit);
     fireEvent.click(within(popup).getByText("LONG"));
 
+    const chartConfirm = screen.getByRole("button", {
+      name: "Confirm pending Buy Limit",
+    });
+
     fireEvent.click(
       within(popup).getByRole("button", { name: "Confirm LONG Limit" }),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Confirm pending Buy Limit" }),
-    );
+    fireEvent.click(chartConfirm);
 
     expect(onSubmit).toHaveBeenCalledTimes(2);
+    expect(onSubmit.mock.calls[0][0]).toBe(onSubmit.mock.calls[1][0]);
+    expect(onSubmit.mock.calls[0][0]).toMatch(/^limit-draft-BTCUSDT-buy-/);
   });
 
   it("closes outside and dismisses the selected shared draft", () => {
     const popup = renderLimitPopup();
     fireEvent.click(within(popup).getByText("LONG"));
-    fireEvent.pointerDown(document.querySelector(".paper-limit-popup-backdrop")!);
+    fireEvent.pointerDown(document.body);
 
     expect(screen.queryByRole("dialog", { name: "New Buy Limit" })).not.toBeInTheDocument();
     expect(screen.queryByRole("slider", { name: /Pending Buy Limit/ })).not.toBeInTheDocument();
@@ -497,7 +505,7 @@ describe("ModePanel PAPER Market amounts", () => {
     "does not submit invalid LIMIT price %s amount %s", async (price, amount) => {
       const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(paperState()) });
       vi.stubGlobal("fetch", fetchMock);
-      render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
+      render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="64250" onPositionSideChange={vi.fn()} />);
       await screen.findAllByDisplayValue("250");
       fireEvent.click(screen.getByRole("button", { name: "BUY LIMITS 0" }));
       fireEvent.change(screen.getByLabelText("LONG Limit price"), { target: { value: price } });

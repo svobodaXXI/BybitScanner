@@ -64,6 +64,7 @@ vi.mock("../components/ChartPanel", () => ({
   }) => <div>{workspaceControls}{pendingLimitDrafts.map((draft) => (
     <PendingLimitLine key={draft.draftId} side={draft.side} price={draft.price} top={120}
       onDragClientY={() => {}} confirmDisabled={!pendingLimitVolumeValid[draft.side]}
+      popupLinked={draft.origin === "limits-popup"}
       liveSubmitStatus={liveLimitDrafts && (draft.status === "submitting" || draft.status === "ambiguous")
         ? draft.status : undefined}
       onConfirm={() => onPendingLimitConfirm(draft.draftId)} />
@@ -79,7 +80,7 @@ vi.mock("../components/ModePanel", async (importOriginal) => {
   }) => <div>
     {activeLimitOrders.map((order) => <div key={order.order_id}>Active LIVE Limit {order.order_id}</div>)}
     <button type="button" onClick={() => dispatchLimitDraft({ type: "begin", draft: {
-      draftId: "live-draft", symbol: "ONGUSDT", side: "Buy", origin: "limits-popup",
+      draftId: "live-draft", symbol: "ONGUSDT", side: "Buy", origin: "chart-fast",
       volume: { unit: "usdt", amount: "" }, sizingReferencePrice: "0.1005", price: "0.09849",
       authoritativeTickSize: "0.00001", status: "draft", clientActionId: null, rejectionReason: null,
     } })}>Create draft</button>
@@ -251,6 +252,54 @@ it.each(["completed", "accepted_pending"])("%s removes the draft and refreshes a
   expect(screen.getByText("Active LIVE Limit exchange-order")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Confirm pending Buy Limit" })).not.toBeInTheDocument();
   expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("popup and chart confirms share one LIVE CREATE attempt", async () => {
+  testMode.realPanel = true;
+
+  const fetchMock = vi.fn(async (url: string, _options?: RequestInit) => ({
+    ok: true,
+    json: async () =>
+      url === "/api/live/limit"
+        ? {
+            status: "accepted_pending",
+            reason_code: "accepted_pending",
+            command_id: "popup-create",
+            reconciliation_required: true,
+          }
+        : { instruments: [] },
+  }));
+
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(<App />);
+  await act(async () => {});
+
+  fireEvent.click(screen.getByRole("button", { name: "BUY LIMITS 0" }));
+
+  const popup = screen.getByRole("dialog", { name: "New Buy Limit" });
+
+  fireEvent.change(within(popup).getByLabelText("LONG Limit volume"), {
+    target: { value: "5" },
+  });
+
+  const chartConfirm = screen.getByRole("button", {
+    name: "Confirm pending Buy Limit",
+  });
+
+  fireEvent.click(
+    within(popup).getByRole("button", { name: "Confirm LONG Limit" }),
+  );
+  fireEvent.click(chartConfirm);
+
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, options]) =>
+          url === "/api/live/limit" && options?.method === "POST",
+      ),
+    ).toHaveLength(1),
+  );
 });
 
 function setupCancel(status = "completed", deferred = false) {

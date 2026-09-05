@@ -110,7 +110,7 @@ export function ModePanel({
   authoritativeTickSize: string | null;
   limitDraftState: LimitDraftState;
   dispatchLimitDraft: Dispatch<LimitDraftAction>;
-  onLimitDraftConfirm: () => void;
+  onLimitDraftConfirm: (draftId?: string) => void | Promise<void>;
   onFastLimitHoldChange?: (
     intent: { side: MarketSide; volumeUsdt: string } | null,
   ) => void;
@@ -171,7 +171,13 @@ export function ModePanel({
   const [holdTooltip, setHoldTooltip] = useState<string | null>(null);
   const holdTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [amendPrices, setAmendPrices] = useState<Record<string, string>>({});
-  const previousLimitDraft = useRef(limitDraftState.draft);
+  const limitDrafts =
+    limitDraftState.drafts ??
+    (limitDraftState.draft ? [limitDraftState.draft] : []);
+  const popupLimitDrafts = limitDrafts.filter(
+    (draft) => draft.origin === "limits-popup",
+  );
+  const previousPopupLimitDraftCount = useRef(popupLimitDrafts.length);
   const [liveConfirmation, setLiveConfirmation] = useState<LiveMarketCommandRequest | null>(null);
   const [liveConfirmationSubmitting, setLiveConfirmationSubmitting] = useState(false);
   const liveDispatchActionIdRef = useRef<string | null>(null);
@@ -214,11 +220,15 @@ export function ModePanel({
   }, [activeLimitOrders, onPositionAverageEntryChange, onPositionSideChange, paperState]);
 
   useEffect(() => {
-    if (previousLimitDraft.current !== null && limitDraftState.draft === null) {
+    if (
+      limitPresentationSide !== null &&
+      previousPopupLimitDraftCount.current > 0 &&
+      popupLimitDrafts.length === 0
+    ) {
       setLimitPresentationSide(null);
     }
-    previousLimitDraft.current = limitDraftState.draft;
-  }, [limitDraftState.draft]);
+    previousPopupLimitDraftCount.current = popupLimitDrafts.length;
+  }, [limitPresentationSide, popupLimitDrafts.length]);
 
   const alternatives = (["TERMINAL", "AUTOPILOT"] as const).filter(
     (candidate) => candidate !== mode,
@@ -249,9 +259,37 @@ export function ModePanel({
     : null;
 
   const dismissLimitPresentation = () => {
+    if (
+      popupLimitDrafts.some(
+        (draft) =>
+          draft.status === "submitting" || draft.status === "ambiguous",
+      )
+    ) {
+      return;
+    }
+
     setLimitPresentationSide(null);
-    dispatchLimitDraft({ type: "dismiss" });
+    for (const draft of popupLimitDrafts) {
+      dispatchLimitDraft({ type: "dismiss", draftId: draft.draftId });
+    }
   };
+
+  useEffect(() => {
+    if (limitPresentationSide === null) return;
+
+    const dismissFromOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".paper-limit-popup")) return;
+      if (target.closest('[data-popup-limit-draft="true"]')) return;
+      dismissLimitPresentation();
+    };
+
+    document.addEventListener("pointerdown", dismissFromOutside, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismissFromOutside, true);
+    };
+  }, [limitPresentationSide, popupLimitDrafts]);
 
   const dismissSideCancelConfirmation = () => {
     setCancelLimitSideConfirm(null);
@@ -260,10 +298,28 @@ export function ModePanel({
   const openLimitPresentation = (side: MarketSide) => {
     setCancelLimitSideConfirm(null);
     setLimitsInventorySide(null);
+
+    const lockedPopupDraft = popupLimitDrafts.find(
+      (draft) =>
+        draft.status === "submitting" || draft.status === "ambiguous",
+    );
+    if (lockedPopupDraft) {
+      setLimitPresentationSide(lockedPopupDraft.side);
+      dispatchLimitDraft({
+        type: "select",
+        draftId: lockedPopupDraft.draftId,
+      });
+      return;
+    }
+
+    for (const draft of popupLimitDrafts) {
+      dispatchLimitDraft({ type: "dismiss", draftId: draft.draftId });
+    }
+
     setLimitPresentationSide(side);
     const price = side === "Buy" ? longDefaultPrice : shortDefaultPrice;
     if (price === null) {
-      dispatchLimitDraft({ type: "dismiss" });
+      setLimitPresentationSide(null);
       return;
     }
     dispatchLimitDraft({
@@ -340,12 +396,12 @@ export function ModePanel({
         commandResult.status === "completed"
           ? `PAPER ${side.toUpperCase()} completed`
           : commandResult.reason_code === HANDLED_REASON_CODES[0]
-            ? "РЎСѓРјРјР° СЃР»РёС€РєРѕРј РјР°Р»Р° РґР»СЏ С€Р°РіР° РѕР±СЉС‘РјР°"
-            : `${side.toUpperCase()} РѕС‚РјРµРЅРµРЅРѕ`,
+            ? "\u0421\u0443\u043c\u043c\u0430 \u0441\u043b\u0438\u0448\u043a\u043e\u043c \u043c\u0430\u043b\u0430 \u0434\u043b\u044f \u0448\u0430\u0433\u0430 \u043e\u0431\u044a\u0451\u043c\u0430"
+            : `${side.toUpperCase()} \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e`,
       );
 
       } catch {
-        setExecutionStatus(`${side.toUpperCase()} РѕС‚РјРµРЅРµРЅРѕ`);
+        setExecutionStatus(`${side.toUpperCase()} \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e`);
         await refreshPaperState();
       }
     });
@@ -402,11 +458,13 @@ export function ModePanel({
       });
       const result = (await response.json()) as CommandMutationResponse;
       setExecutionStatus(
-        result.status === "completed" ? "PAPER РїРѕР·РёС†РёСЏ Р·Р°РєСЂС‹С‚Р°" : "Р—Р°РєСЂС‹С‚РёРµ РѕС‚РјРµРЅРµРЅРѕ",
+        result.status === "completed"
+          ? "PAPER \u043f\u043e\u0437\u0438\u0446\u0438\u044f \u0437\u0430\u043a\u0440\u044b\u0442\u0430"
+          : "\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0435 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e",
       );
       if (result.status === "completed") applyPaperState(result.paper_state);
       } catch {
-        setExecutionStatus("Р—Р°РєСЂС‹С‚РёРµ РѕС‚РјРµРЅРµРЅРѕ");
+        setExecutionStatus("\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0435 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e");
         await refreshPaperState();
       }
     });
@@ -644,8 +702,8 @@ export function ModePanel({
 
                     onTap={() => setCloseConfirmOpen(true)}
                     type="button"
-                    aria-label="Р—Р°РєСЂС‹С‚СЊ РїРѕР·РёС†РёСЋ"
-                    title="Р—Р°РєСЂС‹С‚СЊ РїРѕР·РёС†РёСЋ"
+                    aria-label={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e"}
+                    title={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e"}
                   >
                     <svg
                       className="paper-close-icon"
@@ -821,14 +879,10 @@ export function ModePanel({
             <div
               className="paper-limit-popup-backdrop"
               role="presentation"
-              onPointerDown={(event) =>
-                dismissPopupFromBackdrop(event, dismissLimitPresentation)
-              }
             >
               <section
                 className="paper-limit-popup"
                 role="dialog"
-                aria-modal="true"
                 aria-label={`New ${limitPresentationSide} Limit`}
                 onPointerDown={shieldPopupPointerInteraction}
                 onClick={shieldPopupClickInteraction}
@@ -836,9 +890,19 @@ export function ModePanel({
                 {(() => {
                   const side = limitPresentationSide;
                   const label = side === "Buy" ? "LONG" : "SHORT";
-                  const selected = limitDraftState.draft?.side === side;
-                  const draft = selected ? limitDraftState.draft : null;
+                  const draft =
+                    popupLimitDrafts.find(
+                      (candidate) => candidate.side === side,
+                    ) ?? null;
+                  const selected = draft !== null;
                   const selectedVolume = selectedVolumes[side];
+                  const tickPrecision = draft?.authoritativeTickSize?.includes(".")
+                    ? draft.authoritativeTickSize.split(".")[1].length
+                    : 0;
+                  const popupPrice =
+                    draft && Number.isFinite(Number(draft.price))
+                      ? Number(draft.price).toFixed(tickPrecision)
+                      : draft?.price ?? "";
                   const canSubmit = draft !== null
                     && isValidSelectedVolume(selectedVolume)
                     && normalizeLimitDraftPrice(
@@ -879,15 +943,22 @@ export function ModePanel({
                           });
                         }}
                         type="text"
-                        value={draft?.price ?? ""}
+                        value={popupPrice}
                       />
                       <TradingControlButton
                         type="button"
                         aria-label={`Confirm ${label} Limit`}
                         disabled={!canSubmit}
-                        onTap={onLimitDraftConfirm}
+                        onTap={() => {
+                          if (draft) {
+                            void onLimitDraftConfirm(draft.draftId);
+                          }
+                        }}
                       >
-                        {"\u2713"}</TradingControlButton>
+                        {draft?.status === "submitting"
+                          ? "..."
+                          : "\u2713"}
+                      </TradingControlButton>
                     </div>
                   );
                 })()}

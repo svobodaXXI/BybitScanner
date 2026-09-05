@@ -12,6 +12,8 @@ export function PendingLimitLine({
   onConfirm,
   selected = false,
   confirmDisabled = false,
+  controlsVisible = true,
+  popupLinked = false,
   liveSubmitStatus,
 }: {
   side: MarketSide;
@@ -24,6 +26,8 @@ export function PendingLimitLine({
   onConfirm?: () => void;
   selected?: boolean;
   confirmDisabled?: boolean;
+  controlsVisible?: boolean;
+  popupLinked?: boolean;
   liveSubmitStatus?: "submitting" | "ambiguous";
 }) {
   const submitLabel = liveSubmitStatus === "submitting"
@@ -41,6 +45,7 @@ export function PendingLimitLine({
     <div
       className={`pending-limit-line ${side.toLowerCase()}${selected ? " selected" : ""}`}
       data-pending-limit-line
+      data-popup-limit-draft={popupLinked ? "true" : undefined}
       aria-label={`Pending ${side} Limit at ${price}`}
       role="slider"
       aria-valuenow={Number(price)}
@@ -76,23 +81,27 @@ export function PendingLimitLine({
           fontSize: "0.7rem", fontWeight: 700, pointerEvents: "none",
         }}>{submitLabel}</output>
       )}
-      <button
-        type="button"
-        className="pending-limit-confirm"
-        aria-label={`Confirm pending ${side} Limit`}
-        disabled={!!submitLabel || confirmDisabled || !onConfirm}
-        {...confirmActivation}
-      >
-        ✓
-      </button>
-      <button
-        type="button"
-        className="pending-limit-dismiss"
-        aria-label={`Dismiss pending ${side} Limit`}
-        {...dismissActivation}
-      >
-        &times;
-      </button>
+      {controlsVisible ? (
+        <>
+          <button
+            type="button"
+            className="pending-limit-confirm"
+            aria-label={`Confirm pending ${side} Limit`}
+            disabled={!!submitLabel || confirmDisabled || !onConfirm}
+            {...confirmActivation}
+          >
+            {"\u2713"}
+          </button>
+          <button
+            type="button"
+            className="pending-limit-dismiss"
+            aria-label={`Dismiss pending ${side} Limit`}
+            {...dismissActivation}
+          >
+            &times;
+          </button>
+        </>
+      ) : null}
     </div>
   );
 }

@@ -98,6 +98,42 @@ it("positions confirm-all popup directly above the shared green button", () => {
   });
 });
 
+it("includes limits-popup drafts in the shared confirm-all action", async () => {
+  const onPendingLimitConfirm = vi.fn();
+
+  render(
+    <ChartPanel
+      candles={[]}
+      tickSize={0.5}
+      onPendingLimitConfirm={onPendingLimitConfirm}
+      pendingLimitDrafts={[{
+        draftId: "popup-draft-1",
+        symbol: "BTCUSDT",
+        side: "Buy",
+        origin: "limits-popup",
+        volume: { unit: "usdt", amount: "250" },
+        sizingReferencePrice: "100",
+        price: "99",
+        authoritativeTickSize: "0.5",
+        status: "draft",
+        clientActionId: null,
+        rejectionReason: null,
+      }]}
+    />,
+  );
+
+  fireEvent.click(screen.getByRole("button", {
+    name: "Confirm all pending Limit drafts",
+  }));
+
+  fireEvent.click(screen.getByRole("button", {
+    name: "CONFIRM ALL",
+  }));
+
+  expect(onPendingLimitConfirm).toHaveBeenCalledOnce();
+  expect(onPendingLimitConfirm).toHaveBeenCalledWith("popup-draft-1");
+});
+
 it("disables a pending Limit confirmation when its side volume is invalid", () => {
   const onPendingLimitConfirm = vi.fn();
   render(
