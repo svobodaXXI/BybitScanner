@@ -37,6 +37,7 @@ export type LimitDraftAction =
   | { type: "begin"; draft: LimitDraft }
   | { type: "select"; draftId: string }
   | { type: "update-price"; price: string; draftId?: string }
+  | { type: "update-volume"; volume: VolumeRequest; draftId?: string }
   | { type: "start-submitting"; clientActionId: string; draftId?: string }
   | { type: "mark-ambiguous"; clientActionId: string; draftId?: string }
   | {
@@ -216,6 +217,21 @@ export function limitDraftReducer(
       // Preserve the exact decimal draft while the user is typing. The
       // authoritative tick is applied at validation/submission.
       price: action.price,
+      status: "editing",
+      clientActionId: null,
+      rejectionReason: null,
+    };
+  } else if (action.type === "update-volume") {
+    if (
+      target.status === "submitting" ||
+      target.status === "ambiguous"
+    ) {
+      return state;
+    }
+
+    updated = {
+      ...target,
+      volume: action.volume,
       status: "editing",
       clientActionId: null,
       rejectionReason: null,
