@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createLimitDraft } from "./limitDraft";
+import {
+  createLimitDraft,
+  EMPTY_LIMIT_DRAFT_STATE,
+  limitDraftReducer,
+} from "./limitDraft";
 import {
   canConfirmLimitInteractionDraft,
   captureLimitInteractionIntent,
@@ -49,6 +53,56 @@ describe("shared Limit interaction core", () => {
 
     expect(limitDraftVolumeUsdt(draft)).toBe("10");
     expect(canConfirmLimitInteractionDraft(draft)).toBe(true);
+  });
+
+  it("updates popup draft volume inside the draft lifecycle", () => {
+    const draft = createLimitDraft({
+      draftId: "popup-draft",
+      symbol: "BTCUSDT",
+      side: "Buy",
+      origin: "limits-popup",
+      volume: { unit: "usdt", amount: "10" },
+      sizingReferencePrice: "100",
+      price: "99",
+      authoritativeTickSize: "0.5",
+    });
+    const begun = limitDraftReducer(EMPTY_LIMIT_DRAFT_STATE, { type: "begin", draft });
+    const updated = limitDraftReducer(begun, {
+      type: "update-volume",
+      draftId: draft.draftId,
+      volume: { unit: "usdt", amount: "25" },
+    });
+
+    expect(updated.draft?.volume).toEqual({ unit: "usdt", amount: "25" });
+    expect(updated.draft?.status).toBe("editing");
+    expect(canConfirmLimitInteractionDraft(updated.draft!)).toBe(true);
+  });
+
+  it("does not change a submitting draft volume", () => {
+    const draft = createLimitDraft({
+      draftId: "locked",
+      symbol: "BTCUSDT",
+      side: "Sell",
+      origin: "limits-popup",
+      volume: { unit: "usdt", amount: "10" },
+      sizingReferencePrice: "100",
+      price: "101",
+      authoritativeTickSize: "0.5",
+    });
+    const begun = limitDraftReducer(EMPTY_LIMIT_DRAFT_STATE, { type: "begin", draft });
+    const submitting = limitDraftReducer(begun, {
+      type: "start-submitting",
+      draftId: draft.draftId,
+      clientActionId: "action-1",
+    });
+    const updated = limitDraftReducer(submitting, {
+      type: "update-volume",
+      draftId: draft.draftId,
+      volume: { unit: "usdt", amount: "25" },
+    });
+
+    expect(updated.draft?.volume).toEqual({ unit: "usdt", amount: "10" });
+    expect(updated.draft?.status).toBe("submitting");
   });
 
   it("fails closed when any visible same-side draft has an invalid captured volume", () => {
