@@ -92,7 +92,14 @@ vi.mock("../components/ModePanel", async (importOriginal) => {
       volume: { unit: "usdt", amount: "" }, sizingReferencePrice: "0.1005", price: "0.09849",
       authoritativeTickSize: "0.00001", status: "draft", clientActionId: null, rejectionReason: null,
     } })}>Create draft</button>
-    <button type="button" onClick={() => onSelectedVolumeChange("Buy", "5")}>Set valid volume</button>
+    <button type="button" onClick={() => {
+      onSelectedVolumeChange("Buy", "5");
+      dispatchLimitDraft({
+        type: "update-volume",
+        draftId: "live-draft",
+        volume: { unit: "usdt", amount: "5" },
+      });
+    }}>Set valid volume</button>
     <button type="button" onClick={() => onLimitDraftConfirm()}>Attempt confirmation</button>
   </div>;
   return { ModePanel: (props: ComponentProps<typeof actual.ModePanel>) => testMode.realPanel
@@ -249,7 +256,6 @@ it.each(["unknown", "network failure"])("locks %s without resending after projec
   await act(async () => {});
   fireEvent.click(screen.getByRole("button", { name: "Create draft" }));
   fireEvent.click(screen.getByRole("button", { name: "Set valid volume" }));
-  // Two callbacks in one render window must still share the synchronous attempt guard.
   act(() => {
     fireEvent.click(screen.getByRole("button", { name: "Attempt confirmation" }));
     fireEvent.click(screen.getByRole("button", { name: "Attempt confirmation" }));
@@ -364,7 +370,6 @@ function setupCancel(status = "completed", deferred = false) {
 }
 
 function cancelBuySide() {
-  // Exclude App's mount-time refresh; assert only cancellation side effects.
   vi.mocked(paperTradingStore.refresh).mockClear();
   fireEvent.click(screen.getByRole("button", { name: "Cancel all Buy Limit orders for ONGUSDT" }));
   const dialog = screen.getByRole("dialog", { name: "Cancel all LONG Limit orders for ONGUSDT?" });
