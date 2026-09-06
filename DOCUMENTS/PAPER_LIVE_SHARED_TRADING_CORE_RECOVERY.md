@@ -245,3 +245,57 @@ Do not start by patching only the observed LIVE hold/tap symptom.
 From this checkpoint forward, PAPER remains the behavioral reference implementation for manual trading semantics, while LIVE is an execution environment using the same trading core.
 
 Any future manual-trading feature intended for both account types should be implemented once in the common core and proven with parity tests before provider-specific execution wiring is considered complete.
+
+## 9. Robot execution reuse decision
+
+Decision date: 2026-09-06.
+
+The shared PAPER/LIVE trading core is also the execution foundation for the trading robot. The project must not create a separate robot-specific PAPER trading engine or a second parallel order lifecycle.
+
+The intended progression is:
+
+1. finish the common PAPER/LIVE core for manual trading;
+2. connect the PAPER robot to the same common trading command/domain layer and the same PAPER account/execution path;
+3. when the robot is ready for LIVE operation, keep the robot strategy and common command layer unchanged and switch execution to the LIVE Bybit adapter behind the existing safety boundary.
+
+Target architecture:
+
+```text
+MANUAL UI ---------+
+                   |
+PAPER ROBOT -------+--> COMMON TRADING INTENT / COMMAND
+                            |
+                            v
+                      COMMON TRADING CORE
+                            |
+                            v
+                      EXECUTION ADAPTER
+                        /           \
+                       v             v
+                 PAPER adapter   LIVE Bybit adapter
+                       |             |
+                       v             v
+                PAPER ACCOUNT      BYBIT
+```
+
+Binding invariants:
+
+- robot strategy logic must not implement exchange transport or duplicate order lifecycle behavior;
+- manual trading and robot trading must produce the same domain-level trading commands where the semantic action is the same;
+- the PAPER robot must use the same PAPER account/state, sizing semantics, LIMIT/STOP/TAKE/Market/Full-Close behavior, validation and authoritative state path as manual PAPER trading;
+- the LIVE robot must reuse the same common command semantics and differ only at the execution adapter and LIVE safety/authority/reconciliation boundary;
+- provider-specific execution concerns must remain outside strategy logic;
+- PAPER robot behavior is the rehearsal path for LIVE robot behavior, not a separate simulation architecture;
+- new robot features must extend the common trading core when they represent shared trading semantics instead of introducing robot-only duplicates.
+
+Conceptually:
+
+```text
+ROBOT STRATEGY
+    -> COMMON TRADING COMMANDS
+    -> EXECUTION ADAPTER
+        -> PAPER
+        -> LIVE Bybit
+```
+
+This decision is intended to make PAPER robot testing a faithful rehearsal of the same trading mechanics later used by the LIVE robot, while preserving LIVE-only fail-closed authority, mutation identity, ambiguity and reconciliation safeguards.
