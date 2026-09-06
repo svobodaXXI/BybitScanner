@@ -2,7 +2,7 @@
 
 Date: 2026-09-06
 Parent direction: `DOCUMENTS/PAPER_LIVE_SHARED_TRADING_CORE_RECOVERY.md`
-Status: SLICE 1 REAL LIVE CONFIRM ACCEPTED / COMPLETE
+Status: SLICE 2 SHARED SUBMISSION BOUNDARY IN PROGRESS
 
 ## Slice 1 objective
 
@@ -267,8 +267,48 @@ Evidence now includes:
 
 The previously open `LIVE dashed chart Limit checkmark confirmation` blocker is closed for this accepted path.
 
+## Slice 2 — shared submission boundary
+
+A dedicated branch / draft PR now extracts the provider-independent Limit draft submission lifecycle from PAPER-only code.
+
+The common `LimitDraftSubmitController<T>` owns only:
+
+- one attempt per draft identity;
+- transition to `submitting`;
+- definitive `completed` -> dismiss;
+- definitive rejection -> `rejected`;
+- ambiguous/UNKNOWN -> `ambiguous` with the attempt latched.
+
+PAPER remains an adapter over this common lifecycle.
+
+LIVE create is now also routed through a dedicated `LiveLimitDraftSubmitController`, which uses the same common lifecycle while retaining LIVE-only:
+
+- current account/session authority fencing;
+- durable `client_action_id` generation;
+- `/api/live/limit` transport;
+- accepted/completed, rejection and UNKNOWN classification;
+- no blind retry after ambiguous outcome;
+- authoritative LIVE projection refresh after accepted/completed execution.
+
+`App.submitLimitDraft` no longer owns separate LIVE create reducer transitions or a separate CREATE_LIMIT attempt map. LIVE amend/cancel remain unchanged and are still outside this slice.
+
+Additional tests cover:
+
+- provider-neutral mocked-LIVE completed lifecycle;
+- provider-neutral mocked-LIVE ambiguous latch;
+- actual LIVE adapter accepted path with one transport dispatch and one authoritative refresh;
+- actual LIVE adapter UNKNOWN/network ambiguity with no second dispatch.
+
+### Slice 2 verification status
+
+Before LIVE migration, local verification on the branch passed:
+
+- `limitDraftSubmission.test.ts`: 4/4 PASS;
+- shared targeted suite: 36/36 PASS;
+- production build: PASS.
+
+The LIVE adapter migration commits are now remote and require a fresh local pull plus targeted tests/build before the draft PR can be considered verified.
+
 ## Next step
 
-Return the local runtime to fail-closed LIVE mutation gates OFF after the acceptance evidence is captured.
-
-Then proceed with the next shared PAPER/LIVE trading-core slice rather than reopening the resolved hold/tap or chart-confirm path unless new evidence shows a regression.
+Pull the latest `shared-limit-execution-boundary-slice2` branch locally and run the shared + LIVE adapter targeted suite. If it passes, run the production build. Do not perform a real LIVE exchange mutation for this refactor verification; mocked/controlled tests are the required evidence for this step.
