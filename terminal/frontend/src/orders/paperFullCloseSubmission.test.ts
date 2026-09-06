@@ -36,23 +36,27 @@ describe("PaperFullCloseSubmissionController", () => {
   it("deduplicates the semantic close and allocates one durable client_action_id", async () => {
     let resolveFetch!: (value: Response) => void;
     const fetchPromise = new Promise<Response>((done) => { resolveFetch = done; });
-    const fetchMock = vi.fn(() => fetchPromise);
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      () => fetchPromise,
+    );
     vi.stubGlobal("fetch", fetchMock);
     const createClientActionId = vi.fn(() => "close-1");
-    const runMutation = vi.fn(async <T>(_key: string, mutation: () => Promise<T>) => mutation());
+    const runMutation = async <T>(_key: string, mutation: () => Promise<T>): Promise<T> => mutation();
+    const runMutationSpy = vi.fn(runMutation);
     const applyPaperState = vi.fn(() => true);
     const controller = new PaperFullCloseSubmissionController();
-    const dependencies = { createClientActionId, applyPaperState, runMutation };
+    const dependencies = { createClientActionId, applyPaperState, runMutation: runMutationSpy as typeof runMutation };
 
     const first = controller.submit({ symbol: "BTCUSDT" }, dependencies);
     const duplicate = controller.submit({ symbol: "BTCUSDT" }, dependencies);
 
     expect(duplicate).toBe(first);
     expect(createClientActionId).toHaveBeenCalledTimes(1);
-    expect(runMutation).toHaveBeenCalledTimes(1);
-    expect(runMutation).toHaveBeenCalledWith("FULL_CLOSE", expect.any(Function));
+    expect(runMutationSpy).toHaveBeenCalledTimes(1);
+    expect(runMutationSpy).toHaveBeenCalledWith("FULL_CLOSE", expect.any(Function));
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(String(init?.body))).toEqual({
       client_action_id: "close-1",
       symbol: "BTCUSDT",
     });
@@ -63,7 +67,9 @@ describe("PaperFullCloseSubmissionController", () => {
   });
 
   it("releases ownership after completion", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify(RESULT), { status: 200 }));
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => new Response(JSON.stringify(RESULT), { status: 200 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     let id = 0;
     const controller = new PaperFullCloseSubmissionController();
@@ -85,7 +91,7 @@ describe("PaperFullCloseSubmissionController", () => {
     let resolveNew!: (value: Response) => void;
     const oldFetch = new Promise<Response>((done) => { resolveOld = done; });
     const newFetch = new Promise<Response>((done) => { resolveNew = done; });
-    const fetchMock = vi.fn()
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
       .mockImplementationOnce(() => oldFetch)
       .mockImplementationOnce(() => newFetch);
     vi.stubGlobal("fetch", fetchMock);
