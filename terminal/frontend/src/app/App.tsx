@@ -162,17 +162,30 @@ export function App() {
     && accountProjection.read_only === false
     && accountProjection.capabilities?.stop === true
     && accountProjection.capabilities?.take === true;
-  const currentLiveAuthority = useCallback(() => liveLimitAllowed && accountProjection ? {
-    accountId: accountProjection.account_id,
-    sessionGeneration: accountProjection.session_generation,
-  } : null, [accountProjection, liveLimitAllowed]);
-  const currentLiveProtectionAuthority = useCallback(
-    () => liveProtectionAllowed && accountProjection ? {
-      accountId: accountProjection.account_id,
-      sessionGeneration: accountProjection.session_generation,
-    } : null,
-    [accountProjection, liveProtectionAllowed],
-  );
+  const liveAuthoritySnapshot = useRef({
+    projection: accountProjection,
+    limitAllowed: liveLimitAllowed,
+    protectionAllowed: liveProtectionAllowed,
+  });
+  liveAuthoritySnapshot.current = {
+    projection: accountProjection,
+    limitAllowed: liveLimitAllowed,
+    protectionAllowed: liveProtectionAllowed,
+  };
+  const currentLiveAuthority = useCallback(() => {
+    const current = liveAuthoritySnapshot.current;
+    return current.limitAllowed && current.projection ? {
+      accountId: current.projection.account_id,
+      sessionGeneration: current.projection.session_generation,
+    } : null;
+  }, []);
+  const currentLiveProtectionAuthority = useCallback(() => {
+    const current = liveAuthoritySnapshot.current;
+    return current.protectionAllowed && current.projection ? {
+      accountId: current.projection.account_id,
+      sessionGeneration: current.projection.session_generation,
+    } : null;
+  }, []);
   useEffect(() => {
     const nextMutationAuthorityKey = liveLimitAllowed && accountProjection
       ? `LIVE:${accountProjection.account_id}:${accountProjection.session_generation}`
