@@ -34,6 +34,11 @@ const response = (): PaperStopMutationResponse => ({
   paper_state: paperState(),
 });
 
+const runMutationMock = () => vi.fn((
+  _key: string,
+  mutation: () => Promise<PaperStopMutationResponse>,
+) => mutation());
+
 describe("PaperProtectionMutationController", () => {
   it("allocates one durable id and one runMutation for a duplicated semantic attempt", async () => {
     const controller = new PaperProtectionMutationController();
@@ -49,7 +54,7 @@ describe("PaperProtectionMutationController", () => {
     const createClientActionId = vi.fn()
       .mockReturnValueOnce("first-id")
       .mockReturnValueOnce("second-id");
-    const runMutation = vi.fn(async <T>(_key: string, mutation: () => Promise<T>) => mutation());
+    const runMutation = runMutationMock();
     const applyPaperState = vi.fn(() => true);
     const input = {
       leg: "STOP" as const,
@@ -90,7 +95,7 @@ describe("PaperProtectionMutationController", () => {
     const createClientActionId = vi.fn()
       .mockReturnValueOnce("stop-id")
       .mockReturnValueOnce("take-id");
-    const runMutation = vi.fn(async <T>(_key: string, mutation: () => Promise<T>) => mutation());
+    const runMutation = runMutationMock();
     const applyPaperState = vi.fn(() => true);
 
     await Promise.all([
@@ -120,7 +125,7 @@ describe("PaperProtectionMutationController", () => {
     const createClientActionId = vi.fn()
       .mockReturnValueOnce("first-id")
       .mockReturnValueOnce("replacement-id");
-    const runMutation = vi.fn(async <T>(_key: string, mutation: () => Promise<T>) => mutation());
+    const runMutation = runMutationMock();
     const applyPaperState = vi.fn(() => true);
     const input = {
       leg: "STOP" as const,
