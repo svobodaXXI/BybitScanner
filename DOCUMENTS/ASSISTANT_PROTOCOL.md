@@ -2,7 +2,7 @@
 
 Version:
 
-4.37
+4.38
 
 Date:
 
@@ -219,9 +219,11 @@ behavior, contract checks, mandatory E2E, verification, or governance.
 
 # 4. LOCAL REALITY AND USER-OWNED WORK
 
-Start from the current local checkout and inspect actual targets before editing. Existing dirty and untracked work
-is user-owned unless proven otherwise. Never overwrite, reformat, stage, clean, restore, reset, move, delete,
-discard, commit, or push unrelated work.
+For local/Codex tasks, start from the current local checkout and inspect actual targets before editing. For
+ChatGPT-led GitHub-first work, use the current remote repository state plus known synchronization evidence and treat
+local-only state as a separate runtime/verification concern. Existing dirty and untracked work is user-owned unless
+proven otherwise. Never overwrite, reformat, stage, clean, restore, reset, move, delete, discard, commit, or push
+unrelated work.
 
 ## 4.1 PC/VPS GIT SYNC PREFLIGHT — HARD GATE
 
@@ -332,6 +334,27 @@ EXPLICIT_CURRENT_USER_IMAGE_REQUEST == TRUE
 Prior messages, attachments, screenshots, general visual discussion, tool availability, or inferred usefulness do
 not authorize image tools. Do not ask for image-generation permission during ordinary UI work.
 
+## 6.4 GITHUB-FIRST CHANGE SURFACE — HARD RULE
+
+For ChatGPT-led BybitScanner work, committed project code, configuration, documentation, tests, and repository-owned
+tooling are read and changed through the available GitHub/repository connector whenever that connector can safely
+perform the operation. The user's Windows checkout is a downstream synchronization, runtime, test, build, and
+acceptance surface by default: pull repository changes to the PC, then use the local machine to prove behavior that
+cannot be proven remotely.
+
+Do not ask the user to patch, rewrite, replace, or manually edit project source/documentation on the PC merely
+because a local shell is available. Local code/document writes require either an explicit user override for that
+specific task or an objectively necessary operation that the repository connector cannot perform safely; they are
+not the fallback path for convenience.
+
+For material code changes, preserve the existing verification and approval model. When repository-native branch/PR
+or CI evidence is available and appropriate, prefer it before changing `main`. If a direct remote commit is the only
+practical connector path, mark code behavior as unverified until the synchronized checkout passes the required
+local tests/build/runtime/device acceptance. This rule never weakens LIVE-mutation approval, fail-closed safety,
+Task/Spec/ChangeRequest scope, branch protection, verification requirements, or protection of user-owned local work.
+When the user explicitly chooses Codex/local implementation for a particular task, the Codex/local workflow remains
+available for that task; otherwise GitHub-first is the default.
+
 ---
 
 # 7. CODEX EXECUTION AND VERIFICATION
@@ -353,9 +376,11 @@ PASS authorizes a material scope amendment, LIVE mutation, deployment or Git wri
 
 Batch approved compatible micro-tasks and related decisions. Do not interrupt implementation with serial
 micro-questions when one safe decision batch suffices. Full research, status, diff, and verbose logs are off by
-default. Use Codex primarily for current local inspection/mutation, tests/build/runtime, and authorized Git work.
-Do not perform opportunistic refactoring, cleanup, redesign, or “while here” improvements. Prefer the smallest
-targeted tests and checks that prove the current delta; run full suites only when objectively required.
+default. When Codex/local implementation is explicitly selected, use Codex primarily for current local
+inspection/mutation, tests/build/runtime, and authorized Git work. Otherwise §6.4 makes GitHub-first the default
+ChatGPT-led mutation surface. Do not perform opportunistic refactoring, cleanup, redesign, or “while here”
+improvements. Prefer the smallest targeted tests and checks that prove the current delta; run full suites only when
+objectively required.
 
 Default execution loop:
 
@@ -646,13 +671,32 @@ This is research-only capture, not authorization to change trading/runtime code.
 observation, not proof of the generalized claim. Root `AGENTS.md` and section 7.2 own the protected edit, verification
 and Git workflow; preserve reference-case storage rules and all approval boundaries.
 
+## 8.10 EXTERNAL REFERENCE ACCELERATION — HARD RULE
+
+Do not reserve external research only for severe regressions. For non-trivial architecture, debugging, reliability,
+workflow, performance, state-management, transport, exchange-integration, or developer-productivity problems,
+proactively consult proven external implementations when doing so is likely to reduce the search space or prevent a
+local reinvention. Prefer official API/protocol/library documentation first, then mature relevant open-source
+projects, high-signal issue/PR history, and authoritative engineering write-ups.
+
+Use external reference as an accelerator, not as authority over this project. Compare candidate patterns against the
+current BybitScanner architecture, contracts, invariants, safety model, runtime constraints, and user workflow before
+adopting them. Extract the transferable ownership/lifecycle/failure-handling idea; do not cargo-cult code or import a
+foreign architecture wholesale.
+
+External research is especially appropriate when the project reaches an unfamiliar boundary, several plausible
+solutions exist, tests disagree with runtime behavior, a repeated manual workaround appears, or another mature
+project is likely to have already solved the same class of problem. It is not required for a trivial deterministic
+fix with a proven local cause, and it must not become broad browsing that delays an obvious safe correction.
+
 ---
 
 # 9. CURRENT REVISION RECORD
 
-`4.37` hardens the no-user-as-file-transport rule into an explicit read-only inspection routing rule: committed
-repository code/config/docs/history are inspected directly through GitHub/repository connectors when available, and
-local shell output is reserved for facts that are genuinely local or otherwise inaccessible. The user-action
-preflight now blocks redundant read-only repository commands. Detailed history remains in Git.
+`4.38` establishes GitHub-first ChatGPT-led work: committed project code/docs/config/tests/tooling are inspected and
+changed through repository connectors when available, while the local PC is primarily a pull/runtime/test/build/
+acceptance surface rather than a code-edit surface. It also broadens external-reference use from regression-only
+escalation to proactive acceleration for non-trivial engineering problems, without weakening project authority,
+verification, safety, or approval boundaries. Detailed history remains in Git.
 
 # END_OF_DOCUMENT
