@@ -1,8 +1,8 @@
 # PAPER / LIVE SHARED TRADING CORE RECOVERY — PROGRESS
 
-Date: 2026-09-05
+Date: 2026-09-06
 Parent direction: `DOCUMENTS/PAPER_LIVE_SHARED_TRADING_CORE_RECOVERY.md`
-Status: SLICE 1 PARTIALLY ACCEPTED / LIVE CHART CONFIRM BLOCKED
+Status: SLICE 1 DIAGNOSED / REAL LIVE CONFIRM ACCEPTANCE PENDING EXPLICIT AUTHORIZATION
 
 ## Slice 1 objective
 
@@ -79,7 +79,7 @@ Local verification after pull:
 - production `tsc -b && vite build`: PASS;
 - built assets included `dist/assets/index-BCQ3MsJ9.js`.
 
-The first targeted run exposed 7 stale LIVE integration tests because their mocks changed only `selectedVolumes`; that harness was corrected to update draft-owned volume. The repeated targeted run then passed 23/23.
+A later diagnostic boundary test exercised the real `ChartPanel` + `PendingLimitLine` touch-confirm routing and, together with the existing targeted suite, produced 33/33 PASS. This narrowed the real-phone failure away from gesture capture and exact draft-id routing.
 
 ## Real UI acceptance on 2026-09-05
 
@@ -102,15 +102,11 @@ PASS:
 
 This confirms the previously reported LIVE hold + chart tap draft-creation regression is recovered.
 
-### LIVE chart confirmation
+### LIVE chart confirmation — diagnosis
 
-FAIL / OPEN BLOCKER:
+The real-phone symptom was initially recorded as a chart-confirm failure. Subsequent end-to-end inspection and runtime diagnostics established that the tested runtime was fail-closed at the LIVE authority boundary rather than blocked at touch handling or `ChartPanel` routing.
 
-- the dashed LIVE pending Limit line does not confirm when the chart checkmark is pressed in the real UI;
-- therefore Slice 1 is NOT fully accepted and the shared recovery is NOT complete;
-- automated LIVE integration tests passing do not override this real-UI failure.
-
-The next investigation must start after draft creation, along the real path:
+The relevant frontend path is:
 
 ```text
 PendingLimitLine chart checkmark
@@ -121,11 +117,51 @@ PendingLimitLine chart checkmark
     -> executeLiveLimitCreate
 ```
 
-Do not start the next session by changing the hold/tap gesture again: that part is now real-UI PASS.
+`App.submitLimitDraft` requires current LIVE Limit authority. The workspace projection reports that authority through `capabilities.limit`. The diagnosed local runtime had `capabilities.limit=false` because LIVE mutation gates were OFF and, before restart with explicit build attribution, the durable acceptance service was unavailable.
+
+Therefore the observed no-submit state is not evidence that the chart touch-confirm handler is broken. It is consistent with the intended fail-closed LIVE capability boundary.
+
+## Safe runtime rehearsal on 2026-09-06
+
+The backend was restarted with authoritative build attribution:
+
+`d05cae669c07a66d76682ca7b65091d6c28eb7e7`
+
+and deployment identity `local-rehearsal`, while all LIVE mutation gates remained explicitly OFF.
+
+Operator diagnostics then confirmed:
+
+- active Bybit MAINNET account: READY and writable;
+- account session generation: `2`;
+- durable acceptance service available: `true`;
+- LIVE Market capability: `false`;
+- LIVE Limit capability: `false`;
+- LIVE parity capability: `false`;
+- unresolved LIVE Limit actions: `0`;
+- unresolved LIVE Limit operations: `0`;
+- all previous acceptance sessions non-ARMED (`EXPIRED`, `EXHAUSTED`, or `REVOKED`).
+
+The built-in safe rehearsal was then run with session id `live-limit-ong-safe-rehearsal-006`, symbol `ONGUSDT`, capability `LIVE_LIMIT_CREATE`, max create count `1`, aggregate ceiling `5.20 USDT`, and per-order ceiling `5.20 USDT`.
+
+Result:
+
+```text
+status = PASS
+exchange_mutation = NOT_REQUESTED
+live_gates = OFF
+workflow =
+  INSPECTED_GATES_OFF
+  ARM_REQUEST_VALIDATED
+  ARMED_DIAGNOSTICS_CONFIRMED
+  REVOKED
+  FINAL_DIAGNOSTICS_CONFIRMED
+```
+
+This proves the durable acceptance administration path, runtime/build/database/session attribution, ARMED diagnostics, revocation, and final fail-closed state without requesting an exchange mutation.
 
 ## Safety
 
-No LIVE gate was relaxed.
+No LIVE gate was relaxed during diagnosis or rehearsal.
 
 No LIVE STOP/TAKE/full-close behavior was enabled.
 
@@ -133,17 +169,12 @@ No blind retry was introduced.
 
 LIVE account/session fencing, single-attempt ownership and reconciliation behavior remain unchanged.
 
-The user should not repeatedly press the LIVE chart checkmark while the blocker is unresolved; diagnose the non-confirming path before any further real mutation acceptance.
+A real LIVE Limit create is still separately authorization-gated. Safe rehearsal PASS does not authorize an exchange mutation.
 
-## Next session
+## Next step
 
-Resume from the current GitHub `main` and treat these facts as authoritative:
+Do not change the hold/tap gesture or bypass the acceptance boundary.
 
-1. shared Limit core tests PASS;
-2. existing targeted LIVE Limit integration tests PASS;
-3. production frontend build PASS;
-4. PAPER chart Limit create + confirm real UI PASS;
-5. LIVE hold BUY + chart tap draft creation real UI PASS;
-6. LIVE dashed chart Limit checkmark confirmation real UI FAIL — current blocker.
+The next meaningful acceptance is one deliberately bounded real LIVE Limit create only after separate explicit user authorization. Before that acceptance, runtime authority must be started with the exact authorized build/database/session identity and the dedicated LIVE Limit gates/ceiling, then one ARMED acceptance session must be created with the previously established one-create / 5.20-USDT budget.
 
-Investigate the chart-confirm path end-to-end and add a test that reproduces the real interaction boundary before changing execution behavior. Preserve PAPER/LIVE common semantics and keep provider-specific differences behind the execution/safety boundary.
+Until that explicit authorization is given, keep all LIVE mutation gates OFF.
