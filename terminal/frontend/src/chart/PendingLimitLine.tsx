@@ -15,6 +15,7 @@ export function PendingLimitLine({
   controlsVisible = true,
   popupLinked = false,
   liveSubmitStatus,
+  rejectionReason,
 }: {
   side: MarketSide;
   price: string;
@@ -29,10 +30,12 @@ export function PendingLimitLine({
   controlsVisible?: boolean;
   popupLinked?: boolean;
   liveSubmitStatus?: "submitting" | "ambiguous";
+  rejectionReason?: string | null;
 }) {
   const submitLabel = liveSubmitStatus === "submitting"
     ? "SUBMITTING…"
     : liveSubmitStatus === "ambiguous" ? "RECONCILING — DO NOT RETRY" : null;
+  const statusLabel = submitLabel ?? (rejectionReason ? `REJECTED — ${rejectionReason}` : null);
   const confirmActivation = useTradingControlActivation({
     onTap: onConfirm,
     disabled: !!submitLabel || confirmDisabled || !onConfirm,
@@ -80,12 +83,12 @@ export function PendingLimitLine({
       }}
     >
       <span>{price}</span>
-      {submitLabel && (
+      {statusLabel && (
         <output role="status" aria-live="polite" style={{
           position: "absolute", right: "4rem", bottom: "1rem",
           whiteSpace: "nowrap", background: "#11181f", padding: "0.2rem",
           fontSize: "0.7rem", fontWeight: 700, pointerEvents: "none",
-        }}>{submitLabel}</output>
+        }}>{statusLabel}</output>
       )}
       {controlsVisible ? (
         <>
