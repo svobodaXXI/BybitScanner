@@ -1,0 +1,31 @@
+/*
+ * Mobile modal-layer hardening.
+ *
+ * The LIVE read-only treatment dims .paper-market-actions with opacity. Because
+ * opacity is inherited by the whole rendered subtree and creates a stacking
+ * context, a LIMIT popup rendered inside that container becomes translucent and
+ * cannot escape above later terminal controls, regardless of its own z-index.
+ *
+ * Keep the mutation controls visibly read-only without applying opacity to the
+ * container that owns modal layers. The backend/LIVE authority gate remains the
+ * source of truth; this changes presentation only.
+ */
+@media (max-width: 620px) {
+  .paper-market-actions.is-read-only {
+    opacity: 1;
+  }
+
+  .paper-market-actions.is-read-only > :not(.paper-limit-popup-backdrop):not(.paper-close-confirm-backdrop) {
+    opacity: 0.52;
+  }
+
+  .paper-limit-popup-backdrop,
+  .paper-close-confirm-backdrop {
+    z-index: 2147483647;
+  }
+
+  .paper-limit-popup {
+    opacity: 1;
+    background: #131a21;
+  }
+}
