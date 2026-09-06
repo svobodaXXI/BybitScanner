@@ -3,6 +3,11 @@ import { MarketCommandLifecycleController } from "./marketCommandLifecycle";
 
 const liveMarketLifecycle =
   new MarketCommandLifecycleController<LiveMarketCommandResponse | null>();
+let liveMarketAuthorityKey: string | null = null;
+
+function marketAuthorityKey(request: LiveMarketCommandRequest): string {
+  return `${request.account_id}:${request.session_generation}`;
+}
 
 export function createLiveMarketAction(input: {
   accountId: string; sessionGeneration: number; symbol: string; side: MarketSide;
@@ -43,6 +48,12 @@ export function executeLiveMarketCommand(
     currentAuthority: () => { accountId: string; sessionGeneration: number } | null;
   },
 ): Promise<LiveMarketCommandResponse | null> {
+  const authorityKey = marketAuthorityKey(request);
+  if (liveMarketAuthorityKey !== authorityKey) {
+    liveMarketLifecycle.clear();
+    liveMarketAuthorityKey = authorityKey;
+  }
+
   return liveMarketLifecycle.submit(request.client_action_id, {
     startAttempt: () => dispatchLiveMarketCommand(request, dependencies),
     classifyResult: (result) => {
