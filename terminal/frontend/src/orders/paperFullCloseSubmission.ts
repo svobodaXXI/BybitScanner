@@ -15,8 +15,7 @@ type Dependencies = {
   runMutation: <T>(key: string, mutation: () => Promise<T>) => Promise<T>;
 };
 
-const createDefaultClientActionId = () =>
-  globalThis.crypto?.randomUUID?.() ?? `paper-full-close-${Date.now()}`;
+const createDefaultClientActionId = () => `paper-full-close-${Date.now()}`;
 
 export class PaperFullCloseSubmissionController {
   private readonly lifecycle = new FullCloseCommandLifecycleController<CommandMutationResponse>();
