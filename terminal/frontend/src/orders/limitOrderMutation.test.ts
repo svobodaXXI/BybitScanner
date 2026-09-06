@@ -125,6 +125,45 @@ describe("LimitOrderMutationController", () => {
     expect(startAttempt).toHaveBeenCalledTimes(1);
   });
 
+  it("does not let a cleared stale completion release a replacement attempt", async () => {
+    let resolveOld!: (value: { status: string }) => void;
+    let resolveReplacement!: (value: { status: string }) => void;
+    const oldPromise = new Promise<{ status: string }>((resolve) => {
+      resolveOld = resolve;
+    });
+    const replacementPromise = new Promise<{ status: string }>((resolve) => {
+      resolveReplacement = resolve;
+    });
+    const startAttempt = vi
+      .fn()
+      .mockImplementationOnce(() => ({ clientActionId: "old-action", promise: oldPromise }))
+      .mockImplementationOnce(() => ({ clientActionId: "replacement-action", promise: replacementPromise }))
+      .mockImplementationOnce(() => ({
+        clientActionId: "unexpected-third-action",
+        promise: Promise.resolve({ status: "completed" }),
+      }));
+    const dependencies = {
+      startAttempt,
+      classifyResult: () => "release" as const,
+      classifyError: () => "release" as const,
+    };
+    const controller = new LimitOrderMutationController<{ status: string }>();
+
+    const oldAttempt = controller.submit("CANCEL_LIMIT", "order-1", dependencies);
+    controller.clear();
+    const replacement = controller.submit("CANCEL_LIMIT", "order-1", dependencies);
+
+    resolveOld({ status: "completed" });
+    await oldAttempt.promise;
+
+    const duplicate = controller.submit("CANCEL_LIMIT", "order-1", dependencies);
+    expect(duplicate).toBe(replacement);
+    expect(startAttempt).toHaveBeenCalledTimes(2);
+
+    resolveReplacement({ status: "completed" });
+    await replacement.promise;
+  });
+
   it("does not latch a synchronous provider preflight failure", () => {
     const startAttempt = vi.fn(() => {
       throw new Error("stale authority");
