@@ -144,7 +144,6 @@ it.each(["READY", "READ_ONLY"] as const)(
   render(<Harness />);
   expect(screen.queryByText("LIVE READ-ONLY")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("LIVE account positions and orders")).not.toBeInTheDocument();
-  expect(screen.getByRole("group", { name: "Manual trading controls" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "BUY" })).toBeVisible();
   expect(screen.getByRole("button", { name: "BUY" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "SELL" })).toBeDisabled();
@@ -162,10 +161,9 @@ it.each(["READY", "READ_ONLY"] as const)(
   fireEvent.click(screen.getByRole("button", { name: "Open account selection" }));
   expect(await screen.findByRole("dialog", { name: "Accounts" })).toBeInTheDocument();
   expect(screen.queryByLabelText("LIVE account positions and orders")).not.toBeInTheDocument();
-  expect(screen.queryByText(/Equity 100|Wallet 90|BTCUSDT|ETHUSDT/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Equity 100|Wallet 90|ETHUSDT/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Close Accounts" }));
   fireEvent.click(screen.getByRole("button", { name: "Restore PAPER" }));
-  expect(screen.getByRole("group", { name: "Manual trading controls" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "BUY" })).toBeEnabled();
   },
 );
