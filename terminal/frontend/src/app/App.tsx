@@ -64,14 +64,7 @@ import {
   stopPriceFromPercent,
   takePriceFromPercent,
 } from "../orders/stopPreset";
-import {
-  executePaperStopAmend,
-  executePaperStopCreate,
-  executePaperStopDelete,
-  executePaperTakeAmend,
-  executePaperTakeCreate,
-  executePaperTakeDelete,
-} from "../orders/paperStopCommand";
+import { PaperProtectionMutationController } from "../orders/paperProtectionMutationSubmission";
 import {
   isSignalTakeProposalHandled,
   markSignalTakeProposalHandled,
@@ -124,6 +117,7 @@ export function App() {
   const liveLimitSubmitController = useRef(new LiveLimitDraftSubmitController());
   const paperLimitOrderMutationController = useRef(new PaperLimitOrderMutationController());
   const liveLimitOrderMutationController = useRef(new LiveLimitOrderMutationController());
+  const paperProtectionMutationController = useRef(new PaperProtectionMutationController());
   const limitMutationAuthorityKey = useRef<string | null>(null);
   const domLimitController = useRef(new DomLimitPlacementController());
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
@@ -164,6 +158,7 @@ export function App() {
       limitMutationAuthorityKey.current = nextMutationAuthorityKey;
       paperLimitOrderMutationController.current.clear();
       liveLimitOrderMutationController.current.clear();
+      paperProtectionMutationController.current.clear();
     }
     paperTradingStore.setAccountSession(
       mutationsAllowed ? accountProjection.account_id : null,
@@ -700,20 +695,21 @@ export function App() {
     const draft = leg === "STOP" ? stopDraft : takeDraft;
     const dispatch = leg === "STOP" ? dispatchStopDraft : dispatchTakeDraft;
     if (!draft || draft.status === "submitting") return;
-    const clientActionId = globalThis.crypto?.randomUUID?.()
-      ?? `paper-${leg.toLowerCase()}-${Date.now()}`;
     dispatch({ type: "submitting" });
     try {
-      const execute = leg === "STOP"
-        ? draft.mode === "CREATE" ? executePaperStopCreate : executePaperStopAmend
-        : draft.mode === "CREATE" ? executePaperTakeCreate : executePaperTakeAmend;
-      const result = await paperTradingStore.runMutation(
-        `${draft.mode}_${leg}:${clientActionId}`,
-        () => execute({
-          client_action_id: clientActionId,
+      const result = await paperProtectionMutationController.current.submit(
+        {
+          leg,
+          operation: draft.mode === "CREATE" ? "CREATE" : "AMEND",
           symbol: tradingSymbol,
-          trigger_price: draft.price,
-        }, { applyPaperState: applyPaperStateForSession }),
+          triggerPrice: draft.price,
+        },
+        {
+          createClientActionId: () =>
+            globalThis.crypto?.randomUUID?.() ?? `paper-${leg.toLowerCase()}-${Date.now()}`,
+          applyPaperState: applyPaperStateForSession,
+          runMutation: paperTradingStore.runMutation,
+        },
       );
       const authoritative = leg === "STOP"
         ? authoritativeStopPrice(result.paper_state)
@@ -734,15 +730,19 @@ export function App() {
 
   const deleteProtection = useCallback(async (leg: "STOP" | "TAKE") => {
     if ((leg === "STOP" ? activeStopPrice : activeTakePrice) === null) return;
-    const clientActionId = globalThis.crypto?.randomUUID?.()
-      ?? `paper-${leg.toLowerCase()}-delete-${Date.now()}`;
-    const execute = leg === "STOP" ? executePaperStopDelete : executePaperTakeDelete;
     try {
-      await paperTradingStore.runMutation(`DELETE_${leg}:${clientActionId}`, () =>
-        execute({
-          client_action_id: clientActionId,
+      await paperProtectionMutationController.current.submit(
+        {
+          leg,
+          operation: "DELETE",
           symbol: tradingSymbol,
-        }, { applyPaperState: applyPaperStateForSession }),
+        },
+        {
+          createClientActionId: () =>
+            globalThis.crypto?.randomUUID?.() ?? `paper-${leg.toLowerCase()}-delete-${Date.now()}`,
+          applyPaperState: applyPaperStateForSession,
+          runMutation: paperTradingStore.runMutation,
+        },
       );
     } catch {
       await paperTradingStore.refresh();
