@@ -32,10 +32,14 @@ import { isValidSelectedVolume, type SelectedSideVolumes } from "../orders/selec
 import { executePaperMarketCommand } from "../orders/paperMarketCommand";
 import { createLiveMarketAction, executeLiveMarketCommand } from "../orders/liveMarketCommand";
 import { PaperFullCloseSubmissionController } from "../orders/paperFullCloseSubmission";
+import { LiveFullCloseSubmissionController } from "../orders/liveFullCloseSubmission";
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 import { AccountMenu } from "./AccountMenu";
 import { LiveAccountInventory } from "./LiveAccountInventory";
-import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
+import {
+  accountWorkspaceStore,
+  type AccountWorkspaceProjection,
+} from "../accountWorkspace/accountWorkspaceStore";
 import { StopSettings } from "./StopSettings";
 
 export type WorkspaceMode = "TERMINAL" | "AUTOPILOT" | "EDITOR";
@@ -162,6 +166,15 @@ export function ModePanel({
   const liveCancelPending = useRef(false);
   const cancelAuthority = useRef({ projection: accountWorkspaceProjection, allowed: liveLimitAllowed });
   cancelAuthority.current = { projection: accountWorkspaceProjection, allowed: liveLimitAllowed };
+  const liveMutationEnvelopeAllowed = liveMarketAllowed || liveLimitAllowed || liveProtectionAllowed;
+  const liveFullCloseAllowed = liveMutationEnvelopeAllowed
+    && accountWorkspaceProjection?.provider === "BYBIT"
+    && accountWorkspaceProjection.environment === "MAINNET"
+    && accountWorkspaceProjection.status === "READY"
+    && accountWorkspaceProjection.read_only === false
+    && accountWorkspaceProjection.capabilities?.full_close === true;
+  const fullCloseAuthority = useRef({ projection: accountWorkspaceProjection, allowed: liveFullCloseAllowed });
+  fullCloseAuthority.current = { projection: accountWorkspaceProjection, allowed: liveFullCloseAllowed };
   const [engagedWorkingVolume, setEngagedWorkingVolume] = useState<string | null>(
     null,
   );
@@ -185,6 +198,7 @@ export function ModePanel({
   const [liveConfirmationSubmitting, setLiveConfirmationSubmitting] = useState(false);
   const liveDispatchActionIdRef = useRef<string | null>(null);
   const paperFullCloseSubmissionController = useRef(new PaperFullCloseSubmissionController());
+  const liveFullCloseSubmissionController = useRef(new LiveFullCloseSubmissionController());
 
   useEffect(() => {
     setLiveConfirmation(null);
@@ -192,45 +206,91 @@ export function ModePanel({
 
   useEffect(() => {
     paperFullCloseSubmissionController.current.clear();
+    liveFullCloseSubmissionController.current.clear();
+    setCloseConfirmOpen(false);
   }, [
     accountWorkspaceProjection?.account_id,
     accountWorkspaceProjection?.provider,
     accountWorkspaceProjection?.session_generation,
+    liveFullCloseAllowed,
     mutationsAllowed,
   ]);
 
   useEffect(() => {
-      const engagedWv = Number(paperState?.engaged_wv);
-      const engagedNotional = Number(paperState?.engaged_notional_usdt);
-      setEngagedWorkingVolume(
-        paperState?.ok && Number.isFinite(engagedWv) ? engagedWv.toFixed(1) : null,
-      );
-      setEngagedNotionalUsdt(
-        paperState?.ok && Number.isFinite(engagedNotional)
-          ? String(Math.round(Math.max(0, engagedNotional)))
-          : "0",
-      );
-      const normalizedPositionSide =
-        paperState?.ok && (paperState.position_side === "Long" || paperState.position_side === "Short")
-          ? paperState.position_side
-          : "Flat";
-      setPositionSide(normalizedPositionSide);
-      setPositionSymbol(paperState?.ok ? paperState.symbol : "");
-      onPositionSideChange(normalizedPositionSide);
-      const averageEntry = Number(paperState?.average_entry);
-      const normalizedAverageEntry =
-        paperState?.ok && paperState.average_entry !== null && Number.isFinite(averageEntry)
-          && averageEntry > 0
-          ? averageEntry
+      if (paperState?.ok) {
+        const engagedWv = Number(paperState.engaged_wv);
+        const engagedNotional = Number(paperState.engaged_notional_usdt);
+        setEngagedWorkingVolume(Number.isFinite(engagedWv) ? engagedWv.toFixed(1) : null);
+        setEngagedNotionalUsdt(
+          Number.isFinite(engagedNotional)
+            ? String(Math.round(Math.max(0, engagedNotional)))
+            : "0",
+        );
+        const normalizedPositionSide =
+          paperState.position_side === "Long" || paperState.position_side === "Short"
+            ? paperState.position_side
+            : "Flat";
+        setPositionSide(normalizedPositionSide);
+        setPositionSymbol(paperState.symbol);
+        onPositionSideChange(normalizedPositionSide);
+        const averageEntry = Number(paperState.average_entry);
+        const normalizedAverageEntry =
+          paperState.average_entry !== null && Number.isFinite(averageEntry) && averageEntry > 0
+            ? averageEntry
+            : null;
+        setPositionAverageEntry(normalizedAverageEntry);
+        onPositionAverageEntryChange?.(normalizedAverageEntry);
+        setOneWvUsdt(paperState.one_wv_usdt);
+        setPositionQuantity(paperState.position_quantity);
+      } else {
+        const livePosition = accountWorkspaceProjection?.provider === "BYBIT"
+          ? accountWorkspaceProjection.positions.find((candidate) =>
+              candidate.symbol === symbol
+              && (candidate.side === "Long" || candidate.side === "Short")
+              && Number(candidate.size) > 0,
+            ) ?? null
           : null;
-      setPositionAverageEntry(normalizedAverageEntry);
-      onPositionAverageEntryChange?.(normalizedAverageEntry);
-      setOneWvUsdt(paperState?.ok ? paperState.one_wv_usdt : "0");
-      setPositionQuantity(paperState?.ok ? paperState.position_quantity : "0");
+        const liveSide = livePosition?.side === "Long" || livePosition?.side === "Short"
+          ? livePosition.side
+          : "Flat";
+        const liveQuantity = livePosition && Number(livePosition.size) > 0
+          ? String(livePosition.size)
+          : "0";
+        const liveAverage = Number(livePosition?.average_entry);
+        const normalizedAverage = Number.isFinite(liveAverage) && liveAverage > 0 ? liveAverage : null;
+        const mark = Number(livePosition?.mark_price);
+        const quantity = Number(liveQuantity);
+        const reference = Number.isFinite(mark) && mark > 0 ? mark : normalizedAverage ?? 0;
+        const notional = Number.isFinite(quantity) && quantity > 0 && reference > 0
+          ? quantity * reference
+          : 0;
+        const liveOneWv = accountWorkspaceProjection?.one_wv_usdt ?? "0";
+        const liveOneWvNumber = Number(liveOneWv);
+        setPositionSide(liveSide);
+        setPositionSymbol(livePosition ? symbol : "");
+        onPositionSideChange(liveSide);
+        setPositionAverageEntry(normalizedAverage);
+        onPositionAverageEntryChange?.(normalizedAverage);
+        setPositionQuantity(liveQuantity);
+        setEngagedNotionalUsdt(String(Math.round(notional)));
+        setOneWvUsdt(liveOneWv);
+        setEngagedWorkingVolume(
+          liveSide !== "Flat" && Number.isFinite(liveOneWvNumber) && liveOneWvNumber > 0
+            ? (notional / liveOneWvNumber).toFixed(1)
+            : null,
+        );
+      }
       setAmendPrices((current) => Object.fromEntries(
         activeLimitOrders.map((order) => [order.order_id, current[order.order_id] ?? order.price]),
       ));
-  }, [activeLimitOrders, onPositionAverageEntryChange, onPositionSideChange, paperState]);
+  }, [
+    accountWorkspaceProjection,
+    activeLimitOrders,
+    onPositionAverageEntryChange,
+    onPositionSideChange,
+    paperState,
+    symbol,
+  ]);
 
   useEffect(() => {
     if (
@@ -458,6 +518,45 @@ export function ModePanel({
   };
 
   const submitFullClose = async () => {
+    if (liveFullCloseAllowed) {
+      try {
+        const result = await liveFullCloseSubmissionController.current.submit(
+          { symbol },
+          {
+            currentAuthority: () => {
+              const current = fullCloseAuthority.current;
+              const projection = current.projection;
+              return current.allowed && projection?.provider === "BYBIT"
+                ? {
+                    accountId: projection.account_id,
+                    sessionGeneration: projection.session_generation,
+                  }
+                : null;
+            },
+            createClientActionId: () =>
+              globalThis.crypto?.randomUUID?.() ?? `live-full-close-${Date.now()}`,
+            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+          },
+        );
+        setExecutionStatus(
+          !result || result.status === "unknown" || result.reconciliation_required
+            ? "LIVE Full Close ambiguous — reconciling; do not retry"
+            : result.status === "accepted_pending"
+              ? "LIVE Full Close accepted — awaiting REST evidence"
+              : result.status === "completed"
+                ? "LIVE position closed"
+                : `LIVE Full Close ${result.status}: ${result.reason_code}`,
+        );
+      } catch {
+        setExecutionStatus("LIVE Full Close transport uncertain — reconciling; do not retry");
+        await accountWorkspaceStore.refreshActiveLive();
+      }
+      return;
+    }
+    if (!mutationsAllowed) {
+      setExecutionStatus("Full Close unavailable: account authority changed");
+      return;
+    }
     try {
       const result = await paperFullCloseSubmissionController.current.submit(
         { symbol },
@@ -613,9 +712,9 @@ export function ModePanel({
         <div className="paper-market-actions-shell" {...tradingInputFocus.boundaryProps}>
         <div
           aria-label="Manual trading controls"
-          className={`paper-market-actions${mutationsAllowed || liveMarketAllowed || liveLimitAllowed || liveProtectionAllowed ? "" : " is-read-only"}`}
+          className={`paper-market-actions${mutationsAllowed || liveMarketAllowed || liveLimitAllowed || liveProtectionAllowed || liveFullCloseAllowed ? "" : " is-read-only"}`}
         >
-          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed}>
+          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed && !liveFullCloseAllowed}>
           <div className="paper-trade-side-group" aria-label="PAPER trade sides">
             <div className="paper-market-side paper-market-buy-side">
               <TradingControlButton
@@ -706,7 +805,7 @@ export function ModePanel({
                 {positionSide !== "Flat" ? (
                   <TradingControlButton
                     className={`paper-wv-close ${positionSide.toLowerCase()}`}
-
+                    disabled={!mutationsAllowed && !liveFullCloseAllowed}
                     onTap={() => setCloseConfirmOpen(true)}
                     type="button"
                     aria-label={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e"}
@@ -818,7 +917,7 @@ export function ModePanel({
               </svg>            </button>
           </div>
 
-          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed && !liveProtectionAllowed}>
+          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed && !liveProtectionAllowed && !liveFullCloseAllowed}>
           <div className="paper-protection-stack">
             <TradingControlButton
               className="paper-stop-button"
@@ -1069,7 +1168,10 @@ export function ModePanel({
                   <TradingControlButton
                     type="button"
                     className="paper-close-confirm-accept"
-                    disabled={pendingActions.has("FULL_CLOSE")}
+                    disabled={
+                      (!mutationsAllowed && !liveFullCloseAllowed)
+                      || pendingActions.has("FULL_CLOSE")
+                    }
                     onTap={async () => {
                       await submitFullClose();
                       setCloseConfirmOpen(false);
