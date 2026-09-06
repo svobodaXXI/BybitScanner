@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PaperLimitMutationResponse, PaperState } from "../contracts/trading";
-import { createLimitDraft, type LimitDraftAction } from "./limitDraft";
-import { PaperLimitDraftSubmitController } from "./limitDraftSubmission";
+import {
+  createLimitDraft,
+  type LimitDraftAction,
+  type LimitSubmitOutcome,
+} from "./limitDraft";
+import {
+  LimitDraftSubmitController,
+  PaperLimitDraftSubmitController,
+} from "./limitDraftSubmission";
 
 const draft = () =>
   createLimitDraft({
@@ -33,6 +40,79 @@ const paperState: PaperState = {
 
 const response = (result: PaperLimitMutationResponse) =>
   ({ json: vi.fn().mockResolvedValue(result) }) as unknown as Response;
+
+describe("LimitDraftSubmitController", () => {
+  type MockLiveResult = {
+    status: "completed" | "blocked";
+    reason_code: string;
+  };
+
+  const classify = (
+    outcome: LimitSubmitOutcome<MockLiveResult>,
+  ): { state: "completed" } | { state: "rejected"; reason: string } | { state: "ambiguous" } => {
+    if (outcome.certainty === "ambiguous") return { state: "ambiguous" };
+    if (outcome.value.status === "completed") return { state: "completed" };
+    return { state: "rejected", reason: outcome.value.reason_code };
+  };
+
+  it("drives the same completed lifecycle for a mocked LIVE adapter", async () => {
+    const dispatch = vi.fn<(action: LimitDraftAction) => void>();
+    let resolveOutcome!: (value: LimitSubmitOutcome<MockLiveResult>) => void;
+    const transport = new Promise<LimitSubmitOutcome<MockLiveResult>>((resolve) => {
+      resolveOutcome = resolve;
+    });
+    const startAttempt = vi.fn(() => ({
+      draftId: "draft-1",
+      clientActionId: "live-action-1",
+      promise: transport,
+    }));
+    const controller = new LimitDraftSubmitController<MockLiveResult>();
+    const dependencies = { dispatch, startAttempt, classifyOutcome: classify };
+
+    const first = controller.submit(draft(), dependencies);
+    const repeated = controller.submit(draft(), dependencies);
+
+    expect(repeated).toBe(first);
+    expect(startAttempt).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "start-submitting",
+      clientActionId: "live-action-1",
+      draftId: "draft-1",
+    });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "dismiss", draftId: "draft-1" });
+
+    resolveOutcome({
+      certainty: "definitive",
+      value: { status: "completed", reason_code: "created" },
+    });
+    await first.promise;
+
+    expect(dispatch).toHaveBeenCalledWith({ type: "dismiss", draftId: "draft-1" });
+  });
+
+  it("keeps an ambiguous mocked LIVE attempt latched without a second start", async () => {
+    const dispatch = vi.fn<(action: LimitDraftAction) => void>();
+    const startAttempt = vi.fn(() => ({
+      draftId: "draft-1",
+      clientActionId: "live-action-ambiguous",
+      promise: Promise.resolve({ certainty: "ambiguous" } as const),
+    }));
+    const controller = new LimitDraftSubmitController<MockLiveResult>();
+    const dependencies = { dispatch, startAttempt, classifyOutcome: classify };
+
+    const first = controller.submit(draft(), dependencies);
+    await first.promise;
+    const repeated = controller.submit(draft(), dependencies);
+
+    expect(repeated).toBe(first);
+    expect(startAttempt).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "mark-ambiguous",
+      clientActionId: "live-action-ambiguous",
+      draftId: "draft-1",
+    });
+  });
+});
 
 describe("PaperLimitDraftSubmitController", () => {
   it("deduplicates one successful attempt, clears once, and refreshes authority", async () => {
