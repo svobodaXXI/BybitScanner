@@ -63,7 +63,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it("requires explicit confirmation before a marketable DOM Limit can execute as MARKET", async () => {
+it("executes a marketable DOM selection immediately as MARKET without a confirmation dialog", async () => {
   const fetchMock = vi.fn(async (url: string) => {
     if (url === "/api/instruments") {
       return { ok: true, json: async () => ({ instruments: [{ symbol: "BTCUSDT" }] }) };
@@ -147,12 +147,8 @@ it("requires explicit confirmation before a marketable DOM Limit can execute as 
   fireEvent.click(screen.getByRole("button", { name: "Arm fast Buy" }));
   fireEvent.click(screen.getByRole("button", { name: "Select marketable ask" }));
 
-  expect(fetchMock.mock.calls.filter(([url]) => url === "/api/market")).toHaveLength(0);
-  expect(screen.getByRole("dialog", { name: "Confirm marketable DOM order" })).toBeInTheDocument();
-
-  fireEvent.click(screen.getByRole("button", { name: "Confirm MARKET execution" }));
-
   await waitFor(() => {
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/market")).toHaveLength(1);
   });
+  expect(screen.queryByRole("dialog", { name: "Confirm marketable DOM order" })).not.toBeInTheDocument();
 });
