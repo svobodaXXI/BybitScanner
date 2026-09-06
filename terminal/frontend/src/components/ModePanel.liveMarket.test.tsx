@@ -12,15 +12,19 @@ const projection = {
   positions: [], orders: [], paper_state: null,
 };
 
-function renderLive(onFastLimitHoldChange = vi.fn()) {
-  render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} symbol="BTCUSDT"
+function livePanel(liveMarketAllowed = true, onFastLimitHoldChange = vi.fn()) {
+  return <ModePanel mode="TERMINAL" onModeChange={vi.fn()} symbol="BTCUSDT"
     paperState={null} activeLimitOrders={[]} refreshPaperState={vi.fn()}
     sizingReferencePrice="50000" authoritativeTickSize="0.1"
     limitDraftState={EMPTY_LIMIT_DRAFT_STATE} dispatchLimitDraft={vi.fn()}
     onLimitDraftConfirm={vi.fn()} onPositionSideChange={vi.fn()}
     selectedVolumes={{ Buy: "10", Sell: "11" }} mutationsAllowed={false}
-    liveMarketAllowed={true} accountWorkspaceProjection={projection}
-    onFastLimitHoldChange={onFastLimitHoldChange} />);
+    liveMarketAllowed={liveMarketAllowed} accountWorkspaceProjection={projection}
+    onFastLimitHoldChange={onFastLimitHoldChange} />;
+}
+
+function renderLive(onFastLimitHoldChange = vi.fn()) {
+  return render(livePanel(true, onFastLimitHoldChange));
 }
 
 describe("ModePanel LIVE MARKET capability", () => {
@@ -73,6 +77,21 @@ describe("ModePanel LIVE MARKET capability", () => {
     expect(fetcher.mock.calls.filter((call) => call[0] === "/api/live/market")).toHaveLength(1);
     const body = JSON.parse(liveCall[1].body);
     expect(body).toMatchObject({ account_id: "bybit-main", session_generation: 7 });
+  });
+
+  it("drops an unsubmitted LIVE confirmation when market capability is revoked", async () => {
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const view = render(livePanel(true));
+    fireEvent.click(screen.getByRole("button", { name: "BUY" }));
+    expect(screen.getByRole("dialog", { name: "Confirm LIVE Market order" })).toBeInTheDocument();
+
+    view.rerender(livePanel(false));
+
+    await waitFor(() => expect(screen.queryByRole("dialog", {
+      name: "Confirm LIVE Market order",
+    })).not.toBeInTheDocument());
+    expect(fetcher.mock.calls.filter((call) => call[0] === "/api/live/market")).toHaveLength(0);
   });
 
   it("does not turn a LIVE BUY hold into fast Limit", () => {
