@@ -51,6 +51,18 @@ describe("PendingLimitLine", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it("shows a definitive rejection reason without latching the draft", () => {
+    const onConfirm = vi.fn();
+    const onDismiss = vi.fn();
+    render(<PendingLimitLine side="Buy" price="0.1" top={120}
+      onDragClientY={vi.fn()} onConfirm={onConfirm} onDismiss={onDismiss}
+      rejectionReason="insufficient_volume" />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("REJECTED — insufficient_volume");
+    expect(screen.getByRole("button", { name: "Confirm pending Buy Limit" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Dismiss pending Buy Limit" })).toBeEnabled();
+  });
+
   it("renders one pending line and reports drag coordinates", () => {
     const onDragClientY = vi.fn();
     render(
