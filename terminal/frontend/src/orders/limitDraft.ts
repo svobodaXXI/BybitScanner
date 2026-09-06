@@ -104,6 +104,23 @@ export function normalizeLimitDraftPrice(
   return normalizedUnits > 0n ? formatUnits(normalizedUnits, scale) : null;
 }
 
+const FLOAT_ARTIFACT_EXTRA_SCALE = 6;
+
+function sanitizeLimitDraftInteractionPrice(
+  price: string,
+  authoritativeTickSize: string | null,
+  side: MarketSide,
+): string {
+  if (authoritativeTickSize === null) return price;
+  const parsedPrice = parsePositiveDecimal(price);
+  const parsedTick = parsePositiveDecimal(authoritativeTickSize);
+  if (!parsedPrice || !parsedTick) return price;
+  if (parsedPrice.scale <= parsedTick.scale + FLOAT_ARTIFACT_EXTRA_SCALE) {
+    return price;
+  }
+  return normalizeLimitDraftPrice(price, authoritativeTickSize, side) ?? price;
+}
+
 export function createLimitDraft(input: {
   draftId: string;
   symbol: string;
@@ -214,9 +231,13 @@ export function limitDraftReducer(
 
     updated = {
       ...target,
-      // Preserve the exact decimal draft while the user is typing. The
-      // authoritative tick is applied at validation/submission.
-      price: action.price,
+      // Preserve ordinary typed decimals exactly, but collapse anomalously long
+      // binary-float tails emitted by chart coordinate conversion.
+      price: sanitizeLimitDraftInteractionPrice(
+        action.price,
+        target.authoritativeTickSize,
+        target.side,
+      ),
       status: "editing",
       clientActionId: null,
       rejectionReason: null,
