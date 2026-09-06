@@ -311,4 +311,4 @@ The LIVE adapter migration commits are now remote and require a fresh local pull
 
 ## Next step
 
-Pull the latest `shared-limit-execution-boundary-slice2` branch locally and run the shared + LIVE adapter targeted suite. If it passes, run the production build. Do not perform a real LIVE exchange mutation for this refactor verification; mocked/controlled tests are the required evidence for this step.
+Pull the latest `shared-limit-execution-boundary-slice2` branch locally. First run the targeted shared + LIVE adapter suite. Only after that suite passes, run the production build. Do not perform a real LIVE exchange mutation for this refactor verification; mocked/controlled tests are the required evidence for this step.
