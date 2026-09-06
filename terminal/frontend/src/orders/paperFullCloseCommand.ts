@@ -20,8 +20,10 @@ export async function executePaperFullCloseCommand(
     body: JSON.stringify(request),
   });
   const result = (await response.json()) as CommandMutationResponse;
-  if (result.status === "completed") {
-    dependencies.applyPaperState?.(result.paper_state);
+  if (result.status === "completed" && dependencies.applyPaperState) {
+    if (!dependencies.applyPaperState(result.paper_state)) {
+      throw new Error("paper_full_close_authoritative_state_rejected");
+    }
   }
   return result;
 }
