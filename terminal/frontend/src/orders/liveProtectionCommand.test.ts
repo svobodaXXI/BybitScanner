@@ -21,14 +21,14 @@ const response = {
 
 describe("executeLiveProtection", () => {
   it("posts the complete protection state to the operation-specific endpoint", async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify(response)));
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(response)));
 
     await executeLiveProtection(
       "STOP",
       "AMEND",
       request,
       () => ({ accountId: "bybit-main", sessionGeneration: 7 }),
-      fetcher as typeof fetch,
+      fetcher,
     );
 
     expect(fetcher).toHaveBeenCalledTimes(1);
@@ -38,14 +38,14 @@ describe("executeLiveProtection", () => {
   });
 
   it("returns null when authority changed while the request was in flight", async () => {
-    const fetcher = vi.fn(async () => new Response(JSON.stringify(response)));
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(response)));
 
     const result = await executeLiveProtection(
       "TAKE",
       "DELETE",
       request,
       () => ({ accountId: "bybit-other", sessionGeneration: 8 }),
-      fetcher as typeof fetch,
+      fetcher,
     );
 
     expect(result).toBeNull();
