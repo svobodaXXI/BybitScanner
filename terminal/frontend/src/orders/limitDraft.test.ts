@@ -68,6 +68,16 @@ describe("Limit Draft foundation", () => {
       .toBe("10.1");
   });
 
+  it("collapses an anomalously long chart-drag float tail to authoritative tick precision", () => {
+    const base = draft("limits-popup", "0.00001");
+    const editing = limitDraftReducer(
+      { draft: base, drafts: [base] },
+      { type: "update-price", price: "0.09042679128725561" },
+    );
+
+    expect(editing.draft?.price).toBe("0.09042");
+  });
+
   it("keeps the submission identity stable in reducer transitions", () => {
     const submitting = limitDraftReducer(
       { draft: draft() },
