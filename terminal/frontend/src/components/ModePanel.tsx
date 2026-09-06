@@ -161,7 +161,7 @@ export function ModePanel({
     useState<MarketSide | null>(null);
   const [cancelLimitSideConfirm, setCancelLimitSideConfirm] =
     useState<"Buy" | "Sell" | null>(null);
-  const liveCancelPending = useRef(false);
+  const liveCancelPending = useRef<{ authorityKey: string; token: symbol } | null>(null);
   const cancelAuthority = useRef({ projection: accountWorkspaceProjection, allowed: liveLimitAllowed });
   cancelAuthority.current = { projection: accountWorkspaceProjection, allowed: liveLimitAllowed };
   const marketAuthority = useRef({ projection: accountWorkspaceProjection, allowed: liveMarketAllowed });
@@ -619,14 +619,19 @@ export function ModePanel({
 
     if (accountWorkspaceProjection?.provider === "BYBIT" || liveLimitAllowed || !mutationsAllowed) {
       const captured = accountWorkspaceProjection;
+      const authorityKey = captured?.provider === "BYBIT"
+        ? `${captured.account_id}:${captured.session_generation}`
+        : null;
       const authorityMatches = () => {
         const current = cancelAuthority.current;
         return captured?.provider === "BYBIT" && current.allowed
           && current.projection?.account_id === captured.account_id
           && current.projection?.session_generation === captured.session_generation;
       };
-      if (!authorityMatches() || liveCancelPending.current) return;
-      liveCancelPending.current = true;
+      const pending = liveCancelPending.current;
+      if (!authorityMatches() || !authorityKey || pending?.authorityKey === authorityKey) return;
+      const token = Symbol("live-bulk-cancel");
+      liveCancelPending.current = { authorityKey, token };
       try {
         let submitted = 0;
         for (const order of orders) {
@@ -643,7 +648,9 @@ export function ModePanel({
       } catch {
         if (authorityMatches()) setExecutionStatus("LIVE LIMIT cancellation failed or requires reconciliation");
       } finally {
-        liveCancelPending.current = false;
+        if (liveCancelPending.current?.token === token) {
+          liveCancelPending.current = null;
+        }
       }
       return;
     }
