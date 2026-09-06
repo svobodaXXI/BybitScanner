@@ -32,7 +32,9 @@ afterEach(() => {
 
 describe("OpenPositionsOverlay PAPER Full Close lifecycle boundary", () => {
   it("routes single Full Close through the shared submission mutation boundary", async () => {
-    const runPaperMutation = vi.fn(async (_key: string, operation: () => Promise<unknown>) => operation());
+    const runPaperMutation = vi.fn(
+      async <T,>(_key: string, operation: () => Promise<T>): Promise<T> => operation(),
+    );
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(inventory([position]))
       .mockResolvedValueOnce({
