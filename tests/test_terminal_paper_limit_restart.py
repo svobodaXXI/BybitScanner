@@ -66,7 +66,7 @@ def test_active_paper_limit_survives_runtime_restart():
             after = restarted.paper_state("BTCUSDT")
             assert [item["order_id"] for item in after["active_limit_orders"]] == [created.order_id]
             assert after["active_limit_orders"][0]["side"] == "Buy"
-            assert after["active_limit_orders"][0]["price"] == "64000.0"
+            assert Decimal(after["active_limit_orders"][0]["price"]) == Decimal("64000")
             assert after["active_limit_orders"][0]["time_in_force"] == "GTC"
         finally:
             restarted.close()
