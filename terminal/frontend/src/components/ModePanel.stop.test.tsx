@@ -81,6 +81,7 @@ it("shows the explicit current-market reference when active STOP settings are op
       limitDraftState={EMPTY_LIMIT_DRAFT_STATE} dispatchLimitDraft={vi.fn()}
       onLimitDraftConfirm={vi.fn()} onPositionSideChange={vi.fn()}
       stopActive stopSettingsOpen stopReferencePrice="101"
+      protectionPositionSide="Long"
     />,
   );
   expect(screen.getByRole("dialog", { name: "STOP settings" })).toHaveTextContent("Reference 101");
@@ -96,6 +97,7 @@ it("derives TAKE green dot from authority and reuses hold settings with current 
       limitDraftState={EMPTY_LIMIT_DRAFT_STATE} dispatchLimitDraft={vi.fn()}
       onLimitDraftConfirm={vi.fn()} onPositionSideChange={vi.fn()}
       takeActive takeSettingsOpen takeReferencePrice="101" onTakeTap={onTakeTap}
+      protectionPositionSide="Long"
     />,
   );
   fireEvent.click(screen.getByRole("button", { name: "TAKE" }));
@@ -125,4 +127,24 @@ it("opens TAKE settings through the shared 500ms hold activation", () => {
   expect(onTakeTap).not.toHaveBeenCalled();
   fireEvent.pointerUp(button, { pointerId: 7, pointerType: "mouse", button: 0 });
   vi.useRealTimers();
+});
+
+it("enables STOP and TAKE from LIVE protection authority without PAPER mutation authority", () => {
+  render(
+    <ModePanel
+      mode="TERMINAL" onModeChange={vi.fn()} symbol="BTCUSDT" paperState={null}
+      activeLimitOrders={[]} refreshPaperState={async () => {}}
+      sizingReferencePrice="64000" authoritativeTickSize="0.5"
+      limitDraftState={EMPTY_LIMIT_DRAFT_STATE} dispatchLimitDraft={vi.fn()}
+      onLimitDraftConfirm={vi.fn()} onPositionSideChange={vi.fn()}
+      mutationsAllowed={false} liveProtectionAllowed protectionPositionSide="Short"
+      stopSettingsOpen stopReferencePrice="65000"
+      takeSettingsOpen takeReferencePrice="62000"
+    />,
+  );
+
+  expect(screen.getByRole("button", { name: "STOP" })).not.toBeDisabled();
+  expect(screen.getByRole("button", { name: "TAKE" })).not.toBeDisabled();
+  expect(screen.getByRole("dialog", { name: "STOP settings" })).toHaveTextContent("Reference 65000");
+  expect(screen.getByRole("dialog", { name: "TAKE settings" })).toHaveTextContent("Reference 62000");
 });

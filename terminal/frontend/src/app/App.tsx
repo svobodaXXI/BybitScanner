@@ -65,6 +65,8 @@ import {
   takePriceFromPercent,
 } from "../orders/stopPreset";
 import { PaperProtectionMutationController } from "../orders/paperProtectionMutationSubmission";
+import { LiveProtectionMutationController } from "../orders/liveProtectionMutationSubmission";
+import { projectLiveProtectionPosition } from "../orders/liveProtectionProjection";
 import {
   isSignalTakeProposalHandled,
   markSignalTakeProposalHandled,
@@ -80,6 +82,13 @@ import {
   paperTradingStore,
   usePaperTrading,
 } from "../paperTrading/paperTradingStore";
+
+const sameProtectionPrice = (left: string | null, right: string | null) => {
+  if (left === null || right === null) return left === right;
+  const a = Number(left);
+  const b = Number(right);
+  return Number.isFinite(a) && Number.isFinite(b) && a === b;
+};
 
 export function App() {
   const [mode, setMode] = useState<WorkspaceMode>("TERMINAL");
@@ -118,7 +127,9 @@ export function App() {
   const paperLimitOrderMutationController = useRef(new PaperLimitOrderMutationController());
   const liveLimitOrderMutationController = useRef(new LiveLimitOrderMutationController());
   const paperProtectionMutationController = useRef(new PaperProtectionMutationController());
+  const liveProtectionMutationController = useRef(new LiveProtectionMutationController());
   const limitMutationAuthorityKey = useRef<string | null>(null);
+  const protectionMutationAuthorityKey = useRef<string | null>(null);
   const domLimitController = useRef(new DomLimitPlacementController());
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
     null,
@@ -144,10 +155,24 @@ export function App() {
     && accountProjection.status === "READY"
     && accountProjection.read_only === false
     && accountProjection.capabilities?.limit === true;
+  const liveProtectionAllowed = !accountWorkspace.switching
+    && accountProjection?.provider === "BYBIT"
+    && accountProjection.environment === "MAINNET"
+    && accountProjection.status === "READY"
+    && accountProjection.read_only === false
+    && accountProjection.capabilities?.stop === true
+    && accountProjection.capabilities?.take === true;
   const currentLiveAuthority = useCallback(() => liveLimitAllowed && accountProjection ? {
     accountId: accountProjection.account_id,
     sessionGeneration: accountProjection.session_generation,
   } : null, [accountProjection, liveLimitAllowed]);
+  const currentLiveProtectionAuthority = useCallback(
+    () => liveProtectionAllowed && accountProjection ? {
+      accountId: accountProjection.account_id,
+      sessionGeneration: accountProjection.session_generation,
+    } : null,
+    [accountProjection, liveProtectionAllowed],
+  );
   useEffect(() => {
     const nextMutationAuthorityKey = liveLimitAllowed && accountProjection
       ? `LIVE:${accountProjection.account_id}:${accountProjection.session_generation}`
@@ -158,7 +183,16 @@ export function App() {
       limitMutationAuthorityKey.current = nextMutationAuthorityKey;
       paperLimitOrderMutationController.current.clear();
       liveLimitOrderMutationController.current.clear();
+    }
+    const nextProtectionAuthorityKey = liveProtectionAllowed && accountProjection
+      ? `LIVE:${accountProjection.account_id}:${accountProjection.session_generation}`
+      : mutationsAllowed && accountProjection
+        ? `PAPER:${accountProjection.account_id}:${accountProjection.session_generation}`
+        : null;
+    if (protectionMutationAuthorityKey.current !== nextProtectionAuthorityKey) {
+      protectionMutationAuthorityKey.current = nextProtectionAuthorityKey;
       paperProtectionMutationController.current.clear();
+      liveProtectionMutationController.current.clear();
     }
     paperTradingStore.setAccountSession(
       mutationsAllowed ? accountProjection.account_id : null,
@@ -168,11 +202,21 @@ export function App() {
     accountProjection?.account_id,
     accountProjection?.session_generation,
     liveLimitAllowed,
+    liveProtectionAllowed,
     mutationsAllowed,
   ]);
   const applyPaperStateForSession = paperTradingStore.captureApplyPaperState();
   const currentPaperState =
     mutationsAllowed && paperState?.symbol === tradingSymbol ? paperState : null;
+  const liveProtectionPosition = liveProtectionAllowed
+    ? projectLiveProtectionPosition(accountProjection, tradingSymbol)
+    : null;
+  const protectionPositionSide = currentPaperState?.ok
+    ? currentPaperState.position_side
+    : liveProtectionPosition?.side ?? "Flat";
+  const protectionAverageEntry = currentPaperState?.ok
+    ? currentPaperState.average_entry
+    : liveProtectionPosition?.averageEntry ?? null;
   useEffect(() => {
     if (mutationsAllowed) return;
     setFastLimitIntent(null);
@@ -227,8 +271,12 @@ export function App() {
     : liveLimitAllowed && accountProjection
       ? projectLiveLimitOrders(accountProjection.orders, tradingSymbol)
       : [];
-  const activeStopPrice = authoritativeStopPrice(currentPaperState);
-  const activeTakePrice = authoritativeTakePrice(currentPaperState);
+  const activeStopPrice = currentPaperState?.ok
+    ? authoritativeStopPrice(currentPaperState)
+    : liveProtectionPosition?.stopLoss ?? null;
+  const activeTakePrice = currentPaperState?.ok
+    ? authoritativeTakePrice(currentPaperState)
+    : liveProtectionPosition?.takeProfit ?? null;
   const domOwnOrders = useMemo(
     () => projectPaperLimitOrders(activeLimitOrders, tradingSymbol),
     [activeLimitOrders, tradingSymbol],
@@ -269,16 +317,54 @@ export function App() {
   }, [mode, paperState, refreshPaperState]);
 
   useEffect(() => {
-    if (shouldClearStopDraft(stopDraft, currentPaperState, tradingSymbol)) {
+    const protectionUnavailable = !mutationsAllowed && !liveProtectionAllowed;
+    const clearForLive = liveProtectionAllowed && liveProtectionPosition === null;
+    if (
+      shouldClearStopDraft(stopDraft, currentPaperState, tradingSymbol)
+      || (stopDraft !== null && (
+        stopDraft.symbol !== tradingSymbol || clearForLive || protectionUnavailable
+      ))
+    ) {
       dispatchStopDraft({ type: "clear" });
     }
-    if (shouldClearStopDraft(takeDraft, currentPaperState, tradingSymbol)) {
+    if (
+      shouldClearStopDraft(takeDraft, currentPaperState, tradingSymbol)
+      || (takeDraft !== null && (
+        takeDraft.symbol !== tradingSymbol || clearForLive || protectionUnavailable
+      ))
+    ) {
       dispatchTakeDraft({ type: "clear" });
     }
-    if (shouldCloseStopSettings(protectionSettings?.symbol ?? null, currentPaperState, tradingSymbol)) {
+    const closePaperSettings = shouldCloseStopSettings(
+      protectionSettings?.symbol ?? null, currentPaperState, tradingSymbol,
+    );
+    const closeLiveSettings = liveProtectionAllowed
+      && protectionSettings !== null
+      && (protectionSettings.symbol !== tradingSymbol || liveProtectionPosition === null);
+    const closeUnavailableSettings = protectionUnavailable && protectionSettings !== null;
+    if (closePaperSettings || closeLiveSettings || closeUnavailableSettings) {
       setProtectionSettings(null);
     }
-  }, [currentPaperState, protectionSettings, stopDraft, takeDraft, tradingSymbol]);
+  }, [
+    currentPaperState,
+    liveProtectionAllowed,
+    liveProtectionPosition,
+    mutationsAllowed,
+    protectionSettings,
+    stopDraft,
+    takeDraft,
+    tradingSymbol,
+  ]);
+
+  useEffect(() => {
+    if (!liveProtectionAllowed) return;
+    if (stopDraft?.status === "submitting" && sameProtectionPrice(activeStopPrice, stopDraft.price)) {
+      dispatchStopDraft({ type: "clear" });
+    }
+    if (takeDraft?.status === "submitting" && sameProtectionPrice(activeTakePrice, takeDraft.price)) {
+      dispatchTakeDraft({ type: "clear" });
+    }
+  }, [activeStopPrice, activeTakePrice, liveProtectionAllowed, stopDraft, takeDraft]);
 
   useEffect(() => {
     if (takeDraft !== null || scannerSignal === null) return;
@@ -302,12 +388,12 @@ export function App() {
 
   useEffect(() => {
     if (
-      scannerSignal !== null && activeTakePrice !== null &&
+      currentPaperState?.ok && scannerSignal !== null && activeTakePrice !== null &&
       scannerSignal.symbol === tradingSymbol
     ) {
       markSignalTakeProposalHandled(scannerSignal.signalId);
     }
-  }, [activeTakePrice, scannerSignal, tradingSymbol]);
+  }, [activeTakePrice, currentPaperState, scannerSignal, tradingSymbol]);
 
   useEffect(() => {
     if (!shouldClearSignalTakeProposal(
@@ -563,12 +649,16 @@ export function App() {
   }, [currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
 
   const beginStopDraft = useCallback((): "drafted" | "not-improved" | undefined => {
-    if (!currentPaperState?.ok || market.tickSize === null) return;
+    if (
+      (!mutationsAllowed && !liveProtectionAllowed)
+      || protectionPositionSide === "Flat"
+      || market.tickSize === null
+    ) return;
     const referencePrice = activeStopPrice === null
-      ? currentPaperState.average_entry
+      ? protectionAverageEntry
       : sizingReferencePrice;
     const price = stopPriceFromPercent(
-      currentPaperState.position_side,
+      protectionPositionSide,
       referencePrice,
       stopPresetPercent,
       String(market.tickSize),
@@ -578,7 +668,7 @@ export function App() {
       dispatchStopDraft({ type: "begin-create", symbol: tradingSymbol, price });
       return "drafted";
     }
-    if (!isImprovingStop(currentPaperState.position_side, price, activeStopPrice)) {
+    if (!isImprovingStop(protectionPositionSide, price, activeStopPrice)) {
       return "not-improved";
     }
     dispatchStopDraft({
@@ -588,10 +678,20 @@ export function App() {
     });
     dispatchStopDraft({ type: "update-price", price });
     return "drafted";
-  }, [activeStopPrice, currentPaperState, market.tickSize, sizingReferencePrice, stopPresetPercent, tradingSymbol]);
+  }, [
+    activeStopPrice,
+    liveProtectionAllowed,
+    market.tickSize,
+    mutationsAllowed,
+    protectionAverageEntry,
+    protectionPositionSide,
+    sizingReferencePrice,
+    stopPresetPercent,
+    tradingSymbol,
+  ]);
 
   const applyStopSettings = useCallback((price: string, percent: string) => {
-    if (!currentPaperState?.ok) return;
+    if ((!mutationsAllowed && !liveProtectionAllowed) || protectionPositionSide === "Flat") return;
     setStopPresetPercent(percent);
     saveStopPreset(percent);
     if (activeStopPrice === null) {
@@ -605,7 +705,7 @@ export function App() {
       dispatchStopDraft({ type: "update-price", price });
     }
     setProtectionSettings(null);
-  }, [activeStopPrice, currentPaperState, tradingSymbol]);
+  }, [activeStopPrice, liveProtectionAllowed, mutationsAllowed, protectionPositionSide, tradingSymbol]);
 
   const updateStopPreset = useCallback((percent: string) => {
     setStopPresetPercent(percent);
@@ -613,12 +713,16 @@ export function App() {
   }, []);
 
   const beginTakeDraft = useCallback(() => {
-    if (!currentPaperState?.ok || market.tickSize === null) return;
+    if (
+      (!mutationsAllowed && !liveProtectionAllowed)
+      || protectionPositionSide === "Flat"
+      || market.tickSize === null
+    ) return;
     const referencePrice = activeTakePrice === null
-      ? currentPaperState.average_entry
+      ? protectionAverageEntry
       : sizingReferencePrice;
     const price = takePriceFromPercent(
-      currentPaperState.position_side,
+      protectionPositionSide,
       referencePrice,
       takePresetPercent,
       String(market.tickSize),
@@ -633,10 +737,20 @@ export function App() {
       });
       dispatchTakeDraft({ type: "update-price", price });
     }
-  }, [activeTakePrice, currentPaperState, market.tickSize, sizingReferencePrice, takePresetPercent, tradingSymbol]);
+  }, [
+    activeTakePrice,
+    liveProtectionAllowed,
+    market.tickSize,
+    mutationsAllowed,
+    protectionAverageEntry,
+    protectionPositionSide,
+    sizingReferencePrice,
+    takePresetPercent,
+    tradingSymbol,
+  ]);
 
   const applyTakeSettings = useCallback((price: string, percent: string) => {
-    if (!currentPaperState?.ok) return;
+    if ((!mutationsAllowed && !liveProtectionAllowed) || protectionPositionSide === "Flat") return;
     setTakePresetPercent(percent);
     saveTakePreset(percent);
     if (activeTakePrice === null) {
@@ -649,7 +763,7 @@ export function App() {
       dispatchTakeDraft({ type: "update-price", price });
     }
     setProtectionSettings(null);
-  }, [activeTakePrice, currentPaperState, tradingSymbol]);
+  }, [activeTakePrice, liveProtectionAllowed, mutationsAllowed, protectionPositionSide, tradingSymbol]);
 
   const updateTakePreset = useCallback((percent: string) => {
     setTakePresetPercent(percent);
@@ -674,28 +788,64 @@ export function App() {
   }, [activeTakePrice, tradingSymbol]);
 
   const updateStopDraftPrice = useCallback((rawPrice: string) => {
-    if (!stopDraft || !currentPaperState?.ok || market.tickSize === null) return;
-    const closingSide = currentPaperState.position_side === "Long" ? "Sell" : "Buy";
+    if (!stopDraft || protectionPositionSide === "Flat" || market.tickSize === null) return;
+    const closingSide = protectionPositionSide === "Long" ? "Sell" : "Buy";
     const normalized = normalizeLimitDraftPrice(
       rawPrice, String(market.tickSize), closingSide,
     );
     if (normalized !== null) {
       dispatchStopDraft({ type: "update-price", price: normalized });
     }
-  }, [currentPaperState, market.tickSize, stopDraft]);
+  }, [market.tickSize, protectionPositionSide, stopDraft]);
 
   const updateTakeDraftPrice = useCallback((rawPrice: string) => {
-    if (!takeDraft || !currentPaperState?.ok || market.tickSize === null) return;
-    const closingSide = currentPaperState.position_side === "Long" ? "Sell" : "Buy";
+    if (!takeDraft || protectionPositionSide === "Flat" || market.tickSize === null) return;
+    const closingSide = protectionPositionSide === "Long" ? "Sell" : "Buy";
     const normalized = normalizeLimitDraftPrice(rawPrice, String(market.tickSize), closingSide);
     if (normalized !== null) dispatchTakeDraft({ type: "update-price", price: normalized });
-  }, [currentPaperState, market.tickSize, takeDraft]);
+  }, [market.tickSize, protectionPositionSide, takeDraft]);
 
   const confirmProtectionDraft = useCallback(async (leg: "STOP" | "TAKE") => {
     const draft = leg === "STOP" ? stopDraft : takeDraft;
     const dispatch = leg === "STOP" ? dispatchStopDraft : dispatchTakeDraft;
-    if (!draft || draft.status === "submitting") return;
+    if (
+      !draft
+      || draft.status === "submitting"
+      || (!mutationsAllowed && !liveProtectionAllowed)
+    ) return;
     dispatch({ type: "submitting" });
+    if (liveProtectionAllowed) {
+      try {
+        const result = await liveProtectionMutationController.current.submit(
+          {
+            leg,
+            operation: draft.mode === "CREATE" ? "CREATE" : "AMEND",
+            symbol: tradingSymbol,
+            triggerPrice: draft.price,
+            currentStopLoss: liveProtectionPosition?.stopLoss ?? null,
+            currentTakeProfit: liveProtectionPosition?.takeProfit ?? null,
+          },
+          {
+            currentAuthority: currentLiveProtectionAuthority,
+            createClientActionId: () =>
+              globalThis.crypto?.randomUUID?.() ?? `live-${leg.toLowerCase()}-${Date.now()}`,
+            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+          },
+        );
+        if (
+          result !== null
+          && result.status !== "accepted_pending"
+          && result.status !== "completed"
+          && result.status !== "unknown"
+          && !result.reconciliation_required
+        ) {
+          dispatch({ type: "restore-editing" });
+        }
+      } catch {
+        await accountWorkspaceStore.refreshActiveLive();
+      }
+      return;
+    }
     try {
       const result = await paperProtectionMutationController.current.submit(
         {
@@ -726,10 +876,41 @@ export function App() {
       dispatch({ type: "restore-editing" });
       await paperTradingStore.refresh();
     }
-  }, [stopDraft, takeDraft, tradingSymbol]);
+  }, [
+    currentLiveProtectionAuthority,
+    liveProtectionAllowed,
+    liveProtectionPosition,
+    mutationsAllowed,
+    stopDraft,
+    takeDraft,
+    tradingSymbol,
+  ]);
 
   const deleteProtection = useCallback(async (leg: "STOP" | "TAKE") => {
     if ((leg === "STOP" ? activeStopPrice : activeTakePrice) === null) return;
+    if (!mutationsAllowed && !liveProtectionAllowed) return;
+    if (liveProtectionAllowed) {
+      try {
+        await liveProtectionMutationController.current.submit(
+          {
+            leg,
+            operation: "DELETE",
+            symbol: tradingSymbol,
+            currentStopLoss: liveProtectionPosition?.stopLoss ?? null,
+            currentTakeProfit: liveProtectionPosition?.takeProfit ?? null,
+          },
+          {
+            currentAuthority: currentLiveProtectionAuthority,
+            createClientActionId: () =>
+              globalThis.crypto?.randomUUID?.() ?? `live-${leg.toLowerCase()}-delete-${Date.now()}`,
+            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+          },
+        );
+      } catch {
+        await accountWorkspaceStore.refreshActiveLive();
+      }
+      return;
+    }
     try {
       await paperProtectionMutationController.current.submit(
         {
@@ -747,7 +928,15 @@ export function App() {
     } catch {
       await paperTradingStore.refresh();
     }
-  }, [activeStopPrice, activeTakePrice, tradingSymbol]);
+  }, [
+    activeStopPrice,
+    activeTakePrice,
+    currentLiveProtectionAuthority,
+    liveProtectionAllowed,
+    liveProtectionPosition,
+    mutationsAllowed,
+    tradingSymbol,
+  ]);
 
   const visibleLimitDrafts =
     limitDraftState.drafts ??
@@ -822,11 +1011,7 @@ export function App() {
           onTakeCancelDraft={dismissTakeDraft}
           onTakeEdit={beginTakeEdit}
           onTakeDelete={() => deleteProtection("TAKE")}
-          averageEntryPrice={
-            currentPaperState?.ok && currentPaperState.position_side !== "Flat"
-              ? currentPaperState.average_entry
-              : null
-          }
+          averageEntryPrice={protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
           workspaceControls={(
             <WorkspaceHeader
               instruments={instruments}
@@ -917,6 +1102,7 @@ export function App() {
           }}
           onPositionSideChange={setPositionSide}
           onPositionAverageEntryChange={setPositionAverageEntry}
+          protectionPositionSide={protectionPositionSide}
           onStopTap={beginStopDraft}
           onStopHold={() => setProtectionSettings({ leg: "STOP", symbol: tradingSymbol })}
           stopActive={activeStopPrice !== null}
@@ -924,7 +1110,7 @@ export function App() {
           stopPresetPercent={stopPresetPercent}
           stopReferencePrice={
             activeStopPrice === null
-              ? currentPaperState?.average_entry ?? "0"
+              ? protectionAverageEntry ?? "0"
               : sizingReferencePrice
           }
           onStopSettingsApply={applyStopSettings}
@@ -937,7 +1123,7 @@ export function App() {
           takePresetPercent={takePresetPercent}
           takeReferencePrice={
             activeTakePrice === null
-              ? currentPaperState?.average_entry ?? "0"
+              ? protectionAverageEntry ?? "0"
               : sizingReferencePrice
           }
           onTakeSettingsApply={applyTakeSettings}
@@ -950,6 +1136,7 @@ export function App() {
           mutationsAllowed={mutationsAllowed}
           liveMarketAllowed={liveMarketAllowed}
           liveLimitAllowed={liveLimitAllowed}
+          liveProtectionAllowed={liveProtectionAllowed}
         />
       </section>
     </main>
