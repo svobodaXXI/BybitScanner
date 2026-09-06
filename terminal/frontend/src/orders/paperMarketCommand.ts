@@ -27,8 +27,10 @@ async function dispatchPaperMarketCommand(
 
   const result = (await response.json()) as CommandMutationResponse;
 
-  if (result.status === "completed") {
-    dependencies.applyPaperState?.(result.paper_state);
+  if (result.status === "completed" && dependencies.applyPaperState) {
+    if (!dependencies.applyPaperState(result.paper_state)) {
+      throw new Error("paper_market_authoritative_state_rejected");
+    }
   }
 
   return result;
