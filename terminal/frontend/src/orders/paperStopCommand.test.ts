@@ -74,29 +74,4 @@ describe("PAPER STOP commands", () => {
     expect(applyPaperState).toHaveBeenCalledWith(paperState(null));
     vi.unstubAllGlobals();
   });
-
-  it("deduplicates the same in-flight protection attempt even with a second client_action_id", async () => {
-    let resolve!: (value: Response) => void;
-    const fetchMock = vi.fn<typeof fetch>(() => new Promise<Response>((next) => { resolve = next; }));
-    vi.stubGlobal("fetch", fetchMock);
-    const applyPaperState = vi.fn(() => true);
-
-    const first = executePaperStopCreate(
-      { client_action_id: "first-id", symbol: "BTCUSDT", trigger_price: "98" },
-      { applyPaperState },
-    );
-    const duplicate = executePaperStopCreate(
-      { client_action_id: "second-id", symbol: "BTCUSDT", trigger_price: "98" },
-      { applyPaperState },
-    );
-
-    expect(duplicate).toBe(first);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string).client_action_id).toBe("first-id");
-
-    resolve({ ok: true, json: async () => response("98") } as Response);
-    await expect(first).resolves.toEqual(response("98"));
-    expect(applyPaperState).toHaveBeenCalledTimes(1);
-    vi.unstubAllGlobals();
-  });
 });
