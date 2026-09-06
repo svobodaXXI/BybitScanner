@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch } from "react";
 import {
-  type CommandMutationResponse,
-  type FullCloseCommandRequest,
   HANDLED_REASON_CODES,
   type MarketCommandRequest,
   type LiveMarketCommandRequest,
@@ -33,6 +31,7 @@ import {
 import { isValidSelectedVolume, type SelectedSideVolumes } from "../orders/selectedVolume";
 import { executePaperMarketCommand } from "../orders/paperMarketCommand";
 import { createLiveMarketAction, executeLiveMarketCommand } from "../orders/liveMarketCommand";
+import { PaperFullCloseSubmissionController } from "../orders/paperFullCloseSubmission";
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 import { AccountMenu } from "./AccountMenu";
 import { LiveAccountInventory } from "./LiveAccountInventory";
@@ -181,10 +180,20 @@ export function ModePanel({
   const [liveConfirmation, setLiveConfirmation] = useState<LiveMarketCommandRequest | null>(null);
   const [liveConfirmationSubmitting, setLiveConfirmationSubmitting] = useState(false);
   const liveDispatchActionIdRef = useRef<string | null>(null);
+  const paperFullCloseSubmissionController = useRef(new PaperFullCloseSubmissionController());
 
   useEffect(() => {
     setLiveConfirmation(null);
   }, [accountWorkspaceProjection?.account_id, accountWorkspaceProjection?.session_generation]);
+
+  useEffect(() => {
+    paperFullCloseSubmissionController.current.clear();
+  }, [
+    accountWorkspaceProjection?.account_id,
+    accountWorkspaceProjection?.provider,
+    accountWorkspaceProjection?.session_generation,
+    mutationsAllowed,
+  ]);
 
   useEffect(() => {
       const engagedWv = Number(paperState?.engaged_wv);
@@ -439,35 +448,29 @@ export function ModePanel({
     if (!result) return;
     setLiveConfirmation(null);
     setExecutionStatus(result.status === "unknown"
-      ? "LIVE result ambiguous вЂ” reconciling; do not retry"
-      : result.status === "accepted_pending" ? "LIVE accepted вЂ” awaiting REST evidence"
+      ? "LIVE result ambiguous — reconciling; do not retry"
+      : result.status === "accepted_pending" ? "LIVE accepted — awaiting REST evidence"
       : `LIVE ${result.status}: ${result.reason_code}`);
   };
 
   const submitFullClose = async () => {
-    await runPaperMutation("FULL_CLOSE", async () => {
-      try {
-      const request: FullCloseCommandRequest = {
-        client_action_id: `paper-full-close-${Date.now()}`,
-        symbol,
-      };
-      const response = await fetch("/api/full-close", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-      });
-      const result = (await response.json()) as CommandMutationResponse;
+    try {
+      const result = await paperFullCloseSubmissionController.current.submit(
+        { symbol },
+        {
+          applyPaperState,
+          runMutation: runPaperMutation,
+        },
+      );
       setExecutionStatus(
         result.status === "completed"
           ? "PAPER \u043f\u043e\u0437\u0438\u0446\u0438\u044f \u0437\u0430\u043a\u0440\u044b\u0442\u0430"
           : "\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0435 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e",
       );
-      if (result.status === "completed") applyPaperState(result.paper_state);
-      } catch {
-        setExecutionStatus("\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0435 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e");
-        await refreshPaperState();
-      }
-    });
+    } catch {
+      setExecutionStatus("\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0435 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e");
+      await refreshPaperState();
+    }
   };
 
   const cancelLimit = async (orderId: string) => {
