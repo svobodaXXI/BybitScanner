@@ -700,7 +700,7 @@ export function App() {
       const result = await paperProtectionMutationController.current.submit(
         {
           leg,
-          operation: draft.mode,
+          operation: draft.mode === "CREATE" ? "CREATE" : "AMEND",
           symbol: tradingSymbol,
           triggerPrice: draft.price,
         },
