@@ -66,6 +66,28 @@ describe("PaperFullCloseSubmissionController", () => {
     expect(applyPaperState).toHaveBeenCalledWith(PAPER_STATE);
   });
 
+  it("fails closed when completed state is rejected by the current PAPER session", async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      async () => new Response(JSON.stringify(RESULT), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const applyPaperState = vi.fn(() => false);
+    const controller = new PaperFullCloseSubmissionController();
+
+    const attempt = controller.submit(
+      { symbol: "BTCUSDT" },
+      {
+        createClientActionId: () => "close-stale-session",
+        applyPaperState,
+        runMutation: async <T>(_key: string, mutation: () => Promise<T>) => mutation(),
+      },
+    );
+
+    await expect(attempt).rejects.toThrow("paper_full_close_authoritative_state_rejected");
+    expect(applyPaperState).toHaveBeenCalledOnce();
+    expect(applyPaperState).toHaveBeenCalledWith(PAPER_STATE);
+  });
+
   it("releases ownership after completion", async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
       async () => new Response(JSON.stringify(RESULT), { status: 200 }),
