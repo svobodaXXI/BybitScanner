@@ -70,6 +70,7 @@ export function ModePanel({
   onLimitCancel,
   onPositionSideChange,
   onPositionAverageEntryChange,
+  protectionPositionSide = "Flat",
   onStopTap = () => {},
   onStopHold = () => {},
   stopActive = false,
@@ -95,6 +96,7 @@ export function ModePanel({
   mutationsAllowed = true,
   liveMarketAllowed = false,
   liveLimitAllowed = false,
+  liveProtectionAllowed = false,
 }: {
   mode: WorkspaceMode;
   onModeChange: (mode: WorkspaceMode) => void;
@@ -118,6 +120,7 @@ export function ModePanel({
   onLimitCancel?: (orderId: string) => Promise<{ status: string } | null>;
   onPositionSideChange: (side: PaperState["position_side"]) => void;
   onPositionAverageEntryChange?: (averageEntry: number | null) => void;
+  protectionPositionSide?: PaperState["position_side"];
   onStopTap?: () => "drafted" | "not-improved" | undefined | void;
   onStopHold?: () => void;
   stopActive?: boolean;
@@ -143,6 +146,7 @@ export function ModePanel({
   mutationsAllowed?: boolean;
   liveMarketAllowed?: boolean;
   liveLimitAllowed?: boolean;
+  liveProtectionAllowed?: boolean;
 }) {
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
@@ -609,7 +613,7 @@ export function ModePanel({
         <div className="paper-market-actions-shell" {...tradingInputFocus.boundaryProps}>
         <div
           aria-label="Manual trading controls"
-          className={`paper-market-actions${mutationsAllowed || liveMarketAllowed || liveLimitAllowed ? "" : " is-read-only"}`}
+          className={`paper-market-actions${mutationsAllowed || liveMarketAllowed || liveLimitAllowed || liveProtectionAllowed ? "" : " is-read-only"}`}
         >
           <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed}>
           <div className="paper-trade-side-group" aria-label="PAPER trade sides">
@@ -814,11 +818,11 @@ export function ModePanel({
               </svg>            </button>
           </div>
 
-          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed}>
+          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed && !liveProtectionAllowed}>
           <div className="paper-protection-stack">
             <TradingControlButton
               className="paper-stop-button"
-              disabled={!mutationsAllowed}
+              disabled={!mutationsAllowed && !liveProtectionAllowed}
               type="button"
               aria-pressed={stopActive}
               onTap={() => {
@@ -831,9 +835,9 @@ export function ModePanel({
               {stopActive ? <span className="paper-stop-active-dot" aria-hidden="true" /> : null}
               STOP
             </TradingControlButton>
-            {stopSettingsOpen && paperState?.ok && paperState.position_side !== "Flat" ? (
+            {stopSettingsOpen && protectionPositionSide !== "Flat" ? (
               <StopSettings
-                side={paperState.position_side}
+                side={protectionPositionSide}
                 referencePrice={stopReferencePrice}
                 tickSize={authoritativeTickSize}
                 presetPercent={stopPresetPercent}
@@ -844,7 +848,7 @@ export function ModePanel({
             ) : null}
             <TradingControlButton
               className="paper-take-button"
-              disabled={!mutationsAllowed}
+              disabled={!mutationsAllowed && !liveProtectionAllowed}
               type="button"
               aria-pressed={takeActive}
               onTap={onTakeTap}
@@ -854,10 +858,10 @@ export function ModePanel({
               {takeActive ? <span className="paper-take-active-dot" aria-hidden="true" /> : null}
               TAKE
             </TradingControlButton>
-            {takeSettingsOpen && paperState?.ok && paperState.position_side !== "Flat" ? (
+            {takeSettingsOpen && protectionPositionSide !== "Flat" ? (
               <StopSettings
                 leg="TAKE"
-                side={paperState.position_side}
+                side={protectionPositionSide}
                 referencePrice={takeReferencePrice}
                 tickSize={authoritativeTickSize}
                 presetPercent={takePresetPercent}
