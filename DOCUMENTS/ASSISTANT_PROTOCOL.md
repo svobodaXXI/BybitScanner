@@ -2,11 +2,11 @@
 
 Version:
 
-4.36
+4.37
 
 Date:
 
-2026-09-05
+2026-09-06
 
 Document Type:
 
@@ -111,12 +111,14 @@ restart, and expected outcome. Never require the user to infer missing setup.
 Immediately before sending any response that requires user action, verify that:
 
 1. the action is objectively necessary now;
-2. it is the next dependent step, not a premature later step;
-3. required terminal, process, directory, and runtime state is known;
-4. every command, text, or payload intended for copying is alone in a dedicated code block;
-5. any exact requested user reply—including `готово`, `да`, `PASS`, `A`, `э`, or another literal confirmation—is
+2. the same required fact or read-only repository inspection cannot be obtained directly by the assistant through an
+   available repository/file connector or other non-user tool;
+3. it is the next dependent step, not a premature later step;
+4. required terminal, process, directory, and runtime state is known;
+5. every command, text, or payload intended for copying is alone in a dedicated code block;
+6. any exact requested user reply—including `готово`, `да`, `PASS`, `A`, `э`, or another literal confirmation—is
    itself in a copy-ready block introduced by `Сейчас сделай:`;
-6. current communication authority has been loaded and, if this protocol changed during the session, its changed
+7. current communication authority has been loaded and, if this protocol changed during the session, its changed
    communication/workflow sections have been reloaded.
 
 If any condition fails, correct the response before sending it. This is an enforcement/preflight gate for the
@@ -575,8 +577,18 @@ Do not use the user as a manual transport layer for repository files that the as
 available repository/file connector. Do not ask the user to paste large committed documents, broad diffs, or file
 fragments merely to restore assistant context.
 
-Ask for local shell output only when the information is inherently local or not otherwise accessible. Prefer narrow,
-purpose-built commands that return only the missing fact.
+For read-only inspection of committed repository code, configuration, documentation, history, or remote diffs, the
+assistant must use the available GitHub/repository connector directly whenever it can answer the question. Do not ask
+the user to run `Get-Content`, `Select-String`, `git show`, `git diff`, `git log`, `cat`, `grep`, or equivalent commands
+merely to transport or inspect information already available through the connector. Before requesting any read-only
+repository shell command, first check whether the same fact can be obtained through the available connector; if yes,
+the user action is prohibited.
+
+Ask for local shell output only when the required fact is inherently local or unavailable through the connector,
+such as dirty/untracked working-tree state, uncommitted/generated content, process/environment state, runtime/API
+state, host networking/DNS/proxy behavior, or real browser/device behavior. When local evidence is required, request
+the narrowest purpose-built command that returns only the missing fact. GitHub/remote inspection does not override a
+known newer local checkout or unsynchronized local edits; use local evidence only for that genuinely local delta.
 
 ## 8.8 MACHINE-APPLIED MULTILINE FILE CHANGE — HARD RULE
 
@@ -638,8 +650,9 @@ and Git workflow; preserve reference-case storage rules and all approval boundar
 
 # 9. CURRENT REVISION RECORD
 
-`4.35` reduces active procedures to diagnosis, change review and strategy capture. Ordinary tasks use central
-recovery/evidence/harness rules without a procedural skill. Handoff and workflow-improvement checklists are narrowly
-consulted references; safety, approval, acceptance and Git boundaries are unchanged. Detailed history remains in Git.
+`4.37` hardens the no-user-as-file-transport rule into an explicit read-only inspection routing rule: committed
+repository code/config/docs/history are inspected directly through GitHub/repository connectors when available, and
+local shell output is reserved for facts that are genuinely local or otherwise inaccessible. The user-action
+preflight now blocks redundant read-only repository commands. Detailed history remains in Git.
 
 # END_OF_DOCUMENT
