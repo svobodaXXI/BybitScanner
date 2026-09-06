@@ -38,6 +38,7 @@ import {
   sideDraftVolumesValid,
 } from "../orders/limitInteractionCore";
 import { PaperLimitDraftSubmitController } from "../orders/limitDraftSubmission";
+import { LiveLimitDraftSubmitController } from "../orders/liveLimitDraftSubmission";
 import { executePaperLimitAmend, executePaperLimitCancel } from "../orders/paperLimitCommand";
 import {
   DomLimitPlacementController,
@@ -48,8 +49,6 @@ import { projectPaperLimitOrders } from "../orders/paperLimitProjection";
 import {
   executeLiveLimitAmend,
   executeLiveLimitCancel,
-  executeLiveLimitCreate,
-  liveLimitCreateRequest,
   projectLiveLimitOrders,
 } from "../orders/liveLimitCommand";
 import { isValidSelectedVolume, updateSelectedVolume } from "../orders/selectedVolume";
@@ -127,6 +126,7 @@ export function App() {
     leg: "STOP" | "TAKE"; symbol: string;
   } | null>(null);
   const limitSubmitController = useRef(new PaperLimitDraftSubmitController());
+  const liveLimitSubmitController = useRef(new LiveLimitDraftSubmitController());
   const domLimitController = useRef(new DomLimitPlacementController());
   const liveLimitAttempts = useRef(new Map<string, Promise<unknown>>());
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
@@ -393,9 +393,6 @@ export function App() {
       return;
     }
     if (liveLimitAllowed) {
-      const attemptKey = `CREATE_LIMIT:${draft.draftId}`;
-      const existingAttempt = liveLimitAttempts.current.get(attemptKey);
-      if (existingAttempt) return existingAttempt.then(() => undefined);
       const authority = currentLiveAuthority();
       const normalizedPrice = normalizeLimitDraftPrice(
         draft.price, draft.authoritativeTickSize, draft.side,
@@ -405,29 +402,14 @@ export function App() {
         return;
       }
       setLimitSubmissionFeedback(null);
-      const clientActionId = globalThis.crypto?.randomUUID?.() ?? `live-limit-${Date.now()}`;
-      dispatchLimitDraft({ type: "start-submitting", clientActionId, draftId: draft.draftId });
-      const liveAttempt = executeLiveLimitCreate(liveLimitCreateRequest({
-        authority, clientActionId, symbol: draft.symbol, side: draft.side,
-        volume: { unit: "usdt", amount: volumeUsdt },
-        sizingReferencePrice: draft.sizingReferencePrice, limitPrice: normalizedPrice,
-      }), currentLiveAuthority).then(async (result) => {
-        if (result === null) return;
-        if (result.status === "accepted_pending" || result.status === "completed") {
-          dispatchLimitDraft({ type: "dismiss", draftId: draft.draftId });
-          await accountWorkspaceStore.refreshActiveLive();
-          liveLimitAttempts.current.delete(attemptKey);
-        } else if (result.status === "unknown" || result.reconciliation_required) {
-          dispatchLimitDraft({ type: "mark-ambiguous", clientActionId, draftId: draft.draftId });
-        } else {
-          dispatchLimitDraft({ type: "mark-rejected", clientActionId, reason: result.reason_code, draftId: draft.draftId });
-          liveLimitAttempts.current.delete(attemptKey);
-        }
-      }).catch(() => {
-        dispatchLimitDraft({ type: "mark-ambiguous", clientActionId, draftId: draft.draftId });
+      const attempt = liveLimitSubmitController.current.submit(draft, {
+        dispatch: dispatchLimitDraft,
+        currentAuthority: currentLiveAuthority,
+        createClientActionId: () =>
+          globalThis.crypto?.randomUUID?.() ?? `live-limit-${Date.now()}`,
+        refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
       });
-      liveLimitAttempts.current.set(attemptKey, liveAttempt);
-      return liveAttempt;
+      return attempt.promise.then(() => undefined);
     }
     setLimitSubmissionFeedback(null);
     const attempt = limitSubmitController.current.submit(draft, {
