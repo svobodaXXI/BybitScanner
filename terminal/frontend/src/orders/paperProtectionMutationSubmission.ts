@@ -1,5 +1,6 @@
 import type { PaperState, PaperStopMutationResponse } from "../contracts/trading";
 import {
+  clearPaperProtectionCommandLifecycle,
   executePaperStopAmend,
   executePaperStopCreate,
   executePaperStopDelete,
@@ -65,5 +66,6 @@ export class PaperProtectionMutationController {
 
   clear(): void {
     this.lifecycle.clear();
+    clearPaperProtectionCommandLifecycle();
   }
 }
