@@ -4,8 +4,6 @@ import {
   type MarketCommandRequest,
   type LiveMarketCommandRequest,
   type MarketSide,
-  type PaperLimitAmendRequest,
-  type PaperLimitMutationResponse,
   type PaperLimitOrder,
   type PaperState,
 } from "../contracts/trading";
@@ -166,6 +164,8 @@ export function ModePanel({
   const liveCancelPending = useRef(false);
   const cancelAuthority = useRef({ projection: accountWorkspaceProjection, allowed: liveLimitAllowed });
   cancelAuthority.current = { projection: accountWorkspaceProjection, allowed: liveLimitAllowed };
+  const marketAuthority = useRef({ projection: accountWorkspaceProjection, allowed: liveMarketAllowed });
+  marketAuthority.current = { projection: accountWorkspaceProjection, allowed: liveMarketAllowed };
   const liveMutationEnvelopeAllowed = liveMarketAllowed || liveLimitAllowed || liveProtectionAllowed;
   const liveFullCloseAllowed = liveMutationEnvelopeAllowed
     && accountWorkspaceProjection?.provider === "BYBIT"
@@ -186,7 +186,6 @@ export function ModePanel({
   const [positionAverageEntry, setPositionAverageEntry] = useState<number | null>(null);
   const [holdTooltip, setHoldTooltip] = useState<string | null>(null);
   const holdTooltipTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [amendPrices, setAmendPrices] = useState<Record<string, string>>({});
   const limitDrafts =
     limitDraftState.drafts ??
     (limitDraftState.draft ? [limitDraftState.draft] : []);
@@ -202,7 +201,13 @@ export function ModePanel({
 
   useEffect(() => {
     setLiveConfirmation(null);
-  }, [accountWorkspaceProjection?.account_id, accountWorkspaceProjection?.session_generation]);
+    setLiveConfirmationSubmitting(false);
+    liveDispatchActionIdRef.current = null;
+  }, [
+    accountWorkspaceProjection?.account_id,
+    accountWorkspaceProjection?.session_generation,
+    liveMarketAllowed,
+  ]);
 
   useEffect(() => {
     paperFullCloseSubmissionController.current.clear();
@@ -280,12 +285,8 @@ export function ModePanel({
             : null,
         );
       }
-      setAmendPrices((current) => Object.fromEntries(
-        activeLimitOrders.map((order) => [order.order_id, current[order.order_id] ?? order.price]),
-      ));
   }, [
     accountWorkspaceProjection,
-    activeLimitOrders,
     onPositionAverageEntryChange,
     onPositionSideChange,
     paperState,
@@ -469,12 +470,12 @@ export function ModePanel({
         commandResult.status === "completed"
           ? `PAPER ${side.toUpperCase()} completed`
           : commandResult.reason_code === HANDLED_REASON_CODES[0]
-            ? "\u0421\u0443\u043c\u043c\u0430 \u0441\u043b\u0438\u0448\u043a\u043e\u043c \u043c\u0430\u043b\u0430 \u0434\u043b\u044f \u0448\u0430\u0433\u0430 \u043e\u0431\u044a\u0451\u043c\u0430"
-            : `${side.toUpperCase()} \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e`,
+            ? "Сумма слишком мала для шага объёма"
+            : `${side.toUpperCase()} отменено`,
       );
 
       } catch {
-        setExecutionStatus(`${side.toUpperCase()} \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e`);
+        setExecutionStatus(`${side.toUpperCase()} отменено`);
         await refreshPaperState();
       }
     });
@@ -501,16 +502,41 @@ export function ModePanel({
   const confirmLiveMarket = async () => {
     const action = liveConfirmation;
     if (!action || liveDispatchActionIdRef.current === action.client_action_id) return;
+    const current = marketAuthority.current;
+    const projection = current.projection;
+    if (
+      !current.allowed
+      || projection?.provider !== "BYBIT"
+      || projection.account_id !== action.account_id
+      || projection.session_generation !== action.session_generation
+    ) {
+      setLiveConfirmation(null);
+      setLiveConfirmationSubmitting(false);
+      setExecutionStatus("LIVE Market unavailable: account authority changed");
+      return;
+    }
     liveDispatchActionIdRef.current = action.client_action_id;
     setLiveConfirmationSubmitting(true);
     const result = await executeLiveMarketCommand(action, {
-      currentAuthority: () => accountWorkspaceProjection ? {
-        accountId: accountWorkspaceProjection.account_id,
-        sessionGeneration: accountWorkspaceProjection.session_generation,
-      } : null,
+      currentAuthority: () => {
+        const latest = marketAuthority.current;
+        const currentProjection = latest.projection;
+        return latest.allowed && currentProjection?.provider === "BYBIT"
+          ? {
+              accountId: currentProjection.account_id,
+              sessionGeneration: currentProjection.session_generation,
+            }
+          : null;
+      },
     });
-    if (!result) return;
+    if (!result) {
+      setLiveConfirmation(null);
+      setLiveConfirmationSubmitting(false);
+      setExecutionStatus("LIVE Market authority changed — do not retry");
+      return;
+    }
     setLiveConfirmation(null);
+    setLiveConfirmationSubmitting(false);
     setExecutionStatus(result.status === "unknown"
       ? "LIVE result ambiguous — reconciling; do not retry"
       : result.status === "accepted_pending" ? "LIVE accepted — awaiting REST evidence"
@@ -567,11 +593,11 @@ export function ModePanel({
       );
       setExecutionStatus(
         result.status === "completed"
-          ? "PAPER \u043f\u043e\u0437\u0438\u0446\u0438\u044f \u0437\u0430\u043a\u0440\u044b\u0442\u0430"
-          : "\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0435 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e",
+          ? "PAPER позиция закрыта"
+          : "Закрытие отменено",
       );
     } catch {
-      setExecutionStatus("\u0417\u0430\u043a\u0440\u044b\u0442\u0438\u0435 \u043e\u0442\u043c\u0435\u043d\u0435\u043d\u043e");
+      setExecutionStatus("Закрытие отменено");
       await refreshPaperState();
     }
   };
@@ -584,7 +610,7 @@ export function ModePanel({
         ? `${mutationsAllowed ? "PAPER" : "LIVE"} LIMIT cancellation submitted`
         : "LIMIT cancellation failed or requires reconciliation");
     } catch {
-      setExecutionStatus("РћС‚РјРµРЅР° LIMIT РЅРµ РІС‹РїРѕР»РЅРµРЅР°");
+      setExecutionStatus("Отмена LIMIT не выполнена");
     }
   };
 
@@ -637,29 +663,6 @@ export function ModePanel({
       setExecutionStatus(`PAPER LIMITS cancelled: ${completed}/${orders.length}`);
       } catch {
         setExecutionStatus("PAPER LIMIT cancellation failed");
-        await refreshPaperState();
-      }
-    });
-  };
-
-  const amendLimit = async (orderId: string) => {
-    const price = amendPrices[orderId];
-    if (!(Number(price) > 0)) return;
-    await runPaperMutation(`AMEND_LIMIT:${orderId}`, async () => {
-      try {
-      const request: PaperLimitAmendRequest = {
-        client_action_id: `paper-limit-amend-${Date.now()}`,
-        symbol, order_id: orderId, limit_price: price,
-      };
-      const response = await fetch("/api/limit/amend", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-      });
-      const result = (await response.json()) as PaperLimitMutationResponse;
-      setExecutionStatus(result.status === "completed" ? "PAPER LIMIT РёР·РјРµРЅС‘РЅ" : "РР·РјРµРЅРµРЅРёРµ LIMIT РЅРµ РІС‹РїРѕР»РЅРµРЅРѕ");
-      if (result.status === "completed") applyPaperState(result.paper_state);
-      } catch {
-        setExecutionStatus("РР·РјРµРЅРµРЅРёРµ LIMIT РЅРµ РІС‹РїРѕР»РЅРµРЅРѕ");
         await refreshPaperState();
       }
     });
@@ -787,19 +790,19 @@ export function ModePanel({
                 <span
                   className="paper-wv-value paper-hold-target"
                   onPointerDown={() =>
-                    startHoldTooltip(`1 \u0420\u041E = ${oneWvUsdt} USDT`)
+                    startHoldTooltip(`1 РО = ${oneWvUsdt} USDT`)
                   }
                   onPointerUp={stopHoldTooltip}
                   onPointerCancel={stopHoldTooltip}
                   onPointerLeave={stopHoldTooltip}
                   onTouchStart={() =>
-                    startHoldTooltip(`1 \u0420\u041E = ${oneWvUsdt} USDT`)
+                    startHoldTooltip(`1 РО = ${oneWvUsdt} USDT`)
                   }
                   onTouchEnd={stopHoldTooltip}
                   onTouchCancel={stopHoldTooltip}
                   onContextMenu={(event) => event.preventDefault()}
                 >
-                  {"\u2694\uFE0F"} {engagedWorkingVolume ?? "\u2014"}
+                  {"⚔️"} {engagedWorkingVolume ?? "—"}
                 </span>
 
                 {positionSide !== "Flat" ? (
@@ -808,8 +811,8 @@ export function ModePanel({
                     disabled={!mutationsAllowed && !liveFullCloseAllowed}
                     onTap={() => setCloseConfirmOpen(true)}
                     type="button"
-                    aria-label={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e"}
-                    title={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e"}
+                    aria-label={"Закрыть позицию"}
+                    title={"Закрыть позицию"}
                   >
                     <svg
                       className="paper-close-icon"
@@ -1056,7 +1059,7 @@ export function ModePanel({
                       >
                         {draft?.status === "submitting"
                           ? "..."
-                          : "\u2713"}
+                          : "✓"}
                       </TradingControlButton>
                     </div>
                   );
@@ -1149,11 +1152,11 @@ export function ModePanel({
                 className="paper-close-confirm"
                 role="dialog"
                 aria-modal="true"
-                aria-label={"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e?"}
+                aria-label={"Закрыть позицию?"}
                 onPointerDown={shieldPopupPointerInteraction}
                 onClick={shieldPopupClickInteraction}
               >
-                <strong>{"\u0417\u0430\u043a\u0440\u044b\u0442\u044c \u043f\u043e\u0437\u0438\u0446\u0438\u044e?"}</strong>
+                <strong>{"Закрыть позицию?"}</strong>
 
                 <span>
                   {positionSide === "Long"
@@ -1161,7 +1164,7 @@ export function ModePanel({
                     : positionSide === "Short"
                       ? "SHORT"
                       : "FLAT"}{" "}
-                  {"\u00b7"} {engagedNotionalUsdt} USDT
+                  {"·"} {engagedNotionalUsdt} USDT
                 </span>
 
                 <div className="paper-close-confirm-actions">
@@ -1177,7 +1180,7 @@ export function ModePanel({
                       setCloseConfirmOpen(false);
                     }}
                   >
-                    {"\u0417\u0410\u041a\u0420\u042b\u0422\u042c \u041f\u041e\u0417\u0418\u0426\u0418\u042e"}
+                    {"ЗАКРЫТЬ ПОЗИЦИЮ"}
                   </TradingControlButton>
 
                   <TradingControlButton
@@ -1186,7 +1189,7 @@ export function ModePanel({
                     disabled={pendingActions.has("FULL_CLOSE")}
                     onTap={() => setCloseConfirmOpen(false)}
                   >
-                    {"\u041d\u0415 \u0417\u0410\u041a\u0420\u042b\u0412\u0410\u0422\u042c"}
+                    {"НЕ ЗАКРЫВАТЬ"}
                   </TradingControlButton>
                 </div>
               </section>
@@ -1221,7 +1224,7 @@ export function ModePanel({
                       }
                       onTap={() => openSideCancelConfirmation(side)}
                     >
-                      {"\u00D7"}
+                      {"×"}
                     </TradingControlButton>
                   </div>
                 );
@@ -1242,7 +1245,7 @@ export function ModePanel({
                       }
                       onTap={() => openSideCancelConfirmation(limitsInventorySide)}
                     >
-                      {"\u00D7"}
+                      {"×"}
                     </TradingControlButton>
                   </header>
                   <div className="paper-limits-order-list">
@@ -1259,7 +1262,7 @@ export function ModePanel({
                           }
                           onTap={() => void cancelLimit(order.order_id)}
                         >
-                          {"\u00D7"}
+                          {"×"}
                         </TradingControlButton>
                       </div>
                     ))}
@@ -1284,8 +1287,8 @@ export function ModePanel({
               <div className="paper-limit-popup" role="dialog" aria-label="Confirm LIVE Market order">
                 <strong>Main Bybit / LIVE</strong>
                 <p>{liveConfirmation.side.toUpperCase()} MARKET {liveConfirmation.symbol}</p>
-                <p>{liveConfirmation.volume.amount} USDT В· slippage {liveConfirmation.slippage_value}%</p>
-                <button type="button" disabled={liveConfirmationSubmitting} onClick={() => void confirmLiveMarket()}>
+                <p>{liveConfirmation.volume.amount} USDT · slippage {liveConfirmation.slippage_value}%</p>
+                <button type="button" disabled={liveConfirmationSubmitting || !liveMarketAllowed} onClick={() => void confirmLiveMarket()}>
                   {liveConfirmationSubmitting ? "LIVE MARKET SUBMITTING" : "CONFIRM LIVE MARKET"}
                 </button>
                 <button type="button" onClick={() => setLiveConfirmation(null)}>CANCEL</button>
