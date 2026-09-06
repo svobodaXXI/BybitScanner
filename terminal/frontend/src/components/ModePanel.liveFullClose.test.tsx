@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import type { AccountWorkspaceProjection } from "../accountWorkspace/accountWorkspaceStore";
 import { EMPTY_LIMIT_DRAFT_STATE } from "../orders/limitDraft";
 import { ModePanel } from "./ModePanel";
@@ -19,6 +19,11 @@ vi.mock("../orders/liveFullCloseSubmission", () => ({
     }
   },
 }));
+
+beforeEach(() => {
+  fullCloseMocks.submit.mockReset();
+  fullCloseMocks.clear.mockReset();
+});
 
 const projection = (fullClose = true): AccountWorkspaceProjection => ({
   ok: true,
