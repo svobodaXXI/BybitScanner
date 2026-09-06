@@ -48,7 +48,7 @@ describe("executePaperMarketCommand", () => {
         paper_state: paperState,
       }),
     });
-    const applyPaperState = vi.fn();
+    const applyPaperState = vi.fn(() => true);
 
     await executePaperMarketCommand(
       {
