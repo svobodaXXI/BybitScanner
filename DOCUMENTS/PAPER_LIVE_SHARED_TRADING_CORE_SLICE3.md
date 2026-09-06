@@ -1,7 +1,7 @@
 # PAPER / LIVE SHARED TRADING CORE — SLICE 3
 
 Date: 2026-09-06
-Status: IMPLEMENTED ON BRANCH / VERIFICATION PENDING
+Status: VERIFIED / READY FOR MERGE
 Parent direction: `DOCUMENTS/PAPER_LIVE_SHARED_TRADING_CORE_RECOVERY.md`
 Baseline: `8641ed1573b447670cba4f5740729a5b470d491f`
 
@@ -58,7 +58,7 @@ The retry/idempotency pattern also follows the general distributed-systems rule 
 ## Current branch progress
 
 Branch: `shared-limit-existing-order-lifecycle-slice3`
-Draft PR: `#2 refactor: share existing Limit mutation lifecycle`
+PR: `#2 refactor: share existing Limit mutation lifecycle`
 
 Added:
 
@@ -74,15 +74,40 @@ Integrated:
 - `App.tsx` routes LIVE amend/cancel through `LiveLimitOrderMutationController`;
 - direct `executePaperLimitAmend`, `executePaperLimitCancel`, `executeLiveLimitAmend`, and `executeLiveLimitCancel` lifecycle ownership was removed from `App.tsx`;
 - retained mutation ownership is cleared only when the effective PAPER/LIVE mutation authority key changes or becomes unavailable, rather than on an ordinary projection refresh;
+- a reviewed clear/late-completion race was fixed so a stale completion cannot release replacement ownership;
 - existing active-order caller contracts remain unchanged.
 
-The implementation is intentionally not marked verified or complete yet. No local targeted tests or production build have been executed against this branch after the App integration.
+## Verification evidence
 
-## Remaining work
+Windows checkout verification against the current Slice 3 code completed on 2026-09-06 before the subsequent documentation-only robot-architecture decision commit.
 
-1. Synchronize the branch to the Windows checkout only when local verification is ready to begin.
-2. Run focused shared-controller/adapter regression tests and any compile/type checks routed by the protected task workflow.
-3. Run the required frontend production build through the protected local verification workflow.
-4. Review the final scoped diff/PR evidence after current verification.
-5. Do not perform a real LIVE amend or cancel during implementation verification.
-6. Any project-driven real LIVE amend/cancel acceptance requires separate explicit user authorization and a fresh acceptance session/gate where applicable.
+Focused suite:
+
+```text
+src/orders/liveLimitCommand.test.ts                    3 passed
+src/orders/limitOrderMutation.test.ts                  7 passed
+src/orders/limitOrderMutationSubmission.test.ts        6 passed
+src/app/App.liveLimitConfirm.test.tsx                 16 passed
+TOTAL                                                 32 passed
+```
+
+Production build:
+
+```text
+npm run build
+= tsc -b && vite build
+PASS
+82 modules transformed
+```
+
+The later documentation-only commit does not change executable code, tests, build configuration, or runtime behavior, so the code verification evidence remains applicable to the current PR scope.
+
+Final scoped review was performed after the race fix. No material defects remain in the reviewed Slice 3 execution/order-lifecycle scope.
+
+No real LIVE amend or cancel was performed or authorized for implementation verification.
+
+## Remaining merge boundary
+
+1. Merge PR #2 after final repository/PR state is confirmed mergeable.
+2. Synchronize Windows `main` to the resulting merge commit and record the new authoritative checkpoint.
+3. Any future project-driven real LIVE amend/cancel acceptance requires separate explicit user authorization and a fresh acceptance session/gate where applicable.
