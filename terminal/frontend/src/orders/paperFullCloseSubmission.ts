@@ -10,10 +10,13 @@ type Input = {
 };
 
 type Dependencies = {
-  createClientActionId: () => string;
+  createClientActionId?: () => string;
   applyPaperState: (state: PaperState) => boolean;
   runMutation: <T>(key: string, mutation: () => Promise<T>) => Promise<T>;
 };
+
+const createDefaultClientActionId = () =>
+  globalThis.crypto?.randomUUID?.() ?? `paper-full-close-${Date.now()}`;
 
 export class PaperFullCloseSubmissionController {
   private readonly lifecycle = new FullCloseCommandLifecycleController<CommandMutationResponse>();
@@ -22,7 +25,7 @@ export class PaperFullCloseSubmissionController {
     const attemptKey = `FULL_CLOSE:${input.symbol}`;
     return this.lifecycle.submit(attemptKey, {
       startAttempt: () => {
-        const clientActionId = dependencies.createClientActionId();
+        const clientActionId = (dependencies.createClientActionId ?? createDefaultClientActionId)();
         return dependencies.runMutation("FULL_CLOSE", () =>
           executePaperFullCloseCommand(
             {
