@@ -8,10 +8,6 @@ import {
   accountWorkspaceStore,
   useAccountWorkspace,
 } from "../accountWorkspace/accountWorkspaceStore";
-import type {
-  PaperLimitAmendRequest,
-  PaperLimitCancelRequest,
-} from "../contracts/trading";
 import {
   DOM_ROW_HEIGHT_REM,
   DOM_VISIBLE_ROWS,
@@ -39,18 +35,17 @@ import {
 } from "../orders/limitInteractionCore";
 import { PaperLimitDraftSubmitController } from "../orders/limitDraftSubmission";
 import { LiveLimitDraftSubmitController } from "../orders/liveLimitDraftSubmission";
-import { executePaperLimitAmend, executePaperLimitCancel } from "../orders/paperLimitCommand";
+import {
+  LiveLimitOrderMutationController,
+  PaperLimitOrderMutationController,
+} from "../orders/limitOrderMutationSubmission";
 import {
   DomLimitPlacementController,
   normalizedPaperLimitCreatePrice,
   type PaperLimitCreateIntent,
 } from "../orders/paperLimitCreate";
 import { projectPaperLimitOrders } from "../orders/paperLimitProjection";
-import {
-  executeLiveLimitAmend,
-  executeLiveLimitCancel,
-  projectLiveLimitOrders,
-} from "../orders/liveLimitCommand";
+import { projectLiveLimitOrders } from "../orders/liveLimitCommand";
 import { isValidSelectedVolume, updateSelectedVolume } from "../orders/selectedVolume";
 import {
   authoritativeStopPrice,
@@ -127,8 +122,10 @@ export function App() {
   } | null>(null);
   const limitSubmitController = useRef(new PaperLimitDraftSubmitController());
   const liveLimitSubmitController = useRef(new LiveLimitDraftSubmitController());
+  const paperLimitOrderMutationController = useRef(new PaperLimitOrderMutationController());
+  const liveLimitOrderMutationController = useRef(new LiveLimitOrderMutationController());
+  const limitMutationAuthorityKey = useRef<string | null>(null);
   const domLimitController = useRef(new DomLimitPlacementController());
-  const liveLimitAttempts = useRef(new Map<string, Promise<unknown>>());
   const [ladderCenterPrice, setLadderCenterPrice] = useState<number | null>(
     null,
   );
@@ -158,12 +155,26 @@ export function App() {
     sessionGeneration: accountProjection.session_generation,
   } : null, [accountProjection, liveLimitAllowed]);
   useEffect(() => {
-    liveLimitAttempts.current.clear();
+    const nextMutationAuthorityKey = liveLimitAllowed && accountProjection
+      ? `LIVE:${accountProjection.account_id}:${accountProjection.session_generation}`
+      : mutationsAllowed && accountProjection
+        ? `PAPER:${accountProjection.account_id}:${accountProjection.session_generation}`
+        : null;
+    if (limitMutationAuthorityKey.current !== nextMutationAuthorityKey) {
+      limitMutationAuthorityKey.current = nextMutationAuthorityKey;
+      paperLimitOrderMutationController.current.clear();
+      liveLimitOrderMutationController.current.clear();
+    }
     paperTradingStore.setAccountSession(
       mutationsAllowed ? accountProjection.account_id : null,
       mutationsAllowed ? accountProjection.session_generation : null,
     );
-  }, [accountProjection, mutationsAllowed]);
+  }, [
+    accountProjection?.account_id,
+    accountProjection?.session_generation,
+    liveLimitAllowed,
+    mutationsAllowed,
+  ]);
   const applyPaperStateForSession = paperTradingStore.captureApplyPaperState();
   const currentPaperState =
     mutationsAllowed && paperState?.symbol === tradingSymbol ? paperState : null;
@@ -502,84 +513,59 @@ export function App() {
   const cancelPaperLimit = useCallback(async (orderId: string) => {
     if (!mutationsAllowed && !liveLimitAllowed) throw new Error("live_mutations_disabled");
     if (liveLimitAllowed) {
-      const attemptKey = `CANCEL_LIMIT:${orderId}`;
-      const existingAttempt = liveLimitAttempts.current.get(attemptKey);
-      if (existingAttempt) return existingAttempt as Promise<never>;
-      const authority = currentLiveAuthority();
-      if (!authority) throw new Error("stale_live_authority");
-      const liveAttempt = executeLiveLimitCancel({
-        client_action_id: globalThis.crypto?.randomUUID?.() ?? `live-limit-cancel-${Date.now()}`,
-        account_id: authority.accountId, session_generation: authority.sessionGeneration,
-        symbol: tradingSymbol, order_id: orderId,
-      }, currentLiveAuthority);
-      liveLimitAttempts.current.set(attemptKey, liveAttempt);
-      const result = await liveAttempt;
-      if (result?.status === "accepted_pending" || result?.status === "completed") {
-        await accountWorkspaceStore.refreshActiveLive();
-        liveLimitAttempts.current.delete(attemptKey);
-      } else if (result && result.status !== "unknown" && !result.reconciliation_required) {
-        liveLimitAttempts.current.delete(attemptKey);
-      }
-      return result;
+      const attempt = liveLimitOrderMutationController.current.cancel(
+        { symbol: tradingSymbol, orderId },
+        {
+          currentAuthority: currentLiveAuthority,
+          createClientActionId: () =>
+            globalThis.crypto?.randomUUID?.() ?? `live-limit-cancel-${Date.now()}`,
+          refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+        },
+      );
+      return attempt.promise;
     }
-    const request: PaperLimitCancelRequest = {
-      client_action_id: `paper-limit-cancel-${Date.now()}`,
-      symbol: tradingSymbol,
-      order_id: orderId,
-    };
-    return paperTradingStore.runMutation(`CANCEL_LIMIT:${orderId}`, async () => {
-      try {
-        return await executePaperLimitCancel(request, {
-          applyPaperState: applyPaperStateForSession,
-        });
-      } catch (error) {
-        await paperTradingStore.refresh();
-        throw error;
-      }
-    });
-  }, [accountWorkspace, currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
+    const attempt = paperLimitOrderMutationController.current.cancel(
+      { symbol: tradingSymbol, orderId },
+      {
+        createClientActionId: () => `paper-limit-cancel-${Date.now()}`,
+        applyPaperState: applyPaperStateForSession,
+        runMutation: paperTradingStore.runMutation,
+        refreshPaper: paperTradingStore.refresh,
+      },
+    );
+    return attempt.promise;
+  }, [currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
 
   const amendPaperLimit = useCallback(async (orderId: string, price: string) => {
     if (!mutationsAllowed && !liveLimitAllowed) throw new Error("live_mutations_disabled");
     if (liveLimitAllowed) {
-      const attemptKey = `AMEND_LIMIT:${orderId}`;
-      const existingAttempt = liveLimitAttempts.current.get(attemptKey);
-      if (existingAttempt) return existingAttempt.then(() => undefined);
-      const authority = currentLiveAuthority();
-      if (!authority) throw new Error("stale_live_authority");
-      const liveAttempt = executeLiveLimitAmend({
-        client_action_id: globalThis.crypto?.randomUUID?.() ?? `live-limit-amend-${Date.now()}`,
-        account_id: authority.accountId, session_generation: authority.sessionGeneration,
-        symbol: tradingSymbol, order_id: orderId, limit_price: price,
-      }, currentLiveAuthority);
-      liveLimitAttempts.current.set(attemptKey, liveAttempt);
-      const result = await liveAttempt;
+      const attempt = liveLimitOrderMutationController.current.amend(
+        { symbol: tradingSymbol, orderId, price },
+        {
+          currentAuthority: currentLiveAuthority,
+          createClientActionId: () =>
+            globalThis.crypto?.randomUUID?.() ?? `live-limit-amend-${Date.now()}`,
+          refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+        },
+      );
+      const result = await attempt.promise;
       if (result?.status !== "accepted_pending" && result?.status !== "completed") {
-        if (result && result.status !== "unknown" && !result.reconciliation_required) {
-          liveLimitAttempts.current.delete(attemptKey);
-        }
         throw new Error(result?.reason_code ?? "stale_live_authority");
       }
-      await accountWorkspaceStore.refreshActiveLive();
-      liveLimitAttempts.current.delete(attemptKey);
       return;
     }
-    const request: PaperLimitAmendRequest = {
-      client_action_id: globalThis.crypto?.randomUUID?.() ?? `paper-limit-amend-${Date.now()}`,
-      symbol: tradingSymbol,
-      order_id: orderId,
-      limit_price: price,
-    };
-    try {
-      const result = await paperTradingStore.runMutation(`AMEND_LIMIT:${orderId}`, () =>
-        executePaperLimitAmend(request, { applyPaperState: applyPaperStateForSession }),
-      );
-      if (result.status !== "completed") throw new Error(result.reason_code);
-    } catch (error) {
-      await paperTradingStore.refresh();
-      throw error;
-    }
-  }, [accountWorkspace, currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
+    const attempt = paperLimitOrderMutationController.current.amend(
+      { symbol: tradingSymbol, orderId, price },
+      {
+        createClientActionId: () =>
+          globalThis.crypto?.randomUUID?.() ?? `paper-limit-amend-${Date.now()}`,
+        applyPaperState: applyPaperStateForSession,
+        runMutation: paperTradingStore.runMutation,
+        refreshPaper: paperTradingStore.refresh,
+      },
+    );
+    await attempt.promise;
+  }, [currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
 
   const beginStopDraft = useCallback((): "drafted" | "not-improved" | undefined => {
     if (!currentPaperState?.ok || market.tickSize === null) return;
