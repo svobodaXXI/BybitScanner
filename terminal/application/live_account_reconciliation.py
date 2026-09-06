@@ -93,6 +93,9 @@ def _position_projection(account_id: str, item) -> dict[str, object]:
         "average_entry": str(item.average_entry) if item.average_entry is not None else None,
         "mark_price": str(item.mark_price) if item.mark_price is not None else None,
         "unrealized_pnl": str(item.unrealized_pnl) if item.unrealized_pnl is not None else None,
+        "take_profit": str(item.take_profit) if item.take_profit is not None else None,
+        "stop_loss": str(item.stop_loss) if item.stop_loss is not None else None,
+        "trailing_stop": str(item.trailing_stop) if item.trailing_stop is not None else None,
         "updated_at_ms": item.updated_at_ms,
     }
 
