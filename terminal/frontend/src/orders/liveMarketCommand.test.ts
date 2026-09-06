@@ -31,4 +31,38 @@ describe("LIVE Market command", () => {
     expect(fetcher.mock.calls[0][0]).toBe("/api/live/market");
     expect(result).toBeNull();
   });
+
+  it("clears retained ownership when account/session authority changes", async () => {
+    const first = createLiveMarketAction({
+      accountId: "bybit-main-a", sessionGeneration: 10, symbol: "BTCUSDT",
+      side: "Buy", amount: "10", sizingReferencePrice: "50000",
+      idFactory: () => "reused-action-id",
+    });
+    const second = createLiveMarketAction({
+      accountId: "bybit-main-b", sessionGeneration: 11, symbol: "BTCUSDT",
+      side: "Buy", amount: "10", sizingReferencePrice: "50000",
+      idFactory: () => "reused-action-id",
+    });
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce({ json: async () => ({
+        status: "unknown", reason_code: "unknown_reconciling",
+        command_id: "cmd-a", order_link_id: "tw-a", reconciliation_required: true,
+      }) })
+      .mockResolvedValueOnce({ json: async () => ({
+        status: "completed", reason_code: "OK",
+        command_id: "cmd-b", order_link_id: "tw-b", reconciliation_required: false,
+      }) });
+
+    await executeLiveMarketCommand(first, {
+      fetcher: fetcher as unknown as typeof fetch,
+      currentAuthority: () => ({ accountId: "bybit-main-a", sessionGeneration: 10 }),
+    });
+    const result = await executeLiveMarketCommand(second, {
+      fetcher: fetcher as unknown as typeof fetch,
+      currentAuthority: () => ({ accountId: "bybit-main-b", sessionGeneration: 11 }),
+    });
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(result?.status).toBe("completed");
+  });
 });
