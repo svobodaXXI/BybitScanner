@@ -1,4 +1,8 @@
 import type { LiveMarketCommandRequest, LiveMarketCommandResponse, MarketSide } from "../contracts/trading";
+import { MarketCommandLifecycleController } from "./marketCommandLifecycle";
+
+const liveMarketLifecycle =
+  new MarketCommandLifecycleController<LiveMarketCommandResponse | null>();
 
 export function createLiveMarketAction(input: {
   accountId: string; sessionGeneration: number; symbol: string; side: MarketSide;
@@ -14,7 +18,7 @@ export function createLiveMarketAction(input: {
   };
 }
 
-export async function executeLiveMarketCommand(
+async function dispatchLiveMarketCommand(
   request: LiveMarketCommandRequest,
   dependencies: {
     fetcher?: typeof fetch;
@@ -30,4 +34,23 @@ export async function executeLiveMarketCommand(
   if (!current || current.accountId !== request.account_id
     || current.sessionGeneration !== request.session_generation) return null;
   return result;
+}
+
+export function executeLiveMarketCommand(
+  request: LiveMarketCommandRequest,
+  dependencies: {
+    fetcher?: typeof fetch;
+    currentAuthority: () => { accountId: string; sessionGeneration: number } | null;
+  },
+): Promise<LiveMarketCommandResponse | null> {
+  return liveMarketLifecycle.submit(request.client_action_id, {
+    startAttempt: () => dispatchLiveMarketCommand(request, dependencies),
+    classifyResult: (result) => {
+      if (result === null) return "retain";
+      if (result.status === "unknown" || result.reconciliation_required) return "retain";
+      if (result.status === "accepted_pending") return "retain";
+      return "release";
+    },
+    releaseOnError: false,
+  });
 }
