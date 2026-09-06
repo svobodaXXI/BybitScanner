@@ -16,14 +16,14 @@ describe("LiveProtectionMutationController", () => {
   it("single-flights duplicate semantic attempts with one durable client action id", async () => {
     const controller = new LiveProtectionMutationController();
     let resolveFetch!: (value: Response) => void;
-    const fetcher = vi.fn(() => new Promise<Response>((resolve) => { resolveFetch = resolve; }));
+    const fetcher = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => { resolveFetch = resolve; }));
     const createClientActionId = vi.fn(() => "action-1");
     const refreshActiveLive = vi.fn(async () => undefined);
     const dependencies = {
       currentAuthority: () => authority,
       createClientActionId,
       refreshActiveLive,
-      fetcher: fetcher as typeof fetch,
+      fetcher,
     };
     const intent = {
       leg: "STOP" as const,
@@ -47,7 +47,7 @@ describe("LiveProtectionMutationController", () => {
 
   it("preserves the opposite protection leg and clears only the deleted leg", async () => {
     const controller = new LiveProtectionMutationController();
-    const fetcher = vi.fn(async () => accepted());
+    const fetcher = vi.fn<typeof fetch>(async () => accepted());
 
     await controller.submit({
       leg: "TAKE",
@@ -59,7 +59,7 @@ describe("LiveProtectionMutationController", () => {
       currentAuthority: () => authority,
       createClientActionId: () => "action-2",
       refreshActiveLive: async () => undefined,
-      fetcher: fetcher as typeof fetch,
+      fetcher,
     });
 
     const [url, options] = fetcher.mock.calls[0];
@@ -78,7 +78,7 @@ describe("LiveProtectionMutationController", () => {
 
   it("retains UNKNOWN ownership until authority reconciliation clears it", async () => {
     const controller = new LiveProtectionMutationController();
-    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
       status: "unknown",
       reason_code: "mutation_unknown",
       command_id: "command-unknown",
@@ -92,7 +92,7 @@ describe("LiveProtectionMutationController", () => {
       currentAuthority: () => authority,
       createClientActionId,
       refreshActiveLive: async () => undefined,
-      fetcher: fetcher as typeof fetch,
+      fetcher,
     };
     const intent = {
       leg: "STOP" as const,
@@ -120,7 +120,7 @@ describe("LiveProtectionMutationController", () => {
   it("fails before allocation or dispatch when LIVE authority is unavailable", () => {
     const controller = new LiveProtectionMutationController();
     const createClientActionId = vi.fn(() => "action-1");
-    const fetcher = vi.fn();
+    const fetcher = vi.fn<typeof fetch>();
 
     expect(() => controller.submit({
       leg: "STOP",
@@ -133,7 +133,7 @@ describe("LiveProtectionMutationController", () => {
       currentAuthority: () => null,
       createClientActionId,
       refreshActiveLive: async () => undefined,
-      fetcher: fetcher as typeof fetch,
+      fetcher,
     })).toThrow("stale_live_authority");
 
     expect(createClientActionId).not.toHaveBeenCalled();
