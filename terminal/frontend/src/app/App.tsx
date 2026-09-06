@@ -110,6 +110,12 @@ export function App() {
   const [limitSubmissionFeedback, setLimitSubmissionFeedback] = useState<string | null>(null);
   const selectedVolumeWorkspaceKey = useRef<string | null>(null);
   const [fastLimitIntent, setFastLimitIntent] = useState<LimitInteractionIntent | null>(null);
+  const [pendingDomMarket, setPendingDomMarket] = useState<{
+    symbol: string;
+    side: "Buy" | "Sell";
+    volumeUsdt: string;
+    sizingReferencePrice: string;
+  } | null>(null);
   const [limitDraftState, dispatchLimitDraft] = useReducer(
     limitDraftReducer,
     EMPTY_LIMIT_DRAFT_STATE,
@@ -233,6 +239,7 @@ export function App() {
   useEffect(() => {
     if (mutationsAllowed) return;
     setFastLimitIntent(null);
+    setPendingDomMarket(null);
     dispatchLimitDraft({ type: "dismiss-all" });
     dispatchStopDraft({ type: "clear" });
     dispatchTakeDraft({ type: "clear" });
@@ -262,6 +269,7 @@ export function App() {
     }
     setWorkspaceSwitchError(null);
     setFastLimitIntent(null);
+    setPendingDomMarket(null);
     dispatchLimitDraft({ type: "dismiss-all" });
     dispatchStopDraft({ type: "clear" });
     dispatchTakeDraft({ type: "clear" });
@@ -558,26 +566,11 @@ export function App() {
         bestAsk,
       )
     ) {
-      const side = fastLimitIntent.side;
-      await paperTradingStore.runMutation(`MARKET:${side}`, async () => {
-        try {
-          await executePaperMarketCommand(
-            {
-              client_action_id:
-                globalThis.crypto?.randomUUID?.() ??
-                `paper-dom-market-${side.toLowerCase()}-${Date.now()}`,
-              symbol: tradingSymbol,
-              side,
-              volume: { unit: "usdt", amount: volumeUsdt },
-              sizing_reference_price: sizingReferencePrice,
-              slippage_type: "Percent",
-              slippage_value: "0.5",
-            },
-            { applyPaperState: applyPaperStateForSession },
-          );
-        } catch {
-          await paperTradingStore.refresh();
-        }
+      setPendingDomMarket({
+        symbol: tradingSymbol,
+        side: fastLimitIntent.side,
+        volumeUsdt,
+        sizingReferencePrice,
       });
       return;
     }
@@ -603,6 +596,36 @@ export function App() {
     sizingReferencePrice,
     tradingSymbol,
   ]);
+
+  const confirmDomMarket = useCallback(async () => {
+    const pending = pendingDomMarket;
+    if (!pending) return;
+    if (!mutationsAllowed || pending.symbol !== tradingSymbol) {
+      setPendingDomMarket(null);
+      return;
+    }
+    setPendingDomMarket(null);
+    await paperTradingStore.runMutation(`MARKET:${pending.side}`, async () => {
+      try {
+        await executePaperMarketCommand(
+          {
+            client_action_id:
+              globalThis.crypto?.randomUUID?.() ??
+              `paper-dom-market-${pending.side.toLowerCase()}-${Date.now()}`,
+            symbol: pending.symbol,
+            side: pending.side,
+            volume: { unit: "usdt", amount: pending.volumeUsdt },
+            sizing_reference_price: pending.sizingReferencePrice,
+            slippage_type: "Percent",
+            slippage_value: "0.5",
+          },
+          { applyPaperState: applyPaperStateForSession },
+        );
+      } catch {
+        await paperTradingStore.refresh();
+      }
+    });
+  }, [mutationsAllowed, pendingDomMarket, tradingSymbol]);
 
   const cancelPaperLimit = useCallback(async (orderId: string) => {
     if (!mutationsAllowed && !liveLimitAllowed) throw new Error("live_mutations_disabled");
@@ -971,6 +994,23 @@ export function App() {
         <output aria-live="polite" role="status">
           {limitSubmissionFeedback}
         </output>
+      )}
+      {pendingDomMarket && (
+        <div
+          aria-label="Confirm marketable DOM order"
+          className="dom-marketable-confirmation"
+          role="dialog"
+        >
+          <p>
+            This DOM price crosses the spread and will execute as MARKET. Confirm explicitly to continue.
+          </p>
+          <button type="button" onClick={() => setPendingDomMarket(null)}>
+            Cancel MARKET execution
+          </button>
+          <button type="button" onClick={() => void confirmDomMarket()}>
+            Confirm MARKET execution
+          </button>
+        </div>
       )}
       <TelegramMiniAppBridge />
       <section className="workspace-grid" aria-label="Trading workspace">
