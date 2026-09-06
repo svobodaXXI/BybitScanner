@@ -4,10 +4,21 @@ import type {
   PaperStopMutationRequest,
   PaperStopMutationResponse,
 } from "../contracts/trading";
+import { ProtectionCommandLifecycleController } from "./protectionCommandLifecycle";
 
 type Dependencies = { applyPaperState: (state: PaperState) => boolean };
 
-async function execute(
+const protectionLifecycle =
+  new ProtectionCommandLifecycleController<PaperStopMutationResponse>();
+
+const attemptKey = (
+  path: string,
+  request: PaperStopMutationRequest | PaperStopDeleteRequest,
+) => "trigger_price" in request
+  ? `${path}:${request.symbol}:${request.trigger_price}`
+  : `${path}:${request.symbol}`;
+
+async function dispatch(
   path: string,
   request: PaperStopMutationRequest | PaperStopDeleteRequest,
   dependencies: Dependencies,
@@ -25,6 +36,18 @@ async function execute(
     throw new Error("paper_protection_authoritative_state_rejected");
   }
   return result;
+}
+
+function execute(
+  path: string,
+  request: PaperStopMutationRequest | PaperStopDeleteRequest,
+  dependencies: Dependencies,
+): Promise<PaperStopMutationResponse> {
+  return protectionLifecycle.submit(attemptKey(path, request), {
+    startAttempt: () => dispatch(path, request, dependencies),
+    classifyResult: () => "release",
+    releaseOnError: true,
+  });
 }
 
 export const executePaperStopCreate = (
