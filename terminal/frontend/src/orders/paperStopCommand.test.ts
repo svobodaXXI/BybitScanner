@@ -76,8 +76,8 @@ describe("PAPER STOP commands", () => {
   });
 
   it("deduplicates the same in-flight protection attempt even with a second client_action_id", async () => {
-    let resolve!: (value: unknown) => void;
-    const fetchMock = vi.fn(() => new Promise((next) => { resolve = next; }));
+    let resolve!: (value: Response) => void;
+    const fetchMock = vi.fn<typeof fetch>(() => new Promise<Response>((next) => { resolve = next; }));
     vi.stubGlobal("fetch", fetchMock);
     const applyPaperState = vi.fn(() => true);
 
@@ -94,7 +94,7 @@ describe("PAPER STOP commands", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string).client_action_id).toBe("first-id");
 
-    resolve({ ok: true, json: async () => response("98") });
+    resolve({ ok: true, json: async () => response("98") } as Response);
     await expect(first).resolves.toEqual(response("98"));
     expect(applyPaperState).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
