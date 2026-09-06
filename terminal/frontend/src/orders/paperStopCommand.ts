@@ -50,6 +50,10 @@ function execute(
   });
 }
 
+export function clearPaperProtectionCommandLifecycle(): void {
+  protectionLifecycle.clear();
+}
+
 export const executePaperStopCreate = (
   request: PaperStopMutationRequest,
   dependencies: Dependencies,
