@@ -2,7 +2,7 @@
 
 Date: 2026-09-06
 Parent direction: `DOCUMENTS/PAPER_LIVE_SHARED_TRADING_CORE_RECOVERY.md`
-Status: SLICE 2 SHARED SUBMISSION BOUNDARY IN PROGRESS
+Status: SLICE 2 SHARED SUBMISSION BOUNDARY COMPLETE
 
 ## Slice 1 objective
 
@@ -269,7 +269,7 @@ The previously open `LIVE dashed chart Limit checkmark confirmation` blocker is 
 
 ## Slice 2 — shared submission boundary
 
-A dedicated branch / draft PR now extracts the provider-independent Limit draft submission lifecycle from PAPER-only code.
+The provider-independent Limit draft submission lifecycle has been extracted from PAPER-only code and is now shared by both PAPER and LIVE create.
 
 The common `LimitDraftSubmitController<T>` owns only:
 
@@ -281,7 +281,7 @@ The common `LimitDraftSubmitController<T>` owns only:
 
 PAPER remains an adapter over this common lifecycle.
 
-LIVE create is now also routed through a dedicated `LiveLimitDraftSubmitController`, which uses the same common lifecycle while retaining LIVE-only:
+LIVE create is routed through `LiveLimitDraftSubmitController`, which uses the same common lifecycle while retaining LIVE-only:
 
 - current account/session authority fencing;
 - durable `client_action_id` generation;
@@ -290,7 +290,7 @@ LIVE create is now also routed through a dedicated `LiveLimitDraftSubmitControll
 - no blind retry after ambiguous outcome;
 - authoritative LIVE projection refresh after accepted/completed execution.
 
-`App.submitLimitDraft` no longer owns separate LIVE create reducer transitions or a separate CREATE_LIMIT attempt map. LIVE amend/cancel remain unchanged and are still outside this slice.
+`App.submitLimitDraft` no longer owns separate LIVE create reducer transitions or a separate CREATE_LIMIT attempt map. LIVE amend/cancel remain unchanged and are outside this slice.
 
 Additional tests cover:
 
@@ -299,16 +299,30 @@ Additional tests cover:
 - actual LIVE adapter accepted path with one transport dispatch and one authoritative refresh;
 - actual LIVE adapter UNKNOWN/network ambiguity with no second dispatch.
 
-### Slice 2 verification status
+### Slice 2 verification
 
-Before LIVE migration, local verification on the branch passed:
+Local verification after the LIVE adapter migration passed:
 
-- `limitDraftSubmission.test.ts`: 4/4 PASS;
-- shared targeted suite: 36/36 PASS;
-- production build: PASS.
+- LIVE adapter + shared lifecycle + App integration: 23/23 PASS;
+- full targeted shared Limit suite: 39/39 PASS;
+- production `npm run build`: PASS (`tsc -b && vite build`);
+- 80 modules transformed;
+- built asset: `dist/assets/index-DmYL9BM9.js`.
 
-The LIVE adapter migration commits are now remote and require a fresh local pull plus targeted tests/build before the draft PR can be considered verified.
+The implementation was reviewed through PR #1 and merged to `main` as:
+
+`0a3aa559576b1154e3540c6181950353c321389d`
+
+The local Windows checkout was then fast-forwarded to that merge commit. Tracked repository state was clean and synchronized with `origin/main`; remaining untracked files are user-owned and intentionally outside project commits.
+
+No additional real LIVE exchange mutation was required for Slice 2 verification because backend mutation semantics were not changed and the end-to-end LIVE create path had already been accepted in Slice 1.
+
+## Slice 2 result
+
+SLICE 2 is COMPLETE.
+
+PAPER and LIVE Limit create now share one draft submission lifecycle while keeping provider-specific execution, authority and reconciliation behind adapters. The refactor preserved fail-closed LIVE safety, one-attempt ownership, stable command identity and UNKNOWN -> reconciliation semantics.
 
 ## Next step
 
-Pull the latest `shared-limit-execution-boundary-slice2` branch locally. First run the targeted shared + LIVE adapter suite. Only after that suite passes, run the production build. Do not perform a real LIVE exchange mutation for this refactor verification; mocked/controlled tests are the required evidence for this step.
+Proceed with the next shared PAPER/LIVE trading-core slice. Before moving additional LIVE operations behind common boundaries, preserve the same invariants: account/session invalidation, explicit release only after reconciliation for ambiguous attempts, stable command identity, and no blind retry. LIVE amend/cancel should not be folded into the shared create lifecycle mechanically; first define the provider-neutral command/lifecycle contract they actually share.
