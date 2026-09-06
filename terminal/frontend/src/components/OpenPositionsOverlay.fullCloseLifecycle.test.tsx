@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PaperOpenPosition, PaperState } from "../contracts/trading";
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
 
+type MutationRunner = <T>(key: string, operation: () => Promise<T>) => Promise<T>;
+
 const position: PaperOpenPosition = {
   symbol: "BTCUSDT",
   position_side: "Long",
@@ -32,9 +34,14 @@ afterEach(() => {
 
 describe("OpenPositionsOverlay PAPER Full Close lifecycle boundary", () => {
   it("routes single Full Close through the shared submission mutation boundary", async () => {
-    const runPaperMutation = vi.fn(
-      async <T,>(_key: string, operation: () => Promise<T>): Promise<T> => operation(),
-    );
+    const runPaperMutationSpy = vi.fn();
+    const runPaperMutation: MutationRunner = async <T,>(
+      key: string,
+      operation: () => Promise<T>,
+    ): Promise<T> => {
+      runPaperMutationSpy(key);
+      return operation();
+    };
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(inventory([position]))
       .mockResolvedValueOnce({
@@ -63,8 +70,8 @@ describe("OpenPositionsOverlay PAPER Full Close lifecycle boundary", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Закрыть позицию BTCUSDT" }));
     fireEvent.click(screen.getByRole("button", { name: "Закрыть" }));
 
-    await waitFor(() => expect(runPaperMutation).toHaveBeenCalled());
-    expect(runPaperMutation.mock.calls[0][0]).toBe("FULL_CLOSE");
+    await waitFor(() => expect(runPaperMutationSpy).toHaveBeenCalled());
+    expect(runPaperMutationSpy.mock.calls[0][0]).toBe("FULL_CLOSE");
     expect(fetchMock.mock.calls.filter(([url]) => url === "/api/full-close")).toHaveLength(1);
   });
 });
