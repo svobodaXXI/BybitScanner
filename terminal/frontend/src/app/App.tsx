@@ -317,16 +317,21 @@ export function App() {
   }, [mode, paperState, refreshPaperState]);
 
   useEffect(() => {
+    const protectionUnavailable = !mutationsAllowed && !liveProtectionAllowed;
     const clearForLive = liveProtectionAllowed && liveProtectionPosition === null;
     if (
       shouldClearStopDraft(stopDraft, currentPaperState, tradingSymbol)
-      || (stopDraft !== null && (stopDraft.symbol !== tradingSymbol || clearForLive))
+      || (stopDraft !== null && (
+        stopDraft.symbol !== tradingSymbol || clearForLive || protectionUnavailable
+      ))
     ) {
       dispatchStopDraft({ type: "clear" });
     }
     if (
       shouldClearStopDraft(takeDraft, currentPaperState, tradingSymbol)
-      || (takeDraft !== null && (takeDraft.symbol !== tradingSymbol || clearForLive))
+      || (takeDraft !== null && (
+        takeDraft.symbol !== tradingSymbol || clearForLive || protectionUnavailable
+      ))
     ) {
       dispatchTakeDraft({ type: "clear" });
     }
@@ -336,11 +341,15 @@ export function App() {
     const closeLiveSettings = liveProtectionAllowed
       && protectionSettings !== null
       && (protectionSettings.symbol !== tradingSymbol || liveProtectionPosition === null);
-    if (closePaperSettings || closeLiveSettings) setProtectionSettings(null);
+    const closeUnavailableSettings = protectionUnavailable && protectionSettings !== null;
+    if (closePaperSettings || closeLiveSettings || closeUnavailableSettings) {
+      setProtectionSettings(null);
+    }
   }, [
     currentPaperState,
     liveProtectionAllowed,
     liveProtectionPosition,
+    mutationsAllowed,
     protectionSettings,
     stopDraft,
     takeDraft,
@@ -799,7 +808,11 @@ export function App() {
   const confirmProtectionDraft = useCallback(async (leg: "STOP" | "TAKE") => {
     const draft = leg === "STOP" ? stopDraft : takeDraft;
     const dispatch = leg === "STOP" ? dispatchStopDraft : dispatchTakeDraft;
-    if (!draft || draft.status === "submitting") return;
+    if (
+      !draft
+      || draft.status === "submitting"
+      || (!mutationsAllowed && !liveProtectionAllowed)
+    ) return;
     dispatch({ type: "submitting" });
     if (liveProtectionAllowed) {
       try {
@@ -867,6 +880,7 @@ export function App() {
     currentLiveProtectionAuthority,
     liveProtectionAllowed,
     liveProtectionPosition,
+    mutationsAllowed,
     stopDraft,
     takeDraft,
     tradingSymbol,
@@ -874,6 +888,7 @@ export function App() {
 
   const deleteProtection = useCallback(async (leg: "STOP" | "TAKE") => {
     if ((leg === "STOP" ? activeStopPrice : activeTakePrice) === null) return;
+    if (!mutationsAllowed && !liveProtectionAllowed) return;
     if (liveProtectionAllowed) {
       try {
         await liveProtectionMutationController.current.submit(
@@ -919,6 +934,7 @@ export function App() {
     currentLiveProtectionAuthority,
     liveProtectionAllowed,
     liveProtectionPosition,
+    mutationsAllowed,
     tradingSymbol,
   ]);
 
