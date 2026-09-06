@@ -14,7 +14,12 @@ export async function executePaperLimitAmend(
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
   });
   const result = (await response.json()) as PaperLimitMutationResponse;
-  if (result.status === "completed") dependencies.applyPaperState(result.paper_state);
+  if (
+    result.status === "completed"
+    && !dependencies.applyPaperState(result.paper_state)
+  ) {
+    throw new Error("paper_limit_amend_authoritative_state_rejected");
+  }
   return result;
 }
 
@@ -31,8 +36,11 @@ export async function executePaperLimitCommand(
     body: JSON.stringify(request),
   });
   const result = (await response.json()) as PaperLimitMutationResponse;
-  if (result.status === "completed") {
-    dependencies.applyPaperState(result.paper_state);
+  if (
+    result.status === "completed"
+    && !dependencies.applyPaperState(result.paper_state)
+  ) {
+    throw new Error("paper_limit_create_authoritative_state_rejected");
   }
   return result;
 }
@@ -50,8 +58,11 @@ export async function executePaperLimitCancel(
     body: JSON.stringify(request),
   });
   const result = (await response.json()) as PaperLimitMutationResponse;
-  if (result.status === "completed") {
-    dependencies.applyPaperState(result.paper_state);
+  if (
+    result.status === "completed"
+    && !dependencies.applyPaperState(result.paper_state)
+  ) {
+    throw new Error("paper_limit_cancel_authoritative_state_rejected");
   }
   return result;
 }
