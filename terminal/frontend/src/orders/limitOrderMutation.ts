@@ -42,17 +42,23 @@ export class LimitOrderMutationController<T> {
     const attempt = dependencies.startAttempt();
     this.attempts.set(attemptKey, attempt);
 
+    const releaseIfCurrent = () => {
+      if (this.attempts.get(attemptKey) === attempt) {
+        this.attempts.delete(attemptKey);
+      }
+    };
+
     const execution = attempt.promise;
     attempt.promise = execution.then(
       (result) => {
         if (dependencies.classifyResult(result) === "release") {
-          this.attempts.delete(attemptKey);
+          releaseIfCurrent();
         }
         return result;
       },
       (error: unknown) => {
         if (dependencies.classifyError(error) === "release") {
-          this.attempts.delete(attemptKey);
+          releaseIfCurrent();
         }
         throw error;
       },
