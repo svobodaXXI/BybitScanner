@@ -1,7 +1,7 @@
 # PAPER / LIVE SHARED TRADING CORE — SLICE 3
 
 Date: 2026-09-06
-Status: IN PROGRESS
+Status: IMPLEMENTED ON BRANCH / VERIFICATION PENDING
 Parent direction: `DOCUMENTS/PAPER_LIVE_SHARED_TRADING_CORE_RECOVERY.md`
 Baseline: `8641ed1573b447670cba4f5740729a5b470d491f`
 
@@ -58,6 +58,7 @@ The retry/idempotency pattern also follows the general distributed-systems rule 
 ## Current branch progress
 
 Branch: `shared-limit-existing-order-lifecycle-slice3`
+Draft PR: `#2 refactor: share existing Limit mutation lifecycle`
 
 Added:
 
@@ -66,14 +67,22 @@ Added:
 - `terminal/frontend/src/orders/limitOrderMutationSubmission.ts`;
 - `terminal/frontend/src/orders/limitOrderMutationSubmission.test.ts`.
 
-Current state is intentionally not marked verified or complete. `App.tsx` integration is still pending, and no local targeted tests or production build have yet been executed against this branch.
+Integrated:
+
+- `App.tsx` no longer owns a LIVE amend/cancel attempt map;
+- `App.tsx` routes PAPER amend/cancel through `PaperLimitOrderMutationController`;
+- `App.tsx` routes LIVE amend/cancel through `LiveLimitOrderMutationController`;
+- direct `executePaperLimitAmend`, `executePaperLimitCancel`, `executeLiveLimitAmend`, and `executeLiveLimitCancel` lifecycle ownership was removed from `App.tsx`;
+- retained mutation ownership is cleared only when the effective PAPER/LIVE mutation authority key changes or becomes unavailable, rather than on an ordinary projection refresh;
+- existing active-order caller contracts remain unchanged.
+
+The implementation is intentionally not marked verified or complete yet. No local targeted tests or production build have been executed against this branch after the App integration.
 
 ## Remaining work
 
-1. Replace the remaining `App.tsx` LIVE-specific amend/cancel attempt map and inline lifecycle logic with the new PAPER/LIVE mutation controllers.
-2. Clear LIVE retained mutation ownership on account/session authority invalidation through the controller boundary.
-3. Preserve current UI contracts for active-order amend/cancel callers.
-4. Run focused shared-controller/adapter/App regression tests.
-5. Run the required frontend production build through the protected local verification workflow.
-6. Do not perform a real LIVE amend or cancel during implementation verification.
-7. Any project-driven real LIVE amend/cancel acceptance requires separate explicit user authorization and a fresh acceptance session/gate where applicable.
+1. Synchronize the branch to the Windows checkout only when local verification is ready to begin.
+2. Run focused shared-controller/adapter regression tests and any compile/type checks routed by the protected task workflow.
+3. Run the required frontend production build through the protected local verification workflow.
+4. Review the final scoped diff/PR evidence after current verification.
+5. Do not perform a real LIVE amend or cancel during implementation verification.
+6. Any project-driven real LIVE amend/cancel acceptance requires separate explicit user authorization and a fresh acceptance session/gate where applicable.
