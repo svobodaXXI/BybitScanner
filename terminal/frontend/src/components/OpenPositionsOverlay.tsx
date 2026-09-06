@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CloseAllCommandRequest,
   CloseAllCommandResponse,
-  CommandMutationResponse,
-  FullCloseCommandRequest,
   PaperOpenPosition,
   PaperOpenPositionsResponse,
   PaperState,
@@ -14,6 +12,7 @@ import {
   formatPositionPrice,
   positionPnlPercent,
 } from "../marketData/positionPnl";
+import { PaperFullCloseSubmissionController } from "../orders/paperFullCloseSubmission";
 
 type MutationRunner = <T>(key: string, operation: () => Promise<T>) => Promise<T>;
 
@@ -43,6 +42,7 @@ export function OpenPositionsOverlay({
   const ambiguousSymbols = useRef(new Set<string>());
   const bulkActionId = useRef<string | null>(null);
   const bulkTargetSymbols = useRef(new Set<string>());
+  const fullCloseSubmission = useRef(new PaperFullCloseSubmissionController());
   const activePositionIndex = positions.findIndex(
     (position) => position.symbol === activeSymbol,
   );
@@ -110,67 +110,37 @@ export function OpenPositionsOverlay({
     setPendingSymbol(symbol);
     setStatusBySymbol((current) => ({ ...current, [symbol]: "Закрытие..." }));
 
-    await runPaperMutation(`FULL_CLOSE:${symbol}`, async () => {
-      try {
-        const request: FullCloseCommandRequest = {
-          client_action_id: actionId,
-          symbol,
-        };
-        const response = await fetch("/api/full-close", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(request),
-        });
-        if (!response.ok) throw new Error("full close request failed");
-        const result = (await response.json()) as CommandMutationResponse;
-        if (result.status === "completed") {
-          applyPaperState(result.paper_state);
-          const latest = await refresh();
-          setStatusBySymbol((current) => {
-            const next = { ...current };
-            if (latest?.some((item) => item.symbol === symbol)) {
-              ambiguousSymbols.current.add(symbol);
-              next[symbol] = "Позиция ещё открыта";
-            } else if (latest) {
-              ambiguousSymbols.current.delete(symbol);
-              actionIds.current.delete(symbol);
-              delete next[symbol];
-            } else {
-              ambiguousSymbols.current.add(symbol);
-              next[symbol] = "Закрытие не подтверждено — повтор заблокирован";
-            }
-            return next;
-          });
-          return;
-        }
-        const definitiveFailure = ["blocked", "rejected", "validation_error"]
-          .includes(result.status);
-        if (!definitiveFailure || result.reconciliation_required) {
-          ambiguousSymbols.current.add(symbol);
-          const latest = await refresh();
-          if (latest && !latest.some((item) => item.symbol === symbol)) {
+    try {
+      const result = await fullCloseSubmission.current.submit(
+        { symbol },
+        {
+          createClientActionId: () => actionId,
+          applyPaperState,
+          runMutation: runPaperMutation,
+        },
+      );
+      if (result.status === "completed") {
+        const latest = await refresh();
+        setStatusBySymbol((current) => {
+          const next = { ...current };
+          if (latest?.some((item) => item.symbol === symbol)) {
+            ambiguousSymbols.current.add(symbol);
+            next[symbol] = "Позиция ещё открыта";
+          } else if (latest) {
             ambiguousSymbols.current.delete(symbol);
             actionIds.current.delete(symbol);
-            setStatusBySymbol((current) => {
-              const next = { ...current };
-              delete next[symbol];
-              return next;
-            });
+            delete next[symbol];
           } else {
-            setStatusBySymbol((current) => ({
-              ...current,
-              [symbol]: "Результат неизвестен — повтор заблокирован",
-            }));
+            ambiguousSymbols.current.add(symbol);
+            next[symbol] = "Закрытие не подтверждено — повтор заблокирован";
           }
-        } else {
-          actionIds.current.delete(symbol);
-          setStatusBySymbol((current) => ({
-            ...current,
-            [symbol]: "Закрытие не выполнено",
-          }));
-          await refresh();
-        }
-      } catch {
+          return next;
+        });
+        return;
+      }
+      const definitiveFailure = ["blocked", "rejected", "validation_error"]
+        .includes(result.status);
+      if (!definitiveFailure || result.reconciliation_required) {
         ambiguousSymbols.current.add(symbol);
         const latest = await refresh();
         if (latest && !latest.some((item) => item.symbol === symbol)) {
@@ -184,13 +154,37 @@ export function OpenPositionsOverlay({
         } else {
           setStatusBySymbol((current) => ({
             ...current,
-            [symbol]: "Связь прервана — повтор заблокирован",
+            [symbol]: "Результат неизвестен — повтор заблокирован",
           }));
         }
-      } finally {
-        setPendingSymbol((current) => current === symbol ? null : current);
+      } else {
+        actionIds.current.delete(symbol);
+        setStatusBySymbol((current) => ({
+          ...current,
+          [symbol]: "Закрытие не выполнено",
+        }));
+        await refresh();
       }
-    });
+    } catch {
+      ambiguousSymbols.current.add(symbol);
+      const latest = await refresh();
+      if (latest && !latest.some((item) => item.symbol === symbol)) {
+        ambiguousSymbols.current.delete(symbol);
+        actionIds.current.delete(symbol);
+        setStatusBySymbol((current) => {
+          const next = { ...current };
+          delete next[symbol];
+          return next;
+        });
+      } else {
+        setStatusBySymbol((current) => ({
+          ...current,
+          [symbol]: "Связь прервана — повтор заблокирован",
+        }));
+      }
+    } finally {
+      setPendingSymbol((current) => current === symbol ? null : current);
+    }
   };
 
   const closeAll = async () => {
