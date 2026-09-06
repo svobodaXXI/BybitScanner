@@ -946,6 +946,8 @@ export function ChartPanel({
               onConfirm={() => onPendingLimitConfirm?.(draft.draftId)}
               liveSubmitStatus={liveLimitDrafts && (draft.status === "submitting" || draft.status === "ambiguous")
                 ? draft.status : undefined}
+              rejectionReason={liveLimitDrafts && draft.status === "rejected"
+                ? draft.rejectionReason : null}
               confirmDisabled={
                 !pendingLimitVolumeValid[draft.side] ||
                 draft.status === "submitting" ||
