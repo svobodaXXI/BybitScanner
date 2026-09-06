@@ -58,7 +58,8 @@ class ReadAdapter:
             ),
             side=SimpleNamespace(value="Short"), size=Decimal("-2"),
             average_entry=Decimal("100"), mark_price=Decimal("90"),
-            unrealized_pnl=Decimal("20"), updated_at_ms=1200,
+            unrealized_pnl=Decimal("20"), take_profit=None, stop_loss=None,
+            trailing_stop=None, updated_at_ms=1200,
         ),)
     def list_all_active_orders(self): return ()
 
