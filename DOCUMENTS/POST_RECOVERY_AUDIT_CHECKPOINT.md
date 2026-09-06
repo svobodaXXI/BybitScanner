@@ -189,9 +189,50 @@ Verification for Cleanup #8 after pulling the branch to Windows:
 - production `npm run build`: PASS;
 - tracked tree clean and local diff empty before merge.
 
+## Follow-up cleanup — marketable/aggressive PAPER DOM Limit confirmation
+
+After the Cleanup #1-#8 checkpoint was complete, the master roadmap's remaining Stage 5 safety gap was inspected as a concrete defect rather than continued cleanup by numbering.
+
+The defect was in `App.submitDomLimit()`:
+
+- a marketable/aggressive PAPER DOM Limit selection was detected by `domSelectionRequiresMarket(...)`;
+- the selection was then immediately converted into `executePaperMarketCommand(...)`;
+- `/api/market` could therefore be dispatched without a separate explicit confirmation gesture.
+
+This contradicted the recorded safety contract that a marketable/aggressive Limit must not silently become MARKET.
+
+PR: #27
+
+Title: `fix: require explicit confirmation for marketable DOM limit`
+
+Merge commit:
+
+`db2b764a0437dd806054d5dccabaa852d6dccfbd`
+
+Result:
+
+- marketable PAPER DOM selection now captures a pending MARKET intent instead of dispatching immediately;
+- the UI presents an explicit `Confirm marketable DOM order` dialog;
+- `/api/market` is dispatched only after the separate `Confirm MARKET execution` action;
+- cancellation clears the pending intent without mutation;
+- pending intent is cleared when PAPER mutation authority becomes unavailable or the Workspace symbol changes;
+- ordinary resting DOM Limit placement remains on the existing `DomLimitPlacementController` path;
+- LIVE mutation behavior and runtime gates are unchanged.
+
+Verification after pulling the branch to Windows:
+
+- RED proof: focused test failed because the confirmation dialog did not exist;
+- GREEN focused confirmation test: 1/1 PASS;
+- confirmation test + `DomPanel.test.tsx`: 7/7 PASS;
+- production `npm run build`: PASS;
+- tracked tree clean and local diff empty before merge;
+- local `main` was then fast-forwarded and confirmed equal to `origin/main` at `db2b764a0437dd806054d5dccabaa852d6dccfbd`.
+
+This follow-up is not Slice 9. It is a concrete safety defect correction permitted by the checkpoint's own rule for future cleanup.
+
 ## Audit conclusion
 
-The post-recovery audit/cleanup sequence is COMPLETE for the identified scope.
+The post-recovery audit/cleanup sequence is COMPLETE for the identified scope, including the later concrete marketable-DOM safety follow-up above.
 
 The resulting execution architecture remains:
 
@@ -215,6 +256,7 @@ Required invariants remain intact:
 - fail-closed authoritative-state application;
 - UNKNOWN / reconciliation remains fail-closed;
 - no blind retry after ambiguous mutation outcome;
+- marketable/aggressive DOM Limit cannot dispatch MARKET without explicit confirmation;
 - unrelated user-owned files remain outside project commits.
 
 ## Deferred / intentionally separate
@@ -226,3 +268,7 @@ Required invariants remain intact:
 ## Recovery pointer
 
 For future continuation, recover from repository authority first. Treat this document as the completion checkpoint for the post-recovery cleanup sequence following shared-core Slices 1-8.
+
+Latest authoritative code checkpoint recorded by this document before its documentation-only merge:
+
+`db2b764a0437dd806054d5dccabaa852d6dccfbd`
