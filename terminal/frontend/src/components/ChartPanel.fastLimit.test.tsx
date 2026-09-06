@@ -1,5 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
 import { expect, it, vi } from "vitest";
+import { TradingControlButton } from "../interactions/useTradingControlActivation";
 import { ChartPanel } from "./ChartPanel";
 
 const coordinateToPrice = vi.fn<() => number | null>(() => 100.5);
@@ -63,6 +65,65 @@ it("emits one fast-Limit intent when a touch pointer is followed by compatibilit
 
   expect(onFastLimitPriceSelect).toHaveBeenCalledOnce();
   expect(onFastLimitPriceSelect).toHaveBeenCalledWith("100.5");
+});
+
+it("uses a second touch pointer on the chart while the first touch holds BUY", () => {
+  const onFastLimitPriceSelect = vi.fn();
+
+  function TwoFingerHarness() {
+    const [fastLimitActive, setFastLimitActive] = useState(false);
+    return (
+      <>
+        <TradingControlButton
+          aria-label="BUY"
+          holdMs={200}
+          onHoldStart={() => setFastLimitActive(true)}
+          onHoldEnd={() => setFastLimitActive(false)}
+          onCancel={() => setFastLimitActive(false)}
+        >
+          BUY
+        </TradingControlButton>
+        <ChartPanel
+          candles={[]}
+          tickSize={0.5}
+          fastLimitActive={fastLimitActive}
+          onFastLimitPriceSelect={onFastLimitPriceSelect}
+        />
+      </>
+    );
+  }
+
+  vi.useFakeTimers();
+  try {
+    render(<TwoFingerHarness />);
+    const buy = screen.getByRole("button", { name: "BUY" });
+    const chart = screen.getByRole("application", {
+      name: "Interactive market chart",
+    });
+    Object.defineProperty(chart.firstElementChild, "getBoundingClientRect", {
+      value: () => ({ left: 0, top: 0 }),
+    });
+
+    fireEvent.pointerDown(buy, {
+      pointerId: 1,
+      pointerType: "touch",
+      button: 0,
+    });
+    act(() => vi.advanceTimersByTime(200));
+
+    fireEvent.pointerDown(chart, {
+      pointerId: 2,
+      pointerType: "touch",
+      button: 0,
+      clientX: 50,
+      clientY: 80,
+    });
+
+    expect(onFastLimitPriceSelect).toHaveBeenCalledOnce();
+    expect(onFastLimitPriceSelect).toHaveBeenCalledWith("100.5");
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("positions confirm-all popup directly above the shared green button", () => {
