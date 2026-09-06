@@ -7,7 +7,7 @@
     "build": "tsc -b && vite build",
     "check": "biome check .",
     "dev": "vite",
-    "preview:phone": "vite preview --host 0.0.0.0",
+    "preview:phone": "npm run build && vite preview --host 0.0.0.0",
     "e2e": "python ../../tools/e2e/run_paper_workspace.py",
     "test": "vitest run"
   },
@@ -19,7 +19,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.10",
     "@playwright/test": "^1.62.1",
-    "@tailwindcss/vite": "^4.3.3",
+    "@tailwindcss/vite": "^1.62.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.18",
