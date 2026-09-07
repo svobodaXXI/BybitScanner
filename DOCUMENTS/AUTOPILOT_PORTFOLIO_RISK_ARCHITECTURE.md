@@ -1,6 +1,6 @@
 # BybitScanner — AUTOPILOT Portfolio Risk Architecture
 
-Version: 1.0
+Version: 1.1
 Date: 2026-09-07
 Status: ACTIVE / DESIGN-ONLY
 Implementation authorization: NONE
@@ -224,5 +224,35 @@ Future research should compare:
 - admission decisions with and without liquidity/execution constraints.
 
 No unvalidated numeric cluster or directional-heat threshold is accepted by this document.
+
+---
+
+# 11. DEGRADED CORRELATION / CLUSTER-DATA POLICY
+
+`ACCEPTED DESIGN`: if correlation/cluster risk data becomes stale, unavailable or materially unreliable, AUTOPILOT enters a degraded-risk mode rather than silently ignoring that layer.
+
+Default policy:
+
+- new entries may be admitted only at a reduced size while degradation is limited and other hard risk data remains healthy;
+- position increases/additions are blocked while correlation/cluster data is degraded;
+- existing open positions continue ordinary setup/STOP/management logic and are not automatically closed solely because correlation data degraded;
+- if degradation becomes prolonged, severe, or combines with other unknown/unreconciled account-risk state, transition to full fail-closed for new risk;
+- all degraded-mode admissions/rejections must be logged with the data-health reason and risk-mode state.
+
+Exact reduced-size fraction and exact degradation-duration thresholds remain `NEEDS VALIDATION`; this document accepts the behavior class, not those numeric parameters.
+
+Candidate explicit states:
+
+- `RISK_DATA_HEALTHY`;
+- `RISK_DATA_DEGRADED_REDUCED_ONLY`;
+- `RISK_DATA_FAIL_CLOSED`.
+
+Candidate decision codes include:
+
+- `ACCEPT_REDUCED_DATA_DEGRADED`;
+- `REJECT_ADD_DATA_DEGRADED`;
+- `REJECT_DATA_UNAVAILABLE`.
+
+Version 1.1 records this degraded-risk policy.
 
 # END_OF_DOCUMENT
