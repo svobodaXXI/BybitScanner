@@ -1,6 +1,6 @@
 # BybitScanner — AUTOPILOT Risk Admission Refinements
 
-Version: 1.4
+Version: 1.5
 Date: 2026-09-07
 Status: ACTIVE / DESIGN-ONLY
 Implementation authorization: NONE
@@ -240,6 +240,55 @@ Required diary/research fields should include at least:
 - requested and admitted size;
 - final risk decision code.
 
-Version 1.4 records the combined nominal-exposure and stop-risk policy.
+---
+
+# 6. DAILY LOSS TRADING BLOCKER
+
+`ACCEPTED DESIGN DIRECTION`:
+
+AUTOPILOT should have a separate account-level daily-loss circuit breaker for future real-money operation.
+
+Target research range:
+
+- daily loss threshold under consideration: approximately `8%–10%` of the account deposit / day-start capital baseline;
+- the exact final threshold remains `NEEDS VALIDATION` and must be chosen from virtual-account statistics before LIVE use.
+
+Behavior after the threshold is reached:
+
+- block all **new risk** for the remainder of the trading day;
+- block new entries and position increases/additions;
+- existing positions continue only under their already-authorized STOP / exit / risk-reduction management;
+- risk-reducing actions and emergency close must remain available;
+- normal new-risk admission resumes only on the next trading day after the daily baseline is reset and account/risk state is healthy.
+
+This daily blocker is distinct from the simultaneous portfolio stop-risk budget in Section 5. The Section 5 budget limits how much can be lost across currently open positions if protective STOPs are hit; the daily blocker limits how much account loss may accumulate across the whole day before trading is suspended.
+
+Testing / rollout policy:
+
+- early PAPER / virtual-account research may run with the daily blocker disabled so the system can collect an unbiased distribution of natural daily losses and identify where the blocker would have triggered;
+- even when disabled in PAPER, the system should preferably calculate and log the hypothetical trigger state for later analysis;
+- before transition to real-money AUTOPILOT, the daily-loss blocker becomes a required safety layer and its final threshold/reset semantics must be explicitly validated;
+- this document does not authorize LIVE implementation.
+
+Calculation details still `NEEDS VALIDATION`:
+
+- whether the daily loss measure uses realized PnL only or realized + current unrealized PnL;
+- exact day-start baseline definition;
+- exchange/trading-day timezone and reset boundary;
+- whether commissions/funding/slippage are included in the trigger metric;
+- exact threshold within the `8%–10%` research range.
+
+Required diary/research fields should include at least:
+
+- day-start capital baseline;
+- current daily PnL / drawdown measure;
+- hypothetical blocker threshold;
+- blocker enabled/disabled state;
+- trigger timestamp if crossed;
+- maximum further drawdown after hypothetical trigger during PAPER research;
+- next-day reset timestamp;
+- reason code for blocked new-risk decisions.
+
+Version 1.5 records this daily-loss circuit-breaker design direction.
 
 # END_OF_DOCUMENT
