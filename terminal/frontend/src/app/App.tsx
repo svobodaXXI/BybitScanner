@@ -667,14 +667,12 @@ export function App() {
       || protectionPositionSide === "Flat"
       || market.tickSize === null
     ) return;
-    const referencePrice = activeStopPrice === null
-      ? protectionAverageEntry
-      : sizingReferencePrice;
+    const referencePrice = sizingReferencePrice;
     if (activeStopPrice !== null) {
       const percent = protectionPercentFromPrice(
         "STOP",
         protectionPositionSide,
-        referencePrice ?? "0",
+        referencePrice,
         activeStopPrice,
       );
       if (percent !== null) setStopPresetPercent(percent);
@@ -699,7 +697,6 @@ export function App() {
     liveProtectionAllowed,
     market.tickSize,
     mutationsAllowed,
-    protectionAverageEntry,
     protectionPositionSide,
     sizingReferencePrice,
     stopPresetPercent,
@@ -794,12 +791,9 @@ export function App() {
     setStopPresetPercent(percent);
     saveStopPreset(percent);
     if (!stopDraft || protectionPositionSide === "Flat" || market.tickSize === null) return;
-    const referencePrice = activeStopPrice === null
-      ? protectionAverageEntry
-      : sizingReferencePrice;
     const price = stopPriceFromPercent(
       protectionPositionSide,
-      referencePrice,
+      sizingReferencePrice,
       percent,
       String(market.tickSize),
     );
@@ -807,23 +801,34 @@ export function App() {
       dispatchStopDraft({ type: "update-price", price });
     }
   }, [
-    activeStopPrice,
     market.tickSize,
-    protectionAverageEntry,
     protectionPositionSide,
     sizingReferencePrice,
     stopDraft,
   ]);
 
-  const beginTakeDraft = useCallback(() => {
+  const beginTakeDraft = useCallback((): "drafted" | undefined => {
     if (
       (!mutationsAllowed && !liveProtectionAllowed)
       || protectionPositionSide === "Flat"
       || market.tickSize === null
     ) return;
-    const referencePrice = activeTakePrice === null
-      ? protectionAverageEntry
-      : sizingReferencePrice;
+    const referencePrice = sizingReferencePrice;
+    if (activeTakePrice !== null) {
+      const percent = protectionPercentFromPrice(
+        "TAKE",
+        protectionPositionSide,
+        referencePrice,
+        activeTakePrice,
+      );
+      if (percent !== null) setTakePresetPercent(percent);
+      dispatchTakeDraft({
+        type: "begin-edit",
+        symbol: tradingSymbol,
+        authoritativePrice: activeTakePrice,
+      });
+      return "drafted";
+    }
     const price = takePriceFromPercent(
       protectionPositionSide,
       referencePrice,
@@ -831,28 +836,20 @@ export function App() {
       String(market.tickSize),
     );
     if (price === null) return;
-    if (activeTakePrice === null) {
-      dispatchTakeDraft({ type: "begin-create", symbol: tradingSymbol, price });
-    } else {
-      dispatchTakeDraft({
-        type: "begin-edit", symbol: tradingSymbol,
-        authoritativePrice: activeTakePrice,
-      });
-      dispatchTakeDraft({ type: "update-price", price });
-    }
+    dispatchTakeDraft({ type: "begin-create", symbol: tradingSymbol, price });
+    return "drafted";
   }, [
     activeTakePrice,
     liveProtectionAllowed,
     market.tickSize,
     mutationsAllowed,
-    protectionAverageEntry,
     protectionPositionSide,
     sizingReferencePrice,
     takePresetPercent,
     tradingSymbol,
   ]);
 
-  const applyTakeSettings = useCallback((price: string, percent: string) => {
+  const applyTakeSettings = useCallback(async (price: string, percent: string) => {
     if ((!mutationsAllowed && !liveProtectionAllowed) || protectionPositionSide === "Flat") return;
     setTakePresetPercent(percent);
     saveTakePreset(percent);
@@ -865,13 +862,92 @@ export function App() {
       });
       dispatchTakeDraft({ type: "update-price", price });
     }
+    dispatchTakeDraft({ type: "submitting" });
     setProtectionSettings(null);
-  }, [activeTakePrice, liveProtectionAllowed, mutationsAllowed, protectionPositionSide, tradingSymbol]);
+
+    if (liveProtectionAllowed) {
+      try {
+        const result = await liveProtectionMutationController.current.submit(
+          {
+            leg: "TAKE",
+            operation: activeTakePrice === null ? "CREATE" : "AMEND",
+            symbol: tradingSymbol,
+            triggerPrice: price,
+            currentStopLoss: liveProtectionPosition?.stopLoss ?? null,
+            currentTakeProfit: liveProtectionPosition?.takeProfit ?? null,
+          },
+          {
+            currentAuthority: currentLiveProtectionAuthority,
+            createClientActionId: () =>
+              globalThis.crypto?.randomUUID?.() ?? `live-take-${Date.now()}`,
+            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+          },
+        );
+        if (
+          result !== null
+          && result.status !== "accepted_pending"
+          && result.status !== "completed"
+          && result.status !== "unknown"
+          && !result.reconciliation_required
+        ) {
+          dispatchTakeDraft({ type: "restore-editing" });
+        }
+      } catch {
+        await accountWorkspaceStore.refreshActiveLive();
+      }
+      return;
+    }
+
+    try {
+      const result = await paperProtectionMutationController.current.submit(
+        {
+          leg: "TAKE",
+          operation: activeTakePrice === null ? "CREATE" : "AMEND",
+          symbol: tradingSymbol,
+          triggerPrice: price,
+        },
+        {
+          createClientActionId: () =>
+            globalThis.crypto?.randomUUID?.() ?? `paper-take-${Date.now()}`,
+          applyPaperState: applyPaperStateForSession,
+          runMutation: paperTradingStore.runMutation,
+        },
+      );
+      if (authoritativeTakePrice(result.paper_state) !== null) {
+        if (takeDraft?.proposalSignalId) {
+          markSignalTakeProposalHandled(takeDraft.proposalSignalId);
+        }
+        dispatchTakeDraft({ type: "clear" });
+      } else {
+        dispatchTakeDraft({ type: "restore-editing" });
+      }
+    } catch {
+      dispatchTakeDraft({ type: "restore-editing" });
+      await paperTradingStore.refresh();
+    }
+  }, [
+    activeTakePrice,
+    currentLiveProtectionAuthority,
+    liveProtectionAllowed,
+    liveProtectionPosition,
+    mutationsAllowed,
+    protectionPositionSide,
+    takeDraft,
+    tradingSymbol,
+  ]);
 
   const updateTakePreset = useCallback((percent: string) => {
     setTakePresetPercent(percent);
     saveTakePreset(percent);
-  }, []);
+    if (!takeDraft || protectionPositionSide === "Flat" || market.tickSize === null) return;
+    const price = takePriceFromPercent(
+      protectionPositionSide,
+      sizingReferencePrice,
+      percent,
+      String(market.tickSize),
+    );
+    if (price !== null) dispatchTakeDraft({ type: "update-price", price });
+  }, [market.tickSize, protectionPositionSide, sizingReferencePrice, takeDraft]);
 
   const beginStopEdit = useCallback(() => {
     if (activeStopPrice === null) return;
@@ -898,21 +974,16 @@ export function App() {
     );
     if (normalized !== null) {
       dispatchStopDraft({ type: "update-price", price: normalized });
-      const referencePrice = activeStopPrice === null
-        ? protectionAverageEntry
-        : sizingReferencePrice;
       const percent = protectionPercentFromPrice(
         "STOP",
         protectionPositionSide,
-        referencePrice ?? "0",
+        sizingReferencePrice,
         normalized,
       );
       if (percent !== null) setStopPresetPercent(percent);
     }
   }, [
-    activeStopPrice,
     market.tickSize,
-    protectionAverageEntry,
     protectionPositionSide,
     sizingReferencePrice,
     stopDraft,
@@ -922,8 +993,17 @@ export function App() {
     if (!takeDraft || protectionPositionSide === "Flat" || market.tickSize === null) return;
     const closingSide = protectionPositionSide === "Long" ? "Sell" : "Buy";
     const normalized = normalizeLimitDraftPrice(rawPrice, String(market.tickSize), closingSide);
-    if (normalized !== null) dispatchTakeDraft({ type: "update-price", price: normalized });
-  }, [market.tickSize, protectionPositionSide, takeDraft]);
+    if (normalized !== null) {
+      dispatchTakeDraft({ type: "update-price", price: normalized });
+      const percent = protectionPercentFromPrice(
+        "TAKE",
+        protectionPositionSide,
+        sizingReferencePrice,
+        normalized,
+      );
+      if (percent !== null) setTakePresetPercent(percent);
+    }
+  }, [market.tickSize, protectionPositionSide, sizingReferencePrice, takeDraft]);
 
   const confirmProtectionDraft = useCallback(async (leg: "STOP" | "TAKE") => {
     const draft = leg === "STOP" ? stopDraft : takeDraft;
@@ -1133,8 +1213,14 @@ export function App() {
           authoritativeTakePrice={activeTakePrice}
           takeDraft={takeDraft}
           onTakeDraftPriceChange={updateTakeDraftPrice}
-          onTakeConfirm={() => confirmProtectionDraft("TAKE")}
-          onTakeCancelDraft={dismissTakeDraft}
+          onTakeConfirm={() => {
+            setProtectionSettings(null);
+            return confirmProtectionDraft("TAKE");
+          }}
+          onTakeCancelDraft={() => {
+            setProtectionSettings(null);
+            dismissTakeDraft();
+          }}
           onTakeEdit={beginTakeEdit}
           onTakeDelete={() => deleteProtection("TAKE")}
           averageEntryPrice={protectionPositionSide !== "Flat" ? protectionAverageEntry : null}
@@ -1241,30 +1327,32 @@ export function App() {
           stopActive={activeStopPrice !== null}
           stopSettingsOpen={protectionSettings?.leg === "STOP" && protectionSettings.symbol === tradingSymbol}
           stopPresetPercent={stopPresetPercent}
-          stopReferencePrice={
-            activeStopPrice === null
-              ? protectionAverageEntry ?? "0"
-              : sizingReferencePrice
-          }
+          stopReferencePrice={sizingReferencePrice}
           onStopSettingsApply={applyStopSettings}
           onStopPresetChange={updateStopPreset}
           onStopSettingsClose={() => {
             setProtectionSettings(null);
             dispatchStopDraft({ type: "clear" });
           }}
-          onTakeTap={beginTakeDraft}
-          onTakeHold={() => setProtectionSettings({ leg: "TAKE", symbol: tradingSymbol })}
+          onTakeTap={() => {
+            const result = beginTakeDraft();
+            setProtectionSettings({ leg: "TAKE", symbol: tradingSymbol });
+            return result;
+          }}
+          onTakeHold={() => {
+            beginTakeDraft();
+            setProtectionSettings({ leg: "TAKE", symbol: tradingSymbol });
+          }}
           takeActive={activeTakePrice !== null}
           takeSettingsOpen={protectionSettings?.leg === "TAKE" && protectionSettings.symbol === tradingSymbol}
           takePresetPercent={takePresetPercent}
-          takeReferencePrice={
-            activeTakePrice === null
-              ? protectionAverageEntry ?? "0"
-              : sizingReferencePrice
-          }
+          takeReferencePrice={sizingReferencePrice}
           onTakeSettingsApply={applyTakeSettings}
           onTakePresetChange={updateTakePreset}
-          onTakeSettingsClose={() => setProtectionSettings(null)}
+          onTakeSettingsClose={() => {
+            setProtectionSettings(null);
+            dismissTakeDraft();
+          }}
           onWorkspaceSymbolSelect={switchWorkspaceSymbol}
           accountOpen={accountOpen}
           onAccountToggle={() => setAccountOpen((open) => !open)}
