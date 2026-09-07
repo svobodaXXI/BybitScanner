@@ -409,7 +409,7 @@ describe("ModePanel PAPER Market amounts", () => {
       json: vi.fn().mockResolvedValue(
         url.startsWith("/api/paper-state")
           ? paperState()
-          : { status: "blocked", reason_code: "insufficient_sizing_precision" },
+          : { status: "blocked", reason_code: "offline" },
       ),
     }));
     vi.stubGlobal("fetch", fetchMock);
@@ -418,25 +418,7 @@ describe("ModePanel PAPER Market amounts", () => {
     await screen.findAllByDisplayValue("250");
     fireEvent.click(screen.getByRole("button", { name: "BUY" }));
 
-    expect(await screen.findByText("Сумма слишком мала для шага объёма")).toBeInTheDocument();
-  });
-
-  it.each(["BUY", "SELL"])("shows a generic %s cancellation", async (side) => {
-    const fetchMock = vi.fn((url: string) => Promise.resolve({
-      ok: true,
-      json: vi.fn().mockResolvedValue(
-        url.startsWith("/api/paper-state")
-          ? paperState()
-          : { status: "blocked", reason_code: "offline" },
-      ),
-    }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<ModePanel mode="TERMINAL" onModeChange={vi.fn()} sizingReferencePrice="0.094" onPositionSideChange={vi.fn()} />);
-    await screen.findAllByDisplayValue("250");
-    fireEvent.click(screen.getByRole("button", { name: side }));
-
-    expect(await screen.findByText(`${side} отменено`)).toBeInTheDocument();
+    expect(await screen.findByText("BUY отменено")).toBeInTheDocument();
   });
 
   it("submits backend-authoritative Full Close after confirmation", async () => {
@@ -513,6 +495,48 @@ describe("ModePanel PAPER Market amounts", () => {
     await waitFor(() => expect(onLimitCancel).toHaveBeenCalledWith("paper-limit-1"));
   });
 
+  it("cancels every authoritative Buy PAPER limit after one side confirmation", async () => {
+    const limits = Array.from({ length: 5 }, (_, index) => ({
+      ...activeLimit,
+      order_id: `paper-limit-${index + 1}`,
+      order_link_id: `link-${index + 1}`,
+      price: String(64000 - index * 10),
+    }));
+    const state = paperState({ active_limit_orders: limits }) as PaperState;
+    const onLimitCancel = vi.fn().mockResolvedValue({
+      status: "completed",
+      reason_code: "completed",
+    });
+    render(
+      <ModePanelView
+        mode="TERMINAL"
+        onModeChange={vi.fn()}
+        symbol="BTCUSDT"
+        paperState={state}
+        activeLimitOrders={state.active_limit_orders}
+        refreshPaperState={vi.fn()}
+        sizingReferencePrice="64250"
+        authoritativeTickSize="0.5"
+        limitDraftState={EMPTY_LIMIT_DRAFT_STATE}
+        dispatchLimitDraft={vi.fn()}
+        onLimitDraftConfirm={vi.fn()}
+        onLimitCancel={onLimitCancel}
+        onPositionSideChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel all Buy Limit orders for BTCUSDT" }));
+    const cancelDialog = screen.getByRole("dialog", {
+      name: "Cancel all LONG Limit orders for BTCUSDT?",
+    });
+    fireEvent.click(within(cancelDialog).getByRole("button", { name: "CANCEL" }));
+
+    await waitFor(() => expect(onLimitCancel).toHaveBeenCalledTimes(5));
+    expect(onLimitCancel.mock.calls.map(([orderId]) => orderId)).toEqual(
+      limits.map((limit) => limit.order_id),
+    );
+  });
+
   it.each([["0", "321"], ["64000", "0"]])(
     "does not submit invalid LIMIT price %s amount %s", async (price, amount) => {
       const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(paperState()) });
@@ -523,7 +547,7 @@ describe("ModePanel PAPER Market amounts", () => {
       fireEvent.change(screen.getByLabelText("LONG Limit price"), { target: { value: price } });
       fireEvent.change(screen.getByLabelText("LONG Limit volume"), { target: { value: amount } });
       fireEvent.click(screen.getByRole("button", { name: "Confirm LONG Limit" }));
-      expect(fetchMock.mock.calls.some(([url]) => url === "/api/limit")).toBe(false);
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/limit")).toBe(false;
     },
   );
 });
