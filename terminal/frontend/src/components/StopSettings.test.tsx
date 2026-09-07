@@ -11,16 +11,17 @@ it("links Percent and Price and confirms STOP through the checkmark", () => {
   );
   expect(screen.getByText("Тек. цена")).toBeInTheDocument();
   expect(screen.getByText("100.0")).toBeInTheDocument();
-  expect(screen.getByLabelText("STOP Percent")).toHaveValue("2.0");
-  expect(screen.getByLabelText("STOP Price")).toHaveValue("98");
+  expect(screen.getByLabelText("STOP Percent")).toHaveValue("1.5");
+  expect(screen.getByLabelText("STOP Price")).toHaveValue("98.5");
 
   fireEvent.change(screen.getByLabelText("STOP Percent"), { target: { value: "3" } });
-  expect(screen.getByLabelText("STOP Price")).toHaveValue("97");
-  expect(screen.getByLabelText("STOP Percent")).toHaveValue("3.0");
-  expect(onPresetChange).toHaveBeenCalled();
+  expect(screen.getByLabelText("STOP Price")).toHaveValue("97.5");
+  expect(screen.getByLabelText("STOP Percent")).toHaveValue("2.5");
+  expect(onPresetChange).toHaveBeenLastCalledWith("2.5");
   fireEvent.change(screen.getByLabelText("STOP Price"), { target: { value: "96.7" } });
   expect(screen.getByLabelText("STOP Price")).toHaveValue("97");
   expect(screen.getByLabelText("STOP Percent")).toHaveValue("3.0");
+  expect(onPresetChange).toHaveBeenLastCalledWith("3.0");
 
   fireEvent.click(screen.getByRole("button", { name: "Confirm STOP" }));
   expect(onApply).toHaveBeenCalledWith("97", "3.0");
