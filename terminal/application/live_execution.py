@@ -42,11 +42,26 @@ from terminal.runtime.paper_context import working_volume_usdt
 
 @dataclass(frozen=True, slots=True)
 class LiveParityMutationGates:
-    protection_mutations_enabled: bool = False
-    full_close_mutations_enabled: bool = False
+    parity_mutations_enabled: bool = False
     mainnet_authorized: bool = False
     limit_mutations_enabled: bool = False
     limit_acceptance_notional_ceiling: Decimal = Decimal("0")
+    protection_mutations_enabled: bool | None = None
+    full_close_mutations_enabled: bool | None = None
+
+    def protection_enabled(self) -> bool:
+        return (
+            self.parity_mutations_enabled
+            if self.protection_mutations_enabled is None
+            else self.protection_mutations_enabled
+        )
+
+    def full_close_enabled(self) -> bool:
+        return (
+            self.parity_mutations_enabled
+            if self.full_close_mutations_enabled is None
+            else self.full_close_mutations_enabled
+        )
 
 
 class _FencedExecutionPort:
@@ -164,7 +179,7 @@ class LiveExecutionCoordinator:
         self._gates = gates
         self._clock_ms = clock_ms
         self._captured: AccountSessionToken | None = None
-        self._mutation_scope = "none"
+        self._mutation_scope = "parity"
         self._ignored_limit_command_id = None
         context = _LiveContextProvider(self)
         self._engine = ExecutionEngine(store)
@@ -218,8 +233,7 @@ class LiveExecutionCoordinator:
         self, account_id_text: str, session_generation: int, client_action_id: str,
         operation: Callable[[TerminalCommandApi], CommandResult],
     ):
-        """Legacy broad parity entry remains fail-closed; callers must name the mutation scope."""
-        return self._execute(account_id_text, session_generation, client_action_id, "none", operation)
+        return self._execute(account_id_text, session_generation, client_action_id, "parity", operation)
 
     def execute_protection(
         self, account_id_text: str, session_generation: int, client_action_id: str,
@@ -290,7 +304,7 @@ class LiveExecutionCoordinator:
             return CommandResult(action_id, CommandResultStatus.BLOCKED, code, code, None, False)
         finally:
             self._captured = None
-            self._mutation_scope = "none"
+            self._mutation_scope = "parity"
 
     def _submit_limit_with_ceiling(
         self, api: TerminalCommandApi, request: LimitCommandRequest,
@@ -740,12 +754,12 @@ class LiveExecutionCoordinator:
             if not self._gates.limit_mutations_enabled:
                 raise RuntimeError("live_limit_disabled")
         elif self._mutation_scope == "protection":
-            if not self._gates.protection_mutations_enabled:
+            if not self._gates.protection_enabled():
                 raise RuntimeError("live_protection_disabled")
         elif self._mutation_scope == "full_close":
-            if not self._gates.full_close_mutations_enabled:
+            if not self._gates.full_close_enabled():
                 raise RuntimeError("live_full_close_disabled")
-        else:
+        elif not self._gates.parity_mutations_enabled:
             raise RuntimeError("live_mutations_disabled")
         if not self._gates.mainnet_authorized:
             raise RuntimeError("live_mainnet_unauthorized")
