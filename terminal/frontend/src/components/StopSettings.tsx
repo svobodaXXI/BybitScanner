@@ -62,8 +62,16 @@ export function StopSettings({
       <label>Percent<input aria-label={`${leg} Percent`} inputMode="decimal" value={percent} onChange={(event) => changePercent(event.target.value)} /></label>
       <label>Price<input aria-label={`${leg} Price`} inputMode="decimal" value={price} onChange={(event) => changePrice(event.target.value)} /></label>
       <div className="paper-stop-settings-actions">
-        <button type="button" onClick={() => price && onApply(price, percent)}>Apply</button>
-        <button type="button" onClick={onClose}>Close</button>
+        <button
+          type="button"
+          aria-label={leg === "STOP" ? "Confirm STOP" : "Apply"}
+          onClick={() => price && onApply(price, percent)}
+        >{leg === "STOP" ? "✓" : "Apply"}</button>
+        <button
+          type="button"
+          aria-label={leg === "STOP" ? "Cancel STOP draft" : "Close"}
+          onClick={onClose}
+        >{leg === "STOP" ? "×" : "Close"}</button>
       </div>
     </div>
   );
