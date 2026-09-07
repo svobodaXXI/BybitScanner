@@ -547,7 +547,7 @@ describe("ModePanel PAPER Market amounts", () => {
       fireEvent.change(screen.getByLabelText("LONG Limit price"), { target: { value: price } });
       fireEvent.change(screen.getByLabelText("LONG Limit volume"), { target: { value: amount } });
       fireEvent.click(screen.getByRole("button", { name: "Confirm LONG Limit" }));
-      expect(fetchMock.mock.calls.some(([url]) => url === "/api/limit")).toBe(false;
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/limit")).toBe(false);
     },
   );
 });
