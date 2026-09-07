@@ -5,19 +5,24 @@ Implementation authorization: NONE
 
 ## Accepted decision
 
-If AUTOPILOT is already in the 50% recovery-size mode and the STOP-series protection triggers again, new risk is escalated to a full entry block.
+If AUTOPILOT is already in the 50% recovery-size mode and the STOP-series protection triggers again, new entries are paused again rather than escalated to a full entry block.
+
+The second recovery pause is doubled relative to the ordinary recovery pause.
 
 Flow:
 
-`NORMAL SIZE -> STOP-series protection -> pause -> 50% RECOVERY SIZE -> STOP-series protection again -> FULL NEW-ENTRY BLOCK`
+`NORMAL SIZE -> STOP-series protection -> pause -> 50% RECOVERY SIZE -> STOP-series protection again -> 2x PAUSE -> 50% RECOVERY SIZE`
 
-While fully blocked:
+During the doubled pause:
 - no new positions;
 - no position increases / additions;
 - existing positions continue normal protection and risk-reduction management;
-- STOP / TAKE / closing / emergency risk reduction remain allowed;
-- the ordinary recovery pause alone does not automatically re-enable entries.
+- STOP / TAKE / closing / emergency risk reduction remain allowed.
 
-A separate, stronger recovery/reset condition must be defined before automatic trading can resume from this state.
+After the doubled pause completes, AUTOPILOT may resume new entries at 50% recovery size, subject to all other active portfolio-risk gates.
+
+The recovery-progress rules remain unchanged: profitable closed trades after actual costs add +1, losing trades subtract 1 without going below zero, and normal size is restored only when the required recovery score reaches the number of STOPs that originally triggered recovery.
+
+The exact ordinary pause length remains NEEDS VALIDATION on PAPER; the second pause is exactly 2x that validated value.
 
 This decision is independent of the daily-loss blocker and other portfolio risk gates; the strictest active gate wins.
