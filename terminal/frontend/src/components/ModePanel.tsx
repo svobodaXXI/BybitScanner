@@ -724,7 +724,7 @@ export function ModePanel({
           aria-label="Manual trading controls"
           className={`paper-market-actions${mutationsAllowed || liveMarketAllowed || liveLimitAllowed || liveProtectionAllowed || liveFullCloseAllowed ? "" : " is-read-only"}`}
         >
-          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed && !liveFullCloseAllowed}>
+          <fieldset className="paper-mutation-boundary">
           <div className="paper-trade-side-group" aria-label="PAPER trade sides">
             <div className="paper-market-side paper-market-buy-side">
               <TradingControlButton
@@ -927,7 +927,7 @@ export function ModePanel({
               </svg>            </button>
           </div>
 
-          <fieldset className="paper-mutation-boundary" disabled={!mutationsAllowed && !liveMarketAllowed && !liveLimitAllowed && !liveProtectionAllowed && !liveFullCloseAllowed}>
+          <fieldset className="paper-mutation-boundary">
           <div className="paper-protection-stack">
             <TradingControlButton
               className="paper-stop-button"
@@ -1205,7 +1205,7 @@ export function ModePanel({
           </fieldset>
         </div>
           <div className="paper-lower-actions-row">
-            <fieldset className="paper-limits-shell" disabled={!mutationsAllowed && !liveLimitAllowed}>
+            <fieldset className="paper-limits-shell">
               {(["Buy", "Sell"] as const).map((side) => {
                 const orders = side === "Buy" ? longLimitOrders : shortLimitOrders;
                 return (
