@@ -2,11 +2,12 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { StopSettings } from "./StopSettings";
 
-it("links Percent and Price and applies only through its local callback", () => {
+it("links Percent and Price and confirms STOP through the checkmark", () => {
   const onApply = vi.fn();
   const onPresetChange = vi.fn();
+  const onClose = vi.fn();
   render(
-    <StopSettings side="Long" referencePrice="100" tickSize="0.5" presetPercent="2" onPresetChange={onPresetChange} onApply={onApply} onClose={vi.fn()} />,
+    <StopSettings side="Long" referencePrice="100" tickSize="0.5" presetPercent="2" onPresetChange={onPresetChange} onApply={onApply} onClose={onClose} />,
   );
   expect(screen.getByText("100")).toBeInTheDocument();
   expect(screen.getByLabelText("STOP Price")).toHaveValue("98");
@@ -19,8 +20,10 @@ it("links Percent and Price and applies only through its local callback", () => 
   expect(screen.getByLabelText("STOP Percent")).toHaveValue("3");
   expect(onPresetChange).toHaveBeenLastCalledWith("3");
 
-  fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+  fireEvent.click(screen.getByRole("button", { name: "Confirm STOP" }));
   expect(onApply).toHaveBeenCalledWith("97", "3");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel STOP draft" }));
+  expect(onClose).toHaveBeenCalledTimes(1);
 });
 
 it("reuses linked normalized settings for TAKE", () => {
