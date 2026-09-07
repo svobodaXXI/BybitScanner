@@ -1,6 +1,6 @@
 # BybitScanner — AUTOPILOT Risk Admission Refinements
 
-Version: 1.2
+Version: 1.3
 Date: 2026-09-07
 Status: ACTIVE / DESIGN-ONLY
 Implementation authorization: NONE
@@ -137,6 +137,48 @@ Required diary/research fields should include at least:
 - regime transition timestamp;
 - effective LONG/SHORT capacity derived from the regime.
 
-Version 1.2 records this combined market-regime policy.
+---
+
+# 4. ASYMMETRIC MARKET-REGIME TRANSITION / HYSTERESIS POLICY
+
+`ACCEPTED DESIGN`:
+
+Changes in effective LONG/SHORT capacity must not mirror every raw regime-classifier fluctuation immediately. AUTOPILOT should use asymmetric confirmation and smoothing so risk can contract quickly when conditions worsen but expand more cautiously when conditions improve.
+
+Policy:
+
+- ordinary non-stress regime changes require confirmation across multiple decision cycles and should move effective directional capacity gradually rather than by a full one-step jump;
+- transitions into a materially worse or `STRESS` state may reduce admissible **new** directional risk quickly;
+- transitions into a better regime should restore directional capacity more slowly and only after persistence/confirmation, reducing false-recovery risk;
+- regime changes primarily affect admission of new entries and position increases;
+- existing positions are not automatically cut solely because the market-regime label changed; they remain governed by setup invalidation, STOP, management and stronger emergency-risk rules;
+- hard absolute directional ceilings remain binding at all times;
+- exact confirmation length, smoothing function, stress override threshold, recovery delay and transition coefficients remain `NEEDS VALIDATION`.
+
+Conceptual behavior:
+
+`RAW_REGIME_STATE`
+`-> CONFIDENCE / PERSISTENCE CHECK`
+`-> ASYMMETRIC TRANSITION FILTER`
+`-> EFFECTIVE_REGIME_FOR_RISK`
+`-> EFFECTIVE_LONG/SHORT_CAPACITY`
+
+The transition filter should favor:
+
+- fast defensive contraction;
+- slower offensive expansion;
+- reduced oscillation/churn around state boundaries.
+
+Required diary/research fields should include at least:
+
+- raw regime state;
+- effective regime state used for risk;
+- transition direction (`IMPROVING` / `WORSENING` / `STRESS` / `STABLE`);
+- persistence/confidence values;
+- prior and new effective directional capacity;
+- transition reason and model version;
+- timestamp of both raw and effective state changes.
+
+Version 1.3 records this asymmetric regime-transition policy.
 
 # END_OF_DOCUMENT
