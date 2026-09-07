@@ -69,22 +69,18 @@ export function StopSettings({
   const changePercent = (raw: string) => {
     const nextPrice = protectionPriceFromPercent(leg, side, reference, raw, tickSize);
     if (nextPrice === null) return;
-    const actualPercent = formatProtectionPercent(
-      protectionPercentFromPrice(leg, side, reference, nextPrice) ?? raw,
-    );
+    const exactPercent = protectionPercentFromPrice(leg, side, reference, nextPrice) ?? raw;
     setPrice(nextPrice);
-    setPercent(actualPercent);
-    onPresetChange(actualPercent);
+    setPercent(formatProtectionPercent(exactPercent));
+    onPresetChange(exactPercent);
   };
   const changePrice = (raw: string) => {
     const nextPrice = normalizeStopPrice(side, raw, tickSize);
     if (nextPrice === null) return;
-    const actualPercent = formatProtectionPercent(
-      protectionPercentFromPrice(leg, side, reference, nextPrice) ?? percent,
-    );
+    const exactPercent = protectionPercentFromPrice(leg, side, reference, nextPrice) ?? percent;
     setPrice(nextPrice);
-    setPercent(actualPercent);
-    onPresetChange(actualPercent);
+    setPercent(formatProtectionPercent(exactPercent));
+    onPresetChange(exactPercent);
   };
 
   return (
