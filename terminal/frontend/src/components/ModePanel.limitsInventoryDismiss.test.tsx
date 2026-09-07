@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PaperState } from "../contracts/trading";
 import { EMPTY_LIMIT_DRAFT_STATE } from "../orders/limitDraft";
@@ -66,7 +66,9 @@ const openBuyInventory = () => {
     pointerType: "touch",
     button: 0,
   });
-  vi.advanceTimersByTime(500);
+  act(() => {
+    vi.advanceTimersByTime(500);
+  });
   fireEvent.pointerUp(button, {
     pointerId: 1,
     pointerType: "touch",
