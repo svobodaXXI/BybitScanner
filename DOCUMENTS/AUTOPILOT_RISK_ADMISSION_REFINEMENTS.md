@@ -1,6 +1,6 @@
 # BybitScanner — AUTOPILOT Risk Admission Refinements
 
-Version: 1.3
+Version: 1.4
 Date: 2026-09-07
 Status: ACTIVE / DESIGN-ONLY
 Implementation authorization: NONE
@@ -179,6 +179,67 @@ Required diary/research fields should include at least:
 - transition reason and model version;
 - timestamp of both raw and effective state changes.
 
-Version 1.3 records this asymmetric regime-transition policy.
+---
+
+# 5. COMBINED EXPOSURE + STOP-RISK HEAT
+
+`ACCEPTED DESIGN`:
+
+AUTOPILOT must control two different things at the same time:
+
+1. **how much capital is exposed** in positions;
+2. **how much can realistically be lost** if current protective STOP orders are hit.
+
+Nominal exposure limits remain independent hard safeguards:
+
+- `MAX_PER_ASSET_EXPOSURE = 2 WV`;
+- `MAX_AUTOPILOT_EXPOSURE = 19 WV`.
+
+These limits protect against asset-specific and operational force-majeure risk that a STOP may not contain.
+
+Separately, portfolio and cluster risk should be based primarily on estimated worst-case loss to the current valid STOP, including an allowance for fees and adverse execution/slippage.
+
+Conceptually:
+
+`POSITION_STOP_RISK`
+`≈ POSITION_QUANTITY × ADVERSE_DISTANCE_TO_STOP`
+`+ FEES`
+`+ SLIPPAGE_ALLOWANCE`
+
+Portfolio and cluster stop-risk should then be adjusted by correlation / common-market stress so several positions that are likely to lose together consume more effective risk capacity than independent positions.
+
+Therefore admission requires both classes of constraint to pass:
+
+- exposure caps in WV;
+- stop-risk / portfolio-heat limits.
+
+A trade may be rejected or size-reduced even when there is spare WV exposure capacity if its stop-risk would exceed the current portfolio, cluster or directional risk budget.
+
+Conversely, a tight-stop trade may consume relatively little stop-risk budget while still remaining subject to the same hard WV exposure caps.
+
+Rules:
+
+- WV exposure and stop-risk must never be treated as the same quantity;
+- valid protective STOP data is required for stop-risk-based admission unless a later explicit degraded-policy rule defines otherwise;
+- estimated loss must use decision-time STOP, quantity, fees and slippage assumptions and must not be rewritten after outcome;
+- correlation/stress adjustment should increase effective risk for positions expected to fail together rather than provide false diversification from symbol count alone;
+- exact portfolio stop-risk ceiling, cluster stop-risk ceiling, slippage allowance and correlation/stress formula remain `NEEDS VALIDATION`.
+
+Required diary/research fields should include at least:
+
+- exposure in WV;
+- entry/reference price;
+- STOP price and STOP source/version;
+- raw loss-to-STOP estimate;
+- fee allowance;
+- slippage allowance;
+- correlation/stress adjustment;
+- effective position risk;
+- cluster risk before/after;
+- portfolio risk before/after;
+- requested and admitted size;
+- final risk decision code.
+
+Version 1.4 records the combined nominal-exposure and stop-risk policy.
 
 # END_OF_DOCUMENT
