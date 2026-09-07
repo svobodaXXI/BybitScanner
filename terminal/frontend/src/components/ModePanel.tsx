@@ -365,6 +365,22 @@ export function ModePanel({
     };
   }, [limitPresentationSide, popupLimitDrafts]);
 
+  useEffect(() => {
+    if (limitsInventorySide === null) return;
+
+    const dismissInventoryFromOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".paper-limits-side-inventory")) return;
+      setLimitsInventorySide(null);
+    };
+
+    document.addEventListener("pointerdown", dismissInventoryFromOutside, true);
+    return () => {
+      document.removeEventListener("pointerdown", dismissInventoryFromOutside, true);
+    };
+  }, [limitsInventorySide]);
+
   const dismissSideCancelConfirmation = () => {
     setCancelLimitSideConfirm(null);
   };
@@ -1245,12 +1261,8 @@ export function ModePanel({
                     <strong>{limitsInventorySide.toUpperCase()} LIMITS</strong>
                     <TradingControlButton
                       type="button"
-                      aria-label={`Cancel all ${limitsInventorySide} Limit orders for ${symbol}`}
-                      disabled={
-                        pendingActions.has(`CANCEL_SIDE:${limitsInventorySide}`)
-                        || inventoryOrders.length === 0
-                      }
-                      onTap={() => openSideCancelConfirmation(limitsInventorySide)}
+                      aria-label={`Close ${limitsInventorySide} Limit orders for ${symbol}`}
+                      onTap={() => setLimitsInventorySide(null)}
                     >
                       {"×"}
                     </TradingControlButton>
