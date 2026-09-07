@@ -2,7 +2,7 @@
 
 Version:
 
-1.3
+1.4
 
 Date:
 
@@ -293,6 +293,31 @@ For a sufficiently mature `Falling Wedge`, study a LONG entry near the lower bou
 valid and before an upside breakout. Maturity, lower-edge proximity, entry trigger, initial position size and
 initial structural stop remain `NEEDS VALIDATION`. The early entry is not evidence that breakout will occur.
 
+#### Lower-edge rounded-arc and candlestick confluence
+
+A local downward-curving / rounded deceleration arc that develops inside the Falling Wedge near its lower side may
+be recorded as contextual confluence, especially when the arc terminates close to the admitted lower-edge/support
+zone. This is not a separate pattern identity and must not relabel the parent Falling Wedge. Where measurable, its
+curvature/deceleration features should reuse compatible H-015 decision-time feature definitions while remaining a
+Falling Wedge cohort.
+
+Closed-candle bullish reversal evidence near that lower-edge/arc termination may strengthen the LONG hypothesis.
+Candidate evidence includes:
+
+* bullish engulfing after local downside movement;
+* a hammer at/near the lower-edge zone followed by bullish confirmation;
+* a classic `Morning Star`: a strong bearish candle, then a small-bodied indecision/star candle near the local low,
+  then a strong bullish candle recovering materially into the first candle's body.
+
+The user's phrase "engulfing through a hammer" is preserved as an observation description, but it is not assigned a
+standard candlestick name unless the actual candle sequence matches one of the versioned definitions. `Morning Star`
+is specifically treated as the three-candle structure above, not as a generic hammer-plus-engulfing label.
+
+These candle formations are confluence, not standalone trade authorization. Their incremental value must be tested
+against otherwise-matched Falling Wedge lower-edge entries without the candle evidence, controlling for location,
+trend, volatility, volume, structure maturity and costs. Record formation identity/version, component OHLC,
+location relative to the lower boundary/arc, confirmation close, volume context and subsequent MAE/MFE.
+
 If price reaches and breaks the upper boundary without a prolonged accumulation phase, management is conditioned on
 a versioned `breakout_strength_state`. Candidate states are `NORMAL`, `STRONG` and `EXPLOSIVE`; their thresholds
 must be measurable at decision time from features such as ATR-normalized breakout displacement, volume ratio,
@@ -325,9 +350,10 @@ adaptive policy against the frozen `NORMAL/STRONG` realization policy; do not cl
 future outcome information.
 
 Required comparisons include: pre-breakout lower-edge entry versus breakout-only and breakout-plus-retest cohorts;
-fixed early realization versus strength-conditioned realization; retest rebuild versus no rebuild; runner versus
-full target realization; and alternative stop/trailing policies. Measure expectancy after costs, MAE/MFE, drawdown,
-tail loss, missed continuation, failed-breakout loss, realized-versus-left-on-table PnL and execution feasibility.
+with versus without lower-edge rounded-arc/candlestick confluence; fixed early realization versus strength-conditioned
+realization; retest rebuild versus no rebuild; runner versus full target realization; and alternative stop/trailing
+policies. Measure expectancy after costs, MAE/MFE, drawdown, tail loss, missed continuation, failed-breakout loss,
+realized-versus-left-on-table PnL and execution feasibility.
 
 ## 4.4 Structural pullback
 
@@ -546,6 +572,51 @@ subjective arc thickness or hand-drawn boundary is promoted into the generalized
 
 ---
 
+# 7C. UNPREPARED BREAKOUT DEEP RETEST
+
+## H-016 UNPREPARED BREAKOUT DEEP RETEST / "NAKED" BREAKOUT CANDLE
+
+**Status:** `HYPOTHESIS / NEEDS VALIDATION`.
+
+**Classification:** `NEW_SETUP / CROSS-PATTERN BEHAVIOR`. The user's colloquial labels `голая свеча` / `наглая свеча`
+are retained as research aliases for a sharp breakout candle that crosses a pattern boundary or significant level
+without an observable preceding accumulation/acceptance phase.
+
+**Claim:** an abrupt large breakout through a pattern boundary or level without prior local accumulation may have a
+higher near-term probability of returning deeply toward that boundary/level, and in some cases closing back through
+it in the opposite direction, than otherwise-matched prepared breakouts. Neither the elevated probability nor the
+required depth is assumed; both must be measured.
+
+The setup must be defined using decision-time information only. Candidate features include:
+
+* pre-breakout accumulation/compression score and duration;
+* distance/time from the last meaningful pause or base;
+* breakout-candle range and body normalized by ATR;
+* wick/body geometry and close location;
+* displacement beyond the crossed boundary/level;
+* volume ratio and short-horizon price velocity;
+* boundary/level type, age, touch history and structural significance;
+* immediate follow-through versus stall after the breakout;
+* time to first return, retest penetration depth and maximum excursion through the level;
+* whether price merely retests and holds, deeply retests, or closes/accepts back across the level.
+
+`DEEP_RETEST` must not be defined using the eventual outcome. Its depth/timing threshold must be frozen before
+holdout evaluation and normalized by ATR, local structure width or another versioned scale. A return that holds the
+breakout side is distinct from `FAILED_BREAKOUT`; acceptance back through the level is a separate outcome class.
+
+Required controls include breakouts preceded by measurable accumulation/acceptance, matched breakout candles of
+similar ATR-normalized size and volume, and ordinary retests from the same pattern/level families. Stratify by
+Falling/Rising Wedge, Triangle, horizontal levels, direction, regime, volatility, liquidity, timeframe and level
+quality. Measure return-to-level probability, time-to-return, retest depth, failed-breakout probability, post-retest
+MFE/MAE and after-cost expectancy for any later trading rule built on the behavior.
+
+Promotion requires a stable, economically actionable difference versus frozen matched controls across holdout and
+walk-forward samples, with no dependence on hindsight definitions. Kill or narrow the claim if the effect disappears
+after controlling for breakout magnitude, volatility, level type, regime or costs, or if a robust decision-time
+`without accumulation` definition cannot be established.
+
+---
+
 # 8. AKEUSDT CASE STUDY
 
 **Status:** `OBSERVATION / HYPOTHESIS SOURCE`, not proof.
@@ -676,6 +747,7 @@ explicit unique ID and evidence plan.
 | H-013 | Mirror Level Touch Decay / Touch Conditional Expectancy | `HYPOTHESIS` | H-011 bounce events | Bounce expectancy changes as a function of touch number; direction of change is unknown. | Touch fields in section 7 plus range/regime controls. | Conditional event study for touch 1/2/3/4+, clustered uncertainty, holdout and sensitivity tests. | Stable, actionable conditional effect with adequate sample size and out-of-sample replication. | No distinguishable effect, effect disappears under controls/costs, or sample dependence makes it unusable. |
 | H-014 | Post-Impulse Channel Midline Harvesting | `HYPOTHESIS` | Post-impulse rising/falling channel | Channel-fraction entry with midline-first realization may outperform absolute-extreme entry or full opposite-boundary targeting after costs. | Channel version/boundaries/midline, normalized position, entry bin, ladder variant, exit policy, invalidation, fills, costs, MAE/MFE and outcomes. | Mode-specific event study and matched policy comparison across holdout symbols/regimes, then walk-forward and PAPER/shadow gates. | Robust positive post-cost expectancy with acceptable tail risk and an out-of-sample advantage over frozen control policies. | No robust advantage, insufficient harvestable width, unstable/no-look-ahead channel definition or unacceptable fill/tail-risk behavior. |
 | H-015 | Rounded Deceleration Breakout / Parabolic Compression Reversal | `HYPOTHESIS` | Post-bearish-impulse nonlinear deceleration/compression | Measured curvature/deceleration followed by bullish structural breakout may have distinguishable post-cost expectancy, and curvature may or may not add information beyond deceleration alone. | Versioned fit/derivatives, slopes and decay, velocity, swing/ATR/range/volume contraction, breakout/retest, regime/liquidity, entry/exit variant, MAE/MFE, costs and outcome. | Curvature-versus-deceleration ablation and matched-control event study, then holdout, walk-forward, sensitivity and PAPER/shadow. | Robust post-cost result plus stable out-of-sample incremental value for the retained feature model with acceptable tail risk. | No incremental/stable effect, look-ahead-dependent geometry, non-robust parameters, or failed post-cost/tail-risk gates. |
+| H-016 | Unprepared Breakout Deep Retest / "Naked" Breakout Candle | `HYPOTHESIS` | Cross-pattern breakout/retest behavior | Abrupt breakout without preceding accumulation may have a higher near-term deep-retest or failed-breakout probability than matched prepared breakouts. | Accumulation score, boundary/level metadata, breakout candle/volume/velocity, return timing, penetration, acceptance side, MAE/MFE and costs. | Matched-control event study by level/pattern/regime, then holdout, walk-forward and sensitivity analysis. | Stable economically actionable difference versus frozen matched prepared-breakout controls without hindsight-dependent definitions. | Effect disappears under controls/costs, definition is unstable/look-ahead-dependent, or no robust actionable difference remains. |
 
 ---
 
@@ -779,9 +851,12 @@ Fields below are desired before implementation design; names and storage are not
 * rounded-deceleration fit method/type, fit window/version, high/low slope start/end, slope decay, first/second
   derivative or curvature, downside-velocity decay, swing-amplitude contraction and post-impulse age;
 * breakout type/displacement/distance, breakout volume ratio, retest flag and H-015 matched-control class;
-* Falling Wedge maturity/apex position, lower-edge distance, `breakout_strength_state`, post-edge velocity,
-  pullback depth, realized fraction, retained fraction, retest/rebuild decision, target-path progress, runner policy
-  and trailing/profit-lock state for the pre-breakout lower-edge refinement;
+* Falling Wedge maturity/apex position, lower-edge distance, local rounded-arc/deceleration features, candlestick
+  formation identity/version and component OHLC, `breakout_strength_state`, post-edge velocity, pullback depth,
+  realized fraction, retained fraction, retest/rebuild decision, target-path progress, runner policy and
+  trailing/profit-lock state for the pre-breakout lower-edge refinement;
+* H-016 pre-breakout accumulation/compression score, level/pattern identity, breakout candle ATR/body/wick/close,
+  breakout volume/velocity, time-to-return, retest penetration, deep-retest class and acceptance/failure side;
 * `touch_number`, penetration, rejection and time since previous touch;
 * ATR/realized volatility and volume context;
 * spread, liquidity/depth context, BTC/market context and abnormal-volatility flag.
@@ -815,15 +890,22 @@ No item below authorizes code.
 * formalize H-014 channel identity, no-look-ahead normalized position, economic-width gate and invalidation;
 * formalize H-015 decision-time fit, curvature/deceleration features, competing models and matched-control labels;
 * complete the Falling Wedge pre-breakout lower-edge refinement: maturity, edge proximity, entry trigger, initial
-  structural invalidation/stop, breakout-strength classification, retest-hold rule and trailing/profit-lock logic;
+  structural invalidation/stop, lower-edge rounded-arc and candle-confluence definitions, breakout-strength
+  classification, retest-hold rule and trailing/profit-lock logic;
+* formalize H-016 decision-time `without accumulation` definition, level/boundary taxonomy, `DEEP_RETEST` threshold
+  and prepared-breakout matched controls;
 * complete an end-to-end Falling Wedge strategy definition with separate context and entry-mode cohorts;
 * preserve the AKEUSDT source/reference case only if original evidence and case identity are supplied.
 
 ## P1 — comparative validation
 
 * compare breakout, breakout-plus-retest and pre-breakout/corridor entries without cohort mixing;
+* compare Falling Wedge lower-edge entries with versus without bullish engulfing, hammer-plus-confirmation,
+  Morning Star and rounded-arc confluence, including correlated-evidence controls;
 * compare Falling Wedge fixed versus breakout-strength-conditioned partial realization, retest rebuild versus no
   rebuild, candidate `75/25` and `70/30` distributions versus neighboring fractions, and runner/trailing variants;
+* test H-016 return-to-level, deep-retest and failed-breakout rates against prepared-breakout and matched-strength
+  controls across pattern/level families and regimes;
 * evaluate structural pullback and exhaustion/reversal accumulation separately;
 * optimize/compare trade-management mechanisms only after a stable eligible-entry dataset exists;
 * compare H-014 entry fractions and `MID_100`, `MID_70_TOP_30`, `MID_50_TOP_50`,
@@ -886,6 +968,10 @@ features stay default-off and may not silently drift into admission.
 12. What minimum sample, effect size, uncertainty and tail-risk gates are required for each promotion stage?
 13. For Falling Wedge lower-edge pre-breakout entry, what structural/volatility rule defines the initial stop and
     hard invalidation without making normal boundary noise indistinguishable from setup failure?
+14. Which lower-edge candlestick formations add independent value after controlling for wedge maturity, local arc,
+    volatility and volume, and how should overlapping candle evidence be deduplicated?
+15. What decision-time definition best separates an H-016 unprepared breakout from an ordinary momentum breakout,
+    and what normalized depth/timing constitutes a `DEEP_RETEST` rather than normal boundary noise?
 
 ---
 
@@ -909,6 +995,8 @@ Version 1.1 adds the H-014 post-impulse channel research hypothesis and strategy
 Version 1.2 adds H-015 and the BTWUSDT 1m observation with curvature-versus-deceleration controls.
 Version 1.3 records the Falling Wedge lower-edge pre-breakout entry and breakout-management mechanics as an existing
 setup refinement, including candidate partial-realization, retest-rebuild, explosive-breakout and runner policies.
+Version 1.4 adds Falling Wedge lower-edge rounded-arc/candlestick confluence and H-016 Unprepared Breakout Deep Retest,
+including the user research aliases `голая свеча` / `наглая свеча`.
 These revisions change documentation only and create no detector, signal, order, risk or runtime behavior.
 
 # END_OF_DOCUMENT
