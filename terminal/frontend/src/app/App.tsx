@@ -55,9 +55,9 @@ import {
   stopDraftReducer,
 } from "../orders/stopDraft";
 import {
-  isImprovingStop,
   loadStopPreset,
   loadTakePreset,
+  protectionPercentFromPrice,
   saveStopPreset,
   saveTakePreset,
   shouldCloseStopSettings,
@@ -661,7 +661,7 @@ export function App() {
     await attempt.promise;
   }, [currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
 
-  const beginStopDraft = useCallback((): "drafted" | "not-improved" | undefined => {
+  const beginStopDraft = useCallback((): "drafted" | undefined => {
     if (
       (!mutationsAllowed && !liveProtectionAllowed)
       || protectionPositionSide === "Flat"
@@ -670,6 +670,21 @@ export function App() {
     const referencePrice = activeStopPrice === null
       ? protectionAverageEntry
       : sizingReferencePrice;
+    if (activeStopPrice !== null) {
+      const percent = protectionPercentFromPrice(
+        "STOP",
+        protectionPositionSide,
+        referencePrice ?? "0",
+        activeStopPrice,
+      );
+      if (percent !== null) setStopPresetPercent(percent);
+      dispatchStopDraft({
+        type: "begin-edit",
+        symbol: tradingSymbol,
+        authoritativePrice: activeStopPrice,
+      });
+      return "drafted";
+    }
     const price = stopPriceFromPercent(
       protectionPositionSide,
       referencePrice,
@@ -677,19 +692,7 @@ export function App() {
       String(market.tickSize),
     );
     if (price === null) return;
-    if (activeStopPrice === null) {
-      dispatchStopDraft({ type: "begin-create", symbol: tradingSymbol, price });
-      return "drafted";
-    }
-    if (!isImprovingStop(protectionPositionSide, price, activeStopPrice)) {
-      return "not-improved";
-    }
-    dispatchStopDraft({
-      type: "begin-edit",
-      symbol: tradingSymbol,
-      authoritativePrice: activeStopPrice,
-    });
-    dispatchStopDraft({ type: "update-price", price });
+    dispatchStopDraft({ type: "begin-create", symbol: tradingSymbol, price });
     return "drafted";
   }, [
     activeStopPrice,
@@ -790,7 +793,27 @@ export function App() {
   const updateStopPreset = useCallback((percent: string) => {
     setStopPresetPercent(percent);
     saveStopPreset(percent);
-  }, []);
+    if (!stopDraft || protectionPositionSide === "Flat" || market.tickSize === null) return;
+    const referencePrice = activeStopPrice === null
+      ? protectionAverageEntry
+      : sizingReferencePrice;
+    const price = stopPriceFromPercent(
+      protectionPositionSide,
+      referencePrice,
+      percent,
+      String(market.tickSize),
+    );
+    if (price !== null) {
+      dispatchStopDraft({ type: "update-price", price });
+    }
+  }, [
+    activeStopPrice,
+    market.tickSize,
+    protectionAverageEntry,
+    protectionPositionSide,
+    sizingReferencePrice,
+    stopDraft,
+  ]);
 
   const beginTakeDraft = useCallback(() => {
     if (
@@ -875,8 +898,25 @@ export function App() {
     );
     if (normalized !== null) {
       dispatchStopDraft({ type: "update-price", price: normalized });
+      const referencePrice = activeStopPrice === null
+        ? protectionAverageEntry
+        : sizingReferencePrice;
+      const percent = protectionPercentFromPrice(
+        "STOP",
+        protectionPositionSide,
+        referencePrice ?? "0",
+        normalized,
+      );
+      if (percent !== null) setStopPresetPercent(percent);
     }
-  }, [market.tickSize, protectionPositionSide, stopDraft]);
+  }, [
+    activeStopPrice,
+    market.tickSize,
+    protectionAverageEntry,
+    protectionPositionSide,
+    sizingReferencePrice,
+    stopDraft,
+  ]);
 
   const updateTakeDraftPrice = useCallback((rawPrice: string) => {
     if (!takeDraft || protectionPositionSide === "Flat" || market.tickSize === null) return;
@@ -1080,8 +1120,14 @@ export function App() {
           authoritativeStopPrice={activeStopPrice}
           stopDraft={stopDraft}
           onStopDraftPriceChange={updateStopDraftPrice}
-          onStopConfirm={() => confirmProtectionDraft("STOP")}
-          onStopCancelDraft={() => dispatchStopDraft({ type: "clear" })}
+          onStopConfirm={() => {
+            setProtectionSettings(null);
+            return confirmProtectionDraft("STOP");
+          }}
+          onStopCancelDraft={() => {
+            setProtectionSettings(null);
+            dispatchStopDraft({ type: "clear" });
+          }}
           onStopEdit={beginStopEdit}
           onStopDelete={() => deleteProtection("STOP")}
           authoritativeTakePrice={activeTakePrice}
@@ -1188,7 +1234,10 @@ export function App() {
             setProtectionSettings({ leg: "STOP", symbol: tradingSymbol });
             return result;
           }}
-          onStopHold={() => setProtectionSettings({ leg: "STOP", symbol: tradingSymbol })}
+          onStopHold={() => {
+            beginStopDraft();
+            setProtectionSettings({ leg: "STOP", symbol: tradingSymbol });
+          }}
           stopActive={activeStopPrice !== null}
           stopSettingsOpen={protectionSettings?.leg === "STOP" && protectionSettings.symbol === tradingSymbol}
           stopPresetPercent={stopPresetPercent}
