@@ -56,9 +56,22 @@ const renderPanel = (onLimitCancel = vi.fn()) => render(
 const openBuyInventory = () => {
   vi.useFakeTimers();
   const button = screen.getByRole("button", { name: "BUY LIMITS 1" });
-  fireEvent.pointerDown(button, { pointerId: 1 });
+  Object.assign(button, {
+    setPointerCapture: vi.fn(),
+    hasPointerCapture: vi.fn(() => true),
+    releasePointerCapture: vi.fn(),
+  });
+  fireEvent.pointerDown(button, {
+    pointerId: 1,
+    pointerType: "touch",
+    button: 0,
+  });
   vi.advanceTimersByTime(500);
-  fireEvent.pointerUp(button, { pointerId: 1 });
+  fireEvent.pointerUp(button, {
+    pointerId: 1,
+    pointerType: "touch",
+    button: 0,
+  });
   return screen.getByLabelText("Active Buy Limit orders for BTCUSDT");
 };
 
