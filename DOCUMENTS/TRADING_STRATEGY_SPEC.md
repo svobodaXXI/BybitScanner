@@ -2,7 +2,7 @@
 
 Version:
 
-1.8
+1.9
 
 Date:
 
@@ -318,6 +318,40 @@ against otherwise-matched Falling Wedge lower-edge entries without the candle ev
 trend, volatility, volume, structure maturity and costs. Record formation identity/version, component OHLC,
 location relative to the lower boundary/arc, confirmation close, volume context and subsequent MAE/MFE.
 
+#### Initial position size, confirmation strength and entry trigger
+
+The candidate initial pre-breakout LONG size is bounded to `0.5–1.0 WV` and selected from three research tiers:
+
+* `BASE` confirmation -> `0.5 WV`;
+* `STRONG` confirmation -> `0.75 WV`;
+* `VERY_STRONG` confirmation -> `1.0 WV`.
+
+The size may depend on confirmation strength, but exact weights and thresholds are `NEEDS VALIDATION`. Confirmation
+must be organized into independent evidence groups rather than a raw count of visual signals. Candidate groups
+include wedge/lower-edge structural quality and maturity; local rounded-arc/deceleration; closed-candle reversal
+evidence; independent support/mirror-level confluence; reversal-volume behavior; higher-timeframe context outside
+the source event; and broad-market/BTC context. A `SAME_EVENT_AGGREGATION` sequence such as lower-timeframe Morning
+Star -> higher-timeframe engulfing representation -> still-higher-timeframe lower wick counts as one underlying
+reversal event unless genuinely independent information exists outside that event window.
+
+The working sizing policy is that `BASE` means the setup passes all mandatory admission gates with minimally
+sufficient confirmation; `STRONG` requires at least two materially independent strong evidence groups; and
+`VERY_STRONG` requires at least three materially independent groups, preferably spanning different evidence types
+rather than several correlated candle views. These counts are candidate research rules, not proven optimal cutoffs.
+Initial size may never exceed `1.0 WV` merely because more confirmations are present.
+
+The entry trigger is the **close of the selected bullish confirmation candle**. No entry is authorized while that
+confirmation candle is still open. Once it closes and all admission conditions remain valid, the candidate policy is
+to enter the entire selected initial size immediately with a `MARKET` order. The initial `0.5/0.75/1.0 WV` is not
+split into a pullback ladder and the policy does not wait for a later retracement or a passive Limit fill.
+
+Immediately before the Market command, the decision-time market reference, selected stop, expected costs and
+`expected_reward_to_risk` must still satisfy the frozen admission rules. If price has already moved far enough after
+the confirmation close that the selected stop or the minimum `1:1` reward-to-risk is no longer admissible, the
+entry is skipped rather than chased. Actual Market fill, slippage and latency must be recorded; allowable adverse
+slippage/tolerance is `NEEDS VALIDATION` and belongs to execution-risk research rather than hindsight adjustment of
+the setup.
+
 #### Initial-stop candidates after lower-edge confirmation
 
 Two initial protective-stop variants are retained as separate research policies; they must not be pooled in one
@@ -439,12 +473,13 @@ adaptive policy against the frozen `NORMAL/STRONG` realization policy; do not cl
 future outcome information.
 
 Required comparisons include: pre-breakout lower-edge entry versus breakout-only and breakout-plus-retest cohorts;
-with versus without lower-edge rounded-arc/candlestick confluence; structural-extremum stop versus confirmation-
-candle-open stop and threshold selector; same-event multi-timeframe aggregation versus genuinely independent
-higher-timeframe context; fixed early realization versus strength-conditioned realization; retest rebuild versus no
-rebuild; runner versus full target realization; and alternative stop/trailing policies. Measure expectancy after
-costs, MAE/MFE, drawdown, tail loss, missed continuation, failed-breakout loss, realized-versus-left-on-table PnL and
-execution feasibility.
+with versus without lower-edge rounded-arc/candlestick confluence; confirmation-strength-based initial sizing versus
+fixed initial-size controls; immediate confirmation-close Market entry versus delayed/pullback control variants;
+structural-extremum stop versus confirmation-candle-open stop and threshold selector; same-event multi-timeframe
+aggregation versus genuinely independent higher-timeframe context; fixed early realization versus strength-
+conditioned realization; retest rebuild versus no rebuild; runner versus full target realization; and alternative
+stop/trailing policies. Measure expectancy after costs, MAE/MFE, drawdown, tail loss, missed continuation,
+failed-breakout loss, realized-versus-left-on-table PnL and execution feasibility.
 
 ## 4.4 Structural pullback
 
@@ -944,11 +979,13 @@ Fields below are desired before implementation design; names and storage are not
 * breakout type/displacement/distance, breakout volume ratio, retest flag and H-015 matched-control class;
 * Falling Wedge maturity/apex position, lower-edge distance, local rounded-arc/deceleration features, candlestick
   formation identity/version and component OHLC, source timeframe and parent/child aggregation mapping,
-  `same_event_aggregation` versus independent higher-timeframe context, initial-stop policy, relevant structural
-  extremum, confirmation-candle open, stop buffer, `structural_stop_distance_pct`, candidate stop-selector threshold,
-  selected stop policy and selector reason, upper-wedge-boundary price/version at admission, expected-reward
-  reference, expected reward distance after costs, initial risk distance after costs, `expected_reward_to_risk`,
-  reward-to-risk admission result, `breakout_strength_state`, post-edge velocity, pullback depth, realized fraction,
+  `same_event_aggregation` versus independent higher-timeframe context, confirmation-strength tier, independent
+  evidence groups, planned initial WV, confirmation-candle close time, entry trigger, intended entry order type,
+  pre-Market executable reference, initial-stop policy, relevant structural extremum, confirmation-candle open,
+  stop buffer, `structural_stop_distance_pct`, candidate stop-selector threshold, selected stop policy and selector
+  reason, upper-wedge-boundary price/version at admission, expected-reward reference, expected reward distance after
+  costs, initial risk distance after costs, `expected_reward_to_risk`, reward-to-risk admission result, actual Market
+  fill, entry slippage/latency, `breakout_strength_state`, post-edge velocity, pullback depth, realized fraction,
   retained fraction, retest/rebuild decision, target-path progress, runner policy and trailing/profit-lock state for
   the pre-breakout lower-edge refinement;
 * H-016 pre-breakout accumulation/compression score, level/pattern identity, breakout candle ATR/body/wick/close,
@@ -985,12 +1022,13 @@ No item below authorizes code.
 * define H-012 structural ladder budget, spacing variants and single-entry control;
 * formalize H-014 channel identity, no-look-ahead normalized position, economic-width gate and invalidation;
 * formalize H-015 decision-time fit, curvature/deceleration features, competing models and matched-control labels;
-* complete the Falling Wedge pre-breakout lower-edge refinement: maturity, edge proximity, entry trigger,
-  `STRUCTURAL_EXTREMUM_STOP` versus `CONFIRMATION_CANDLE_OPEN_STOP`, structural-stop-distance selector and candidate
-  `2%` cutoff, candidate minimum `expected_reward_to_risk >= 1.0` using the contemporaneous upper wedge boundary as
-  the primary pre-breakout reward reference, lower-edge rounded-arc and candle-confluence definitions,
-  source-to-higher-timeframe candle aggregation mapping, breakout-strength classification, retest-hold rule and
-  trailing/profit-lock logic;
+* complete the Falling Wedge pre-breakout lower-edge refinement: maturity, edge proximity, confirmation-close entry
+  trigger, immediate Market execution, `0.5/0.75/1.0 WV` confirmation-strength sizing tiers and independent evidence
+  groups, `STRUCTURAL_EXTREMUM_STOP` versus `CONFIRMATION_CANDLE_OPEN_STOP`, structural-stop-distance selector and
+  candidate `2%` cutoff, candidate minimum `expected_reward_to_risk >= 1.0` using the contemporaneous upper wedge
+  boundary as the primary pre-breakout reward reference, lower-edge rounded-arc and candle-confluence definitions,
+  source-to-higher-timeframe candle aggregation mapping, Market slippage/latency tolerance, breakout-strength
+  classification, retest-hold rule and trailing/profit-lock logic;
 * formalize H-016 decision-time `without accumulation` definition, level/boundary taxonomy, `DEEP_RETEST` threshold
   and prepared-breakout matched controls;
 * complete an end-to-end Falling Wedge strategy definition with separate context and entry-mode cohorts;
@@ -1001,6 +1039,10 @@ No item below authorizes code.
 * compare breakout, breakout-plus-retest and pre-breakout/corridor entries without cohort mixing;
 * compare Falling Wedge lower-edge entries with versus without bullish engulfing, hammer-plus-confirmation,
   Morning Star and rounded-arc confluence, including correlated-evidence controls;
+* compare `0.5`, `0.75` and `1.0 WV` confirmation-strength tiers against fixed-size controls and test whether the
+  independent-evidence grouping adds out-of-sample value without merely scaling losses;
+* compare immediate confirmation-close Market entry against frozen delayed/pullback and passive-entry controls,
+  including fill rate, slippage, missed-move rate and after-cost expectancy;
 * compare `STRUCTURAL_EXTREMUM_STOP`, `CONFIRMATION_CANDLE_OPEN_STOP` and the candidate distance-based selector;
   test the `2%` cutoff against neighboring thresholds and volatility-normalized alternatives, and test the candidate
   `expected_reward_to_risk >= 1.0` gate against nearby minimum-R variants, using the upper-wedge-boundary admission
@@ -1084,6 +1126,9 @@ features stay default-off and may not silently drift into admission.
     underlying move?
 16. What decision-time definition best separates an H-016 unprepared breakout from an ordinary momentum breakout,
     and what normalized depth/timing constitutes a `DEEP_RETEST` rather than normal boundary noise?
+17. For the Falling Wedge lower-edge pre-breakout policy, which independent-evidence weighting and tier boundaries
+    best separate `0.5`, `0.75` and `1.0 WV` initial sizes, and what maximum adverse Market-entry slippage/latency can
+    be tolerated before the confirmation-close entry should be skipped?
 
 ---
 
@@ -1118,6 +1163,8 @@ Version 1.7 tightens that candidate selector to `2%` and adds a separate candida
 reward-to-risk admission gate after costs for Falling Wedge lower-edge pre-breakout entries.
 Version 1.8 defines the contemporaneous upper Falling Wedge boundary as the primary pre-breakout expected-reward
 reference for that `1:1` gate and explicitly excludes unconfirmed post-breakout potential from admission.
+Version 1.9 adds confirmation-strength-based `0.5/0.75/1.0 WV` initial sizing, closed-confirmation-candle entry
+trigger and immediate whole-size Market execution, with no pullback wait and explicit slippage/latency research.
 These revisions change documentation only and create no detector, signal, order, risk or runtime behavior.
 
 # END_OF_DOCUMENT
