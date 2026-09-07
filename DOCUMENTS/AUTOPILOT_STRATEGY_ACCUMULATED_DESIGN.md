@@ -1,6 +1,6 @@
 # BybitScanner — Accumulated Strategy & AUTOPILOT Design Addendum
 
-Version: 1.0
+Version: 1.1
 Date: 2026-09-07
 Status: ACTIVE / RESEARCH-ONLY / DESIGN-ONLY
 Implementation authorization: NONE
@@ -417,18 +417,46 @@ Target flow:
 
 PAPER and LIVE are execution/account environments, not separate strategy implementations.
 
-## 9.2 Arbitrary account count
+## 9.2 Initial implementation scope versus future capability
 
-Design for any number of connected accounts, including:
+`ACCEPTED DESIGN / IMPLEMENTATION SCOPE`: the first AUTOPILOT implementation is deliberately narrow:
 
-- PAPER accounts;
-- multiple Bybit LIVE accounts;
-- Bybit subaccounts;
-- future provider adapters if added.
+- exactly one selected trading account is controlled by AUTOPILOT at a time;
+- initially exactly one selected trading pair/symbol is actively traded at a time;
+- one active setup/trade lifecycle is sufficient for the first production-shaped PAPER/shadow implementation;
+- no multi-account allocation engine, portfolio optimizer, cross-account signal fan-out, or simultaneous multi-symbol capital allocation is required for MVP.
 
-Do not hard-code an architecture for exactly `1 PAPER + 1 LIVE`.
+This scope reduction is intentional and must not be interpreted as permission to hard-code the strategy to one special PAPER account, one special LIVE account, or one immutable symbol.
 
-Each account context should have explicit identity and capabilities, including at minimum:
+The MVP still preserves the structural seams required for later expansion:
+
+- explicit `account_id` even when only one account is selected;
+- explicit `symbol` / `setup_instance_id` even when only one pair is active;
+- account-neutral strategy logic;
+- account-scoped risk/admission context;
+- execution adapter abstraction;
+- separate strategy/setup state from execution/account state;
+- no strategy-level `PAPER` versus `LIVE` fork.
+
+Thus the first implementation is **single-account and single-pair in runtime scope, but not single-account/single-pair in architecture**.
+
+## 9.3 Future multi-account / multi-symbol extension
+
+`FUTURE EXTENSION`: after the one-account/one-pair AUTOPILOT is stable and validated, the same architecture may expand to:
+
+- multiple PAPER accounts;
+- multiple Bybit LIVE accounts/subaccounts;
+- future provider adapters;
+- multiple simultaneous candidate symbols;
+- per-account admission and sizing;
+- portfolio/correlation-aware capital allocation;
+- signal fan-out from one shared `setup_instance_id` to multiple account-specific trade lifecycles.
+
+These capabilities must not be implemented prematurely merely because the architecture can support them.
+
+## 9.4 Account context for future expansion
+
+When multi-account operation is eventually enabled, each account context should have explicit identity and capabilities, including at minimum:
 
 - `account_id`;
 - `provider`;
@@ -441,46 +469,37 @@ Each account context should have explicit identity and capabilities, including a
 - connection/reconciliation state;
 - instrument permissions/constraints.
 
-## 9.3 Setup state versus account trade state
+## 9.5 Setup state versus account trade state
 
 Separate shared market/setup state from per-account execution/trade state.
 
-Example:
+For the MVP there is normally one selected account and one selected pair, but the data model still distinguishes:
 
-`SETUP ABCUSDT: RETEST_CONFIRMED`
+`setup_instance_id`
 
-may coexist with:
+from
+
+`account_trade_id`.
+
+This prevents future migration from requiring a strategy rewrite and also keeps PAPER/LIVE comparison analytically clean.
+
+In a later multi-account extension, one setup may coexist with different per-account states, for example:
 
 - `paper-1: ACTIVE 1.0 WV`;
 - `bybit-main: ACTIVE 0.75 WV`;
-- `bybit-sub2: SKIPPED`;
-- `bybit-sub3: ARMED`.
+- `bybit-sub2: SKIPPED`.
 
-The setup should not be duplicated as unrelated strategy copies for each account.
+## 9.6 Per-account admission — deferred operationally, retained conceptually
 
-## 9.4 Per-account admission
+For MVP, admission is evaluated only for the single selected `account_id`.
 
-A single market setup may produce different decisions per account.
+Later, if multiple accounts are enabled, each account may independently evaluate current WV/wallet, risk budget, exposure, existing position, cooldown, liquidity/execution constraints, provider capabilities, session/reconciliation health and account-specific restrictions.
 
-Each account independently evaluates:
-
-- current WV/account wallet;
-- risk budget;
-- aggregate exposure;
-- existing symbol position;
-- cooldown;
-- liquidity/execution constraints;
-- provider/account capabilities;
-- session/reconciliation health;
-- account-specific restrictions.
-
-Therefore the same setup can be `ACCEPT` on one account and `REJECT/SKIP` on another without altering the shared setup state.
-
-## 9.5 PAPER-to-LIVE parity
+## 9.7 PAPER-to-LIVE parity
 
 PAPER should use the same domain command lifecycle, intent identity, fencing, ambiguity handling and reconciliation semantics as LIVE wherever technically possible.
 
-The goal is that moving an AUTOPILOT strategy from PAPER to LIVE means attaching another account/execution adapter to the same strategy and risk architecture, not rewriting the robot.
+The goal is that moving an AUTOPILOT strategy from PAPER to LIVE means selecting another compatible account/execution adapter for the same strategy and risk architecture, not rewriting the robot.
 
 No blind retries, account/session fencing, authoritative fills, UNKNOWN/reconciliation semantics and explicit account identity should remain common invariants.
 
@@ -512,8 +531,9 @@ Candidate fields to support the mechanics above:
 - structural level / round-number / DOM-density features used for an exit decision;
 - `discovery_state`, `focused_watch_state`, suppression reason;
 - opportunity-priority features, expected holding-time estimate and model version;
-- shared `setup_instance_id` plus per-account trade/admission IDs;
-- account-level `account_id`, provider, environment, risk profile/version, capability state and reconciliation state.
+- shared `setup_instance_id` plus explicit `account_trade_id`;
+- account-level `account_id`, provider, environment, risk profile/version, capability state and reconciliation state;
+- explicit MVP runtime selection for active `account_id` and active `symbol`.
 
 All decision-time fields must remain immutable for research evaluation; later outcomes append rather than rewrite prior state.
 
@@ -537,7 +557,8 @@ Required future comparisons include:
 - Rising Wedge exhaustion context vs matched post-impulse controls;
 - Flag/L-shape/upper-compression continuation context vs matched controls;
 - opportunity ranking by potential only vs EV/time-efficiency aware ranking once sufficient statistics exist;
-- multi-account PAPER/LIVE parity and account-specific admission behavior in PAPER/shadow environments.
+- single-account PAPER-to-LIVE parity first;
+- multi-account admission/allocation behavior only as a later extension after single-account AUTOPILOT stabilization.
 
 No item in this addendum authorizes autonomous LIVE trading.
 
@@ -554,6 +575,14 @@ No item in this addendum authorizes autonomous LIVE trading.
 7. Exact structure definitions for L-shaped continuation and upper compression.
 8. Exact opportunity-ranking formula before statistically reliable win-rate and holding-time models exist.
 9. Focused-watch resource budgets and scheduling cadence.
-10. Per-account allocation policy when the same setup is simultaneously admissible on multiple accounts.
+10. Later only: multi-account and multi-symbol portfolio allocation policy once the single-account/single-pair MVP is stable.
+
+---
+
+# 13. VERSION TRACEABILITY
+
+Version 1.0 captured the accumulated Falling Wedge management mechanics, universal reversal-candle principle, post-impulse continuation/exhaustion context, Scanner/focused-watch architecture, opportunity-prioritization direction and multi-account-neutral AUTOPILOT invariant.
+
+Version 1.1 clarifies implementation scope: the initial AUTOPILOT is intentionally limited to one selected account and one selected trading pair at a time. Multi-account and multi-symbol capital allocation are explicitly deferred future extensions, while `account_id`, `symbol`, account-neutral strategy semantics, execution adapters and PAPER-to-LIVE parity remain first-class architectural seams from the beginning.
 
 # END_OF_DOCUMENT
