@@ -703,7 +703,7 @@ export function App() {
     tradingSymbol,
   ]);
 
-  const applyStopSettings = useCallback((price: string, percent: string) => {
+  const applyStopSettings = useCallback(async (price: string, percent: string) => {
     if ((!mutationsAllowed && !liveProtectionAllowed) || protectionPositionSide === "Flat") return;
     setStopPresetPercent(percent);
     saveStopPreset(percent);
@@ -717,8 +717,75 @@ export function App() {
       });
       dispatchStopDraft({ type: "update-price", price });
     }
+    dispatchStopDraft({ type: "submitting" });
     setProtectionSettings(null);
-  }, [activeStopPrice, liveProtectionAllowed, mutationsAllowed, protectionPositionSide, tradingSymbol]);
+
+    if (liveProtectionAllowed) {
+      try {
+        const result = await liveProtectionMutationController.current.submit(
+          {
+            leg: "STOP",
+            operation: activeStopPrice === null ? "CREATE" : "AMEND",
+            symbol: tradingSymbol,
+            triggerPrice: price,
+            currentStopLoss: liveProtectionPosition?.stopLoss ?? null,
+            currentTakeProfit: liveProtectionPosition?.takeProfit ?? null,
+          },
+          {
+            currentAuthority: currentLiveProtectionAuthority,
+            createClientActionId: () =>
+              globalThis.crypto?.randomUUID?.() ?? `live-stop-${Date.now()}`,
+            refreshActiveLive: accountWorkspaceStore.refreshActiveLive,
+          },
+        );
+        if (
+          result !== null
+          && result.status !== "accepted_pending"
+          && result.status !== "completed"
+          && result.status !== "unknown"
+          && !result.reconciliation_required
+        ) {
+          dispatchStopDraft({ type: "restore-editing" });
+        }
+      } catch {
+        await accountWorkspaceStore.refreshActiveLive();
+      }
+      return;
+    }
+
+    try {
+      const result = await paperProtectionMutationController.current.submit(
+        {
+          leg: "STOP",
+          operation: activeStopPrice === null ? "CREATE" : "AMEND",
+          symbol: tradingSymbol,
+          triggerPrice: price,
+        },
+        {
+          createClientActionId: () =>
+            globalThis.crypto?.randomUUID?.() ?? `paper-stop-${Date.now()}`,
+          applyPaperState: applyPaperStateForSession,
+          runMutation: paperTradingStore.runMutation,
+        },
+      );
+      if (authoritativeStopPrice(result.paper_state) !== null) {
+        dispatchStopDraft({ type: "clear" });
+      } else {
+        dispatchStopDraft({ type: "restore-editing" });
+      }
+    } catch {
+      dispatchStopDraft({ type: "restore-editing" });
+      await paperTradingStore.refresh();
+    }
+  }, [
+    activeStopPrice,
+    currentLiveProtectionAuthority,
+    liveProtectionAllowed,
+    liveProtectionPosition,
+    mutationsAllowed,
+    protectionPositionSide,
+    tradingSymbol,
+  ]);
 
   const updateStopPreset = useCallback((percent: string) => {
     setStopPresetPercent(percent);
@@ -1116,7 +1183,11 @@ export function App() {
           onPositionSideChange={setPositionSide}
           onPositionAverageEntryChange={setPositionAverageEntry}
           protectionPositionSide={protectionPositionSide}
-          onStopTap={beginStopDraft}
+          onStopTap={() => {
+            const result = beginStopDraft();
+            setProtectionSettings({ leg: "STOP", symbol: tradingSymbol });
+            return result;
+          }}
           onStopHold={() => setProtectionSettings({ leg: "STOP", symbol: tradingSymbol })}
           stopActive={activeStopPrice !== null}
           stopSettingsOpen={protectionSettings?.leg === "STOP" && protectionSettings.symbol === tradingSymbol}
@@ -1128,7 +1199,10 @@ export function App() {
           }
           onStopSettingsApply={applyStopSettings}
           onStopPresetChange={updateStopPreset}
-          onStopSettingsClose={() => setProtectionSettings(null)}
+          onStopSettingsClose={() => {
+            setProtectionSettings(null);
+            dispatchStopDraft({ type: "clear" });
+          }}
           onTakeTap={beginTakeDraft}
           onTakeHold={() => setProtectionSettings({ leg: "TAKE", symbol: tradingSymbol })}
           takeActive={activeTakePrice !== null}
