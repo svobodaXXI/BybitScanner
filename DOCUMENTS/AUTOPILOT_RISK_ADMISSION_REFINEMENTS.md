@@ -1,6 +1,6 @@
 # BybitScanner — AUTOPILOT Risk Admission Refinements
 
-Version: 1.1
+Version: 1.2
 Date: 2026-09-07
 Status: ACTIVE / DESIGN-ONLY
 Implementation authorization: NONE
@@ -89,6 +89,54 @@ Required diary/research fields should include at least:
 - requested and admitted size;
 - final decision code.
 
-Version 1.1 records this combined directional-heat policy.
+---
+
+# 3. COMBINED MARKET-REGIME MODEL
+
+`ACCEPTED DESIGN`:
+
+`MARKET_REGIME` must not be derived from a single instrument or one indicator. AUTOPILOT should combine several independent market-state blocks and produce a versioned regime state used by the Portfolio Risk Engine.
+
+Primary input blocks:
+
+1. `BTC_ETH_TREND` — directional state and structure of BTC and ETH;
+2. `MARKET_BREADTH` — how broadly the traded universe participates in rising/falling movement;
+3. `VOLATILITY_STATE` — calm/normal/elevated/stress volatility context;
+4. `MOMENTUM_STATE` — strength/persistence of directional movement across the market;
+5. `CORRELATION_STRESS` — whether cross-asset correlation is normal or converging toward a common stressed move.
+
+The final state should be richer than simple `BULL / BEAR`.
+
+Candidate initial taxonomy:
+
+- `BULL_CALM`;
+- `BULL_VOLATILE`;
+- `NEUTRAL`;
+- `BEAR_CALM`;
+- `BEAR_STRESS`;
+- optionally later additional transitional/uncertain states if research shows they add value.
+
+Rules:
+
+- no single input block may silently become the sole market-regime authority unless a later versioned rule explicitly says so;
+- exact indicators, windows, weights, thresholds and state-transition hysteresis remain `NEEDS VALIDATION`;
+- regime classification must use decision-time data only and must not be rewritten after the outcome is known;
+- stale or materially incomplete regime inputs must expose explicit data-health state and participate in degraded/fail-closed risk behavior rather than being silently ignored;
+- the regime state is context for admission sizing and directional heat, not an unconditional trade signal by itself.
+
+Required diary/research fields should include at least:
+
+- `market_regime_state`;
+- `market_regime_model_version`;
+- BTC/ETH trend features;
+- breadth features;
+- volatility features;
+- momentum features;
+- correlation/stress features;
+- regime confidence/data-health state;
+- regime transition timestamp;
+- effective LONG/SHORT capacity derived from the regime.
+
+Version 1.2 records this combined market-regime policy.
 
 # END_OF_DOCUMENT
