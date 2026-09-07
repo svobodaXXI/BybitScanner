@@ -2,7 +2,7 @@
 
 Version:
 
-1.5
+1.6
 
 Date:
 
@@ -336,6 +336,30 @@ that exact opening-price rule to bullish engulfing, Morning Star or other candle
 must not be assumed without validation. Compare both stop families on realized loss, stop-out frequency, subsequent
 MFE after stop-out, MAE, expectancy per admitted risk, tail loss and sensitivity to volatility/noise.
 
+##### Candidate stop-policy selector by structural-stop distance
+
+The user-proposed selector measures the planned structural-stop distance from the intended entry price:
+
+```text
+structural_stop_distance_pct = abs(entry_price - structural_extremum_stop_price) / entry_price * 100
+```
+
+Candidate policy:
+
+* when `structural_stop_distance_pct <= 5%`, prefer `STRUCTURAL_EXTREMUM_STOP`;
+* when `structural_stop_distance_pct > 5%`, prefer the tighter `CONFIRMATION_CANDLE_OPEN_STOP`.
+
+The `5%` cutoff is a `NEEDS VALIDATION` research parameter, not an accepted universal risk limit. It should be tested
+against neighboring thresholds and volatility-normalized alternatives rather than optimized on the final holdout.
+The selector changes only which pre-defined stop reference is used; it does not authorize increasing position size,
+maximum idea risk or aggregate exposure. If the tighter confirmation-candle stop itself violates the admitted
+idea-risk budget or becomes economically/structurally invalid, the trade must be rejected rather than widening risk.
+
+Required comparisons include fixed structural stop, fixed confirmation-candle-open stop and the threshold-based
+selector, with stratification by wedge maturity, volatility, entry distance from the lower edge, confirmation type
+and structural-stop distance bin. Measure expectancy per admitted risk, stop-out frequency, stop-out-then-MFE,
+MAE/MFE, tail loss and sensitivity around the candidate `5%` boundary.
+
 #### Multi-timeframe candle aggregation
 
 The same underlying lower-edge reversal episode may present differently after timeframe aggregation. A sequence
@@ -388,10 +412,11 @@ future outcome information.
 
 Required comparisons include: pre-breakout lower-edge entry versus breakout-only and breakout-plus-retest cohorts;
 with versus without lower-edge rounded-arc/candlestick confluence; structural-extremum stop versus confirmation-
-candle-open stop; same-event multi-timeframe aggregation versus genuinely independent higher-timeframe context;
-fixed early realization versus strength-conditioned realization; retest rebuild versus no rebuild; runner versus
-full target realization; and alternative stop/trailing policies. Measure expectancy after costs, MAE/MFE, drawdown,
-tail loss, missed continuation, failed-breakout loss, realized-versus-left-on-table PnL and execution feasibility.
+candle-open stop and threshold selector; same-event multi-timeframe aggregation versus genuinely independent
+higher-timeframe context; fixed early realization versus strength-conditioned realization; retest rebuild versus no
+rebuild; runner versus full target realization; and alternative stop/trailing policies. Measure expectancy after
+costs, MAE/MFE, drawdown, tail loss, missed continuation, failed-breakout loss, realized-versus-left-on-table PnL and
+execution feasibility.
 
 ## 4.4 Structural pullback
 
@@ -892,9 +917,10 @@ Fields below are desired before implementation design; names and storage are not
 * Falling Wedge maturity/apex position, lower-edge distance, local rounded-arc/deceleration features, candlestick
   formation identity/version and component OHLC, source timeframe and parent/child aggregation mapping,
   `same_event_aggregation` versus independent higher-timeframe context, initial-stop policy, relevant structural
-  extremum, confirmation-candle open and stop buffer, `breakout_strength_state`, post-edge velocity, pullback depth,
-  realized fraction, retained fraction, retest/rebuild decision, target-path progress, runner policy and
-  trailing/profit-lock state for the pre-breakout lower-edge refinement;
+  extremum, confirmation-candle open, stop buffer, `structural_stop_distance_pct`, candidate stop-selector threshold,
+  selected stop policy and selector reason, `breakout_strength_state`, post-edge velocity, pullback depth, realized
+  fraction, retained fraction, retest/rebuild decision, target-path progress, runner policy and trailing/profit-lock
+  state for the pre-breakout lower-edge refinement;
 * H-016 pre-breakout accumulation/compression score, level/pattern identity, breakout candle ATR/body/wick/close,
   breakout volume/velocity, time-to-return, retest penetration, deep-retest class and acceptance/failure side;
 * `touch_number`, penetration, rejection and time since previous touch;
@@ -930,9 +956,9 @@ No item below authorizes code.
 * formalize H-014 channel identity, no-look-ahead normalized position, economic-width gate and invalidation;
 * formalize H-015 decision-time fit, curvature/deceleration features, competing models and matched-control labels;
 * complete the Falling Wedge pre-breakout lower-edge refinement: maturity, edge proximity, entry trigger,
-  `STRUCTURAL_EXTREMUM_STOP` versus `CONFIRMATION_CANDLE_OPEN_STOP`, lower-edge rounded-arc and candle-confluence
-  definitions, source-to-higher-timeframe candle aggregation mapping, breakout-strength classification, retest-hold
-  rule and trailing/profit-lock logic;
+  `STRUCTURAL_EXTREMUM_STOP` versus `CONFIRMATION_CANDLE_OPEN_STOP`, structural-stop-distance selector and candidate
+  `5%` cutoff, lower-edge rounded-arc and candle-confluence definitions, source-to-higher-timeframe candle
+  aggregation mapping, breakout-strength classification, retest-hold rule and trailing/profit-lock logic;
 * formalize H-016 decision-time `without accumulation` definition, level/boundary taxonomy, `DEEP_RETEST` threshold
   and prepared-breakout matched controls;
 * complete an end-to-end Falling Wedge strategy definition with separate context and entry-mode cohorts;
@@ -943,8 +969,9 @@ No item below authorizes code.
 * compare breakout, breakout-plus-retest and pre-breakout/corridor entries without cohort mixing;
 * compare Falling Wedge lower-edge entries with versus without bullish engulfing, hammer-plus-confirmation,
   Morning Star and rounded-arc confluence, including correlated-evidence controls;
-* compare `STRUCTURAL_EXTREMUM_STOP` with `CONFIRMATION_CANDLE_OPEN_STOP`, including stop-out-then-MFE analysis and
-  volatility/noise sensitivity;
+* compare `STRUCTURAL_EXTREMUM_STOP`, `CONFIRMATION_CANDLE_OPEN_STOP` and the candidate distance-based selector;
+  test the `5%` cutoff against neighboring thresholds and volatility-normalized alternatives, including
+  stop-out-then-MFE analysis and volatility/noise sensitivity;
 * test whether a higher-timeframe engulfing representation or long lower wick adds incremental information beyond
   the already-known lower-timeframe reversal sequence, without double-counting `SAME_EVENT_AGGREGATION`;
 * compare Falling Wedge fixed versus breakout-strength-conditioned partial realization, retest rebuild versus no
@@ -1011,8 +1038,10 @@ features stay default-off and may not silently drift into admission.
     look-ahead leakage?
 11. Which archived notes, if any, legitimately own H-001 through H-010? Until recovered, the IDs remain reserved.
 12. What minimum sample, effect size, uncertainty and tail-risk gates are required for each promotion stage?
-13. For Falling Wedge lower-edge pre-breakout entry, when does `STRUCTURAL_EXTREMUM_STOP` outperform the tighter
-    `CONFIRMATION_CANDLE_OPEN_STOP`, and what tick/ATR buffer prevents ordinary lower-edge noise from dominating?
+13. For Falling Wedge lower-edge pre-breakout entry, does the candidate selector
+    `structural_stop_distance_pct <= 5% -> STRUCTURAL_EXTREMUM_STOP; > 5% -> CONFIRMATION_CANDLE_OPEN_STOP` improve
+    expectancy per admitted risk versus fixed stop policies, and is `5%` robust across neighboring thresholds and
+    volatility regimes?
 14. Which lower-edge candlestick formations add independent value after controlling for wedge maturity, local arc,
     volatility and volume, and how should overlapping candle evidence be deduplicated?
 15. When the same reversal appears as Morning Star on a lower timeframe, engulfing on a higher timeframe and a long
@@ -1048,6 +1077,8 @@ including the user research aliases `голая свеча` / `наглая св
 Version 1.5 adds Falling Wedge lower-edge initial-stop variants and multi-timeframe candle aggregation handling,
 including the rule that one underlying reversal must not be counted as independent Morning Star, engulfing and
 higher-timeframe lower-wick confirmations merely because timeframe aggregation changes its visual form.
+Version 1.6 adds the Falling Wedge structural-stop-distance selector with a candidate `5%` cutoff between structural
+extremum and confirmation-candle-open stop policies, plus explicit validation against neighboring thresholds.
 These revisions change documentation only and create no detector, signal, order, risk or runtime behavior.
 
 # END_OF_DOCUMENT
