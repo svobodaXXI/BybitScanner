@@ -46,6 +46,22 @@ class LiveParityMutationGates:
     mainnet_authorized: bool = False
     limit_mutations_enabled: bool = False
     limit_acceptance_notional_ceiling: Decimal = Decimal("0")
+    protection_mutations_enabled: bool | None = None
+    full_close_mutations_enabled: bool | None = None
+
+    def protection_enabled(self) -> bool:
+        return (
+            self.parity_mutations_enabled
+            if self.protection_mutations_enabled is None
+            else self.protection_mutations_enabled
+        )
+
+    def full_close_enabled(self) -> bool:
+        return (
+            self.parity_mutations_enabled
+            if self.full_close_mutations_enabled is None
+            else self.full_close_mutations_enabled
+        )
 
 
 class _FencedExecutionPort:
@@ -219,6 +235,22 @@ class LiveExecutionCoordinator:
     ):
         return self._execute(account_id_text, session_generation, client_action_id, "parity", operation)
 
+    def execute_protection(
+        self, account_id_text: str, session_generation: int, client_action_id: str,
+        operation: Callable[[TerminalCommandApi], CommandResult],
+    ):
+        return self._execute(
+            account_id_text, session_generation, client_action_id, "protection", operation,
+        )
+
+    def execute_full_close(
+        self, account_id_text: str, session_generation: int, client_action_id: str,
+        operation: Callable[[TerminalCommandApi], CommandResult],
+    ):
+        return self._execute(
+            account_id_text, session_generation, client_action_id, "full_close", operation,
+        )
+
     def execute_limit_create(
         self, account_id_text: str, session_generation: int, request: LimitCommandRequest,
     ):
@@ -263,8 +295,8 @@ class LiveExecutionCoordinator:
             return result
         except Exception as exc:
             code = str(exc) if str(exc) in {
-                "live_mutations_disabled", "live_limit_disabled",
-                "live_limit_durable_admission_required",
+                "live_mutations_disabled", "live_protection_disabled", "live_full_close_disabled",
+                "live_limit_disabled", "live_limit_durable_admission_required",
                 "live_limit_amend_cancel_durable_ownership_required",
                 "live_limit_acceptance_notional_exceeded", "live_mainnet_unauthorized", "inactive_account",
                 "stale_account_session", "live_account_not_writable_ready",
@@ -721,6 +753,12 @@ class LiveExecutionCoordinator:
         if self._mutation_scope == "limit":
             if not self._gates.limit_mutations_enabled:
                 raise RuntimeError("live_limit_disabled")
+        elif self._mutation_scope == "protection":
+            if not self._gates.protection_enabled():
+                raise RuntimeError("live_protection_disabled")
+        elif self._mutation_scope == "full_close":
+            if not self._gates.full_close_enabled():
+                raise RuntimeError("live_full_close_disabled")
         elif not self._gates.parity_mutations_enabled:
             raise RuntimeError("live_mutations_disabled")
         if not self._gates.mainnet_authorized:

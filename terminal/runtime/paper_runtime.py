@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import hashlib
 import hmac
@@ -120,6 +121,16 @@ class PaperOnlyAdapter:
         self._blocked()
 
 
+class _LiveOperationScopeProbe:
+    """Classify the already-separated HTTP parity command without executing it."""
+
+    def protection(self, _request):
+        return "protection"
+
+    def full_close(self, _request):
+        return "full_close"
+
+
 class PaperRuntime:
     def __init__(
         self,
@@ -154,6 +165,16 @@ class PaperRuntime:
         self._live_market_mutations_enabled = live_market_mutations_enabled
         self._live_mainnet_authorized = live_mainnet_authorized
         self._live_parity_mutations_enabled = live_parity_mutations_enabled
+        parity_scope = os.environ.get("LIVE_PARITY_MUTATION_SCOPE", "").strip().lower()
+        if parity_scope not in {"", "protection", "full_close"}:
+            parity_scope = ""
+        self._live_parity_mutation_scope = parity_scope
+        self._live_protection_mutations_enabled = (
+            live_parity_mutations_enabled and parity_scope == "protection"
+        )
+        self._live_full_close_mutations_enabled = (
+            live_parity_mutations_enabled and parity_scope == "full_close"
+        )
         self._live_limit_mutations_enabled = live_limit_mutations_enabled
         self._live_market_acceptance_notional_ceiling = live_acceptance_notional_ceiling
         self._live_market_acceptance_single_flight = live_acceptance_single_flight
@@ -207,6 +228,9 @@ class PaperRuntime:
                 "live_limit_mutations_enabled": self._live_limit_mutations_enabled,
                 "live_market_mutations_enabled": self._live_market_mutations_enabled,
                 "live_parity_mutations_enabled": self._live_parity_mutations_enabled,
+                "live_parity_mutation_scope": self._live_parity_mutation_scope,
+                "live_protection_mutations_enabled": self._live_protection_mutations_enabled,
+                "live_full_close_mutations_enabled": self._live_full_close_mutations_enabled,
                 "live_market_acceptance_notional_ceiling": str(
                     self._live_market_acceptance_notional_ceiling
                 ),
@@ -316,8 +340,11 @@ class PaperRuntime:
                 writable_account_provider=self._is_stored_account_writable,
                 live_limit_acceptance=live_limit_acceptance,
                 gates=LiveParityMutationGates(
-                    live_parity_mutations_enabled, live_mainnet_authorized,
-                    live_limit_mutations_enabled, live_limit_acceptance_notional_ceiling,
+                    protection_mutations_enabled=self._live_protection_mutations_enabled,
+                    full_close_mutations_enabled=self._live_full_close_mutations_enabled,
+                    mainnet_authorized=live_mainnet_authorized,
+                    limit_mutations_enabled=live_limit_mutations_enabled,
+                    limit_acceptance_notional_ceiling=live_limit_acceptance_notional_ceiling,
                 ),
                 clock_ms=lambda: int(time.time() * 1000),
             ) if self._live_account_store is not None else None
@@ -497,17 +524,17 @@ class PaperRuntime:
                 "stop": bool(
                     not snapshot.read_only and account.environment is TradingAccountEnvironment.MAINNET
                     and account.status is TradingAccountStatus.READY
-                    and self._live_parity_mutations_enabled and self._live_mainnet_authorized
+                    and self._live_protection_mutations_enabled and self._live_mainnet_authorized
                 ),
                 "take": bool(
                     not snapshot.read_only and account.environment is TradingAccountEnvironment.MAINNET
                     and account.status is TradingAccountStatus.READY
-                    and self._live_parity_mutations_enabled and self._live_mainnet_authorized
+                    and self._live_protection_mutations_enabled and self._live_mainnet_authorized
                 ),
                 "full_close": bool(
                     not snapshot.read_only and account.environment is TradingAccountEnvironment.MAINNET
                     and account.status is TradingAccountStatus.READY
-                    and self._live_parity_mutations_enabled and self._live_mainnet_authorized
+                    and self._live_full_close_mutations_enabled and self._live_mainnet_authorized
                 ),
             },
             "projection_generation": snapshot.refresh_generation,
@@ -552,7 +579,19 @@ class PaperRuntime:
     def live_execute(self, account_id: str, session_generation: int, client_action_id: str, operation):
         if self._live_execution is None:
             raise RuntimeError("live_parity_unavailable")
-        return self._live_execution.execute(account_id, session_generation, client_action_id, operation)
+        try:
+            mutation_scope = operation(_LiveOperationScopeProbe())
+        except Exception as exc:
+            raise RuntimeError("live_parity_unavailable") from exc
+        if mutation_scope == "protection":
+            return self._live_execution.execute_protection(
+                account_id, session_generation, client_action_id, operation,
+            )
+        if mutation_scope == "full_close":
+            return self._live_execution.execute_full_close(
+                account_id, session_generation, client_action_id, operation,
+            )
+        raise RuntimeError("live_parity_unavailable")
 
     def live_limit_create(self, account_id: str, session_generation: int, request):
         if self._live_execution is None:
