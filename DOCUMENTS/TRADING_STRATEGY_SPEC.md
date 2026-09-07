@@ -2,11 +2,11 @@
 
 Version:
 
-1.2
+1.3
 
 Date:
 
-2026-09-03
+2026-09-07
 
 Document Type:
 
@@ -283,6 +283,51 @@ retest window, close/acceptance rule and failure rule require validation.
 Trade inside a still-valid bounded structure before breakout. This is a distinct mean-reversion/setup type with
 different failure and cost characteristics. It must not inherit breakout statistics. Entries require sufficient
 distance to the opposing boundary after costs, explicit boundary zones and immediate invalidation rules.
+
+### Falling Wedge lower-edge mechanics refinement
+
+**Classification:** `MECHANICS_REFINEMENT / HYPOTHESIS / NEEDS VALIDATION`; this does not allocate a new H-ID or
+create a new setup family.
+
+For a sufficiently mature `Falling Wedge`, study a LONG entry near the lower boundary while the structure is still
+valid and before an upside breakout. Maturity, lower-edge proximity, entry trigger, initial position size and
+initial structural stop remain `NEEDS VALIDATION`. The early entry is not evidence that breakout will occur.
+
+If price reaches and breaks the upper boundary without a prolonged accumulation phase, management is conditioned on
+a versioned `breakout_strength_state`. Candidate states are `NORMAL`, `STRONG` and `EXPLOSIVE`; their thresholds
+must be measurable at decision time from features such as ATR-normalized breakout displacement, volume ratio,
+post-edge velocity, close location, range expansion, sequence persistence and pullback depth.
+
+For `NORMAL` or `STRONG` breakout, the working comparison policy is to realize a large fraction of the pre-breakout
+position and retain a smaller remainder protected at a cost-aware break-even or better level. The user's initial
+candidate is approximately `75%` realized and `25%` retained. These fractions are unoptimized research parameters,
+not accepted strategy constants.
+
+If a subsequent retest of the broken upper boundary is confirmed as holding rather than a failed breakout, the
+retained position may be rebuilt up to the pre-admitted total position ceiling. The user's initial candidate is to
+rebuild the residual `~0.25 WV` up to `1 WV` total by adding at most `~0.75 WV`. Retest touch, hold/rejection,
+reclaim, maximum depth, timing and continuation trigger all require validation. A simple return to the boundary is
+not sufficient for an automatic add, and the original idea-level risk budget may not be increased.
+
+After successful continuation, study delayed distribution rather than immediate repeated partial exits. The user's
+initial candidate begins staged realization after roughly `70%` of the versioned pattern-potential path has been
+traversed, then distributes approximately `0.25 + 0.25 + 0.25 WV` across the remaining path while leaving the final
+`~0.25 WV` as a runner. The `70%/30%` split, grid geometry and fractions are unoptimized candidates. Pattern
+potential itself remains only a `BASELINE` feature until validated as an economically meaningful target model.
+
+The runner has no mandatory fixed target in this refinement. Candidate exits are volatility-adjusted trailing,
+structure trailing, confirmed reversal, or exhaustion evidence. Each policy is a separate management variant.
+
+For `EXPLOSIVE` breakout, study deferring the large early realization so that unusually strong momentum can expand.
+Protection should move into profit when the selected rule permits, but not so tightly that ordinary volatility
+invalidates the position. Exact profit-lock event, distance and trailing method require validation. Compare this
+adaptive policy against the frozen `NORMAL/STRONG` realization policy; do not classify an explosive move with
+future outcome information.
+
+Required comparisons include: pre-breakout lower-edge entry versus breakout-only and breakout-plus-retest cohorts;
+fixed early realization versus strength-conditioned realization; retest rebuild versus no rebuild; runner versus
+full target realization; and alternative stop/trailing policies. Measure expectancy after costs, MAE/MFE, drawdown,
+tail loss, missed continuation, failed-breakout loss, realized-versus-left-on-table PnL and execution feasibility.
 
 ## 4.4 Structural pullback
 
@@ -734,6 +779,9 @@ Fields below are desired before implementation design; names and storage are not
 * rounded-deceleration fit method/type, fit window/version, high/low slope start/end, slope decay, first/second
   derivative or curvature, downside-velocity decay, swing-amplitude contraction and post-impulse age;
 * breakout type/displacement/distance, breakout volume ratio, retest flag and H-015 matched-control class;
+* Falling Wedge maturity/apex position, lower-edge distance, `breakout_strength_state`, post-edge velocity,
+  pullback depth, realized fraction, retained fraction, retest/rebuild decision, target-path progress, runner policy
+  and trailing/profit-lock state for the pre-breakout lower-edge refinement;
 * `touch_number`, penetration, rejection and time since previous touch;
 * ATR/realized volatility and volume context;
 * spread, liquidity/depth context, BTC/market context and abnormal-volatility flag.
@@ -766,12 +814,16 @@ No item below authorizes code.
 * define H-012 structural ladder budget, spacing variants and single-entry control;
 * formalize H-014 channel identity, no-look-ahead normalized position, economic-width gate and invalidation;
 * formalize H-015 decision-time fit, curvature/deceleration features, competing models and matched-control labels;
+* complete the Falling Wedge pre-breakout lower-edge refinement: maturity, edge proximity, entry trigger, initial
+  structural invalidation/stop, breakout-strength classification, retest-hold rule and trailing/profit-lock logic;
 * complete an end-to-end Falling Wedge strategy definition with separate context and entry-mode cohorts;
 * preserve the AKEUSDT source/reference case only if original evidence and case identity are supplied.
 
 ## P1 — comparative validation
 
 * compare breakout, breakout-plus-retest and pre-breakout/corridor entries without cohort mixing;
+* compare Falling Wedge fixed versus breakout-strength-conditioned partial realization, retest rebuild versus no
+  rebuild, candidate `75/25` and `70/30` distributions versus neighboring fractions, and runner/trailing variants;
 * evaluate structural pullback and exhaustion/reversal accumulation separately;
 * optimize/compare trade-management mechanisms only after a stable eligible-entry dataset exists;
 * compare H-014 entry fractions and `MID_100`, `MID_70_TOP_30`, `MID_50_TOP_50`,
@@ -832,6 +884,8 @@ features stay default-off and may not silently drift into admission.
     look-ahead leakage?
 11. Which archived notes, if any, legitimately own H-001 through H-010? Until recovered, the IDs remain reserved.
 12. What minimum sample, effect size, uncertainty and tail-risk gates are required for each promotion stage?
+13. For Falling Wedge lower-edge pre-breakout entry, what structural/volatility rule defines the initial stop and
+    hard invalidation without making normal boundary noise indistinguishable from setup failure?
 
 ---
 
@@ -852,7 +906,9 @@ Version 1.0 was reconciled against these current facts:
 * `training/reference_patterns/`: canonical case-study storage and before/after integrity rules.
 
 Version 1.1 adds the H-014 post-impulse channel research hypothesis and strategy-idea capture support.
-Version 1.2 adds H-015 and the BTWUSDT 1m observation with curvature-versus-deceleration controls. These revisions
-change documentation only and create no detector, signal, order, risk or runtime behavior.
+Version 1.2 adds H-015 and the BTWUSDT 1m observation with curvature-versus-deceleration controls.
+Version 1.3 records the Falling Wedge lower-edge pre-breakout entry and breakout-management mechanics as an existing
+setup refinement, including candidate partial-realization, retest-rebuild, explosive-breakout and runner policies.
+These revisions change documentation only and create no detector, signal, order, risk or runtime behavior.
 
 # END_OF_DOCUMENT
