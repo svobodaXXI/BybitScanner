@@ -2,7 +2,7 @@
 
 Version:
 
-1.6
+1.7
 
 Date:
 
@@ -346,19 +346,34 @@ structural_stop_distance_pct = abs(entry_price - structural_extremum_stop_price)
 
 Candidate policy:
 
-* when `structural_stop_distance_pct <= 5%`, prefer `STRUCTURAL_EXTREMUM_STOP`;
-* when `structural_stop_distance_pct > 5%`, prefer the tighter `CONFIRMATION_CANDLE_OPEN_STOP`.
+* when `structural_stop_distance_pct <= 2%`, prefer `STRUCTURAL_EXTREMUM_STOP`;
+* when `structural_stop_distance_pct > 2%`, prefer the tighter `CONFIRMATION_CANDLE_OPEN_STOP`.
 
-The `5%` cutoff is a `NEEDS VALIDATION` research parameter, not an accepted universal risk limit. It should be tested
+The `2%` cutoff is a `NEEDS VALIDATION` research parameter, not an accepted universal risk limit. It should be tested
 against neighboring thresholds and volatility-normalized alternatives rather than optimized on the final holdout.
 The selector changes only which pre-defined stop reference is used; it does not authorize increasing position size,
 maximum idea risk or aggregate exposure. If the tighter confirmation-candle stop itself violates the admitted
 idea-risk budget or becomes economically/structurally invalid, the trade must be rejected rather than widening risk.
 
+The user's purpose for tightening this selector is to avoid accepting a stop so wide that the available reward no
+longer compensates the initial downside. A separate candidate admission check therefore requires at least `1:1`
+expected reward-to-risk for this lower-edge entry after the selected stop is known:
+
+```text
+expected_reward_to_risk = expected_reward_distance_after_costs / initial_risk_distance_after_costs
+candidate_admission     = expected_reward_to_risk >= 1.0
+```
+
+The `1.0` minimum is itself `NEEDS VALIDATION`; a `2%` stop does not by itself guarantee `1:1`. The expected-reward
+reference must be defined from decision-time structure/pattern potential or another versioned target model, and fees,
+spread, slippage and expected execution costs must be included. If the selected stop leaves less than the required
+reward-to-risk, the candidate trade is rejected rather than moving the target or widening the stop after admission.
+
 Required comparisons include fixed structural stop, fixed confirmation-candle-open stop and the threshold-based
 selector, with stratification by wedge maturity, volatility, entry distance from the lower edge, confirmation type
 and structural-stop distance bin. Measure expectancy per admitted risk, stop-out frequency, stop-out-then-MFE,
-MAE/MFE, tail loss and sensitivity around the candidate `5%` boundary.
+MAE/MFE, tail loss and sensitivity around the candidate `2%` boundary, and compare admission with versus without the
+candidate `expected_reward_to_risk >= 1.0` gate.
 
 #### Multi-timeframe candle aggregation
 
@@ -918,9 +933,11 @@ Fields below are desired before implementation design; names and storage are not
   formation identity/version and component OHLC, source timeframe and parent/child aggregation mapping,
   `same_event_aggregation` versus independent higher-timeframe context, initial-stop policy, relevant structural
   extremum, confirmation-candle open, stop buffer, `structural_stop_distance_pct`, candidate stop-selector threshold,
-  selected stop policy and selector reason, `breakout_strength_state`, post-edge velocity, pullback depth, realized
-  fraction, retained fraction, retest/rebuild decision, target-path progress, runner policy and trailing/profit-lock
-  state for the pre-breakout lower-edge refinement;
+  selected stop policy and selector reason, expected-reward reference, expected reward distance after costs,
+  initial risk distance after costs, `expected_reward_to_risk`, reward-to-risk admission result,
+  `breakout_strength_state`, post-edge velocity, pullback depth, realized fraction, retained fraction,
+  retest/rebuild decision, target-path progress, runner policy and trailing/profit-lock state for the pre-breakout
+  lower-edge refinement;
 * H-016 pre-breakout accumulation/compression score, level/pattern identity, breakout candle ATR/body/wick/close,
   breakout volume/velocity, time-to-return, retest penetration, deep-retest class and acceptance/failure side;
 * `touch_number`, penetration, rejection and time since previous touch;
@@ -957,8 +974,9 @@ No item below authorizes code.
 * formalize H-015 decision-time fit, curvature/deceleration features, competing models and matched-control labels;
 * complete the Falling Wedge pre-breakout lower-edge refinement: maturity, edge proximity, entry trigger,
   `STRUCTURAL_EXTREMUM_STOP` versus `CONFIRMATION_CANDLE_OPEN_STOP`, structural-stop-distance selector and candidate
-  `5%` cutoff, lower-edge rounded-arc and candle-confluence definitions, source-to-higher-timeframe candle
-  aggregation mapping, breakout-strength classification, retest-hold rule and trailing/profit-lock logic;
+  `2%` cutoff, candidate minimum `expected_reward_to_risk >= 1.0`, lower-edge rounded-arc and candle-confluence
+  definitions, source-to-higher-timeframe candle aggregation mapping, breakout-strength classification, retest-hold
+  rule and trailing/profit-lock logic;
 * formalize H-016 decision-time `without accumulation` definition, level/boundary taxonomy, `DEEP_RETEST` threshold
   and prepared-breakout matched controls;
 * complete an end-to-end Falling Wedge strategy definition with separate context and entry-mode cohorts;
@@ -970,8 +988,9 @@ No item below authorizes code.
 * compare Falling Wedge lower-edge entries with versus without bullish engulfing, hammer-plus-confirmation,
   Morning Star and rounded-arc confluence, including correlated-evidence controls;
 * compare `STRUCTURAL_EXTREMUM_STOP`, `CONFIRMATION_CANDLE_OPEN_STOP` and the candidate distance-based selector;
-  test the `5%` cutoff against neighboring thresholds and volatility-normalized alternatives, including
-  stop-out-then-MFE analysis and volatility/noise sensitivity;
+  test the `2%` cutoff against neighboring thresholds and volatility-normalized alternatives, and test the candidate
+  `expected_reward_to_risk >= 1.0` gate against nearby minimum-R variants, including stop-out-then-MFE analysis and
+  volatility/noise sensitivity;
 * test whether a higher-timeframe engulfing representation or long lower wick adds incremental information beyond
   the already-known lower-timeframe reversal sequence, without double-counting `SAME_EVENT_AGGREGATION`;
 * compare Falling Wedge fixed versus breakout-strength-conditioned partial realization, retest rebuild versus no
@@ -1039,9 +1058,10 @@ features stay default-off and may not silently drift into admission.
 11. Which archived notes, if any, legitimately own H-001 through H-010? Until recovered, the IDs remain reserved.
 12. What minimum sample, effect size, uncertainty and tail-risk gates are required for each promotion stage?
 13. For Falling Wedge lower-edge pre-breakout entry, does the candidate selector
-    `structural_stop_distance_pct <= 5% -> STRUCTURAL_EXTREMUM_STOP; > 5% -> CONFIRMATION_CANDLE_OPEN_STOP` improve
-    expectancy per admitted risk versus fixed stop policies, and is `5%` robust across neighboring thresholds and
-    volatility regimes?
+    `structural_stop_distance_pct <= 2% -> STRUCTURAL_EXTREMUM_STOP; > 2% -> CONFIRMATION_CANDLE_OPEN_STOP` improve
+    expectancy per admitted risk versus fixed stop policies, and does the candidate minimum
+    `expected_reward_to_risk >= 1.0` improve outcomes without excluding too many valid entries? Are both thresholds
+    robust across neighboring values and volatility regimes?
 14. Which lower-edge candlestick formations add independent value after controlling for wedge maturity, local arc,
     volatility and volume, and how should overlapping candle evidence be deduplicated?
 15. When the same reversal appears as Morning Star on a lower timeframe, engulfing on a higher timeframe and a long
@@ -1079,6 +1099,8 @@ including the rule that one underlying reversal must not be counted as independe
 higher-timeframe lower-wick confirmations merely because timeframe aggregation changes its visual form.
 Version 1.6 adds the Falling Wedge structural-stop-distance selector with a candidate `5%` cutoff between structural
 extremum and confirmation-candle-open stop policies, plus explicit validation against neighboring thresholds.
+Version 1.7 tightens that candidate selector to `2%` and adds a separate candidate minimum `1:1` expected
+reward-to-risk admission gate after costs for Falling Wedge lower-edge pre-breakout entries.
 These revisions change documentation only and create no detector, signal, order, risk or runtime behavior.
 
 # END_OF_DOCUMENT
