@@ -28,7 +28,7 @@ describe("StopLine", () => {
     expect(onCancel).toHaveBeenCalledOnce();
   });
 
-  it("renders solid authoritative line with edit and delete controls", () => {
+  it("hides active actions until tap and dismisses them on outside tap", () => {
     const onEdit = vi.fn();
     const onDelete = vi.fn();
     render(<StopLine
@@ -37,10 +37,31 @@ describe("StopLine", () => {
     />);
     const line = screen.getByLabelText("Active STOP at 98");
     expect(line).toHaveClass("active");
+    expect(screen.queryByRole("button", { name: "Edit STOP" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete STOP" })).not.toBeInTheDocument();
+
+    fireEvent.pointerDown(line, { pointerId: 2 });
     fireEvent.click(screen.getByRole("button", { name: "Edit STOP" }));
     fireEvent.click(screen.getByRole("button", { name: "Delete STOP" }));
     expect(onEdit).toHaveBeenCalledOnce();
     expect(onDelete).toHaveBeenCalledOnce();
+
+    fireEvent.pointerDown(document.body, { pointerId: 3 });
+    expect(screen.queryByRole("button", { name: "Edit STOP" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete STOP" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the confirmed draft selected when it becomes authoritative", () => {
+    const onConfirm = vi.fn();
+    const view = render(<StopLine
+      price="98" top={100} rightOffset={64} mode="CREATE" onConfirm={onConfirm}
+    />);
+    fireEvent.click(screen.getByRole("button", { name: "Confirm STOP" }));
+    expect(onConfirm).toHaveBeenCalledOnce();
+
+    view.rerender(<StopLine price="98" top={100} rightOffset={64} mode="ACTIVE" />);
+    expect(screen.getByRole("button", { name: "Edit STOP" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete STOP" })).toBeInTheDocument();
   });
 
   it("sends one STOP create on touch pointerup plus detail-zero compatibility click without drag", async () => {
@@ -96,5 +117,6 @@ describe("StopLine", () => {
     const line = screen.getByRole("slider", { name: "Pending TAKE at 103" });
     expect(line).toHaveClass("take", "draft");
     expect(screen.getByRole("button", { name: "Confirm TAKE" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel TAKE draft" })).toBeInTheDocument();
   });
 });
