@@ -1,12 +1,14 @@
 # BybitScanner — Robot Strategy Design
 
-Version: 0.1
+Version: 0.2
 
-Date: 2026-09-05
+Date: 2026-09-08
 
 Status: RESEARCH DESIGN / NO IMPLEMENTATION AUTHORIZATION
 
 Purpose: preserve the current robot-strategy design decisions and research direction without changing Scanner, Strategy, Risk, Execution, PAPER or LIVE behavior.
+
+Authoritative Diary reference: `DOCUMENTS/TRADING_DIARY_ARCHITECTURE.md`.
 
 ---
 
@@ -252,32 +254,36 @@ Skipped and invalidated setups are required research data. Without them the syst
 
 # 6. TRADING DIARY INSTEAD OF A SIMPLE JOURNAL
 
-The project should use a Trading Diary rather than a minimal trade journal.
+The project uses a Trading Diary rather than a minimal trade journal.
 
-The Diary is intended to become a richer research and review layer containing the full decision context, not merely fills and PnL.
+`DOCUMENTS/TRADING_DIARY_ARCHITECTURE.md` now owns the Diary/data architecture after the donor review. The donor was used as a reference, but its runtime, database schema, Telegram/Mini App, account model and execution client are not adopted wholesale.
 
-Conceptual chain:
+The accepted Diary chain is:
 
 ```text
-MARKET CONTEXT
+MARKET / SCANNER OBSERVATION
   -> SIGNAL
-  -> SETUP
-  -> DECISION
+  -> SETUP INSTANCE
+  -> STRATEGY DECISION
+  -> RISK DECISION
   -> ORDER PLAN
-  -> FILLS
-  -> MANAGEMENT
+  -> ORDER LIFECYCLE
+  -> EXECUTION FACTS
+  -> POSITION / TRADE EPISODE
+  -> MANAGEMENT / PROTECTION
   -> EXIT
-  -> RESULT
-  -> POST-TRADE ANALYTICS
+  -> CLOSED RESULT
+  -> POST-TRADE ENRICHMENT
+  -> STATISTICS / RESEARCH DATASET
 ```
 
-The future AUTOPILOT should populate as much of the Diary automatically as possible. The Diary should support both machine-generated structured fields and human-readable review/annotation.
+The future AUTOPILOT should populate the Diary automatically. Human review remains supported through annotations that never rewrite original decision-time evidence.
 
-The user intends to obtain a friend's existing trading-diary structure and use it as the main UX/information-architecture reference. The BybitScanner Diary should reproduce that useful structure closely where appropriate while adapting fields, automation and analytics to the project's robot, Scanner, risk and execution model.
+Accepted donor-derived principles include normalized execution facts, idempotent replay, safe incremental synchronization, explicit data readiness, versioned automatic-factor observations, read-only statistics, PnL provenance, post-trade MAE/MFE, exit-quality analytics and integrity auditing.
 
-Until that reference is supplied, no final Diary schema, layout or implementation contract is frozen.
+The Diary must preserve both executed trades and non-traded setup outcomes (`SKIPPED`, `INVALIDATED`, `EXPIRED`) so strategy research can compare admitted and rejected opportunities using the correct eligible-event denominator.
 
-The Diary must be able to include both executed trades and non-traded setup outcomes (`SKIPPED`, `INVALIDATED`, `EXPIRED`) so strategy research can compare admitted and rejected opportunities.
+The Diary is downstream of execution authority and must never become a second order engine or a competing source of account/order/position truth.
 
 ---
 
@@ -290,7 +296,7 @@ The recommended sequence is:
 3. Define and compare `S1_BREAKOUT`, `S2_RETEST` and `S3_PRE_BREAKOUT` independently.
 4. Freeze a simple initial management baseline: structural invalidation plus fixed-R or structural target.
 5. Define risk admission beyond the 19-WV exposure cap, including idea risk and portfolio open risk.
-6. Build the event/decision dataset and Trading Diary schema.
+6. Freeze Trading Diary D0 identities/contracts and build the event/decision dataset described by `TRADING_DIARY_ARCHITECTURE.md`.
 7. Replay/backtest with realistic costs, untouched holdout and walk-forward validation.
 8. Add regime filters only when they show incremental out-of-sample value.
 9. Add more complex management only against the frozen simple baseline.
@@ -317,8 +323,10 @@ The next design pass should resolve, one by one:
 * simultaneous-candidate ranking when many setups compete for limited risk budget;
 * setup expiry and cooldown/re-entry rules;
 * manual-close suppression so AUTOPILOT does not immediately re-enter;
-* which Diary fields are generated automatically and which may be manually annotated;
-* final Diary structure after the friend's reference is supplied.
+* exact D0 trade/position-episode identity and setup-to-trade linkage;
+* exact normalized execution-fact contract and persistence boundary;
+* exact P0 automatic-factor set for the first active research hypotheses;
+* which Diary annotations remain manual versus fully automatic.
 
 ---
 
