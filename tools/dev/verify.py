@@ -59,6 +59,23 @@ def _unlink_frontend_dependencies(verification_root: Path) -> None:
         os.rmdir(target)
 
 
+def _isolated_changed_files(root: Path) -> set[str]:
+    git = Git(root)
+    tracked = {
+        item for item in require_ok(
+            git.run("diff", "--name-only", "-z"),
+            "isolated tracked-file inspection",
+        ).split("\0") if item
+    }
+    untracked = {
+        item for item in require_ok(
+            git.run("ls-files", "--others", "--exclude-standard", "-z"),
+            "isolated untracked-file inspection",
+        ).split("\0") if item
+    }
+    return tracked | untracked
+
+
 def verify(
     path_values: Sequence[str], *, git: Git | None = None, transaction_id: str | None = None,
     additional_commands: Sequence[dict[str, object]] = (),
@@ -184,10 +201,7 @@ def verify(
             checks.append({"name": name, "status": "PASS" if passed else "FAIL", "detail": detail})
             executed_commands.append({"label": label_value, "cwd": cwd_value, "argv": argv})
         if transaction_receipt:
-            changed_result = Git(verification_root).run("diff", "--name-only", "-z")
-            changed_files = {item for item in require_ok(
-                changed_result, "isolated tracked-file inspection"
-            ).split("\0") if item}
+            changed_files = _isolated_changed_files(verification_root)
             expected_changes = set(transaction_receipt["candidate_files"])
             checks.append({
                 "name": "isolated-tracked-scope",

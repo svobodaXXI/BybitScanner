@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from tools.dev.checkpoint import checkpoint
 from tools.dev.task_transaction import begin, candidate_root
-from tools.dev.verify import verify
+from tools.dev.verify import _isolated_changed_files, verify
 from tools.dev.workflow import CommandResult, Git, fingerprints, worktree_change_paths
 
 
@@ -81,6 +81,19 @@ class ControlledGit(Git):
 
 
 class DevWorkflowTests(unittest.TestCase):
+    def test_isolated_changed_files_includes_task_new_files(self):
+        temporary, root = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+
+        (root / "task.py").write_text("VALUE = 2\n", encoding="utf-8")
+        new_file = root / "new-task-file.py"
+        new_file.write_text("VALUE = 3\n", encoding="utf-8")
+
+        self.assertEqual(
+            _isolated_changed_files(root),
+            {"task.py", "new-task-file.py"},
+        )
+
     def make_repo(self) -> tuple[tempfile.TemporaryDirectory, Path]:
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)
