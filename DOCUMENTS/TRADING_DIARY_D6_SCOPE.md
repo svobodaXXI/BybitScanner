@@ -1,6 +1,6 @@
 # BybitScanner Trading Diary — D6 UI Scope
 
-Status: ACCEPTED SCOPE / IMPLEMENTATION NOT YET AUTHORIZED
+Status: D6 SCOPE ACCEPTED / D6.1 IMPLEMENTED / D6.2-D6.5 NOT YET AUTHORIZED
 
 Date: 2026-09-08
 
@@ -46,6 +46,10 @@ The Diary UI must not become a trading authority or issue order mutations.
 ## D6 slices
 
 ### D6.1 — Diary shell + Trades list
+
+Implementation status: COMPLETE.
+
+Authoritative implementation commit: `5bd3ebd014e3098cc415fcbe329781e146258374`.
 
 Add the Diary shell inside Trading Workspace with primary sections:
 
@@ -274,6 +278,13 @@ No part of this scope authorizes autonomous LIVE trading.
 
 ## Implementation authorization
 
-This document freezes D6 scope only.
+The D6 scope remains frozen by this document.
 
-Implementation remains unauthorized until the user explicitly authorizes D6 implementation or an individual D6 slice.
+D6.1 was explicitly authorized by the user and is implemented at commit
+`5bd3ebd014e3098cc415fcbe329781e146258374`.
+
+D6.2, D6.3, D6.4, and D6.5 remain unauthorized until the user explicitly authorizes
+the corresponding slice or a broader D6 implementation scope.
+
+Completion of D6.1 does not authorize any trading mutation, AUTOPILOT runtime behavior,
+or autonomous LIVE trading.
