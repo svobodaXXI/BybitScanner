@@ -29,6 +29,10 @@ from tradingview_bridge import (
     create_tradingview_url
 )
 
+from robot_candidate_store import (
+    create_signal_snapshot,
+)
+
 import config
 
 
@@ -231,12 +235,10 @@ def format_signal(
 def build_tradingview_keyboard(
     symbol,
     timeframe,
-    include_review_actions=True
+    include_review_actions=True,
+    robot_candidate_id=None,
 ):
-    """
-    Telegram inline keyboard:
-    TradingView + Review Queue.
-    """
+    """Telegram inline keyboard for TradingView, review, and Robot admission."""
 
     tradingview_url = (
         create_tradingview_url(
@@ -259,6 +261,18 @@ def build_tradingview_keyboard(
             }
         ]
     ]
+
+    if robot_candidate_id:
+        keyboard.append(
+            [
+                {
+                    "text": "🤖 Робот",
+                    "callback_data": (
+                        f"robot:approve:{robot_candidate_id}"
+                    ),
+                }
+            ]
+        )
 
     if include_review_actions:
         keyboard.extend(
@@ -365,17 +379,40 @@ def send_signal(
         return all_delivered
 
     owner_chat_id = get_telegram_owner_chat_id()
+    robot_candidate_id = None
+
+    # Only production Scanner signals can be handed to Robot.  Persist the
+    # complete signal payload first; a failed persistence simply withholds the
+    # Robot button and does not break ordinary Scanner notification delivery.
+    if owner_chat_id and not test_mode:
+        try:
+            candidate = create_signal_snapshot(
+                result,
+                timeframe=timeframe,
+            )
+            robot_candidate_id = candidate["candidate_id"]
+        except Exception as error:
+            print(
+                "[ROBOT CANDIDATE ERROR] "
+                f"symbol={symbol} error={error}"
+            )
 
     for chat_id in get_telegram_chat_ids():
         try:
+            is_owner = (
+                bool(owner_chat_id)
+                and chat_id == owner_chat_id
+            )
             reply_markup = (
                 build_tradingview_keyboard(
                     symbol,
                     timeframe,
-                    include_review_actions=(
-                        bool(owner_chat_id)
-                        and chat_id == owner_chat_id
-                    )
+                    include_review_actions=is_owner,
+                    robot_candidate_id=(
+                        robot_candidate_id
+                        if is_owner
+                        else None
+                    ),
                 )
             )
 

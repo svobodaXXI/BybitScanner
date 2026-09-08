@@ -7,6 +7,9 @@ import time
 import requests
 
 import config
+from robot_candidate_store import (
+    approve_candidate,
+)
 
 
 PROJECT_ROOT = Path(r"C:\BybitScanner")
@@ -144,9 +147,31 @@ def _parse_callback(data):
         return None
 
     return {
+        "kind": "review",
         "action": action,
         "symbol": symbol,
         "timeframe": timeframe,
+    }
+
+
+def _parse_robot_callback(data):
+    parts = str(data).split(":")
+
+    if len(parts) != 3:
+        return None
+
+    prefix, action, candidate_id = parts
+
+    if prefix != "robot" or action != "approve":
+        return None
+
+    if not candidate_id:
+        return None
+
+    return {
+        "kind": "robot",
+        "action": action,
+        "candidate_id": candidate_id,
     }
 
 
@@ -277,6 +302,29 @@ def _save_review(
     return case_dir
 
 
+def _approve_robot_candidate(
+    callback_query,
+    parsed,
+):
+    message = callback_query.get("message") or {}
+    from_user = callback_query.get("from") or {}
+    chat = message.get("chat") or {}
+
+    record, changed = approve_candidate(
+        parsed["candidate_id"],
+        approval={
+            "source": "telegram_robot_button",
+            "callback_query_id": callback_query.get("id"),
+            "message_id": message.get("message_id"),
+            "chat_id": chat.get("id"),
+            "user_id": from_user.get("id"),
+            "username": from_user.get("username"),
+        },
+    )
+
+    return record, changed
+
+
 def _process_callback(
     callback_query
 ):
@@ -285,9 +333,9 @@ def _process_callback(
         ""
     )
 
-    parsed = _parse_callback(
-        data
-    )
+    parsed = _parse_callback(data)
+    if parsed is None:
+        parsed = _parse_robot_callback(data)
 
     if parsed is None:
         return
@@ -308,6 +356,38 @@ def _process_callback(
             callback_query.get("id"),
             "Недостаточно прав"
         )
+        return
+
+    if parsed["kind"] == "robot":
+        try:
+            record, changed = _approve_robot_candidate(
+                callback_query,
+                parsed,
+            )
+
+            _answer_callback(
+                callback_query.get("id"),
+                (
+                    "Робот: сигнал принят ✅"
+                    if changed
+                    else "Робот: сигнал уже принят"
+                ),
+            )
+
+            print(
+                "[ROBOT CANDIDATE APPROVED]",
+                record["candidate_id"],
+                record["symbol"],
+            )
+        except Exception as exc:
+            print(
+                "[ROBOT CANDIDATE ERROR]",
+                exc
+            )
+            _answer_callback(
+                callback_query.get("id"),
+                "Робот: ошибка сохранения"
+            )
         return
 
     try:
