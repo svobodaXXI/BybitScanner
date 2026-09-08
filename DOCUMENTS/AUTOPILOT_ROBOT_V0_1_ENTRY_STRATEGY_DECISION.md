@@ -1,6 +1,6 @@
 # BybitScanner — Robot v0.1 entry strategy decision
 
-Version: 1.0
+Version: 1.1
 Date: 2026-09-08
 Status: ACCEPTED DESIGN / PAPER PROTOTYPE
 Implementation authorization: NONE
@@ -73,7 +73,29 @@ The 2-tick offset is a Robot v0.1 prototype strategy parameter, not a separate g
 
 Every reposition must use the shared authoritative order amend/cancel/reconciliation lifecycle. Blind resend, duplicate entry orders, or a second Robot-owned order-state engine are forbidden.
 
-## 6. Confirmation Market entry path
+## 6. Partial LIMIT fill completion rule
+
+A partial fill is treated as an active entry attempt for the same intended `1 WV` position, not as an automatically finalized reduced-size trade.
+
+After the first authoritative partial fill, Robot allows the remaining quantity of the existing LIMIT order up to **10 seconds** to fill naturally.
+
+If the full intended `1 WV` position is still not filled after those 10 seconds, Robot evaluates the current authoritative market price relative to the LIMIT entry price.
+
+If the price has moved in the adverse/less favorable entry direction by **no more than 0.5%**, Robot completes the missing quantity to the original intended `1 WV` size using a Market order.
+
+Before sending that Market remainder, the still-working LIMIT remainder must first be authoritatively cancelled or otherwise proven incapable of further fill through the shared order lifecycle. The Market completion quantity is calculated only from authoritative filled/remaining position state. Parallel exposure from a still-fillable LIMIT plus Market completion is forbidden.
+
+Direction semantics:
+- LONG: an upward move from the LIMIT price is adverse for the completion-price test; Market completion is allowed only while that deterioration is `<= 0.5%`;
+- SHORT: a downward move from the LIMIT price is adverse for the completion-price test; Market completion is allowed only while that deterioration is `<= 0.5%`.
+
+The 10-second wait and 0.5% maximum deterioration are accepted Robot v0.1 PAPER prototype strategy parameters and must be recorded in trade telemetry for later validation/calibration.
+
+If, after the 10-second wait, adverse price movement is greater than 0.5%, Robot does **not** chase the remainder by Market. The unfilled remainder is cancelled/reconciled and the already-filled quantity remains as a valid reduced-size Robot position. It is managed normally with the accepted STOP/TAKE policy and is not later topped back up merely because price becomes favorable again.
+
+No blind retry is allowed for either LIMIT cancellation or Market completion. Ambiguous state remains fail-closed and must reconcile before any exposure-increasing action.
+
+## 7. Confirmation Market entry path
 
 The confirmation path remains available when LIMIT entry has not filled.
 
@@ -87,7 +109,7 @@ If a Robot LIMIT is still active when the Market confirmation path becomes eligi
 
 This is a single-entry invariant: the LIMIT path and confirmation-Market path are alternatives for one immutable Robot idea, never simultaneous independent entry attempts.
 
-## 7. Entry-quality gates for confirmation Market entry
+## 8. Entry-quality gates for confirmation Market entry
 
 Immediately before actual Market entry, Robot evaluates the trade using authoritative current price/state and the already accepted STOP/TAKE calculations.
 
@@ -101,7 +123,18 @@ If expected reward is below 1%, the idea terminates without entry as `SKIPPED_LO
 
 These are Robot v0.1 PAPER prototype filters and may later be calibrated from collected data.
 
-## 8. Apex termination
+## 9. STOP after retest LIMIT entry
+
+The accepted Robot v0.1 STOP anchor remains the breakout-candle extreme rather than a later retest extreme.
+
+- LONG: preferred STOP = breakout candle low - 1 tick;
+- SHORT: preferred STOP = breakout candle high + 1 tick.
+
+If the distance from actual entry/authoritative average entry to that preferred STOP exceeds 2%, the accepted fallback is a fixed 2% STOP distance. Shared authoritative tick-size and order normalization must be used.
+
+For a position completed through partial LIMIT fill plus Market remainder, the final authoritative average entry price of the whole position is used when evaluating the 2% distance rule and TAKE calculations.
+
+## 10. Apex termination
 
 If the frozen wedge apex is reached before either:
 - a valid LIMIT entry has filled; or
@@ -113,7 +146,7 @@ Conceptually this may be represented as `EXPIRED_AT_APEX`; exact implementation 
 
 The same immutable wedge instance must not reactivate or enter later beyond its apex. A later Robot trade on the same symbol requires a genuinely new scanner pattern/signal instance.
 
-## 9. Conceptual lifecycle
+## 11. Conceptual lifecycle
 
 ```text
 WAITING_BREAKOUT
@@ -125,12 +158,20 @@ WAITING_RETEST
   -> LIMIT_WORKING at frozen boundary
 
 LIMIT_WORKING
-  -- filled ---------------------------------------------> ENTRY_FILLED
+  -- full fill ------------------------------------------> ENTRY_FILLED
+  -- partial fill ---------------------------------------> PARTIAL_FILL_WAIT_10S
   -- 5 new closed 1m candles, still unfilled ------------> authoritative reposition
   -- confirmation close becomes eligible ----------------> cancel/reconcile LIMIT first
                                                            -> entry-quality gates
                                                            -> Market entry or terminal skip
   -- apex reached without entry --------------------------> EXPIRED_AT_APEX
+
+PARTIAL_FILL_WAIT_10S
+  -- remainder fills within 10 s ------------------------> ENTRY_FILLED at intended 1 WV
+  -- 10 s + adverse move <= 0.5% ------------------------> cancel/reconcile remainder
+                                                           -> Market complete to 1 WV
+  -- 10 s + adverse move > 0.5% -------------------------> cancel/reconcile remainder
+                                                           -> keep filled reduced-size position
 
 CONFIRMATION MARKET PATH
   -- RR < 1.0 -------------------------------------------> SKIPPED_POOR_RR
@@ -140,7 +181,7 @@ CONFIRMATION MARKET PATH
 
 The lifecycle names above are conceptual design labels unless already present in the common architecture. Exact runtime state/enum naming is deferred until implementation authorization.
 
-## 10. Direction symmetry
+## 12. Direction symmetry
 
 All accepted LONG mechanics are mirrored for SHORT unless an explicit direction-specific rule is stated.
 
@@ -148,7 +189,7 @@ LONG / Falling Wedge uses the upper boundary and Buy entry semantics.
 
 SHORT / Rising Wedge uses the lower boundary and Sell entry semantics.
 
-## 11. Prototype risk-limit scope
+## 13. Prototype risk-limit scope
 
 Robot v0.1 PAPER prototype currently has:
 - no daily loss-limit stop;
