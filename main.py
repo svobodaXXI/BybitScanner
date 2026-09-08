@@ -23,6 +23,7 @@ from config import MODE, MIN_SCORE, MAX_SYMBOLS
 
 from signal_adapter import prepare_signal
 from signal_memory import update_signal
+from scanner_diary import record_scanner_diary_observation
 from notification import (
     send_message_to_recipients as send_message,
     send_signal,
@@ -95,6 +96,22 @@ def main():
                 continue
 
             signal_decision = analysis.get("signal") or {}
+
+            # Trading Diary is an opt-in observational sink. Its failure must not
+            # change Scanner admission, notifications, or any trading behavior.
+            try:
+                record_scanner_diary_observation(
+                    symbol=symbol,
+                    analysis_result=analysis_result,
+                    timeframe=config.TIMEFRAME,
+                    scanner_mode=MODE,
+                    observed_at_ms=int(time.time() * 1000),
+                )
+            except Exception as diary_error:
+                print(
+                    f"{symbol:<15} TRADING DIARY ERROR: "
+                    f"{str(diary_error)[:80]}"
+                )
 
             if not signal_decision.get("approved", False):
                 telegram_sent = False
