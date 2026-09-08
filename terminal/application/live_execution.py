@@ -216,13 +216,31 @@ class LiveExecutionCoordinator:
                 orders = (*adapter.list_active_orders(symbol), *adapter.list_order_history(symbol))
                 executions = adapter.list_executions(symbol)
                 position = adapter.get_position(symbol)
+                reconciliation_at_ms = self._clock_ms()
                 resolved = self._engine.resolve_command(
                     command, order_evidence=tuple(orders), execution_evidence=tuple(executions),
-                    occurred_at_ms=self._clock_ms(),
+                    occurred_at_ms=reconciliation_at_ms,
                 )
                 if command.command_kind == "protection" and position is not None:
                     self._engine.ingest_protection_evidence(
-                        ProtectionEvidence.from_position(position), occurred_at_ms=self._clock_ms(),
+                        ProtectionEvidence.from_position(position),
+                        occurred_at_ms=reconciliation_at_ms,
+                    )
+                elif position is None and resolved.current_state is CommandState.FILLED:
+                    self._engine.ingest_protection_evidence(
+                        ProtectionEvidence(
+                            PositionKey(
+                                command.trading_account_id,
+                                command.category,
+                                command.symbol,
+                                command.position_idx,
+                            ),
+                            None,
+                            None,
+                            Decimal("0"),
+                            reconciliation_at_ms,
+                        ),
+                        occurred_at_ms=reconciliation_at_ms,
                     )
                 recovered.append(resolved)
             except Exception:
