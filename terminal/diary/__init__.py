@@ -27,6 +27,19 @@ from .decision_store import (
     DiaryLinkageError,
     DiaryPersistenceError,
 )
+from .excursions import (
+    D5_POST_TRADE_FACTOR_DEFINITIONS_V1,
+    EXCURSION_SEMANTICS_V1,
+    EXIT_QUALITY_SEMANTICS_V1,
+    ExcursionAnalysis,
+    ExcursionMetrics,
+    ExcursionReadiness,
+    ExitReference,
+    PostTradePath,
+    TradePathBar,
+    analyze_post_trade_excursion,
+    persist_post_trade_excursion_factors,
+)
 from .factors import (
     P0_FACTOR_DEFINITIONS_V1,
     DiaryFactorStore,
@@ -53,6 +66,7 @@ from .service import TradeEpisodeReadService
 
 __all__ = [
     "AllocationRole",
+    "D5_POST_TRADE_FACTOR_DEFINITIONS_V1",
     "DecisionEventId",
     "DecisionEventKind",
     "DecisionEventRecord",
@@ -64,8 +78,14 @@ __all__ = [
     "DiaryPersistenceError",
     "DiaryReadiness",
     "DiaryStatisticsEngine",
+    "EXCURSION_SEMANTICS_V1",
+    "EXIT_QUALITY_SEMANTICS_V1",
     "ExecutionAllocation",
     "ExecutionFactView",
+    "ExcursionAnalysis",
+    "ExcursionMetrics",
+    "ExcursionReadiness",
+    "ExitReference",
     "FactorDefinition",
     "FactorImmutableConflict",
     "FactorLinkageError",
@@ -81,6 +101,7 @@ __all__ = [
     "P0_FACTOR_DEFINITIONS_V1",
     "PnLComponents",
     "PnLSource",
+    "PostTradePath",
     "SetupInstanceId",
     "SetupInstanceRecord",
     "SetupTerminalOutcome",
@@ -90,6 +111,9 @@ __all__ = [
     "TradeEpisodeReadService",
     "TradeEpisodeReconstructor",
     "TradeEpisodeSetupLink",
+    "TradePathBar",
     "TradeStatistics",
+    "analyze_post_trade_excursion",
+    "persist_post_trade_excursion_factors",
     "pnl_from_episode",
 ]
