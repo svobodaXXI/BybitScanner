@@ -10,25 +10,29 @@ from .reconstruction import TradeEpisodeReconstructor
 
 
 class TradeEpisodeReadService:
-    """Reconstruct episodes from executions already persisted by Terminal authority."""
+    """Reconstruct one account's episodes from Terminal-persisted executions."""
 
-    def __init__(self, store: SQLiteStore, *, environment: DiaryEnvironment):
+    def __init__(
+        self,
+        store: SQLiteStore,
+        *,
+        trading_account_id: TradingAccountId,
+        environment: DiaryEnvironment,
+    ):
         if not isinstance(store, SQLiteStore):
             raise TypeError("store must be SQLiteStore")
+        if not isinstance(trading_account_id, TradingAccountId):
+            raise TypeError("trading_account_id must be TradingAccountId")
         self._store = store
+        self._trading_account_id = trading_account_id
         self._environment = DiaryEnvironment(environment)
         self._reconstructor = TradeEpisodeReconstructor()
 
-    def list_episodes(
-        self,
-        *,
-        trading_account_id: TradingAccountId | None = None,
-        symbol: Symbol | None = None,
-    ) -> tuple[TradeEpisode, ...]:
+    def list_episodes(self, *, symbol: Symbol | None = None) -> tuple[TradeEpisode, ...]:
         executions = tuple(
             item
             for item in self._store.load_executions()
-            if (trading_account_id is None or item.dedup_key.trading_account_id == trading_account_id)
+            if item.dedup_key.trading_account_id == self._trading_account_id
             and (symbol is None or item.symbol == symbol)
         )
         return self._reconstructor.reconstruct(executions, environment=self._environment)
