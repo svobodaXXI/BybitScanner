@@ -134,6 +134,72 @@ Initial statistics surface should include where already supported/eligible:
 - MAE/MFE;
 - factor coverage / missingness.
 
+The D6 statistics target is extended with the following high-value metrics/presentations, derived from BybitScanner requirements plus retained external product references:
+
+**Priority additions**
+
+- payoff ratio = average win / absolute average loss;
+- expectancy in currency per trade;
+- expectancy in R per trade once initial admitted-risk semantics are frozen and durably represented;
+- average and median R once R semantics are frozen;
+- maximum drawdown;
+- current drawdown;
+- equity curve;
+- maximum consecutive wins and losses;
+- largest win and largest loss;
+- rolling profit factor;
+- rolling expectancy;
+- performance by setup/pattern;
+- performance by entry mode;
+- performance by timeframe;
+- LONG versus SHORT performance;
+- performance by hour/session and weekday where timestamps/source coverage are reliable;
+- performance by holding-duration buckets;
+- fees/funding/slippage contribution relative to gross PnL;
+- entry and exit slippage when reliable execution evidence exists;
+- MAE/MFE distributions;
+- MFE capture / exit giveback from D5;
+- setup admission rate;
+- reason-code distributions for skipped/rejected setups;
+- skip/filter effectiveness when later-outcome semantics are frozen;
+- metric/factor coverage and missingness.
+
+**Desired health/degradation presentation**
+
+Statistics should support lifetime plus rolling windows when enough eligible observations exist, for example:
+
+```text
+Profit Factor
+All time      1.72
+Last 100      1.61
+Last 50       1.28
+Last 20       0.83
+```
+
+Rolling values are observational/research indicators only. They do not authorize automatic strategy disabling, LIVE entry, or risk-policy mutation.
+
+**Desired setup-level summary**
+
+A primary research view should be able to summarize one cohort such as:
+
+```text
+FALLING WEDGE / PRE-BREAKOUT
+sample size
+win rate
+profit factor
+expectancy
+average win / average loss
+MAE / MFE distribution
+MFE capture
+holding time
+cost contribution
+drawdown
+skipped setups / reason codes
+coverage
+```
+
+The exact layout remains a D6 implementation decision, but the cohort definition and metric semantics must remain explicit and version-safe.
+
 Cohort filters should preserve the architecture's separation rules and support only fields already represented reliably in the read layer, such as:
 
 - environment;
@@ -146,6 +212,8 @@ Cohort filters should preserve the architecture's separation rules and support o
 - controller/origin.
 
 Different versions and entry modes must not be silently pooled.
+
+External references retained for this statistics design are recorded in `DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md`. TradeZella is used as a reference for expectancy, profit factor, setup/time breakdowns, drawdown, R-multiples, streaks, rolling health and dashboard hierarchy. Tradervue is used as a reference for MAE/MFE, best-exit/exit-efficiency concepts, time-to-MFE/time-to-MAE and advanced report breakdowns. These are design references only; BybitScanner owns all metric definitions and safety semantics.
 
 ### D6.5 — AUTOPILOT integration
 
