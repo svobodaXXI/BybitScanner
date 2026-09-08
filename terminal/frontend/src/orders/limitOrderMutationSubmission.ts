@@ -45,6 +45,12 @@ export type ExistingLimitCancelIntent = {
   orderId: string;
 };
 
+function paperCancelClientActionId(baseId: string, orderId: string) {
+  const suffix = `-${orderId}`;
+  const baseBudget = Math.max(1, 128 - suffix.length);
+  return `${baseId.slice(0, baseBudget)}${suffix}`;
+}
+
 /** PAPER adapter for the shared existing-Limit mutation ownership lifecycle. */
 export class PaperLimitOrderMutationController {
   private readonly common = new LimitOrderMutationController<PaperLimitMutationResponse>();
@@ -93,7 +99,10 @@ export class PaperLimitOrderMutationController {
   ): LimitOrderMutationAttempt<PaperLimitMutationResponse> {
     return this.common.submit("CANCEL_LIMIT", intent.orderId, {
       startAttempt: () => {
-        const clientActionId = dependencies.createClientActionId();
+        const clientActionId = paperCancelClientActionId(
+          dependencies.createClientActionId(),
+          intent.orderId,
+        );
         const request: PaperLimitCancelRequest = {
           client_action_id: clientActionId,
           symbol: intent.symbol,
