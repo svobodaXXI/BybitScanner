@@ -11,7 +11,7 @@ import hashlib
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from terminal.domain.models import Execution, OrderSide, PositionKey, PositionSide, Price, Quantity
+from terminal.domain.models import Execution, PositionKey, PositionSide, Price, Quantity
 
 from .models import (
     AllocationRole,
@@ -82,7 +82,7 @@ class TradeEpisodeReconstructor:
                 item.dedup_key.exec_id.value,
             ),
         )
-        seen = set()
+        seen: dict[object, Execution] = {}
         active: dict[PositionKey, _EpisodeBuilder] = {}
         history: list[_EpisodeBuilder] = []
 
@@ -90,9 +90,14 @@ class TradeEpisodeReconstructor:
             if not isinstance(execution, Execution):
                 raise TypeError("executions must contain terminal.domain.models.Execution values")
             key = execution.dedup_key
-            if key in seen:
+            previous = seen.get(key)
+            if previous is not None:
+                if previous != execution:
+                    raise ValueError(
+                        "execution replay contains conflicting immutable evidence for one dedup key"
+                    )
                 continue
-            seen.add(key)
+            seen[key] = execution
             position_key = position_key_for_execution(execution)
             current = active.get(position_key)
             if current is None:
