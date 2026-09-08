@@ -1,6 +1,6 @@
 # BybitScanner — Robot v0.1 recovery/state batch decision
 
-Version: 1.2
+Version: 1.3
 Date: 2026-09-08
 Status: ACCEPTED DESIGN / PAPER PROTOTYPE
 Implementation authorization: NONE
@@ -131,6 +131,76 @@ The position may remain open under the proven STOP until one of the normal lifec
 
 Robot must not invent a TAKE-only market-liquidation timer or a second recovery mechanism.
 
+### 12. Loss of an already-proven STOP
+
+If a STOP was authoritative for an open robot-owned position and later becomes absent, invalid, cancelled, stale, ambiguous, or otherwise cannot be authoritatively proven, the position immediately re-enters the same `STOP_NOT_PROVEN` safety contract.
+
+There is no softer recovery branch merely because the STOP had previously existed.
+
+The same rules apply:
+- at most 5 seconds to safely re-establish/prove the intended STOP;
+- no blind STOP retry;
+- immediate emergency close if the intended STOP level is reached/crossed before recovery;
+- emergency close at the 5-second deadline if STOP is still not proven;
+- confirmed authoritative `FLAT` is required before the emergency lifecycle is complete.
+
+### 13. Loss of authoritative market data while STOP is unproven
+
+If an open robot-owned position has no proven STOP and the shared authoritative market-data state becomes unavailable, stale, ambiguous, or `UNKNOWN`, Robot must not consume the remaining STOP recovery window blind.
+
+It must immediately initiate `EMERGENCY MARKET CLOSE` through the common PAPER execution path and reconcile until authoritative `FLAT` is confirmed.
+
+No Robot-specific fallback price feed is permitted.
+
+### 14. Account-wide gate during unresolved emergency exposure
+
+While any robot-owned emergency close remains unresolved, ambiguous, `UNKNOWN`, or still under reconciliation, Robot must block **all new approvals and all new entries for the entire active PAPER account**.
+
+This is an admission/risk gate only. It does not automatically liquidate other already-open robot positions that remain safely protected.
+
+### 15. Other already-open robot positions during one-position emergency
+
+A protection emergency on one position does not trigger account-wide emergency flatten by itself.
+
+Other already-open robot positions:
+- remain open if their authoritative state is healthy;
+- keep their existing proven STOP/TAKE lifecycle;
+- continue normal shared protection management;
+- independently enter their own emergency path if their own protection/state becomes unsafe.
+
+Robot therefore freezes new risk while preserving correctly protected existing exposure.
+
+### 16. Reopening the account-wide admission gate
+
+New Robot approvals/entries may resume only when all of the following are true:
+- the affected emergency-close position is authoritatively `FLAT`;
+- its emergency execution/reconciliation lifecycle is terminally resolved;
+- the shared authoritative PAPER account state is no longer `UNKNOWN`/`RECONCILING` for the relevant safety domains;
+- no residual robot-owned exposure or protection ambiguity requiring reconciliation remains;
+- ordinary Robot admission/risk gates are otherwise satisfied.
+
+A confirmed `FLAT` event alone is not enough if the common account state is still materially ambiguous.
+
+### 17. Prolonged or unresolved emergency reconciliation
+
+There is no timeout that permits Robot to resume new trading merely because reconciliation has taken too long.
+
+If authoritative safety cannot be proven, Robot remains fail-closed. The durable condition is treated as `RECONCILIATION_REQUIRED` (or the common equivalent), with new approvals/entries blocked until authoritative safety is restored.
+
+Restart must not bypass this gate or auto-resume Robot activity.
+
+### 18. No blind emergency-close resend
+
+Emergency close follows the existing shared execution/reconciliation ownership rules.
+
+An ambiguous command result is reconciled rather than blindly repeated. A later close mutation is permitted only if authoritative reconciliation proves residual open quantity that still requires a new close command under the common execution lifecycle.
+
+### 19. Recovery-block policy principle
+
+For Robot v0.1, non-strategic recovery details in this protection-failure block default to the existing shared fail-closed/reuse-first architecture without requiring separate user confirmation.
+
+User confirmation remains required only when a choice would materially change trading strategy, risk sizing, STOP/TAKE semantics, emergency liquidation scope, ownership/control, LIVE execution boundaries, or another decision with direct financial consequence.
+
 ## Resulting state contract
 
 Conceptually:
@@ -149,15 +219,22 @@ RECONCILIATION_REQUIRED
 ENTRY_FILLED
   -> establish/prove intended STOP through shared protection lifecycle
 
+STOP_PROVEN
+  -- STOP later becomes unproven -------------------------> STOP_NOT_PROVEN
+
 STOP_NOT_PROVEN
   -- safe reconciliation/recovery, < 5 s ----------------> STOP_PROVEN
   -- intended STOP crossed before deadline --------------> EMERGENCY_MARKET_CLOSE
+  -- market data authority lost --------------------------> EMERGENCY_MARKET_CLOSE
   -- STOP still not proven at 5 s ------------------------> EMERGENCY_MARKET_CLOSE
 
 EMERGENCY_MARKET_CLOSE
+  -> block all new Robot approvals/entries account-wide
   -> shared execution/reconciliation
   -> confirmed authoritative FLAT
-  -> CLOSED_EMERGENCY_PROTECTION_FAILURE
+  -> common account safety/reconciliation proven
+  -> CLOSED_EMERGENCY_PROTECTION_FAILURE for affected idea
+  -> ordinary Robot admission may resume
 
 CLOSED_EMERGENCY_PROTECTION_FAILURE
   -> same immutable signal/pattern instance can never re-enter
