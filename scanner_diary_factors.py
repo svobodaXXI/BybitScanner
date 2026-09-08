@@ -87,6 +87,22 @@ def _p0_values(analysis: dict[str, Any]) -> dict[str, bool | int | float]:
     return values
 
 
+def _same_evidence_except_observed_at(
+    existing: FactorObservation,
+    candidate: FactorObservation,
+) -> bool:
+    return (
+        existing.observation_id == candidate.observation_id
+        and existing.factor_key == candidate.factor_key
+        and existing.factor_version == candidate.factor_version
+        and existing.subject_kind is candidate.subject_kind
+        and existing.subject_id == candidate.subject_id
+        and existing.provenance is candidate.provenance
+        and existing.source_version == candidate.source_version
+        and existing.value == candidate.value
+    )
+
+
 def record_scanner_p0_factors(
     *,
     setup_instance_id: SetupInstanceId,
@@ -122,7 +138,6 @@ def record_scanner_p0_factors(
             observation_id = "fo_scanner_" + hashlib.sha256(
                 identity_material.encode("utf-8")
             ).hexdigest()[:24]
-            existing = store.get_observation(observation_id)
             observation = FactorObservation(
                 observation_id=observation_id,
                 factor_key=factor_key,
@@ -134,8 +149,10 @@ def record_scanner_p0_factors(
                 source_version=f"{SCANNER_FACTOR_SOURCE_VERSION}:{decision_event_id.value}",
                 value=value,
             )
+            existing = store.get_observation(observation_id)
+            if existing is not None and _same_evidence_except_observed_at(existing, observation):
+                continue
             store.append_observation(observation)
-            if existing is None:
-                recorded += 1
+            recorded += 1
 
     return ScannerFactorWriteResult("RECORDED" if recorded else "UNCHANGED", recorded)
