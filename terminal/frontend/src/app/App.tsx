@@ -628,7 +628,7 @@ export function App() {
       },
     );
     return attempt.promise;
-  }, [currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
+  }, [applyPaperStateForSession, currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
 
   const amendPaperLimit = useCallback(async (orderId: string, price: string) => {
     if (!mutationsAllowed && !liveLimitAllowed) throw new Error("live_mutations_disabled");
@@ -659,7 +659,7 @@ export function App() {
       },
     );
     await attempt.promise;
-  }, [currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
+  }, [applyPaperStateForSession, currentLiveAuthority, liveLimitAllowed, mutationsAllowed, tradingSymbol]);
 
   const beginStopDraft = useCallback((): "drafted" | undefined => {
     if (
