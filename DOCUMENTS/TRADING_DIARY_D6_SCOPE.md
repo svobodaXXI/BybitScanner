@@ -1,6 +1,6 @@
 # BybitScanner Trading Diary — D6 UI Scope
 
-Status: D6 SCOPE ACCEPTED / D6.1 IMPLEMENTED / D6.2-D6.5 NOT YET AUTHORIZED
+Status: D6 SCOPE ACCEPTED / D6.1-D6.2 IMPLEMENTED / D6.3-D6.5 NOT YET AUTHORIZED
 
 Date: 2026-09-08
 
@@ -79,6 +79,10 @@ Trade-list rows should expose only read-model facts, including where available:
 Missing values must remain missing and must never be displayed as numeric zero by default.
 
 ### D6.2 — Trade Details
+
+Implementation status: COMPLETE.
+
+Authoritative merge commit: `f7afc26af09117c358d5c746551a0fd24e3755c4`.
 
 Expose one structured trade-detail view composed from existing Diary entities/read models.
 
@@ -280,11 +284,16 @@ No part of this scope authorizes autonomous LIVE trading.
 
 The D6 scope remains frozen by this document.
 
-D6.1 was explicitly authorized by the user and is implemented at commit
+D6.1 and D6.2 were explicitly authorized by the user and are implemented.
+
+D6.1 authoritative implementation commit:
 `5bd3ebd014e3098cc415fcbe329781e146258374`.
 
-D6.2, D6.3, D6.4, and D6.5 remain unauthorized until the user explicitly authorizes
+D6.2 authoritative merge commit:
+`f7afc26af09117c358d5c746551a0fd24e3755c4`.
+
+D6.3, D6.4, and D6.5 remain unauthorized until the user explicitly authorizes
 the corresponding slice or a broader D6 implementation scope.
 
-Completion of D6.1 does not authorize any trading mutation, AUTOPILOT runtime behavior,
+Completion of D6.1-D6.2 does not authorize any trading mutation, AUTOPILOT runtime behavior,
 or autonomous LIVE trading.
