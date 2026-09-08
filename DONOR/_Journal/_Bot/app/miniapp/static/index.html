@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Торговый журнал</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">TRADING JOURNAL <span class="live-dot" aria-hidden="true"></span></p>
+        <h1>Ваш журнал</h1>
+      </div>
+      <button id="refresh" class="icon-button" type="button" aria-label="Обновить данные" title="Обновить данные">↻</button>
+    </header>
+    <nav class="main-nav" aria-label="Основная навигация">
+      <button data-page="dashboard" class="nav-button active" aria-current="page"><span aria-hidden="true">⌂</span><span>Обзор</span></button>
+      <button data-page="journal" class="nav-button"><span aria-hidden="true">▤</span><span>Журнал</span></button>
+      <button data-page="statistics" class="nav-button"><span aria-hidden="true">◒</span><span>Статистика</span></button>
+      <button data-page="attention" class="nav-button"><span aria-hidden="true">⚠</span><span>Внимание</span></button>
+    </nav>
+    <section id="content" aria-live="polite" aria-busy="false"></section>
+    <footer class="app-footer">Данные рассчитаны сервером Trading Journal</footer>
+  </main>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="/static/telegram-platform.js"></script>
+  <script src="/static/viewer-access.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

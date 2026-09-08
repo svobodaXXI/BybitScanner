@@ -1,0 +1,2 @@
+"""Domain event enums."""
+

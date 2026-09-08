@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+*.dump
+*.backup
+*.sql.gz
+
+runtime_logs/

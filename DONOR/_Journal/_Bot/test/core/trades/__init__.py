@@ -1,0 +1,2 @@
+"""Trade domain tests."""
+
