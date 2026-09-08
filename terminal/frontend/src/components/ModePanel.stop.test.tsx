@@ -84,7 +84,7 @@ it("shows the explicit current-market reference when active STOP settings are op
       protectionPositionSide="Long"
     />,
   );
-  expect(screen.getByRole("dialog", { name: "STOP settings" })).toHaveTextContent("Reference 101");
+  expect(screen.getByRole("dialog", { name: "STOP settings" })).toHaveTextContent("Тек. цена 101.0");
 });
 
 it("derives TAKE green dot from authority and reuses hold settings with current reference", () => {
@@ -103,7 +103,7 @@ it("derives TAKE green dot from authority and reuses hold settings with current 
   fireEvent.click(screen.getByRole("button", { name: "TAKE" }));
   expect(onTakeTap).toHaveBeenCalledOnce();
   expect(document.querySelector(".paper-take-active-dot")).toBeInTheDocument();
-  expect(screen.getByRole("dialog", { name: "TAKE settings" })).toHaveTextContent("Reference 101");
+  expect(screen.getByRole("dialog", { name: "TAKE settings" })).toHaveTextContent("Тек. цена 101.0");
 });
 
 it("opens TAKE settings through the shared 500ms hold activation", () => {
@@ -145,6 +145,6 @@ it("enables STOP and TAKE from LIVE protection authority without PAPER mutation 
 
   expect(screen.getByRole("button", { name: "STOP" })).not.toBeDisabled();
   expect(screen.getByRole("button", { name: "TAKE" })).not.toBeDisabled();
-  expect(screen.getByRole("dialog", { name: "STOP settings" })).toHaveTextContent("Reference 65000");
-  expect(screen.getByRole("dialog", { name: "TAKE settings" })).toHaveTextContent("Reference 62000");
+  expect(screen.getByRole("dialog", { name: "STOP settings" })).toHaveTextContent("Тек. цена 65000.0");
+  expect(screen.getByRole("dialog", { name: "TAKE settings" })).toHaveTextContent("Тек. цена 62000.0");
 });

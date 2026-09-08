@@ -63,6 +63,37 @@ describe("existing Limit mutation adapters", () => {
     expect(result.status).toBe("completed");
   });
 
+  it("PAPER cancel keeps action identity unique across different orders when the generator repeats", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      json: async () => ({
+        client_action_id: "ignored-by-adapter-test",
+        status: "completed",
+        reason_code: "ok",
+        order_id: "order-1",
+        paper_state: paperState(),
+      }),
+    });
+    const runMutation = vi.fn(async (_key: string, operation: () => Promise<unknown>) => operation());
+    const dependencies: PaperLimitOrderMutationDependencies = {
+      createClientActionId: () => "paper-limit-cancel-1700000000000",
+      applyPaperState: () => true,
+      runMutation: runMutation as PaperLimitOrderMutationDependencies["runMutation"],
+      refreshPaper: vi.fn(async () => undefined),
+      fetcher: fetcher as unknown as typeof fetch,
+    };
+    const controller = new PaperLimitOrderMutationController();
+
+    await controller.cancel({ symbol: "BTCUSDT", orderId: "order-1" }, dependencies).promise;
+    await controller.cancel({ symbol: "BTCUSDT", orderId: "order-2" }, dependencies).promise;
+
+    const firstBody = JSON.parse(fetcher.mock.calls[0][1].body);
+    const secondBody = JSON.parse(fetcher.mock.calls[1][1].body);
+    expect(firstBody.client_action_id).toBe("paper-limit-cancel-1700000000000-order-1");
+    expect(secondBody.client_action_id).toBe("paper-limit-cancel-1700000000000-order-2");
+    expect(firstBody.client_action_id).not.toBe(secondBody.client_action_id);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("PAPER transport failure reconciles and releases ownership", async () => {
     const fetcher = vi.fn().mockRejectedValue(new Error("network"));
     const refreshPaper = vi.fn(async () => undefined);
@@ -84,7 +115,7 @@ describe("existing Limit mutation adapters", () => {
 
     expect(refreshPaper).toHaveBeenCalledTimes(2);
     expect(fetcher).toHaveBeenCalledTimes(2);
-    expect(second.clientActionId).toBe("paper-cancel-2");
+    expect(second.clientActionId).toBe("paper-cancel-2-order-1");
   });
 
   it("LIVE accepted amend refreshes authoritative projection before releasing ownership", async () => {
