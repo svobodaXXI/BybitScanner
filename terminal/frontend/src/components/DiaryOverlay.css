@@ -42,7 +42,8 @@
 
 .diary-header,
 .diary-primary-nav,
-.diary-filter-bar {
+.diary-filter-bar,
+.diary-filter-placeholder {
   display: flex;
   align-items: center;
   border-bottom: 1px solid #27313b;
@@ -84,9 +85,14 @@
   overflow-x: auto;
 }
 
+.diary-filter-placeholder {
+  min-height: 2.9rem;
+}
+
 .diary-primary-nav button,
 .diary-filter-bar button,
-.diary-state button {
+.diary-state button,
+.diary-detail-back {
   flex: 0 0 auto;
   padding: 0.38rem 0.62rem;
   border: 1px solid #303b47;
@@ -124,7 +130,8 @@
   text-align: center;
 }
 
-.diary-trades-list {
+.diary-trades-list,
+.diary-detail {
   display: grid;
   gap: 0.4rem;
 }
@@ -132,12 +139,16 @@
 .diary-trade-row {
   display: grid;
   gap: 0.42rem;
+  width: 100%;
   padding: 0.58rem 0.65rem;
   border: 1px solid #27313b;
   border-left: 3px solid #53616e;
   border-radius: 0.32rem;
   background: #121820;
+  color: inherit;
+  font: inherit;
   font-variant-numeric: tabular-nums;
+  text-align: left;
 }
 
 .diary-trade-row.long {
@@ -148,9 +159,17 @@
   border-left-color: var(--trade-sell);
 }
 
+.diary-trade-row:hover,
+.diary-trade-row:focus-visible {
+  border-top-color: #465462;
+  border-right-color: #465462;
+  border-bottom-color: #465462;
+}
+
 .diary-trade-heading,
 .diary-trade-times,
-.diary-trade-metrics {
+.diary-trade-metrics,
+.diary-detail-title {
   display: flex;
   align-items: center;
   gap: 0.65rem;
@@ -158,21 +177,25 @@
   flex-wrap: wrap;
 }
 
-.diary-trade-heading {
+.diary-trade-heading,
+.diary-detail-title {
   color: #aab6c1;
   font-size: 0.68rem;
 }
 
-.diary-trade-heading strong {
+.diary-trade-heading strong,
+.diary-detail-title strong {
   color: #edf2f6;
   font-size: 0.82rem;
 }
 
-.diary-trade-row.long .diary-trade-side {
+.diary-trade-row.long .diary-trade-side,
+.diary-detail-title .diary-trade-side.long {
   color: var(--trade-buy);
 }
 
-.diary-trade-row.short .diary-trade-side {
+.diary-trade-row.short .diary-trade-side,
+.diary-detail-title .diary-trade-side.short {
   color: var(--trade-sell);
 }
 
@@ -182,7 +205,8 @@
 
 .diary-trade-times,
 .diary-trade-metrics,
-.diary-trade-row small {
+.diary-trade-row small,
+.diary-detail-section small {
   color: #8996a3;
   font-size: 0.68rem;
 }
@@ -193,6 +217,73 @@
 
 .diary-trade-metrics .loss {
   color: var(--trade-sell);
+}
+
+.diary-detail-back {
+  justify-self: start;
+}
+
+.diary-detail-title {
+  padding: 0.35rem 0.1rem 0.15rem;
+}
+
+.diary-detail-section {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #27313b;
+  border-radius: 0.32rem;
+  background: #121820;
+}
+
+.diary-detail-section h3 {
+  margin: 0 0 0.45rem;
+  color: #dce4eb;
+  font-size: 0.76rem;
+}
+
+.diary-detail-section dl {
+  display: grid;
+  gap: 0.28rem;
+  margin: 0;
+}
+
+.diary-detail-section dl > div,
+.diary-executions > div {
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.8fr) minmax(0, 1.2fr);
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.diary-detail-section dt,
+.diary-detail-section dd,
+.diary-executions span,
+.diary-executions strong,
+.diary-missing {
+  margin: 0;
+  color: #8996a3;
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.diary-detail-section dd,
+.diary-executions strong {
+  color: #c3cdd6;
+}
+
+.diary-executions {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.diary-executions > div {
+  grid-template-columns: auto minmax(0, 1fr);
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid #202933;
+}
+
+.diary-executions > div:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
 }
 
 @media (max-width: 620px) {
@@ -210,7 +301,14 @@
 
   .diary-trade-heading,
   .diary-trade-times,
-  .diary-trade-metrics {
+  .diary-trade-metrics,
+  .diary-detail-title {
     gap: 0.42rem 0.58rem;
+  }
+
+  .diary-detail-section dl > div,
+  .diary-executions > div {
+    grid-template-columns: 1fr;
+    gap: 0.12rem;
   }
 }
