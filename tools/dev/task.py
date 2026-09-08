@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 from typing import Sequence
@@ -12,7 +11,7 @@ from .task_context import build_task_context
 from .task_transaction import begin, load_transaction
 from .verify import verify
 from .workflow import (
-    Git, fingerprints, index_snapshot, read_receipt, receipt_path, repository_root, require_ok,
+    Git, fingerprints, index_tree, read_receipt, receipt_path, repository_root, require_ok,
     worktree_change_paths,
 )
 
@@ -25,18 +24,27 @@ def _manifest_path(directory: Path) -> Path:
 
 
 def _sync_preflight(git: Git) -> None:
+    """Require a named branch that exactly matches its origin mirror.
+
+    Tasks are intentionally allowed on feature branches. The safety property is not
+    "must be main"; it is "start from a reviewable, remotely mirrored baseline".
+    """
     require_ok(git.run("fetch", "origin", "--prune"), "origin fetch")
     branch = require_ok(git.run("symbolic-ref", "--quiet", "--short", "HEAD"), "branch discovery")
-    if branch != "main":
-        raise RuntimeError(f"new tasks require main; current branch is {branch}")
     head = require_ok(git.run("rev-parse", "HEAD"), "HEAD discovery")
-    remote = require_ok(git.run("rev-parse", "origin/main"), "origin/main discovery")
+    remote_ref = f"refs/remotes/origin/{branch}"
+    remote_result = git.run("rev-parse", "--verify", "--quiet", remote_ref)
+    if remote_result.returncode:
+        raise RuntimeError(
+            f"current branch has no origin mirror; publish/sync {branch} before starting a task"
+        )
+    remote = remote_result.stdout.strip()
     if head != remote:
         counts = require_ok(
-            git.run("rev-list", "--left-right", "--count", "HEAD...origin/main"),
+            git.run("rev-list", "--left-right", "--count", f"HEAD...{remote_ref}"),
             "synchronization comparison",
         )
-        raise RuntimeError(f"HEAD does not match origin/main ({counts})")
+        raise RuntimeError(f"HEAD does not match origin/{branch} ({counts})")
 
 
 def start(
@@ -51,7 +59,7 @@ def start(
         context = build_task_context(root, paths, hint=intent, git=active)
         dirty_paths = worktree_change_paths(active)
         dirty_fingerprints = fingerprints(root, dirty_paths)
-        index_state, index_bytes = index_snapshot(root, active)
+        baseline_index_tree = index_tree(active)
         metadata = begin(paths, git=active, task_id=task_id)
         directory, _ = load_transaction(metadata["task_id"], git=active)
         manifest = {
@@ -61,9 +69,7 @@ def start(
             "scope": metadata["scope"],
             "baseline_change_paths": dirty_paths,
             "baseline_change_fingerprints": dirty_fingerprints,
-            "baseline_index": {
-                "state": index_state, "sha256": hashlib.sha256(index_bytes).hexdigest()
-            },
+            "baseline_index_tree": baseline_index_tree,
             "context": context,
         }
         _manifest_path(directory).write_text(
@@ -73,6 +79,7 @@ def start(
         refs = ", ".join(context["authority_refs"])
         return True, "\n".join((
             "STATUS PASS", f"TASK {metadata['task_id']}",
+            f"BRANCH {metadata['branch']}",
             f"SCOPE {', '.join(metadata['scope'])}", f"AUTHORITY {refs}",
             "VERIFICATION AUTO_FROM_SCOPE", "BLOCKERS NONE",
         ))
@@ -110,10 +117,8 @@ def finish(task_id: str, *, git: Git | None = None) -> tuple[bool, str]:
             path: manifest["baseline_change_fingerprints"][path] for path in protected
         }:
             raise RuntimeError("pre-existing user-owned files changed outside task scope")
-        index_state, index_bytes = index_snapshot(root, active)
-        index_hash = hashlib.sha256(index_bytes).hexdigest()
-        if {"state": index_state, "sha256": index_hash} != manifest["baseline_index"]:
-            raise RuntimeError("Git index changed during task")
+        if index_tree(active) != manifest.get("baseline_index_tree"):
+            raise RuntimeError("Git index content changed during task")
         passed, output = verify(metadata["scope"], git=active, transaction_id=task_id)
         if not passed:
             return False, output
