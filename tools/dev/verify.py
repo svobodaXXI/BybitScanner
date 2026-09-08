@@ -16,7 +16,7 @@ from .task_transaction import (
     load_transaction, remove_isolated_worktree,
 )
 from .workflow import (
-    Git, compact, fingerprints, index_snapshot, normalize_task_paths, receipt_path,
+    Git, compact, fingerprints, index_tree, normalize_task_paths, receipt_path,
     repository_root, require_ok, resolve_inside,
 )
 
@@ -76,6 +76,27 @@ def _isolated_changed_files(root: Path) -> set[str]:
     return tracked | untracked
 
 
+def _tree_changed_files(git: Git, base: str, tree: str) -> set[str]:
+    """Return Git-semantic candidate changes, honoring clean/EOL filters."""
+    return {
+        item for item in require_ok(
+            git.run("diff", "--name-only", "-z", base, tree),
+            "candidate tree diff",
+        ).split("\0") if item
+    }
+
+
+def _failed_check_details(checks: Sequence[dict[str, object]]) -> list[str]:
+    details: list[str] = []
+    for item in checks:
+        if item.get("status") == "PASS":
+            continue
+        name = str(item.get("name", "unknown-check"))
+        detail = str(item.get("detail", "")).strip()
+        details.append(f"{name}: {detail}" if detail else f"{name}: check failed")
+    return details
+
+
 def verify(
     path_values: Sequence[str], *, git: Git | None = None, transaction_id: str | None = None,
     additional_commands: Sequence[dict[str, object]] = (),
@@ -100,11 +121,11 @@ def verify(
             raise RuntimeError("detached HEAD is not supported")
         transaction_receipt = None
         transaction_post_fingerprints = None
-        transaction_index = None
+        transaction_index_tree = None
         verification_root = root
         isolated_tree = None
         if transaction_id:
-            transaction_index = index_snapshot(root, active_git)
+            transaction_index_tree = index_tree(active_git)
             transaction_post_fingerprints = fingerprints(root, files)
             _, metadata = load_transaction(transaction_id, git=active_git)
             if metadata["scope"] != paths:
@@ -119,11 +140,14 @@ def verify(
             all_candidate_fingerprints = fingerprints(candidates, files)
             if any(value["state"] != "file" for value in all_candidate_fingerprints.values()):
                 raise RuntimeError("transaction candidate is incomplete")
-            baseline_hashes = {record["path"]: record["head_sha256"] for record in metadata["files"]}
-            candidate_files = [
-                path for path in files
-                if all_candidate_fingerprints[path]["sha256"] != baseline_hashes[path]
-            ]
+            isolated_tree = candidate_tree(transaction_id, git=active_git)
+            tree_changes = _tree_changed_files(active_git, metadata["head"], isolated_tree)
+            out_of_scope_tree = sorted(tree_changes - set(files))
+            if out_of_scope_tree:
+                raise RuntimeError(
+                    "candidate tree contains out-of-scope changes: " + ", ".join(out_of_scope_tree)
+                )
+            candidate_files = [path for path in files if path in tree_changes]
             if not candidate_files:
                 raise RuntimeError("transaction has no task-only candidate changes")
             candidate_fingerprints = {
@@ -143,7 +167,9 @@ def verify(
             }
             checks.append({"name": "task-delta-proof", "status": "PASS", "detail": ""})
             checks.append({"name": "inverse-proof", "status": "PASS", "detail": ""})
-            isolated_path, isolated_tree = create_isolated_worktree(transaction_id, git=active_git)
+            isolated_path, created_tree = create_isolated_worktree(transaction_id, git=active_git)
+            if created_tree != isolated_tree:
+                raise RuntimeError("candidate tree changed while creating isolated worktree")
             verification_root = isolated_path
             if fingerprints(verification_root, files) != all_candidate_fingerprints:
                 raise RuntimeError("isolated candidate overlay does not match derived candidate")
@@ -203,32 +229,44 @@ def verify(
         if transaction_receipt:
             changed_files = _isolated_changed_files(verification_root)
             expected_changes = set(transaction_receipt["candidate_files"])
+            if changed_files == expected_changes:
+                scope_detail = ""
+            else:
+                unexpected = sorted(changed_files - expected_changes)
+                missing = sorted(expected_changes - changed_files)
+                parts = []
+                if unexpected:
+                    parts.append("unexpected: " + ", ".join(unexpected))
+                if missing:
+                    parts.append("missing: " + ", ".join(missing))
+                scope_detail = "; ".join(parts)
             checks.append({
                 "name": "isolated-tracked-scope",
                 "status": "PASS" if changed_files == expected_changes else "FAIL",
-                "detail": "" if changed_files == expected_changes else (
-                    "tracked files differ from candidate scope: " + ", ".join(sorted(changed_files))
-                ),
+                "detail": scope_detail,
             })
         diff = Git(verification_root).run("diff", "--check", "--", *paths)
         checks.append({"name": "diff-check", "status": "PASS" if diff.returncode == 0 else "FAIL", "detail": (diff.stderr or diff.stdout).strip()})
         failed = [str(item["name"]) for item in checks if item["status"] != "PASS"]
         if failed:
+            failure_details = _failed_check_details(checks)
             if isolated_path is not None:
                 if frontend_dependencies_linked:
                     _unlink_frontend_dependencies(isolated_path)
                     frontend_dependencies_linked = False
                 remove_isolated_worktree(isolated_path, git=active_git)
                 isolated_path = None
-            return False, compact("FAIL", paths, [str(x["name"]) for x in checks], failed, ())
+            return False, compact(
+                "FAIL", paths, [str(x["name"]) for x in checks], failed, failure_details
+            )
         if transaction_receipt:
             state = inspect(transaction_id or "", git=active_git)
             if state["status"] != "OK":
                 raise RuntimeError("transaction became stale during verification")
             if fingerprints(root, files) != transaction_post_fingerprints:
                 raise RuntimeError("transaction task-file content changed during verification")
-            if index_snapshot(root, active_git) != transaction_index:
-                raise RuntimeError("real Git index changed during transaction verification")
+            if index_tree(active_git) != transaction_index_tree:
+                raise RuntimeError("real Git index content changed during transaction verification")
             if fingerprints(verification_root, files) != all_candidate_fingerprints:
                 raise RuntimeError("isolated candidate changed during verification")
             if candidate_tree(transaction_id or "", git=active_git) != isolated_tree:
