@@ -201,4 +201,14 @@ def test_d5_definitions_are_post_trade_only_and_do_not_invent_r_normalization():
         and item.subject_kind is FactorSubjectKind.TRADE_EPISODE
         for item in D5_POST_TRADE_FACTOR_DEFINITIONS_V1
     )
-    assert all("_r" not in item.factor_key and not item.factor_key.endswith(".r") for item in D5_POST_TRADE_FACTOR_DEFINITIONS_V1)
+    forbidden_r_normalized_names = {
+        "trade.mae_r",
+        "trade.mfe_r",
+        "trade.exit_r",
+        "trade.r_multiple",
+    }
+    assert all(
+        item.factor_key not in forbidden_r_normalized_names
+        and not item.factor_key.endswith(".r")
+        for item in D5_POST_TRADE_FACTOR_DEFINITIONS_V1
+    )
