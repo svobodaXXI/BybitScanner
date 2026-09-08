@@ -1,14 +1,15 @@
 # Handoff — STOP/TAKE popup/line sync and PAPER side bulk-cancel
 
 Date: 2026-09-07
+Updated: 2026-09-08
 
 ## Branch / PR
 
 - PR #47: `fix: sync STOP popup with pending line`
 - Branch: `fix/stop-popup-line-sync`
-- Last validated code head before this handoff: `fa4ef67d2641010f0f29f3d7e82444b6ff568f4a`
-- PR remains OPEN and MUST NOT be merged yet because real-phone PAPER bulk-cancel acceptance failed.
-- `main` advanced during the session; PR metadata reported mergeable=false before this handoff. Re-sync branch with latest `main` before merge work resumes.
+- Last validated code head: `7be62dcf259c3d85136046f716064a97b19b3c29`
+- PAPER side bulk-cancel blocker is now RESOLVED and accepted on the real phone.
+- `main` advanced during the session. Re-sync branch with latest `main` and verify mergeability/CI before merge.
 
 ## Implemented behavior in PR #47
 
@@ -38,32 +39,52 @@ Date: 2026-09-07
 - UNKNOWN/reconciliation remains fail-closed.
 - No blind retry behavior was introduced.
 
+## PAPER side bulk-cancel diagnosis and resolution
+
+### Real-runtime failure that was reproduced
+Expected:
+- with several PAPER Buy Limit orders, tap the side-level `×` beside `BUY LIMITS`, confirm once, and all side orders disappear.
+
+Observed before the final fix:
+- one cancellation reached the backend and succeeded;
+- the frontend then threw `PAPER LIMIT cancellation failed` and stopped the sequential side loop;
+- authoritative state showed only one order removed per confirmation.
+
+### Diagnostic evidence
+1. PAPER `state_revision` was stable without mutations (`411 → 411`), so a spontaneous revision race was ruled out.
+2. Two direct sequential POST `/api/limit/cancel` calls with distinct action IDs both succeeded (`411 → 412 → 413`), proving the backend/runtime can process sequential cancels correctly.
+3. The earlier same-millisecond `client_action_id` collision hypothesis was fixed defensively with order-specific PAPER cancel IDs, but real-phone acceptance still failed, proving that was not the whole root cause.
+4. The remaining frontend defect was a stale PAPER session-fence callback: `applyPaperStateForSession` had been captured before the active PAPER session was installed and then retained by `cancelPaperLimit` through an incomplete `useCallback` dependency set. The first backend cancel completed, but the returned authoritative PAPER state was rejected by the stale callback, causing the side loop to abort.
+
+### Final fix
+- `App.cancelPaperLimit` now refreshes its closure when the session-scoped `applyPaperStateForSession` callback changes, so each PAPER cancel response is validated against the current session fence.
+- Integration regression added: `src/app/App.paperLimitSessionFence.test.tsx`.
+- Existing order-specific PAPER cancel action-ID regression remains in `src/orders/limitOrderMutationSubmission.test.ts`.
+- Existing one-confirm side bulk-cancel component regression remains in `src/components/ModePanel.paperBulkCancel.test.tsx`.
+
 ## Validation completed
 
-### Targeted tests at branch head `fa4ef67`
-Passed:
-- `src/components/StopSettings.test.tsx` — 2/2
-- `src/chart/StopLine.test.tsx` — 5/5
-- `src/components/ModePanel.paperBulkCancel.test.tsx` — 1/1
-- `src/components/ModePanel.liveBulkCancel.test.tsx` — 1/1
-- `src/components/ModePanel.stop.test.tsx` — 6/6
-- `src/app/App.test.tsx` — 4/4
+### Latest targeted validation at code head `7be62dc`
+Command:
 
-The focused PAPER bulk-cancel mock regression specifically passed for five Buy limits after one side confirmation.
+```powershell
+npm test -- --run src\app\App.paperLimitSessionFence.test.tsx src\orders\limitOrderMutationSubmission.test.ts src\components\ModePanel.paperBulkCancel.test.tsx
+```
 
-Two existing tests in `ModePanel.test.tsx` still failed:
-- PAPER Market success-status test
-- PAPER Full Close success-status test
-
-Those two failures are outside the STOP/TAKE change and remained present after restoring `ModePanel.test.tsx` from current main.
+Result:
+- `App.paperLimitSessionFence.test.tsx` — 1/1 PASS
+- `limitOrderMutationSubmission.test.ts` — 7/7 PASS
+- `ModePanel.paperBulkCancel.test.tsx` — 1/1 PASS
+- total 9/9 PASS
 
 ### Production build
-`npm run build` PASS.
+`npm run build` PASS at `7be62dc`.
 
 Vite emitted only the existing chunk-size warning (~509 kB main JS chunk). This is a non-blocking optimization warning, not a build failure.
 
 ### Real-phone PAPER acceptance — PASS
-On production preview `http://192.168.100.8:4173/`:
+Production preview:
+`http://192.168.100.8:4173/`
 
 STOP:
 - popup + dashed line simultaneous: PASS
@@ -77,69 +98,25 @@ STOP:
 TAKE:
 - same mirrored checks: PASS
 
-## BLOCKER — PAPER side bulk-cancel real runtime
+PAPER side Buy bulk-cancel after final fix:
+- UI showed 3 active Buy limits before the acceptance action;
+- user tapped the side-level `×` once and confirmed once;
+- all Buy limits disappeared in the UI;
+- authoritative backend check returned `state_revision: 420` and `active_limit_orders: []`;
+- no second cancellation attempt was required.
 
-Expected:
-- with 5 PAPER Buy Limit orders, tap the side-level `×` beside `BUY LIMITS`, confirm once, and all five orders disappear.
+This closes the real-runtime PAPER Buy bulk-cancel blocker.
 
-Actual real-phone behavior:
-- only one order disappears per confirmation attempt;
-- the UI shows `PAPER LIMIT cancellation failed` above the LIMIT controls;
-- screenshot at end of session showed `BUY LIMITS 3`, `SELL LIMITS 0` and the failure message;
-- therefore real runtime acceptance is FAIL even though the isolated 5-order component mock test passes.
+## Remaining pre-merge work
 
-This proves the defect is below or beyond the isolated `ModePanel` loop test. Do not mark bulk-cancel fixed from the mock regression alone.
+1. Re-sync PR branch with latest `main`.
+2. Resolve any conflicts without touching unrelated/user-owned files.
+3. Re-run targeted validation and `npm run build` after the re-sync if the branch changes materially.
+4. Verify PR mergeability and CI/status checks.
+5. Keep PR draft until those checks are complete.
+6. Only then merge.
 
-## Current implementation path relevant to blocker
-
-`ModePanel.cancelLimits()` loops through the captured side-order snapshot and awaits `onLimitCancel(order_id)` sequentially.
-
-In App, `onLimitCancel` is `cancelPaperLimit`.
-
-PAPER cancel path:
-`ModePanel.cancelLimits`
-→ `App.cancelPaperLimit`
-→ `PaperLimitOrderMutationController.cancel`
-→ nested `paperTradingStore.runMutation(CANCEL_LIMIT:<orderId>)`
-→ `executePaperLimitCancel`
-→ POST `/api/limit/cancel`
-→ `applyPaperStateForSession`.
-
-The outer side operation itself is also wrapped in `paperTradingStore.runMutation(CANCEL_SIDE:<side>)`.
-
-Observed `PAPER LIMIT cancellation failed` comes from the catch path in `ModePanel.cancelLimits()`, so one of the later sequential cancellations is throwing/rejecting after at least one earlier cancellation has succeeded.
-
-## First diagnostic for next session
-
-Do not change code first. Reproduce in PAPER with several Buy limits and inspect the backend/runtime evidence for each sequential `/api/limit/cancel` request.
-
-First read-only state check if limits still exist:
-
-```powershell
-Invoke-RestMethod "http://localhost:8765/api/paper-state?symbol=BTCUSDT" | ConvertTo-Json -Depth 8
-```
-
-Then determine exactly why the second/subsequent cancellation rejects. Candidate areas to verify, not assume:
-- returned `paper_state.state_revision` progression for each cancellation;
-- whether `applyPaperStateForSession` rejects a subsequent response as stale/mismatched;
-- nested `runMutation` ownership between `CANCEL_SIDE:<side>` and `CANCEL_LIMIT:<orderId>`;
-- backend/idempotency/client_action_id behavior across rapid sequential cancellation requests;
-- whether controller/application refresh changes the authoritative order snapshot during the loop in a way that invalidates the next request.
-
-No blind retry. Diagnose the first rejected cancellation from evidence.
-
-## Acceptance required before merge
-
-1. Fix root cause of PAPER side bulk-cancel runtime failure.
-2. Add a regression at the correct integration/controller level, not only a mocked `ModePanel` loop test.
-3. Targeted tests PASS.
-4. `npm run build` PASS.
-5. Fresh production preview.
-6. Real-phone PAPER test: create 5 Buy limits → one side `×` → one confirmation → all 5 disappear → count 0 → no failure status.
-7. Mirror/verify Sell side if code path differs or evidence indicates need.
-8. Update PR #47 validation notes.
-9. Re-sync PR branch with latest main and verify mergeability/CI.
-10. Only then merge.
+Sell-side bulk cancel uses the same shared PAPER side loop and order-cancel path; no side-specific code path was identified during diagnosis. A separate real-phone Sell acceptance is not required unless re-sync or subsequent evidence introduces a side-specific difference.
 
 ## User-owned files
 Do not touch:
