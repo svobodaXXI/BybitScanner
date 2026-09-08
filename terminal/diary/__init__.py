@@ -9,6 +9,7 @@ from .models import (
     TradeEpisodeId,
 )
 from .reconstruction import TradeEpisodeReconstructor
+from .service import TradeEpisodeReadService
 
 __all__ = [
     "AllocationRole",
@@ -17,5 +18,6 @@ __all__ = [
     "ExecutionFactView",
     "TradeEpisode",
     "TradeEpisodeId",
+    "TradeEpisodeReadService",
     "TradeEpisodeReconstructor",
 ]
