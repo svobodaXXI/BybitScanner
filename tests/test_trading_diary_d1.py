@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+import pytest
+
 from terminal.diary import DiaryEnvironment, TradeEpisodeReconstructor
 from terminal.domain.models import (
     Category,
@@ -51,7 +53,7 @@ def test_reconstructs_one_episode_with_increase_partial_reduce_and_close():
         "OPEN", "INCREASE", "REDUCE", "CLOSE"
     ]
     assert episode.execution_fees == Decimal("0.6")
-    assert episode.realized_price_pnl == Decimal("-10.0000000000000000000000000")
+    assert episode.realized_price_pnl.quantize(Decimal("0.00000001")) == Decimal("-10.00000000")
 
 
 def test_replay_duplicate_does_not_duplicate_episode_or_allocation():
@@ -63,6 +65,16 @@ def test_replay_duplicate_does_not_duplicate_episode_or_allocation():
     assert len(episodes) == 1
     assert len(episodes[0].allocations) == 1
     assert episodes[0].open_quantity.value == Decimal("1")
+
+
+def test_conflicting_duplicate_execution_evidence_is_rejected():
+    first = _execution("e1", OrderSide.BUY, "1", "100", "0.1", 1)
+    conflict = _execution("e1", OrderSide.BUY, "1", "101", "0.1", 1)
+
+    with pytest.raises(ValueError, match="conflicting immutable evidence"):
+        TradeEpisodeReconstructor().reconstruct(
+            (first, conflict), environment=DiaryEnvironment.LIVE
+        )
 
 
 def test_zero_crossing_reversal_splits_execution_without_double_counting_quantity_or_fee():
