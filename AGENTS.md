@@ -82,10 +82,15 @@ Handoff and workflow-improvement checklists are references, not skills. Consult 
 - `DOCUMENTS/PROJECT_TREE.md`: important canonical path roles during staged modernization.
 - `DOCUMENTS/ASSISTANT_PROTOCOL.md`: assistant-specific behavior and communication.
 - `DOCUMENTS/CHATGPT_CODEX_GITHUB_WORKFLOW.md`: planned GitHub-driven ChatGPT/Codex collaboration, including the user shorthand `х`; load it when that workflow is being enabled, used, reviewed, or resumed.
+- `DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md`: project-wide rule for retaining strong external design/metric/workflow references as implementation accelerators; load it when external examples materially inform a feature or when extending a previously referenced domain.
 
 The current local checkout may be newer than GitHub. GitHub is for remote synchronization, collaboration, reviews, PRs, and remote history; remote changes become local working truth only after explicit synchronization. Dirty implementation does not silently override a normative contract: record the mismatch and resolve it through Task/Spec.
 
 Generated ContextDumps, reports, snapshots, caches, backups, historical copies, chat, and memory are non-authoritative. Treat LEGACY/DEPRECATED artifacts according to applicable warnings; never revive or delete them without authority.
+
+## External reference reuse
+
+When mature external products, official documentation, specifications, papers, or public repositories can materially improve a non-trivial product, UX, analytics, workflow, or architecture decision, use `DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md`: prefer primary sources, record what pattern was useful and how BybitScanner adapts it, and re-check the source before implementation when practical. External references are design accelerators only; they never override BybitScanner authority, safety contracts, versioned metric semantics, approval gates, or licensing/copyright constraints.
 
 ## Task and change routing
 
