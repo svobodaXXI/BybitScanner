@@ -277,11 +277,22 @@ class LiveMarketMutationCoordinator:
     def _fresh_reference_price(self, request) -> Decimal | None:
         if self._book_provider is None:
             return request.sizing_reference_price
-        book = self._book_provider.get_book(Symbol(request.symbol))
+        symbol = Symbol(request.symbol)
+        book = self._book_provider.get_book(symbol)
         if book is None or book.health is not BookHealth.READY:
             return None
         if self._clock_ms() - book.received_at_ms > 1000:
-            return None
+            rest_refresh = getattr(self._book_provider, "_load_rest_book", None)
+            if not callable(rest_refresh):
+                return None
+            try:
+                book = rest_refresh(symbol)
+            except Exception:
+                return None
+            if book is None or book.health is not BookHealth.READY:
+                return None
+            if self._clock_ms() - book.received_at_ms > 1000:
+                return None
         levels = book.asks if request.side.value == "Buy" else book.bids
         return levels[0].price.value if levels else None
 
