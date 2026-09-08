@@ -107,17 +107,16 @@ def test_scanner_p0_producer_records_only_available_decision_time_factors(tmp_pa
         assert all(item.provenance is FactorProvenance.SCANNER_DERIVED for item in observations)
 
 
-def test_same_scanner_decision_replay_does_not_duplicate_factors(tmp_path: Path):
+def test_same_scanner_decision_replay_does_not_duplicate_factors_even_later(tmp_path: Path):
     path = tmp_path / "factors.sqlite3"
-    kwargs = dict(
+    common = dict(
         setup_instance_id=SetupInstanceId("si-1"),
         decision_event_id=DecisionEventId("de-1"),
         analysis={"final_score": 80, "confirmation": {"breakout": False}},
-        observed_at_ms=100,
         database_path=path,
     )
-    first = record_scanner_p0_factors(**kwargs)
-    second = record_scanner_p0_factors(**kwargs)
+    first = record_scanner_p0_factors(**common, observed_at_ms=100)
+    second = record_scanner_p0_factors(**common, observed_at_ms=200)
     assert first.status == "RECORDED"
     assert second.status == "UNCHANGED"
     assert second.recorded == 0
@@ -128,6 +127,26 @@ def test_same_scanner_decision_replay_does_not_duplicate_factors(tmp_path: Path)
             subject_id="si-1",
         )
         assert len(observations) == 2
+        assert {item.observed_at_ms for item in observations} == {100}
+
+
+def test_same_decision_id_with_changed_factor_evidence_fails_closed(tmp_path: Path):
+    path = tmp_path / "factors.sqlite3"
+    record_scanner_p0_factors(
+        setup_instance_id=SetupInstanceId("si-1"),
+        decision_event_id=DecisionEventId("de-1"),
+        analysis={"final_score": 80},
+        observed_at_ms=100,
+        database_path=path,
+    )
+    with pytest.raises(FactorImmutableConflict):
+        record_scanner_p0_factors(
+            setup_instance_id=SetupInstanceId("si-1"),
+            decision_event_id=DecisionEventId("de-1"),
+            analysis={"final_score": 81},
+            observed_at_ms=200,
+            database_path=path,
+        )
 
 
 def test_factor_contract_keeps_decision_time_separate_from_post_trade():
