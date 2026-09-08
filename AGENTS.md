@@ -81,6 +81,7 @@ Handoff and workflow-improvement checklists are references, not skills. Consult 
 - `DOCUMENTS/ARCHITECTURE.md`: architecture and responsibility boundaries.
 - `DOCUMENTS/PROJECT_TREE.md`: important canonical path roles during staged modernization.
 - `DOCUMENTS/ASSISTANT_PROTOCOL.md`: assistant-specific behavior and communication.
+- `DOCUMENTS/CHATGPT_CODEX_GITHUB_WORKFLOW.md`: planned GitHub-driven ChatGPT/Codex collaboration, including the user shorthand `х`; load it when that workflow is being enabled, used, reviewed, or resumed.
 
 The current local checkout may be newer than GitHub. GitHub is for remote synchronization, collaboration, reviews, PRs, and remote history; remote changes become local working truth only after explicit synchronization. Dirty implementation does not silently override a normative contract: record the mismatch and resolve it through Task/Spec.
 
