@@ -1,5 +1,15 @@
 """Trading Diary observational/read-model package."""
 
+from .analytics import (
+    NET_PNL_FORMULA_V1,
+    DiaryReadiness,
+    DiaryStatisticsEngine,
+    PnLComponents,
+    PnLSource,
+    TradeAnalyticsRecord,
+    TradeStatistics,
+    pnl_from_episode,
+)
 from .decision_models import (
     DecisionEventId,
     DecisionEventKind,
@@ -38,16 +48,24 @@ __all__ = [
     "DiaryImmutableConflict",
     "DiaryLinkageError",
     "DiaryPersistenceError",
+    "DiaryReadiness",
+    "DiaryStatisticsEngine",
     "ExecutionAllocation",
     "ExecutionFactView",
+    "NET_PNL_FORMULA_V1",
     "OrderPlanId",
     "OrderPlanRecord",
+    "PnLComponents",
+    "PnLSource",
     "SetupInstanceId",
     "SetupInstanceRecord",
     "SetupTerminalOutcome",
+    "TradeAnalyticsRecord",
     "TradeEpisode",
     "TradeEpisodeId",
     "TradeEpisodeReadService",
     "TradeEpisodeReconstructor",
     "TradeEpisodeSetupLink",
+    "TradeStatistics",
+    "pnl_from_episode",
 ]
