@@ -46,7 +46,10 @@ from terminal.api.models import (
     to_primitive,
 )
 from terminal.domain.models import OrderSide
-from terminal.domain.models import Price, Quantity, Symbol
+from terminal.domain.models import Price, Quantity, Symbol, TradingAccountId
+from terminal.diary.models import DiaryEnvironment
+from terminal.diary.presentation import project_trade_episode_list
+from terminal.diary.service import TradeEpisodeReadService
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.client_projection import ClientMarketProjection, StaleProjectionError
@@ -173,6 +176,36 @@ def safe_account_catalog(value: object) -> dict[str, object]:
         "session_generation": generation,
         "accounts": projected_accounts,
     }
+def _diary_trade_list(runtime: PaperRuntime) -> dict[str, object]:
+    """Read active-account Diary episodes without creating a second execution engine."""
+    catalog = safe_account_catalog(runtime.account_catalog())
+    active_account_id = catalog["active_account_id"]
+    active_account = next(
+        account
+        for account in catalog["accounts"]
+        if account["id"] == active_account_id
+    )
+    environment = (
+        DiaryEnvironment.PAPER
+        if active_account["environment"] == "PAPER"
+        else DiaryEnvironment.LIVE
+    )
+    episodes = TradeEpisodeReadService(
+        runtime.store,
+        trading_account_id=TradingAccountId(active_account_id),
+        environment=environment,
+    ).list_episodes()
+    return {
+        "active_account_id": active_account_id,
+        "session_generation": catalog["session_generation"],
+        "environment": environment.value,
+        "trades": project_trade_episode_list(
+            episodes,
+            now_ms=int(time.time() * 1000),
+        ),
+    }
+
+
 STOP_DELETE_FIELDS = {"client_action_id", "symbol"}
 WORKSPACE_SYMBOL_FIELDS = {"symbol"}
 NATIVE_KLINE_INTERVALS = ("1", "5", "15", "60", "D")
@@ -1462,6 +1495,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(503, {"ok": False, "error": "account_catalog_unavailable"})
                 return
             self._json_response(200, {"ok": True, **catalog})
+            return
+
+        if parsed.path == "/api/diary/trades":
+            try:
+                projection = self.server.runtime.call(_diary_trade_list)
+            except Exception:
+                LOGGER.exception("Trading Diary trades projection failed")
+                self._json_response(
+                    503,
+                    {"ok": False, "error": "diary_trades_unavailable"},
+                )
+                return
+            self._json_response(200, {"ok": True, **projection})
             return
 
         if parsed.path == "/api/workspace/account":

@@ -32,6 +32,7 @@ import { createLiveMarketAction, executeLiveMarketCommand } from "../orders/live
 import { PaperFullCloseSubmissionController } from "../orders/paperFullCloseSubmission";
 import { LiveFullCloseSubmissionController } from "../orders/liveFullCloseSubmission";
 import { OpenPositionsOverlay } from "./OpenPositionsOverlay";
+import { DiaryOverlay } from "./DiaryOverlay";
 import { AccountMenu } from "./AccountMenu";
 import { LiveAccountInventory } from "./LiveAccountInventory";
 import {
@@ -154,6 +155,7 @@ export function ModePanel({
   const [executionStatus, setExecutionStatus] = useState("");
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [openPositionsVisible, setOpenPositionsVisible] = useState(false);
+  const [diaryVisible, setDiaryVisible] = useState(false);
   const [activeAccountLabel, setActiveAccountLabel] = useState<{ id: string; name: string } | null>(null);
   const [limitPresentationSide, setLimitPresentationSide] =
     useState<MarketSide | null>(null);
@@ -920,6 +922,15 @@ export function ModePanel({
               <span /><span /><span />
             </button>
             <button
+              className="paper-diary-button"
+              type="button"
+              aria-label="???????? ???????"
+              title="???????? ???????"
+              onClick={() => setDiaryVisible(true)}
+            >
+              D
+            </button>
+            <button
               className="paper-autopilot-button"
               type="button"
               aria-label="?????????"
@@ -1160,6 +1171,13 @@ export function ModePanel({
                 onWorkspaceSymbolSelect?.(nextSymbol);
               }}
               projection={accountWorkspaceProjection}
+            />
+          ) : null}
+
+          {diaryVisible ? (
+            <DiaryOverlay
+              accountKey={`${accountWorkspaceProjection?.account_id ?? "unknown"}:${accountWorkspaceProjection?.session_generation ?? 0}`}
+              onClose={() => setDiaryVisible(false)}
             />
           ) : null}
 
