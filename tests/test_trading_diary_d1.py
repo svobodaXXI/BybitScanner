@@ -2,19 +2,27 @@ from decimal import Decimal
 
 import pytest
 
-from terminal.diary import DiaryEnvironment, TradeEpisodeReconstructor
+from terminal.diary import (
+    DiaryEnvironment,
+    TradeEpisodeReadService,
+    TradeEpisodeReconstructor,
+)
 from terminal.domain.models import (
     Category,
     Execution,
     ExecutionDedupKey,
     ExecutionId,
+    Notional,
     OrderId,
     OrderSide,
+    PositionKey,
+    PositionSide,
     Price,
     Quantity,
     Symbol,
     TradingAccountId,
 )
+from terminal.persistence.sqlite_store import PositionProjectionUpdate, SQLiteStore
 
 
 def _execution(exec_id: str, side: OrderSide, qty: str, price: str, fee: str, ts: int) -> Execution:
@@ -116,3 +124,38 @@ def test_episode_identity_is_stable_for_same_persisted_execution_history():
 
     assert first[0].trade_episode_id == second[0].trade_episode_id
     assert first == second
+
+
+def test_read_service_reconstructs_from_existing_terminal_execution_store(tmp_path):
+    account_id = TradingAccountId("acct")
+    symbol = Symbol("BTCUSDT")
+    position_key = PositionKey(account_id, Category.LINEAR, symbol, 0)
+    execution = _execution("e1", OrderSide.BUY, "1", "100", "0.1", 1)
+
+    with SQLiteStore.open(tmp_path / "terminal.db") as store:
+        projection = PositionProjectionUpdate(
+            position_key=position_key,
+            side=PositionSide.LONG,
+            quantity=Quantity(Decimal("1")),
+            average_entry=Price(Decimal("100")),
+            realized_pnl=Decimal("0"),
+            accumulated_fee=Decimal("0.1"),
+            engaged_notional=Notional(Decimal("100")),
+            sync_state="converged",
+            expected_version=None,
+            updated_at_ms=1,
+        )
+        assert store.apply_execution_once(execution, projection).value == "applied"
+        assert store.apply_execution_once(execution, projection).value == "duplicate"
+
+        service = TradeEpisodeReadService(
+            store,
+            trading_account_id=account_id,
+            environment=DiaryEnvironment.LIVE,
+        )
+        episodes = service.list_episodes(symbol=symbol)
+
+    assert len(episodes) == 1
+    assert episodes[0].open_quantity.value == Decimal("1")
+    assert episodes[0].environment is DiaryEnvironment.LIVE
+    assert len(episodes[0].allocations) == 1
