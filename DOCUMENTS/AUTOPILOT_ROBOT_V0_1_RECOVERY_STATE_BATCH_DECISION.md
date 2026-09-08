@@ -1,13 +1,13 @@
 # BybitScanner — Robot v0.1 recovery/state batch decision
 
-Version: 1.0
+Version: 1.1
 Date: 2026-09-08
 Status: ACCEPTED DESIGN / PAPER PROTOTYPE
 Implementation authorization: NONE
 
 ## Scope
 
-This decision batches minor Robot v0.1 lifecycle/recovery semantics that follow the already accepted fail-closed, reuse-first architecture.
+This decision batches Robot v0.1 lifecycle, recovery, and post-entry protection semantics that follow the already accepted fail-closed, reuse-first architecture.
 
 ## Accepted decisions
 
@@ -54,7 +54,58 @@ The following remain authoritative shared capabilities:
 - reconciliation;
 - account state;
 - sizing;
+- market data;
+- instrument metadata and order normalization;
 - ownership/control state where already defined by the common trading architecture.
+
+Robot must not create a separate price feed or protection execution/reconciliation path for this recovery policy.
+
+### 6. Filled entry with STOP not yet proven
+
+Once a Robot entry is authoritatively `FILLED`, the intended STOP remains mandatory, but Robot v0.1 may temporarily hold the position while the shared execution/protection state is being safely resolved.
+
+The maximum interval in which the robot-owned position may remain open without an authoritative proven STOP is **5 seconds** from the point at which the filled entry requires protection.
+
+During that interval:
+- an ambiguous STOP result is reconciled before any further mutation;
+- blind STOP retry is forbidden;
+- Robot uses the common authoritative protection/execution/reconciliation capability rather than a Robot-specific repair path.
+
+If the correct STOP becomes authoritative within the allowed window, normal position management may continue.
+
+### 7. Early emergency exit before the 5-second deadline
+
+The 5-second interval is a maximum recovery window, not a mandatory waiting period.
+
+If, while STOP is still not authoritative, the shared authoritative market price reaches or crosses the already calculated intended STOP level, Robot must immediately initiate `EMERGENCY MARKET CLOSE` rather than wait for the remaining recovery time.
+
+Direction semantics:
+- LONG: emergency condition when authoritative market price is at or below intended STOP;
+- SHORT: emergency condition when authoritative market price is at or above intended STOP.
+
+This comparison uses the existing shared authoritative market-data source. Robot does not own a second price source.
+
+### 8. STOP recovery deadline
+
+If 5 seconds expire and the required STOP still cannot be authoritatively proven, Robot must initiate `EMERGENCY MARKET CLOSE` through the common PAPER execution path.
+
+After an emergency close request:
+- ambiguity remains fail-closed and enters reconciliation;
+- no blind close resend is allowed;
+- Robot does not declare the position safely closed from command acceptance alone;
+- the lifecycle remains recovery/reconciliation constrained until the shared authoritative PAPER position state confirms `FLAT`.
+
+### 9. TAKE failure with authoritative STOP
+
+Failure or ambiguity of TAKE does not by itself require emergency liquidation when the correct STOP is already authoritative.
+
+In that case:
+- the position may remain open under the authoritative STOP;
+- TAKE recovery/reconciliation uses only the common protection lifecycle;
+- blind TAKE retry is forbidden;
+- Robot must not weaken, remove, or replace the proven STOP merely to repair TAKE.
+
+STOP protection therefore has higher safety priority than TAKE restoration in the post-entry recovery sequence.
 
 ## Resulting state contract
 
@@ -70,6 +121,22 @@ ROBOT_STOPPED
 
 RECONCILIATION_REQUIRED
   -- confirmed safe authoritative state -----------------> eligible for explicit start
+
+ENTRY_FILLED
+  -> establish/prove intended STOP through shared protection lifecycle
+
+STOP_NOT_PROVEN
+  -- safe reconciliation/recovery, < 5 s ----------------> STOP_PROVEN
+  -- intended STOP crossed before deadline --------------> EMERGENCY_MARKET_CLOSE
+  -- STOP still not proven at 5 s ------------------------> EMERGENCY_MARKET_CLOSE
+
+EMERGENCY_MARKET_CLOSE
+  -> shared execution/reconciliation
+  -> confirmed authoritative FLAT
+
+STOP_PROVEN + TAKE_NOT_PROVEN
+  -> position may remain open
+  -> safe TAKE reconciliation/recovery
 ```
 
 Old stopped candidates never revive through these transitions.
