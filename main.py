@@ -24,6 +24,7 @@ from config import MODE, MIN_SCORE, MAX_SYMBOLS
 from signal_adapter import prepare_signal
 from signal_memory import update_signal
 from scanner_diary import record_scanner_diary_observation
+from scanner_diary_factors import record_scanner_p0_factors
 from notification import (
     send_message_to_recipients as send_message,
     send_signal,
@@ -100,13 +101,24 @@ def main():
             # Trading Diary is an opt-in observational sink. Its failure must not
             # change Scanner admission, notifications, or any trading behavior.
             try:
-                record_scanner_diary_observation(
+                diary_observed_at_ms = int(time.time() * 1000)
+                diary_result = record_scanner_diary_observation(
                     symbol=symbol,
                     analysis_result=analysis_result,
                     timeframe=config.TIMEFRAME,
                     scanner_mode=MODE,
-                    observed_at_ms=int(time.time() * 1000),
+                    observed_at_ms=diary_observed_at_ms,
                 )
+                if (
+                    diary_result.setup_instance_id is not None
+                    and diary_result.decision_event_id is not None
+                ):
+                    record_scanner_p0_factors(
+                        setup_instance_id=diary_result.setup_instance_id,
+                        decision_event_id=diary_result.decision_event_id,
+                        analysis=analysis,
+                        observed_at_ms=diary_observed_at_ms,
+                    )
             except Exception as diary_error:
                 print(
                     f"{symbol:<15} TRADING DIARY ERROR: "
