@@ -115,10 +115,14 @@ class ExecutionEngine:
         return acknowledged
 
     def ingest_protection_evidence(
-        self, evidence: ProtectionEvidence,
+        self,
+        evidence: ProtectionEvidence,
+        *,
+        occurred_at_ms: int | None = None,
     ) -> ProtectionProjectionRecord:
         """Project only Bybit protection facts and resolve a matching pending intent."""
 
+        resolved_at_ms = evidence.evidence_at_ms if occurred_at_ms is None else occurred_at_ms
         current = self._store.get_protection_projection(evidence.position_key)
         pending_id = current.pending_command_id if current is not None else None
         state = (
@@ -137,28 +141,28 @@ class ExecutionEngine:
             )
             if matches and command is not None and command.current_state is CommandState.ACKNOWLEDGED:
                 self._transition(
-                    command, CommandState.AMENDED, evidence.evidence_at_ms,
+                    command, CommandState.AMENDED, resolved_at_ms,
                     "Bybit protection evidence confirmed desired state", None,
                 )
                 self._store.update_protection_intent_status(
-                    pending_id, status=state.value, updated_at_ms=evidence.evidence_at_ms,
+                    pending_id, status=state.value, updated_at_ms=resolved_at_ms,
                 )
                 pending_id = None
             elif not matches:
                 state = ProtectionState.UNKNOWN
                 if command is not None and command.current_state is CommandState.ACKNOWLEDGED:
                     self._transition(
-                        command, CommandState.UNKNOWN, evidence.evidence_at_ms,
+                        command, CommandState.UNKNOWN, resolved_at_ms,
                         "Bybit protection evidence does not confirm desired state", None,
                     )
                 if intent is not None:
                     self._store.update_protection_intent_status(
-                        pending_id, status=state.value, updated_at_ms=evidence.evidence_at_ms,
+                        pending_id, status=state.value, updated_at_ms=resolved_at_ms,
                     )
         record = ProtectionProjectionRecord(
             evidence.position_key, state.value, evidence.take_profit, evidence.stop_loss,
             evidence.trailing_stop, pending_id,
-            current.version if current else 1, evidence.evidence_at_ms, evidence.evidence_at_ms,
+            current.version if current else 1, evidence.evidence_at_ms, resolved_at_ms,
         )
         return self._store.upsert_protection_projection(
             record, expected_version=current.version if current else None,

@@ -1,4 +1,4 @@
-﻿"""Transport-neutral mutation boundary for trading execution."""
+"""Transport-neutral mutation boundary for trading execution."""
 
 from __future__ import annotations
 
