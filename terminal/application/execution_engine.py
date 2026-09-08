@@ -252,6 +252,16 @@ class ExecutionEngine:
     ) -> CommandRecord:
         """Resolve one command from sufficient multi-source normalized evidence."""
 
+        if command.command_kind == "protection":
+            triggered = self._resolve_triggered_protection(
+                command,
+                order_evidence=order_evidence,
+                execution_evidence=execution_evidence,
+                occurred_at_ms=occurred_at_ms,
+            )
+            if triggered is not None:
+                return triggered
+
         matching_orders = tuple(item for item in order_evidence if _matches_command(command, item))
         matching_executions = tuple(
             item for item in execution_evidence if _execution_matches_command(command, item)
@@ -275,6 +285,56 @@ class ExecutionEngine:
             "normalized exchange evidence resolved command",
             order_id,
         )
+
+    def _resolve_triggered_protection(
+        self,
+        command: CommandRecord,
+        *,
+        order_evidence: tuple[OrderEvent, ...],
+        execution_evidence: tuple[ExecutionEvent, ...],
+        occurred_at_ms: int,
+    ) -> CommandRecord | None:
+        intent = self._store.get_protection_intent(command.command_id)
+        if intent is None:
+            return None
+        current = self._store.get_protection_projection(intent.position_key)
+        if current is None or current.pending_command_id != command.command_id:
+            return None
+        evidence_at_ms = _matching_filled_protection_trigger(
+            command, intent, order_evidence, execution_evidence,
+        )
+        if evidence_at_ms is None:
+            return None
+        resolved = self._transition_via_reconciliation(
+            command,
+            CommandState.AMENDED,
+            occurred_at_ms,
+            "filled Bybit protection trigger confirmed desired protection was active",
+            None,
+        )
+        if resolved.current_state is not CommandState.AMENDED:
+            return None
+        state = ProtectionState.NO_PROTECTION_CONFIGURED
+        self._store.update_protection_intent_status(
+            command.command_id,
+            status=state.value,
+            updated_at_ms=occurred_at_ms,
+        )
+        self._store.upsert_protection_projection(
+            ProtectionProjectionRecord(
+                intent.position_key,
+                state.value,
+                None,
+                None,
+                Decimal("0"),
+                None,
+                current.version,
+                evidence_at_ms,
+                occurred_at_ms,
+            ),
+            expected_version=current.version,
+        )
+        return resolved
 
     def _transition_via_reconciliation(
         self,
@@ -481,6 +541,52 @@ def _execution_matches_command(command: CommandRecord, execution: ExecutionEvent
             and execution.order_id == command.exchange_order_id
         )
     )
+
+
+def _matching_filled_protection_trigger(command, intent, orders, executions) -> int | None:
+    executions_by_order: dict[OrderId, list[ExecutionEvent]] = {}
+    for execution in executions:
+        if (
+            execution.trading_account_id != command.trading_account_id
+            or execution.category is not command.category
+            or execution.symbol != command.symbol.value
+            or execution.side is not command.side
+            or execution.executed_at_ms < command.created_at_ms
+        ):
+            continue
+        executions_by_order.setdefault(execution.order_id, []).append(execution)
+
+    candidates: dict[OrderId, int] = {}
+    for order in orders:
+        if (
+            order.trading_account_id != command.trading_account_id
+            or order.category is not command.category
+            or order.symbol != command.symbol.value
+            or order.position_idx != command.position_idx
+            or order.side is not command.side
+            or order.status is not NormalizedOrderStatus.FILLED
+            or order.updated_at_ms < command.created_at_ms
+        ):
+            continue
+        matching_executions = executions_by_order.get(order.order_id)
+        if not matching_executions:
+            continue
+        stop_type = (order.stop_order_type or "").lower().replace("_", "").replace("-", "")
+        if stop_type in {"stoploss", "sl"}:
+            expected_trigger = intent.stop_loss
+        elif stop_type in {"takeprofit", "tp"}:
+            expected_trigger = intent.take_profit
+        else:
+            continue
+        if expected_trigger is None or order.trigger_price != expected_trigger:
+            continue
+        candidates[order.order_id] = max(
+            order.updated_at_ms,
+            *(execution.executed_at_ms for execution in matching_executions),
+        )
+    if len(candidates) != 1:
+        return None
+    return next(iter(candidates.values()))
 
 
 def _correlated_order_id(orders, executions):
