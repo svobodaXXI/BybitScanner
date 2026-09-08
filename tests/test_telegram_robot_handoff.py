@@ -1,5 +1,21 @@
+import sys
+import types
 import unittest
 from unittest.mock import patch
+
+
+# config.py is intentionally local/ignored because it contains machine-specific
+# credentials.  The repository verifier runs in a tracked-only worktree, so this
+# focused unit test must provide only the import-time configuration surface it
+# owns instead of depending on a developer machine's secret-bearing config.py.
+config_stub = types.ModuleType("config")
+config_stub.TELEGRAM_TOKEN = "test-token"
+config_stub.TELEGRAM_CHAT_ID = "42"
+config_stub.TELEGRAM_CHAT_IDS = ("42",)
+config_stub.TELEGRAM_ENABLED = True
+config_stub.TELEGRAM_TEST_MODE = False
+config_stub.TIMEFRAME = "1"
+sys.modules["config"] = config_stub
 
 import notification
 import telegram_review
