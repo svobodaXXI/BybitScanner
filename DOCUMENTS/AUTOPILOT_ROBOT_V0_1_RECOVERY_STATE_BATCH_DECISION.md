@@ -1,6 +1,6 @@
 # BybitScanner — Robot v0.1 recovery/state batch decision
 
-Version: 1.1
+Version: 1.2
 Date: 2026-09-08
 Status: ACCEPTED DESIGN / PAPER PROTOTYPE
 Implementation authorization: NONE
@@ -107,6 +107,30 @@ In that case:
 
 STOP protection therefore has higher safety priority than TAKE restoration in the post-entry recovery sequence.
 
+### 10. Terminal disposition after protection emergency close
+
+Once a post-entry STOP-protection failure has caused emergency liquidation and the shared authoritative PAPER state confirms `FLAT`, that exact robot trading idea is terminally closed as `CLOSED_EMERGENCY_PROTECTION_FAILURE`.
+
+For that exact immutable signal/pattern instance:
+- no re-entry is permitted;
+- a later breakout event cannot reactivate it;
+- repeated delivery/approval of the same pattern instance remains idempotently ignored;
+- the robot may continue operating on unrelated valid ideas if all common risk/state gates remain satisfied.
+
+A later trade on the same symbol is permitted only from a genuinely new signal/pattern instance under the normal admission rules.
+
+### 11. No emergency timeout for TAKE-only recovery
+
+When the intended STOP is already authoritative, Robot v0.1 does not impose a separate emergency-close timeout solely because TAKE is missing, ambiguous, or still being reconciled.
+
+The position may remain open under the proven STOP until one of the normal lifecycle outcomes occurs, including:
+- TAKE becomes safely authoritative through the common lifecycle;
+- STOP closes the position;
+- the user closes the position through an already-authorized common control path;
+- another already-defined common close/emergency rule closes the position.
+
+Robot must not invent a TAKE-only market-liquidation timer or a second recovery mechanism.
+
 ## Resulting state contract
 
 Conceptually:
@@ -133,10 +157,14 @@ STOP_NOT_PROVEN
 EMERGENCY_MARKET_CLOSE
   -> shared execution/reconciliation
   -> confirmed authoritative FLAT
+  -> CLOSED_EMERGENCY_PROTECTION_FAILURE
+
+CLOSED_EMERGENCY_PROTECTION_FAILURE
+  -> same immutable signal/pattern instance can never re-enter
 
 STOP_PROVEN + TAKE_NOT_PROVEN
-  -> position may remain open
-  -> safe TAKE reconciliation/recovery
+  -> position may remain open without a TAKE-only emergency timeout
+  -> safe TAKE reconciliation/recovery through shared protection lifecycle
 ```
 
 Old stopped candidates never revive through these transitions.
