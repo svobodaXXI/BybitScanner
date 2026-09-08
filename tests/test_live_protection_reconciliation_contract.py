@@ -86,17 +86,20 @@ def test_live_protection_reconciliation_accepts_runtime_timestamp_and_resolves_p
                 1000,
                 1200,
             ))
-            store.upsert_protection_projection(ProtectionProjectionRecord(
-                key,
-                ProtectionState.PENDING_CONFIRMATION.value,
-                None,
-                None,
-                Decimal("0"),
-                command_id,
-                1,
-                1000,
-                1200,
-            ))
+            store.upsert_protection_projection(
+                ProtectionProjectionRecord(
+                    key,
+                    ProtectionState.PENDING_CONFIRMATION.value,
+                    None,
+                    None,
+                    Decimal("0"),
+                    command_id,
+                    1,
+                    1000,
+                    1200,
+                ),
+                expected_version=None,
+            )
 
             projection = engine.ingest_protection_evidence(
                 ProtectionEvidence(
