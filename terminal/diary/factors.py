@@ -168,6 +168,7 @@ class DiaryFactorStore:
         database_path = Path(path)
         connection = sqlite3.connect(database_path)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("PRAGMA journal_mode = WAL")
         connection.execute("PRAGMA synchronous = FULL")
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
