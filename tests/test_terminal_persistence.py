@@ -310,6 +310,97 @@ class TerminalPersistenceTests(unittest.TestCase):
             self.assertEqual(persisted.initial_deposit_usdt, Decimal("5000"))
             self.assertEqual(persisted.equity_usdt, Decimal("5000"))
 
+    def test_robot_runtime_defaults_stopped_and_uses_cas_updates(self):
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            initial = store.initialize_robot_runtime_state(account, updated_at_ms=1000)
+            self.assertEqual(initial.mode, "ROBOT_STOPPED")
+            self.assertEqual(initial.recovery_status, "ROBOT_STOPPED")
+            ready = store.update_robot_runtime_state(
+                account, mode="ROBOT_RUNNING", recovery_status="READY", reason=None,
+                expected_version=1, updated_at_ms=1100,
+            )
+            self.assertEqual(ready.version, 2)
+            with self.assertRaises(ConcurrentUpdate):
+                store.update_robot_runtime_state(
+                    account, mode="ROBOT_RUNNING", recovery_status="READY", reason=None,
+                    expected_version=1, updated_at_ms=1200,
+                )
+
+        with self.open_store() as reopened:
+            self.assertEqual(reopened.get_robot_runtime_state(account), ready)
+
+    def test_robot_candidate_snapshot_is_immutable_and_state_is_cas_persisted(self):
+        account = TradingAccountId("paper")
+        snapshot = {"symbol": "BTCUSDT", "pattern": "Falling Wedge", "geometry": {"current_index": 10}}
+        with self.open_store() as store:
+            candidate, created = store.create_robot_candidate(
+                candidate_id="candidate-1", trading_account_id=account, symbol=Symbol("BTCUSDT"),
+                status="APPROVED", signal_snapshot=snapshot, approved_at_ms=1000, updated_at_ms=1000,
+            )
+            self.assertTrue(created)
+            snapshot["symbol"] = "MUTATED"
+            self.assertEqual(store.get_robot_candidate("candidate-1").signal_snapshot["symbol"], "BTCUSDT")
+            repeated, created = store.create_robot_candidate(
+                candidate_id="candidate-1", trading_account_id=account, symbol=Symbol("BTCUSDT"),
+                status="APPROVED", signal_snapshot=candidate.signal_snapshot,
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            self.assertFalse(created)
+            self.assertEqual(repeated.snapshot_sha256, candidate.snapshot_sha256)
+            saved = store.save_robot_candidate_state(
+                "candidate-1", status="APPROVED",
+                robot_state={"phase": "WAITING_BREAKOUT", "geometry_cursor": 12},
+                expected_revision=0, updated_at_ms=1200,
+            )
+            self.assertEqual(saved.state_revision, 1)
+            with self.assertRaises(ConcurrentUpdate):
+                store.save_robot_candidate_state(
+                    "candidate-1", status="APPROVED", robot_state={"phase": "WAITING_BREAKOUT"},
+                    expected_revision=0, updated_at_ms=1300,
+                )
+
+    def test_robot_trade_open_close_is_atomic_durable_and_idempotent(self):
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            store.create_robot_candidate(
+                candidate_id="candidate-trade", trading_account_id=account, symbol=Symbol("BTCUSDT"),
+                status="APPROVED", signal_snapshot={"symbol": "BTCUSDT", "pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            trade, created = store.create_robot_trade(
+                trade_id="trade-1", trading_account_id=account, candidate_id="candidate-trade",
+                symbol=Symbol("BTCUSDT"), direction="LONG", pattern="Falling Wedge",
+                source_timeframe="1", signal_time_ms=900, entry_time_ms=1500,
+                entry_path="MIXED", actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
+                stop_price=Decimal("98"), take_price=Decimal("106"), created_at_ms=1500,
+            )
+            self.assertTrue(created)
+            self.assertEqual(store.get_robot_candidate("candidate-trade").status, "OPEN")
+            closed, changed = store.close_robot_trade(
+                "trade-1", exit_time_ms=2000, exit_price=Decimal("106"), exit_reason="TAKE",
+                realized_pnl_usdt=Decimal("12.5"), realized_pnl_pct=Decimal("6"),
+                fees_costs_usdt=Decimal("0.4"), updated_at_ms=2000,
+            )
+            self.assertTrue(changed)
+            replay, changed = store.close_robot_trade(
+                "trade-1", exit_time_ms=2000, exit_price=Decimal("106"), exit_reason="TAKE",
+                realized_pnl_usdt=Decimal("12.5"), realized_pnl_pct=Decimal("6"),
+                fees_costs_usdt=Decimal("0.4"), updated_at_ms=2000,
+            )
+            self.assertFalse(changed)
+            self.assertEqual(replay, closed)
+            self.assertEqual(store.get_robot_candidate("candidate-trade").status, "CLOSED")
+            with self.assertRaises(ImmutableExecutionConflict):
+                store.close_robot_trade(
+                    "trade-1", exit_time_ms=2100, exit_price=Decimal("98"), exit_reason="STOP",
+                    realized_pnl_usdt=Decimal("-4"), realized_pnl_pct=Decimal("-2"),
+                    fees_costs_usdt=Decimal("0.4"), updated_at_ms=2100,
+                )
+
+        with self.open_store() as reopened:
+            self.assertEqual(reopened.get_robot_trade("trade-1"), closed)
+
     def test_v1_migration_preserves_commands_executions_and_projection(self):
         self.create_v1_database()
 
@@ -461,6 +552,27 @@ class TerminalPersistenceTests(unittest.TestCase):
             self.assertEqual(store.get_paper_state_revision(
                 TradingAccountId("paper"), Symbol("BTCUSDT"),
             ), 7)
+
+    def test_v14_to_current_migration_adds_robot_tables_transactionally(self):
+        with self.open_store():
+            pass
+        connection = sqlite3.connect(self.database_path)
+        for table in ("robot_trades", "robot_candidates", "robot_runtime_state"):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute("PRAGMA user_version = 14")
+        connection.commit()
+        connection.close()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+        connection = sqlite3.connect(self.database_path)
+        tables = {
+            row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        connection.close()
+        self.assertTrue({"robot_runtime_state", "robot_candidates", "robot_trades"}.issubset(tables))
 
     def test_paper_state_revision_is_durable_and_ignores_idempotent_or_noop_mutations(self):
         account_id = TradingAccountId("paper")

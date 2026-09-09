@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -511,6 +511,94 @@ SCHEMA_V14_MIGRATION_STATEMENTS = (
     """,
 )
 
+SCHEMA_V15_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE robot_runtime_state (
+        trading_account_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL,
+        recovery_status TEXT NOT NULL,
+        reason TEXT,
+        version INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        CHECK (mode IN ('ROBOT_STOPPED', 'ROBOT_RUNNING')),
+        CHECK (recovery_status IN (
+            'ROBOT_STOPPED', 'RECONCILING', 'READY',
+            'RECONCILIATION_REQUIRED'
+        )),
+        CHECK (version >= 1),
+        CHECK (updated_at_ms >= 0)
+    ) WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE robot_candidates (
+        candidate_id TEXT PRIMARY KEY,
+        trading_account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        status TEXT NOT NULL,
+        signal_snapshot_json TEXT NOT NULL,
+        snapshot_sha256 TEXT NOT NULL,
+        robot_state_json TEXT,
+        state_revision INTEGER NOT NULL,
+        approved_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        UNIQUE (trading_account_id, snapshot_sha256),
+        CHECK (length(trim(candidate_id)) > 0),
+        CHECK (length(trim(symbol)) > 0),
+        CHECK (status IN ('APPROVED', 'OPEN', 'CLOSED', 'EXPIRED', 'INVALIDATED')),
+        CHECK (length(snapshot_sha256) = 64),
+        CHECK (state_revision >= 0),
+        CHECK ((state_revision = 0 AND robot_state_json IS NULL)
+            OR (state_revision >= 1 AND robot_state_json IS NOT NULL)),
+        CHECK (approved_at_ms >= 0),
+        CHECK (updated_at_ms >= approved_at_ms)
+    ) WITHOUT ROWID
+    """,
+    """
+    CREATE TABLE robot_trades (
+        trade_id TEXT PRIMARY KEY,
+        trading_account_id TEXT NOT NULL,
+        candidate_id TEXT NOT NULL UNIQUE,
+        symbol TEXT NOT NULL,
+        direction TEXT NOT NULL,
+        pattern TEXT NOT NULL,
+        source_timeframe TEXT NOT NULL,
+        signal_time_ms INTEGER NOT NULL,
+        entry_time_ms INTEGER NOT NULL,
+        entry_path TEXT NOT NULL,
+        actual_wv TEXT NOT NULL,
+        average_entry TEXT NOT NULL,
+        stop_price TEXT NOT NULL,
+        take_price TEXT NOT NULL,
+        exit_time_ms INTEGER,
+        exit_price TEXT,
+        exit_reason TEXT,
+        realized_pnl_usdt TEXT,
+        realized_pnl_pct TEXT,
+        fees_costs_usdt TEXT,
+        version INTEGER NOT NULL,
+        created_at_ms INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        FOREIGN KEY (candidate_id) REFERENCES robot_candidates(candidate_id),
+        CHECK (direction IN ('LONG', 'SHORT')),
+        CHECK (entry_path IN ('LIMIT', 'MARKET', 'MIXED')),
+        CHECK (length(trim(pattern)) > 0),
+        CHECK (length(trim(source_timeframe)) > 0),
+        CHECK (signal_time_ms >= 0),
+        CHECK (entry_time_ms >= signal_time_ms),
+        CHECK (version >= 1),
+        CHECK (created_at_ms >= 0 AND updated_at_ms >= created_at_ms),
+        CHECK (
+            (exit_time_ms IS NULL AND exit_price IS NULL AND exit_reason IS NULL
+                AND realized_pnl_usdt IS NULL AND realized_pnl_pct IS NULL)
+            OR
+            (exit_time_ms IS NOT NULL AND exit_price IS NOT NULL AND exit_reason IS NOT NULL
+                AND realized_pnl_usdt IS NOT NULL AND realized_pnl_pct IS NOT NULL
+                AND exit_time_ms >= entry_time_ms)
+        )
+    ) WITHOUT ROWID
+    """,
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -526,4 +614,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V12_MIGRATION_STATEMENTS
     + SCHEMA_V13_MIGRATION_STATEMENTS
     + SCHEMA_V14_MIGRATION_STATEMENTS
+    + SCHEMA_V15_MIGRATION_STATEMENTS
 )
