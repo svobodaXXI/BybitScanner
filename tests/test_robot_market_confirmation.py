@@ -16,7 +16,7 @@ from robot_market_confirmation import (
     submit_confirmation_market,
 )
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
-from terminal.api.models import CommandResultStatus, CommandResult, VolumeUnit
+from terminal.api.models import VolumeUnit
 from terminal.domain.models import OrderSide
 
 
@@ -58,10 +58,11 @@ def _candle(index=105, close="96.5"):
 class _RecordingSubmitter:
     def __init__(self):
         self.calls = []
+        self.result = object()
 
     def market(self, request):
         self.calls.append(request)
-        return CommandResult(request.client_action_id.value, CommandResultStatus.COMPLETED, "filled")
+        return self.result
 
 
 class RobotMarketConfirmationTests(unittest.TestCase):
@@ -168,7 +169,7 @@ class RobotMarketConfirmationTests(unittest.TestCase):
         self.assertEqual(first.request.volume.amount, Decimal("0.6"))
         self.assertEqual(first.request.client_action_id, second.request.client_action_id)
 
-    def test_submission_calls_shared_market_once_even_if_result_unknown(self):
+    def test_submission_calls_shared_market_exactly_once(self):
         decision = evaluate_confirmation(
             _snapshot(), _state(), _candle(close="95.1"),
             filled_wv=Decimal("0"), sizing_reference_price=Decimal("96"),
@@ -181,7 +182,8 @@ class RobotMarketConfirmationTests(unittest.TestCase):
             slippage_value=Decimal("0.1"),
         )
         submitter = _RecordingSubmitter()
-        submit_confirmation_market(submitter, plan)
+        result = submit_confirmation_market(submitter, plan)
+        self.assertIs(result, submitter.result)
         self.assertEqual(submitter.calls, [plan.request])
 
     def test_rejects_non_authoritative_candle_and_invalid_stop(self):
