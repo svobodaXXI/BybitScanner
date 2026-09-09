@@ -88,16 +88,16 @@ class TelegramRobotHandoffTests(unittest.TestCase):
             "42",
         ), patch.object(
             telegram_review,
-            "approve_candidate",
+            "admit_robot_candidate",
             return_value=(approved_record, True),
-        ) as approve_mock, patch.object(
+        ) as admit_mock, patch.object(
             telegram_review,
             "_answer_callback",
         ) as answer_mock:
             telegram_review._process_callback(callback_query)
 
-        approve_mock.assert_called_once()
-        args, kwargs = approve_mock.call_args
+        admit_mock.assert_called_once()
+        args, kwargs = admit_mock.call_args
         self.assertEqual(args, ("abc123",))
         self.assertEqual(
             kwargs["approval"]["source"],
@@ -126,14 +126,14 @@ class TelegramRobotHandoffTests(unittest.TestCase):
             "42",
         ), patch.object(
             telegram_review,
-            "approve_candidate",
-        ) as approve_mock, patch.object(
+            "admit_robot_candidate",
+        ) as admit_mock, patch.object(
             telegram_review,
             "_answer_callback",
         ) as answer_mock:
             telegram_review._process_callback(callback_query)
 
-        approve_mock.assert_not_called()
+        admit_mock.assert_not_called()
         answer_mock.assert_called_once_with(
             "callback-2",
             "Недостаточно прав",
