@@ -7,8 +7,8 @@ import time
 import requests
 
 import config
-from robot_candidate_store import (
-    approve_candidate,
+from terminal.application.robot_admission import (
+    admit_robot_candidate,
 )
 
 
@@ -310,7 +310,7 @@ def _approve_robot_candidate(
     from_user = callback_query.get("from") or {}
     chat = message.get("chat") or {}
 
-    record, changed = approve_candidate(
+    record, changed = admit_robot_candidate(
         parsed["candidate_id"],
         approval={
             "source": "telegram_robot_button",
@@ -376,8 +376,8 @@ def _process_callback(
 
             print(
                 "[ROBOT CANDIDATE APPROVED]",
-                record["candidate_id"],
-                record["symbol"],
+                record["candidate_id"] if isinstance(record, dict) else record.candidate_id,
+                record["symbol"] if isinstance(record, dict) else record.symbol.value,
             )
         except Exception as exc:
             print(
