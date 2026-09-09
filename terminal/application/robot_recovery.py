@@ -8,7 +8,7 @@ never submits, retries, amends, cancels, or closes an exchange order.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Mapping
 
 from robot_restart_recovery import (
     EXPIRED_AT_APEX,
@@ -49,21 +49,14 @@ class RobotRecoveryResult:
 
 
 class RobotRecoveryCoordinator:
-    """Single durable owner of Robot restart recovery admission.
-
-    A persisted ``ROBOT_RUNNING`` mode never implies immediate admission after a
-    process restart. The coordinator first persists ``RECONCILING``, restores
-    only durable candidate state through the existing pure recovery planner,
-    persists any cursor/expiry result, and only then publishes ``READY``.
-    Ambiguity remains fail-closed as ``RECONCILIATION_REQUIRED``.
-    """
+    """Single durable owner of Robot restart recovery admission."""
 
     def __init__(
         self,
         store: SQLiteStore,
         trading_account_id: TradingAccountId,
         *,
-        latest_geometry_index_provider: Callable[[str], int] | None = None,
+        latest_geometry_index_provider: Callable[[str, Mapping[str, object]], int] | None = None,
         clock_ms: Callable[[], int],
     ) -> None:
         self._store = store
@@ -89,7 +82,7 @@ class RobotRecoveryCoordinator:
                 durable_mode=runtime.mode,
                 open_robot_positions=open_positions,
                 approved_candidates=(),
-                latest_geometry_index_by_symbol={},
+                latest_geometry_index_by_candidate={},
             )
             if status == RECONCILIATION_REQUIRED:
                 runtime = self._set_runtime(
@@ -98,8 +91,6 @@ class RobotRecoveryCoordinator:
                     recovery_status=RECONCILIATION_REQUIRED,
                     reason=decisions[0].reason if decisions else "restart reconciliation required",
                 )
-            # Never auto-clear an existing reconciliation-required state. A clean
-            # subsequent read is not proof that the earlier ambiguity was resolved.
             return RobotRecoveryResult(runtime, decisions)
 
         runtime = self._set_runtime(
@@ -114,7 +105,7 @@ class RobotRecoveryCoordinator:
                 durable_mode=ROBOT_RUNNING,
                 open_robot_positions=open_positions,
                 approved_candidates=tuple(self._candidate_payload(item) for item in approved),
-                latest_geometry_index_by_symbol=geometry_indices,
+                latest_geometry_index_by_candidate=geometry_indices,
             )
             if status != ROBOT_RUNNING:
                 raise RobotRecoveryError(f"unexpected restart status: {status}")
@@ -144,7 +135,6 @@ class RobotRecoveryCoordinator:
             return RobotRecoveryResult(runtime, ())
 
     def admission_ready(self) -> bool:
-        """Return durable admission proof; any absent/other state is closed."""
         runtime = self._store.get_robot_runtime_state(self._account_id)
         return bool(
             runtime is not None
@@ -160,13 +150,12 @@ class RobotRecoveryCoordinator:
             raise RobotRecoveryError("latest geometry index provider is unavailable")
         result: dict[str, int] = {}
         for candidate in approved:
-            symbol = candidate.symbol.value
-            if symbol in result:
-                continue
-            value = provider(symbol)
+            value = provider(candidate.symbol.value, candidate.signal_snapshot)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                raise RobotRecoveryError(f"invalid latest geometry index for {symbol}")
-            result[symbol] = value
+                raise RobotRecoveryError(
+                    f"invalid latest geometry index for candidate {candidate.candidate_id}"
+                )
+            result[candidate.candidate_id] = value
         return result
 
     @staticmethod
