@@ -85,19 +85,17 @@ def _robot_state() -> dict[str, object]:
     return state
 
 
-def _set_running(runtime: PaperRuntime, *, updated_at_ms: int) -> None:
+def _set_running(runtime: PaperRuntime) -> None:
     state = runtime.store.get_robot_runtime_state(ACCOUNT_ID)
     if state is None:
-        state = runtime.store.initialize_robot_runtime_state(
-            ACCOUNT_ID, updated_at_ms=updated_at_ms,
-        )
+        raise AssertionError("PaperRuntime startup must initialize Robot runtime state")
     runtime.store.update_robot_runtime_state(
         ACCOUNT_ID,
         mode="ROBOT_RUNNING",
         recovery_status="READY",
         reason=None,
         expected_version=state.version,
-        updated_at_ms=updated_at_ms + 1,
+        updated_at_ms=state.updated_at_ms + 1,
     )
 
 
@@ -119,7 +117,7 @@ class RobotRuntimeWiringTests(unittest.TestCase):
             path = Path(temp) / "terminal.db"
             runtime = _runtime(path)
             try:
-                _set_running(runtime, updated_at_ms=1000)
+                _set_running(runtime)
                 candidate, created = runtime.store.create_robot_candidate(
                     candidate_id="candidate-open",
                     trading_account_id=ACCOUNT_ID,
@@ -181,7 +179,7 @@ class RobotRuntimeWiringTests(unittest.TestCase):
                     expected_revision=candidate.state_revision,
                     updated_at_ms=1001,
                 )
-                _set_running(runtime, updated_at_ms=1002)
+                _set_running(runtime)
             finally:
                 runtime.close()
 
@@ -216,7 +214,7 @@ class RobotRuntimeWiringTests(unittest.TestCase):
                     expected_revision=candidate.state_revision,
                     updated_at_ms=1001,
                 )
-                _set_running(runtime, updated_at_ms=1002)
+                _set_running(runtime)
             finally:
                 runtime.close()
 
