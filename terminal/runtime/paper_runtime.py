@@ -47,6 +47,7 @@ from terminal.application.live_account_reconciliation import (
     LiveAccountReconciler,
     LiveAccountReconciliationError,
 )
+from terminal.application.robot_recovery import RobotRecoveryCoordinator
 from terminal.domain.models import (
     ExecutionId, OrderId, OrderSide, PositionSide, Quantity, Symbol,
     TradingAccountId,
@@ -155,6 +156,7 @@ class PaperRuntime:
         live_limit_acceptance_notional_ceiling: Decimal = Decimal("0"),
         live_limit_build_sha: str = "",
         deployment_identity: str = "local",
+        robot_latest_geometry_index_provider: Callable[[str], int] | None = None,
     ) -> None:
         self._account_manager = account_manager or paper_account_manager()
         self._paper_account_id = TradingAccountId("paper")
@@ -355,11 +357,22 @@ class PaperRuntime:
         self._live_market.recover_unresolved()
         if self._live_execution is not None:
             self._live_execution.recover_unresolved()
+        self._robot_recovery = RobotRecoveryCoordinator(
+            self.store,
+            self._paper_account_id,
+            latest_geometry_index_provider=robot_latest_geometry_index_provider,
+            clock_ms=lambda: int(time.time() * 1000),
+        )
+        self._robot_recovery.recover()
 
     @property
     def _account_id(self) -> TradingAccountId:
         """Immutable PAPER persistence identity, independent of active session authority."""
         return self._paper_account_id
+
+    def robot_admission_ready(self) -> bool:
+        """Return durable Robot startup admission; never infer readiness locally."""
+        return self._robot_recovery.admission_ready()
 
     def account_catalog(self) -> dict[str, object]:
         return self._account_manager.catalog_projection()
