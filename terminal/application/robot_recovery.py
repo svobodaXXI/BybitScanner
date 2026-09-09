@@ -19,6 +19,7 @@ from robot_restart_recovery import (
     RestartDecision,
     reconcile_restart,
 )
+from scanner_geometry_cursor import default_scanner_geometry_cursor_provider
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import (
     ConcurrentUpdate,
@@ -61,7 +62,9 @@ class RobotRecoveryCoordinator:
     ) -> None:
         self._store = store
         self._account_id = trading_account_id
-        self._latest_geometry_index_provider = latest_geometry_index_provider
+        self._latest_geometry_index_provider = (
+            latest_geometry_index_provider or default_scanner_geometry_cursor_provider()
+        )
         self._clock_ms = clock_ms
 
     def recover(self) -> RobotRecoveryResult:
@@ -146,8 +149,6 @@ class RobotRecoveryCoordinator:
         if not approved:
             return {}
         provider = self._latest_geometry_index_provider
-        if provider is None:
-            raise RobotRecoveryError("latest geometry index provider is unavailable")
         result: dict[str, int] = {}
         for candidate in approved:
             value = provider(candidate.symbol.value, candidate.signal_snapshot)
