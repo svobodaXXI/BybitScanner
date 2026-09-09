@@ -50,6 +50,7 @@ from terminal.domain.models import Price, Quantity, Symbol, TradingAccountId
 from terminal.diary.models import DiaryEnvironment
 from terminal.diary.presentation import project_trade_episode_list
 from terminal.diary.service import TradeEpisodeReadService
+from terminal.diary.setup_runtime import decision_store_path, project_setup_store
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.client_projection import ClientMarketProjection, StaleProjectionError
@@ -1510,6 +1511,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **projection})
             return
 
+        if parsed.path == "/api/diary/setups":
+            try:
+                projection = project_setup_store(self.server.diary_setup_store_path)
+            except Exception:
+                LOGGER.exception("Trading Diary setups projection failed")
+                self._json_response(
+                    503,
+                    {"ok": False, "error": "diary_setups_unavailable"},
+                )
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
         if parsed.path == "/api/workspace/account":
             symbols = parse_qs(parsed.query).get("symbol", [])
             if len(symbols) != 1:
@@ -2526,6 +2540,7 @@ def main() -> None:
     server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
     server.runtime = runtime
     server.market_data = market_data
+    server.diary_setup_store_path = decision_store_path(database_path)
 
     try:
         print(f"PAPER HTTP runtime listening on http://{HOST}:{port}")

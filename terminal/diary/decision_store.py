@@ -210,6 +210,28 @@ class DiaryDecisionStore:
             created_at_ms=int(row["created_at_ms"]),
         )
 
+    def load_setup_instances(self) -> tuple[SetupInstanceRecord, ...]:
+        """Return all durable D2 setup evidence in deterministic creation order."""
+        rows = self._connection.execute(
+            "SELECT * FROM setup_instances ORDER BY created_at_ms, setup_instance_id"
+        ).fetchall()
+        return tuple(
+            SetupInstanceRecord(
+                setup_instance_id=SetupInstanceId(row["setup_instance_id"]),
+                symbol=Symbol(row["symbol"]),
+                timeframe=row["timeframe"],
+                pattern=row["pattern"],
+                direction=PositionSide(row["direction"]),
+                strategy_version=row["strategy_version"],
+                setup_id=row["setup_id"],
+                hypothesis_id=row["hypothesis_id"],
+                entry_mode=row["entry_mode"],
+                origin=Origin(row["origin"]),
+                created_at_ms=int(row["created_at_ms"]),
+            )
+            for row in rows
+        )
+
     def append_decision_event(self, record: DecisionEventRecord) -> DecisionEventRecord:
         setup = self.get_setup_instance(record.setup_instance_id)
         if setup is None:
