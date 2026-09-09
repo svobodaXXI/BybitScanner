@@ -1,8 +1,8 @@
 # BybitScanner Trading Diary — D6 UI Scope
 
-Status: D6 SCOPE ACCEPTED / D6.1-D6.2 IMPLEMENTED / D6.3-D6.5 NOT YET AUTHORIZED
+Status: D6 SCOPE ACCEPTED / D6.1-D6.3 IMPLEMENTED / D6.4-D6.5 NOT YET AUTHORIZED
 
-Date: 2026-09-08
+Date: 2026-09-09
 
 ## Purpose
 
@@ -31,6 +31,8 @@ Trading Diary data / read models
 ```
 
 Telegram integration is intentionally deferred. When implemented later, it must consume the same Diary/statistics read layer and cohort semantics rather than creating a second statistics implementation.
+
+User-facing Diary interface labels are Russian. Internal identifiers, enum values, reason codes, database fields, and API payload semantics remain unchanged technical data and are not translated at the data boundary.
 
 ## Entry points
 
@@ -101,6 +103,10 @@ Manual trades must not fabricate setup/strategy metadata. Robot-origin trades ma
 
 ### D6.3 — Setups + Attention / Data Quality
 
+Implementation status: COMPLETE.
+
+Authoritative merge commit: `ade806038f3531daae28e8559e041e565aed5df3`.
+
 Expose setup observations independently of whether a trade occurred.
 
 Setup states/views:
@@ -124,6 +130,16 @@ Expose:
 Attention/Data Quality must explain metric eligibility and incomplete records, including missing evidence rather than coercing missingness to zero.
 
 A trade may be READY for PnL while remaining ineligible for MAE/MFE or another factor. UI coverage must make this distinction visible.
+
+Implemented D6.3 boundary:
+
+- reads existing D2 setup/decision evidence from the dedicated Trading Diary store;
+- exposes read-only `GET /api/diary/setups`;
+- does not create setup/admission/strategy producers;
+- does not mutate Scanner, strategy, risk, order, PAPER/LIVE, reconciliation, or controller state;
+- exposes `Сетапы` plus `Требуют внимания` in the shared Diary UI;
+- keeps `Статистика` disabled pending D6.4 authorization;
+- keeps missing evidence explicit and does not fabricate zeros or decision facts.
 
 ### D6.4 — Statistics / Cohorts / Factors
 
@@ -284,7 +300,7 @@ No part of this scope authorizes autonomous LIVE trading.
 
 The D6 scope remains frozen by this document.
 
-D6.1 and D6.2 were explicitly authorized by the user and are implemented.
+D6.1, D6.2, and D6.3 were explicitly authorized by the user and are implemented.
 
 D6.1 authoritative implementation commit:
 `5bd3ebd014e3098cc415fcbe329781e146258374`.
@@ -292,8 +308,9 @@ D6.1 authoritative implementation commit:
 D6.2 authoritative merge commit:
 `f7afc26af09117c358d5c746551a0fd24e3755c4`.
 
-D6.3, D6.4, and D6.5 remain unauthorized until the user explicitly authorizes
-the corresponding slice or a broader D6 implementation scope.
+D6.3 authoritative merge commit:
+`ade806038f3531daae28e8559e041e565aed5df3`.
 
-Completion of D6.1-D6.2 does not authorize any trading mutation, AUTOPILOT runtime behavior,
-or autonomous LIVE trading.
+D6.4 and D6.5 remain unauthorized until the user explicitly authorizes the corresponding slice or a broader D6 implementation scope.
+
+Completion of D6.1-D6.3 does not authorize any trading mutation, AUTOPILOT runtime behavior, or autonomous LIVE trading.
