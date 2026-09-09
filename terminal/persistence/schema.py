@@ -525,6 +525,14 @@ SCHEMA_V15_MIGRATION_STATEMENTS = (
             'ROBOT_STOPPED', 'RECONCILING', 'READY',
             'RECONCILIATION_REQUIRED'
         )),
+        CHECK (
+            (mode = 'ROBOT_STOPPED' AND recovery_status IN (
+                'ROBOT_STOPPED', 'RECONCILIATION_REQUIRED'
+            )) OR
+            (mode = 'ROBOT_RUNNING' AND recovery_status IN (
+                'RECONCILING', 'READY', 'RECONCILIATION_REQUIRED'
+            ))
+        ),
         CHECK (version >= 1),
         CHECK (updated_at_ms >= 0)
     ) WITHOUT ROWID
@@ -586,7 +594,11 @@ SCHEMA_V15_MIGRATION_STATEMENTS = (
         CHECK (signal_time_ms >= 0),
         CHECK (entry_time_ms >= signal_time_ms),
         CHECK (version >= 1),
-        CHECK (created_at_ms >= 0 AND updated_at_ms >= created_at_ms),
+        CHECK (created_at_ms >= entry_time_ms AND updated_at_ms >= created_at_ms),
+        CHECK (exit_reason IS NULL OR exit_reason IN (
+            'STOP', 'TAKE', 'MANUAL', 'TAKEOVER',
+            'EMERGENCY_CLOSE', 'EMERGENCY_PROTECTION_FAILURE'
+        )),
         CHECK (
             (exit_time_ms IS NULL AND exit_price IS NULL AND exit_reason IS NULL
                 AND realized_pnl_usdt IS NULL AND realized_pnl_pct IS NULL)

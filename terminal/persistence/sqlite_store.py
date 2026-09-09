@@ -85,6 +85,24 @@ ROBOT_RECOVERY_STATUSES = {
 ROBOT_CANDIDATE_STATUSES = {"APPROVED", "OPEN", "CLOSED", "EXPIRED", "INVALIDATED"}
 ROBOT_ENTRY_PATHS = {"LIMIT", "MARKET", "MIXED"}
 ROBOT_DIRECTIONS = {"LONG", "SHORT"}
+ROBOT_RUNTIME_STATE_PAIRS = {
+    ("ROBOT_STOPPED", "ROBOT_STOPPED"),
+    ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"),
+    ("ROBOT_RUNNING", "RECONCILING"),
+    ("ROBOT_RUNNING", "READY"),
+    ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+}
+ROBOT_CANDIDATE_TRANSITIONS = {
+    "APPROVED": {"APPROVED", "EXPIRED", "INVALIDATED"},
+    "OPEN": {"OPEN"},
+    "CLOSED": {"CLOSED"},
+    "EXPIRED": {"EXPIRED"},
+    "INVALIDATED": {"INVALIDATED"},
+}
+ROBOT_EXIT_REASONS = {
+    "STOP", "TAKE", "MANUAL", "TAKEOVER",
+    "EMERGENCY_CLOSE", "EMERGENCY_PROTECTION_FAILURE",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -644,6 +662,9 @@ def _robot_candidate_from_row(row: sqlite3.Row) -> RobotCandidateRecord:
         raise SchemaError("persisted Robot candidate JSON is corrupt") from exc
     if not isinstance(snapshot, dict) or (state is not None and not isinstance(state, dict)):
         raise SchemaError("persisted Robot candidate JSON must contain objects")
+    canonical_snapshot = _canonical_json(snapshot)
+    if hashlib.sha256(canonical_snapshot.encode("utf-8")).hexdigest() != row["snapshot_sha256"]:
+        raise SchemaError("persisted Robot candidate snapshot hash mismatch")
     return RobotCandidateRecord(
         candidate_id=row["candidate_id"],
         trading_account_id=TradingAccountId(row["trading_account_id"]),
@@ -3360,7 +3381,10 @@ class SQLiteStore:
         reason: str | None, expected_version: int, updated_at_ms: int,
     ) -> RobotRuntimeStateRecord:
         self._assert_owner()
-        if mode not in ROBOT_MODES or recovery_status not in ROBOT_RECOVERY_STATUSES:
+        if (
+            mode not in ROBOT_MODES or recovery_status not in ROBOT_RECOVERY_STATUSES
+            or (mode, recovery_status) not in ROBOT_RUNTIME_STATE_PAIRS
+        ):
             raise ValueError("unsupported Robot runtime state")
         if expected_version < 1 or updated_at_ms < 0:
             raise ValueError("invalid Robot runtime revision or timestamp")
@@ -3435,6 +3459,13 @@ class SQLiteStore:
             raise ValueError("invalid Robot candidate state update")
         state_json = _canonical_json(robot_state)
         with self._transaction():
+            current = self._connection.execute(
+                "SELECT status FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
+            ).fetchone()
+            if current is None:
+                raise PersistenceError("Robot candidate does not exist")
+            if status not in ROBOT_CANDIDATE_TRANSITIONS[current["status"]]:
+                raise PersistenceError("Robot candidate lifecycle cannot move backwards")
             cursor = self._connection.execute(
                 """UPDATE robot_candidates
                    SET status=?, robot_state_json=?, state_revision=state_revision+1, updated_at_ms=?
@@ -3455,7 +3486,10 @@ class SQLiteStore:
         self._assert_owner()
         if not trade_id.strip() or direction not in ROBOT_DIRECTIONS or entry_path not in ROBOT_ENTRY_PATHS:
             raise ValueError("invalid Robot trade identity, direction or entry path")
-        if not pattern.strip() or not source_timeframe.strip() or signal_time_ms < 0 or entry_time_ms < signal_time_ms:
+        if (
+            not pattern.strip() or not source_timeframe.strip() or signal_time_ms < 0
+            or entry_time_ms < signal_time_ms or created_at_ms < entry_time_ms
+        ):
             raise ValueError("invalid Robot trade source or timestamps")
         decimals = (actual_wv, average_entry, stop_price, take_price)
         for value in decimals:
@@ -3527,8 +3561,8 @@ class SQLiteStore:
         fees_costs_usdt: Decimal | None, updated_at_ms: int,
     ) -> tuple[RobotTradeRecord, bool]:
         self._assert_owner()
-        if not exit_reason.strip():
-            raise ValueError("Robot exit reason must not be empty")
+        if exit_reason not in ROBOT_EXIT_REASONS:
+            raise ValueError("unsupported Robot exit reason")
         for value in (exit_price, realized_pnl_usdt, realized_pnl_pct):
             _decimal_text(value)
         if fees_costs_usdt is not None:
@@ -3560,10 +3594,13 @@ class SQLiteStore:
                  _decimal_text(realized_pnl_usdt), _decimal_text(realized_pnl_pct),
                  _optional_decimal_value(fees_costs_usdt), updated_at_ms, trade_id),
             )
-            self._connection.execute(
-                "UPDATE robot_candidates SET status='CLOSED', updated_at_ms=? WHERE candidate_id=?",
-                (updated_at_ms, record.candidate_id),
+            cursor = self._connection.execute(
+                """UPDATE robot_candidates SET status='CLOSED', updated_at_ms=?
+                   WHERE candidate_id=? AND status='OPEN' AND updated_at_ms<=?""",
+                (updated_at_ms, record.candidate_id, updated_at_ms),
             )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Robot candidate changed before trade close")
         return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
 
     def get_reconciliation_checkpoint(

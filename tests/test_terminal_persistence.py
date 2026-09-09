@@ -326,6 +326,11 @@ class TerminalPersistenceTests(unittest.TestCase):
                     account, mode="ROBOT_RUNNING", recovery_status="READY", reason=None,
                     expected_version=1, updated_at_ms=1200,
                 )
+            with self.assertRaisesRegex(ValueError, "unsupported Robot runtime state"):
+                store.update_robot_runtime_state(
+                    account, mode="ROBOT_STOPPED", recovery_status="READY", reason=None,
+                    expected_version=ready.version, updated_at_ms=1200,
+                )
 
         with self.open_store() as reopened:
             self.assertEqual(reopened.get_robot_runtime_state(account), ready)
@@ -358,6 +363,15 @@ class TerminalPersistenceTests(unittest.TestCase):
                 store.save_robot_candidate_state(
                     "candidate-1", status="APPROVED", robot_state={"phase": "WAITING_BREAKOUT"},
                     expected_revision=0, updated_at_ms=1300,
+                )
+            expired = store.save_robot_candidate_state(
+                "candidate-1", status="EXPIRED", robot_state={"phase": "EXPIRED_AT_APEX"},
+                expected_revision=1, updated_at_ms=1400,
+            )
+            with self.assertRaisesRegex(PersistenceError, "cannot move backwards"):
+                store.save_robot_candidate_state(
+                    "candidate-1", status="APPROVED", robot_state={"phase": "WAITING_BREAKOUT"},
+                    expected_revision=expired.state_revision, updated_at_ms=1500,
                 )
 
     def test_robot_trade_open_close_is_atomic_durable_and_idempotent(self):
