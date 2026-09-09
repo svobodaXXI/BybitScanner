@@ -51,6 +51,7 @@ from terminal.diary.models import DiaryEnvironment
 from terminal.diary.presentation import project_trade_episode_list
 from terminal.diary.service import TradeEpisodeReadService
 from terminal.diary.setup_runtime import decision_store_path, project_setup_store
+from terminal.diary.statistics_endpoint import project_active_account_statistics
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.client_projection import ClientMarketProjection, StaleProjectionError
@@ -1524,6 +1525,28 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **projection})
             return
 
+        if parsed.path == "/api/diary/statistics":
+            try:
+                factor_store_path = getattr(self.server, "diary_factor_store_path", None)
+                if factor_store_path is None:
+                    factor_store_path = self.server.diary_setup_store_path
+                projection = self.server.runtime.call(
+                    lambda runtime: project_active_account_statistics(
+                        runtime.store,
+                        account_catalog=safe_account_catalog(runtime.account_catalog()),
+                        factor_store_path=factor_store_path,
+                    )
+                )
+            except Exception:
+                LOGGER.exception("Trading Diary statistics projection failed")
+                self._json_response(
+                    503,
+                    {"ok": False, "error": "diary_statistics_unavailable"},
+                )
+                return
+            self._json_response(200, {"ok": True, **projection})
+            return
+
         if parsed.path == "/api/workspace/account":
             symbols = parse_qs(parsed.query).get("symbol", [])
             if len(symbols) != 1:
@@ -2541,6 +2564,7 @@ def main() -> None:
     server.runtime = runtime
     server.market_data = market_data
     server.diary_setup_store_path = decision_store_path(database_path)
+    server.diary_factor_store_path = server.diary_setup_store_path
 
     try:
         print(f"PAPER HTTP runtime listening on http://{HOST}:{port}")

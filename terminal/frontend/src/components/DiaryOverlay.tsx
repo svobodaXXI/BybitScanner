@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import "./DiaryOverlay.css";
 
-type DiarySection = "TRADES" | "SETUPS";
+type DiarySection = "TRADES" | "SETUPS" | "STATISTICS";
 type DiaryFilter = "ALL" | "OPEN" | "CLOSED" | "ATTENTION";
 type SetupFilter = "ALL" | "ATTENTION";
 
@@ -91,6 +91,40 @@ type DiarySetup = {
   missing_evidence: string[];
 };
 
+type FactorCoverage = {
+  eligible_closed: number;
+  observed: number;
+  coverage_ratio: string;
+};
+
+type DiaryStatistics = {
+  sample: {
+    total: number;
+    eligible_closed_ready: number;
+    excluded_open: number;
+    excluded_incomplete: number;
+  };
+  pnl: {
+    net_pnl: string | null;
+    average_net_pnl: string | null;
+    wins: number;
+    losses: number;
+    breakeven: number;
+    win_rate: string | null;
+    average_win: string | null;
+    average_loss: string | null;
+    payoff_ratio: string | null;
+    profit_factor: string | null;
+  };
+  holding: {
+    average_duration_ms: string | null;
+  };
+  coverage: {
+    pnl_ready_ratio: string;
+    post_trade_factors: Record<string, FactorCoverage>;
+  };
+};
+
 type DiaryTradesResponse = {
   ok: boolean;
   active_account_id: string;
@@ -103,6 +137,14 @@ type DiarySetupsResponse = {
   ok: boolean;
   source: "TRADING_DIARY_D2";
   setups: DiarySetup[];
+};
+
+type DiaryStatisticsResponse = {
+  ok: boolean;
+  active_account_id: string;
+  session_generation: number;
+  environment: DiaryTrade["environment"];
+  statistics: DiaryStatistics;
 };
 
 const tradeFilters: ReadonlyArray<{ id: DiaryFilter; label: string }> = [
@@ -138,6 +180,18 @@ function formatDuration(value: number): string {
   if (hours < 24) return remainder ? `${hours}ч ${remainder}м` : `${hours}ч`;
   const days = Math.floor(hours / 24);
   return `${days}д ${hours % 24}ч`;
+}
+
+function formatRatio(value: string | null): string {
+  if (value === null) return "—";
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return value;
+  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(numeric * 100) + "%";
+}
+
+function formatDurationValue(value: string | null): string {
+  if (value === null) return "—";
+  return formatDuration(Number(value));
 }
 
 function sideLabel(side: "LONG" | "SHORT"): string {
@@ -288,10 +342,61 @@ function SetupList({ setups }: { setups: DiarySetup[] }) {
   );
 }
 
+function StatisticsView({ statistics }: { statistics: DiaryStatistics }) {
+  const mae = statistics.coverage.post_trade_factors["trade.mae_pct"];
+  const mfe = statistics.coverage.post_trade_factors["trade.mfe_pct"];
+  const capture = statistics.coverage.post_trade_factors["trade.exit_capture_ratio"];
+  return (
+    <div className="diary-detail">
+      <section className="diary-detail-section">
+        <h3>Выборка</h3>
+        <dl>
+          <div><dt>Всего сделок</dt><dd>{statistics.sample.total}</dd></div>
+          <div><dt>Готовы для чистого PnL</dt><dd>{statistics.sample.eligible_closed_ready}</dd></div>
+          <div><dt>Открытые</dt><dd>{statistics.sample.excluded_open}</dd></div>
+          <div><dt>Закрытые с неполными данными</dt><dd>{statistics.sample.excluded_incomplete}</dd></div>
+        </dl>
+      </section>
+
+      <section className="diary-detail-section">
+        <h3>Результативность</h3>
+        <dl>
+          <div><dt>Чистый PnL</dt><dd><Value value={statistics.pnl.net_pnl} /></dd></div>
+          <div><dt>Средний PnL на сделку</dt><dd><Value value={statistics.pnl.average_net_pnl} /></dd></div>
+          <div><dt>Прибыльные / убыточные / в ноль</dt><dd>{statistics.pnl.wins} / {statistics.pnl.losses} / {statistics.pnl.breakeven}</dd></div>
+          <div><dt>Доля прибыльных</dt><dd>{formatRatio(statistics.pnl.win_rate)}</dd></div>
+          <div><dt>Средняя прибыль</dt><dd><Value value={statistics.pnl.average_win} /></dd></div>
+          <div><dt>Средний убыток</dt><dd><Value value={statistics.pnl.average_loss} /></dd></div>
+          <div><dt>Средняя прибыль / средний убыток</dt><dd><Value value={statistics.pnl.payoff_ratio} /></dd></div>
+          <div><dt>Профит-фактор</dt><dd><Value value={statistics.pnl.profit_factor} /></dd></div>
+        </dl>
+      </section>
+
+      <section className="diary-detail-section">
+        <h3>Удержание позиции</h3>
+        <dl>
+          <div><dt>Среднее время в сделке</dt><dd>{formatDurationValue(statistics.holding.average_duration_ms)}</dd></div>
+        </dl>
+      </section>
+
+      <section className="diary-detail-section">
+        <h3>Полнота данных</h3>
+        <dl>
+          <div><dt>Готовность чистого PnL</dt><dd>{formatRatio(statistics.coverage.pnl_ready_ratio)}</dd></div>
+          <div><dt>Покрытие MAE</dt><dd>{mae ? `${mae.observed}/${mae.eligible_closed} (${formatRatio(mae.coverage_ratio)})` : "—"}</dd></div>
+          <div><dt>Покрытие MFE</dt><dd>{mfe ? `${mfe.observed}/${mfe.eligible_closed} (${formatRatio(mfe.coverage_ratio)})` : "—"}</dd></div>
+          <div><dt>Покрытие качества выхода</dt><dd>{capture ? `${capture.observed}/${capture.eligible_closed} (${formatRatio(capture.coverage_ratio)})` : "—"}</dd></div>
+        </dl>
+      </section>
+    </div>
+  );
+}
+
 export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onClose: () => void }) {
   const [section, setSection] = useState<DiarySection>("TRADES");
   const [trades, setTrades] = useState<DiaryTrade[]>([]);
   const [setups, setSetups] = useState<DiarySetup[]>([]);
+  const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
   const [tradeFilter, setTradeFilter] = useState<DiaryFilter>("ALL");
   const [setupFilter, setSetupFilter] = useState<SetupFilter>("ALL");
   const [loading, setLoading] = useState(true);
@@ -311,12 +416,19 @@ export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onCl
         setTrades(result.trades);
         setAccountId(result.active_account_id);
         setSelectedTradeId((current) => current && result.trades.some((trade) => trade.trade_episode_id === current) ? current : null);
-      } else {
+      } else if (section === "SETUPS") {
         const response = await fetch(marketApiRoutes.diarySetups);
         if (!response.ok) throw new Error("diary setups request failed");
         const result = (await response.json()) as DiarySetupsResponse;
         if (!result.ok || !Array.isArray(result.setups)) throw new Error("diary setups response is invalid");
         setSetups(result.setups);
+      } else {
+        const response = await fetch(marketApiRoutes.diaryStatistics);
+        if (!response.ok) throw new Error("diary statistics request failed");
+        const result = (await response.json()) as DiaryStatisticsResponse;
+        if (!result.ok || !result.statistics) throw new Error("diary statistics response is invalid");
+        setStatistics(result.statistics);
+        setAccountId(result.active_account_id);
       }
     } catch {
       setLoadError(true);
@@ -360,10 +472,10 @@ export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onCl
         <nav className="diary-primary-nav" aria-label="Разделы дневника">
           <button aria-current={section === "TRADES" ? "page" : undefined} onClick={() => { setSection("TRADES"); setSelectedTradeId(null); }} type="button">Сделки</button>
           <button aria-current={section === "SETUPS" ? "page" : undefined} onClick={() => { setSection("SETUPS"); setSelectedTradeId(null); }} type="button">Сетапы</button>
-          <button aria-disabled="true" disabled title="D6.4" type="button">Статистика</button>
+          <button aria-current={section === "STATISTICS" ? "page" : undefined} onClick={() => { setSection("STATISTICS"); setSelectedTradeId(null); }} type="button">Статистика</button>
         </nav>
 
-        {!selectedTrade ? (
+        {!selectedTrade && section !== "STATISTICS" ? (
           <div className="diary-filter-bar" aria-label={section === "TRADES" ? "Фильтры сделок" : "Фильтры сетапов"}>
             {(section === "TRADES" ? tradeFilters : setupFilters).map((candidate) => {
               const pressed = section === "TRADES" ? tradeFilter === candidate.id : setupFilter === candidate.id;
@@ -422,6 +534,7 @@ export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onCl
           ) : null}
 
           {!loading && !loadError && !selectedTrade && section === "SETUPS" && visibleSetups.length > 0 ? <SetupList setups={visibleSetups} /> : null}
+          {!loading && !loadError && !selectedTrade && section === "STATISTICS" && statistics ? <StatisticsView statistics={statistics} /> : null}
         </div>
       </section>
     </div>
