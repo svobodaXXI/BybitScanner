@@ -17,7 +17,6 @@ from robot_restart_recovery import (
     ROBOT_RUNNING,
     ROBOT_STOPPED,
     RestartDecision,
-    RobotRestartError,
     reconcile_restart,
 )
 from terminal.domain.models import TradingAccountId
@@ -99,13 +98,8 @@ class RobotRecoveryCoordinator:
                     recovery_status=RECONCILIATION_REQUIRED,
                     reason=decisions[0].reason if decisions else "restart reconciliation required",
                 )
-            elif runtime.recovery_status != ROBOT_STOPPED or runtime.reason is not None:
-                runtime = self._set_runtime(
-                    runtime,
-                    mode=ROBOT_STOPPED,
-                    recovery_status=ROBOT_STOPPED,
-                    reason=None,
-                )
+            # Never auto-clear an existing reconciliation-required state. A clean
+            # subsequent read is not proof that the earlier ambiguity was resolved.
             return RobotRecoveryResult(runtime, decisions)
 
         runtime = self._set_runtime(
@@ -145,7 +139,7 @@ class RobotRecoveryCoordinator:
                 reason=None,
             )
             return RobotRecoveryResult(runtime, decisions)
-        except (RobotRestartError, RobotRecoveryError, PersistenceError, ValueError, TypeError) as exc:
+        except Exception as exc:
             runtime = self._mark_reconciliation_required(runtime, exc)
             return RobotRecoveryResult(runtime, ())
 
