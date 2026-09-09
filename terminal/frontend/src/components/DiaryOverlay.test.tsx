@@ -137,10 +137,52 @@ const setupsResponse = {
   ],
 };
 
+const statisticsResponse = {
+  ok: true,
+  active_account_id: "paper",
+  session_generation: 1,
+  environment: "PAPER" as const,
+  statistics: {
+    sample: {
+      total: 2,
+      eligible_closed_ready: 0,
+      excluded_open: 1,
+      excluded_incomplete: 1,
+    },
+    pnl: {
+      net_pnl: null,
+      average_net_pnl: null,
+      wins: 0,
+      losses: 0,
+      breakeven: 0,
+      win_rate: null,
+      average_win: null,
+      average_loss: null,
+      payoff_ratio: null,
+      profit_factor: null,
+    },
+    holding: {
+      average_duration_ms: null,
+    },
+    coverage: {
+      pnl_ready_ratio: "0",
+      post_trade_factors: {
+        "trade.mae_pct": { eligible_closed: 1, observed: 1, coverage_ratio: "1" },
+        "trade.mfe_pct": { eligible_closed: 1, observed: 1, coverage_ratio: "1" },
+        "trade.exit_capture_ratio": { eligible_closed: 1, observed: 0, coverage_ratio: "0" },
+      },
+    },
+  },
+};
+
 function installFetchMock() {
   const fetchMock = vi.fn().mockImplementation(async (url: string) => ({
     ok: true,
-    json: async () => url.includes("/api/diary/setups") ? setupsResponse : tradesResponse,
+    json: async () => {
+      if (url.includes("/api/diary/setups")) return setupsResponse;
+      if (url.includes("/api/diary/statistics")) return statisticsResponse;
+      return tradesResponse;
+    },
   }));
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -194,6 +236,24 @@ describe("DiaryOverlay", () => {
     expect(screen.getByText("Не хватает данных: MISSING_DECISION_EVENTS")).toBeTruthy();
     expect(screen.getByText("ЛОНГ")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/setups");
+  });
+
+  it("opens D6.4 statistics read-only and keeps unavailable metrics missing", async () => {
+    const fetchMock = installFetchMock();
+    render(<DiaryOverlay accountKey="paper:1" onClose={() => {}} />);
+
+    await screen.findByText("BTCUSDT");
+    fireEvent.click(screen.getByRole("button", { name: "Статистика" }));
+
+    expect(await screen.findByText("Выборка")).toBeTruthy();
+    expect(screen.getByText("Результативность")).toBeTruthy();
+    expect(screen.getByText("Удержание позиции")).toBeTruthy();
+    expect(screen.getByText("Полнота данных")).toBeTruthy();
+    expect(screen.getByText("Готовы для чистого PnL")).toBeTruthy();
+    expect(screen.getByText("Покрытие MAE")).toBeTruthy();
+    expect(screen.getAllByText("1/1 (100%)")).toHaveLength(2);
+    expect(screen.getByText("0/1 (0%)")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledWith("/api/diary/statistics");
   });
 
   it("refetches after active account authority changes", async () => {
