@@ -1,6 +1,6 @@
 """Durable immutable Scanner snapshots for Robot v0.1 admission.
 
-This module owns only the signal-handoff envelope.  It does not own trading,
+This module owns only the signal-handoff envelope. It does not own trading,
 market data, Scanner analysis, sizing, or execution.
 """
 
@@ -36,6 +36,10 @@ class RobotCandidateNotFound(RobotCandidateError):
 
 class RobotCandidateCorrupt(RobotCandidateError):
     """Raised when persisted state cannot be trusted."""
+
+
+class RobotCandidateStateConflict(RobotCandidateError):
+    """Raised when a stale writer attempts to replace Robot lifecycle state."""
 
 
 def _utc_now_iso() -> str:
@@ -105,6 +109,14 @@ def _read_record(path: Path) -> dict[str, Any]:
     snapshot = record.get("signal_snapshot")
     if not isinstance(snapshot, dict):
         raise RobotCandidateCorrupt("candidate snapshot is missing")
+
+    robot_state = record.get("robot_state")
+    if robot_state is not None:
+        if not isinstance(robot_state, dict):
+            raise RobotCandidateCorrupt("robot_state is not an object")
+        revision = robot_state.get("revision")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 1:
+            raise RobotCandidateCorrupt("invalid robot_state revision")
 
     return record
 
@@ -177,7 +189,6 @@ def create_signal_snapshot(
         raise RobotCandidateError("signal snapshot has no timeframe")
 
     directory = Path(store_dir) if store_dir is not None else DEFAULT_STORE_DIR
-
     attempts = 1 if candidate_id is not None else 8
 
     for _ in range(attempts):
@@ -230,13 +241,7 @@ def approve_candidate(
     store_dir: Path | str | None = None,
     approved_at: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
-    """Idempotently transition AVAILABLE -> APPROVED.
-
-    Returns ``(record, changed)``.  A repeat callback for the same durable
-    candidate returns the already-approved record with ``changed=False``.
-    The ``signal_snapshot`` value is copied byte-for-byte at the data-model
-    level and never recomputed from Telegram callback fields.
-    """
+    """Idempotently transition AVAILABLE -> APPROVED."""
 
     directory = Path(store_dir) if store_dir is not None else DEFAULT_STORE_DIR
     path = _candidate_path(candidate_id, directory)
@@ -259,3 +264,53 @@ def approve_candidate(
 
     _replace_record(path, record)
     return deepcopy(record), True
+
+
+def save_robot_state(
+    candidate_id: str,
+    state: Mapping[str, Any],
+    *,
+    expected_revision: int,
+    store_dir: Path | str | None = None,
+) -> dict[str, Any]:
+    """CAS-persist mutable Robot lifecycle state beside an immutable snapshot.
+
+    ``expected_revision`` is zero when no Robot state has been saved yet.
+    A stale writer is rejected rather than overwriting a newer lifecycle state.
+    """
+
+    if not isinstance(state, Mapping):
+        raise RobotCandidateError("robot state must be a mapping")
+    if not isinstance(expected_revision, int) or isinstance(expected_revision, bool):
+        raise RobotCandidateError("expected_revision must be an integer")
+    if expected_revision < 0:
+        raise RobotCandidateError("expected_revision cannot be negative")
+
+    directory = Path(store_dir) if store_dir is not None else DEFAULT_STORE_DIR
+    path = _candidate_path(candidate_id, directory)
+    record = _read_record(path)
+
+    if record["status"] != STATUS_APPROVED:
+        raise RobotCandidateError("candidate must be APPROVED before Robot state")
+
+    current_state = record.get("robot_state")
+    current_revision = current_state.get("revision", 0) if current_state else 0
+    if current_revision != expected_revision:
+        raise RobotCandidateStateConflict(
+            f"robot state revision mismatch: expected {expected_revision}, "
+            f"current {current_revision}"
+        )
+
+    frozen_snapshot = deepcopy(record["signal_snapshot"])
+    frozen_approval = deepcopy(record.get("approval"))
+    persisted_state = _json_round_trip(dict(state))
+    persisted_state["revision"] = current_revision + 1
+    record["robot_state"] = persisted_state
+
+    if record["signal_snapshot"] != frozen_snapshot:
+        raise RobotCandidateCorrupt("signal snapshot mutation detected")
+    if record.get("approval") != frozen_approval:
+        raise RobotCandidateCorrupt("approval metadata mutation detected")
+
+    _replace_record(path, record)
+    return deepcopy(record)
