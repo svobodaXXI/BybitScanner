@@ -33,12 +33,12 @@ def project_setup_instance(
         "strategy_version": setup.strategy_version,
         "hypothesis_id": setup.hypothesis_id,
         "entry_mode": setup.entry_mode,
-        "origin": setup.origin.value,
+        "origin": setup.origin.value.upper(),
         "created_at_ms": setup.created_at_ms,
         "status": latest_outcome.next_state if latest_outcome else "ADMITTED",
         "decision_state": latest_event.next_state if latest_event else None,
         "reason_code": latest_event.reason_code if latest_event else None,
-        "controller": latest_event.controller.value if latest_event else None,
+        "controller": latest_event.controller.value.upper() if latest_event else None,
         "latest_decision_at_ms": (
             latest_event.occurred_at_ms if latest_event else None
         ),
