@@ -28,6 +28,7 @@ from signal.quality import evaluate_quality
 from signal.filter import evaluate_signal
 
 from tradingview_bridge import create_signal_payload
+from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
 
 from config import (
     TIMEFRAME,
@@ -117,6 +118,13 @@ def analyze_symbol(symbol):
                 "highs": highs,
                 "lows": lows
             }
+
+        if str(TIMEFRAME).strip() == "1":
+            result["scanner_geometry_cursor"] = build_scanner_geometry_cursor_anchor(
+                geometry_index=current_index,
+                source_candle_time_ms=int(df.iloc[current_index]["time"]),
+                timeframe="1",
+            )
 
         # =========================
         # Confirmation
