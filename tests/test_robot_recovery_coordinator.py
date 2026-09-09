@@ -145,6 +145,28 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
         self.assertFalse(result.admission_ready)
 
+    def test_stopped_reconciliation_required_is_not_auto_cleared(self):
+        runtime = self.store.initialize_robot_runtime_state(
+            ACCOUNT_ID, updated_at_ms=self.clock(),
+        )
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID,
+            mode="ROBOT_STOPPED",
+            recovery_status="RECONCILIATION_REQUIRED",
+            reason="earlier ambiguous recovery",
+            expected_version=runtime.version,
+            updated_at_ms=self.clock(),
+        )
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+
+        result = coordinator.recover()
+
+        self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertEqual(result.runtime_state.reason, "earlier ambiguous recovery")
+        self.assertFalse(result.admission_ready)
+
     def test_running_waiting_candidate_recovers_before_ready(self):
         original = self._create_waiting_candidate()
         self._initialize_running()
