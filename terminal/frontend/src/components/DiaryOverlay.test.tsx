@@ -251,7 +251,7 @@ describe("DiaryOverlay", () => {
     expect(screen.getByText("Полнота данных")).toBeTruthy();
     expect(screen.getByText("Готовы для чистого PnL")).toBeTruthy();
     expect(screen.getByText("Покрытие MAE")).toBeTruthy();
-    expect(screen.getByText("1/1 (100%)")).toBeTruthy();
+    expect(screen.getAllByText("1/1 (100%)")).toHaveLength(2);
     expect(screen.getByText("0/1 (0%)")).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith("/api/diary/statistics");
   });
