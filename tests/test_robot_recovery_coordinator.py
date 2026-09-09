@@ -125,9 +125,7 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         coordinator = RobotRecoveryCoordinator(
             self.store, ACCOUNT_ID, clock_ms=self.clock,
         )
-
         result = coordinator.recover()
-
         self.assertEqual(result.runtime_state.mode, "ROBOT_STOPPED")
         self.assertEqual(result.runtime_state.recovery_status, "ROBOT_STOPPED")
         self.assertFalse(result.admission_ready)
@@ -138,9 +136,7 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         coordinator = RobotRecoveryCoordinator(
             self.store, ACCOUNT_ID, clock_ms=self.clock,
         )
-
         result = coordinator.recover()
-
         self.assertEqual(result.runtime_state.mode, "ROBOT_STOPPED")
         self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
         self.assertFalse(result.admission_ready)
@@ -160,9 +156,7 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         coordinator = RobotRecoveryCoordinator(
             self.store, ACCOUNT_ID, clock_ms=self.clock,
         )
-
         result = coordinator.recover()
-
         self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
         self.assertEqual(result.runtime_state.reason, "earlier ambiguous recovery")
         self.assertFalse(result.admission_ready)
@@ -173,12 +167,10 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         coordinator = RobotRecoveryCoordinator(
             self.store,
             ACCOUNT_ID,
-            latest_geometry_index_provider=lambda symbol: 105,
+            latest_geometry_index_provider=lambda symbol, snapshot: 105,
             clock_ms=self.clock,
         )
-
         result = coordinator.recover()
-
         self.assertEqual(result.runtime_state.mode, "ROBOT_RUNNING")
         self.assertEqual(result.runtime_state.recovery_status, READY)
         self.assertTrue(result.admission_ready)
@@ -188,29 +180,25 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(recovered.robot_state["geometry_cursor"], 105)
         self.assertEqual(recovered.robot_state["phase"], "WAITING_BREAKOUT")
 
-    def test_missing_geometry_provider_fails_closed(self):
+    def test_legacy_waiting_candidate_without_cursor_anchor_fails_closed_before_network(self):
         self._create_waiting_candidate()
         self._initialize_running()
         coordinator = RobotRecoveryCoordinator(
             self.store, ACCOUNT_ID, clock_ms=self.clock,
         )
-
         result = coordinator.recover()
-
         self.assertEqual(result.runtime_state.mode, "ROBOT_RUNNING")
         self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
         self.assertFalse(result.admission_ready)
-        self.assertIn("geometry index provider", result.runtime_state.reason)
+        self.assertIn("Scanner geometry cursor anchor", result.runtime_state.reason)
 
-    def test_running_open_trade_can_recover_without_geometry_provider(self):
+    def test_running_open_trade_can_recover_without_geometry_read(self):
         self._create_open_candidate()
         self._initialize_running()
         coordinator = RobotRecoveryCoordinator(
             self.store, ACCOUNT_ID, clock_ms=self.clock,
         )
-
         result = coordinator.recover()
-
         self.assertEqual(result.runtime_state.recovery_status, READY)
         self.assertTrue(result.admission_ready)
         self.assertEqual(result.decisions[0].status, "RESUME_OPEN_POSITION")

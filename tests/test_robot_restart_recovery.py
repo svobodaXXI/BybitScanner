@@ -30,9 +30,9 @@ def _snapshot():
     }
 
 
-def _candidate_with_state():
+def _candidate_with_state(candidate_id="candidate-1"):
     candidate = {
-        "candidate_id": "candidate-1",
+        "candidate_id": candidate_id,
         "status": "APPROVED",
         "timeframe": "1",
         "symbol": "TESTUSDT",
@@ -52,7 +52,7 @@ class RobotRestartRecoveryTests(unittest.TestCase):
             durable_mode=ROBOT_STOPPED,
             open_robot_positions=({"symbol": "TESTUSDT", "candidate_id": "candidate-1"},),
             approved_candidates=(),
-            latest_geometry_index_by_symbol={},
+            latest_geometry_index_by_candidate={},
         )
         self.assertEqual(status, RECONCILIATION_REQUIRED)
         self.assertEqual(decisions[0].status, RECONCILIATION_REQUIRED)
@@ -62,7 +62,7 @@ class RobotRestartRecoveryTests(unittest.TestCase):
             durable_mode=ROBOT_RUNNING,
             open_robot_positions=({"symbol": "TESTUSDT", "candidate_id": "candidate-1"},),
             approved_candidates=(),
-            latest_geometry_index_by_symbol={},
+            latest_geometry_index_by_candidate={},
         )
         self.assertEqual(status, ROBOT_RUNNING)
         self.assertEqual(decisions[0].status, RESUME_OPEN_POSITION)
@@ -73,7 +73,7 @@ class RobotRestartRecoveryTests(unittest.TestCase):
             durable_mode=ROBOT_RUNNING,
             open_robot_positions=(),
             approved_candidates=(candidate,),
-            latest_geometry_index_by_symbol={"TESTUSDT": 105},
+            latest_geometry_index_by_candidate={"candidate-1": 105},
         )
         self.assertEqual(status, ROBOT_RUNNING)
         decision = decisions[0]
@@ -95,10 +95,22 @@ class RobotRestartRecoveryTests(unittest.TestCase):
             durable_mode=ROBOT_RUNNING,
             open_robot_positions=(),
             approved_candidates=(candidate,),
-            latest_geometry_index_by_symbol={"TESTUSDT": 110},
+            latest_geometry_index_by_candidate={"candidate-1": 110},
         )
         self.assertEqual(status, ROBOT_RUNNING)
         self.assertEqual(decisions[0].status, EXPIRED_AT_APEX)
+
+    def test_same_symbol_candidates_use_independent_cursor_spaces(self):
+        first = _candidate_with_state("candidate-1")
+        second = _candidate_with_state("candidate-2")
+        status, decisions = reconcile_restart(
+            durable_mode=ROBOT_RUNNING,
+            open_robot_positions=(),
+            approved_candidates=(first, second),
+            latest_geometry_index_by_candidate={"candidate-1": 103, "candidate-2": 107},
+        )
+        self.assertEqual(status, ROBOT_RUNNING)
+        self.assertEqual([item.state["geometry_cursor"] for item in decisions], [103, 107])
 
     def test_trade_record_open_and_close_are_durable_and_close_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:

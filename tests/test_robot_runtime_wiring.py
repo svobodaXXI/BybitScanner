@@ -112,7 +112,7 @@ class RobotRuntimeWiringTests(unittest.TestCase):
             finally:
                 runtime.close()
 
-    def test_running_open_trade_recovers_to_ready_without_geometry_provider(self):
+    def test_running_open_trade_recovers_to_ready_without_geometry_read(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "terminal.db"
             runtime = _runtime(path)
@@ -157,7 +157,7 @@ class RobotRuntimeWiringTests(unittest.TestCase):
             finally:
                 restarted.close()
 
-    def test_running_waiting_candidate_without_geometry_provider_fails_closed(self):
+    def test_legacy_waiting_candidate_without_cursor_anchor_fails_closed(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "terminal.db"
             runtime = _runtime(path)
@@ -188,7 +188,7 @@ class RobotRuntimeWiringTests(unittest.TestCase):
                 state = restarted.store.get_robot_runtime_state(ACCOUNT_ID)
                 self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
                 self.assertFalse(restarted.robot_admission_ready())
-                self.assertIn("geometry index provider", state.reason)
+                self.assertIn("Scanner geometry cursor anchor", state.reason)
             finally:
                 restarted.close()
 
@@ -220,7 +220,7 @@ class RobotRuntimeWiringTests(unittest.TestCase):
 
             restarted = _runtime(
                 path,
-                latest_geometry_index_provider=lambda symbol: 105,
+                latest_geometry_index_provider=lambda symbol, snapshot: 105,
             )
             try:
                 state = restarted.store.get_robot_runtime_state(ACCOUNT_ID)
