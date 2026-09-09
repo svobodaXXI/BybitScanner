@@ -1,6 +1,6 @@
 # BybitScanner Trading Diary — D6 UI Scope
 
-Status: D6 SCOPE ACCEPTED / D6.1-D6.4 IMPLEMENTED / D6.5 NOT YET AUTHORIZED
+Status: D6 SCOPE ACCEPTED / D6.1-D6.5 IMPLEMENTED
 
 Date: 2026-09-09
 
@@ -255,7 +255,17 @@ External references retained for this statistics design are recorded in `DOCUMEN
 
 ### D6.5 — AUTOPILOT integration
 
-Integrate Diary navigation into the AUTOPILOT mode without changing trading control semantics.
+Implementation status: COMPLETE.
+
+Implemented D6.5 boundary:
+
+- adds read-only AUTOPILOT Diary navigation controls with Russian labels `Статистика` and `Подробности сделки`;
+- `Статистика` opens the existing shared Diary directly in the `STATISTICS` section;
+- `Подробности сделки` opens the existing shared Diary Trade Details only when an explicit `trade_episode_id` linkage is supplied;
+- no trade is inferred by symbol, position, or other heuristic; missing linkage fails closed and leaves trade details unavailable;
+- if an explicit linked episode is absent from the current Diary response, the UI reports that the trade is unavailable rather than substituting another episode;
+- closing the Diary returns to the same AUTOPILOT mode/context because the Diary is an overlay and does not switch workspace mode;
+- integration is presentation-only and does not transfer MANUAL/ROBOT ownership, issue orders, retry mutations, or alter PAPER/LIVE authority, reconciliation, protection, strategy, or Robot runtime state.
 
 Required behavior:
 
@@ -263,6 +273,12 @@ Required behavior:
 - `Подробности сделки` opens Trade Details for the currently displayed trade when a Diary episode link exists;
 - returning from Diary preserves the user's prior Trading Workspace/AUTOPILOT context where practical;
 - Diary navigation must not transfer controller ownership, issue orders, retry mutations, or alter PAPER/LIVE authority.
+
+Validation for D6.5:
+
+- targeted frontend tests: 11/11 PASS;
+- production frontend build: PASS;
+- Vite chunk-size warning remains non-blocking and does not change D6.5 behavior.
 
 ## Explicitly out of scope for D6
 
@@ -314,7 +330,7 @@ No part of this scope authorizes autonomous LIVE trading.
 
 The D6 scope remains frozen by this document.
 
-D6.1, D6.2, D6.3, and D6.4 were explicitly authorized by the user and are implemented.
+D6.1, D6.2, D6.3, D6.4, and D6.5 were explicitly authorized by the user and are implemented.
 
 D6.1 authoritative implementation commit:
 `5bd3ebd014e3098cc415fcbe329781e146258374`.
@@ -328,6 +344,7 @@ D6.3 authoritative merge commit:
 D6.4 authoritative implementation head before documentation closeout:
 `6462c81c709bb2d2688b87c764cf1ff90079c937`.
 
-D6.5 remains unauthorized until the user explicitly authorizes that slice or a broader implementation scope that includes it.
+D6.5 implementation branch:
+`feat/trading-diary-d6-5`.
 
-Completion of D6.1-D6.4 does not authorize any trading mutation, AUTOPILOT runtime behavior, or autonomous LIVE trading.
+Completion of D6.1-D6.5 does not authorize any trading mutation, AUTOPILOT decision/runtime behavior, Robot ownership transfer, or autonomous LIVE trading.
