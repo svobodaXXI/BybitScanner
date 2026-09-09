@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -47,6 +48,7 @@ from .schema import (
     SCHEMA_V12_MIGRATION_STATEMENTS,
     SCHEMA_V13_MIGRATION_STATEMENTS,
     SCHEMA_V14_MIGRATION_STATEMENTS,
+    SCHEMA_V15_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -74,6 +76,33 @@ class ImmutableExecutionConflict(PersistenceError):
 class ExecutionApplyResult(str, Enum):
     APPLIED = "applied"
     DUPLICATE = "duplicate"
+
+
+ROBOT_MODES = {"ROBOT_STOPPED", "ROBOT_RUNNING"}
+ROBOT_RECOVERY_STATUSES = {
+    "ROBOT_STOPPED", "RECONCILING", "READY", "RECONCILIATION_REQUIRED",
+}
+ROBOT_CANDIDATE_STATUSES = {"APPROVED", "OPEN", "CLOSED", "EXPIRED", "INVALIDATED"}
+ROBOT_ENTRY_PATHS = {"LIMIT", "MARKET", "MIXED"}
+ROBOT_DIRECTIONS = {"LONG", "SHORT"}
+ROBOT_RUNTIME_STATE_PAIRS = {
+    ("ROBOT_STOPPED", "ROBOT_STOPPED"),
+    ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"),
+    ("ROBOT_RUNNING", "RECONCILING"),
+    ("ROBOT_RUNNING", "READY"),
+    ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+}
+ROBOT_CANDIDATE_TRANSITIONS = {
+    "APPROVED": {"APPROVED", "EXPIRED", "INVALIDATED"},
+    "OPEN": {"OPEN"},
+    "CLOSED": {"CLOSED"},
+    "EXPIRED": {"EXPIRED"},
+    "INVALIDATED": {"INVALIDATED"},
+}
+ROBOT_EXIT_REASONS = {
+    "STOP", "TAKE", "MANUAL", "TAKEOVER",
+    "EMERGENCY_CLOSE", "EMERGENCY_PROTECTION_FAILURE",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,12 +454,71 @@ class ProtectionProjectionRecord:
     updated_at_ms: int
 
 
+@dataclass(frozen=True, slots=True)
+class RobotRuntimeStateRecord:
+    trading_account_id: TradingAccountId
+    mode: str
+    recovery_status: str
+    reason: str | None
+    version: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class RobotCandidateRecord:
+    candidate_id: str
+    trading_account_id: TradingAccountId
+    symbol: Symbol
+    status: str
+    signal_snapshot: dict[str, object]
+    snapshot_sha256: str
+    robot_state: dict[str, object] | None
+    state_revision: int
+    approved_at_ms: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class RobotTradeRecord:
+    trade_id: str
+    trading_account_id: TradingAccountId
+    candidate_id: str
+    symbol: Symbol
+    direction: str
+    pattern: str
+    source_timeframe: str
+    signal_time_ms: int
+    entry_time_ms: int
+    entry_path: str
+    actual_wv: Decimal
+    average_entry: Decimal
+    stop_price: Decimal
+    take_price: Decimal
+    exit_time_ms: int | None
+    exit_price: Decimal | None
+    exit_reason: str | None
+    realized_pnl_usdt: Decimal | None
+    realized_pnl_pct: Decimal | None
+    fees_costs_usdt: Decimal | None
+    version: int
+    created_at_ms: int
+    updated_at_ms: int
+
+
 def _decimal_text(value: Decimal) -> str:
     if not isinstance(value, Decimal):
         raise TypeError("persistent decimal values must be Decimal")
     if not value.is_finite():
         raise ValueError("persistent decimal values must be finite")
     return str(value)
+
+
+def _canonical_json(value: dict[str, object]) -> str:
+    if not isinstance(value, dict):
+        raise TypeError("Robot JSON value must be an object")
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    )
 
 
 def _optional_decimal_value(value: Decimal | None) -> str | None:
@@ -566,6 +654,46 @@ def _live_limit_operation_from_row(row: sqlite3.Row) -> LiveLimitOperationRecord
     )
 
 
+def _robot_candidate_from_row(row: sqlite3.Row) -> RobotCandidateRecord:
+    try:
+        snapshot = json.loads(row["signal_snapshot_json"])
+        state = json.loads(row["robot_state_json"]) if row["robot_state_json"] else None
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise SchemaError("persisted Robot candidate JSON is corrupt") from exc
+    if not isinstance(snapshot, dict) or (state is not None and not isinstance(state, dict)):
+        raise SchemaError("persisted Robot candidate JSON must contain objects")
+    canonical_snapshot = _canonical_json(snapshot)
+    if hashlib.sha256(canonical_snapshot.encode("utf-8")).hexdigest() != row["snapshot_sha256"]:
+        raise SchemaError("persisted Robot candidate snapshot hash mismatch")
+    return RobotCandidateRecord(
+        candidate_id=row["candidate_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        symbol=Symbol(row["symbol"]), status=row["status"], signal_snapshot=snapshot,
+        snapshot_sha256=row["snapshot_sha256"], robot_state=state,
+        state_revision=int(row["state_revision"]), approved_at_ms=int(row["approved_at_ms"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
+def _robot_trade_from_row(row: sqlite3.Row) -> RobotTradeRecord:
+    optional_decimal = lambda value: _load_decimal(value) if value is not None else None
+    return RobotTradeRecord(
+        trade_id=row["trade_id"], trading_account_id=TradingAccountId(row["trading_account_id"]),
+        candidate_id=row["candidate_id"], symbol=Symbol(row["symbol"]),
+        direction=row["direction"], pattern=row["pattern"], source_timeframe=row["source_timeframe"],
+        signal_time_ms=int(row["signal_time_ms"]), entry_time_ms=int(row["entry_time_ms"]),
+        entry_path=row["entry_path"], actual_wv=_load_decimal(row["actual_wv"]),
+        average_entry=_load_decimal(row["average_entry"]), stop_price=_load_decimal(row["stop_price"]),
+        take_price=_load_decimal(row["take_price"]),
+        exit_time_ms=int(row["exit_time_ms"]) if row["exit_time_ms"] is not None else None,
+        exit_price=optional_decimal(row["exit_price"]), exit_reason=row["exit_reason"],
+        realized_pnl_usdt=optional_decimal(row["realized_pnl_usdt"]),
+        realized_pnl_pct=optional_decimal(row["realized_pnl_pct"]),
+        fees_costs_usdt=optional_decimal(row["fees_costs_usdt"]), version=int(row["version"]),
+        created_at_ms=int(row["created_at_ms"]), updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
 class SQLiteStore:
     """Synchronous store owned by one backend thread and writer."""
 
@@ -612,6 +740,11 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 14:
+            SQLiteStore._validate_required_tables(connection, version=14)
+            SQLiteStore._migrate_v14_to_v15(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 13:
@@ -878,6 +1011,19 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v14_to_v15(connection)
+
+    @staticmethod
+    def _migrate_v14_to_v15(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V15_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 15")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -920,6 +1066,8 @@ class SQLiteStore:
             required.update({"live_limit_acceptance_sessions", "live_limit_actions"})
         if version >= 14:
             required.add("live_limit_operations")
+        if version >= 15:
+            required.update({"robot_runtime_state", "robot_candidates", "robot_trades"})
         actual = {
             row[0]
             for row in connection.execute(
@@ -3199,6 +3347,261 @@ class SQLiteStore:
         if projection_record is None or checkpoint_record is None:
             raise PersistenceError("committed reconciliation state disappeared")
         return projection_record, checkpoint_record
+
+    def initialize_robot_runtime_state(
+        self, trading_account_id: TradingAccountId, *, updated_at_ms: int,
+    ) -> RobotRuntimeStateRecord:
+        self._assert_owner()
+        if updated_at_ms < 0:
+            raise ValueError("Robot runtime timestamp must not be negative")
+        with self._transaction():
+            self._connection.execute(
+                """INSERT OR IGNORE INTO robot_runtime_state VALUES (?, ?, ?, NULL, 1, ?)""",
+                (trading_account_id.value, "ROBOT_STOPPED", "ROBOT_STOPPED", updated_at_ms),
+            )
+        return self.get_robot_runtime_state(trading_account_id)  # type: ignore[return-value]
+
+    def get_robot_runtime_state(
+        self, trading_account_id: TradingAccountId,
+    ) -> RobotRuntimeStateRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM robot_runtime_state WHERE trading_account_id=?",
+            (trading_account_id.value,),
+        ).fetchone()
+        if row is None:
+            return None
+        return RobotRuntimeStateRecord(
+            TradingAccountId(row["trading_account_id"]), row["mode"], row["recovery_status"],
+            row["reason"], int(row["version"]), int(row["updated_at_ms"]),
+        )
+
+    def update_robot_runtime_state(
+        self, trading_account_id: TradingAccountId, *, mode: str, recovery_status: str,
+        reason: str | None, expected_version: int, updated_at_ms: int,
+    ) -> RobotRuntimeStateRecord:
+        self._assert_owner()
+        if (
+            mode not in ROBOT_MODES or recovery_status not in ROBOT_RECOVERY_STATUSES
+            or (mode, recovery_status) not in ROBOT_RUNTIME_STATE_PAIRS
+        ):
+            raise ValueError("unsupported Robot runtime state")
+        if expected_version < 1 or updated_at_ms < 0:
+            raise ValueError("invalid Robot runtime revision or timestamp")
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE robot_runtime_state
+                   SET mode=?, recovery_status=?, reason=?, version=version+1, updated_at_ms=?
+                   WHERE trading_account_id=? AND version=? AND updated_at_ms<=?""",
+                (mode, recovery_status, reason, updated_at_ms, trading_account_id.value,
+                 expected_version, updated_at_ms),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Robot runtime state changed or timestamp regressed")
+        return self.get_robot_runtime_state(trading_account_id)  # type: ignore[return-value]
+
+    def create_robot_candidate(
+        self, *, candidate_id: str, trading_account_id: TradingAccountId, symbol: Symbol,
+        status: str, signal_snapshot: dict[str, object], approved_at_ms: int,
+        updated_at_ms: int,
+    ) -> tuple[RobotCandidateRecord, bool]:
+        self._assert_owner()
+        if not candidate_id.strip() or status != "APPROVED":
+            raise ValueError("new Robot candidate must be a named APPROVED candidate")
+        if approved_at_ms < 0 or updated_at_ms < approved_at_ms:
+            raise ValueError("invalid Robot candidate timestamps")
+        snapshot_json = _canonical_json(signal_snapshot)
+        snapshot_sha256 = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
+            ).fetchone()
+            if existing is not None:
+                record = _robot_candidate_from_row(existing)
+                same = (
+                    record.trading_account_id == trading_account_id and record.symbol == symbol
+                    and record.snapshot_sha256 == snapshot_sha256
+                )
+                if not same:
+                    raise DuplicateIdentity("Robot candidate identity conflicts with durable snapshot")
+                return record, False
+            try:
+                self._connection.execute(
+                    """INSERT INTO robot_candidates VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, ?)""",
+                    (candidate_id, trading_account_id.value, symbol.value, status, snapshot_json,
+                     snapshot_sha256, approved_at_ms, updated_at_ms),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateIdentity("Robot signal snapshot is already admitted") from exc
+        return self.get_robot_candidate(candidate_id), True  # type: ignore[return-value]
+
+    def get_robot_candidate(self, candidate_id: str) -> RobotCandidateRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
+        ).fetchone()
+        return _robot_candidate_from_row(row) if row is not None else None
+
+    def load_robot_candidates(self, trading_account_id: TradingAccountId) -> tuple[RobotCandidateRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            "SELECT * FROM robot_candidates WHERE trading_account_id=? ORDER BY approved_at_ms, candidate_id",
+            (trading_account_id.value,),
+        )
+        return tuple(_robot_candidate_from_row(row) for row in rows)
+
+    def save_robot_candidate_state(
+        self, candidate_id: str, *, status: str, robot_state: dict[str, object],
+        expected_revision: int, updated_at_ms: int,
+    ) -> RobotCandidateRecord:
+        self._assert_owner()
+        if status not in ROBOT_CANDIDATE_STATUSES or expected_revision < 0 or updated_at_ms < 0:
+            raise ValueError("invalid Robot candidate state update")
+        state_json = _canonical_json(robot_state)
+        with self._transaction():
+            current = self._connection.execute(
+                "SELECT status FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
+            ).fetchone()
+            if current is None:
+                raise PersistenceError("Robot candidate does not exist")
+            if status not in ROBOT_CANDIDATE_TRANSITIONS[current["status"]]:
+                raise PersistenceError("Robot candidate lifecycle cannot move backwards")
+            cursor = self._connection.execute(
+                """UPDATE robot_candidates
+                   SET status=?, robot_state_json=?, state_revision=state_revision+1, updated_at_ms=?
+                   WHERE candidate_id=? AND state_revision=? AND updated_at_ms<=?""",
+                (status, state_json, updated_at_ms, candidate_id, expected_revision, updated_at_ms),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Robot candidate state changed or timestamp regressed")
+        return self.get_robot_candidate(candidate_id)  # type: ignore[return-value]
+
+    def create_robot_trade(
+        self, *, trade_id: str, trading_account_id: TradingAccountId, candidate_id: str,
+        symbol: Symbol, direction: str, pattern: str, source_timeframe: str,
+        signal_time_ms: int, entry_time_ms: int, entry_path: str, actual_wv: Decimal,
+        average_entry: Decimal, stop_price: Decimal, take_price: Decimal,
+        created_at_ms: int,
+    ) -> tuple[RobotTradeRecord, bool]:
+        self._assert_owner()
+        if not trade_id.strip() or direction not in ROBOT_DIRECTIONS or entry_path not in ROBOT_ENTRY_PATHS:
+            raise ValueError("invalid Robot trade identity, direction or entry path")
+        if (
+            not pattern.strip() or not source_timeframe.strip() or signal_time_ms < 0
+            or entry_time_ms < signal_time_ms or created_at_ms < entry_time_ms
+        ):
+            raise ValueError("invalid Robot trade source or timestamps")
+        decimals = (actual_wv, average_entry, stop_price, take_price)
+        for value in decimals:
+            _decimal_text(value)
+        if not (Decimal("0") < actual_wv <= Decimal("1")) or any(value <= 0 for value in decimals[1:]):
+            raise ValueError("invalid Robot trade size or price")
+        values = (
+            trade_id, trading_account_id.value, candidate_id, symbol.value, direction, pattern,
+            source_timeframe, signal_time_ms, entry_time_ms, entry_path,
+            *(_decimal_text(value) for value in decimals),
+            None, None, None, None, None, None, 1, created_at_ms, created_at_ms,
+        )
+        with self._transaction():
+            existing = self._connection.execute(
+                "SELECT * FROM robot_trades WHERE trade_id=?", (trade_id,),
+            ).fetchone()
+            if existing is not None:
+                record = _robot_trade_from_row(existing)
+                same = (
+                    record.trading_account_id == trading_account_id
+                    and record.candidate_id == candidate_id and record.symbol == symbol
+                    and record.direction == direction and record.pattern == pattern
+                    and record.source_timeframe == source_timeframe
+                    and record.signal_time_ms == signal_time_ms and record.entry_time_ms == entry_time_ms
+                    and record.entry_path == entry_path and record.actual_wv == actual_wv
+                    and record.average_entry == average_entry and record.stop_price == stop_price
+                    and record.take_price == take_price
+                )
+                if not same:
+                    raise DuplicateIdentity("Robot trade identity conflicts with durable trade")
+                return record, False
+            candidate = self._connection.execute(
+                "SELECT * FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
+            ).fetchone()
+            if candidate is None:
+                raise PersistenceError("Robot trade candidate does not exist")
+            candidate_record = _robot_candidate_from_row(candidate)
+            if (
+                candidate_record.trading_account_id != trading_account_id
+                or candidate_record.symbol != symbol
+                or candidate_record.status != "APPROVED"
+            ):
+                raise PersistenceError("Robot trade candidate scope or lifecycle is not admissible")
+            try:
+                self._connection.execute(
+                    "INSERT INTO robot_trades VALUES (" + ",".join("?" for _ in values) + ")", values,
+                )
+                cursor = self._connection.execute(
+                    """UPDATE robot_candidates SET status='OPEN', updated_at_ms=?
+                       WHERE candidate_id=? AND status='APPROVED' AND updated_at_ms<=?""",
+                    (created_at_ms, candidate_id, created_at_ms),
+                )
+                if cursor.rowcount != 1:
+                    raise ConcurrentUpdate("Robot candidate changed before trade creation")
+            except sqlite3.IntegrityError as exc:
+                raise PersistenceError("cannot create Robot trade from durable candidate") from exc
+        return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
+
+    def get_robot_trade(self, trade_id: str) -> RobotTradeRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM robot_trades WHERE trade_id=?", (trade_id,),
+        ).fetchone()
+        return _robot_trade_from_row(row) if row is not None else None
+
+    def close_robot_trade(
+        self, trade_id: str, *, exit_time_ms: int, exit_price: Decimal, exit_reason: str,
+        realized_pnl_usdt: Decimal, realized_pnl_pct: Decimal,
+        fees_costs_usdt: Decimal | None, updated_at_ms: int,
+    ) -> tuple[RobotTradeRecord, bool]:
+        self._assert_owner()
+        if exit_reason not in ROBOT_EXIT_REASONS:
+            raise ValueError("unsupported Robot exit reason")
+        for value in (exit_price, realized_pnl_usdt, realized_pnl_pct):
+            _decimal_text(value)
+        if fees_costs_usdt is not None:
+            _decimal_text(fees_costs_usdt)
+        if exit_price <= 0:
+            raise ValueError("invalid Robot exit economics")
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT * FROM robot_trades WHERE trade_id=?", (trade_id,),
+            ).fetchone()
+            if row is None:
+                raise PersistenceError("Robot trade does not exist")
+            record = _robot_trade_from_row(row)
+            proposed = (exit_time_ms, exit_price, exit_reason, realized_pnl_usdt,
+                        realized_pnl_pct, fees_costs_usdt)
+            current = (record.exit_time_ms, record.exit_price, record.exit_reason,
+                       record.realized_pnl_usdt, record.realized_pnl_pct, record.fees_costs_usdt)
+            if record.exit_time_ms is not None:
+                if current != proposed:
+                    raise ImmutableExecutionConflict("Robot trade already closed with different evidence")
+                return record, False
+            if exit_time_ms < record.entry_time_ms or updated_at_ms < record.created_at_ms:
+                raise ValueError("invalid Robot close timestamps")
+            self._connection.execute(
+                """UPDATE robot_trades SET exit_time_ms=?, exit_price=?, exit_reason=?,
+                   realized_pnl_usdt=?, realized_pnl_pct=?, fees_costs_usdt=?, version=version+1,
+                   updated_at_ms=? WHERE trade_id=?""",
+                (exit_time_ms, _decimal_text(exit_price), exit_reason,
+                 _decimal_text(realized_pnl_usdt), _decimal_text(realized_pnl_pct),
+                 _optional_decimal_value(fees_costs_usdt), updated_at_ms, trade_id),
+            )
+            cursor = self._connection.execute(
+                """UPDATE robot_candidates SET status='CLOSED', updated_at_ms=?
+                   WHERE candidate_id=? AND status='OPEN' AND updated_at_ms<=?""",
+                (updated_at_ms, record.candidate_id, updated_at_ms),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Robot candidate changed before trade close")
+        return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
 
     def get_reconciliation_checkpoint(
         self, key: PositionKey
