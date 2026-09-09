@@ -45,15 +45,14 @@ def reconcile_restart(
     durable_mode: str | None,
     open_robot_positions: Sequence[Mapping[str, Any]],
     approved_candidates: Sequence[Mapping[str, Any]],
-    latest_geometry_index_by_symbol: Mapping[str, int],
+    latest_geometry_index_by_candidate: Mapping[str, int],
 ) -> tuple[str, tuple[RestartDecision, ...]]:
     """Build restart actions without replaying missed candles.
 
     OPEN Robot positions survive restart. WAITING approved candidates resume only
-    from their persisted immutable snapshot and persisted Robot state. Their
-    geometry cursor is advanced to the latest authoritative index using
-    ``resume_without_replay`` so missed breakout/retest events cannot be traded
-    retroactively.
+    from their persisted immutable snapshot and persisted Robot state. Each
+    candidate gets its own latest index because two candidates on one symbol may
+    have different frozen Scanner index anchors.
     """
 
     mode = initial_robot_mode(durable_mode)
@@ -95,13 +94,14 @@ def reconcile_restart(
             raise RobotRestartError("approved candidate lacks durable recovery state")
         state = dict(state_wrapper)
         state.pop("revision", None)
-        symbol = str(snapshot.get("symbol", candidate.get("symbol", ""))).strip().upper()
-        if symbol not in latest_geometry_index_by_symbol:
-            raise RobotRestartError(f"latest geometry index is unavailable for {symbol}")
+        if candidate_id not in latest_geometry_index_by_candidate:
+            raise RobotRestartError(
+                f"latest geometry index is unavailable for candidate {candidate_id}"
+            )
         resumed, event = resume_without_replay(
             snapshot,
             state,
-            latest_geometry_index=int(latest_geometry_index_by_symbol[symbol]),
+            latest_geometry_index=int(latest_geometry_index_by_candidate[candidate_id]),
         )
         if resumed.get("phase") == PHASE_EXPIRED_AT_APEX:
             decisions.append(
