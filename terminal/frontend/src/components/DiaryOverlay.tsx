@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { marketApiRoutes } from "../marketData/apiRoutes";
 import "./DiaryOverlay.css";
 
-type DiarySection = "TRADES" | "SETUPS" | "STATISTICS";
+export type DiarySection = "TRADES" | "SETUPS" | "STATISTICS";
 type DiaryFilter = "ALL" | "OPEN" | "CLOSED" | "ATTENTION";
 type SetupFilter = "ALL" | "ATTENTION";
 
@@ -392,8 +392,20 @@ function StatisticsView({ statistics }: { statistics: DiaryStatistics }) {
   );
 }
 
-export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onClose: () => void }) {
-  const [section, setSection] = useState<DiarySection>("TRADES");
+export function DiaryOverlay({
+  accountKey,
+  onClose,
+  initialSection = "TRADES",
+  initialTradeEpisodeId = null,
+}: {
+  accountKey: string;
+  onClose: () => void;
+  initialSection?: DiarySection;
+  initialTradeEpisodeId?: string | null;
+}) {
+  const [section, setSection] = useState<DiarySection>(
+    initialTradeEpisodeId === null ? initialSection : "TRADES",
+  );
   const [trades, setTrades] = useState<DiaryTrade[]>([]);
   const [setups, setSetups] = useState<DiarySetup[]>([]);
   const [statistics, setStatistics] = useState<DiaryStatistics | null>(null);
@@ -403,6 +415,8 @@ export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onCl
   const [loadError, setLoadError] = useState(false);
   const [accountId, setAccountId] = useState("");
   const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
+  const [requestedTradeMissing, setRequestedTradeMissing] = useState(false);
+  const initialTradeRequest = useRef<string | null>(initialTradeEpisodeId);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -415,14 +429,27 @@ export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onCl
         if (!result.ok || !Array.isArray(result.trades)) throw new Error("diary response is invalid");
         setTrades(result.trades);
         setAccountId(result.active_account_id);
-        setSelectedTradeId((current) => current && result.trades.some((trade) => trade.trade_episode_id === current) ? current : null);
+        const requestedTradeId = initialTradeRequest.current;
+        if (requestedTradeId !== null) {
+          initialTradeRequest.current = null;
+          const linkedTrade = result.trades.find(
+            (trade) => trade.trade_episode_id === requestedTradeId,
+          );
+          setSelectedTradeId(linkedTrade?.trade_episode_id ?? null);
+          setRequestedTradeMissing(linkedTrade === undefined);
+        } else {
+          setRequestedTradeMissing(false);
+          setSelectedTradeId((current) => current && result.trades.some((trade) => trade.trade_episode_id === current) ? current : null);
+        }
       } else if (section === "SETUPS") {
+        setRequestedTradeMissing(false);
         const response = await fetch(marketApiRoutes.diarySetups);
         if (!response.ok) throw new Error("diary setups request failed");
         const result = (await response.json()) as DiarySetupsResponse;
         if (!result.ok || !Array.isArray(result.setups)) throw new Error("diary setups response is invalid");
         setSetups(result.setups);
       } else {
+        setRequestedTradeMissing(false);
         const response = await fetch(marketApiRoutes.diaryStatistics);
         if (!response.ok) throw new Error("diary statistics request failed");
         const result = (await response.json()) as DiaryStatisticsResponse;
@@ -439,6 +466,7 @@ export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onCl
 
   useEffect(() => {
     setSelectedTradeId(null);
+    setRequestedTradeMissing(false);
     void refresh();
   }, [accountKey, refresh]);
 
@@ -470,9 +498,9 @@ export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onCl
         </header>
 
         <nav className="diary-primary-nav" aria-label="Разделы дневника">
-          <button aria-current={section === "TRADES" ? "page" : undefined} onClick={() => { setSection("TRADES"); setSelectedTradeId(null); }} type="button">Сделки</button>
-          <button aria-current={section === "SETUPS" ? "page" : undefined} onClick={() => { setSection("SETUPS"); setSelectedTradeId(null); }} type="button">Сетапы</button>
-          <button aria-current={section === "STATISTICS" ? "page" : undefined} onClick={() => { setSection("STATISTICS"); setSelectedTradeId(null); }} type="button">Статистика</button>
+          <button aria-current={section === "TRADES" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("TRADES"); setSelectedTradeId(null); }} type="button">Сделки</button>
+          <button aria-current={section === "SETUPS" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("SETUPS"); setSelectedTradeId(null); }} type="button">Сетапы</button>
+          <button aria-current={section === "STATISTICS" ? "page" : undefined} onClick={() => { setRequestedTradeMissing(false); setSection("STATISTICS"); setSelectedTradeId(null); }} type="button">Статистика</button>
         </nav>
 
         {!selectedTrade && section !== "STATISTICS" ? (
@@ -502,11 +530,12 @@ export function DiaryOverlay({ accountKey, onClose }: { accountKey: string; onCl
             </div>
           ) : null}
 
-          {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => setSelectedTradeId(null)} /> : null}
-          {!loading && !loadError && !selectedTrade && section === "TRADES" && visibleTrades.length === 0 ? <p className="diary-state">Нет сделок в этом фильтре</p> : null}
+          {!loading && !loadError && selectedTrade ? <TradeDetailsView trade={selectedTrade} onBack={() => { setRequestedTradeMissing(false); setSelectedTradeId(null); }} /> : null}
+          {!loading && !loadError && requestedTradeMissing && section === "TRADES" ? <p className="diary-state">Сделка недоступна в текущем дневнике</p> : null}
+          {!loading && !loadError && !requestedTradeMissing && !selectedTrade && section === "TRADES" && visibleTrades.length === 0 ? <p className="diary-state">Нет сделок в этом фильтре</p> : null}
           {!loading && !loadError && !selectedTrade && section === "SETUPS" && visibleSetups.length === 0 ? <p className="diary-state">Нет сетапов в этом фильтре</p> : null}
 
-          {!loading && !loadError && !selectedTrade && section === "TRADES" && visibleTrades.length > 0 ? (
+          {!loading && !loadError && !requestedTradeMissing && !selectedTrade && section === "TRADES" && visibleTrades.length > 0 ? (
             <div className="diary-trades-list">
               {visibleTrades.map((trade) => (
                 <button className={`diary-trade-row ${trade.side.toLowerCase()}`} key={trade.trade_episode_id} onClick={() => setSelectedTradeId(trade.trade_episode_id)} type="button">
