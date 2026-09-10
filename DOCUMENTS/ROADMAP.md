@@ -2,7 +2,7 @@
 
 Version:
 
-4.60
+4.61
 
 Date:
 
@@ -1483,190 +1483,31 @@ Current action:
 
 STAGE_8_MOBILE_TRADING_WORKSPACE_UX_CLARIFICATIONS_2_RECORDED_NEXT_IMPLEMENTATION_SLICE_NOT_AUTHORIZED_REVISION_1_27.
 
-Current revision 1.27 is documentation only and records full-position STOP/TAKE creation, editing, sizing and
-average-entry invariants; signal TAKE proposals; no-position behavior; independent BUY/SELL volume; swords and
-position details; the two-row Limit inventory; authoritative live position PnL; average-entry line behavior;
-order-line classes; and the sampled graphite/#3BC639/#CD0000 palette. Mobile UX remains incomplete and no
-implementation is started or authorized.
+Full per-revision wording is owned by the CR file's own machine-readable
+revision history, not restated here (`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md`,
+`revision_history` field). This roadmap keeps only a milestone index:
 
-Previous revision 1.26 is documentation only and records the approved mobile chart core, geometry-preserving
-collapsible Prints/DOM panel, position/PnL placement, lower trading-panel layout and collapse, non-reversing
-Market taps, two-finger chart Limit gesture, existing Limit reveal/cancel and confirmed-move rollback, and
-reference-led visual direction. Mobile UX remains incomplete and no implementation is started or authorized.
+* 1.5-1.9 — intermediate CONTEXT architecture, execution/reconciliation model and execution/risk
+  decisions: Bybit REST/WS reconciliation, SignalSnapshot, renderer-neutral chart adapter, backend
+  boundary, WV/One-Way Mode/Manual-takeover/Emergency-Close policy, upper-workspace layout direction;
+* 1.10-1.16 — DOM/prints/CENTER UX decisions: recenter policy, Market/Limit/SL-TP execution and
+  protection, single-CENTER locked-mode semantics, MetaScalp new-tab integration decisions;
+* 1.17 — Paper-first React 19/TypeScript/Vite frontend stack selected; fast-order and CENTER control
+  semantics recorded; Stage 8 not authorized;
+* 1.18 — authoritative normalized Bybit Public WebSocket L2 book (depth 50), Paper Market execution via
+  book walk, fail-closed staleness/resync handling;
+* 1.19 — Stage 8 Block 1 implemented and verified: `terminal/frontend/` React 19/TS/Vite scaffold, PAPER/
+  non-live shell, normalized order-book type boundary, no functional DOM/L2/Paper engine yet;
+* 1.20-1.21 — Fast DOM client-slice UX documentation and the single shared 3-in-1 Terminal/Autopilot/
+  Editor workspace architecture; no implementation authorized;
+* 1.22-1.23 — first runnable Fast DOM/Workspace prototype implemented and verified: three-mode shell,
+  SVG chart, non-trading DOM/Tape, Paper fixture orders, responsive layout;
+* 1.24-1.25 — Telegram Mini App phone-test adapter authorized, then implemented and verified inside
+  Telegram with a temporary development tunnel;
+* 1.26-1.27 — approved mobile chart core, DOM/Prints panel layout, full-position STOP/TAKE lifecycle,
+  average-entry and position-PnL UX invariants. Mobile UX remains incomplete.
 
-Previous revision 1.25 records that adapter as implemented and verified: the same frontend initializes inside
-Telegram, respects prototype safe areas and stable viewport height, remains locally runnable, accepts a
-temporary `trycloudflare.com` development URL, and exposes an HTTPS-only existing-bot menu configuration tool
-without moving secrets into the client. Installing and launching the temporary tunnel and binding its URL to
-the bot menu remain user-side phone-launch steps; no next implementation slice is authorized.
-
-Previous revision 1.24 authorizes only the smallest Telegram Mini App phone-test adapter around the same
-frontend, basic safe-area/viewport integration, existing-bot menu-button configuration and a temporary HTTPS
-development tunnel while preserving localhost, server-side secrets, Paper/non-live mode and all deferred scope.
-
-Previous revision 1.23 records the first runnable prototype: shared state-preserving three-mode shell, SVG
-candlestick chart, compact non-trading DOM/Tape, CENTER lock/manual movement, same-price Paper fixture order
-visualization and individual cancellation, Paper account menu, responsive layout and a normalized labelled
-deterministic development feed. Four focused interaction/adapter tests, Biome, TypeScript/Vite production
-build and HTTP 200 local startup smoke check passed. Live Bybit, Robot, real credentials, execution and every
-next Stage 8 slice remain separately gated.
-
-Previous revision 1.22 authorized only the smallest runnable Fast DOM client slice on the existing frontend
-foundation, with a shared three-mode shell, real chart surface, non-trading DOM/Tape interactions, labelled
-deterministic development feed behind normalized boundaries, CENTER behavior, own-order fixture rendering,
-Paper account access location and focused verification. Robot, live credentials, real execution, complete
-Editor, Trading Intelligence and all other deferred scope remain unauthorized.
-
-Previous revision 1.21 single 3-in-1 Trading Workspace architecture checkpoint:
-
-* defines one shared application/engine with Terminal, Autopilot and Editor modes rather than separate apps
-  or chart engines;
-* switches the lower mode-specific functional panel while retaining symbol, timeframe, chart viewport, market
-  data, DOM/Tape, account and connection state where applicable;
-* provides lower-panel buttons to the other two modes and removes the upper/header Autopilot button;
-* makes mode switching non-mutating and routes account selection through a key-icon area with Paper/Virtual
-  as one configured account choice;
-* defers final DOM-plus-Tape/header responsiveness to the real prototype and retains delivery of the first
-  runnable Fast DOM/Workspace prototype as the active product priority;
-* starts no Robot, Editor, credential or Fast DOM implementation and changes no implementation authority.
-
-Previous revision 1.20 Fast DOM client-slice UX documentation checkpoint:
-
-* preserves React/TypeScript/Vite while requiring a dedicated future-Web-Worker-compatible high-frequency
-  data path and efficient/virtualized ladder rendering under backend execution authority;
-* makes ordinary DOM Bid/Ask/price left/right clicks non-trading for the current slice, permits vertical drag
-  and wheel repositioning, disables locked CENTER on intentional manual movement and preserves single/double
-  CENTER semantics with a visible locked outline;
-* binds one side-colored dot per distinct own order at a price, per-dot individual cancellation and the
-  side-colored aggregate own-order USDT notional at the extreme left of that same DOM row;
-* binds Bybit V5 public WebSocket depth-50 snapshot/delta orderbook plus conceptually separate `publicTrade`
-  tape as the live baseline, while keeping the normalized DOM contract depth-extensible and REST secondary;
-* explicitly defers DOM-cell order creation, detailed quick-volume controls and all other final trading mouse
-  semantics; implementation remains not started and not authorized.
-
-Previous revision 1.19 Stage 8 Block 1 frontend foundation checkpoint:
-
-* created the bounded `terminal/frontend/` React 19, TypeScript and Vite scaffold with npm lockfile,
-  Tailwind 4 styling foundation, Biome checks and one Vitest/React Testing Library shell test;
-* established small shell regions for instrument/header, chart placeholder, DOM/order-book placeholder,
-  unavailable trading controls and connection status, with visible PAPER/non-live execution mode;
-* established only a frontend-facing normalized order-book type boundary, with no raw Bybit snapshot/delta,
-  `u` or `seq` coupling and no Market Data Engine or realtime integration;
-* verified Biome, focused test, strict TypeScript and production build; no charting, functional DOM, L2
-  ingestion, Paper engine, live execution, credentials, MetaScalp or Scanner/Telegram change was introduced;
-* kept all later Stage 8 blocks separately authorization-gated.
-
-Previous revision 1.18 authoritative L2 and Paper execution decisions, preserving Paper-first architecture
-and the prior frontend, fast-order, CENTER and MetaScalp boundaries:
-
-* CENTER mouse double-click is 300 ms and touch double-tap is 350 ms; first activation centers immediately,
-  and CENTER mouse/touch, 500-ms long press and 300-ms trading anti-bounce remain independent domains;
-* same-price own orders aggregate their displayed USDT amount while retaining independently cancellable,
-  deterministic newest-to-left, touch-safe markers with priority over overlapping translucent prints;
-* quick volume resets to one WV when entering or switching symbol, while its tooltip shows the USDT reference
-  and execution remains governed by rounded base-asset quantity;
-* one authoritative normalized Bybit Public WebSocket L2 book, initially depth 50, supplies DOM, Market
-  VWAP/slippage preview and Paper Market execution through explicit readiness and resynchronization state;
-* Market BUY/Paper BUY walk asks and Market SELL/Paper SELL walk bids; resting Paper Limits do not fill fully
-  merely on touch, and their exact queue/liquidity model remains a bounded unresolved design item;
-* stale, unsynchronized or sequence-ambiguous books fail closed; the exact numeric staleness threshold remains
-  unresolved, and a masked bounded SECRET EXPOSURE AUDIT is required but was not executed;
-* Stage 8 remains not started/not authorized, no implementation or dependencies are authorized, and real-money
-  Bybit execution and MetaScalp integration remain outside this checkpoint.
-
-Previous revision 1.17 Paper-first frontend and fast-order decisions:
-
-* the selected frontend stack is one React 19 plus TypeScript plus Vite SPA for desktop and Telegram Mini
-  App, with npm/package-lock, Zustand, TanStack Query for REST/server state, a separate WebSocket realtime
-  layer, Tailwind 4, selective shadcn/Radix, Vitest/RTL/Playwright and Biome;
-* high-frequency DOM rendering remains isolated from ordinary React rendering, and no chart/rendering
-  engine is selected by this decision;
-* desktop DOM and chart Limit placement is side-explicit, fast placement is fail-closed, normal
-  non-marketable Limits require no confirmation, aggressive marketable Limits require confirmation and
-  remain Limit orders, while Market BUY/SELL preparation always requires the approved preview confirmation;
-* BUY/SELL/LIMIT long press is binding at 500 ms, separate from the 300-ms trading anti-bounce; CENTER
-  mouse 300-ms and touch 350-ms double-activation windows remain pending proposals, not approved timings;
-* pending Limit-line edits roll back to the exact confirmed price without an amend unless explicitly
-  confirmed, and actual filled/remaining base-asset quantity is authoritative after fills and for close;
-* initial execution is Paper-first behind a backend-neutral interface, with real-money Bybit deferred and
-  no Paper engine, frontend dependency or Stage 8 implementation authorized by this checkpoint;
-
-* Fast DOM has one `CENTER` control: single activation performs one-shot centering, double activation
-  centers and enables LOCKED CENTERING, repeated double activation disables it, and deliberate manual
-  scrolling or repositioning also disables it;
-* active LOCKED CENTERING is shown by a persistent visible border or outline on `CENTER`; exact styling
-  and double-activation timing remain frontend details independent of the 300-ms trading anti-bounce;
-* touch and desktop share one execution gesture state machine and backend/API semantics, while touch uses
-  primary-plus-secondary fingers and desktop uses held mouse arming plus a separately deliberate DOM-row
-  action whose exact button mapping must be approved before Stage 8; hover never trades;
-* a future Scanner Telegram signal `Open in MetaScalp` action must open a new MetaScalp tab and new DOM for
-  the signal symbol while preserving all existing tabs and order books;
-* official MetaScalp Linking API `/api/combo` remains a verification-gated candidate rather than proof of
-  the required new-tab behavior; failure to prove `NEW TAB + NEW DOM + PRESERVE EXISTING TABS` is an explicit
-  blocker and cannot be replaced by change-ticker;
-* Stage 7 is complete, Stage 8 is not started or authorized pending exact scope and dependency authorization, and
-  MetaScalp integration remains a separate future bounded implementation block.
-
-Approved intermediate CONTEXT architecture directions from revision 1.5:
-
-* Bybit V5 authenticated REST plus private order/execution/position/wallet events, with reconciliation
-  for startup, reconnect, uncertain commands and full-close invariants;
-* backend-validated Telegram Mini App initData, freshness and numeric-user allowlist;
-* immutable versioned SignalSnapshot separated from trading state and detector runtime;
-* a renderer-neutral shared chart adapter, with KLineChart retained as a researched candidate and
-  Matplotlib/mplfinance retained for static reports;
-* Python/FastAPI REST plus backend WebSocket boundary and SQLite/WAL journal plus projections;
-* reconciliation-gated trading, account-isolated state and replaceable CredentialStore;
-* cash-flow-adjusted return direction, single-flight Scanner Control and deployment-neutral HTTPS ingress.
-
-Human-approved intermediate revision 1.6 refinements, superseded where revision 1.8 binds a later decision:
-
-* position-mode-aware USDT Linear Perpetual scope with preferred Hedge Mode and explicit side/positionIdx;
-* ACK-to-pending-to-event/reconciliation confirmation and execId-deduplicated fills;
-* account/symbol/side position projections, reconciled close workflow and REST recovery sources;
-* durable TradingCommand/orderLinkId correlation and no blind retry after uncertain exposure commands;
-* preferred WV base of active-account USDT walletBalance without leverage or unrealized-PnL expansion;
-* downward instrument qty normalization, pre-submit insufficient-volume rejection and visible tickSize price normalization;
-* actual fractional WV derived from confirmed execution and reconciled position state.
-
-Human-approved intermediate revision 1.7 execution/reconciliation model:
-
-* acknowledgements are acceptance evidence, while immutable executions deduplicated by account/category/execId
-  are the only fill evidence and cannot apply quantity, PnL, fee or WV effects twice;
-* TradingCommand and unique orderLinkId are durable before submission, uncertain outcomes prohibit blind retry,
-  and normalized order/position evidence never regresses stronger confirmed state;
-* PositionKey is account/category/symbol/position_idx, position events are operational state rather than fills,
-  and external origin is never silently claimed as Terminal origin or conflated with current controller;
-* L1 command/order, L2 symbol/leg, L3 account and L4 startup/reconnect reconciliation converge through one
-  execution-state owner with scope-appropriate new-exposure locks and a separate reduce-risk gate;
-* crash/replay-safe atomic ingestion covers journal, execution deduplication, immutable execution, projections
-  and reconciliation state, while Full Close converges only at zero plus required cleanup and final reconciliation;
-* revision 1.8 resolves the previously open WV authority, binding position mode, external interaction, Manual
-  takeover, emergency-close, negative-correlation, automatic mode-switching and external-order cleanup policies.
-
-Human-approved intermediate revision 1.8 execution/risk decisions:
-
-* active-account USDT walletBalance is the binding leverage-independent WV base, with existing five-percent
-  calculation and downward tens-of-USDT rounding; totalAvailableBalance, totalEquity and non-USDT value are excluded;
-* Manual v1 requires One-Way Mode and positionIdx zero, prohibits simultaneous opposite exposure and hidden
-  reversal, and never switches Bybit position mode automatically;
-* external exchange state is displayed, included in risk and reconciled/adopted without rewriting origin or
-  sending compensating orders; OWNER takeover changes controller only after reconciliation;
-* Emergency Close remains a separate auditable reduce-risk workflow with no blind retry and CLOSED_RECONCILED
-  completion, while Full Close never silently cancels potentially dangerous external orders;
-* negative lookup uses bounded repeated multi-source correlation, but exhausted horizon retains explicit
-  unresolved state; exact refresh, timeout, interval, backoff and horizon parameters remain later work.
-
-Human-approved intermediate revision 1.9 upper-workspace direction:
-
-* the upper Manual Terminal workspace remains minimal with the primary live chart on the left and a narrow
-  collapsible DOM plus execution-prints panel on the right; the existing trading controls remain below;
-* DOM levels combine price, resting size and stable proportional depth fill, while aggressive executions use
-  buyer/seller color, clamped volume sizing and bounded realtime history;
-* a multi-level sweep ellipse is allowed only when sequenced L2 and trade evidence support the consumed range;
-  ambiguous correlation falls back to a factual non-sweep print;
-* one normalized market-data source is shared with active liquidity consumers, hidden rendering is suspended,
-  and depth, scaling, batching, subscription lifecycle and mobile feasibility remain unresolved research.
+Stage 8 implementation beyond Block 1 remains not started or authorized as of revision 1.27.
 
 Repository-confirmed boundary:
 
@@ -1732,268 +1573,65 @@ RULE-008:
 
 # VERSION_UPDATE_REASON
 
-from:
-
-ROADMAP v4.59
-
-to:
-
-ROADMAP v4.60
-
-reason:
-
-Implemented CR-SCANNER-GEOMETRY-ATR-CONTAINMENT (v4.59 to v4.60):
-
-* `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` `Implementation authorization` changed from
-  `NONE` to `APPROVED` and implemented the same day (2026-09-11); see that document's own
-  `IMPLEMENTATION_RECORD` for files changed, verification evidence, and the accepted Rising
-  Wedge/Triangle Compression containment-gate scope gap;
-* `DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md` remains `SUPERSEDED` (unchanged from the
-  prior checkpoint);
-* `CR-SCANNER-GEOMETRY-002` (Pivot touch/violation tolerance) is unaffected and remains `OPEN / SPEC`,
-  distinct from the now-implemented containment mechanism.
-
-from:
-
-ROADMAP v4.58
-
-to:
-
-ROADMAP v4.59
-
-reason:
-
-Formalized CR-SCANNER-GEOMETRY-002 (v4.58 to v4.59), documentation only, no implementation authorized:
-
-* resolved SCANNER_GEOMETRY_TASK_SELECTION (open since CR-SCANNER-GEOMETRY-001 mission close) to
-  `CR-SCANNER-GEOMETRY-002` — ATR-Normalized Wick-Aware Boundary Fitting for Wedge Layer, TASK/SPEC recorded
-  in `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-002.md` revision 1.0;
-* promoted the GRVTUSDT wick-aware boundary-fitting observation from research hypothesis to a SPEC-stage
-  ChangeRequest targeting `geometry/touches.py` / `geometry/validation/touches.py` Pivot touch/violation
-  tolerance, distinct from the separately governed `SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`
-  post-detection containment/freshness mechanism;
-* recorded approved scope (separate ATR-derived touch/violation tolerance, graduated per-touch scoring,
-  bounded per-line outlier allowance, shared upper/lower code path, additive GeometryModel touches
-  extension) and left ATR multipliers, outlier count, score formula and ATR windowing as unresolved
-  decisions pending separate approval before CONTEXT/IMPLEMENT;
-  changed no Geometry, Wedge, or Signal production behavior.
-
-from:
-
-ROADMAP v4.56
-
-to:
-
-ROADMAP v4.58
-
-reason:
-
-Project priority pivot (v4.56 to v4.58), documentation only, no implementation authorized:
-
-* closed Trading Terminal / Trading Workspace as the active development direction — it has reached a
-  state usable for trading; `CR-TRADING-WORKSPACE-001` is not formally closed and its own record is
-  unchanged;
-* set the new current priority to the Robot v0.1 prototype, whose first dependency is finishing pattern
-  detection / Geometry;
-* promoted the GRVTUSDT wick-aware Wedge boundary-fitting observation from deferred research hypothesis to
-  the active pre-implementation target, formalized in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`
-  (`ACCEPTED DESIGN`, `Implementation authorization: NONE`), which supersedes
-  `DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md`;
-* updated CURRENT_ARCHITECTURE_DIRECTION and CURRENT_OBJECTIVE accordingly; changed no Geometry, Wedge, or
-  Signal production behavior.
-
-from:
-
-ROADMAP v4.44
-
-to:
-
-ROADMAP v4.45
-
-reason:
-
-Current checkpoint — authoritative L2 and Paper execution decisions (v4.44 to v4.45):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.18 and checkpoint `AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED`;
-* approved independent CENTER mouse/touch timings, same-price own-order aggregation and touch-safe identity markers, and symbol-scoped quick-volume reset;
-* bound one authoritative normalized Bybit Public WebSocket L2 book at initial depth 50 for DOM, Market preview and Paper market execution;
-* recorded L2-walk VWAP/slippage, Paper Market liquidity consumption and fail-closed health/resynchronization behavior;
-* preserved resting Paper Limit queue/fill algorithm, marker overflow presentation and numeric staleness threshold as bounded unresolved details;
-* required a future masked SECRET EXPOSURE AUDIT before live credentials, did not execute it, and kept Stage 8 not started/not authorized.
-
-Previous checkpoint preserved — Paper-first frontend and fast-order decisions (v4.43 to v4.44):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.17 and checkpoint `PAPER_FIRST_FRONTEND_AND_FAST_ORDER_DECISIONS_RECORDED`;
-* selected the React 19/TypeScript/Vite frontend toolchain while leaving the chart/rendering engine unselected;
-* recorded desktop Limit placement, confirmed Market preparation, binding 500-ms long press, fail-closed fast-order safety and acknowledgement-gated success sound;
-* recorded pending Limit-line rollback and actual filled base-asset quantity as position and close authority;
-* superseded real-Bybit-first with Paper-first execution behind a reusable backend-neutral interface while deferring real-money Bybit execution;
-* retained CENTER 300-ms mouse and 350-ms touch windows as pending proposals and kept Stage 8 not started/not authorized.
-
-Previous checkpoint preserved — corrective single-CENTER locked-mode semantics (v4.42 to v4.43):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.16 and checkpoint `DOM_SINGLE_CENTER_LOCKED_MODE_SEMANTICS_RECORDED`;
-* replaced two centering controls with one `CENTER` control and bound its single/double activation semantics;
-* required visible border/outline state while locked and manual-scroll lock-off;
-* kept CENTER recognition independent from the 300-ms trading anti-bounce;
-* preserved MetaScalp and touch/mouse trading decisions and Stage 8 not started/not authorized.
-
-Previous checkpoint preserved — DOM input and MetaScalp new-tab integration decisions (v4.41 to v4.42):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.15 and checkpoint `DOM_INPUT_AND_METASCALP_NEW_TAB_INTEGRATION_DECISIONS_RECORDED`;
-* recorded the revision 1.15 default-off AUTO CENTER plus separate one-shot CENTER policy, now superseded only by revision 1.16 single-CENTER semantics;
-* recorded shared execution semantics with distinct touch and verification-gated desktop mouse mappings;
-* recorded the separate Scanner Telegram-to-MetaScalp new-tab/new-DOM requirement and official Linking API verification gate;
-* preserved Stage 7 completion, Stage 8 not started/not authorized and MetaScalp as a separate bounded block.
-
-Previous checkpoint preserved — Manual Limit GTC and amend lifecycle correction (v4.40 to v4.41):
-
-* superseded as the current checkpoint by `CR-TRADING-WORKSPACE-001` revision 1.14 checkpoint
-  `MANUAL_LIMIT_GTC_AND_AMEND_LIFECYCLE_CORRECTION_RECORDED`;
-* bound ordinary Manual Limit v1 orders to GTC until fill, explicit cancellation or approved cleanup;
-* recorded truthful terminal `AMENDED` command completion separately from the still-active exchange order;
-* recorded the Stage 5 pybit mutation no-retry gate and narrow ExecutionEngine outcome-ingestion requirement;
-* preserved Stage 5 as not started and not authorized, overall CONTEXT as active/incomplete and Robot as out of scope.
-
-Previous checkpoint preserved — Manual execution/protection IMPLEMENT planning (v4.39 to v4.40):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.13 and checkpoint `MANUAL_EXECUTION_PROTECTION_IMPLEMENT_PLAN_RECORDED`;
-* recorded modular Terminal boundaries, Bybit adapter responsibilities, explicit execution/connectivity states, persistence/recovery and DOM/chart projection contracts;
-* decomposed the bounded implementation into nine reviewable stages with acceptance, rollback and a complete safety/regression test matrix;
-* assessed the plan as ready for explicit human authorization after recorded pre-implementation gates, without authorizing or starting IMPLEMENT;
-* preserved overall active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT.
-
-Previous checkpoint preserved — Manual execution/protection CONTEXT completion (v4.38 to v4.39):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.12 and recorded checkpoint `MANUAL_EXECUTION_PROTECTION_CONTEXT_SUFFICIENT_FOR_IMPLEMENT_PLANNING`;
-* completed fast-input versus uncertainty locks, degraded-state risk gates, Market/Limit reversal distinction and realtime reconciliation requirements;
-* recorded origin-independent current-symbol ordinary-Limit cleanup after confirmed FLAT, without extending it to other symbols or conditional protection;
-* recorded the final conceptual execution-state matrix and assessed this bounded CONTEXT block as sufficiently researched with no blocker before separately authorized IMPLEMENT planning;
-* preserved overall active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT planning and IMPLEMENT.
-
-Previous checkpoint preserved — Trading Workspace Manual Market / Limit / SL-TP execution and protection (v4.37 to v4.38):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.11 and recorded checkpoint `MANUAL_MARKET_LIMIT_SLTP_EXECUTION_PROTECTION_RECORDED`;
-* recorded held-side fast DOM execution, quick-volume and anti-bounce semantics, fail-closed submission and distinct Market/Limit partial-fill behavior;
-* recorded Market-to-FLAT behavior, the narrow Manual-Limit opposite-remainder exception, all-origin Limit visibility and confirmed DOM/chart order lifecycle;
-* preserved Bybit authority, reconciliation locks, close cleanup with external-order safeguards and future-capable non-priority automatic preset SL/TP;
-* preserved active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT.
-
-Previous checkpoint preserved — Trading Workspace threshold-based DOM recenter policy (v4.36 to v4.37):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.10 and recorded checkpoint `MANUAL_LIVE_TRADING_V1_THRESHOLD_RECENTER_POLICY_RECORDED`;
-* superseded only the approximately 23-second periodic timing with an approximately five-second configurable check that recenters only beyond a central-deviation threshold;
-* preserved immediate CENTER, higher-priority STRONG-sweep follow, manual-inspection suppression and every other revision 1.9 DOM/prints decision;
-* retained exact interval, deviation threshold, dead-zone, motion and inactivity behavior as prototype-tunable research;
-* preserved active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT.
-
-Previous checkpoint preserved — Trading Workspace upper workspace / DOM / prints direction (v4.35 to v4.36):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.9 and recorded the approved minimal upper-workspace composition;
-* recorded the normalized public-market-data owner, confidence-gated sweep and resync semantics, reusable Manual book walk, compact position indication and Canvas2D-oriented bounded rendering direction;
-* recorded non-binding DOM/print scaling and external license/provenance constraints without vendoring source;
-* recorded a preferred 20+20 viewport over an `orderbook.50` working-depth candidate, configurable recenter, interaction-safe STRONG-sweep follow and optional deferred x10/x100 presentation compression;
-* retained responsive/calculation depth, exact timing/animation, compression feasibility, gap/correlation/confidence rules, scaling windows, retention, lifecycle, vendoring, heatmap and mobile feasibility as later research;
-* preserved active incomplete CONTEXT, Robot out of scope and unauthorized IMPLEMENT.
-
-Previous checkpoint preserved — Trading Workspace human execution/risk decisions record (v4.34 to v4.35):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.8 and recorded the approved execution/risk decisions;
-* bound walletBalance WV, One-Way Mode, reconcile-and-adopt external state, Manual takeover, Emergency Close, external-order-aware Full Close and conservative negative correlation;
-* retained numeric refresh/cache/retry/backoff/search-horizon parameters as later configurable research/design work;
-* preserved active incomplete CONTEXT, future-only Robot constraints and unauthorized IMPLEMENT.
-
-Previous checkpoint preserved — Trading Workspace execution/reconciliation model record (v4.33 to v4.34):
-
-* advanced `CR-TRADING-WORKSPACE-001` to revision 1.7 and recorded the formal execution/reconciliation model;
-* retained REST/WS acknowledgements as non-fill evidence, immutable deduplicated executions, non-regressive order/position projections and external-origin separation;
-* recorded L1-L4 reconciliation, scoped exposure gates, crash/replay atomicity and reconciled Full Close invariants;
-* preserved the enumerated human decisions as unresolved, kept CONTEXT active and incomplete, and left IMPLEMENT not started or authorized.
-
-Previous checkpoint preserved — ANCHOR_QUALITY_LEARNING future research mission record (v4.32 to v4.33):
-
-* recorded historical multi-candidate Anchor/START quality learning as a future Scanner / Geometry mission;
-* prohibited look-ahead leakage and separated immutable live evidence from hindsight outcome evaluation;
-* recorded potential/height correspondence as an unapproved research feature rather than a formula;
-* preserved hard geometry constraints, baseline behavior, manual-review uncertainty and holdout acceptance;
-* retained Trading Workspace v1 CONTEXT / RESEARCH as current primary work without lifecycle change;
-* did not authorize a ChangeRequest, CONTEXT, IMPLEMENT, ML work or production Geometry change.
-
-Previous checkpoint preserved — CR-TRADING-INTELLIGENCE-001 microstructure research record (v4.22 to v4.23):
-
-* recorded realtime L2/tape, incremental book, adaptive depth and selective activation conclusions;
-* recorded LiquidityZone/LiquidityObservation evidence boundaries and market-execution simulation direction;
-* classified microstructure research as sufficient for roadmap-level design while retaining implementation details as open;
-* routed the next research focus to Trading Intelligence detector families;
-* preserved the roadmap as non-final and kept ROADMAP_SPEC and IMPLEMENT unauthorized.
-
-Previous checkpoint preserved — CR-TRADING-INTELLIGENCE-001 durable planning/research start (v4.21 to v4.22):
-
-* added the non-final three-track roadmap hypothesis for Trading Intelligence, Trading Foundation and Market Microstructure;
-* preserved approved Paper Trader v1, strategy, realtime execution, liquidity and performance directions;
-* routed unresolved design choices to targeted external research;
-* explicitly retained implementation as not started and not authorized.
-
-Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 mission close (v4.20 to v4.21):
-
-* recorded the verified implementation commit and synchronized push;
-* closed revision 1.4 while preserving criterion 13 and residual non-blocking risks;
-* returned planning to `SCANNER_GEOMETRY_TASK_SELECTION` without authorizing new implementation.
-
-Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 checkpoint commit authorization (v4.19 to v4.20):
-
-* recorded explicit authorization for the scoped implementation/record commit under revision 1.3;
-* preserved verified implementation, acceptance disposition, review result and residual risks;
-* retained mission close as a separate lifecycle action.
-
-Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 implementation review record (v4.18 to v4.19):
-
-* recorded implementation, focused verification and review as complete;
-* recorded `READY_FOR_RECORD` and retained manual reference validation as a residual non-blocking risk;
-* routed the next action to an explicitly authorized scoped commit.
-
-Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 implementation authorization (v4.17 to v4.18):
-
-* recorded revision 1.1 as human-authorized for bounded implementation;
-* preserved implementation as not started and retained the approved scope and acceptance criteria.
-
-Previous checkpoint preserved — CR-SCANNER-GEOMETRY-001 Task/Spec (v4.16 to v4.17):
-
-* selected the next durable Scanner Geometry task and recorded its bounded scope;
-* routed acceptance criteria and risks to ChangeRequest revision 1.0;
-* retained implementation as not started and not authorized.
-
-Previous checkpoint preserved — CR-DOC-AI-CONTEXT-001 mission close (v4.15 to v4.16):
-
-* recorded MISSION_CLOSE_COMPLETED and the durable ChangeRequest as CLOSED;
-* retained Phase 0–6 as implemented and verified;
-* recorded the final 35.80 percent recovery-footprint reduction;
-* returned planning to `SCANNER_GEOMETRY` task selection without starting or authorizing new implementation.
-
-Previous checkpoint preserved — Signal Admission Implementation (v4.5 to v4.6):
-
-* Priority 1 implementation and focused verification recorded as complete;
-* acceptance status recorded as satisfied;
-* remaining technical-debt and historical-state items retained as non-blocking follow-ups.
-
-Previous checkpoint preserved — Signal Admission Recovery (v4.4 to v4.5):
-
-* approved Signal admission contract and confirmed mismatches recorded;
-* Priority 1 status set to APPROVED_NOT_IMPLEMENTED;
-* minimal implementation scope, acceptance matrix and historical-state follow-up recorded;
-
-Previous checkpoint preserved — Performance Architecture Audit (v4.3 to v4.4):
-
-* зафиксирован утверждённый результат Performance Architecture Audit;
-* текущий Roadmap синхронизирован с приоритетом SCANNER_GEOMETRY;
-* утверждён порядок восьми targeted implementation priorities;
-* Signal admission поставлен перед throughput optimization;
-* chart/report и Telegram reliability выделены как отдельные целевые этапы;
-* Geometry instrumentation поставлена перед Geometry optimization;
-* bounded market-data concurrency и notification worker отложены до измерений;
-* запрещён end-to-end asyncio conversion;
-* зафиксированы performance non-goals, deferred findings и implementation principles;
-* сохранены действующие analytical contracts и Project Sync architecture.
+Full per-version reasons through v4.45 used to retell, checkpoint by
+checkpoint, the same ChangeRequest revisions already owned by each CR file's
+own revision history and by Git commit history. Per DECISION-007 ("Git owns
+detailed implementation history"), that retelling is not duplicated here;
+only a compact milestone index is kept, newest first.
+
+* v4.59→v4.60 — implemented `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`
+  (`Implementation authorization` NONE→APPROVED, 2026-09-11): ATR-normalized wedge containment
+  replacing the old hard reject; see that document's own `IMPLEMENTATION_RECORD` (including the
+  `KNOWN_GAP` that Rising Wedge/Triangle Compression currently have no containment gate at all) for
+  full detail; `CR-SCANNER-GEOMETRY-002` unaffected;
+* v4.58→v4.59 — resolved `SCANNER_GEOMETRY_TASK_SELECTION` (open since `CR-SCANNER-GEOMETRY-001`
+  mission close) to `CR-SCANNER-GEOMETRY-002` (ATR-Normalized Wick-Aware Boundary Fitting for Wedge
+  Layer — Pivot touch/violation tolerance in `geometry/touches.py` / `geometry/validation/touches.py`),
+  TASK/SPEC recorded in `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-002.md` revision 1.0;
+  documentation only, no implementation authorized;
+* v4.56→v4.58 — project priority pivot: closed Trading Terminal / Trading Workspace as the active
+  development direction (reached a state usable for trading; `CR-TRADING-WORKSPACE-001` not formally
+  closed, its own record unchanged) and set the new priority to the Robot v0.1 prototype, whose first
+  dependency is finishing pattern detection / Geometry; promoted the GRVTUSDT wick-aware boundary-fitting
+  observation from deferred hypothesis to active target (see
+  `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`, which supersedes
+  `DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md`);
+* v4.56→v4.57 — documentation-hygiene pass (no CR revision advance): removed
+  ROADMAP.md's per-revision retelling of `CR-TRADING-WORKSPACE-001` (folded
+  into the milestone index below) and this document's own then-190-line
+  VERSION_UPDATE_REASON checkpoint retelling into the same index; in
+  `PROJECT_MAP.md`, removed TRADING_INTELLIGENCE_MAP/TRADING_COMPONENT_MAP
+  content duplicating verified ARCHITECTURE.md content and replaced the
+  stale CURRENT_PROJECT_STATE snapshot with a pointer to PROJECT_STATE.md;
+* v4.44→v4.45 — `CR-TRADING-WORKSPACE-001` revision 1.18: authoritative
+  Bybit Public WebSocket L2 book, Paper Market execution, fail-closed
+  staleness/resync handling;
+* v4.36→v4.44 — `CR-TRADING-WORKSPACE-001` revisions 1.9-1.17: DOM/prints/
+  CENTER UX (recenter policy, single-CENTER semantics, MetaScalp new-tab
+  integration), Manual Market/Limit/SL-TP execution and protection, GTC/
+  amend correction, IMPLEMENT planning, Paper-first React/TS/Vite frontend
+  stack selection;
+* v4.32→v4.36 — `CR-TRADING-WORKSPACE-001` revisions 1.7-1.9: execution/
+  reconciliation model, execution/risk decisions (WV, One-Way Mode, Manual
+  takeover, Emergency Close), upper-workspace direction, plus the
+  ANCHOR_QUALITY_LEARNING future-research record (own content, see the
+  CR-TRADING-INTELLIGENCE-001 section above);
+* v4.21→v4.23 — `CR-TRADING-INTELLIGENCE-001`: durable planning/research
+  start (three-track roadmap hypothesis) and the microstructure research
+  checkpoint;
+* v4.16→v4.21 — `CR-SCANNER-GEOMETRY-001`: Task/Spec through implementation
+  authorization, review and mission close;
+* v4.15→v4.16 — `CR-DOC-AI-CONTEXT-001` mission close;
+* v4.3→v4.6 — Performance Architecture Audit and Signal Admission recovery/
+  implementation (Priority 1).
+
+Full wording for any of the above is recoverable from Git history for
+`DOCUMENTS/ROADMAP.md` and from the named CR file under
+`DOCUMENTS/CHANGE_REQUESTS/`. Versions v4.46 through v4.55 (between this
+retelling cutoff and the v4.57 documentation-hygiene pass) were not appended
+here as individual entries; consult Git history and the relevant CR file
+directly rather than expecting this section to be an exhaustive per-version
+log going forward.
 
 ---
 

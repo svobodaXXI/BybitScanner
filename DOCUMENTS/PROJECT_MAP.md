@@ -2,11 +2,11 @@
 
 Version:
 
-3.3
+3.4
 
 Date:
 
-2026-07-28
+2026-09-10
 
 Document Type:
 
@@ -75,155 +75,47 @@ BybitScanner
 
 # TRADING_INTELLIGENCE_MAP
 
-## Market Data Flow
+Canonical authority:
 
-Market Data
+DOCUMENTS/ARCHITECTURE.md → TRADING_INTELLIGENCE / TRADING_LAYERS
 
-↓
-
-Analyzer / Orchestration
-
-↓
-
-Geometry Engine
-
-↓
-
-Validation Engine
-
-↓
-
-Pattern Detection
-
-↓
-
-Confirmation Engine
-
-↓
-
-Signal Layer
-
-↓
-
-Notification Layer
+Verified pipeline, layer responsibilities, restrictions and module lists
+are owned there and are not repeated here to avoid drift between two
+descriptions of the same verified content.
 
 ---
 
 # TRADING_COMPONENT_MAP
 
-## DATA_LAYER
+Directory location of each Trading Intelligence component. Responsibility,
+restrictions and verified module lists belong to ARCHITECTURE.md; only
+locations and facts not already recorded there are kept in this map.
 
-location:
+DATA_LAYER:
 
 contracts/
 
-responsibility:
-
-Получение и передача
-рыночных данных
-через определённые контракты.
-
----
-
-## ANALYZER COMPONENT
-
-location:
+ANALYZER COMPONENT:
 
 analyzer/
 
-type:
-
-Orchestration Component
-
-responsibility:
-
-* запуск pipeline;
-
-* передача данных между слоями;
-
-* координация результатов.
-
-restrictions:
-
-Не содержит:
-
-* собственную геометрию;
-
-* торговые решения;
-
-* уведомления.
-
----
-
-## GEOMETRY_LAYER
-
-location:
+GEOMETRY_LAYER:
 
 geometry/
-
-responsibility:
-
-Математическое описание
-рыночной структуры.
-
-components:
-
-geometry/
-
-├── Trendline Engine
-
-├── Apex Engine
-
-├── Compression Analysis
-
-├── Touch Analysis
-
-├── Validation Support
-
-output:
-
-GeometryModel Contract
-
----
-
-## VALIDATION_LAYER
-
-location:
 
 geometry/validation/
 
-responsibility:
-
-Проверка качества
-геометрической структуры.
-
-input:
-
-GeometryModel
-
-output:
-
-ValidationResult Contract
-
----
-
-## PATTERN_LAYER
-
-locations:
+PATTERN_LAYER:
 
 wedge/
 
 structures/
 
-responsibility:
-
-Распознавание рыночных структур.
-
 current_pattern:
 
 Wedge
 
-future_extensions:
+future_extensions (not recorded in ARCHITECTURE.md):
 
 * Triangle;
 
@@ -233,71 +125,23 @@ future_extensions:
 
 * Complex Structures.
 
----
+CONFIRMATION_LAYER:
 
-## CONFIRMATION_LAYER
+analyzer/ (confirmation components; no separate directory)
 
-location:
-
-analyzer/
-
-confirmation components
-
-responsibility:
-
-Дополнительная проверка
-качества структуры.
-
-functions:
-
-* breakout confirmation;
-
-* volume confirmation;
-
-* volatility confirmation.
-
----
-
-## SIGNAL_LAYER
-
-locations:
+SIGNAL_LAYER:
 
 signal/
 
 signals/
 
-responsibility:
-
-Формирование торговой интерпретации.
-
-output:
-
-Signal Object Contract
-
----
-
-## NOTIFICATION_LAYER
-
-locations:
+NOTIFICATION_LAYER:
 
 reports/
 
 charts/
 
 tradingview/
-
-responsibility:
-
-Представление результата
-пользователю.
-
-supports:
-
-* reports;
-
-* chart images;
-
-* external presentation.
 
 ---
 
@@ -611,33 +455,14 @@ Documentation Synchronization
 
 # CURRENT_PROJECT_STATE
 
-architecture_state:
+Source of truth:
 
-Architecture Rule Intelligence Transition
+DOCUMENTS/PROJECT_STATE.md
 
-implemented:
-
-* Project Registry;
-
-* Architecture Registry;
-
-* Validation Pipeline;
-
-* Impact Analysis;
-
-* Change Detection;
-
-* Rule Engine Foundation;
-
-* Synchronization Planning.
-
-active_development:
-
-* Architecture Rule Engine Pipeline;
-
-* Documentation Intelligence;
-
-* State Intelligence.
+PROJECT_MAP.md is a logical/topology map and does not track current
+priority, phase or active-development status. That state changes
+frequently and is owned exclusively by PROJECT_STATE.md; a copy here
+would drift and eventually contradict it.
 
 ---
 
@@ -645,25 +470,24 @@ active_development:
 
 from:
 
-PROJECT_MAP v3.2
+PROJECT_MAP v3.3
 
 to:
 
-PROJECT_MAP v3.3
+PROJECT_MAP v3.4
 
 changes:
 
-* синхронизирована карта с новым PROJECT_TREE;
-
-* добавлен полный Project Sync Framework;
-
-* добавлена Architecture Rule Engine карта;
-
-* добавлена связь между архитектурными слоями и каталогами;
-
-* обновлены контракты взаимодействия;
-
-* устранены расхождения между архитектурой и файловой структурой.
+* removed TRADING_INTELLIGENCE_MAP/TRADING_COMPONENT_MAP content that
+  duplicated verified ARCHITECTURE.md content (pipeline, layer
+  responsibility, restrictions, module lists);
+* kept only directory-location facts and forward-looking notes not
+  already recorded in ARCHITECTURE.md;
+* replaced the stale CURRENT_PROJECT_STATE snapshot (referencing
+  Architecture Rule Intelligence Transition, no longer current) with a
+  pointer to PROJECT_STATE.md as the single source of truth for
+  priority/phase/active-development state;
+* PROJECT_SYNC_COMPONENT_MAP and the rest of the document are unchanged.
 
 ---
 
