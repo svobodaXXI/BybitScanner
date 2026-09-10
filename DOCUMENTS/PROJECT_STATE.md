@@ -2,11 +2,11 @@
 
 Version:
 
-7.83
+7.87
 
 Date:
 
-2026-08-30
+2026-09-10
 
 Document Type:
 
@@ -663,30 +663,32 @@ ACTIVE
 
 Current work priority:
 
-TRADING_TERMINAL_TRADING_WORKSPACE
+ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY
 
 Current work domain:
 
-Trading Foundation / Trading Workspace
+Robot v0.1 Prototype / Scanner Geometry Pattern Detection
 
 Current project phase:
 
-TRADING_TERMINAL_HUMAN_EXECUTION_AND_RISK_DECISIONS_RECORDED
+ROBOT_V0_1_WEDGE_BOUNDARY_FITTING_ACTIVE
 
 Primary objective:
 
-Prepare the separately governed Trading Terminal / Trading Workspace development mission from the
-recorded domain, safety, Paper Trader and operator-surface research. Terminal implementation has not
-started and is not authorized by this checkpoint.
+Trading Terminal / Trading Workspace has reached a state usable for trading and is no longer the active
+development priority as of 2026-09-10; `CR-TRADING-WORKSPACE-001` is not formally closed and its own
+ChangeRequest record is unchanged. The new primary project priority is the Robot v0.1 prototype. Robot's
+first dependency is finishing pattern detection / Geometry: the active implementation target is wedge
+boundary fitting, recorded in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` (ACCEPTED DESIGN,
+2026-09-10). The GRVTUSDT wick-aware Wedge boundary-fitting observation is no longer deferred research —
+it is the active pre-implementation target. Implementation authorization for that document remains NONE
+as of this checkpoint; only the priority is recorded here.
 
 Previous primary objective:
 
-Довести геометрию сканера
-до приемлемого рабочего состояния,
-повысить качество определения
-графических структур Wedge
-и создать основу для практически
-приемлемой работы сканера.
+Prepare the separately governed Trading Terminal / Trading Workspace development mission from the
+recorded domain, safety, Paper Trader and operator-surface research. Terminal reached a state usable for
+trading; see current objective above.
 
 Current development policy:
 
@@ -722,6 +724,12 @@ Scanner Geometry.
 5. Scanner Feature Development;
 6. Documentation Automation;
 7. Architecture Hygiene.
+
+Начиная с 2026-09-10 пункты 1-2 выполняются
+в интересах Robot v0.1: без доведённого
+pattern detection / Geometry Робот не может
+расширяться за пределы уже реализованных
+8 слайсов admission/execution.
 
 Documentation Automation:
 
@@ -782,13 +790,16 @@ DEFERRED
 
 Current decision:
 
-CURRENT PRIORITY = TRADING_TERMINAL_TRADING_WORKSPACE
+CURRENT PRIORITY = ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY
 
 Important:
 
-The current priority selects Trading Terminal / Trading Workspace task definition. It does not authorize
-terminal implementation. Scanner Geometry remains active with the GRVTUSDT wick-aware observation
-retained for later research.
+The current priority selects Robot v0.1 pattern-detection / Scanner Geometry task definition. It does not
+by itself authorize implementation. Trading Terminal / Trading Workspace (`CR-TRADING-WORKSPACE-001`) has
+reached a state usable for trading and is deprioritized as an active development direction, without being
+formally closed. The GRVTUSDT wick-aware boundary-fitting observation is promoted from deferred research to
+the active target: `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` (ACCEPTED DESIGN, 2026-09-10),
+which also supersedes `DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md` (now `Status: SUPERSEDED`).
 
 Documentation Automation временно
 не является блокирующим направлением.
@@ -799,7 +810,7 @@ Documentation Automation временно
 
 Priority:
 
-TRADING_TERMINAL_TRADING_WORKSPACE
+ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY
 
 Priority level:
 
@@ -807,29 +818,31 @@ HIGHEST
 
 Primary subsystem:
 
-TRADING_WORKSPACE_BOUNDARY / IMPLEMENTATION_PATHS_NOT_SELECTED
+SCANNER_GEOMETRY / WEDGE_BOUNDARY_FITTING
 
 Secondary subsystem:
 
-NONE_SELECTED
+ROBOT_V0_1_PROTOTYPE
 
 Related subsystems:
 
-* Scanner normalized signal boundary;
-* Paper Trader and ExecutionPort;
-* order, fill, position, account and journal domains;
-* Bybit market-data and later execution adapters;
-* chart workspace and Telegram Mini App access.
+* Geometry Validation Gate (`slopes`/`apex`/`apex_quality`/`compression`/`touches`);
+* `wedge/detector.py` containment/freshness gating, targeted for replacement per the ATR Containment decision;
+* `signal/quality.py` quality-tier decision (planned containment-violation penalty input);
+* Robot v0.1 candidate admission and execution (already implemented: 8 slices, durable admission gate).
 
 Primary objective:
 
-Define and authorize a separate durable Trading Terminal / Trading Workspace implementation mission.
-Approved SPEC revision 1.4 and execution/reconciliation model revision 1.7 remain authoritative. Human-approved
-intermediate CONTEXT revision 1.8's wallet-based WV authority is restored as the current
-runtime-aligned active-account Wallet WV authority, with rounding down to whole USDT; One-Way Mode, no
-automatic mode switching, reconcile-and-adopt external state, Manual takeover, Emergency Close,
-external-order-aware Full Close and conservative negative correlation. CONTEXT remains incomplete/in progress
-and IMPLEMENT remains unauthorized.
+As of 2026-09-10, Trading Terminal / Trading Workspace has reached a state usable for trading and is no
+longer the active development priority; `CR-TRADING-WORKSPACE-001` remains its own unchanged governance
+record. The new priority is the Robot v0.1 prototype, whose first dependency is finishing pattern
+detection / Geometry. The active implementation target is wedge boundary fitting per
+`DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` (ACCEPTED DESIGN, Implementation authorization:
+NONE): ATR-normalized containment tolerance, a 60/40 strict/flexible zone split, reversal-pattern exceptions
+in the flexible zone, and replacing `wedge/detector.py`'s hard binary containment/freshness reject with a
+graduated `signal/quality.py` tier penalty. This decision supersedes
+`DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md` (now `Status: SUPERSEDED`). Implementation is
+not started or authorized by this checkpoint; only the priority is recorded here.
 
 Previous geometry objective:
 
@@ -1148,12 +1161,14 @@ ChangeRequest revision 1.9 is CLOSED after verified completion of Phase 0 throug
 
 Next project action:
 
-SCANNER_GEOMETRY_TASK_SELECTION
+SCANNER_GEOMETRY_TASK_SELECTION — RESOLVED 2026-09-11 to `CR-SCANNER-GEOMETRY-002` (ATR-Normalized
+Wick-Aware Boundary Fitting for Wedge Layer), SPEC stage. See `CURRENT_DEVELOPMENT_PRIORITY` above.
 
 Important:
 
-This historical mission closure does not override the newer authoritative priority
-`TRADING_TERMINAL_TRADING_WORKSPACE`. No implementation is authorized by that focus selection.
+This historical mission closure does not override the current authoritative priority
+`ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY` (see `CURRENT_WORK_CONTROL` / `CURRENT_DEVELOPMENT_PRIORITY` above).
+No implementation is authorized by SPEC-stage task selection alone.
 
 ---
 
@@ -1181,7 +1196,38 @@ Owning record:
 
 Next action:
 
-SCANNER_GEOMETRY_TASK_SELECTION
+SCANNER_GEOMETRY_TASK_SELECTION — RESOLVED 2026-09-11. See `CR-SCANNER-GEOMETRY-002` below.
+
+---
+
+# CR-SCANNER-GEOMETRY-002_STATE
+
+Task:
+
+CR-SCANNER-GEOMETRY-002 — ATR-Normalized Wick-Aware Boundary Fitting for Wedge Layer
+
+Lifecycle:
+
+OPEN / SPEC_RECORDED / CONTEXT_NOT_STARTED_NOT_AUTHORIZED
+
+Implementation status:
+
+NOT_STARTED_NOT_AUTHORIZED
+
+Owning record:
+
+`DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-002.md` revision 1.0
+
+Relationship:
+
+This is the current active task under `ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY` (see `CURRENT_WORK_CONTROL` /
+`CURRENT_DEVELOPMENT_PRIORITY` above). It targets Pivot touch/violation tolerance in `geometry/touches.py` /
+`geometry/validation/touches.py`, distinct from the separately governed post-detection containment/freshness
+mechanism in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`.
+
+Next action:
+
+CONTEXT phase, subject to explicit human authorization. Not started.
 
 ---
 
@@ -6344,3 +6390,51 @@ Safety state remains unchanged:
 - no API credentials were entered through the HTTP page;
 - no BUY/SELL/STOP/TAKE or other real-money mutation/acceptance command was sent during this deployment work;
 - backend remains non-public on `127.0.0.1:8765`, with nginx as the public boundary.
+
+---
+
+# 2026-09-10 PROJECT PRIORITY PIVOT — ROBOT V0.1 PATTERN DETECTION / GEOMETRY
+
+Status:
+
+RECORDED / DOCUMENTATION ONLY
+
+Version 7.87 records a human-directed project priority pivot, documentation only. No production or test
+implementation is authorized or started by this checkpoint.
+
+## What changed
+
+* Trading Terminal / Trading Workspace has reached a state usable for trading. It is closed as the active
+  development direction and is no longer the current project priority. `CR-TRADING-WORKSPACE-001` is not
+  formally closed; its own ChangeRequest record, lifecycle state and remaining Stage 8 items are unchanged
+  and owned by `DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md`.
+* The new primary project priority is the Robot v0.1 prototype (already implemented through its 8 slices,
+  durable admission gate, SQLite persistence and restart recovery — see git history and the
+  `AUTOPILOT_ROBOT_V0_1_*` / `ROBOT_V0_1_*` decision documents).
+* Robot's first dependency toward further progress is finishing pattern detection / Geometry. Robot cannot
+  usefully expand beyond its already-implemented admission/execution slices without better Wedge pattern
+  quality feeding it.
+* The active implementation target right now is wedge boundary fitting. The GRVTUSDT wick-aware Wedge
+  boundary-fitting observation, previously recorded in `DOCUMENTS/ROADMAP.md` (`CR-TRADING-INTELLIGENCE-001`
+  Geometry research observation) as "an unproven research hypothesis, not an algorithm change or
+  implementation authorization," is promoted from deferred research to the active pre-implementation
+  target. It is formalized in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` (`Status: ACCEPTED
+  DESIGN`, `Implementation authorization: NONE`, 2026-09-10), which itself supersedes
+  `DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md` (now `Status: SUPERSEDED`).
+
+## What did not change
+
+* `Implementation authorization: NONE` in `SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` is unchanged by
+  this pivot. Recording a priority is not implementation authorization.
+* No code in `geometry/`, `wedge/`, or `signal/` was changed by this checkpoint.
+* `CR-TRADING-WORKSPACE-001`'s own status, lifecycle state and remaining acceptance items are unchanged.
+* Existing Geometry protected boundaries (`GeometryModel`, Geometry → Wedge contract, Geometry detection
+  quality) and the five existing Validation Gate checks (`slopes`/`apex`/`apex_quality`/`compression`/
+  `touches`) remain unchanged and protected.
+
+## Next action
+
+Task/Spec selection for implementing `SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` is the expected next
+step, subject to the project's normal authorization path (lightweight Task/Spec, per this subsystem's
+established practice of decision-doc-then-task rather than a new durable ChangeRequest). Not started or
+authorized by this checkpoint.
