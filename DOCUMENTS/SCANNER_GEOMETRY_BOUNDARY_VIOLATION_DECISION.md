@@ -2,8 +2,10 @@
 
 Version: 1.0
 Date: 2026-09-10
-Status: ACCEPTED DESIGN
+Status: SUPERSEDED
 Implementation authorization: NONE
+
+SUPERSEDED by DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md v1.0 (2026-09-10). This document was never implemented. Live tracing on the real, unmodified pipeline (`wedge/detector.py:detect_structure()`) found that a related boundary-containment mechanism already exists in production — a hard binary `containment` gate (`max_strict_severe_run=2`) that rejects the whole candidate outright rather than applying a graduated quality penalty — and that it already fires on real Falling Wedge candidates that otherwise pass all five Validation Gate checks (observed live on ARBUSDT: `containment_strict_run=50`, `detected=False`). Rather than layering a new, separate soft-penalty check (as this document proposed) alongside the pre-existing hard-reject gate, the superseding document replaces both the existing hard gate and this document's proposal with one ATR-normalized, zone-aware containment design reusing `geometry/envelope_metrics.py:evaluate_candle_containment()`. The reversal-pattern definitions (Bullish Engulfing / Morning Star / Arc) and the tier-downgrade scale approved below are carried forward unchanged into the superseding document.
 
 ## Scope
 
