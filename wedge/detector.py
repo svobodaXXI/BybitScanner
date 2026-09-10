@@ -28,7 +28,16 @@ Score
 """
 
 
-from .integrity import evaluate_directional_envelope
+from .integrity import (
+    evaluate_directional_envelope,
+    evaluate_containment_violations,
+)
+
+
+# DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md Section 7 — initial
+# working defaults, not calibrated against historical data yet.
+FRESHNESS_WINDOW_MIN_BARS = 15
+FRESHNESS_WINDOW_FACTOR = 0.20
 
 
 def _normalize_geometry(
@@ -77,47 +86,9 @@ def _normalize_geometry(
 
 
 
-def _max_consecutive_run(indices):
-    """
-    ???????????? ????? ???????????????? ????? candle indices.
-    """
-
-    if not indices:
-        return 0
-
-    values = sorted(
-        set(
-            int(index)
-            for index in indices
-        )
-    )
-
-    best = 1
-    current = 1
-
-    for previous, index in zip(
-        values,
-        values[1:]
-    ):
-
-        if index == previous + 1:
-
-            current += 1
-
-            best = max(
-                best,
-                current
-            )
-
-        else:
-
-            current = 1
-
-    return best
-
-
 def detect_structure(
-    geometry
+    geometry,
+    candles=None
 ):
     """
     РћРїСЂРµРґРµР»СЏРµС‚, РїРѕС…РѕР¶Р° Р»Рё Geometry Model
@@ -260,105 +231,19 @@ def detect_structure(
 
 
     #
-    # Directional Candle Containment
+    # ATR Containment (soft, quality-tier-only; see
+    # DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md)
+    #
+    # This replaces the previous hard binary containment reject. It never
+    # blocks detection; see signal/quality.py for the tier-penalty
+    # consumer of containment_violations.
     #
 
-    envelope_metrics = geometry.get(
-        "envelope_metrics",
-        {}
+    containment_violations = evaluate_containment_violations(
+        geometry,
+        pattern,
+        candles
     )
-
-    candle_containment = (
-        envelope_metrics.get(
-            "candle_containment"
-        )
-        or {}
-    )
-
-    fully_above_upper = (
-        candle_containment.get(
-            "fully_above_upper_indices",
-            []
-        )
-    )
-
-    fully_below_lower = (
-        candle_containment.get(
-            "fully_below_lower_indices",
-            []
-        )
-    )
-
-    upper_severe_run = _max_consecutive_run(
-        fully_above_upper
-    )
-
-    lower_severe_run = _max_consecutive_run(
-        fully_below_lower
-    )
-
-    # ???? ????????? ???????? ??? ??????
-    # ????????? ???????? ????? ?? ??????? ???????.
-    max_strict_severe_run = 2
-
-    strict_sides = tuple(
-        directional_envelope.get(
-            "strict_sides",
-            []
-        )
-    )
-
-    if strict_sides == ("upper",):
-
-        strict_side = "upper"
-
-        strict_severe_run = (
-            upper_severe_run
-        )
-
-        containment_valid = (
-            strict_severe_run
-            <= max_strict_severe_run
-        )
-
-    elif strict_sides == ("lower",):
-
-        strict_side = "lower"
-
-        strict_severe_run = (
-            lower_severe_run
-        )
-
-        containment_valid = (
-            strict_severe_run
-            <= max_strict_severe_run
-        )
-
-    elif set(strict_sides) == {
-        "upper",
-        "lower"
-    }:
-
-        strict_side = "both"
-
-        strict_severe_run = max(
-            upper_severe_run,
-            lower_severe_run
-        )
-
-        containment_valid = (
-            upper_severe_run
-            <= max_strict_severe_run
-            and
-            lower_severe_run
-            <= max_strict_severe_run
-        )
-
-    else:
-
-        strict_side = "none"
-        strict_severe_run = 0
-        containment_valid = False
 
 
     #
@@ -368,6 +253,10 @@ def detect_structure(
 
     current_index = geometry.get(
         "current_index"
+    )
+
+    start_index = geometry.get(
+        "start_index"
     )
 
     end_index = geometry.get(
@@ -396,6 +285,25 @@ def detect_structure(
             -
             end_index
         )
+
+    structure_length = 0
+
+    if (
+        start_index is not None
+        and end_index is not None
+    ):
+        try:
+            structure_length = max(
+                0,
+                int(end_index) - int(start_index)
+            )
+        except (TypeError, ValueError):
+            structure_length = 0
+
+    freshness_window = max(
+        FRESHNESS_WINDOW_MIN_BARS,
+        round(structure_length * FRESHNESS_WINDOW_FACTOR)
+    )
 
     before_apex = bool(
         current_index is not None
@@ -443,31 +351,17 @@ def detect_structure(
 
             bool(
                 freshness_bars is not None
-                and 0 <= freshness_bars <= 15
+                and 0 <= freshness_bars <= freshness_window
                 and before_apex
             ),
 
-        "containment":
+        "freshness_window":
 
-            bool(
-                containment_valid
-            ),
+            freshness_window,
 
-        "containment_strict_side":
+        "containment_violations":
 
-            strict_side,
-
-        "containment_strict_run":
-
-            strict_severe_run,
-
-        "containment_upper_run":
-
-            upper_severe_run,
-
-        "containment_lower_run":
-
-            lower_severe_run,
+            containment_violations,
 
         "directional_envelope":
 
@@ -498,8 +392,6 @@ def detect_structure(
         features["validation"]
         and
         features["freshness"]
-        and
-        features["containment"]
     ):
 
         return {

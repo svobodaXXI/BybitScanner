@@ -1223,7 +1223,9 @@ Relationship:
 This is the current active task under `ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY` (see `CURRENT_WORK_CONTROL` /
 `CURRENT_DEVELOPMENT_PRIORITY` above). It targets Pivot touch/violation tolerance in `geometry/touches.py` /
 `geometry/validation/touches.py`, distinct from the separately governed post-detection containment/freshness
-mechanism in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`.
+mechanism in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`. As of 2026-09-11 that separate
+containment mechanism is `IMPLEMENTED_VERIFIED` (see the checkpoint at the end of this document); this CR
+(Pivot touch/violation tolerance) remains untouched and is still the current active task.
 
 Next action:
 
@@ -6438,3 +6440,41 @@ Task/Spec selection for implementing `SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.
 step, subject to the project's normal authorization path (lightweight Task/Spec, per this subsystem's
 established practice of decision-doc-then-task rather than a new durable ChangeRequest). Not started or
 authorized by this checkpoint.
+
+---
+
+# 2026-09-11 SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION IMPLEMENTED_VERIFIED
+
+Status:
+
+IMPLEMENTED_VERIFIED / DOCUMENTATION_UPDATE
+
+`DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` `Implementation authorization` was changed from
+`NONE` to `APPROVED` and implemented the same day. See that document's own `IMPLEMENTATION_RECORD` section
+for full detail (files changed, verification evidence, the accepted Rising Wedge/Triangle Compression
+containment-gate scope gap, and the live ARBUSDT before/after confirmation).
+
+This does **not** change `CR-SCANNER-GEOMETRY-002` (Pivot touch/violation tolerance in
+`geometry/touches.py` / `geometry/validation/touches.py`), which remains `OPEN / SPEC_RECORDED /
+CONTEXT_NOT_STARTED_NOT_AUTHORIZED` and the current active task under `ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY`
+(see `CR-SCANNER-GEOMETRY-002_STATE` above). The two are distinct, separately governed mechanisms that both
+trace to the same GRVTUSDT wick-aware boundary-fitting research observation.
+
+Working numeric defaults implemented as approved without further negotiation (ATR multiplier, 60/40 zone
+split, freshness window factor, severity weights, reversal-pattern thresholds) remain explicitly
+uncalibrated against historical data, per the decision's own text.
+
+## KNOWN_GAP — open item, next action required before Robot v0.1 production use of Rising Wedge / Triangle signals
+
+Detected: 2026-09-11. Status: OPEN, not resolved by this implementation.
+
+Rising Wedge and Triangle Compression now have **no containment gate at all** — the old hard reject was
+deleted (not left running for them) and the new ATR-based soft mechanism covers Falling Wedge only, per
+`DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`'s `KNOWN_GAP` section (full detail there). This is
+not theoretical: Rising Wedge is Robot v0.1's confirmed SHORT-side counterpart to Falling Wedge, and Triangle
+Compression is part of the named Robot Decision Model baseline in `DOCUMENTS/ROBOT_STRATEGY_DESIGN.md`.
+
+**Next action required before Robot v0.1 production use of Rising Wedge / Triangle signals**: a separate
+explicit decision selecting either (1) a mirrored ATR containment rule for Rising Wedge plus an analogous
+rule for Triangle Compression, or (2) a temporary hard-reject restoration scoped only to those two patterns.
+Not started, not authorized.

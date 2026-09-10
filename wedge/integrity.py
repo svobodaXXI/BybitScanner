@@ -3,6 +3,14 @@ wedge.integrity
 
 Structure Integrity Layer.
 
+ATR containment note (DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md):
+`evaluate_containment_violations()` below owns the pattern-aware
+interpretation of the direction-neutral raw body-breach data computed in
+geometry/envelope_metrics.py:evaluate_body_zone_breaches(). This mirrors
+how STRICT/EXCURSION roles are assigned only after the operational
+pattern is known (see evaluate_directional_envelope()). Falling Wedge
+only; Rising Wedge is a separate, unresolved future task.
+
 Оценивает целостность уже найденной
 и валидированной геометрической структуры.
 
@@ -23,6 +31,10 @@ Structure Integrity Layer.
 Version 1:
 диагностический soft-score 0..20.
 """
+
+from confirmation import calculate_atr
+from geometry.envelope_metrics import ATR_PERIOD
+from geometry.reversal_patterns import has_reversal_exception
 
 
 DIRECTIONAL_BOUNDARY_ROLES = {
@@ -141,6 +153,101 @@ def evaluate_directional_envelope(
         "hard_rejection": False,
         "score_effect": 0.0,
         "warnings": warnings
+    }
+
+
+ZERO_CONTAINMENT_VIOLATIONS = {
+    "upper_violations": 0,
+    "lower_strict_violations": 0,
+    "lower_flexible_unrecognized_breaches": 0,
+}
+
+
+def evaluate_containment_violations(
+    geometry,
+    pattern,
+    candles
+):
+    """
+    Falling-Wedge-only ATR containment interpretation.
+
+    Replaces the previous hard binary containment reject in
+    wedge/detector.py:detect_structure() with graded violation counts
+    consumed by signal/quality.py as a quality-tier penalty (never a
+    detection-blocking gate).
+
+    Rising Wedge and Triangle Compression are not yet covered by this
+    decision (explicit non-goal: the mirrored Rising Wedge rule is a
+    separate, unresolved future task) and always receive zero violations
+    here — this is a real, currently-accepted gap, not an oversight: those
+    patterns temporarily have no containment mechanism at all until a
+    future mirrored decision is authorized.
+    """
+
+    if pattern != "Falling Wedge":
+        return dict(ZERO_CONTAINMENT_VIOLATIONS)
+
+    envelope_metrics = (
+        geometry.get("envelope_metrics")
+        or {}
+        if isinstance(geometry, dict)
+        else {}
+    )
+
+    breaches = envelope_metrics.get("body_zone_breaches") or {}
+
+    upper_indices = breaches.get("upper_body_breach_indices") or []
+    lower_strict_indices = breaches.get("lower_body_breach_early_indices") or []
+    lower_late_indices = breaches.get("lower_body_breach_late_indices") or []
+
+    if candles is None:
+        # The upper/lower-strict counts are already resolved index lists
+        # from evaluate_body_zone_breaches() and need no further candle
+        # lookup. Only the late-zone reversal-pattern exception needs
+        # candles; without them, the decision's own default applies — a
+        # body breach IS a violation unless a pattern is positively
+        # established, so an unverifiable exception counts as a violation
+        # rather than being silently excused.
+        return {
+            "upper_violations": len(upper_indices),
+            "lower_strict_violations": len(lower_strict_indices),
+            "lower_flexible_unrecognized_breaches": len(lower_late_indices),
+            "lower_flexible_excused_indices": [],
+        }
+
+    atr_series = None
+
+    if lower_late_indices:
+        try:
+            atr_series = calculate_atr(candles, period=ATR_PERIOD)
+        except Exception:
+            atr_series = None
+
+    unrecognized_late_indices = []
+    excused_late_indices = []
+
+    for index in lower_late_indices:
+
+        atr_value = None
+
+        if atr_series is not None:
+            try:
+                candidate = atr_series.iloc[index]
+                if candidate == candidate:
+                    atr_value = float(candidate)
+            except Exception:
+                atr_value = None
+
+        if has_reversal_exception(candles, index, atr_value):
+            excused_late_indices.append(index)
+        else:
+            unrecognized_late_indices.append(index)
+
+    return {
+        "upper_violations": len(upper_indices),
+        "lower_strict_violations": len(lower_strict_indices),
+        "lower_flexible_unrecognized_breaches": len(unrecognized_late_indices),
+        "lower_flexible_excused_indices": excused_late_indices,
     }
 
 

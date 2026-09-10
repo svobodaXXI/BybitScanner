@@ -2,7 +2,7 @@
 
 Version:
 
-4.59
+4.60
 
 Date:
 
@@ -1006,6 +1006,10 @@ governs post-detection containment/freshness in `wedge/detector.py` / `geometry/
 itself in `geometry/touches.py` / `geometry/validation/touches.py` (whether a Pivot point counts as a touch
 at all). Both trace to the same GRVTUSDT observation but change different code.
 
+Status update (2026-09-11): `SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` is now `IMPLEMENTED_VERIFIED`
+(see its own `IMPLEMENTATION_RECORD`). This CR (Pivot touch/violation tolerance) is unaffected and remains
+`OPEN / SPEC` — it is a separate mechanism, not a dependency of the containment work.
+
 Planned scope:
 
 * separate ATR-derived `touch_tolerance` and `violation_tolerance` (reusing `confirmation.py:calculate_atr()`,
@@ -1727,6 +1731,27 @@ RULE-008:
 ---
 
 # VERSION_UPDATE_REASON
+
+from:
+
+ROADMAP v4.59
+
+to:
+
+ROADMAP v4.60
+
+reason:
+
+Implemented CR-SCANNER-GEOMETRY-ATR-CONTAINMENT (v4.59 to v4.60):
+
+* `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` `Implementation authorization` changed from
+  `NONE` to `APPROVED` and implemented the same day (2026-09-11); see that document's own
+  `IMPLEMENTATION_RECORD` for files changed, verification evidence, and the accepted Rising
+  Wedge/Triangle Compression containment-gate scope gap;
+* `DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md` remains `SUPERSEDED` (unchanged from the
+  prior checkpoint);
+* `CR-SCANNER-GEOMETRY-002` (Pivot touch/violation tolerance) is unaffected and remains `OPEN / SPEC`,
+  distinct from the now-implemented containment mechanism.
 
 from:
 

@@ -3,7 +3,7 @@
 Version: 1.0
 Date: 2026-09-10
 Status: ACCEPTED DESIGN
-Implementation authorization: NONE
+Implementation authorization: APPROVED (2026-09-11) — see IMPLEMENTATION_RECORD below
 
 ## Supersession
 
@@ -16,7 +16,7 @@ This document **replaces**:
 
 Applies only to **Falling Wedge**. Rising Wedge (the mirrored rule: strict lower trendline, flexible upper trendline with bearish reversal patterns) remains a separate, unresolved future task, exactly as it was in the superseded document.
 
-This is a design contract only. It does not authorize implementation: no change to `geometry/envelope_metrics.py`, `wedge/detector.py`, or `signal/quality.py` is made by this decision.
+This was originally a design contract only, not authorizing implementation. Implementation was explicitly authorized on 2026-09-11; see `IMPLEMENTATION_RECORD` at the end of this document for what was actually built and what remains a working default pending later calibration.
 
 ## Background: why the existing hard gate is being replaced, not just supplemented
 
@@ -128,5 +128,53 @@ This decision retunes and reuses existing capabilities; it does not introduce a 
 - The reversal-pattern recognizers and the tier-downgrade scale are the same ones approved in the superseded document, not reimplemented.
 
 This decision must not alter `GeometryModel`, the Validation Gate's `valid`/`checks`/`failed_checks` contract, or introduce a second trendline/geometry representation. Its only sanctioned effects are: (a) retuning containment's tolerance and zone parameters and removing its hard-reject role in `detect_structure()` in favor of feeding `containment_violations` into `signal/quality.py`, and (b) widening the freshness window formula while keeping freshness itself a hard gate.
+
+## IMPLEMENTATION_RECORD
+
+Implementation authorized and completed 2026-09-11. Working defaults (`0.15 * ATR(14)`, 60/40 zone split, `freshness_window = max(15, round(structure_length * 0.20))`, severity weights 2/2/1, and the reversal-pattern thresholds below) were implemented exactly as approved, without further negotiation, per explicit instruction. All are still unrehearsed against historical data and remain subject to later calibration.
+
+### What was actually built (one deviation from the original plan text worth recording precisely)
+
+The original "Decision" text above described retuning `evaluate_candle_containment()` in place. During implementation this turned out to be unsafe: `evaluate_candle_containment()`'s existing output (`candle_containment`, specifically `upper_early_max_run`/`lower_early_max_run`) is *also* consumed by `geometry/evaluation.py`'s unrelated CANONICAL→EXPLORATORY downgrade heuristic, which is explicitly out of scope for this decision and protected by the Geometry→Wedge contract. Retuning that function in place would have silently changed that unrelated heuristic's tolerance/zone too.
+
+Actual implementation therefore **added** a new, separate function, `geometry/envelope_metrics.py:evaluate_body_zone_breaches()`, alongside the untouched `evaluate_candle_containment()`. Both are computed in `calculate_envelope_metrics()` and stored under different `envelope_metrics` keys (`candle_containment`, unchanged; `body_zone_breaches`, new). This still satisfies "no two parallel *hard-reject* mechanisms" — `wedge/detector.py` no longer reads `candle_containment` for any rejection purpose, and its old hard-reject block (`max_strict_severe_run`, `_max_consecutive_run`) was deleted outright, not left dormant. It does mean `evaluate_candle_containment()` itself remains in the codebase, but only for the unrelated, still-active CANONICAL/EXPLORATORY heuristic it always served.
+
+Files changed:
+
+- `geometry/envelope_metrics.py` — added `evaluate_body_zone_breaches()` (ATR-tolerance, 60/40 zone split, body-vs-line comparison for both boundaries in one shared code path) and wired its output into `calculate_envelope_metrics()` as `body_zone_breaches`.
+- `geometry/reversal_patterns.py` (new file) — `is_bullish_engulfing`, `is_morning_star`, `is_smooth_arc`, `has_reversal_exception`, with named constants `LARGE_BODY_RATIO=0.5`, `SMALL_BODY_RATIO=0.3`, `ARC_MIN_RUN=4`, `ARC_MAX_RUN=6`, `ARC_MAX_SINGLE_STEP_ATR_MULTIPLIER=2.0`.
+- `wedge/integrity.py` — added `evaluate_containment_violations(geometry, pattern, candles)`: the pattern-aware interpretation (Falling Wedge only; all other patterns get zero violations) that turns raw `body_zone_breaches` into `{upper_violations, lower_strict_violations, lower_flexible_unrecognized_breaches}`, applying the reversal-pattern exception only to late-zone lower breaches.
+- `wedge/detector.py` — removed the old hard containment block entirely (`candle_containment` reading, `_max_consecutive_run`, `max_strict_severe_run`, `containment_valid`) and removed `containment` from the detection AND-gate; added `FRESHNESS_WINDOW_MIN_BARS=15` / `FRESHNESS_WINDOW_FACTOR=0.20` and the proportional freshness window; `detect_structure()` now accepts an optional `candles` parameter and exposes `features["containment_violations"]` / `features["freshness_window"]`.
+- `wedge/analyzer.py` — threads `candles` into `detect_structure()`.
+- `signal/quality.py` — `evaluate_quality()` gained an optional `containment_violations` parameter; base tier is now computed without early return, then downgraded per the approved severity/tier table (constants `CONTAINMENT_SEVERITY_WEIGHT_UPPER=2`, `CONTAINMENT_SEVERITY_WEIGHT_LOWER_STRICT=2`, `CONTAINMENT_SEVERITY_WEIGHT_LOWER_FLEXIBLE=1`, `CONTAINMENT_SEVERITY_TIER_1_MAX=2`, `CONTAINMENT_SEVERITY_TIER_2_MAX=4`). The `Invalid` tier is unaffected.
+- `analyzer/core.py` — passes `containment_violations` from `result["detection"]["features"]` into `evaluate_quality()`.
+
+### KNOWN_GAP — Rising Wedge / Triangle Compression have no containment gate at all
+
+Detected: 2026-09-11 (during this implementation).
+Status: OPEN — requires a separate decision before Robot v0.1 relies on these two patterns' signals in production.
+
+Rising Wedge and Triangle Compression candidates now pass through `wedge/detector.py:detect_structure()` with **zero containment protection of any kind**: the old hard reject (`max_strict_severe_run`, wick-based, flat 0.15%) was deleted outright as part of this implementation, and the new ATR-based soft mechanism (Sections 1–6 above) is scoped to Falling Wedge only, per this decision's own Scope and the explicit instruction to fully replace the old mechanism rather than run it in parallel for the patterns not yet covered. `wedge/integrity.py:evaluate_containment_violations()` returns all-zero violations for every pattern other than `"Falling Wedge"` — not "reduced protection," literally no check.
+
+This is **not** a hypothetical or theoretical risk. Both patterns are active, in-scope parts of Robot v0.1's current work:
+
+- **Rising Wedge**: confirmed implemented as Robot v0.1's SHORT-side counterpart to Falling Wedge LONG entries — see `DOCUMENTS/AUTOPILOT_ROBOT_V0_1_TELEGRAM_FEED_AND_SHORT_WEDGE_DECISION.md` ("Robot v0.1 trades both wedge directions: Falling Wedge -> LONG, Rising Wedge -> SHORT"), `DOCUMENTS/AUTOPILOT_ROBOT_V0_1_ENTRY_STRATEGY_DECISION.md`, and `DOCUMENTS/AUTOPILOT_ROBOT_V0_1_RESTART_RECOVERY_DECISION.md`.
+- **Triangle Compression**: named as part of the existing baseline pattern set for the Robot Decision Model in `DOCUMENTS/ROBOT_STRATEGY_DESIGN.md` ("Falling Wedge; Rising Wedge; Triangle Compression").
+
+Practical consequence: a candidate of either pattern that would previously have been silently hard-rejected for heavy containment violations (candles grossly outside the trendlines) can now reach detection, quality scoring, and — for Rising Wedge specifically — Robot admission, with no containment-based penalty or rejection whatsoever.
+
+Required before Robot v0.1 relies on Rising Wedge or Triangle Compression signals in production — one of, subject to a separate explicit decision:
+
+1. Design and implement the mirrored Rising Wedge containment rule (strict lower trendline, flexible upper trendline with bearish reversal-pattern exceptions) already flagged as future work in this decision's Scope, plus an analogous rule for Triangle Compression (both boundaries strict, per the old `DIRECTIONAL_BOUNDARY_ROLES` mapping); or
+2. As a temporary measure, restore a hard containment reject scoped only to Rising Wedge and Triangle Compression (reusing the still-intact `evaluate_candle_containment()` / `candle_containment` data, which this implementation left untouched) until (1) is authorized and built.
+
+Not resolved by this implementation. No action taken on this gap beyond recording it here and in `DOCUMENTS/PROJECT_STATE.md`.
+
+### Verification
+
+- New focused suite `tests/test_scanner_geometry_atr_containment.py` (28 tests): `evaluate_body_zone_breaches`, all three reversal-pattern recognizers, `evaluate_containment_violations` (including the Falling-Wedge-only scope gate and candles-unavailable fail-to-violation default), the severity/downgrade table end to end, and the freshness window formula.
+- `tests/test_directional_envelope_quality.py` updated: the five tests exercising the old hard-reject mechanism were replaced with tests of the new soft mechanism; the unrelated CANONICAL/EXPLORATORY downgrade test (`test_geometry_evaluation_has_no_directional_outside_downgrade`) was left unchanged and still passes, confirming `evaluate_candle_containment()`'s other consumer was not disturbed.
+- Full repository regression (`python -B -m unittest discover -s tests`): 619 tests, identical 2 failures and 19 errors to the pre-existing baseline (confirmed by diffing against the unmodified tree), zero new failures. `tests/test_geometry.py`, `tests/test_geometry_pipeline.py`, `tests/test_wedge_pipeline.py` (plain-script, not unittest-discoverable) were run directly and produce byte-identical output to the unmodified baseline, including `test_wedge_pipeline.py`'s already-documented pre-existing `AssertionError` (see `CR-SCANNER-GEOMETRY-001` `verification_results`).
+- Live end-to-end check on real ARBUSDT market data: previously hard-rejected (`containment_strict_run=50` against the old `max_strict_severe_run=2`), now `detected=True` with `containment_violations={"upper_violations": 63, "lower_strict_violations": 16, "lower_flexible_unrecognized_breaches": 7}` (4 late-zone breaches excused by recognized reversal patterns), `freshness_window=38`, and quality correctly downgraded from `B Setup` to `Weak Setup` (severity 165, ≥5 → 3-step downgrade per the approved table). The large severity value on this real example is itself useful early evidence for later calibration, not a defect.
 
 # END_OF_DOCUMENT
