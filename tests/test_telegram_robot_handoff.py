@@ -19,6 +19,8 @@ sys.modules["config"] = config_stub
 
 import notification
 import telegram_review
+from terminal.domain.models import Symbol, TradingAccountId
+from terminal.persistence.sqlite_store import RobotCandidateRecord
 
 
 class TelegramRobotHandoffTests(unittest.TestCase):
@@ -77,10 +79,18 @@ class TelegramRobotHandoffTests(unittest.TestCase):
             },
         }
 
-        approved_record = {
-            "candidate_id": "abc123",
-            "symbol": "ONGUSDT",
-        }
+        approved_record = RobotCandidateRecord(
+            candidate_id="abc123",
+            trading_account_id=TradingAccountId("paper"),
+            symbol=Symbol("ONGUSDT"),
+            status="APPROVED",
+            signal_snapshot={},
+            snapshot_sha256="0" * 64,
+            robot_state=None,
+            state_revision=1,
+            approved_at_ms=0,
+            updated_at_ms=0,
+        )
 
         with patch.object(
             telegram_review.config,

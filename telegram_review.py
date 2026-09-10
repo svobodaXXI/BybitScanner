@@ -376,8 +376,8 @@ def _process_callback(
 
             print(
                 "[ROBOT CANDIDATE APPROVED]",
-                record["candidate_id"] if isinstance(record, dict) else record.candidate_id,
-                record["symbol"] if isinstance(record, dict) else record.symbol.value,
+                record.candidate_id,
+                record.symbol.value,
             )
         except Exception as exc:
             print(
