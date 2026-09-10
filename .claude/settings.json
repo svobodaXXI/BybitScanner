@@ -1,0 +1,43 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [".claude/hooks/session_bootstrap.py"],
+            "timeout": 10,
+            "statusMessage": "Loading session bootstrap..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [".claude/hooks/pretool_scope_context.py"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [".claude/hooks/posttool_budget_check.py"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
