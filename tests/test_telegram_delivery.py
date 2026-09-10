@@ -223,6 +223,57 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
         self.assertEqual(message_mock.call_args_list[0].args[1], "owner")
 
 
+class ScanStartedDeliveryTests(unittest.TestCase):
+    def test_scan_started_message_reports_mode_score_and_symbol_count(self):
+        message = main.build_scan_started_message(
+            "hunter",
+            60,
+            18,
+        )
+
+        self.assertIn("Сканер запущен", message)
+        self.assertIn("Mode: hunter", message)
+        self.assertIn("Minimum Score: 60", message)
+        self.assertIn("Symbols: 18", message)
+
+    def test_scan_started_message_reflects_different_parameters(self):
+        message = main.build_scan_started_message(
+            "sniper",
+            75,
+            758,
+        )
+
+        self.assertIn("Mode: sniper", message)
+        self.assertIn("Minimum Score: 75", message)
+        self.assertIn("Symbols: 758", message)
+
+    def test_scan_started_is_sent_to_all_recipients(self):
+        with patch.object(main, "get_symbols", return_value=[]), patch.object(
+            notification.config,
+            "TELEGRAM_CHAT_IDS",
+            ("owner", "friend"),
+        ), patch.object(
+            notification,
+            "send_message",
+            return_value={"ok": True},
+        ) as message_mock:
+            main.main()
+
+        started_calls = [
+            item
+            for item in message_mock.call_args_list
+            if "Сканер запущен" in item.args[2]
+        ]
+
+        self.assertEqual(len(started_calls), 2)
+        self.assertEqual(
+            [item.args[1] for item in started_calls],
+            ["owner", "friend"],
+        )
+        for item in started_calls:
+            self.assertIn("Symbols: 0", item.args[2])
+
+
 class ScanFinishedDeliveryTests(unittest.TestCase):
     def test_scan_finished_message_reports_zero_approved_signals(self):
         message = main.build_scan_finished_message(
@@ -256,12 +307,18 @@ class ScanFinishedDeliveryTests(unittest.TestCase):
         ) as message_mock:
             main.main()
 
-        self.assertEqual(message_mock.call_count, 2)
+        finished_calls = [
+            item
+            for item in message_mock.call_args_list
+            if "Сканирование завершено" in item.args[2]
+        ]
+
+        self.assertEqual(len(finished_calls), 2)
         self.assertEqual(
-            [item.args[1] for item in message_mock.call_args_list],
+            [item.args[1] for item in finished_calls],
             ["owner", "friend"],
         )
-        for item in message_mock.call_args_list:
+        for item in finished_calls:
             self.assertIn("Сканирование завершено", item.args[2])
             self.assertIn("Найдено сигналов: 0", item.args[2])
 

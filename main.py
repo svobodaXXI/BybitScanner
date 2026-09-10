@@ -31,6 +31,21 @@ from notification import (
 )
 
 
+def build_scan_started_message(
+    mode,
+    min_score,
+    symbol_count,
+):
+    """Build the Scanner-started notification announced before the scan loop."""
+
+    return (
+        "Сканер запущен\n"
+        f"Mode: {mode}\n"
+        f"Minimum Score: {min_score}\n"
+        f"Symbols: {symbol_count}"
+    )
+
+
 def build_scan_finished_message(
     approved_pattern_count,
     elapsed_minutes,
@@ -70,6 +85,20 @@ def main():
 
     print("=" * 60)
     print()
+
+    try:
+        send_message(
+            build_scan_started_message(
+                MODE,
+                MIN_SCORE,
+                len(symbols),
+            )
+        )
+    except Exception as e:
+        print(
+            "[TELEGRAM SCAN START ERROR]",
+            e
+        )
 
     for symbol in symbols:
         try:
