@@ -278,22 +278,30 @@ class ScanFinishedDeliveryTests(unittest.TestCase):
     def test_scan_finished_message_reports_zero_approved_signals(self):
         message = main.build_scan_finished_message(
             0,
+            0,
+            10,
             1,
             2,
         )
 
         self.assertIn("Сканирование завершено", message)
         self.assertIn("Найдено сигналов: 0", message)
+        self.assertIn("Отправлено в Telegram: 0", message)
+        self.assertIn("Просканировано тикеров: 10", message)
 
     def test_scan_finished_message_reports_three_approved_signals(self):
         message = main.build_scan_finished_message(
             3,
+            2,
+            5,
             1,
             2,
         )
 
         self.assertIn("Сканирование завершено", message)
         self.assertIn("Найдено сигналов: 3", message)
+        self.assertIn("Отправлено в Telegram: 2", message)
+        self.assertIn("Просканировано тикеров: 5", message)
 
     def test_scan_finished_is_sent_to_all_recipients(self):
         with patch.object(main, "get_symbols", return_value=[]), patch.object(

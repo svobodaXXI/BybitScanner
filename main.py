@@ -48,6 +48,8 @@ def build_scan_started_message(
 
 def build_scan_finished_message(
     approved_pattern_count,
+    sent_to_telegram_count,
+    total_symbols_scanned,
     elapsed_minutes,
     elapsed_remainder,
 ):
@@ -56,6 +58,8 @@ def build_scan_finished_message(
     return (
         "Сканирование завершено\n"
         f"Найдено сигналов: {approved_pattern_count}\n"
+        f"Отправлено в Telegram: {sent_to_telegram_count}\n"
+        f"Просканировано тикеров: {total_symbols_scanned}\n"
         f"Elapsed: "
         f"{elapsed_minutes:02d}:"
         f"{elapsed_remainder:02d}"
@@ -65,6 +69,7 @@ def build_scan_finished_message(
 def main():
     scan_started_at = time.perf_counter()
     approved_pattern_count = 0
+    sent_to_telegram_count = 0
 
     symbols = get_symbols()
 
@@ -216,6 +221,9 @@ def main():
                     telegram_payload
                 )
 
+            if telegram_sent:
+                sent_to_telegram_count += 1
+
             print(
                 f"{symbol:<15} "
                 f"{pattern:<20} "
@@ -237,6 +245,8 @@ def main():
             )
 
     print(f"Найдено паттернов: {approved_pattern_count}")
+    print(f"Отправлено в Telegram: {sent_to_telegram_count}")
+    print(f"Просканировано тикеров: {len(symbols)}")
 
     elapsed_seconds = (
         time.perf_counter()
@@ -265,6 +275,8 @@ def main():
         send_message(
             build_scan_finished_message(
                 approved_pattern_count,
+                sent_to_telegram_count,
+                len(symbols),
                 elapsed_minutes,
                 elapsed_remainder,
             )
