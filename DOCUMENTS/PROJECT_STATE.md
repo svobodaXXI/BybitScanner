@@ -6497,3 +6497,11 @@ explicit decision and implementation of a mirrored ATR containment rule for Risi
 rule for Triangle Compression. Not started, not authorized. Unlike the 2026-09-11 mitigation window, no
 `main.py` restriction currently stands between this gap and production Robot v0.1 output вЂ” the two patterns
 are live in the scanner's output today with zero containment protection, by explicit user choice.
+
+## Robot Run Evidence
+
+- `DOCUMENTS/ROBOT_RUN_INDEX.md` — индекс фактических запусков Robot v0.1.
+- `DOCUMENTS/ROBOT_V0_1_LOCAL_PAPER_RUN_2026-09-12.md` — результат локального Paper-запуска 12.09.2026.
+- Контрольная точка: `ROBOT_RUNNING + READY`; AAVEUSDT и BLURUSDT > `APPROVED`; `robot_trades = 0`.
+- Причина отсутствия Robot-сделок в этом запуске не исследовалась. При дальнейшем расследовании сначала читать `ROBOT_RUN_INDEX.md` и полный отчёт.
+
