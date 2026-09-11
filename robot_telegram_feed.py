@@ -64,6 +64,80 @@ def parse_robot_view_callback(data: Any) -> str | None:
     return view if view in {VIEW_FEED, VIEW_POSITIONS, VIEW_WATCHING} else None
 
 
+CONTROL_START = "start"
+CONTROL_PAUSE = "pause"
+CONTROL_RESUME = "resume"
+CONTROL_STOP = "stop"
+CONTROL_CLOSE_ALL = "close_all"
+CONTROL_CLOSE_ALL_CONFIRM = "close_all_confirm"
+CONTROL_CLOSE_ALL_CANCEL = "close_all_cancel"
+ROBOT_CONTROL_COMMANDS = {
+    CONTROL_START, CONTROL_PAUSE, CONTROL_RESUME, CONTROL_STOP,
+    CONTROL_CLOSE_ALL, CONTROL_CLOSE_ALL_CONFIRM, CONTROL_CLOSE_ALL_CANCEL,
+}
+
+
+def parse_robot_control_callback(data: Any) -> str | None:
+    parts = str(data).split(":")
+    if len(parts) != 3 or parts[:2] != ["robot", "cmd"]:
+        return None
+    command = parts[2]
+    return command if command in ROBOT_CONTROL_COMMANDS else None
+
+
+def build_robot_control_keyboard(
+    mode: str, recovery_status: str,
+) -> dict[str, list[list[dict[str, str]]]]:
+    """Render the operator control panel from live durable admission state.
+
+    Exactly one button ever occupies the pause/resume slot (its label and
+    callback_data flip with current state, per
+    AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale) so a
+    rejected transition is structurally unreachable from this keyboard.
+    RECONCILIATION_REQUIRED offers no buttons: recovering out of it is a
+    separate, unresolved problem this control surface does not attempt.
+    """
+    if recovery_status == "RECONCILIATION_REQUIRED":
+        return {"inline_keyboard": []}
+    if mode == "ROBOT_STOPPED":
+        return {
+            "inline_keyboard": [
+                [{"text": "▶ Старт", "callback_data": f"robot:cmd:{CONTROL_START}"}],
+            ]
+        }
+    toggle = (
+        {"text": "▶ Старт", "callback_data": f"robot:cmd:{CONTROL_RESUME}"}
+        if recovery_status == "PAUSED"
+        else {"text": "⏸ Пауза", "callback_data": f"robot:cmd:{CONTROL_PAUSE}"}
+    )
+    return {
+        "inline_keyboard": [
+            [toggle],
+            [
+                {"text": "❌ Закрыть всё", "callback_data": f"robot:cmd:{CONTROL_CLOSE_ALL}"},
+                {"text": "⏹ Стоп", "callback_data": f"robot:cmd:{CONTROL_STOP}"},
+            ],
+        ]
+    }
+
+
+def build_robot_close_all_confirmation_keyboard() -> dict[str, list[list[dict[str, str]]]]:
+    """One lightweight confirmation tap before close_all_now() executes.
+
+    close_all_now() is the one command in this set that forces an immediate
+    Market close of a live (PAPER) position, so — unlike start/pause/resume/
+    stop — it is never fired directly from the control panel button.
+    """
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Подтвердить", "callback_data": f"robot:cmd:{CONTROL_CLOSE_ALL_CONFIRM}"},
+                {"text": "Отмена", "callback_data": f"robot:cmd:{CONTROL_CLOSE_ALL_CANCEL}"},
+            ],
+        ]
+    }
+
+
 def _required_text(source: Mapping[str, Any], key: str) -> str:
     value = str(source.get(key, "")).strip()
     if not value:

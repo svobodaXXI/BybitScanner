@@ -19,6 +19,21 @@ sys.modules["config"] = config_stub
 
 import notification
 import telegram_review
+from robot_candidate_store import RobotCandidateNotFound
+from terminal.application.robot_admission import RobotAdmissionRejected
+from terminal.domain.models import Symbol, TradingAccountId
+from terminal.persistence.sqlite_store import RobotCandidateRecord, RobotRuntimeStateRecord
+
+
+def _status(mode, recovery_status):
+    return RobotRuntimeStateRecord(
+        trading_account_id=TradingAccountId("paper"),
+        mode=mode,
+        recovery_status=recovery_status,
+        reason=None,
+        version=1,
+        updated_at_ms=1000,
+    )
 
 
 class TelegramRobotHandoffTests(unittest.TestCase):
@@ -77,10 +92,18 @@ class TelegramRobotHandoffTests(unittest.TestCase):
             },
         }
 
-        approved_record = {
-            "candidate_id": "abc123",
-            "symbol": "ONGUSDT",
-        }
+        approved_record = RobotCandidateRecord(
+            candidate_id="abc123",
+            trading_account_id=TradingAccountId("paper"),
+            symbol=Symbol("ONGUSDT"),
+            status="APPROVED",
+            signal_snapshot={},
+            snapshot_sha256="0" * 64,
+            robot_state=None,
+            state_revision=1,
+            approved_at_ms=0,
+            updated_at_ms=0,
+        )
 
         with patch.object(
             telegram_review.config,
@@ -88,16 +111,23 @@ class TelegramRobotHandoffTests(unittest.TestCase):
             "42",
         ), patch.object(
             telegram_review,
-            "approve_candidate",
+            "admit_robot_candidate",
             return_value=(approved_record, True),
-        ) as approve_mock, patch.object(
+        ) as admit_mock, patch.object(
             telegram_review,
             "_answer_callback",
-        ) as answer_mock:
+        ) as answer_mock, patch.object(
+            telegram_review,
+            "get_robot_runtime_status",
+            return_value=_status("ROBOT_RUNNING", "READY"),
+        ), patch.object(
+            telegram_review.telegram_bot,
+            "send_message",
+        ) as send_mock:
             telegram_review._process_callback(callback_query)
 
-        approve_mock.assert_called_once()
-        args, kwargs = approve_mock.call_args
+        admit_mock.assert_called_once()
+        args, kwargs = admit_mock.call_args
         self.assertEqual(args, ("abc123",))
         self.assertEqual(
             kwargs["approval"]["source"],
@@ -108,6 +138,175 @@ class TelegramRobotHandoffTests(unittest.TestCase):
             "callback-1",
             "Робот: сигнал принят ✅",
         )
+
+        # The status panel becomes the sole entry point into the control
+        # keyboard (CR-ROBOT-CONTROL-001): every press re-sends it with live
+        # state, regardless of admission outcome.
+        send_mock.assert_called_once()
+        args, kwargs = send_mock.call_args
+        self.assertEqual(args[1], 42)
+        self.assertIn("Робот: сигнал принят ✅", args[2])
+        self.assertIn("ROBOT_RUNNING", args[2])
+        self.assertIn("READY", args[2])
+        confirm_button = kwargs["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(confirm_button["callback_data"], "robot:cmd:pause")
+
+    def test_rejected_admission_still_sends_status_panel_with_reason(self):
+        callback_query = {
+            "id": "callback-3",
+            "data": "robot:approve:abc123",
+            "from": {"id": 42, "username": "owner"},
+            "message": {"message_id": 102, "chat": {"id": 42}},
+        }
+
+        with patch.object(
+            telegram_review.config,
+            "TELEGRAM_CHAT_ID",
+            "42",
+        ), patch.object(
+            telegram_review,
+            "admit_robot_candidate",
+            side_effect=RobotAdmissionRejected("Robot admission is not ready"),
+        ), patch.object(
+            telegram_review,
+            "_answer_callback",
+        ) as answer_mock, patch.object(
+            telegram_review,
+            "get_robot_runtime_status",
+            return_value=_status("ROBOT_STOPPED", "ROBOT_STOPPED"),
+        ), patch.object(
+            telegram_review.telegram_bot,
+            "send_message",
+        ) as send_mock:
+            telegram_review._process_callback(callback_query)
+
+        answer_mock.assert_called_once_with(
+            "callback-3",
+            "Робот: отклонено — Robot admission is not ready",
+        )
+        send_mock.assert_called_once()
+        args, kwargs = send_mock.call_args
+        self.assertIn("Робот: отклонено — Robot admission is not ready", args[2])
+        self.assertIn("ROBOT_STOPPED", args[2])
+        start_button = kwargs["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(start_button["callback_data"], "robot:cmd:start")
+
+    def test_stale_candidate_not_found_answers_with_specific_reason(self):
+        callback_query = {
+            "id": "callback-stale",
+            "data": "robot:approve:abc123",
+            "from": {"id": 42, "username": "owner"},
+            "message": {"message_id": 105, "chat": {"id": 42}},
+        }
+
+        with patch.object(
+            telegram_review.config,
+            "TELEGRAM_CHAT_ID",
+            "42",
+        ), patch.object(
+            telegram_review,
+            "admit_robot_candidate",
+            side_effect=RobotCandidateNotFound("abc123"),
+        ), patch.object(
+            telegram_review,
+            "_answer_callback",
+        ) as answer_mock, patch.object(
+            telegram_review,
+            "get_robot_runtime_status",
+            return_value=_status("ROBOT_RUNNING", "READY"),
+        ), patch.object(
+            telegram_review.telegram_bot,
+            "send_message",
+        ) as send_mock:
+            telegram_review._process_callback(callback_query)
+
+        answer_mock.assert_called_once_with(
+            "callback-stale",
+            "Робот: сигнал устарел или больше не найден",
+        )
+        send_mock.assert_called_once()
+
+    def test_unexpected_admission_error_still_sends_status_panel(self):
+        callback_query = {
+            "id": "callback-4",
+            "data": "robot:approve:abc123",
+            "from": {"id": 42, "username": "owner"},
+            "message": {"message_id": 103, "chat": {"id": 42}},
+        }
+
+        with patch.object(
+            telegram_review.config,
+            "TELEGRAM_CHAT_ID",
+            "42",
+        ), patch.object(
+            telegram_review,
+            "admit_robot_candidate",
+            side_effect=RuntimeError("disk full"),
+        ), patch.object(
+            telegram_review,
+            "_answer_callback",
+        ) as answer_mock, patch.object(
+            telegram_review,
+            "get_robot_runtime_status",
+            return_value=_status("ROBOT_RUNNING", "PAUSED"),
+        ), patch.object(
+            telegram_review.telegram_bot,
+            "send_message",
+        ) as send_mock:
+            telegram_review._process_callback(callback_query)
+
+        answer_mock.assert_called_once_with("callback-4", "Робот: ошибка сохранения")
+        send_mock.assert_called_once()
+        args, kwargs = send_mock.call_args
+        self.assertIn("Робот: ошибка сохранения", args[2])
+        resume_button = kwargs["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(resume_button["callback_data"], "robot:cmd:resume")
+
+    def test_status_panel_defaults_when_runtime_state_unavailable(self):
+        callback_query = {
+            "id": "callback-5",
+            "data": "robot:approve:abc123",
+            "from": {"id": 42, "username": "owner"},
+            "message": {"message_id": 104, "chat": {"id": 42}},
+        }
+        approved_record = RobotCandidateRecord(
+            candidate_id="abc123",
+            trading_account_id=TradingAccountId("paper"),
+            symbol=Symbol("ONGUSDT"),
+            status="APPROVED",
+            signal_snapshot={},
+            snapshot_sha256="0" * 64,
+            robot_state=None,
+            state_revision=1,
+            approved_at_ms=0,
+            updated_at_ms=0,
+        )
+
+        with patch.object(
+            telegram_review.config,
+            "TELEGRAM_CHAT_ID",
+            "42",
+        ), patch.object(
+            telegram_review,
+            "admit_robot_candidate",
+            return_value=(approved_record, True),
+        ), patch.object(
+            telegram_review,
+            "_answer_callback",
+        ), patch.object(
+            telegram_review,
+            "get_robot_runtime_status",
+            return_value=None,
+        ), patch.object(
+            telegram_review.telegram_bot,
+            "send_message",
+        ) as send_mock:
+            telegram_review._process_callback(callback_query)
+
+        args, kwargs = send_mock.call_args
+        self.assertIn("ROBOT_STOPPED", args[2])
+        start_button = kwargs["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(start_button["callback_data"], "robot:cmd:start")
 
     def test_non_owner_robot_callback_is_rejected(self):
         callback_query = {
@@ -126,14 +325,14 @@ class TelegramRobotHandoffTests(unittest.TestCase):
             "42",
         ), patch.object(
             telegram_review,
-            "approve_candidate",
-        ) as approve_mock, patch.object(
+            "admit_robot_candidate",
+        ) as admit_mock, patch.object(
             telegram_review,
             "_answer_callback",
         ) as answer_mock:
             telegram_review._process_callback(callback_query)
 
-        approve_mock.assert_not_called()
+        admit_mock.assert_not_called()
         answer_mock.assert_called_once_with(
             "callback-2",
             "Недостаточно прав",

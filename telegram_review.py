@@ -7,8 +7,25 @@ import time
 import requests
 
 import config
-from robot_candidate_store import (
-    approve_candidate,
+import telegram_bot
+from robot_candidate_store import RobotCandidateNotFound
+from robot_telegram_feed import (
+    build_robot_close_all_confirmation_keyboard,
+    build_robot_control_keyboard,
+    parse_robot_control_callback,
+)
+from terminal.application.robot_admission import (
+    RobotAdmissionRejected,
+    admit_robot_candidate,
+)
+from terminal.application.robot_control import (
+    RobotControlRejected,
+    close_all_now,
+    get_robot_runtime_status,
+    pause_robot,
+    resume_robot,
+    start_robot,
+    stop_robot,
 )
 
 
@@ -302,6 +319,139 @@ def _save_review(
     return case_dir
 
 
+_ROBOT_CONTROL_SUCCESS_TEXT = {
+    "start": "Робот: запущен ▶",
+    "pause": "Робот: на паузе ⏸",
+    "resume": "Робот: возобновлён ▶",
+    "stop": "Робот: остановлен ⏹",
+}
+
+
+def _call_robot_control_command(command):
+    # Dispatched by name (not a dict of pre-bound functions) so tests can
+    # patch telegram_review.<name>_robot the same way they already patch
+    # admit_robot_candidate, instead of a reference captured at import time.
+    if command == "start":
+        return start_robot()
+    if command == "pause":
+        return pause_robot()
+    if command == "resume":
+        return resume_robot()
+    if command == "stop":
+        return stop_robot()
+    raise ValueError(f"unsupported Robot control command: {command}")
+
+
+def _post_robot_close_all_now(url, payload):
+    # close_all_now() itself imports no network client (see
+    # terminal.application.robot_control's module docstring) -- this is the
+    # transport it is handed, kept here since telegram_review.py already
+    # depends on requests.
+    response = requests.post(url, json=payload, timeout=15)
+    body = response.json()
+    if response.status_code != 200 or not body.get("ok", False):
+        raise RobotControlRejected(f"PAPER backend rejected close_all_now: {body}")
+    return body
+
+
+def _request_close_all_confirmation(callback_query):
+    message = callback_query.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    _answer_callback(
+        callback_query.get("id"),
+        "Подтвердите закрытие всех позиций робота",
+    )
+    if chat_id is not None:
+        telegram_bot.send_message(
+            config.TELEGRAM_TOKEN,
+            chat_id,
+            "❌ Закрыть все позиции робота Market-ордером? Это действие необратимо.",
+            reply_markup=build_robot_close_all_confirmation_keyboard(),
+        )
+
+
+def _confirm_close_all_now(callback_query):
+    try:
+        result = close_all_now(http_post=_post_robot_close_all_now)
+    except RobotControlRejected as exc:
+        _answer_callback(
+            callback_query.get("id"),
+            f"Робот: отклонено — {exc}",
+        )
+        print("[ROBOT CONTROL REJECTED]", "close_all", exc)
+        return None
+    except Exception as exc:
+        _answer_callback(callback_query.get("id"), "Робот: ошибка команды")
+        print("[ROBOT CONTROL ERROR]", "close_all", exc)
+        return None
+
+    prefix = "Робот: закрытие отправлено ❌"
+    _answer_callback(callback_query.get("id"), prefix)
+    _send_robot_status_panel(callback_query, prefix)
+    print("[ROBOT CONTROL]", "close_all", result)
+    return result
+
+
+def _run_robot_control_command(
+    callback_query,
+    command,
+):
+    # close_all_now() is the one command that forces an immediate Market
+    # close, so it is never fired directly from a single tap -- see
+    # AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale and
+    # CR-ROBOT-CONTROL-001's approved_scope for the one-tap confirmation.
+    if command == "close_all":
+        _request_close_all_confirmation(callback_query)
+        return None
+    if command == "close_all_confirm":
+        return _confirm_close_all_now(callback_query)
+    if command == "close_all_cancel":
+        prefix = "Отменено"
+        _answer_callback(callback_query.get("id"), prefix)
+        _send_robot_status_panel(callback_query, prefix)
+        return None
+
+    try:
+        state = _call_robot_control_command(command)
+    except RobotControlRejected as exc:
+        _answer_callback(
+            callback_query.get("id"),
+            f"Робот: отклонено — {exc}",
+        )
+        print(
+            "[ROBOT CONTROL REJECTED]",
+            command,
+            exc,
+        )
+        return None
+    except Exception as exc:
+        _answer_callback(
+            callback_query.get("id"),
+            "Робот: ошибка команды"
+        )
+        print(
+            "[ROBOT CONTROL ERROR]",
+            command,
+            exc
+        )
+        return None
+
+    prefix = _ROBOT_CONTROL_SUCCESS_TEXT[command]
+    _answer_callback(
+        callback_query.get("id"),
+        prefix,
+    )
+    _send_robot_status_panel(callback_query, prefix)
+    print(
+        "[ROBOT CONTROL]",
+        command,
+        state.mode,
+        state.recovery_status,
+    )
+    return state
+
+
 def _approve_robot_candidate(
     callback_query,
     parsed,
@@ -310,7 +460,7 @@ def _approve_robot_candidate(
     from_user = callback_query.get("from") or {}
     chat = message.get("chat") or {}
 
-    record, changed = approve_candidate(
+    record, changed = admit_robot_candidate(
         parsed["candidate_id"],
         approval={
             "source": "telegram_robot_button",
@@ -325,6 +475,48 @@ def _approve_robot_candidate(
     return record, changed
 
 
+def _send_robot_status_panel(
+    callback_query,
+    prefix,
+):
+    # The sole entry point into the admission-gate control panel today (no
+    # /robot command, no send-once-at-startup message -- see
+    # CR-ROBOT-CONTROL-001): every press of the per-signal "🤖 Робот" button
+    # re-sends the panel with live state, whether admission succeeded,
+    # was rejected, or errored.
+    message = callback_query.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+
+    if chat_id is None:
+        return
+
+    try:
+        status = get_robot_runtime_status()
+    except Exception as exc:
+        print(
+            "[ROBOT STATUS PANEL ERROR]",
+            exc,
+        )
+        return
+
+    mode = status.mode if status is not None else "ROBOT_STOPPED"
+    recovery_status = status.recovery_status if status is not None else "ROBOT_STOPPED"
+
+    try:
+        telegram_bot.send_message(
+            config.TELEGRAM_TOKEN,
+            chat_id,
+            f"{prefix}\n\nСтатус робота: {mode} / {recovery_status}",
+            reply_markup=build_robot_control_keyboard(mode, recovery_status),
+        )
+    except Exception as exc:
+        print(
+            "[ROBOT STATUS PANEL ERROR]",
+            exc,
+        )
+
+
 def _process_callback(
     callback_query
 ):
@@ -336,6 +528,10 @@ def _process_callback(
     parsed = _parse_callback(data)
     if parsed is None:
         parsed = _parse_robot_callback(data)
+    if parsed is None:
+        control_command = parse_robot_control_callback(data)
+        if control_command is not None:
+            parsed = {"kind": "robot_control", "command": control_command}
 
     if parsed is None:
         return
@@ -358,6 +554,13 @@ def _process_callback(
         )
         return
 
+    if parsed["kind"] == "robot_control":
+        _run_robot_control_command(
+            callback_query,
+            parsed["command"],
+        )
+        return
+
     if parsed["kind"] == "robot":
         try:
             record, changed = _approve_robot_candidate(
@@ -365,29 +568,56 @@ def _process_callback(
                 parsed,
             )
 
+            prefix = (
+                "Робот: сигнал принят ✅"
+                if changed
+                else "Робот: сигнал уже принят"
+            )
             _answer_callback(
                 callback_query.get("id"),
-                (
-                    "Робот: сигнал принят ✅"
-                    if changed
-                    else "Робот: сигнал уже принят"
-                ),
+                prefix,
             )
 
             print(
                 "[ROBOT CANDIDATE APPROVED]",
-                record["candidate_id"],
-                record["symbol"],
+                record.candidate_id,
+                record.symbol.value,
+            )
+        except RobotAdmissionRejected as exc:
+            prefix = f"Робот: отклонено — {exc}"
+            print(
+                "[ROBOT CANDIDATE REJECTED]",
+                exc,
+            )
+            _answer_callback(
+                callback_query.get("id"),
+                prefix,
+            )
+        except RobotCandidateNotFound as exc:
+            prefix = "Робот: сигнал устарел или больше не найден"
+            print(
+                "[ROBOT CANDIDATE NOT FOUND]",
+                exc,
+            )
+            _answer_callback(
+                callback_query.get("id"),
+                prefix,
             )
         except Exception as exc:
+            prefix = "Робот: ошибка сохранения"
             print(
                 "[ROBOT CANDIDATE ERROR]",
                 exc
             )
             _answer_callback(
                 callback_query.get("id"),
-                "Робот: ошибка сохранения"
+                prefix,
             )
+
+        _send_robot_status_panel(
+            callback_query,
+            prefix,
+        )
         return
 
     try:

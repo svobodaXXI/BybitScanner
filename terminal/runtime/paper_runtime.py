@@ -920,6 +920,52 @@ class PaperRuntime:
             request.client_action_id.value, tuple(results), refreshed.positions,
         )
 
+    def robot_close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
+        """Market-close exclusively Robot-owned open positions (close_all_now()).
+
+        Unlike close_all(), which is account-wide, this filters strictly to
+        symbols with an OPEN robot_candidates row for this account, per
+        AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Section 4 Scope:
+        manual/non-robot positions on the same PAPER account are never
+        checked, cancelled, or closed by this method. If any close cannot be
+        authoritatively confirmed as filled, the durable Robot admission gate
+        is handed to RECONCILIATION_REQUIRED for manual resolution, per
+        Section 4 -- this method never itself changes admission mode
+        otherwise.
+        """
+        self.require_paper_mutations()
+        candidates = self.store.load_robot_candidates(self._account_id)
+        robot_symbols = sorted({
+            item.symbol.value for item in candidates if item.status == "OPEN"
+        })
+        results = []
+        any_unconfirmed = False
+        for symbol in robot_symbols:
+            digest = hashlib.sha256(
+                f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
+            ).hexdigest()[:32]
+            result = self.api.full_close(FullCloseCommandRequest(
+                ClientActionId(f"robot-close-all-{digest}"), symbol,
+            ))
+            results.append(result)
+            if result.status != CommandResultStatus.COMPLETED:
+                any_unconfirmed = True
+        if any_unconfirmed:
+            runtime = self.store.get_robot_runtime_state(self._account_id)
+            if runtime is not None and runtime.mode == "ROBOT_RUNNING":
+                self.store.update_robot_runtime_state(
+                    self._account_id,
+                    mode="ROBOT_RUNNING",
+                    recovery_status="RECONCILIATION_REQUIRED",
+                    reason="close_all_now could not confirm a Robot-owned position close",
+                    expected_version=runtime.version,
+                    updated_at_ms=int(time.time() * 1000),
+                )
+        refreshed = self.open_positions()
+        return CloseAllCommandResponse(
+            request.client_action_id.value, tuple(results), refreshed.positions,
+        )
+
     def create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
         self.require_paper_mutations()
         symbol = request.symbol.strip().upper()

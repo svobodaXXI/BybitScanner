@@ -170,7 +170,12 @@ def analyze_symbol(symbol):
             result.get("pattern"),
             result.get("geometry"),
             confirmation,
-            result["final_score"]
+            result["final_score"],
+            containment_violations=(
+                result.get("detection", {})
+                .get("features", {})
+                .get("containment_violations")
+            )
         )
 
         # =========================

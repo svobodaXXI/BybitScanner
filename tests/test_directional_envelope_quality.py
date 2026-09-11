@@ -8,7 +8,15 @@ from wedge.detector import detect_structure
 from wedge.integrity import evaluate_directional_envelope
 
 
-def _envelope(upper_outside=0, lower_outside=0, above=(), below=()):
+def _envelope(
+    upper_outside=0,
+    lower_outside=0,
+    above=(),
+    below=(),
+    upper_body_breaches=(),
+    lower_strict_breaches=(),
+    lower_late_breaches=(),
+):
     return {
         "upper": {
             "support_count": 3,
@@ -30,6 +38,11 @@ def _envelope(upper_outside=0, lower_outside=0, above=(), below=()):
             "lower_early_max_run": 0,
             "fully_above_upper_indices": list(above),
             "fully_below_lower_indices": list(below)
+        },
+        "body_zone_breaches": {
+            "upper_body_breach_indices": list(upper_body_breaches),
+            "lower_body_breach_early_indices": list(lower_strict_breaches),
+            "lower_body_breach_late_indices": list(lower_late_breaches),
         }
     }
 
@@ -93,47 +106,54 @@ class DirectionalEnvelopeQualityTests(unittest.TestCase):
         self.assertEqual(falling["boundaries"]["upper"]["role"], "STRICT")
         self.assertEqual(rising["boundaries"]["upper"]["role"], "EXCURSION")
 
-    def test_strict_run_over_two_rejects_falling(self):
+    def test_falling_wedge_containment_violations_no_longer_reject_detection(self):
+        # DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md replaces the
+        # old hard containment reject with a soft signal.quality tier
+        # penalty. detect_structure() must still detect the structure and
+        # merely report the violation counts.
         result = detect_structure(
-            _geometry(-1.0, -0.5, _envelope(above=(1, 2, 3)))
-        )
-        self.assertFalse(result["detected"])
-        self.assertEqual(result["features"]["containment_strict_side"], "upper")
-        self.assertEqual(result["features"]["containment_strict_run"], 3)
-
-    def test_strict_run_over_two_rejects_rising(self):
-        result = detect_structure(
-            _geometry(0.5, 1.0, _envelope(below=(1, 2, 3)))
-        )
-        self.assertFalse(result["detected"])
-        self.assertEqual(result["features"]["containment_strict_side"], "lower")
-
-    def test_triangle_rejects_breach_on_either_strict_side(self):
-        upper = detect_structure(
-            _geometry(-1.0, 1.0, _envelope(above=(1, 2, 3)))
-        )
-        lower = detect_structure(
-            _geometry(-1.0, 1.0, _envelope(below=(1, 2, 3)))
-        )
-        self.assertFalse(upper["detected"])
-        self.assertFalse(lower["detected"])
-        self.assertEqual(upper["features"]["containment_strict_side"], "both")
-
-    def test_two_strict_breaches_remain_allowed(self):
-        result = detect_structure(
-            _geometry(-1.0, -0.5, _envelope(above=(1, 2)))
+            _geometry(-1.0, -0.5, _envelope(upper_body_breaches=(1, 2, 3)))
         )
         self.assertTrue(result["detected"])
+        self.assertEqual(
+            result["features"]["containment_violations"]["upper_violations"], 3
+        )
 
-    def test_excursion_run_does_not_reject(self):
-        falling = detect_structure(
-            _geometry(-1.0, -0.5, _envelope(below=(1, 2, 3, 4)))
+    def test_falling_wedge_lower_strict_and_flexible_breaches_are_counted(self):
+        result = detect_structure(
+            _geometry(
+                -1.0, -0.5,
+                _envelope(lower_strict_breaches=(1, 2), lower_late_breaches=(9,))
+            )
         )
+        self.assertTrue(result["detected"])
+        violations = result["features"]["containment_violations"]
+        self.assertEqual(violations["lower_strict_violations"], 2)
+        # No candles supplied -> the late breach cannot be confirmed as
+        # reversal-pattern-excused, so it counts as a violation by default.
+        self.assertEqual(violations["lower_flexible_unrecognized_breaches"], 1)
+
+    def test_rising_wedge_and_triangle_get_no_containment_violations_yet(self):
+        # Explicit, currently-accepted scope gap: the mirrored Rising Wedge
+        # rule is separate future work, so these patterns get zero
+        # violations (and are therefore never penalized by containment)
+        # until that future decision is authorized.
         rising = detect_structure(
-            _geometry(0.5, 1.0, _envelope(above=(1, 2, 3, 4)))
+            _geometry(0.5, 1.0, _envelope(upper_body_breaches=(1, 2, 3)))
         )
-        self.assertTrue(falling["detected"])
+        triangle = detect_structure(
+            _geometry(-1.0, 1.0, _envelope(upper_body_breaches=(1, 2, 3)))
+        )
         self.assertTrue(rising["detected"])
+        self.assertTrue(triangle["detected"])
+        self.assertEqual(
+            rising["features"]["containment_violations"],
+            {
+                "upper_violations": 0,
+                "lower_strict_violations": 0,
+                "lower_flexible_unrecognized_breaches": 0,
+            }
+        )
 
     @patch("geometry.evaluation.detect_pre_pattern_impulse", return_value={})
     @patch("geometry.evaluation.calculate_envelope_metrics")

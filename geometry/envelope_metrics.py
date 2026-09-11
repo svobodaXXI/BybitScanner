@@ -31,6 +31,24 @@ Rising Wedge hypothesis:
 
 
 from .candidate import DEFAULT_TOLERANCE_PERCENT
+from confirmation import calculate_atr
+
+
+# ---------------------------------------------------------------------------
+# DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md — initial working
+# defaults. Not calibrated against historical data yet.
+# ---------------------------------------------------------------------------
+
+# ATR(14) multiplier defining the containment tolerance band, in absolute
+# price units (tolerance = CONTAINMENT_ATR_MULTIPLIER * ATR).
+CONTAINMENT_ATR_MULTIPLIER = 0.15
+
+# Structure split for the upper (always-strict) vs. lower
+# (strict-early/flexible-late) containment regime: the first
+# CONTAINMENT_STRICT_ZONE_RATIO share of the structure is the strict zone.
+CONTAINMENT_STRICT_ZONE_RATIO = 0.6
+
+ATR_PERIOD = 14
 
 
 def line_value(
@@ -983,6 +1001,127 @@ def evaluate_candle_containment(
     }
 
 
+def evaluate_body_zone_breaches(
+    upper_line,
+    lower_line,
+    candles,
+    start_index,
+    current_index,
+    atr_multiplier=CONTAINMENT_ATR_MULTIPLIER,
+    strict_zone_ratio=CONTAINMENT_STRICT_ZONE_RATIO,
+    atr_period=ATR_PERIOD
+):
+    """
+    Direction-neutral raw candle-body breach detection against both
+    trendlines, using an ATR-derived tolerance instead of a fixed
+    percentage, and splitting the structure into an early/late zone by
+    `strict_zone_ratio` instead of a fixed 50/50 midpoint.
+
+    Reused, pattern-aware interpretation (which side is "always strict"
+    vs. "strict-early/flexible-late", and any reversal-pattern exception)
+    is owned by the Wedge Layer (see wedge/integrity.py), not here. This
+    function only reports raw per-side, per-zone body-breach indices.
+
+    A "body breach" compares the candle's body edge (max/min of open and
+    close), not its wick, against the trendline, per
+    DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md Sections 3-5.
+
+    Returns None when required inputs are unavailable, mirroring
+    evaluate_candle_containment().
+    """
+
+    if (
+        candles is None
+        or upper_line is None
+        or lower_line is None
+        or start_index is None
+        or current_index is None
+    ):
+        return None
+
+    try:
+        candle_count = len(candles)
+    except Exception:
+        return None
+
+    if candle_count <= 0:
+        return None
+
+    start = max(0, int(start_index))
+    end = min(int(current_index), candle_count - 1)
+
+    if end < start:
+        return None
+
+    try:
+        atr_series = calculate_atr(candles, period=atr_period)
+    except Exception:
+        atr_series = None
+
+    midpoint = start + round((end - start) * strict_zone_ratio)
+
+    upper_body_breach_indices = []
+    lower_body_breach_early_indices = []
+    lower_body_breach_late_indices = []
+
+    for index in range(start, end + 1):
+
+        try:
+            row = candles.iloc[index]
+            open_price = float(row["open"])
+            close_price = float(row["close"])
+        except Exception:
+            continue
+
+        body_high = max(open_price, close_price)
+        body_low = min(open_price, close_price)
+
+        upper_value = line_value(upper_line, index)
+        lower_value = line_value(lower_line, index)
+
+        if upper_value is None or lower_value is None:
+            continue
+
+        atr_value = None
+
+        if atr_series is not None:
+            try:
+                candidate = atr_series.iloc[index]
+                if candidate == candidate:  # NaN check without importing math/numpy
+                    atr_value = float(candidate)
+            except Exception:
+                atr_value = None
+
+        if atr_value is None:
+            # Insufficient warm-up data for ATR at this index (e.g. the
+            # first atr_period candles of the whole dataset). Fail open:
+            # this soft mechanism skips candles it cannot evaluate rather
+            # than guessing a tolerance.
+            continue
+
+        tolerance = atr_multiplier * atr_value
+
+        if (body_high - upper_value) > tolerance:
+            upper_body_breach_indices.append(index)
+
+        if (lower_value - body_low) > tolerance:
+            if index <= midpoint:
+                lower_body_breach_early_indices.append(index)
+            else:
+                lower_body_breach_late_indices.append(index)
+
+    return {
+        "start_index": start,
+        "end_index": end,
+        "midpoint_index": midpoint,
+        "atr_multiplier": atr_multiplier,
+        "strict_zone_ratio": strict_zone_ratio,
+        "upper_body_breach_indices": upper_body_breach_indices,
+        "lower_body_breach_early_indices": lower_body_breach_early_indices,
+        "lower_body_breach_late_indices": lower_body_breach_late_indices,
+    }
+
+
 def calculate_envelope_metrics(
     upper_candidate,
     lower_candidate,
@@ -1081,6 +1220,16 @@ def calculate_envelope_metrics(
         )
     )
 
+    body_zone_breaches = (
+        evaluate_body_zone_breaches(
+            upper_line,
+            lower_line,
+            candles,
+            common_start,
+            current_index
+        )
+    )
+
     return {
         "common_start":
             common_start,
@@ -1099,6 +1248,9 @@ def calculate_envelope_metrics(
 
         "candle_containment":
             candle_containment,
+
+        "body_zone_breaches":
+            body_zone_breaches,
 
         "reference_anchor":
             reference_anchor

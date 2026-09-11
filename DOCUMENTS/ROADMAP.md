@@ -2,11 +2,11 @@
 
 Version:
 
-4.57
+4.61
 
 Date:
 
-2026-09-10
+2026-09-11
 
 Document Type:
 
@@ -141,11 +141,14 @@ Knowledge System
 
 current_focus:
 
-Scanner Geometry / Targeted Runtime Reliability
+Scanner Geometry / Wedge Boundary Fitting — in service of the Robot v0.1 prototype
 
 current_state:
 
-Performance Architecture Audit completed.
+Performance Architecture Audit completed. As of 2026-09-10, Trading Terminal / Trading Workspace has
+reached a state usable for trading and is closed as the active development direction (see
+CR-TRADING-WORKSPACE-001 below; its own ChangeRequest record is unchanged). Robot v0.1 prototype is the
+new primary project priority; its first dependency is finishing pattern detection / Geometry.
 
 Architecture verdict:
 
@@ -576,23 +579,31 @@ Decouple notification latency if measurements justify it
 
 Текущий приоритет:
 
-SCANNER_GEOMETRY
+ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY
 
 активные задачи:
 
 * сохранить качество Geometry/Wedge;
-* восстановить явный Signal admission;
-* устранить доказанные runtime bottlenecks
-  минимальными целевыми изменениями;
+* довести wedge boundary fitting до реализации — DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md
+  (ACCEPTED DESIGN, Implementation authorization: NONE), заменяющий жёсткий containment/freshness gate
+  в wedge/detector.py на ATR-нормализованный допуск и мягкий штраф к signal/quality.py;
+* устранить доказанные runtime bottlenecks минимальными целевыми изменениями;
 * измерить Geometry до её оптимизации.
 
 следующий этап:
 
-Signal admission contract verification
+Task/Spec на реализацию SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md (не начато, не авторизовано)
 
 долгосрочная цель:
 
-Acceptable Scanner Operation
+Pattern detection / Geometry, достаточные для расширения прототипа Robot v0.1 за пределы уже
+реализованных 8 слайсов admission/execution
+
+Примечание:
+
+Trading Terminal / Trading Workspace доведён до состояния пригодности для торговли и закрыт как активное
+направление разработки 2026-09-10 (CR-TRADING-WORKSPACE-001 формально не закрыт, его собственная запись
+не изменена).
 
 ---
 
@@ -924,7 +935,8 @@ NONE
 
 Post-mission routing:
 
-SCANNER_GEOMETRY_TASK_SELECTION — NOT_STARTED / NOT_AUTHORIZED
+SCANNER_GEOMETRY_TASK_SELECTION — RESOLVED 2026-09-11 to `CR-SCANNER-GEOMETRY-002`
+(ATR-Normalized Wick-Aware Boundary Fitting for Wedge Layer), SPEC stage, CONTEXT not started/not authorized.
 
 Phase 0 through Phase 6 and mission close are complete. Final outcome is owned by ChangeRequest revision 1.9.
 Detailed implementation history is owned by Git.
@@ -954,7 +966,81 @@ Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-001.md` revision 1.4.
 
 Next action:
 
-SCANNER_GEOMETRY_TASK_SELECTION. No next implementation task is selected or authorized.
+SCANNER_GEOMETRY_TASK_SELECTION resolved on 2026-09-11 to `CR-SCANNER-GEOMETRY-002` (see below). No further
+task selection is open under this closed mission.
+
+---
+
+# CR-SCANNER-GEOMETRY-002
+
+Title:
+
+ATR-Normalized Wick-Aware Boundary Fitting for Wedge Layer
+
+Governance type:
+
+RESEARCH_TO_IMPLEMENTATION_CHANGE_REQUEST (not DURABLE_PLANNING_RESEARCH; goes directly to SPEC)
+
+Status:
+
+OPEN / SPEC_RECORDED / CONTEXT_NOT_STARTED_NOT_AUTHORIZED
+
+Objective:
+
+Replace the fixed 0.6% binary touch/violation tolerance in `geometry/touches.py` and
+`geometry/validation/touches.py` with separate, ATR-normalized `touch_tolerance` and `violation_tolerance`
+parameters, graduated per-touch distance scoring, and a bounded per-line outlier-contact allowance, so one
+noisy wick-outlier candle cannot by itself reject a geometrically valid trendline.
+
+Source:
+
+Promotes the GRVTUSDT wick-aware Wedge boundary-fitting research observation (recorded above under
+`CR-TRADING-INTELLIGENCE-001`) from unproven research hypothesis to an active, SPEC-formalized implementation
+path, per the 2026-09-10 project priority pivot recorded in `DOCUMENTS/PROJECT_STATE.md`.
+
+Relationship to CR-SCANNER-GEOMETRY-ATR-CONTAINMENT:
+
+Distinct from and complementary to `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`. That decision
+governs post-detection containment/freshness in `wedge/detector.py` / `geometry/envelope_metrics.py`
+(whether candles between touch points violate the line). This CR governs Pivot touch/violation tolerance
+itself in `geometry/touches.py` / `geometry/validation/touches.py` (whether a Pivot point counts as a touch
+at all). Both trace to the same GRVTUSDT observation but change different code.
+
+Status update (2026-09-11): `SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` is now `IMPLEMENTED_VERIFIED`
+(see its own `IMPLEMENTATION_RECORD`). This CR (Pivot touch/violation tolerance) is unaffected and remains
+`OPEN / SPEC` — it is a separate mechanism, not a dependency of the containment work.
+
+Planned scope:
+
+* separate ATR-derived `touch_tolerance` and `violation_tolerance` (reusing `confirmation.py:calculate_atr()`,
+  no duplicate ATR calculation);
+* graduated per-touch distance/score replacing the binary touch/no-touch decision;
+* a bounded number of outlier contacts per line (RANSAC-inlier-ratio-style) without invalidating the whole
+  line;
+* one shared code path for upper (high-wick) and lower (low-wick) boundaries, no duplicated per-side logic;
+* additive extension of the `touches` dict in the GeometryModel Contract, preserving existing keys and their
+  meaning for existing consumers (`wedge/detector.py`, `signal/quality.py`).
+
+Restrictions:
+
+* not an implementation authorization by itself — IMPLEMENT requires separate explicit approval after
+  CONTEXT;
+* does not change Geometry Engine / Wedge Layer responsibility separation;
+* the Candidate layer still does not determine the wedge pattern or compute Quality/Score.
+
+Unresolved before IMPLEMENT:
+
+Exact ATR multipliers for `touch_tolerance` and `violation_tolerance`, the exact bounded-outlier count, the
+graduated-score formula, and the exact ATR windowing (existing default window vs. a window scoped to the
+structure's own span) — see `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-002.md` `unresolved_decisions`.
+
+Acceptance and risks:
+
+Owned by `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-002.md` revision 1.0.
+
+Next action:
+
+CONTEXT phase, subject to explicit human authorization. Not started.
 
 ---
 
@@ -1058,10 +1144,17 @@ profitability requires later historical and Paper Trader evidence.
 
 Geometry research observation:
 
-GRVTUSDT suggests future validation of robust wick-aware Wedge boundary fitting. Candidate objectives
-include meaningful touches/near-touches, distance and violation magnitude, limited outliers, and
-structure-scale or volatility-normalized tolerance for upper high-wicks and mirrored lower low-wicks.
-This is an unproven research hypothesis, not an algorithm change or implementation authorization.
+GRVTUSDT suggested future validation of robust wick-aware Wedge boundary fitting: meaningful
+touches/near-touches, distance and violation magnitude, limited outliers, and structure-scale or
+volatility-normalized tolerance for upper high-wicks and mirrored lower low-wicks.
+
+Status update (2026-09-10): this observation is no longer an unproven research hypothesis awaiting future
+validation. It is now the active pre-implementation target of the current project priority
+(ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY, see CURRENT_OBJECTIVE above), formalized as an ATR-normalized,
+zone-aware containment redesign in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` (`Status:
+ACCEPTED DESIGN`, `Implementation authorization: NONE`). That document supersedes an intermediate
+non-ATR boundary-violation proposal recorded in `DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md`
+(now `Status: SUPERSEDED`). Recording this status change is not itself an implementation authorization.
 
 ## FUTURE_MISSION_ANCHOR_QUALITY_LEARNING
 
@@ -1340,6 +1433,14 @@ Current checkpoint:
 
 AUTHORITATIVE_L2_AND_PAPER_EXECUTION_DECISIONS_RECORDED
 
+Project priority note (2026-09-10):
+
+This subsystem has reached a state usable for trading and is closed as the active development priority in
+favor of ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY (see CURRENT_OBJECTIVE above and
+`DOCUMENTS/PROJECT_STATE.md`). This CR is not formally closed; its status, lifecycle state and remaining
+Stage 8 items below are unchanged and remain owned by
+`DOCUMENTS/CHANGE_REQUESTS/CR-TRADING-WORKSPACE-001.md`.
+
 First implementation priority:
 
 Usable manual trading through a virtual paper account and reusable Paper Trading Engine behind a
@@ -1478,6 +1579,23 @@ own revision history and by Git commit history. Per DECISION-007 ("Git owns
 detailed implementation history"), that retelling is not duplicated here;
 only a compact milestone index is kept, newest first.
 
+* v4.59→v4.60 — implemented `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`
+  (`Implementation authorization` NONE→APPROVED, 2026-09-11): ATR-normalized wedge containment
+  replacing the old hard reject; see that document's own `IMPLEMENTATION_RECORD` (including the
+  `KNOWN_GAP` that Rising Wedge/Triangle Compression currently have no containment gate at all) for
+  full detail; `CR-SCANNER-GEOMETRY-002` unaffected;
+* v4.58→v4.59 — resolved `SCANNER_GEOMETRY_TASK_SELECTION` (open since `CR-SCANNER-GEOMETRY-001`
+  mission close) to `CR-SCANNER-GEOMETRY-002` (ATR-Normalized Wick-Aware Boundary Fitting for Wedge
+  Layer — Pivot touch/violation tolerance in `geometry/touches.py` / `geometry/validation/touches.py`),
+  TASK/SPEC recorded in `DOCUMENTS/CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-002.md` revision 1.0;
+  documentation only, no implementation authorized;
+* v4.56→v4.58 — project priority pivot: closed Trading Terminal / Trading Workspace as the active
+  development direction (reached a state usable for trading; `CR-TRADING-WORKSPACE-001` not formally
+  closed, its own record unchanged) and set the new priority to the Robot v0.1 prototype, whose first
+  dependency is finishing pattern detection / Geometry; promoted the GRVTUSDT wick-aware boundary-fitting
+  observation from deferred hypothesis to active target (see
+  `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`, which supersedes
+  `DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md`);
 * v4.56→v4.57 — documentation-hygiene pass (no CR revision advance): removed
   ROADMAP.md's per-revision retelling of `CR-TRADING-WORKSPACE-001` (folded
   into the milestone index below) and this document's own then-190-line
@@ -1510,7 +1628,7 @@ only a compact milestone index is kept, newest first.
 Full wording for any of the above is recoverable from Git history for
 `DOCUMENTS/ROADMAP.md` and from the named CR file under
 `DOCUMENTS/CHANGE_REQUESTS/`. Versions v4.46 through v4.55 (between this
-retelling cutoff and the current header version 4.57) were not appended
+retelling cutoff and the v4.57 documentation-hygiene pass) were not appended
 here as individual entries; consult Git history and the relevant CR file
 directly rather than expecting this section to be an exhaustive per-version
 log going forward.

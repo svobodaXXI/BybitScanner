@@ -5,6 +5,7 @@ import unittest
 
 from robot_state_machine import initialize_state
 from terminal.application.robot_recovery import (
+    PAUSED,
     READY,
     RobotRecoveryCoordinator,
 )
@@ -202,6 +203,65 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(result.runtime_state.recovery_status, READY)
         self.assertTrue(result.admission_ready)
         self.assertEqual(result.decisions[0].status, "RESUME_OPEN_POSITION")
+
+    def test_restart_while_paused_lands_back_on_paused_not_ready(self):
+        running = self._initialize_running()
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID,
+            mode="ROBOT_RUNNING",
+            recovery_status=PAUSED,
+            reason=None,
+            expected_version=running.version,
+            updated_at_ms=self.clock(),
+        )
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+        result = coordinator.recover()
+        self.assertEqual(result.runtime_state.mode, "ROBOT_RUNNING")
+        self.assertEqual(result.runtime_state.recovery_status, PAUSED)
+        self.assertFalse(result.admission_ready)
+
+    def test_restart_while_paused_with_open_trade_still_reconciles_it(self):
+        self._create_open_candidate()
+        running = self._initialize_running()
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID,
+            mode="ROBOT_RUNNING",
+            recovery_status=PAUSED,
+            reason=None,
+            expected_version=running.version,
+            updated_at_ms=self.clock(),
+        )
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+        result = coordinator.recover()
+        self.assertEqual(result.runtime_state.recovery_status, PAUSED)
+        self.assertFalse(result.admission_ready)
+        self.assertEqual(result.decisions[0].status, "RESUME_OPEN_POSITION")
+
+    def test_start_from_never_initialized_reaches_running_ready(self):
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+        result = coordinator.start()
+        self.assertEqual(result.runtime_state.mode, "ROBOT_RUNNING")
+        self.assertEqual(result.runtime_state.recovery_status, READY)
+        self.assertTrue(result.admission_ready)
+
+    def test_start_recovers_a_surviving_waiting_candidate(self):
+        original = self._create_waiting_candidate()
+        coordinator = RobotRecoveryCoordinator(
+            self.store,
+            ACCOUNT_ID,
+            latest_geometry_index_provider=lambda symbol, snapshot: 105,
+            clock_ms=self.clock,
+        )
+        result = coordinator.start()
+        self.assertEqual(result.runtime_state.recovery_status, READY)
+        recovered = self.store.get_robot_candidate(original.candidate_id)
+        self.assertEqual(recovered.state_revision, original.state_revision + 1)
 
 
 if __name__ == "__main__":
