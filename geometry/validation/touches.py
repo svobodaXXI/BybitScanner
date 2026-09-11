@@ -33,6 +33,12 @@ def validate_touches(
         "details": dict
     }
 
+    CR-SCANNER-GEOMETRY-002: the touch count threshold (>= 2 per side) is
+    unchanged — this function does not own tolerance (geometry/touches.py
+    does, via ATR-normalized touch_tolerance/violation_tolerance). The
+    `details` dict additionally passes through the outlier/violation
+    diagnostic counts from `touches` when present, for observability only;
+    the valid/reason contract itself is unaffected.
     """
 
 
@@ -76,6 +82,59 @@ def validate_touches(
     )
 
 
+    details = {
+
+        "upper_touches":
+            upper_touches,
+
+        "lower_touches":
+            lower_touches,
+
+        "total_touches":
+            total_touches,
+
+        # Additive (CR-SCANNER-GEOMETRY-002): diagnostic only, does not
+        # affect the valid/reason contract below.
+
+        "upper_outlier_count":
+            int(
+                touches.get(
+                    "upper_outlier_count",
+                    0
+                )
+                or 0
+            ),
+
+        "lower_outlier_count":
+            int(
+                touches.get(
+                    "lower_outlier_count",
+                    0
+                )
+                or 0
+            ),
+
+        "upper_violation_count":
+            int(
+                touches.get(
+                    "upper_violation_count",
+                    0
+                )
+                or 0
+            ),
+
+        "lower_violation_count":
+            int(
+                touches.get(
+                    "lower_violation_count",
+                    0
+                )
+                or 0
+            ),
+
+    }
+
+
     if upper_touches < 2:
 
         return {
@@ -87,18 +146,7 @@ def validate_touches(
                 "Not enough upper line touches",
 
             "details":
-                {
-
-                    "upper_touches":
-                        upper_touches,
-
-                    "lower_touches":
-                        lower_touches,
-
-                    "total_touches":
-                        total_touches
-
-                }
+                details
 
         }
 
@@ -114,18 +162,7 @@ def validate_touches(
                 "Not enough lower line touches",
 
             "details":
-                {
-
-                    "upper_touches":
-                        upper_touches,
-
-                    "lower_touches":
-                        lower_touches,
-
-                    "total_touches":
-                        total_touches
-
-                }
+                details
 
         }
 
@@ -139,17 +176,6 @@ def validate_touches(
             "Touch confirmation acceptable",
 
         "details":
-            {
-
-                "upper_touches":
-                    upper_touches,
-
-                "lower_touches":
-                    lower_touches,
-
-                "total_touches":
-                    total_touches
-
-            }
+            details
 
     }
