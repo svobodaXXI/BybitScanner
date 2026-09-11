@@ -6344,3 +6344,12 @@ Safety state remains unchanged:
 - no API credentials were entered through the HTTP page;
 - no BUY/SELL/STOP/TAKE or other real-money mutation/acceptance command was sent during this deployment work;
 - backend remains non-public on `127.0.0.1:8765`, with nginx as the public boundary.
+
+## Robot Run Evidence
+
+- `DOCUMENTS/ROBOT_RUN_INDEX.md` — индекс фактических запусков Robot v0.1.
+- `DOCUMENTS/ROBOT_V0_1_LOCAL_PAPER_RUN_2026-09-12.md` — результат локального Paper-запуска 12.09.2026.
+- Контрольная точка: `ROBOT_RUNNING + READY`; AAVEUSDT и BLURUSDT > `APPROVED`; `robot_trades = 0`.
+- Причина отсутствия Robot-сделок в этом запуске не исследовалась. При дальнейшем расследовании сначала читать `ROBOT_RUN_INDEX.md` и полный отчёт.
+
+---
