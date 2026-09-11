@@ -116,17 +116,14 @@ def evaluate_signal(
             }
 
 
-        if (
-            quality_name == "B Setup"
-            and score >= 70
-        ):
+        if quality_name == "B Setup":
 
             return {
 
-                "approved": False,
+                "approved": True,
 
                 "reason":
-                    "Good structure waiting confirmation"
+                    "Valid structure admitted"
 
             }
 
