@@ -6,6 +6,7 @@ import unittest
 from terminal.application.robot_control import (
     RobotControlRejected,
     close_all_now,
+    get_robot_runtime_status,
     pause_robot,
     resume_robot,
     start_robot,
@@ -304,6 +305,20 @@ class RobotControlCommandTests(unittest.TestCase):
 
         with self.assertRaises(RobotControlRejected):
             close_all_now(database_path=self.db_path, clock_ms=lambda: 2000, http_post=rejecting)
+
+    # -- get_robot_runtime_status ---------------------------------------
+
+    def test_get_robot_runtime_status_returns_none_when_never_initialized(self):
+        self.assertIsNone(get_robot_runtime_status(database_path=self.db_path))
+
+    def test_get_robot_runtime_status_reflects_live_state_without_transition(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="PAUSED")
+        status = get_robot_runtime_status(database_path=self.db_path)
+        self.assertEqual(status.mode, "ROBOT_RUNNING")
+        self.assertEqual(status.recovery_status, "PAUSED")
+        # A second read is side-effect-free (no version bump).
+        again = get_robot_runtime_status(database_path=self.db_path)
+        self.assertEqual(again.version, status.version)
 
 
 if __name__ == "__main__":

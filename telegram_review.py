@@ -10,14 +10,17 @@ import config
 import telegram_bot
 from robot_telegram_feed import (
     build_robot_close_all_confirmation_keyboard,
+    build_robot_control_keyboard,
     parse_robot_control_callback,
 )
 from terminal.application.robot_admission import (
+    RobotAdmissionRejected,
     admit_robot_candidate,
 )
 from terminal.application.robot_control import (
     RobotControlRejected,
     close_all_now,
+    get_robot_runtime_status,
     pause_robot,
     resume_robot,
     start_robot,
@@ -465,6 +468,48 @@ def _approve_robot_candidate(
     return record, changed
 
 
+def _send_robot_status_panel(
+    callback_query,
+    prefix,
+):
+    # The sole entry point into the admission-gate control panel today (no
+    # /robot command, no send-once-at-startup message -- see
+    # CR-ROBOT-CONTROL-001): every press of the per-signal "🤖 Робот" button
+    # re-sends the panel with live state, whether admission succeeded,
+    # was rejected, or errored.
+    message = callback_query.get("message") or {}
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+
+    if chat_id is None:
+        return
+
+    try:
+        status = get_robot_runtime_status()
+    except Exception as exc:
+        print(
+            "[ROBOT STATUS PANEL ERROR]",
+            exc,
+        )
+        return
+
+    mode = status.mode if status is not None else "ROBOT_STOPPED"
+    recovery_status = status.recovery_status if status is not None else "ROBOT_STOPPED"
+
+    try:
+        telegram_bot.send_message(
+            config.TELEGRAM_TOKEN,
+            chat_id,
+            f"{prefix}\n\nСтатус робота: {mode} / {recovery_status}",
+            reply_markup=build_robot_control_keyboard(mode, recovery_status),
+        )
+    except Exception as exc:
+        print(
+            "[ROBOT STATUS PANEL ERROR]",
+            exc,
+        )
+
+
 def _process_callback(
     callback_query
 ):
@@ -516,13 +561,14 @@ def _process_callback(
                 parsed,
             )
 
+            prefix = (
+                "Робот: сигнал принят ✅"
+                if changed
+                else "Робот: сигнал уже принят"
+            )
             _answer_callback(
                 callback_query.get("id"),
-                (
-                    "Робот: сигнал принят ✅"
-                    if changed
-                    else "Робот: сигнал уже принят"
-                ),
+                prefix,
             )
 
             print(
@@ -530,15 +576,31 @@ def _process_callback(
                 record.candidate_id,
                 record.symbol.value,
             )
+        except RobotAdmissionRejected as exc:
+            prefix = f"Робот: отклонено — {exc}"
+            print(
+                "[ROBOT CANDIDATE REJECTED]",
+                exc,
+            )
+            _answer_callback(
+                callback_query.get("id"),
+                prefix,
+            )
         except Exception as exc:
+            prefix = "Робот: ошибка сохранения"
             print(
                 "[ROBOT CANDIDATE ERROR]",
                 exc
             )
             _answer_callback(
                 callback_query.get("id"),
-                "Робот: ошибка сохранения"
+                prefix,
             )
+
+        _send_robot_status_panel(
+            callback_query,
+            prefix,
+        )
         return
 
     try:

@@ -81,6 +81,24 @@ def _open_store(database_path: Path | str | None) -> SQLiteStore:
     return SQLiteStore.open(resolved)
 
 
+def get_robot_runtime_status(
+    *, database_path: Path | str | None = None,
+) -> RobotRuntimeStateRecord | None:
+    """Read-only snapshot of the durable Robot admission-gate state.
+
+    Performs no transition and never raises ``RobotControlRejected`` — for
+    presentation code (e.g. rendering the Telegram control panel from live
+    state) that needs to know current ``(mode, recovery_status)`` without
+    attempting a command. Returns ``None`` only if the runtime row has never
+    been initialized (no backend has started against this database yet).
+    """
+    store = _open_store(database_path)
+    try:
+        return store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+    finally:
+        store.close()
+
+
 def start_robot(
     *, database_path: Path | str | None = None, clock_ms: Callable[[], int] | None = None,
 ) -> RobotRuntimeStateRecord:
