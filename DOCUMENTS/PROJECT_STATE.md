@@ -6464,10 +6464,10 @@ Working numeric defaults implemented as approved without further negotiation (AT
 split, freshness window factor, severity weights, reversal-pattern thresholds) remain explicitly
 uncalibrated against historical data, per the decision's own text.
 
-## KNOWN_GAP — Rising Wedge / Triangle Compression containment, mitigated by exclusion
+## KNOWN_GAP — Rising Wedge / Triangle Compression containment, re-opened
 
-Detected: 2026-09-11. Status: MITIGATED (Rising Wedge / Triangle Compression temporarily excluded from
-Robot v0.1 pattern set, containment for them remains unimplemented, re-enable only after dedicated decision).
+Detected: 2026-09-11. Status: OPEN (re-opened 2026-09-12; was briefly MITIGATED 2026-09-11 through
+2026-09-12 via a `main.py` exclusion filter that the user has since explicitly reverted).
 
 Rising Wedge and Triangle Compression still have **no containment gate at all** — the old hard reject was
 deleted (not left running for them) and the new ATR-based soft mechanism covers Falling Wedge only, per
@@ -6475,16 +6475,25 @@ deleted (not left running for them) and the new ATR-based soft mechanism covers 
 not theoretical: Rising Wedge is Robot v0.1's confirmed SHORT-side counterpart to Falling Wedge, and Triangle
 Compression is part of the named Robot Decision Model baseline in `DOCUMENTS/ROBOT_STRATEGY_DESIGN.md`.
 
-Mitigation implemented 2026-09-11: `main.py`'s scan loop now excludes both pattern types from Robot v0.1's
-output entirely via `ROBOT_V0_1_ALLOWED_PATTERNS = {"Falling Wedge"}`, checked right after the existing
-junk-pattern filter, before diary recording, Telegram notification, or Robot candidate creation
-(`create_signal_snapshot()`). This is scope-narrowing, not a containment fix — the two patterns are not
-scored, gated, or admitted at all rather than being detected-with-no-check as before. `wedge/detector.py`
-and `wedge/integrity.py` are unchanged; Falling Wedge's ATR soft-penalty mechanism is untouched. A
-hard-reject-restoration alternative (scoped to `wedge/detector.py` for these two patterns only) was
-implemented and unit-tested, then reverted before commit in favor of this simpler exclusion approach.
+Mitigation implemented 2026-09-11, then reverted 2026-09-12: `main.py`'s scan loop briefly excluded both
+pattern types from Robot v0.1's output entirely via `ROBOT_V0_1_ALLOWED_PATTERNS = {"Falling Wedge"}`,
+checked right after the existing junk-pattern filter, before diary recording, Telegram notification, or
+Robot candidate creation (`create_signal_snapshot()`). That was scope-narrowing, not a containment fix — the
+two patterns were not scored, gated, or admitted at all while it was active. A hard-reject-restoration
+alternative (scoped to `wedge/detector.py` for these two patterns only) was implemented and unit-tested,
+then reverted before commit in favor of that exclusion approach, on 2026-09-11.
 
-**Next action required to re-enable Rising Wedge / Triangle Compression in Robot v0.1 production**: a
-separate explicit decision and implementation of a mirrored ATR containment rule for Rising Wedge plus an
-analogous rule for Triangle Compression, followed by removing the `ROBOT_V0_1_ALLOWED_PATTERNS` restriction
-in `main.py`. Not started, not authorized.
+**Re-opened 2026-09-12 by explicit user decision**: `ROBOT_V0_1_ALLOWED_PATTERNS` and its exclusion check
+were removed from `main.py` entirely, restoring pre-`7da7c9f` behavior — all three pattern types (Falling
+Wedge, Rising Wedge, Triangle Compression) once again reach diary recording, Telegram notification, and
+Robot candidate creation, with no exclusion by pattern type. Rationale recorded by the user: mirrored ATR
+containment for Rising Wedge/Triangle Compression remains future work as originally scoped, and the user
+prefers to see all patterns now, without a containment check, rather than continue hiding them until that
+future work is built. `wedge/detector.py` and `wedge/integrity.py` are unchanged by this reversal; Falling
+Wedge's ATR soft-penalty mechanism is untouched.
+
+**Next action required to add containment protection for Rising Wedge / Triangle Compression**: a separate
+explicit decision and implementation of a mirrored ATR containment rule for Rising Wedge plus an analogous
+rule for Triangle Compression. Not started, not authorized. Unlike the 2026-09-11 mitigation window, no
+`main.py` restriction currently stands between this gap and production Robot v0.1 output — the two patterns
+are live in the scanner's output today with zero containment protection, by explicit user choice.

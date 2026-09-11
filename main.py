@@ -31,17 +31,6 @@ from notification import (
 )
 
 
-# STOP-GAP (DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md KNOWN_GAP):
-# Rising Wedge and Triangle Compression have no containment mechanism at all
-# (the ATR containment decision is scoped to Falling Wedge only). Until a
-# dedicated decision covers them, Robot v0.1 only consumes Falling Wedge
-# candidates; the other two pattern types are excluded here, before diary
-# recording, Telegram notification, or Robot candidate creation.
-ROBOT_V0_1_ALLOWED_PATTERNS = {
-    "Falling Wedge",
-}
-
-
 def build_scan_started_message(
     mode,
     min_score,
@@ -139,13 +128,6 @@ def main():
 
             if pattern in (None, "", "No wedge", "Unknown"):
                 print(f"{symbol:<15} no wedge")
-                continue
-
-            if pattern not in ROBOT_V0_1_ALLOWED_PATTERNS:
-                print(
-                    f"{symbol:<15} {pattern:<20} "
-                    f"excluded (Robot v0.1: Falling Wedge only)"
-                )
                 continue
 
             signal_decision = analysis.get("signal") or {}
