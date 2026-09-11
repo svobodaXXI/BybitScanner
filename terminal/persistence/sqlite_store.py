@@ -49,6 +49,7 @@ from .schema import (
     SCHEMA_V13_MIGRATION_STATEMENTS,
     SCHEMA_V14_MIGRATION_STATEMENTS,
     SCHEMA_V15_MIGRATION_STATEMENTS,
+    SCHEMA_V16_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -80,7 +81,7 @@ class ExecutionApplyResult(str, Enum):
 
 ROBOT_MODES = {"ROBOT_STOPPED", "ROBOT_RUNNING"}
 ROBOT_RECOVERY_STATUSES = {
-    "ROBOT_STOPPED", "RECONCILING", "READY", "RECONCILIATION_REQUIRED",
+    "ROBOT_STOPPED", "RECONCILING", "READY", "RECONCILIATION_REQUIRED", "PAUSED",
 }
 ROBOT_CANDIDATE_STATUSES = {"APPROVED", "OPEN", "CLOSED", "EXPIRED", "INVALIDATED"}
 ROBOT_ENTRY_PATHS = {"LIMIT", "MARKET", "MIXED"}
@@ -91,6 +92,7 @@ ROBOT_RUNTIME_STATE_PAIRS = {
     ("ROBOT_RUNNING", "RECONCILING"),
     ("ROBOT_RUNNING", "READY"),
     ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+    ("ROBOT_RUNNING", "PAUSED"),
 }
 ROBOT_CANDIDATE_TRANSITIONS = {
     "APPROVED": {"APPROVED", "EXPIRED", "INVALIDATED"},
@@ -742,6 +744,11 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 15:
+            SQLiteStore._validate_required_tables(connection, version=15)
+            SQLiteStore._migrate_v15_to_v16(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
         if version == 14:
             SQLiteStore._validate_required_tables(connection, version=14)
             SQLiteStore._migrate_v14_to_v15(connection)
@@ -1020,6 +1027,19 @@ class SQLiteStore:
             for statement in SCHEMA_V15_MIGRATION_STATEMENTS:
                 connection.execute(statement)
             connection.execute("PRAGMA user_version = 15")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        SQLiteStore._migrate_v15_to_v16(connection)
+
+    @staticmethod
+    def _migrate_v15_to_v16(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V16_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 16")
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")

@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -611,6 +611,41 @@ SCHEMA_V15_MIGRATION_STATEMENTS = (
     """,
 )
 
+SCHEMA_V16_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE robot_runtime_state_v16 (
+        trading_account_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL,
+        recovery_status TEXT NOT NULL,
+        reason TEXT,
+        version INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        CHECK (mode IN ('ROBOT_STOPPED', 'ROBOT_RUNNING')),
+        CHECK (recovery_status IN (
+            'ROBOT_STOPPED', 'RECONCILING', 'READY',
+            'RECONCILIATION_REQUIRED', 'PAUSED'
+        )),
+        CHECK (
+            (mode = 'ROBOT_STOPPED' AND recovery_status IN (
+                'ROBOT_STOPPED', 'RECONCILIATION_REQUIRED'
+            )) OR
+            (mode = 'ROBOT_RUNNING' AND recovery_status IN (
+                'RECONCILING', 'READY', 'RECONCILIATION_REQUIRED', 'PAUSED'
+            ))
+        ),
+        CHECK (version >= 1),
+        CHECK (updated_at_ms >= 0)
+    ) WITHOUT ROWID
+    """,
+    """
+    INSERT INTO robot_runtime_state_v16
+    SELECT trading_account_id, mode, recovery_status, reason, version, updated_at_ms
+    FROM robot_runtime_state
+    """,
+    "DROP TABLE robot_runtime_state",
+    "ALTER TABLE robot_runtime_state_v16 RENAME TO robot_runtime_state",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -627,4 +662,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V13_MIGRATION_STATEMENTS
     + SCHEMA_V14_MIGRATION_STATEMENTS
     + SCHEMA_V15_MIGRATION_STATEMENTS
+    + SCHEMA_V16_MIGRATION_STATEMENTS
 )

@@ -2,12 +2,14 @@
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from terminal.api.models import (
     ClientActionId,
     CloseAllCommandRequest,
+    CommandResult,
     CommandResultStatus,
     FullCloseCommandRequest,
     LimitCommandRequest,
@@ -449,6 +451,93 @@ def test_close_all_uses_stable_children_and_does_not_duplicate_closes():
             assert len(runtime.store.load_executions()) == execution_count
             assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
             assert runtime.paper_state("ETHUSDT")["position_side"] == "Flat"
+        finally:
+            runtime.close()
+
+
+def _open_robot_position(runtime, *, candidate_id, trade_id, symbol="BTCUSDT"):
+    account_id = TradingAccountId("paper")
+    candidate, _ = runtime.store.create_robot_candidate(
+        candidate_id=candidate_id,
+        trading_account_id=account_id,
+        symbol=Symbol(symbol),
+        status="APPROVED",
+        signal_snapshot={"symbol": symbol, "pattern": "Falling Wedge"},
+        approved_at_ms=1000,
+        updated_at_ms=1000,
+    )
+    runtime.store.create_robot_trade(
+        trade_id=trade_id,
+        trading_account_id=account_id,
+        candidate_id=candidate.candidate_id,
+        symbol=Symbol(symbol),
+        direction="LONG",
+        pattern="Falling Wedge",
+        source_timeframe="1",
+        signal_time_ms=10,
+        entry_time_ms=20,
+        entry_path="MARKET",
+        actual_wv=Decimal("1"),
+        average_entry=Decimal("64250"),
+        stop_price=Decimal("60000"),
+        take_price=Decimal("70000"),
+        created_at_ms=1001,
+    )
+
+
+def test_robot_close_all_only_closes_robot_owned_positions():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            for symbol, action in (("BTCUSDT", "robot-open-btc"), ("ETHUSDT", "manual-open-eth")):
+                runtime.api.market(MarketCommandRequest(
+                    ClientActionId(action), symbol, OrderSide.BUY,
+                    VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                    "Percent", Decimal("0.5"),
+                ))
+            _open_robot_position(runtime, candidate_id="candidate-btc", trade_id="trade-btc")
+
+            request = CloseAllCommandRequest(ClientActionId("robot-bulk-close-1"))
+            response = runtime.robot_close_all(request)
+
+            assert len(response.results) == 1
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+            assert runtime.paper_state("ETHUSDT")["position_side"] != "Flat"
+        finally:
+            runtime.close()
+
+
+def test_robot_close_all_marks_reconciliation_required_on_unconfirmed_close():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            runtime.api.market(MarketCommandRequest(
+                ClientActionId("robot-open-btc-2"), "BTCUSDT", OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")), Decimal("64250"),
+                "Percent", Decimal("0.5"),
+            ))
+            _open_robot_position(runtime, candidate_id="candidate-btc-2", trade_id="trade-btc-2")
+
+            account_id = TradingAccountId("paper")
+            # PaperRuntime.__init__ already ran its own recovery pass with a
+            # real wall-clock updated_at_ms; match that scale here so this
+            # update's monotonic-timestamp check does not spuriously fail.
+            now_ms = int(__import__("time").time() * 1000)
+            running = runtime.store.get_robot_runtime_state(account_id)
+            runtime.store.update_robot_runtime_state(
+                account_id, mode="ROBOT_RUNNING", recovery_status="READY", reason=None,
+                expected_version=running.version, updated_at_ms=now_ms,
+            )
+
+            rejected = CommandResult(
+                "robot-close-all-x", CommandResultStatus.REJECTED, "exchange_rejected", "rejected",
+            )
+            with patch.object(runtime.api, "full_close", return_value=rejected):
+                runtime.robot_close_all(CloseAllCommandRequest(ClientActionId("robot-bulk-close-2")))
+
+            state = runtime.store.get_robot_runtime_state(account_id)
+            assert state.mode == "ROBOT_RUNNING"
+            assert state.recovery_status == "RECONCILIATION_REQUIRED"
         finally:
             runtime.close()
 

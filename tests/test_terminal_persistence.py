@@ -335,6 +335,73 @@ class TerminalPersistenceTests(unittest.TestCase):
         with self.open_store() as reopened:
             self.assertEqual(reopened.get_robot_runtime_state(account), ready)
 
+    def test_v15_to_v16_migration_adds_paused_and_preserves_existing_row(self):
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            store.initialize_robot_runtime_state(account, updated_at_ms=1000)
+            store.update_robot_runtime_state(
+                account, mode="ROBOT_RUNNING", recovery_status="READY", reason=None,
+                expected_version=1, updated_at_ms=1100,
+            )
+
+        # Simulate a real pre-v16 database: rebuild robot_runtime_state under
+        # the old (no-PAUSED) CHECK constraint with an existing row, pinned at
+        # user_version=15, then reopen through SQLiteStore to exercise the
+        # actual v15->v16 rebuild-table migration rather than a fresh create.
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DROP TABLE robot_runtime_state")
+        connection.execute(
+            """
+            CREATE TABLE robot_runtime_state (
+                trading_account_id TEXT PRIMARY KEY,
+                mode TEXT NOT NULL,
+                recovery_status TEXT NOT NULL,
+                reason TEXT,
+                version INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                CHECK (mode IN ('ROBOT_STOPPED', 'ROBOT_RUNNING')),
+                CHECK (recovery_status IN (
+                    'ROBOT_STOPPED', 'RECONCILING', 'READY',
+                    'RECONCILIATION_REQUIRED'
+                )),
+                CHECK (
+                    (mode = 'ROBOT_STOPPED' AND recovery_status IN (
+                        'ROBOT_STOPPED', 'RECONCILIATION_REQUIRED'
+                    )) OR
+                    (mode = 'ROBOT_RUNNING' AND recovery_status IN (
+                        'RECONCILING', 'READY', 'RECONCILIATION_REQUIRED'
+                    ))
+                ),
+                CHECK (version >= 1),
+                CHECK (updated_at_ms >= 0)
+            ) WITHOUT ROWID
+            """
+        )
+        connection.execute(
+            "INSERT INTO robot_runtime_state VALUES (?, 'ROBOT_RUNNING', 'READY', NULL, 2, 1100)",
+            (account.value,),
+        )
+        connection.execute("PRAGMA user_version = 15")
+        connection.commit()
+        connection.close()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+            preserved = store.get_robot_runtime_state(account)
+            self.assertEqual(preserved.mode, "ROBOT_RUNNING")
+            self.assertEqual(preserved.recovery_status, "READY")
+            self.assertEqual(preserved.version, 2)
+            paused = store.update_robot_runtime_state(
+                account, mode="ROBOT_RUNNING", recovery_status="PAUSED", reason=None,
+                expected_version=preserved.version, updated_at_ms=1200,
+            )
+            self.assertEqual(paused.recovery_status, "PAUSED")
+            with self.assertRaisesRegex(ValueError, "unsupported Robot runtime state"):
+                store.update_robot_runtime_state(
+                    account, mode="ROBOT_STOPPED", recovery_status="PAUSED", reason=None,
+                    expected_version=paused.version, updated_at_ms=1300,
+                )
+
     def test_robot_candidate_snapshot_is_immutable_and_state_is_cas_persisted(self):
         account = TradingAccountId("paper")
         snapshot = {"symbol": "BTCUSDT", "pattern": "Falling Wedge", "geometry": {"current_index": 10}}

@@ -2163,7 +2163,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             "/api/market", "/api/limit", "/api/limit/amend", "/api/limit/cancel",
             "/api/stop", "/api/stop/amend", "/api/stop/delete",
             "/api/take", "/api/take/amend", "/api/take/delete",
-            "/api/full-close", "/api/close-all",
+            "/api/full-close", "/api/close-all", "/api/robot/close-all-now",
         }
         if urlparse(self.path).path in mutation_paths:
             try:
@@ -2231,6 +2231,22 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 payload = self._payload(CLOSE_ALL_FIELDS)
                 request = CloseAllCommandRequest(ClientActionId(payload["client_action_id"]))
                 result = self.server.runtime.call(lambda runtime: runtime.close_all(request))
+            except Exception:
+                self._json_response(400, to_primitive(_validation_error()))
+                return
+            self._json_response(200, {"ok": True, **to_primitive(result)})
+            return
+
+        if self.path == "/api/robot/close-all-now":
+            # Robot v0.1 close_all_now() (AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md
+            # v1.2 Section 4): unlike /api/close-all above, scoped strictly to
+            # Robot-owned open positions via PaperRuntime.robot_close_all().
+            # Same localhost-only, no-extra-token trust model as /api/full-close
+            # and /api/close-all (gated only by require_paper_mutations() above).
+            try:
+                payload = self._payload(CLOSE_ALL_FIELDS)
+                request = CloseAllCommandRequest(ClientActionId(payload["client_action_id"]))
+                result = self.server.runtime.call(lambda runtime: runtime.robot_close_all(request))
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
