@@ -56,11 +56,18 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
             telegram_review, "pause_robot", return_value=_state("ROBOT_RUNNING", "PAUSED"),
         ) as pause_mock, patch.object(
             telegram_review, "_answer_callback",
-        ) as answer_mock:
+        ) as answer_mock, patch.object(
+            telegram_review, "get_robot_runtime_status",
+            return_value=_state("ROBOT_RUNNING", "PAUSED"),
+        ), patch.object(
+            telegram_review.telegram_bot, "send_message",
+        ) as send_mock:
             telegram_review._process_callback(callback_query)
 
         pause_mock.assert_called_once_with()
         answer_mock.assert_called_once_with("cb-1", "Робот: на паузе ⏸")
+        send_mock.assert_called_once()
+        self.assertIn("Робот: на паузе ⏸", send_mock.call_args.args[2])
 
     def test_owner_resume_callback_invokes_resume_robot(self):
         callback_query = _owner_callback("cb-2", "resume")
@@ -70,11 +77,17 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
             telegram_review, "resume_robot", return_value=_state("ROBOT_RUNNING", "READY"),
         ) as resume_mock, patch.object(
             telegram_review, "_answer_callback",
-        ) as answer_mock:
+        ) as answer_mock, patch.object(
+            telegram_review, "get_robot_runtime_status",
+            return_value=_state("ROBOT_RUNNING", "READY"),
+        ), patch.object(
+            telegram_review.telegram_bot, "send_message",
+        ) as send_mock:
             telegram_review._process_callback(callback_query)
 
         resume_mock.assert_called_once_with()
         answer_mock.assert_called_once_with("cb-2", "Робот: возобновлён ▶")
+        send_mock.assert_called_once()
 
     def test_owner_start_callback_invokes_start_robot(self):
         callback_query = _owner_callback("cb-3", "start")
@@ -84,11 +97,17 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
             telegram_review, "start_robot", return_value=_state("ROBOT_RUNNING", "READY"),
         ) as start_mock, patch.object(
             telegram_review, "_answer_callback",
-        ) as answer_mock:
+        ) as answer_mock, patch.object(
+            telegram_review, "get_robot_runtime_status",
+            return_value=_state("ROBOT_RUNNING", "READY"),
+        ), patch.object(
+            telegram_review.telegram_bot, "send_message",
+        ) as send_mock:
             telegram_review._process_callback(callback_query)
 
         start_mock.assert_called_once_with()
         answer_mock.assert_called_once_with("cb-3", "Робот: запущен ▶")
+        send_mock.assert_called_once()
 
     def test_owner_stop_callback_invokes_stop_robot(self):
         callback_query = _owner_callback("cb-4", "stop")
@@ -98,11 +117,17 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
             telegram_review, "stop_robot", return_value=_state("ROBOT_STOPPED", "ROBOT_STOPPED"),
         ) as stop_mock, patch.object(
             telegram_review, "_answer_callback",
-        ) as answer_mock:
+        ) as answer_mock, patch.object(
+            telegram_review, "get_robot_runtime_status",
+            return_value=_state("ROBOT_STOPPED", "ROBOT_STOPPED"),
+        ), patch.object(
+            telegram_review.telegram_bot, "send_message",
+        ) as send_mock:
             telegram_review._process_callback(callback_query)
 
         stop_mock.assert_called_once_with()
         answer_mock.assert_called_once_with("cb-4", "Робот: остановлен ⏹")
+        send_mock.assert_called_once()
 
     def test_rejected_command_answers_with_reason_and_does_not_raise(self):
         callback_query = _owner_callback("cb-5", "pause")
@@ -152,12 +177,19 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
             telegram_review, "close_all_now", return_value={"ok": True, "results": []},
         ) as close_all_mock, patch.object(
             telegram_review, "_answer_callback",
-        ) as answer_mock:
+        ) as answer_mock, patch.object(
+            telegram_review, "get_robot_runtime_status",
+            return_value=_state("ROBOT_RUNNING", "READY"),
+        ), patch.object(
+            telegram_review.telegram_bot, "send_message",
+        ) as send_mock:
             telegram_review._process_callback(callback_query)
 
         close_all_mock.assert_called_once()
         self.assertIs(close_all_mock.call_args.kwargs["http_post"], telegram_review._post_robot_close_all_now)
         answer_mock.assert_called_once_with("cb-8", "Робот: закрытие отправлено ❌")
+        send_mock.assert_called_once()
+        self.assertIn("Робот: закрытие отправлено ❌", send_mock.call_args.args[2])
 
     def test_close_all_confirm_rejected_answers_with_reason(self):
         callback_query = _owner_callback("cb-9", "close_all_confirm")
@@ -185,11 +217,18 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
             telegram_review, "close_all_now",
         ) as close_all_mock, patch.object(
             telegram_review, "_answer_callback",
-        ) as answer_mock:
+        ) as answer_mock, patch.object(
+            telegram_review, "get_robot_runtime_status",
+            return_value=_state("ROBOT_RUNNING", "READY"),
+        ), patch.object(
+            telegram_review.telegram_bot, "send_message",
+        ) as send_mock:
             telegram_review._process_callback(callback_query)
 
         close_all_mock.assert_not_called()
         answer_mock.assert_called_once_with("cb-10", "Отменено")
+        send_mock.assert_called_once()
+        self.assertIn("Отменено", send_mock.call_args.args[2])
 
     def test_non_owner_control_callback_is_rejected(self):
         callback_query = {

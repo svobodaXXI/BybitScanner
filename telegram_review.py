@@ -386,7 +386,9 @@ def _confirm_close_all_now(callback_query):
         print("[ROBOT CONTROL ERROR]", "close_all", exc)
         return None
 
-    _answer_callback(callback_query.get("id"), "Робот: закрытие отправлено ❌")
+    prefix = "Робот: закрытие отправлено ❌"
+    _answer_callback(callback_query.get("id"), prefix)
+    _send_robot_status_panel(callback_query, prefix)
     print("[ROBOT CONTROL]", "close_all", result)
     return result
 
@@ -405,7 +407,9 @@ def _run_robot_control_command(
     if command == "close_all_confirm":
         return _confirm_close_all_now(callback_query)
     if command == "close_all_cancel":
-        _answer_callback(callback_query.get("id"), "Отменено")
+        prefix = "Отменено"
+        _answer_callback(callback_query.get("id"), prefix)
+        _send_robot_status_panel(callback_query, prefix)
         return None
 
     try:
@@ -433,10 +437,12 @@ def _run_robot_control_command(
         )
         return None
 
+    prefix = _ROBOT_CONTROL_SUCCESS_TEXT[command]
     _answer_callback(
         callback_query.get("id"),
-        _ROBOT_CONTROL_SUCCESS_TEXT[command],
+        prefix,
     )
+    _send_robot_status_panel(callback_query, prefix)
     print(
         "[ROBOT CONTROL]",
         command,
