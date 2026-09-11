@@ -8,6 +8,7 @@ import requests
 
 import config
 import telegram_bot
+from robot_candidate_store import RobotCandidateNotFound
 from robot_telegram_feed import (
     build_robot_close_all_confirmation_keyboard,
     build_robot_control_keyboard,
@@ -580,6 +581,16 @@ def _process_callback(
             prefix = f"Робот: отклонено — {exc}"
             print(
                 "[ROBOT CANDIDATE REJECTED]",
+                exc,
+            )
+            _answer_callback(
+                callback_query.get("id"),
+                prefix,
+            )
+        except RobotCandidateNotFound as exc:
+            prefix = "Робот: сигнал устарел или больше не найден"
+            print(
+                "[ROBOT CANDIDATE NOT FOUND]",
                 exc,
             )
             _answer_callback(

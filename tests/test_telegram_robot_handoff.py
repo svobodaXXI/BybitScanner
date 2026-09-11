@@ -19,6 +19,7 @@ sys.modules["config"] = config_stub
 
 import notification
 import telegram_review
+from robot_candidate_store import RobotCandidateNotFound
 from terminal.application.robot_admission import RobotAdmissionRejected
 from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, RobotRuntimeStateRecord
@@ -189,6 +190,41 @@ class TelegramRobotHandoffTests(unittest.TestCase):
         self.assertIn("ROBOT_STOPPED", args[2])
         start_button = kwargs["reply_markup"]["inline_keyboard"][0][0]
         self.assertEqual(start_button["callback_data"], "robot:cmd:start")
+
+    def test_stale_candidate_not_found_answers_with_specific_reason(self):
+        callback_query = {
+            "id": "callback-stale",
+            "data": "robot:approve:abc123",
+            "from": {"id": 42, "username": "owner"},
+            "message": {"message_id": 105, "chat": {"id": 42}},
+        }
+
+        with patch.object(
+            telegram_review.config,
+            "TELEGRAM_CHAT_ID",
+            "42",
+        ), patch.object(
+            telegram_review,
+            "admit_robot_candidate",
+            side_effect=RobotCandidateNotFound("abc123"),
+        ), patch.object(
+            telegram_review,
+            "_answer_callback",
+        ) as answer_mock, patch.object(
+            telegram_review,
+            "get_robot_runtime_status",
+            return_value=_status("ROBOT_RUNNING", "READY"),
+        ), patch.object(
+            telegram_review.telegram_bot,
+            "send_message",
+        ) as send_mock:
+            telegram_review._process_callback(callback_query)
+
+        answer_mock.assert_called_once_with(
+            "callback-stale",
+            "Робот: сигнал устарел или больше не найден",
+        )
+        send_mock.assert_called_once()
 
     def test_unexpected_admission_error_still_sends_status_panel(self):
         callback_query = {
