@@ -80,8 +80,11 @@ class RobotBreakoutMonitor:
         while not self._stop.wait(self._tick_interval_s):
             try:
                 self.tick()
-            except Exception:
-                pass
+            except Exception as error:
+                print(
+                    "[ROBOT BREAKOUT MONITOR LOOP ERROR] "
+                    f"error={error}"
+                )
 
     def tick(self) -> tuple[str, ...]:
         """Advance every durable APPROVED candidate by at most one closed candle.
@@ -97,7 +100,11 @@ class RobotBreakoutMonitor:
             try:
                 if self._advance_one(record):
                     advanced.append(record.candidate_id)
-            except Exception:
+            except Exception as error:
+                print(
+                    "[ROBOT CANDIDATE ERROR] "
+                    f"candidate_id={record.candidate_id} error={error}"
+                )
                 continue
         return tuple(advanced)
 
