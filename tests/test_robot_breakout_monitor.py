@@ -1,6 +1,7 @@
 from decimal import Decimal
 from pathlib import Path
 import tempfile
+import time
 import unittest
 
 import robot_partial_fill
@@ -242,12 +243,13 @@ class _Clock:
 class RobotBreakoutMonitorTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.store = SQLiteStore.open(Path(self.temp_dir.name) / "terminal.db")
+        self.db_path = Path(self.temp_dir.name) / "terminal.db"
+        self.store = SQLiteStore.open(self.db_path)
         self.feed = _ScriptedCandleFeed()
         self.clock = _Clock()
         self.executor = _FakeActionExecutor(self.store, ACCOUNT_ID, self.clock)
         self.monitor = RobotBreakoutMonitor(
-            self.store,
+            lambda: SQLiteStore.open(self.db_path),
             ACCOUNT_ID,
             get_closed_candle=self.feed,
             action_executor=self.executor,
@@ -256,6 +258,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         )
 
     def tearDown(self):
+        # tick() runs synchronously on this (the test) thread throughout, so
+        # the monitor's own lazily-opened connection was cached on this same
+        # thread -- close it before the temp directory cleanup, or an
+        # unclosed sqlite3 connection can keep the file locked on Windows.
+        self.monitor.close()
         self.store.close()
         self.temp_dir.cleanup()
 
@@ -438,7 +445,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
 
     def test_start_and_close_do_not_tick_within_the_interval(self):
         monitor = RobotBreakoutMonitor(
-            self.store,
+            lambda: SQLiteStore.open(self.db_path),
             ACCOUNT_ID,
             get_closed_candle=self.feed,
             action_executor=self.executor,
@@ -466,6 +473,69 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         reference, target = M._frozen_prices(snapshot, robot_state_machine.DIRECTION_SHORT)
         self.assertEqual(reference, Decimal("100"))
         self.assertEqual(target, Decimal("80"))  # reference - start_width (DOWN)
+
+
+class RobotBreakoutMonitorRealThreadTests(unittest.TestCase):
+    """Post-closure regression test for the CR-ROBOT-BREAKOUT-MONITOR-001
+    SQLiteStore thread-ownership bug (see DOCUMENTS/ROBOT_RUN_INDEX.md): the
+    monitor previously accepted a SQLiteStore opened by the constructing
+    thread and used it from its own background thread, which
+    SQLiteStore._assert_owner() rejects on every real call. Every other test
+    in this module calls .tick() synchronously and would not have caught
+    this -- this test drives the real background thread through an actual
+    tick interval instead.
+    """
+
+    def test_real_background_thread_ticks_using_its_own_store_connection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db_path = Path(temp) / "terminal.db"
+            setup_store = SQLiteStore.open(db_path)
+            try:
+                setup_store.create_robot_candidate(
+                    candidate_id="candidate-thread",
+                    trading_account_id=ACCOUNT_ID,
+                    symbol=Symbol(SYMBOL),
+                    status="APPROVED",
+                    signal_snapshot=_snapshot(),
+                    approved_at_ms=1,
+                    updated_at_ms=1,
+                )
+            finally:
+                setup_store.close()
+
+            monitor = RobotBreakoutMonitor(
+                lambda: SQLiteStore.open(db_path),
+                ACCOUNT_ID,
+                get_closed_candle=_ScriptedCandleFeed(),
+                action_executor=_FakeActionExecutor(None, ACCOUNT_ID, _Clock()),
+                tick_size_provider=lambda symbol: Decimal("0.1"),
+                clock_ms=lambda: int(time.time() * 1000),
+                tick_interval_s=0.05,
+            )
+            monitor.start()
+            try:
+                deadline = time.monotonic() + 5.0
+                record = None
+                while time.monotonic() < deadline:
+                    time.sleep(0.05)
+                    verify_store = SQLiteStore.open(db_path)
+                    try:
+                        record = verify_store.get_robot_candidate("candidate-thread")
+                    finally:
+                        verify_store.close()
+                    if record.robot_state is not None:
+                        break
+            finally:
+                monitor.close()
+
+            self.assertIsNotNone(record)
+            self.assertIsNotNone(
+                record.robot_state,
+                "the real background thread never advanced the candidate -- "
+                "this is exactly the SQLiteStore thread-ownership regression",
+            )
+            self.assertEqual(record.robot_state["phase"], robot_state_machine.PHASE_WAITING_BREAKOUT)
+            self.assertGreaterEqual(record.state_revision, 1)
 
 
 if __name__ == "__main__":

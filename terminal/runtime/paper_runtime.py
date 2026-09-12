@@ -368,7 +368,7 @@ class PaperRuntime:
         )
         self._robot_recovery.recover()
         self._robot_breakout_monitor = RobotBreakoutMonitor(
-            self.store,
+            lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
             get_closed_candle=robot_closed_candle_provider or latest_scanner_closed_candle,
             action_executor=self,

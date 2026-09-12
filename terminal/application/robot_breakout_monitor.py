@@ -2,14 +2,22 @@
 
 Mode-agnostic coordinator, structurally mirroring
 ``terminal.application.robot_recovery.RobotRecoveryCoordinator``: it accepts a
-``SQLiteStore``, a ``trading_account_id`` and dependency-injected functions
-rather than a concrete PaperRuntime, so a future live implementation can
-reuse it with live-bound dependencies instead of a duplicated cycle. It never
-refits geometry and never invents entry/pattern/protection strategy: it only
-calls the existing public functions of robot_state_machine.py,
-robot_entry_limit.py, robot_partial_fill.py, robot_market_confirmation.py and
-robot_protection.py, in the order CR-ROBOT-BREAKOUT-MONITOR-001 approved,
-driving each APPROVED candidate all the way to ``create_robot_trade``.
+``trading_account_id`` and dependency-injected functions rather than a
+concrete PaperRuntime, so a future live implementation can reuse it with
+live-bound dependencies instead of a duplicated cycle. It never refits
+geometry and never invents entry/pattern/protection strategy: it only calls
+the existing public functions of robot_state_machine.py, robot_entry_limit.py,
+robot_partial_fill.py, robot_market_confirmation.py and robot_protection.py,
+in the order CR-ROBOT-BREAKOUT-MONITOR-001 approved, driving each APPROVED
+candidate all the way to ``create_robot_trade``.
+
+POST-CLOSURE FIX (see DOCUMENTS/ROBOT_RUN_INDEX.md): SQLiteStore binds to its
+opening thread and rejects every call from any other thread. This coordinator
+therefore never accepts a pre-opened SQLiteStore -- it takes a store_factory
+and opens its own connection lazily, from whichever thread first calls into
+it, cached per-thread. The real background thread opens and owns its own
+connection; a caller driving .tick() synchronously (e.g. tests) gets its own
+separate connection on the calling thread.
 """
 
 from __future__ import annotations
@@ -79,7 +87,7 @@ class RobotBreakoutMonitor:
 
     def __init__(
         self,
-        store: SQLiteStore,
+        store_factory: Callable[[], SQLiteStore],
         trading_account_id: TradingAccountId,
         *,
         get_closed_candle: Callable[[str], Mapping[str, object] | None],
@@ -88,7 +96,8 @@ class RobotBreakoutMonitor:
         clock_ms: Callable[[], int],
         tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
     ) -> None:
-        self._store = store
+        self._store_factory = store_factory
+        self._local = threading.local()
         self._account_id = trading_account_id
         self._get_closed_candle = get_closed_candle
         self._action_executor = action_executor
@@ -101,6 +110,13 @@ class RobotBreakoutMonitor:
         )
         self._started = False
 
+    def _store(self) -> SQLiteStore:
+        store = getattr(self._local, "store", None)
+        if store is None:
+            store = self._store_factory()
+            self._local.store = store
+        return store
+
     def start(self) -> None:
         if self._started:
             return
@@ -111,20 +127,34 @@ class RobotBreakoutMonitor:
         self._stop.set()
         if self._started and self._thread is not threading.current_thread():
             self._thread.join(timeout=5)
+        # Close whatever store THIS (calling) thread opened for itself -- the
+        # background thread closes its own in _run()'s finally block, since
+        # only the owning thread may touch a SQLiteStore connection.
+        self._close_local_store()
+
+    def _close_local_store(self) -> None:
+        store = getattr(self._local, "store", None)
+        if store is not None:
+            store.close()
+            self._local.store = None
 
     def _run(self) -> None:
-        # Wait a full interval BEFORE the first tick (never tick immediately on
-        # start): a short-lived caller that starts and closes this monitor well
-        # within one interval -- as every existing PaperRuntime-constructing
-        # test does -- never reaches a real get_closed_candle call.
-        while not self._stop.wait(self._tick_interval_s):
-            try:
-                self.tick()
-            except Exception as error:
-                print(
-                    "[ROBOT BREAKOUT MONITOR LOOP ERROR] "
-                    f"error={error}"
-                )
+        try:
+            # Wait a full interval BEFORE the first tick (never tick immediately
+            # on start): a short-lived caller that starts and closes this
+            # monitor well within one interval -- as every existing
+            # PaperRuntime-constructing test does -- never reaches a real
+            # get_closed_candle call.
+            while not self._stop.wait(self._tick_interval_s):
+                try:
+                    self.tick()
+                except Exception as error:
+                    print(
+                        "[ROBOT BREAKOUT MONITOR LOOP ERROR] "
+                        f"error={error}"
+                    )
+        finally:
+            self._close_local_store()
 
     def tick(self) -> tuple[str, ...]:
         """Advance every durable APPROVED candidate by at most one step.
@@ -134,7 +164,7 @@ class RobotBreakoutMonitor:
         """
 
         advanced: list[str] = []
-        for record in self._store.load_robot_candidates(self._account_id):
+        for record in self._store().load_robot_candidates(self._account_id):
             if record.status != "APPROVED":
                 continue
             try:
@@ -210,7 +240,7 @@ class RobotBreakoutMonitor:
             self._persist_execution(record, execution)
             return True
 
-        order = self._store.get_paper_limit(execution["limit_order_id"], self._account_id)
+        order = self._store().get_paper_limit(execution["limit_order_id"], self._account_id)
         if order is None or order.quantity <= 0:
             return False
 
@@ -265,7 +295,7 @@ class RobotBreakoutMonitor:
                 _cancel_partial_remainder_action_id(record.candidate_id),
                 record.symbol.value, execution["limit_order_id"],
             ))
-            refreshed = self._store.get_paper_limit(execution["limit_order_id"], self._account_id)
+            refreshed = self._store().get_paper_limit(execution["limit_order_id"], self._account_id)
             if refreshed is not None:
                 order = refreshed
                 filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
@@ -377,7 +407,7 @@ class RobotBreakoutMonitor:
         robot_protection.submit_initial_protection(self._action_executor, plan)
 
         now_ms = self._now_ms()
-        self._store.create_robot_trade(
+        self._store().create_robot_trade(
             trade_id=f"robot-trade-{record.candidate_id}",
             trading_account_id=self._account_id,
             candidate_id=record.candidate_id,
@@ -397,7 +427,7 @@ class RobotBreakoutMonitor:
 
     def _average_entry(self, symbol: Symbol) -> Decimal | None:
         key = PositionKey(self._account_id, Category.LINEAR, symbol, 0)
-        projection = self._store.get_position_projection(key)
+        projection = self._store().get_position_projection(key)
         if projection is None or projection.average_entry is None:
             return None
         return projection.average_entry.value
@@ -472,7 +502,7 @@ class RobotBreakoutMonitor:
             else "APPROVED"
         )
         try:
-            self._store.save_robot_candidate_state(
+            self._store().save_robot_candidate_state(
                 record.candidate_id,
                 status=status,
                 robot_state=dict(new_state),
