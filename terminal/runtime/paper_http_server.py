@@ -69,6 +69,7 @@ from terminal.market_data.workspace_errors import (
     WorkspaceSemanticError,
     UpstreamWorkspaceMarketDataFailure,
 )
+from terminal.application.robot_breakout_monitor import DEFAULT_TICK_INTERVAL_S as DEFAULT_ROBOT_TICK_INTERVAL_S
 from terminal.runtime.paper_runtime import PaperRuntime
 from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
 from terminal.exchange.bybit_v5_mutation_adapter import BybitV5MutationAdapter
@@ -1031,6 +1032,17 @@ class SerializedPaperRuntime:
         if isinstance(error, BaseException):
             raise error
         return response.get("result")
+
+    def start_robot_monitor(self) -> None:
+        """Bind self.call as the owned PaperRuntime's Robot command dispatcher
+        and start RobotBreakoutMonitor's background thread.
+
+        Call once, after __init__ returns (the owner thread's dispatch loop
+        is guaranteed running by then) -- never during construction, since
+        the factory runs before this object's own __init__ has returned and
+        nothing is pulling the request queue yet.
+        """
+        self.call(lambda runtime: runtime.start_robot_monitor(self.call))
 
     def enqueue_book_update(self, book_update_id: str) -> None:
         if not book_update_id:
@@ -2495,6 +2507,9 @@ def create_configured_paper_runtime(
     live_limit_build_sha: str = "",
     deployment_identity: str = "local",
     account_manager=None,
+    robot_closed_candle_provider=None,
+    robot_latest_geometry_index_provider=None,
+    robot_tick_interval_s: float = DEFAULT_ROBOT_TICK_INTERVAL_S,
 ) -> PaperRuntime:
     return PaperRuntime(
         database_path,
@@ -2521,6 +2536,9 @@ def create_configured_paper_runtime(
         live_limit_build_sha=live_limit_build_sha,
         deployment_identity=deployment_identity,
         account_manager=account_manager,
+        robot_closed_candle_provider=robot_closed_candle_provider,
+        robot_latest_geometry_index_provider=robot_latest_geometry_index_provider,
+        robot_tick_interval_s=robot_tick_interval_s,
     )
 
 
@@ -2564,6 +2582,7 @@ def main() -> None:
         live_limit_build_sha=os.environ.get("BYBITSCANNER_BUILD_SHA", ""),
         deployment_identity=os.environ.get("BYBITSCANNER_DEPLOYMENT_IDENTITY", "local"),
     ))
+    runtime.start_robot_monitor()
     initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
     market_data = WorkspaceMarketDataManager(
         instruments,

@@ -21,7 +21,7 @@ from terminal.api.models import (
     PaperStopMutationResult, TimeInForce, to_primitive,
     LiveMarketCommandRequest,
 )
-from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+from terminal.application.robot_breakout_monitor import DEFAULT_TICK_INTERVAL_S, RobotBreakoutMonitor
 from terminal.application.live_market_execution import LiveMarketMutationCoordinator, LiveMarketMutationGates
 from terminal.application.live_execution import LiveExecutionCoordinator, LiveParityMutationGates
 from terminal.application.live_limit_acceptance import (
@@ -143,34 +143,43 @@ class RobotPaperActionExecutor:
     submit PAPER orders is the durable robot_runtime_state admission gate
     (terminal.application.robot_recovery.RobotRecoveryCoordinator), never
     whichever account the Workspace UI currently has selected.
+
+    RobotBreakoutMonitor calls every method here from its OWN background
+    thread ("robot-breakout-monitor"), never from the thread that
+    constructed PaperRuntime/its SQLiteStore. Every call is therefore routed
+    through PaperRuntime._dispatch_robot_command(), which forwards to the
+    runtime's bound command dispatcher (SerializedPaperRuntime.call() in
+    production) so the actual store/TradingApplication/ExecutionEngine work
+    always runs on PaperRuntime's single owning writer thread -- exactly like
+    every other externally triggered mutation already does.
     """
 
     def __init__(self, runtime: "PaperRuntime") -> None:
         self._runtime = runtime
 
     def create_limit(self, request):
-        return self._runtime._robot_create_limit(request)
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_create_limit(request))
 
     def cancel_limit(self, request):
-        return self._runtime._robot_cancel_limit(request)
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_cancel_limit(request))
 
     def market(self, request):
-        return self._runtime._robot_market(request)
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_market(request))
 
     def create_stop(self, request):
-        return self._runtime._robot_create_stop(request)
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_create_stop(request))
 
     def amend_stop(self, request):
-        return self._runtime._robot_amend_stop(request)
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_stop(request))
 
     def create_take(self, request):
-        return self._runtime._robot_create_take(request)
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_create_take(request))
 
     def amend_take(self, request):
-        return self._runtime._robot_amend_take(request)
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_take(request))
 
     def full_close(self, request):
-        return self._runtime._robot_full_close(request)
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_full_close(request))
 
 
 class PaperRuntime:
@@ -199,7 +208,13 @@ class PaperRuntime:
         deployment_identity: str = "local",
         robot_latest_geometry_index_provider: Callable[[str], int] | None = None,
         robot_closed_candle_provider: Callable[[str], Mapping[str, object] | None] | None = None,
+        robot_command_dispatcher: Callable[[Callable[["PaperRuntime"], object]], object] | None = None,
+        robot_tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
     ) -> None:
+        # Bound (if given) via this constructor argument, or later via
+        # start_robot_monitor() once a real one exists -- see the class
+        # docstring note on RobotBreakoutMonitor's thread ownership below.
+        self._robot_command_dispatcher = robot_command_dispatcher
         self._account_manager = account_manager or paper_account_manager()
         self._paper_account_id = TradingAccountId("paper")
         self._credential_store = credential_store
@@ -422,6 +437,15 @@ class PaperRuntime:
             clock_ms=lambda: int(time.time() * 1000),
         )
         self._robot_recovery.recover()
+        # RobotBreakoutMonitor runs on its own background thread
+        # ("robot-breakout-monitor"), never the thread that constructed this
+        # runtime (self.store's SQLiteStore owning thread). Its action
+        # executor and match_resting_orders callable therefore both go
+        # through _dispatch_robot_command()/_dispatch_robot_match_symbol(),
+        # which forward to self._robot_command_dispatcher -- bound above from
+        # the constructor argument, or later via start_robot_monitor(). Only
+        # start the monitor once a dispatcher exists: without one, there is
+        # no safe way to route its mutations back onto the owning thread.
         self._robot_breakout_monitor = RobotBreakoutMonitor(
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
@@ -429,9 +453,35 @@ class PaperRuntime:
             action_executor=RobotPaperActionExecutor(self),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
-            match_resting_orders=self.robot_match_symbol,
+            match_resting_orders=self._dispatch_robot_match_symbol,
+            tick_interval_s=robot_tick_interval_s,
         )
+        if self._robot_command_dispatcher is not None:
+            self._robot_breakout_monitor.start()
+
+    def start_robot_monitor(
+        self, dispatcher: Callable[[Callable[["PaperRuntime"], object]], object],
+    ) -> None:
+        """Bind the Robot command dispatcher and start ticking.
+
+        Call this from the composition root once a real cross-thread
+        dispatcher exists (SerializedPaperRuntime.call in production) --
+        never before, and never with a same-thread/direct dispatcher for a
+        runtime whose RobotBreakoutMonitor will actually tick in the
+        background, or its mutations will hit the wrong SQLiteStore thread.
+        """
+        if self._robot_command_dispatcher is not None:
+            raise RuntimeError("Robot command dispatcher is already bound")
+        self._robot_command_dispatcher = dispatcher
         self._robot_breakout_monitor.start()
+
+    def _dispatch_robot_command(self, operation: Callable[["PaperRuntime"], object]) -> object:
+        if self._robot_command_dispatcher is None:
+            raise RuntimeError("Robot command dispatcher is not bound")
+        return self._robot_command_dispatcher(operation)
+
+    def _dispatch_robot_match_symbol(self, symbol: str) -> int:
+        return self._dispatch_robot_command(lambda runtime: runtime.robot_match_symbol(symbol))
 
     @property
     def _account_id(self) -> TradingAccountId:

@@ -133,6 +133,11 @@ def test_robot_paper_execution_is_independent_of_ui_selected_account():
             instrument_provider=lambda symbol: replace(primary, symbol=symbol),
             account_manager=manager,
         )
+        # This test drives RobotPaperActionExecutor synchronously on the test
+        # thread itself (proving UI-account independence, not the separate
+        # cross-thread dispatch fix -- see the production-topology test
+        # below), so a same-thread stand-in dispatcher is correct here.
+        runtime._robot_command_dispatcher = lambda operation: operation(runtime)
         try:
             # Operator switches the Workspace UI to a live Bybit account.
             manager.activate(live_account.id)
