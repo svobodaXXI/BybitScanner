@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -646,6 +646,38 @@ SCHEMA_V16_MIGRATION_STATEMENTS = (
     "ALTER TABLE robot_runtime_state_v16 RENAME TO robot_runtime_state",
 )
 
+SCHEMA_V17_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE paper_protection_obligations (
+        obligation_id TEXT PRIMARY KEY,
+        trade_id TEXT NOT NULL UNIQUE,
+        trading_account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        protection_version INTEGER NOT NULL,
+        winning_leg TEXT NOT NULL,
+        trigger_price TEXT NOT NULL,
+        observed_exit_price TEXT NOT NULL,
+        observed_quantity TEXT NOT NULL,
+        market_event_id TEXT NOT NULL,
+        source_received_at_ms INTEGER NOT NULL,
+        latched_at_ms INTEGER NOT NULL,
+        order_id TEXT NOT NULL UNIQUE,
+        exec_id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        FOREIGN KEY (trade_id) REFERENCES robot_trades(trade_id),
+        CHECK (protection_version >= 1),
+        CHECK (winning_leg IN ('STOP', 'TAKE')),
+        CHECK (status IN ('TRIGGERED', 'DISPATCHING', 'RESOLVED')),
+        CHECK (version >= 1),
+        CHECK (source_received_at_ms >= 0),
+        CHECK (latched_at_ms >= source_received_at_ms),
+        CHECK (updated_at_ms >= latched_at_ms)
+    ) WITHOUT ROWID
+    """,
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -663,4 +695,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V14_MIGRATION_STATEMENTS
     + SCHEMA_V15_MIGRATION_STATEMENTS
     + SCHEMA_V16_MIGRATION_STATEMENTS
+    + SCHEMA_V17_MIGRATION_STATEMENTS
 )

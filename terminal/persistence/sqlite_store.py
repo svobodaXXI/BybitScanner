@@ -50,6 +50,7 @@ from .schema import (
     SCHEMA_V14_MIGRATION_STATEMENTS,
     SCHEMA_V15_MIGRATION_STATEMENTS,
     SCHEMA_V16_MIGRATION_STATEMENTS,
+    SCHEMA_V17_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -104,6 +105,12 @@ ROBOT_CANDIDATE_TRANSITIONS = {
 ROBOT_EXIT_REASONS = {
     "STOP", "TAKE", "MANUAL", "TAKEOVER",
     "EMERGENCY_CLOSE", "EMERGENCY_PROTECTION_FAILURE",
+}
+PAPER_PROTECTION_WINNING_LEGS = {"STOP", "TAKE"}
+PAPER_PROTECTION_OBLIGATION_TRANSITIONS = {
+    "TRIGGERED": {"DISPATCHING"},
+    "DISPATCHING": {"RESOLVED"},
+    "RESOLVED": set(),
 }
 
 
@@ -507,6 +514,27 @@ class RobotTradeRecord:
     updated_at_ms: int
 
 
+@dataclass(frozen=True, slots=True)
+class PaperProtectionObligationRecord:
+    obligation_id: str
+    trade_id: str
+    trading_account_id: TradingAccountId
+    symbol: Symbol
+    protection_version: int
+    winning_leg: str
+    trigger_price: Decimal
+    observed_exit_price: Decimal
+    observed_quantity: Decimal
+    market_event_id: str
+    source_received_at_ms: int
+    latched_at_ms: int
+    order_id: OrderId
+    exec_id: ExecutionId
+    status: str
+    version: int
+    updated_at_ms: int
+
+
 def _decimal_text(value: Decimal) -> str:
     if not isinstance(value, Decimal):
         raise TypeError("persistent decimal values must be Decimal")
@@ -696,6 +724,37 @@ def _robot_trade_from_row(row: sqlite3.Row) -> RobotTradeRecord:
     )
 
 
+def _paper_protection_obligation_from_row(row: sqlite3.Row) -> PaperProtectionObligationRecord:
+    return PaperProtectionObligationRecord(
+        obligation_id=row["obligation_id"],
+        trade_id=row["trade_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        symbol=Symbol(row["symbol"]),
+        protection_version=int(row["protection_version"]),
+        winning_leg=row["winning_leg"],
+        trigger_price=_load_decimal(row["trigger_price"]),
+        observed_exit_price=_load_decimal(row["observed_exit_price"]),
+        observed_quantity=_load_decimal(row["observed_quantity"]),
+        market_event_id=row["market_event_id"],
+        source_received_at_ms=int(row["source_received_at_ms"]),
+        latched_at_ms=int(row["latched_at_ms"]),
+        order_id=OrderId(row["order_id"]),
+        exec_id=ExecutionId(row["exec_id"]),
+        status=row["status"],
+        version=int(row["version"]),
+        updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
+def _stable_paper_protection_identities(trade_id: str) -> tuple[str, OrderId, ExecutionId]:
+    digest = hashlib.sha256(f"paper-protection\0{trade_id}".encode("utf-8")).hexdigest()
+    return (
+        f"paper-protection-{digest}",
+        OrderId(f"paper-protection-order-{digest}"),
+        ExecutionId(f"paper-protection-exec-{digest}"),
+    )
+
+
 class SQLiteStore:
     """Synchronous store owned by one backend thread and writer."""
 
@@ -742,6 +801,11 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 16:
+            SQLiteStore._validate_required_tables(connection, version=16)
+            SQLiteStore._migrate_v16_to_v17(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 15:
@@ -1044,6 +1108,19 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v16_to_v17(connection)
+
+    @staticmethod
+    def _migrate_v16_to_v17(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V17_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 17")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -1088,6 +1165,8 @@ class SQLiteStore:
             required.add("live_limit_operations")
         if version >= 15:
             required.update({"robot_runtime_state", "robot_candidates", "robot_trades"})
+        if version >= 17:
+            required.add("paper_protection_obligations")
         actual = {
             row[0]
             for row in connection.execute(
@@ -1137,6 +1216,20 @@ class SQLiteStore:
             busy_timeout_ms=int(self._connection.execute("PRAGMA busy_timeout").fetchone()[0]),
             synchronous=int(self._connection.execute("PRAGMA synchronous").fetchone()[0]),
         )
+
+    def schema_version(self) -> int:
+        self._assert_owner()
+        return int(self._connection.execute("PRAGMA user_version").fetchone()[0])
+
+    def has_table(self, table_name: str) -> bool:
+        self._assert_owner()
+        if not isinstance(table_name, str) or not table_name.strip():
+            raise ValueError("table_name must be non-empty")
+        row = self._connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name.strip(),),
+        ).fetchone()
+        return row is not None
 
     @property
     def normalized_path(self) -> str:
@@ -3622,6 +3715,138 @@ class SQLiteStore:
             if cursor.rowcount != 1:
                 raise ConcurrentUpdate("Robot candidate changed before trade close")
         return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
+
+    def get_paper_protection_obligation(
+        self, obligation_id: str,
+    ) -> PaperProtectionObligationRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM paper_protection_obligations WHERE obligation_id=?",
+            (obligation_id,),
+        ).fetchone()
+        return _paper_protection_obligation_from_row(row) if row is not None else None
+
+    def latch_paper_protection_obligation(
+        self, *, trade_id: str, protection_version: int, winning_leg: str,
+        trigger_price: Decimal, observed_exit_price: Decimal,
+        observed_quantity: Decimal, market_event_id: str,
+        source_received_at_ms: int, latched_at_ms: int,
+    ) -> tuple[PaperProtectionObligationRecord, bool]:
+        self._assert_owner()
+        if not isinstance(trade_id, str) or not trade_id.strip():
+            raise ValueError("trade_id must be non-empty")
+        if protection_version < 1:
+            raise ValueError("protection_version must be positive")
+        if winning_leg not in PAPER_PROTECTION_WINNING_LEGS:
+            raise ValueError("winning_leg must be STOP or TAKE")
+        for value in (trigger_price, observed_exit_price, observed_quantity):
+            _decimal_text(value)
+        if trigger_price <= 0 or observed_exit_price <= 0 or observed_quantity <= 0:
+            raise ValueError("protection obligation prices/quantity must be positive")
+        if not isinstance(market_event_id, str) or not market_event_id.strip():
+            raise ValueError("market_event_id must be non-empty")
+        if source_received_at_ms < 0 or latched_at_ms < source_received_at_ms:
+            raise ValueError("protection obligation timestamps are invalid")
+
+        existing = self._connection.execute(
+            "SELECT * FROM paper_protection_obligations WHERE trade_id=?",
+            (trade_id,),
+        ).fetchone()
+        if existing is not None:
+            return _paper_protection_obligation_from_row(existing), False
+
+        trade = self._connection.execute(
+            "SELECT trading_account_id, symbol, exit_time_ms FROM robot_trades WHERE trade_id=?",
+            (trade_id,),
+        ).fetchone()
+        if trade is None:
+            raise PersistenceError("Robot trade does not exist")
+        if trade["exit_time_ms"] is not None:
+            raise PersistenceError("Robot trade is already closed")
+
+        obligation_id, order_id, exec_id = _stable_paper_protection_identities(trade_id)
+        try:
+            with self._transaction():
+                existing = self._connection.execute(
+                    "SELECT * FROM paper_protection_obligations WHERE trade_id=?",
+                    (trade_id,),
+                ).fetchone()
+                if existing is not None:
+                    return _paper_protection_obligation_from_row(existing), False
+                self._connection.execute(
+                    """INSERT INTO paper_protection_obligations (
+                        obligation_id, trade_id, trading_account_id, symbol,
+                        protection_version, winning_leg, trigger_price,
+                        observed_exit_price, observed_quantity, market_event_id,
+                        source_received_at_ms, latched_at_ms, order_id, exec_id,
+                        status, version, updated_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'TRIGGERED', 1, ?)""",
+                    (
+                        obligation_id, trade_id, trade["trading_account_id"], trade["symbol"],
+                        protection_version, winning_leg, _decimal_text(trigger_price),
+                        _decimal_text(observed_exit_price), _decimal_text(observed_quantity),
+                        market_event_id.strip(), source_received_at_ms, latched_at_ms,
+                        order_id.value, exec_id.value, latched_at_ms,
+                    ),
+                )
+        except sqlite3.IntegrityError as exc:
+            existing = self._connection.execute(
+                "SELECT * FROM paper_protection_obligations WHERE trade_id=?",
+                (trade_id,),
+            ).fetchone()
+            if existing is not None:
+                return _paper_protection_obligation_from_row(existing), False
+            raise DuplicateIdentity(
+                "PAPER protection obligation durable identity conflict"
+            ) from exc
+
+        created = self.get_paper_protection_obligation(obligation_id)
+        if created is None:
+            raise PersistenceError("latched PAPER protection obligation disappeared")
+        return created, True
+
+    def load_unresolved_paper_protection_obligations(
+        self, trading_account_id: TradingAccountId,
+    ) -> tuple[PaperProtectionObligationRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM paper_protection_obligations
+               WHERE trading_account_id=? AND status!='RESOLVED'
+               ORDER BY latched_at_ms, obligation_id""",
+            (trading_account_id.value,),
+        ).fetchall()
+        return tuple(_paper_protection_obligation_from_row(row) for row in rows)
+
+    def transition_paper_protection_obligation(
+        self, obligation_id: str, *, expected_status: str, next_status: str,
+        expected_version: int, updated_at_ms: int,
+    ) -> PaperProtectionObligationRecord:
+        self._assert_owner()
+        if (
+            expected_status not in PAPER_PROTECTION_OBLIGATION_TRANSITIONS
+            or next_status not in PAPER_PROTECTION_OBLIGATION_TRANSITIONS[expected_status]
+        ):
+            raise ValueError("unsupported PAPER protection obligation transition")
+        if expected_version < 1 or updated_at_ms < 0:
+            raise ValueError("invalid PAPER protection obligation revision/timestamp")
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE paper_protection_obligations
+                   SET status=?, version=version+1, updated_at_ms=?
+                   WHERE obligation_id=? AND status=? AND version=? AND updated_at_ms<=?""",
+                (
+                    next_status, updated_at_ms, obligation_id,
+                    expected_status, expected_version, updated_at_ms,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate(
+                    "PAPER protection obligation state/version no longer matches"
+                )
+        current = self.get_paper_protection_obligation(obligation_id)
+        if current is None:
+            raise PersistenceError("PAPER protection obligation disappeared")
+        return current
 
     def get_reconciliation_checkpoint(
         self, key: PositionKey
