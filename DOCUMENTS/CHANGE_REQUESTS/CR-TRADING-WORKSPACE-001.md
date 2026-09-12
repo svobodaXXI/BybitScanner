@@ -1,4 +1,4 @@
-﻿# CR-TRADING-WORKSPACE-001 — Trading Workspace v1 / Manual Live Trading
+# CR-TRADING-WORKSPACE-001 — Trading Workspace v1 / Manual Live Trading
 
 <!-- CHANGE_REQUEST_METADATA_BEGIN -->
 ```json
@@ -490,7 +490,7 @@
     {"revision": "2.9", "reason": "Human-authorized corrective Working Volume contract: one WV is five percent of active-account account-wide Wallet (totalWalletBalance), rounded down to whole USDT; totalEquity, totalAvailableBalance and leverage are not WV bases", "date": "2026-09-03"},
     {"revision": "3.0", "reason": "Human-authorized dedicated default-off LIVE Limit acceptance boundary with an independent positive requested-notional ceiling; Limit create/amend/cancel no longer require or enable the broader parity gate, while Market, STOP, TAKE and full close remain independently disabled", "date": "2026-09-04"},
     {"revision": "3.1", "reason": "Record incomplete revision 2.7 LIVE Limit real-phone acceptance before PC-to-VPS synchronization: empty-volume confirmation is correctly disabled, but entering 5.20 USDT does not activate confirmation; no real Limit order was submitted", "date": "2026-09-04"},
-    {"revision": "3.3", "reason": "Human-authorized corrective safety redesign after forensic proof that two distinct ONGUSDT LIVE BUY Limit identities were accepted 320 ms apart and filled for 100 ONG / 9.92100 USDT: supersede per-request-only acceptance with one durable backend-owned acceptance session, one-create and 5.20-USDT aggregate limits, durable LIVE Limit identity ownership, no-resend restart reconciliation, and runtime/build/database attribution; implementation is authorized but all LIVE gates and any further real-money acceptance remain separately locked", "date": "2026-09-04"}
+    {"revision": "3.2", "reason": "Human-authorized corrective safety redesign after forensic proof that two distinct ONGUSDT LIVE BUY Limit identities were accepted 320 ms apart and filled for 100 ONG / 9.92100 USDT: supersede per-request-only acceptance with one durable backend-owned acceptance session, one-create and 5.20-USDT aggregate limits, durable LIVE Limit identity ownership, no-resend restart reconciliation, and runtime/build/database attribution; implementation is authorized but all LIVE gates and any further real-money acceptance remain separately locked", "date": "2026-09-04"}
   ]
 }
 ```
