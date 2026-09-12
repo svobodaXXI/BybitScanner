@@ -6500,8 +6500,8 @@ are live in the scanner's output today with zero containment protection, by expl
 
 ## Robot Run Evidence
 
-- `DOCUMENTS/ROBOT_RUN_INDEX.md` ó ËÌ‰ÂÍÒ Ù‡ÍÚË˜ÂÒÍËı Á‡ÔÛÒÍÓ‚ Robot v0.1.
-- `DOCUMENTS/ROBOT_V0_1_LOCAL_PAPER_RUN_2026-09-12.md` ó ÂÁÛÎ¸Ú‡Ú ÎÓÍ‡Î¸ÌÓ„Ó Paper-Á‡ÔÛÒÍ‡ 12.09.2026.
--  ÓÌÚÓÎ¸Ì‡ˇ ÚÓ˜Í‡: `ROBOT_RUNNING + READY`; AAVEUSDT Ë BLURUSDT > `APPROVED`; `robot_trades = 0`.
-- œË˜ËÌ‡ ÓÚÒÛÚÒÚ‚Ëˇ Robot-Ò‰ÂÎÓÍ ‚ ˝ÚÓÏ Á‡ÔÛÒÍÂ ÌÂ ËÒÒÎÂ‰Ó‚‡Î‡Ò¸. œË ‰‡Î¸ÌÂÈ¯ÂÏ ‡ÒÒÎÂ‰Ó‚‡ÌËË ÒÌ‡˜‡Î‡ ˜ËÚ‡Ú¸ `ROBOT_RUN_INDEX.md` Ë ÔÓÎÌ˚È ÓÚ˜∏Ú.
+- `DOCUMENTS/ROBOT_RUN_INDEX.md` ‚Äî –∏–Ω–¥–µ–∫—Å —Ñ–∞–∫—Ç–∏—á–µ—Å–∫–∏—Ö –∑–∞–ø—É—Å–∫–æ–≤ Robot v0.1.
+- `DOCUMENTS/ROBOT_V0_1_LOCAL_PAPER_RUN_2026-09-12.md` ‚Äî —Ä–µ–∑—É–ª—å—Ç–∞—Ç –ª–æ–∫–∞–ª—å–Ω–æ–≥–æ Paper-–∑–∞–ø—É—Å–∫–∞ 12.09.2026.
+- –ö–æ–Ω—Ç—Ä–æ–ª—å–Ω–∞—è —Ç–æ—á–∫–∞: `ROBOT_RUNNING + READY`; AAVEUSDT –∏ BLURUSDT > `APPROVED`; `robot_trades = 0`.
+- –ü—Ä–∏—á–∏–Ω–∞ –æ—Ç—Å—É—Ç—Å—Ç–≤–∏—è Robot-—Å–¥–µ–ª–æ–∫ –≤ —ç—Ç–æ–º –∑–∞–ø—É—Å–∫–µ –Ω–µ –∏—Å—Å–ª–µ–¥–æ–≤–∞–ª–∞—Å—å. –ü—Ä–∏ –¥–∞–ª—å–Ω–µ–π—à–µ–º —Ä–∞—Å—Å–ª–µ–¥–æ–≤–∞–Ω–∏–∏ —Å–Ω–∞—á–∞–ª–∞ —á–∏—Ç–∞—Ç—å `ROBOT_RUN_INDEX.md` –∏ –ø–æ–ª–Ω—ã–π –æ—Ç—á—ë—Ç.
 
