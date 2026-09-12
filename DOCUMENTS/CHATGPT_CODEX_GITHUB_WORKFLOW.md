@@ -154,6 +154,21 @@ The optimization goal is to preserve scope protection, user-owned-work protectio
 
 No harness code change is authorized by this note. Before changing `AGENTS.md` or `tools/dev/*`, first validate this lighter operating pattern on several real tasks. If Codex continues opening separate task transactions for each micro-slice, add a small explicit rule clarifying that micro-slices inside one authorized implementation packet share one task transaction and one final `task finish`.
 
+### Adopted operating rule — 2026-09-12
+
+For small and medium implementation work, the default workflow is now:
+
+1. one `task start` for the complete authorized package scope;
+2. any number of narrow dependent micro-slices inside that same task transaction;
+3. targeted tests, `git diff --check`, or `tools.dev.verify --focused` between micro-slices only when they add useful feedback;
+4. no new `task start` / `task finish` pair for each individual micro-slice;
+5. one `task finish` only after the package is complete and ready for final verification;
+6. one checkpoint/commit/push for that verified package.
+
+This rule is intended to reduce Codex/context/verification overhead and preserve development throughput. It does not weaken authorization boundaries: a materially expanded scope, a new product decision, a risk/LIVE boundary change, or a new logical task still requires its normal approval and, when needed, a revised protected task scope.
+
+If a blocker discovered during final verification is unrelated to the package itself, diagnose it narrowly first. Do not automatically explode a small task into multiple protected transactions unless the blocker must actually be repaired to make the repository reproducible or to complete the authorized package safely.
+
 ## Activation state
 
 As of 2026-09-08 this workflow is documented for future use but is not fully enabled because Codex weekly limits are exhausted until the expected reset on 2026-09-10.
