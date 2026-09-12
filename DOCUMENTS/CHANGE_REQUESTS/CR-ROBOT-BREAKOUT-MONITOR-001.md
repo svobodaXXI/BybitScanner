@@ -7,9 +7,9 @@
   "id": "CR-ROBOT-BREAKOUT-MONITOR-001",
   "title": "Wire Robot v0.1 Breakout/Retest Lifecycle to Approved Candidates via a Reusable RobotBreakoutMonitor Coordinator",
   "governance_type": "DESIGN_TO_IMPLEMENTATION_CHANGE_REQUEST",
-  "status": "IN_PROGRESS",
-  "revision": "1.2",
-  "lifecycle_stage": "IMPLEMENT",
+  "status": "CLOSED",
+  "revision": "1.3",
+  "lifecycle_stage": "RECORD",
   "objective": "Introduce a mode-agnostic RobotBreakoutMonitor coordinator, modeled on the existing terminal/application/robot_recovery.py:RobotRecoveryCoordinator pattern, that drives each durable APPROVED Robot candidate through the already-implemented and already-tested robot_state_machine.py / robot_entry_limit.py / robot_partial_fill.py / robot_market_confirmation.py / robot_protection.py pipeline on every new closed 1m candle, so that APPROVED candidates can actually reach robot_trades instead of stalling forever.",
   "non_goals": [
     "Change Scanner behavior, main.py, pattern/geometry detection, or the Scanner-side Telegram handoff (notification.py, robot_candidate_store.py)",
@@ -130,6 +130,21 @@
     "Existing focused tests for the five pure Robot modules, RobotRecoveryCoordinator/paper_runtime wiring, and the terminal/application/* no-network/no-mutation layering guard continue to pass unmodified",
     "tests/test_robot_breakout_monitor.py exercises both the full-LIMIT-fill and partial-fill-to-Market-completion paths end to end against a real temp-file SQLiteStore, asserting the created robot_trades row's entry_path, actual_wv, average_entry, stop_price and take_price"
   ],
+  "verification_results": [
+    "Durable governance gate PASS (python -m tools.project_sync.governance.change_request)",
+    "tests/test_robot_breakout_monitor.py: 10 of 10 PASS",
+    "Combined focused Robot/paper-runtime/persistence/layering-guard suite: 151 of 151 PASS",
+    "Full repository suite: 882 passed, 8 pre-existing failures confirmed unrelated (reproduced identically against the pre-CR baseline by stashing this CR's changes)",
+    "terminal/application/*.py no-network/no-mutation layering guard (test_no_mutation_or_network_api_is_exposed): PASS"
+  ],
+  "acceptance_state": "SATISFIED_FOR_APPROVED_SCOPE_WITH_DOCUMENTED_RESIDUAL_GAPS_DEFERRED",
+  "mission_outcome": [
+    "RobotBreakoutMonitor implemented and wired into paper_runtime.py, structurally mirroring RobotRecoveryCoordinator",
+    "A durable APPROVED Robot candidate now advances WAITING_BREAKOUT -> WAITING_RETEST -> RETEST_DETECTED -> initial LIMIT -> (full fill or cancel+partial-fill+Market completion) -> protection -> create_robot_trade, closing the wiring gap DOCUMENTS/ROBOT_V0_1_LOCAL_PAPER_RUN_2026-09-12.md recorded",
+    "All nine architecture/data-source decisions across revisions 1.0-1.2 were resolved by the user and implemented without modifying any of the five pure Robot modules' internal decision logic",
+    "Known residual gaps (LIMIT re-pricing, zero-fill fresh-entry fallback, automated resolution of a stuck partial fill) are explicitly out of this CR's approved scope and documented as candidates for a future follow-up CR, not silently dropped",
+    "Full regression (882 passed) and the terminal/application/* no-network/no-mutation layering guard confirmed passing; a real-environment local paper run remains the next, separate verification step outside this CR's unit/integration-test scope"
+  ],
   "verification_requirements": [
     "Focused tests/test_robot_breakout_monitor.py suite passing (10 tests: lazy init, LIMIT-submission timing, apex expiry, full-LIMIT-fill trade creation, partial-fill wait-then-market-complete trade creation, unavailable-candle tolerance, concurrent-writer safety, two-symbol independence, thread start/close safety, structural_extreme/frozen_prices for SHORT)",
     "Full existing Robot regression suite passing unmodified: tests/test_robot_state_machine.py, tests/test_robot_entry_limit.py, tests/test_robot_partial_fill.py, tests/test_robot_market_confirmation.py, tests/test_robot_protection.py, tests/test_robot_recovery_coordinator.py, tests/test_robot_runtime_wiring.py, tests/test_robot_admission.py, tests/test_scanner_geometry_cursor.py, tests/test_terminal_persistence.py, tests/test_terminal_paper_runtime.py, tests/test_terminal_execution_engine.py (including the no-network/no-mutation layering guard)",
@@ -154,29 +169,35 @@
     {"id": "TASK", "status": "COMPLETED"},
     {"id": "SPEC", "status": "COMPLETED_HUMAN_APPROVED"},
     {"id": "CONTEXT", "status": "COMPLETED"},
-    {"id": "IMPLEMENT", "status": "FULL_CHAIN_TO_CREATE_ROBOT_TRADE_IMPLEMENTED_MINOR_RESIDUAL_GAPS_NOTED"},
-    {"id": "VERIFY", "status": "NOT_STARTED_NOT_AUTHORIZED"},
-    {"id": "RECORD", "status": "NOT_STARTED_NOT_AUTHORIZED"}
+    {"id": "IMPLEMENT", "status": "IMPLEMENTED_VERIFIED"},
+    {"id": "VERIFY", "status": "IMPLEMENTED_VERIFIED"},
+    {"id": "RECORD", "status": "COMPLETED_HUMAN_APPROVED"},
+    {"id": "MISSION_CLOSE", "status": "COMPLETED"},
+    {"id": "NO_NEXT_PHASE", "status": "NOT_APPLICABLE"}
   ],
-  "current_phase": "IMPLEMENT",
-  "current_checkpoint": "PARTIAL_FILL_CONFIRMATION_PROTECTION_AND_CREATE_ROBOT_TRADE_IMPLEMENTED_TESTS_PASSING",
-  "implementation_status": "IMPLEMENT_FULL_CHAIN_COMPLETE_PENDING_USER_REVIEW_AND_COMMIT",
-  "next_phase": "VERIFY",
-  "next_phase_authorization": "APPROVED",
+  "current_phase": "MISSION_CLOSE",
+  "current_checkpoint": "MISSION_CLOSE_COMPLETED",
+  "implementation_status": "IMPLEMENTED_VERIFIED",
+  "next_phase": "NO_NEXT_PHASE",
+  "next_phase_authorization": "NOT_APPLICABLE",
   "related_commits": [
     {"phase": "BASELINE", "commit": "95418d75672e9057b294422ae2a66025559defdd"},
     {"phase": "REVISION_1_0_CHECKPOINT", "commit": "1cdddbf7ce90d3dc0aa9dc4b64d17ba5f0aa3c9c"},
-    {"phase": "REVISION_1_1_CHECKPOINT", "commit": "1dbec876be71b98272cfab20d4e5d54de222d85d"}
+    {"phase": "REVISION_1_1_CHECKPOINT", "commit": "1dbec876be71b98272cfab20d4e5d54de222d85d"},
+    {"phase": "REVISION_1_2_CHECKPOINT", "commit": "a769cafd5c81e77d6709e90d08146f0f78a96be6"}
   ],
   "repository_sync": {
     "branch": "robot-v0-1-admission-gate",
     "baseline_local_head": "95418d75672e9057b294422ae2a66025559defdd",
-    "status": "PENDING_CHECKPOINT_COMMIT"
+    "local_head": "a769cafd5c81e77d6709e90d08146f0f78a96be6",
+    "origin_branch": "a769cafd5c81e77d6709e90d08146f0f78a96be6",
+    "status": "SYNCHRONIZED"
   },
   "amendment_history": [
     {"revision": "1.0", "reason": "Human-authorized durable CR opened recording the Robot v0.1 breakout/retest lifecycle wiring gap finding and the RobotBreakoutMonitor architecture decision approved in chat; CONTEXT-stage research on candidate-state read/write locations, multi-symbol live-candle retrieval options and applicable test patterns recorded in the same revision; IMPLEMENT explicitly not authorized pending separate human confirmation", "date": "2026-09-12"},
     {"revision": "1.1", "reason": "Human-authorized: the five unresolved live-candle-transport, threading and concurrency decisions resolved and recorded as approved_decisions with the user's exact choices; IMPLEMENT authorized and executed for the breakout/retest/initial-LIMIT portion (RobotBreakoutMonitor, scanner_geometry_cursor.latest_scanner_closed_candle(), paper_runtime.py wiring, focused test suite); partial-fill/confirmation/protection wiring and create_robot_trade() explicitly deferred to a follow-up revision pending newly discovered data-sourcing decisions this revision does not cover", "date": "2026-09-12"},
-    {"revision": "1.2", "reason": "Human-authorized: the four remaining data-sourcing unresolved_decisions resolved and recorded as approved_decisions with the user's exact sources/formulas; IMPLEMENT continued and completed for the full chain to create_robot_trade() (partial fill, Market confirmation bridge, protection, trade creation) in the same pass, including one additional necessary piece discovered during implementation (cancelling the resting LIMIT remainder before Market completion can be evaluated) and one corrected field path (structural_extreme reads geometry.touches.*_touch_points, not upper_line/lower_line.points which is an integer count). Full existing suite plus the expanded focused suite verified passing", "date": "2026-09-12"}
+    {"revision": "1.2", "reason": "Human-authorized: the four remaining data-sourcing unresolved_decisions resolved and recorded as approved_decisions with the user's exact sources/formulas; IMPLEMENT continued and completed for the full chain to create_robot_trade() (partial fill, Market confirmation bridge, protection, trade creation) in the same pass, including one additional necessary piece discovered during implementation (cancelling the resting LIMIT remainder before Market completion can be evaluated) and one corrected field path (structural_extreme reads geometry.touches.*_touch_points, not upper_line/lower_line.points which is an integer count). Full existing suite plus the expanded focused suite verified passing", "date": "2026-09-12"},
+    {"revision": "1.3", "reason": "Human-authorized: revision 1.2 approved as-is with no further code changes. Lifecycle formally updated to VERIFY/RECORD/MISSION_CLOSE reflecting the test runs already completed and pushed in commit a769caf (10/10 focused, 151/151 combined, 882 passed full-suite with 8 pre-existing unrelated failures). CR closed for its approved scope; residual gaps (LIMIT re-pricing, zero-fill fresh-entry fallback, stuck-partial resolution) remain explicitly documented as out of scope for a possible future follow-up CR", "date": "2026-09-12"}
   ]
 }
 ```
@@ -227,6 +248,13 @@ repository run are pre-existing and unrelated (reproduced identically against th
 a partial fill stuck at `APEX_REACHED` or persistently blocked — these candidates simply stop advancing and
 would need manual operator attention today. None of these were covered by the four decisions this revision
 resolves.
+
+Revision 1.3 closes the mission after revision 1.2 was approved as-is (no further code changes). The
+`VERIFY` and `RECORD` phases are recorded against the test runs already completed and pushed in commit
+`a769caf` — 10/10 focused, 151/151 combined Robot/paper-runtime/persistence/layering-guard, and 882 passed
+in a full repository run with 8 pre-existing failures confirmed unrelated. No later phase exists for this
+CR; the documented residual gaps remain candidates for a separate future ChangeRequest, and a real-environment
+local paper run is tracked separately (see `DOCUMENTS/ROBOT_RUN_INDEX.md`).
 
 ## Amendment rule
 
