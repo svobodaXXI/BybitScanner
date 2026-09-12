@@ -138,6 +138,22 @@ Never automatically:
 
 When repository/local authority conflicts or local state is unknown, stop rather than repair destructively.
 
+## Harness optimization note — 2026-09-12
+
+The current task harness is valuable as a final safety boundary, but its heavy verification path should not be repeated after every micro-slice.
+
+Preferred future operating model:
+
+- open one protected `task start` for the whole authorized implementation packet and include the expected package scope up front;
+- execute the packet as multiple narrow micro-slices, with ChatGPT retaining architectural control and Codex receiving one dependent implementation step at a time;
+- between micro-slices, use targeted tests, `git diff --check`, and focused verification only as needed;
+- run `task finish` once, at the end of the completed packet, to perform isolated exact-scope verification and create the PASS receipt;
+- then perform one checkpoint/commit/push for the verified package.
+
+The optimization goal is to preserve scope protection, user-owned-work protection, fail-closed verification, and checkpoint receipts while reducing repeated transaction setup, isolated worktrees, redundant full verification, and agent/context overhead.
+
+No harness code change is authorized by this note. Before changing `AGENTS.md` or `tools/dev/*`, first validate this lighter operating pattern on several real tasks. If Codex continues opening separate task transactions for each micro-slice, add a small explicit rule clarifying that micro-slices inside one authorized implementation packet share one task transaction and one final `task finish`.
+
 ## Activation state
 
 As of 2026-09-08 this workflow is documented for future use but is not fully enabled because Codex weekly limits are exhausted until the expected reset on 2026-09-10.
