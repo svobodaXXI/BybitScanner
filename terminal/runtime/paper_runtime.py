@@ -10,7 +10,7 @@ import logging
 from uuid import uuid4
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 from terminal.api.models import (
@@ -21,6 +21,7 @@ from terminal.api.models import (
     PaperStopMutationResult, TimeInForce, to_primitive,
     LiveMarketCommandRequest,
 )
+from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 from terminal.application.live_market_execution import LiveMarketMutationCoordinator, LiveMarketMutationGates
 from terminal.application.live_execution import LiveExecutionCoordinator, LiveParityMutationGates
 from terminal.application.live_limit_acceptance import (
@@ -48,6 +49,7 @@ from terminal.application.live_account_reconciliation import (
     LiveAccountReconciliationError,
 )
 from terminal.application.robot_recovery import RobotRecoveryCoordinator
+from scanner_geometry_cursor import latest_scanner_closed_candle
 from terminal.domain.models import (
     ExecutionId, OrderId, OrderSide, PositionSide, Quantity, Symbol,
     TradingAccountId,
@@ -157,6 +159,7 @@ class PaperRuntime:
         live_limit_build_sha: str = "",
         deployment_identity: str = "local",
         robot_latest_geometry_index_provider: Callable[[str], int] | None = None,
+        robot_closed_candle_provider: Callable[[str], Mapping[str, object] | None] | None = None,
     ) -> None:
         self._account_manager = account_manager or paper_account_manager()
         self._paper_account_id = TradingAccountId("paper")
@@ -364,6 +367,15 @@ class PaperRuntime:
             clock_ms=lambda: int(time.time() * 1000),
         )
         self._robot_recovery.recover()
+        self._robot_breakout_monitor = RobotBreakoutMonitor(
+            self.store,
+            self._paper_account_id,
+            get_closed_candle=robot_closed_candle_provider or latest_scanner_closed_candle,
+            limit_submitter=self,
+            tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
+            clock_ms=lambda: int(time.time() * 1000),
+        )
+        self._robot_breakout_monitor.start()
 
     @property
     def _account_id(self) -> TradingAccountId:
@@ -1149,6 +1161,7 @@ class PaperRuntime:
         )
 
     def close(self) -> None:
+        self._robot_breakout_monitor.close()
         self.store.close()
         if self._live_account_store is not None:
             self._live_account_store.close()

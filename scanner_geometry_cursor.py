@@ -115,6 +115,36 @@ def latest_scanner_closed_candle_time_ms(symbol: str) -> int:
     return value
 
 
+def latest_scanner_closed_candle(symbol: str) -> dict[str, object] | None:
+    """Load Scanner 1m candles and return the latest proven closed OHLC bar.
+
+    Mirrors ``latest_scanner_closed_candle_time_ms``'s conservative
+    second-newest-kline evidence, but returns the OHLC values a lifecycle
+    consumer needs instead of only the timestamp. Unlike that function this
+    returns ``None`` (never raises) on any unavailable/invalid evidence, so a
+    periodic caller can simply retry on its next tick.
+    """
+
+    from analyzer.candles import load_candles
+
+    frame = load_candles(symbol, "1", 3, minimum=2)
+    if frame is None or len(frame) < 2:
+        return None
+    if not {"time", "high", "low", "close"}.issubset(frame.columns):
+        return None
+    row = frame.iloc[-2]
+    try:
+        time_ms = int(row["time"])
+        high = float(row["high"])
+        low = float(row["low"])
+        close = float(row["close"])
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if time_ms <= 0:
+        return None
+    return {"time_ms": time_ms, "high": high, "low": low, "close": close}
+
+
 class ScannerGeometryCursorProvider:
     """Translate current closed-candle time into one candidate's frozen index space."""
 
