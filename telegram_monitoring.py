@@ -38,6 +38,19 @@ PHASE_LABELS = {
     "EXPIRED_AT_APEX": "Истёк у апекса",
 }
 
+ROBOT_MODE_LABELS = {
+    "ROBOT_RUNNING": "Запущен",
+    "ROBOT_STOPPED": "Остановлен",
+}
+
+ROBOT_RECOVERY_LABELS = {
+    "READY": "Готов",
+    "PAUSED": "Пауза",
+    "RECONCILING": "Сверка",
+    "RECONCILIATION_REQUIRED": "Нужна сверка",
+    "ROBOT_STOPPED": "Остановлен",
+}
+
 
 def _telegram_request(method: str, **params):
     url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/{method}"
@@ -128,20 +141,25 @@ def _potential_text(snapshot: Mapping[str, object]) -> str:
     return "—"
 
 
+def _robot_status_text(runtime) -> str:
+    if runtime is None:
+        return "Остановлен"
+    mode = ROBOT_MODE_LABELS.get(str(runtime.mode), "Неизвестно")
+    recovery = ROBOT_RECOVERY_LABELS.get(str(runtime.recovery_status), "Неизвестно")
+    if mode == recovery:
+        return mode
+    return f"{mode} / {recovery}"
+
+
 def format_candidate_card(record: RobotCandidateRecord) -> str:
     snapshot = record.signal_snapshot
     state = record.robot_state or {}
     direction = state.get("direction") or snapshot.get("direction") or "—"
     pattern = snapshot.get("pattern") or state.get("pattern") or "—"
     try:
-        runtime = get_robot_runtime_status()
-        robot_status = (
-            f"{runtime.mode} / {runtime.recovery_status}"
-            if runtime is not None
-            else "ROBOT_STOPPED"
-        )
+        robot_status = _robot_status_text(get_robot_runtime_status())
     except Exception:
-        robot_status = "UNKNOWN"
+        robot_status = "Неизвестно"
 
     return (
         "🤖 Мониторинг кандидата\n\n"
