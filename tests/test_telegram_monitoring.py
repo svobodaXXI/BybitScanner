@@ -60,6 +60,20 @@ class TelegramMonitoringTests(unittest.TestCase):
         )
         self.assertIsNone(monitoring.parse_monitor_callback("robot:approve:cand-1"))
 
+    def test_robot_runtime_statuses_are_short_and_localized(self):
+        cases = (
+            ("ROBOT_RUNNING", "READY", "Запущен / Готов"),
+            ("ROBOT_RUNNING", "PAUSED", "Запущен / Пауза"),
+            ("ROBOT_RUNNING", "RECONCILING", "Запущен / Сверка"),
+            ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", "Запущен / Нужна сверка"),
+            ("ROBOT_STOPPED", "ROBOT_STOPPED", "Остановлен"),
+        )
+        for mode, recovery_status, expected in cases:
+            with self.subTest(mode=mode, recovery_status=recovery_status):
+                runtime = SimpleNamespace(mode=mode, recovery_status=recovery_status)
+                self.assertEqual(monitoring._robot_status_text(runtime), expected)
+        self.assertEqual(monitoring._robot_status_text(None), "Остановлен")
+
     @patch("telegram_monitoring.get_robot_runtime_status")
     def test_candidate_card_contains_required_monitoring_fields(self, status):
         status.return_value = SimpleNamespace(mode="ROBOT_RUNNING", recovery_status="READY")
@@ -70,7 +84,7 @@ class TelegramMonitoringTests(unittest.TestCase):
         self.assertIn("Состояние: Ретест обнаружен", card)
         self.assertIn("Качество: B Setup", card)
         self.assertIn("Потенциал: +0.76%", card)
-        self.assertIn("Робот: ROBOT_RUNNING / READY", card)
+        self.assertIn("Робот: Запущен / Готов", card)
         self.assertIn("Сделка: не открыта", card)
 
 
