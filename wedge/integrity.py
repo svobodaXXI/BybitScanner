@@ -156,6 +156,9 @@ def evaluate_directional_envelope(
     }
 
 
+CONTAINMENT_VIOLATION_EVALUATION_ENABLED = False
+
+
 ZERO_CONTAINMENT_VIOLATIONS = {
     "upper_violations": 0,
     "lower_strict_violations": 0,
@@ -169,7 +172,9 @@ def evaluate_containment_violations(
     candles
 ):
     """
-    Falling-Wedge-only ATR containment interpretation.
+    Containment violation evaluation is temporarily disabled globally.
+    The Falling Wedge implementation below is intentionally preserved
+    for future recalibration and re-enable.
 
     Replaces the previous hard binary containment reject in
     wedge/detector.py:detect_structure() with graded violation counts
@@ -183,6 +188,9 @@ def evaluate_containment_violations(
     patterns temporarily have no containment mechanism at all until a
     future mirrored decision is authorized.
     """
+
+    if not CONTAINMENT_VIOLATION_EVALUATION_ENABLED:
+        return dict(ZERO_CONTAINMENT_VIOLATIONS)
 
     if pattern != "Falling Wedge":
         return dict(ZERO_CONTAINMENT_VIOLATIONS)

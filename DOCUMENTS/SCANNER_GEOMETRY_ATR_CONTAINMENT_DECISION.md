@@ -181,4 +181,34 @@ Re-opened, not resolved: the underlying containment gap for Rising Wedge / Trian
 - Full repository regression (`python -B -m unittest discover -s tests`): 619 tests, identical 2 failures and 19 errors to the pre-existing baseline (confirmed by diffing against the unmodified tree), zero new failures. `tests/test_geometry.py`, `tests/test_geometry_pipeline.py`, `tests/test_wedge_pipeline.py` (plain-script, not unittest-discoverable) were run directly and produce byte-identical output to the unmodified baseline, including `test_wedge_pipeline.py`'s already-documented pre-existing `AssertionError` (see `CR-SCANNER-GEOMETRY-001` `verification_results`).
 - Live end-to-end check on real ARBUSDT market data: previously hard-rejected (`containment_strict_run=50` against the old `max_strict_severe_run=2`), now `detected=True` with `containment_violations={"upper_violations": 63, "lower_strict_violations": 16, "lower_flexible_unrecognized_breaches": 7}` (4 late-zone breaches excused by recognized reversal patterns), `freshness_window=38`, and quality correctly downgraded from `B Setup` to `Weak Setup` (severity 165, ≥5 → 3-step downgrade per the approved table). The large severity value on this real example is itself useful early evidence for later calibration, not a defect.
 
+## Implementation note - 2026-09-12: temporary global disablement
+
+Status: TEMPORARILY DISABLED / CALIBRATION REQUIRED
+
+The current Falling Wedge containment calibration proved excessively strict in practical scanning, producing too many unwanted quality downgrades and filtering out useful candidates. Containment violation evaluation is therefore temporarily disabled globally pending further calibration.
+
+### Runtime behavior and implementation
+
+`wedge.integrity.CONTAINMENT_VIOLATION_EVALUATION_ENABLED = False` now causes `evaluate_containment_violations()` to return a fresh copy of `ZERO_CONTAINMENT_VIOLATIONS` immediately for ALL pattern types, including Falling Wedge, Rising Wedge, and Triangle Compression, even when geometry contains body-zone breaches. These zero counts produce no containment-based quality penalty.
+
+Rising Wedge and Triangle Compression already effectively had no active containment penalty. This change aligns Falling Wedge with that existing behavior; it does not implement containment protection for the other patterns.
+
+This temporary disablement does NOT delete or supersede the previous ATR containment design. The existing Falling Wedge ATR handling, body-zone interpretation, upper/lower violation calculation, and reversal exception implementation are preserved in full below the switch for further recalibration and a subsequent controlled re-enable. Earlier decision and implementation records above remain unchanged as history.
+
+### Unchanged boundaries
+
+- Freshness remains a hard gate.
+- The Geometry Validation Gate and touch logic are unchanged.
+- Body-zone calculation and reversal-pattern recognizers are unchanged.
+- The quality downgrade implementation is unchanged; the disabled evaluator supplies zero violations.
+- Robot admission and runtime are unchanged.
+
+### Re-enable condition
+
+Containment evaluation must not be re-enabled merely by flipping the production flag. A separate calibration/verification task and a recorded decision are required before any controlled production re-enable.
+
+### Verification
+
+`tests/test_scanner_geometry_atr_containment.py` confirms default OFF behavior for Falling Wedge, Rising Wedge, and Triangle Compression with breaches present. Existing tests temporarily enable the switch through `unittest.mock.patch` to exercise the preserved Falling Wedge upper, lower-strict, late-flexible, reversal-exception, and missing-candles behavior. The focused module passed all 29 tests on 2026-09-12; this result verifies the switch behavior and retained implementation, not calibration acceptance.
+
 # END_OF_DOCUMENT

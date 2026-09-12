@@ -5,14 +5,15 @@ DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md:
 - geometry.envelope_metrics.evaluate_body_zone_breaches (ATR-normalized,
   zone-split, direction-neutral raw body breaches)
 - geometry.reversal_patterns (Bullish Engulfing / Morning Star / Arc)
-- wedge.integrity.evaluate_containment_violations (Falling-Wedge-only
-  pattern-aware interpretation + reversal-pattern exception)
+- wedge.integrity.evaluate_containment_violations (disabled defaults and
+  preserved Falling Wedge interpretation + reversal-pattern exception)
 - signal.quality's containment severity / tier-downgrade scale
 - wedge.detector's proportional freshness window and removal of the old
   hard containment reject
 """
 
 import unittest
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -23,6 +24,7 @@ from geometry.reversal_patterns import (
     is_smooth_arc,
     has_reversal_exception,
 )
+import wedge.integrity as integrity
 from wedge.integrity import evaluate_containment_violations
 from wedge.detector import detect_structure, FRESHNESS_WINDOW_MIN_BARS, FRESHNESS_WINDOW_FACTOR
 from signal.quality import evaluate_quality
@@ -186,6 +188,23 @@ class ContainmentViolationsTests(unittest.TestCase):
             }
         }
 
+    def test_disabled_by_default_returns_zero_for_all_patterns_with_breaches(self):
+        self.assertIs(integrity.CONTAINMENT_VIOLATION_EVALUATION_ENABLED, False)
+        breaches = {
+            "upper_body_breach_indices": [17],
+            "lower_body_breach_early_indices": [18],
+            "lower_body_breach_late_indices": [23],
+        }
+        candles = _make_candles({23: {"open": 95.0, "close": 94.0}})
+        for pattern in ("Falling Wedge", "Rising Wedge", "Triangle Compression"):
+            with self.subTest(pattern=pattern):
+                result = evaluate_containment_violations(
+                    self._geometry(breaches), pattern, candles
+                )
+                self.assertEqual(result, integrity.ZERO_CONTAINMENT_VIOLATIONS)
+                self.assertIsNot(result, integrity.ZERO_CONTAINMENT_VIOLATIONS)
+
+    @patch("wedge.integrity.CONTAINMENT_VIOLATION_EVALUATION_ENABLED", True)
     def test_falling_wedge_counts_all_three_kinds(self):
         candles = _make_candles({
             23: {"open": 95.0, "close": 94.0},  # unrecognized late breach
@@ -202,6 +221,7 @@ class ContainmentViolationsTests(unittest.TestCase):
         self.assertEqual(result["lower_strict_violations"], 1)
         self.assertEqual(result["lower_flexible_unrecognized_breaches"], 1)
 
+    @patch("wedge.integrity.CONTAINMENT_VIOLATION_EVALUATION_ENABLED", True)
     def test_late_breach_excused_by_bullish_engulfing_is_not_counted(self):
         candles = _make_candles({
             22: {"open": 100.0, "close": 94.0, "high": 100.5, "low": 93.5},
@@ -218,6 +238,7 @@ class ContainmentViolationsTests(unittest.TestCase):
         self.assertEqual(result["lower_flexible_unrecognized_breaches"], 0)
         self.assertIn(23, result["lower_flexible_excused_indices"])
 
+    @patch("wedge.integrity.CONTAINMENT_VIOLATION_EVALUATION_ENABLED", True)
     def test_rising_wedge_and_triangle_are_not_yet_covered(self):
         breaches = {
             "upper_body_breach_indices": [17],
@@ -233,6 +254,7 @@ class ContainmentViolationsTests(unittest.TestCase):
             self.assertEqual(result["lower_strict_violations"], 0)
             self.assertEqual(result["lower_flexible_unrecognized_breaches"], 0)
 
+    @patch("wedge.integrity.CONTAINMENT_VIOLATION_EVALUATION_ENABLED", True)
     def test_missing_candles_still_counts_resolved_breaches(self):
         # upper/lower-strict counts need no candle lookup (already resolved
         # index lists); only the late-zone reversal-pattern exception needs
@@ -372,6 +394,7 @@ class FreshnessWindowTests(unittest.TestCase):
             FRESHNESS_WINDOW_MIN_BARS
         )
 
+    @patch("wedge.integrity.CONTAINMENT_VIOLATION_EVALUATION_ENABLED", True)
     def test_containment_no_longer_blocks_detection(self):
         # Heavy containment violations must not flip detected to False;
         # only signal.quality may downgrade the tier now.

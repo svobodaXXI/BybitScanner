@@ -111,21 +111,27 @@ class DirectionalEnvelopeQualityTests(unittest.TestCase):
         # old hard containment reject with a soft signal.quality tier
         # penalty. detect_structure() must still detect the structure and
         # merely report the violation counts.
-        result = detect_structure(
-            _geometry(-1.0, -0.5, _envelope(upper_body_breaches=(1, 2, 3)))
-        )
+        with patch(
+            "wedge.integrity.CONTAINMENT_VIOLATION_EVALUATION_ENABLED", True
+        ):
+            result = detect_structure(
+                _geometry(-1.0, -0.5, _envelope(upper_body_breaches=(1, 2, 3)))
+            )
         self.assertTrue(result["detected"])
         self.assertEqual(
             result["features"]["containment_violations"]["upper_violations"], 3
         )
 
     def test_falling_wedge_lower_strict_and_flexible_breaches_are_counted(self):
-        result = detect_structure(
-            _geometry(
-                -1.0, -0.5,
-                _envelope(lower_strict_breaches=(1, 2), lower_late_breaches=(9,))
+        with patch(
+            "wedge.integrity.CONTAINMENT_VIOLATION_EVALUATION_ENABLED", True
+        ):
+            result = detect_structure(
+                _geometry(
+                    -1.0, -0.5,
+                    _envelope(lower_strict_breaches=(1, 2), lower_late_breaches=(9,))
+                )
             )
-        )
         self.assertTrue(result["detected"])
         violations = result["features"]["containment_violations"]
         self.assertEqual(violations["lower_strict_violations"], 2)
