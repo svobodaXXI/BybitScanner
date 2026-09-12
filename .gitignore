@@ -42,6 +42,11 @@ secrets.toml
 !secrets.template.*
 
 debug/
+!/geometry/debug/
+/geometry/debug/*
+!/geometry/debug/__init__.py
+!/geometry/debug/inspector.py
+!/geometry/debug/logger.py
 debug.txt
 
 charts/
