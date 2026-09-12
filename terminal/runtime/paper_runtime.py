@@ -371,7 +371,7 @@ class PaperRuntime:
             self.store,
             self._paper_account_id,
             get_closed_candle=robot_closed_candle_provider or latest_scanner_closed_candle,
-            limit_submitter=self,
+            action_executor=self,
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
         )
