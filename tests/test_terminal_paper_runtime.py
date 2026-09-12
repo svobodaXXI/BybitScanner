@@ -31,7 +31,7 @@ from terminal.application.trading_accounts import (
 )
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
-from terminal.runtime.paper_runtime import PaperRuntime
+from terminal.runtime.paper_runtime import PaperRuntime, RobotPaperActionExecutor
 from terminal.persistence.sqlite_store import DuplicateIdentity
 
 
@@ -100,6 +100,93 @@ def test_paper_runtime_rejects_non_paper_active_account() -> None:
                 account_manager=manager,
             )
         assert not database_path.exists()
+
+
+def test_robot_paper_execution_is_independent_of_ui_selected_account():
+    """CR: Robot v0.1 PAPER execution decoupling.
+
+    Reproduces the reported failure (Robot orders raising
+    live_mutations_disabled once the Workspace UI selects a non-PAPER
+    account) and proves the fix: the UI-facing path stays fenced exactly as
+    before, while Robot's own execution port (RobotPaperActionExecutor +
+    PaperRuntime.robot_match_symbol) is unaffected by UI account selection.
+    """
+
+    paper_account = TradingAccount(
+        TradingAccountId("paper"), "Paper / Virtual", TradingAccountProvider.PAPER,
+        TradingAccountEnvironment.PAPER, TradingAccountStatus.READY,
+    )
+    live_account = TradingAccount(
+        TradingAccountId("bybit-1"), "Live Mainnet", TradingAccountProvider.BYBIT,
+        TradingAccountEnvironment.MAINNET, TradingAccountStatus.READY,
+    )
+    manager = TradingAccountManager(
+        (paper_account, live_account), active_account_id=paper_account.id,
+    )
+
+    with tempfile.TemporaryDirectory() as temp:
+        primary = _instrument()
+        runtime = PaperRuntime(
+            Path(temp) / "paper.sqlite3",
+            book_provider=StaticBookProvider(),
+            instrument_snapshot=primary,
+            instrument_provider=lambda symbol: replace(primary, symbol=symbol),
+            account_manager=manager,
+        )
+        try:
+            # Operator switches the Workspace UI to a live Bybit account.
+            manager.activate(live_account.id)
+
+            with pytest.raises(RuntimeError, match="live_mutations_disabled"):
+                runtime.create_limit(LimitCommandRequest(
+                    ClientActionId("ui-limit"), "BTCUSDT", OrderSide.BUY,
+                    VolumeRequest(VolumeUnit.USDT, Decimal("321")),
+                    Decimal("64250.5"), Decimal("64250.5"), TimeInForce.GTC,
+                ))
+            assert runtime.process_orderbook_update("BTCUSDT:1") == 0
+
+            executor = RobotPaperActionExecutor(runtime)
+            submitted = executor.create_limit(LimitCommandRequest(
+                ClientActionId("robot-limit"), "BTCUSDT", OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")),
+                Decimal("64250.5"), Decimal("64250.5"), TimeInForce.GTC,
+            ))
+            assert submitted.status is CommandResultStatus.COMPLETED
+
+            applied = runtime.robot_match_symbol("BTCUSDT")
+            assert applied == 1
+
+            manager.activate(paper_account.id)
+            state = runtime.paper_state("BTCUSDT")
+            assert state["position_side"] == "Long"
+            assert Decimal(state["position_quantity"]) > 0
+        finally:
+            runtime.close()
+
+
+def test_cancel_limit_succeeds_for_a_symbol_other_than_the_startup_instrument():
+    """cancel_limit() used to reject any symbol other than the runtime's fixed
+    startup instrument (self._context.instrument.symbol) even though the
+    order's own symbol was already validated correctly two lines below --
+    a redundant, overly-narrow check that would have blocked Robot's
+    partial-fill cancel-remainder step on any non-startup symbol."""
+
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            created = runtime.create_limit(LimitCommandRequest(
+                ClientActionId("eth-create"), "ETHUSDT", OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")),
+                Decimal("64250.5"), Decimal("64250.5"), TimeInForce.GTC,
+            ))
+            assert created.status is CommandResultStatus.COMPLETED
+
+            cancelled = runtime.cancel_limit(PaperLimitCancelRequest(
+                ClientActionId("eth-cancel"), "ETHUSDT", created.order_id,
+            ))
+            assert cancelled.status is CommandResultStatus.COMPLETED
+        finally:
+            runtime.close()
 
 
 def test_composed_paper_runtime_market_buy_completes():

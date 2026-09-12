@@ -134,6 +134,45 @@ class _LiveOperationScopeProbe:
         return "full_close"
 
 
+class RobotPaperActionExecutor:
+    """Robot v0.1 PAPER execution port (terminal.application.robot_breakout_monitor.ActionExecutor).
+
+    Reuses PaperRuntime's existing guard/store/ExecutionEngine exactly as the
+    UI-facing methods do, through the ``_robot_*`` helpers below, but never
+    calls PaperRuntime.require_paper_mutations() -- Robot's authority to
+    submit PAPER orders is the durable robot_runtime_state admission gate
+    (terminal.application.robot_recovery.RobotRecoveryCoordinator), never
+    whichever account the Workspace UI currently has selected.
+    """
+
+    def __init__(self, runtime: "PaperRuntime") -> None:
+        self._runtime = runtime
+
+    def create_limit(self, request):
+        return self._runtime._robot_create_limit(request)
+
+    def cancel_limit(self, request):
+        return self._runtime._robot_cancel_limit(request)
+
+    def market(self, request):
+        return self._runtime._robot_market(request)
+
+    def create_stop(self, request):
+        return self._runtime._robot_create_stop(request)
+
+    def amend_stop(self, request):
+        return self._runtime._robot_amend_stop(request)
+
+    def create_take(self, request):
+        return self._runtime._robot_create_take(request)
+
+    def amend_take(self, request):
+        return self._runtime._robot_amend_take(request)
+
+    def full_close(self, request):
+        return self._runtime._robot_full_close(request)
+
+
 class PaperRuntime:
     def __init__(
         self,
@@ -278,6 +317,19 @@ class PaperRuntime:
             instrument_provider=instrument_provider,
             active_account_id_provider=lambda: self._account_manager.active_account_id,
         )
+        # Robot v0.1 PAPER execution port: bound to the durable PAPER account
+        # only, never to whichever account the Workspace UI currently has
+        # selected (active_account_id_provider=None skips that fence in
+        # PaperCommandContextProvider.context_for()). Robot's own authority to
+        # trade is the durable robot_runtime_state admission gate
+        # (RobotRecoveryCoordinator below), not UI account selection.
+        self._robot_context = PaperCommandContextProvider(
+            store=self.store,
+            account_id=account_id,
+            instrument=instrument_snapshot,
+            instrument_provider=instrument_provider,
+            active_account_id_provider=None,
+        )
 
         application = TradingApplication(
             PreTradeGuard(gate=MutationGate(mutations_enabled=True)),
@@ -290,6 +342,9 @@ class PaperRuntime:
         )
 
         self.api = TerminalCommandApi(application, context_provider)
+        # Shares the same TradingApplication/ExecutionEngine as self.api --
+        # only the context provider differs (UI-independent PAPER account).
+        self._robot_api = TerminalCommandApi(application, self._robot_context)
         self._live_market = LiveMarketMutationCoordinator(
             self._account_manager, self.store,
             lambda account_id: live_mutation_adapter_factory(
@@ -371,9 +426,10 @@ class PaperRuntime:
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
             get_closed_candle=robot_closed_candle_provider or latest_scanner_closed_candle,
-            action_executor=self,
+            action_executor=RobotPaperActionExecutor(self),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
+            match_resting_orders=self.robot_match_symbol,
         )
         self._robot_breakout_monitor.start()
 
@@ -598,6 +654,9 @@ class PaperRuntime:
         self.require_paper_mutations()
         return self.api.market(request)
 
+    def _robot_market(self, request):
+        return self._robot_api.market(request)
+
     def live_market(self, request: LiveMarketCommandRequest):
         return self._live_market.submit(request)
 
@@ -649,6 +708,9 @@ class PaperRuntime:
     def full_close(self, request):
         self.require_paper_mutations()
         return self.api.full_close(request)
+
+    def _robot_full_close(self, request):
+        return self._robot_api.full_close(request)
 
     def add_bybit_account(self, display_name: str, api_key: str, api_secret: str) -> dict[str, object]:
         if not self._credential_store or not self._account_validator:
@@ -723,16 +785,42 @@ class PaperRuntime:
         # Claim the authoritative snapshot before applying its orders. A queued
         # duplicate therefore cannot replay fills if one order raises midway.
         self._last_processed_book_update_id = book_update_id
+        return self._match_symbol(book.symbol, book, book_update_id, self._context)
+
+    def robot_match_symbol(self, symbol: str) -> int:
+        """Match Robot-owned resting PAPER limit fills and stop/take protection
+        for ``symbol``, independent of the Workspace UI's selected account and
+        of which symbol the UI currently has live-streamed.
+
+        Uses book_provider.get_book() (REST fallback when the symbol is not
+        the UI's currently live-buffered one) rather than
+        get_current_book_update() (buffer-only, single-symbol), so a Robot
+        candidate never depends on the operator viewing its symbol.
+        """
+        normalized = Symbol(symbol.strip().upper())
+        book = self._book_provider.get_book(normalized)
+        if book is None:
+            return 0
+        match_event_id = f"robot:{normalized.value}:{int(book.received_at_ms)}"
+        return self._match_symbol(normalized, book, match_event_id, self._robot_context)
+
+    def _match_symbol(
+        self,
+        symbol: Symbol,
+        book,
+        match_event_id: str,
+        context_provider: "PaperCommandContextProvider",
+    ) -> int:
         applied = 0
-        for order in self.store.load_active_paper_limits(self._account_id, book.symbol):
+        for order in self.store.load_active_paper_limits(self._account_id, symbol):
             result = self._limit_executor.execute(
                 order=order,
                 book=book,
-                match_event_id=book_update_id,
+                match_event_id=match_event_id,
             )
             if result is not None and result.apply_result is ExecutionApplyResult.APPLIED:
                 applied += 1
-        context = self._context.context_for(book.symbol.value)
+        context = context_provider.context_for(symbol.value)
         protection = self.store.get_protection_projection(
             context.pretrade.position_key
         )
@@ -769,7 +857,7 @@ class PaperRuntime:
         digest = hashlib.sha256(
             (
                 f"{context.pretrade.position_key.symbol.value}\0{protection.version}"
-                f"\0{book_update_id}"
+                f"\0{match_event_id}"
             ).encode("utf-8")
         ).hexdigest()
         side = (
@@ -980,10 +1068,18 @@ class PaperRuntime:
 
     def create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
         self.require_paper_mutations()
+        return self._create_limit(request, self._context)
+
+    def _robot_create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
+        return self._create_limit(request, self._robot_context)
+
+    def _create_limit(
+        self, request: LimitCommandRequest, context_provider: PaperCommandContextProvider,
+    ) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()
         if request.time_in_force is not TimeInForce.GTC:
             raise ValueError("PAPER Limit supports GTC only")
-        context = self._context.context_for(symbol)
+        context = context_provider.context_for(symbol)
         volume = (
             NotionalIntent(request.volume.amount)
             if request.volume.unit.value == "usdt"
@@ -1026,9 +1122,13 @@ class PaperRuntime:
 
     def cancel_limit(self, request: PaperLimitCancelRequest) -> PaperLimitMutationResult:
         self.require_paper_mutations()
+        return self._cancel_limit(request)
+
+    def _robot_cancel_limit(self, request: PaperLimitCancelRequest) -> PaperLimitMutationResult:
+        return self._cancel_limit(request)
+
+    def _cancel_limit(self, request: PaperLimitCancelRequest) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()
-        if symbol != self._context.instrument.symbol:
-            raise ValueError("unsupported PAPER symbol")
         existing = self.store.get_paper_limit(request.order_id, self._account_id)
         if existing is not None and existing.symbol.value != symbol:
             raise ValueError("order symbol does not match")
@@ -1105,6 +1205,18 @@ class PaperRuntime:
     def amend_take(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
         return self._mutate_protection("take", "amend", request)
 
+    def _robot_create_stop(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("stop", "create", request, context_provider=self._robot_context)
+
+    def _robot_amend_stop(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("stop", "amend", request, context_provider=self._robot_context)
+
+    def _robot_create_take(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("take", "create", request, context_provider=self._robot_context)
+
+    def _robot_amend_take(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("take", "amend", request, context_provider=self._robot_context)
+
     def delete_take(self, request: PaperStopDeleteRequest) -> PaperStopMutationResult:
         return self._delete_protection("take", request)
 
@@ -1132,10 +1244,13 @@ class PaperRuntime:
 
     def _mutate_protection(
         self, leg: str, operation: str, request: PaperStopMutationRequest,
+        *, context_provider: PaperCommandContextProvider | None = None,
     ) -> PaperStopMutationResult:
-        self.require_paper_mutations()
+        if context_provider is None:
+            self.require_paper_mutations()
+            context_provider = self._context
         symbol = request.symbol.strip().upper()
-        context = self._context.context_for(symbol)
+        context = context_provider.context_for(symbol)
         normalized = normalize_paper_protection_trigger(
             context.position, context.instrument, request.trigger_price, leg,
         )

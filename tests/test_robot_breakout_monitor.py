@@ -121,8 +121,11 @@ class _FakeActionExecutor:
         self.protection_calls: list[tuple[str, object]] = []
         self._exec_counter = 0
         self._order_counter = 0
+        self.fail_create_limit = False
 
     def create_limit(self, request):
+        if self.fail_create_limit:
+            raise RuntimeError("boom: simulated execution failure")
         self.limit_calls.append(request)
         self._order_counter += 1
         order_id = OrderId(f"test-limit-{self._order_counter}")
@@ -279,7 +282,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertTrue(created)
         return candidate
 
-    def _drive_to_retest_detected(self, candidate_id="candidate-1"):
+    def _drive_to_retest_detected(self, candidate_id="candidate-1", *, push_followup_candle=True):
         """Init, breakout, retest -- reaches RETEST_DETECTED (no LIMIT submitted yet)."""
         self.monitor.tick()  # initialize
         self.feed.push(SYMBOL, _candle_at(101, high=96, low=94, close=95))
@@ -290,6 +293,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor.tick()  # RETEST -> RETEST_DETECTED
         record = self.store.get_robot_candidate(candidate_id)
         self.assertEqual(record.robot_state["phase"], robot_state_machine.PHASE_RETEST_DETECTED)
+        if push_followup_candle:
+            # RETEST_DETECTED's first-entry freshness gate reads one more
+            # closed candle (well before the default apex_index=130) before
+            # it will submit the initial LIMIT on the next tick.
+            self.feed.push(SYMBOL, _candle_at(104, high=99, low=97, close=98))
         return record
 
     def test_lazily_initializes_missing_robot_state_without_reading_a_candle(self):
@@ -315,6 +323,190 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(len(self.executor.limit_calls), 1)
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.robot_state["execution"]["limit_order_id"], "test-limit-1")
+
+    def test_advance_failure_records_execution_error_diagnostics(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.executor.fail_create_limit = True
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())
+        record = self.store.get_robot_candidate("candidate-1")
+        execution = record.robot_state["execution"]
+        self.assertIn("boom: simulated execution failure", execution["last_execution_error"])
+        self.assertEqual(execution["attempt_count"], 1)
+        self.assertIsInstance(execution["last_attempt_at_ms"], int)
+        self.assertGreater(execution["last_attempt_at_ms"], 0)
+
+        # A second consecutive failure increments rather than resets the count
+        # (each attempt consumes one fresh closed candle for the RETEST_DETECTED
+        # freshness gate before reaching create_limit()).
+        self.feed.push(SYMBOL, _candle_at(105, high=99, low=97, close=98))
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.robot_state["execution"]["attempt_count"], 2)
+
+        # Recovery still works once the underlying failure clears.
+        self.executor.fail_create_limit = False
+        self.feed.push(SYMBOL, _candle_at(106, high=99, low=97, close=98))
+        advanced = self.monitor.tick()
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+    # -- RETEST_DETECTED first-entry freshness gate (fail-closed on staleness) --
+    #
+    # robot_state_machine.process_closed_candle()/resume_without_replay() both
+    # treat RETEST_DETECTED as terminal (_TERMINAL_PHASES), so nothing else
+    # re-validates the frozen apex once retest is detected. These tests cover
+    # the gate _advance_retest_detected() now runs, once, immediately before
+    # the very first entry order for a candidate.
+
+    def test_a_current_index_before_apex_allows_initial_limit_submission(self):
+        self._create_candidate(apex_index=130)  # default; well past retest_index=103
+        self._drive_to_retest_detected(push_followup_candle=False)
+        self.feed.push(SYMBOL, _candle_at(104, high=99, low=97, close=98))
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(record.robot_state["phase"], robot_state_machine.PHASE_RETEST_DETECTED)
+        self.assertEqual(record.robot_state["execution"]["limit_order_id"], "test-limit-1")
+
+    def test_b_current_index_equal_to_apex_expires_without_submitting(self):
+        self._create_candidate(apex_index=104)
+        self._drive_to_retest_detected(push_followup_candle=False)
+        self.feed.push(SYMBOL, _candle_at(104, high=99, low=97, close=98))
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "EXPIRED")
+        self.assertEqual(record.robot_state["phase"], robot_state_machine.PHASE_EXPIRED_AT_APEX)
+        self.assertEqual(record.robot_state["geometry_cursor"], 104)
+
+        # Terminal: a later tick never revisits or resubmits.
+        self.feed.push(SYMBOL, _candle_at(105, high=99, low=97, close=98))
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+
+    def test_c_current_index_past_apex_expires_without_submitting(self):
+        self._create_candidate(apex_index=104)
+        self._drive_to_retest_detected(push_followup_candle=False)
+        self.feed.push(SYMBOL, _candle_at(110, high=99, low=97, close=98))
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "EXPIRED")
+        self.assertEqual(record.robot_state["phase"], robot_state_machine.PHASE_EXPIRED_AT_APEX)
+
+    def test_d_unavailable_or_invalid_candle_fails_closed_without_submitting(self):
+        self._create_candidate(apex_index=130)
+        self._drive_to_retest_detected(push_followup_candle=False)
+
+        # No candle queued at all.
+        advanced = self.monitor.tick()
+        self.assertEqual(advanced, ())
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(record.robot_state["phase"], robot_state_machine.PHASE_RETEST_DETECTED)
+
+        # A candle whose timestamp cannot project into the frozen index space
+        # (misaligned to the 1m grid) must also fail closed, not raise/crash.
+        self.feed.push(SYMBOL, {
+            "time_ms": T0_MS + 30_000, "high": 99, "low": 97, "close": 98,
+        })
+        advanced = self.monitor.tick()
+        self.assertEqual(advanced, ())
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.robot_state["phase"], robot_state_machine.PHASE_RETEST_DETECTED)
+
+    def test_e_restart_with_stale_retest_detected_and_no_limit_order_id_expires_not_revives(self):
+        """Simulates a process restart finding a durable RETEST_DETECTED
+        candidate (no execution/limit_order_id) whose frozen apex has already
+        passed while the process was down -- must expire on the first tick of
+        the NEW monitor instance, never submit."""
+
+        candidate, created = self.store.create_robot_candidate(
+            candidate_id="candidate-1",
+            trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL),
+            status="APPROVED",
+            signal_snapshot=_snapshot(apex_index=104, current_index=100),
+            approved_at_ms=1,
+            updated_at_ms=1,
+        )
+        self.assertTrue(created)
+        self.store.save_robot_candidate_state(
+            "candidate-1", status="APPROVED",
+            robot_state={
+                "state_version": robot_state_machine.STATE_VERSION,
+                "phase": robot_state_machine.PHASE_RETEST_DETECTED,
+                "pattern": "Falling Wedge",
+                "direction": robot_state_machine.DIRECTION_LONG,
+                "geometry_cursor": 103,
+                "breakout_index": 102,
+                "retest_index": 103,
+                "last_event": robot_state_machine.EVENT_RETEST,
+            },
+            expected_revision=0, updated_at_ms=1,
+        )
+        self.feed.push(SYMBOL, _candle_at(110, high=99, low=97, close=98))
+
+        # A brand-new monitor instance -- nothing carried over in memory.
+        restarted = RobotBreakoutMonitor(
+            lambda: SQLiteStore.open(self.db_path),
+            ACCOUNT_ID,
+            get_closed_candle=self.feed,
+            action_executor=self.executor,
+            tick_size_provider=lambda symbol: Decimal("0.1"),
+            clock_ms=self.clock,
+        )
+        try:
+            advanced = restarted.tick()
+        finally:
+            restarted.close()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "EXPIRED")
+        self.assertEqual(record.robot_state["phase"], robot_state_machine.PHASE_EXPIRED_AT_APEX)
+
+    def test_match_resting_orders_is_invoked_with_the_candidate_symbol(self):
+        match_calls: list[str] = []
+        # tearDown() closes self.monitor unconditionally -- swap it for a
+        # second monitor over the same store rather than leaving two live
+        # monitor objects for this one test.
+        self.monitor.close()
+        self.monitor = RobotBreakoutMonitor(
+            lambda: SQLiteStore.open(self.db_path),
+            ACCOUNT_ID,
+            get_closed_candle=self.feed,
+            action_executor=self.executor,
+            tick_size_provider=lambda symbol: Decimal("0.1"),
+            clock_ms=self.clock,
+            match_resting_orders=match_calls.append,
+        )
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.assertEqual(match_calls, [])
+
+        self.monitor.tick()  # submits the initial LIMIT; no resting order to match yet
+        self.assertEqual(match_calls, [])
+
+        self.monitor.tick()  # polls the now-resting LIMIT: matches first
+        self.assertEqual(match_calls, [SYMBOL])
 
     def test_candidate_expires_at_apex_without_submitting_a_limit(self):
         self._create_candidate(apex_index=100, current_index=100)

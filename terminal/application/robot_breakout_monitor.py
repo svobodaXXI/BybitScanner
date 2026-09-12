@@ -95,6 +95,7 @@ class RobotBreakoutMonitor:
         tick_size_provider: Callable[[str], Decimal],
         clock_ms: Callable[[], int],
         tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
+        match_resting_orders: Callable[[str], object] | None = None,
     ) -> None:
         self._store_factory = store_factory
         self._local = threading.local()
@@ -104,6 +105,12 @@ class RobotBreakoutMonitor:
         self._tick_size_provider = tick_size_provider
         self._clock_ms = clock_ms
         self._tick_interval_s = tick_interval_s
+        # Optional: attempt PAPER fill/protection matching for this candidate's
+        # own symbol before re-reading order state below. Independent of which
+        # symbol the Workspace UI currently displays -- see
+        # PaperRuntime.robot_match_symbol(). None in tests that fake fills
+        # directly through the store.
+        self._match_resting_orders = match_resting_orders
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, name="robot-breakout-monitor", daemon=True,
@@ -175,8 +182,23 @@ class RobotBreakoutMonitor:
                     "[ROBOT CANDIDATE ERROR] "
                     f"candidate_id={record.candidate_id} error={error}"
                 )
+                self._record_execution_error(record, error)
                 continue
         return tuple(advanced)
+
+    def _record_execution_error(self, record: RobotCandidateRecord, error: Exception) -> None:
+        # Best-effort diagnostics only: never let a failure to record the
+        # failure itself mask the original error or block other candidates.
+        if record.robot_state is None:
+            return
+        try:
+            execution = dict(record.robot_state.get("execution") or {})
+            execution["last_execution_error"] = str(error)
+            execution["last_attempt_at_ms"] = self._now_ms()
+            execution["attempt_count"] = int(execution.get("attempt_count", 0) or 0) + 1
+            self._persist_execution(record, execution)
+        except Exception:
+            pass
 
     def _advance_one(self, record: RobotCandidateRecord) -> bool:
         if record.robot_state is None:
@@ -232,6 +254,35 @@ class RobotBreakoutMonitor:
         execution = dict(record.robot_state.get("execution") or {})
 
         if "limit_order_id" not in execution:
+            # RETEST_DETECTED is deliberately terminal for
+            # robot_state_machine.process_closed_candle()/resume_without_replay()
+            # (see _TERMINAL_PHASES there) -- once retest is detected, nothing
+            # else re-validates the frozen apex on later ticks. A candidate can
+            # sit in this phase for an arbitrarily long time (the
+            # live_mutations_disabled bug, a process restart, any other
+            # downtime) before its first entry order is ever submitted, so
+            # re-check freshness against the SAME frozen apex here, once,
+            # immediately before that first submission -- fail closed rather
+            # than submit into an already-expired setup.
+            candle = self._get_closed_candle(record.symbol.value)
+            if candle is None:
+                return False
+            try:
+                geometry_index = project_latest_geometry_index(
+                    record.signal_snapshot,
+                    latest_closed_candle_time_ms=int(candle["time_ms"]),
+                )
+            except ScannerGeometryCursorError:
+                return False
+            apex_index = int(record.signal_snapshot["geometry"]["apex"]["index"])
+            if geometry_index >= apex_index:
+                expired_state = dict(record.robot_state)
+                expired_state["phase"] = robot_state_machine.PHASE_EXPIRED_AT_APEX
+                expired_state["last_event"] = robot_state_machine.EVENT_EXPIRED_AT_APEX
+                expired_state["geometry_cursor"] = geometry_index
+                self._persist_state(record, expired_state)
+                return True
+
             result = self._submit_initial_retest_limit(record, record.robot_state)
             order_id = getattr(result, "order_id", None)
             if not order_id:
@@ -239,6 +290,9 @@ class RobotBreakoutMonitor:
             execution["limit_order_id"] = order_id
             self._persist_execution(record, execution)
             return True
+
+        if self._match_resting_orders is not None:
+            self._match_resting_orders(record.symbol.value)
 
         order = self._store().get_paper_limit(execution["limit_order_id"], self._account_id)
         if order is None or order.quantity <= 0:
