@@ -1,4 +1,4 @@
-# CR-TRADING-WORKSPACE-001 — Trading Workspace v1 / Manual Live Trading
+﻿# CR-TRADING-WORKSPACE-001 — Trading Workspace v1 / Manual Live Trading
 
 <!-- CHANGE_REQUEST_METADATA_BEGIN -->
 ```json
@@ -7,7 +7,7 @@
   "id": "CR-TRADING-WORKSPACE-001",
   "title": "Trading Workspace v1 / Manual Live Trading",
   "status": "IN_PROGRESS",
-  "revision": "3.2",
+  "revision": "3.3",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Complete and accept Manual Terminal v1 through PAPER protection lifecycles, Open Positions UX, secure real-account management and authoritative real-account execution while keeping IMPLEMENT in progress.",
   "non_goals": [
@@ -139,6 +139,13 @@
     ,"Menu Trading Results and AUTOPILOT entries route to their approved workspaces without transferring state ownership to the bot"
     ,"Run Scanner crosses a Scanner Control command boundary such as RUN_SCAN; Scanner owns execution and Telegram does not couple to main.py internals"
     ,"Scanner Control prevents incompatible duplicate concurrent runs and reports accepted or started, already running, completed and failed outcomes"
+    ,"The primary workspace entry replaces `Open Workspace` with a visible `Меню` control whose entries include `Терминал`, Scanner control, `Робот` and `Все открытые позиции`"
+    ,"The `Терминал` Menu entry opens the independently usable Manual Terminal and does not require Scanner runtime or signal context"
+    ,"Scanner control is one state-derived action: `RUNNING` displays `Остановить сканер` and requests pause, while `PAUSED` and `STOPPED` display `Запустить сканер`; `PAUSED` resumes the existing Scanner runtime and `STOPPED` starts a new Scanner run"
+    ,"Scanner control presentation is refreshed from authoritative Scanner Control runtime state rather than inferred from the user's last button click, and it never permits incompatible duplicate concurrent Scanner runs"
+    ,"The `Робот` Menu entry exposes authoritative Robot runtime state including running/stopped state, current Robot status text and account-wide open-position count; the UI never invents Robot runtime state from local button history"
+    ,"The primary workspace control set includes `Все открытые позиции`, which opens the existing authoritative account-wide Open Positions workspace without creating a second position inventory"
+    ,"Open Positions navigation preserves the accepted active-symbol-first presentation: the position for the symbol currently displayed on the main chart is first and highlighted, while all remaining positions retain the established ranking"
     ,"Telegram menu, deep-link and command knowledge never grants trading or Scanner-control authority without the researched authorization boundary"
     ,"Terminal provides account-profile management and clearly identifies the active Bybit trading account and its current USDT deposit or equity value"
     ,"Trading state, reconciliation, analytics and future Robot state are isolated by trading account; account switching disables mutations until selected-account loading and reconciliation complete"
@@ -452,6 +459,7 @@
     {"revision": "1.51", "reason": "Recorded BUY/SELL chart fast-Limit exactly-once real-phone acceptance and implemented one App-owned side-specific selected USDT volume source shared by quick Market controls, editable Limit popup, chart fast-Limit, DOM fast-Limit and popup submission; Stage 5 acceptance remains pending", "date": "2026-08-28"},
     {"revision": "1.52", "reason": "Implemented one shared Enter/Done lifecycle for trading numeric inputs: prevent default focus progression, stop propagation and blur without submission across BUY/SELL quick volume and Limit popup volume/price; phone acceptance remains pending", "date": "2026-08-28"},
     {"revision": "1.53", "reason": "Replaced the phone-rejected blur-only Done behavior with one terminal focus boundary and completion latch that owns post-Enter focus and rejects implicit sibling-input focus until an explicit pointer edit begins; phone acceptance remains pending", "date": "2026-08-28"},
+    {"revision": "3.3", "reason": "Recorded the unified workspace Menu replacing Open Workspace, the state-derived Scanner pause/resume/start control, authoritative Robot status presentation, and the existing account-wide Все открытые позиции navigation without changing Robot behavior or Scanner algorithm scope", "date": "2026-09-12"},
     {"revision": "1.54", "reason": "Recorded the user's intentional deferral of the unresolved real-phone Done/Enter focus progression, removed temporary on-screen focus/IME diagnostics, preserved the current functional focus policy, and returned acceptance priority to the existing LIMIT sequence", "date": "2026-08-28"},
     {"revision": "1.55", "reason": "Recorded real-phone PASS evidence for the approximately 300-ms active-LIMIT edit hold and drag/release dashed-candidate controls, preserved the unresolved deferred Done/Enter issue, and clarified that the current × restore behavior remains incomplete because × must authoritatively cancel while outside activation alone abandons the edit", "date": "2026-08-28"},
     {"revision": "1.61", "reason": "Recorded real-phone acceptance of the complete active-LIMIT interaction slice: solid tap cancellation affordance, pre-hold movement abort, 300-ms hold-only edit, immediate dashed re-grab, authoritative per-line amend/cancel, consume-once outside restore, and mixed normal-draft plus edited-active GLOBAL confirm/cancel semantics", "date": "2026-08-28"},
@@ -482,7 +490,7 @@
     {"revision": "2.9", "reason": "Human-authorized corrective Working Volume contract: one WV is five percent of active-account account-wide Wallet (totalWalletBalance), rounded down to whole USDT; totalEquity, totalAvailableBalance and leverage are not WV bases", "date": "2026-09-03"},
     {"revision": "3.0", "reason": "Human-authorized dedicated default-off LIVE Limit acceptance boundary with an independent positive requested-notional ceiling; Limit create/amend/cancel no longer require or enable the broader parity gate, while Market, STOP, TAKE and full close remain independently disabled", "date": "2026-09-04"},
     {"revision": "3.1", "reason": "Record incomplete revision 2.7 LIVE Limit real-phone acceptance before PC-to-VPS synchronization: empty-volume confirmation is correctly disabled, but entering 5.20 USDT does not activate confirmation; no real Limit order was submitted", "date": "2026-09-04"},
-    {"revision": "3.2", "reason": "Human-authorized corrective safety redesign after forensic proof that two distinct ONGUSDT LIVE BUY Limit identities were accepted 320 ms apart and filled for 100 ONG / 9.92100 USDT: supersede per-request-only acceptance with one durable backend-owned acceptance session, one-create and 5.20-USDT aggregate limits, durable LIVE Limit identity ownership, no-resend restart reconciliation, and runtime/build/database attribution; implementation is authorized but all LIVE gates and any further real-money acceptance remain separately locked", "date": "2026-09-04"}
+    {"revision": "3.3", "reason": "Human-authorized corrective safety redesign after forensic proof that two distinct ONGUSDT LIVE BUY Limit identities were accepted 320 ms apart and filled for 100 ONG / 9.92100 USDT: supersede per-request-only acceptance with one durable backend-owned acceptance session, one-create and 5.20-USDT aggregate limits, durable LIVE Limit identity ownership, no-resend restart reconciliation, and runtime/build/database attribution; implementation is authorized but all LIVE gates and any further real-money acceptance remain separately locked", "date": "2026-09-04"}
   ]
 }
 ```
@@ -663,6 +671,47 @@ intended terminal state is proven before success.
 Conceptual states sufficient for later design include `MANUAL_CONTROLLED`, `ROBOT_CONTROLLED`,
 `TAKEOVER_PENDING`, `CLOSING` and `RECONCILING`. Names and transitions may be refined during later
 authorized CONTEXT/architecture work; this revision does not implement a state machine.
+
+### 9.4 Unified Menu and authoritative Robot status
+
+The primary workspace navigation replaces the former `Open Workspace` entry with one `Меню` control.
+The Menu provides `Терминал`, one state-derived Scanner control, `Робот` and `Все открытые позиции`.
+This is a navigation/presentation contract only and does not transfer trading or Scanner authority to the UI.
+
+`Терминал` opens the independently usable Manual Terminal and remains available regardless of Scanner
+runtime state.
+
+The Scanner control has one stable action slot whose visible label is derived from authoritative
+Scanner Control state:
+
+* `RUNNING` → `Остановить сканер`; the action requests pause of the currently running Scanner runtime.
+* `PAUSED` → `Запустить сканер`; the action resumes the existing paused Scanner runtime.
+* `STOPPED` / no active runtime → `Запустить сканер`; the action starts a new Scanner run from its normal
+  initial state.
+
+The label is refreshed from actual Scanner Control state after command processing and on subsequent state
+refresh. Button-click history, optimistic UI state or a locally remembered "last action" is never treated
+as Scanner runtime truth. Incompatible duplicate concurrent Scanner runtimes remain prohibited.
+
+`Робот` opens the Robot status view. At minimum it presents authoritative runtime state such as:
+
+* `Робот: запущен` or the corresponding stopped/not-running state;
+* `Статус робота: ...`, including the current observation/activity summary;
+* `Открытых позиций: N`.
+
+For example, a valid presentation may be `Робот: запущен` and `Статус робота: Наблюдение: 1 позиция`.
+The exact status vocabulary may evolve with the Robot contract, but the displayed state must come from the
+authoritative Robot/trading runtime and must not be inferred from local button presses.
+
+`Все открытые позиции` opens the existing account-wide authoritative Open Positions workspace. It does
+not create a second inventory or alter Close/Close All execution semantics. The already accepted
+active-symbol-first presentation remains in force: the position corresponding to the symbol currently
+shown on the main chart is first and highlighted; all other open positions retain the established
+ranking.
+
+This clarification does not authorize autonomous Robot behavior, AUTOPILOT enablement or Scanner
+algorithm changes. It defines only the unified navigation and runtime-state presentation/control
+contract.
 
 ## 10. AUTOPILOT trading results and durable analytics
 
