@@ -12,6 +12,7 @@ from robot_candidate_store import RobotCandidateNotFound
 from robot_telegram_feed import (
     build_robot_close_all_confirmation_keyboard,
     build_robot_control_keyboard,
+    format_robot_status_text,
     parse_robot_control_callback,
 )
 from terminal.application.robot_admission import (
@@ -507,7 +508,7 @@ def _send_robot_status_panel(
         telegram_bot.send_message(
             config.TELEGRAM_TOKEN,
             chat_id,
-            f"{prefix}\n\nСтатус робота: {mode} / {recovery_status}",
+            f"{prefix}\n\nСтатус робота: {format_robot_status_text(mode, recovery_status)}",
             reply_markup=build_robot_control_keyboard(mode, recovery_status),
         )
     except Exception as exc:
@@ -569,9 +570,9 @@ def _process_callback(
             )
 
             prefix = (
-                "Робот: сигнал принят ✅"
+                f"🤖 Сигнал принят: {record.symbol.value} ✅"
                 if changed
-                else "Робот: сигнал уже принят"
+                else f"🤖 Этот сигнал уже был принят ранее: {record.symbol.value} ❗"
             )
             _answer_callback(
                 callback_query.get("id"),

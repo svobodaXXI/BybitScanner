@@ -56,7 +56,7 @@ def build_scan_finished_message(
     """Build the final Scanner notification from the admission-owned count."""
 
     return (
-        "Сканирование завершено\n"
+        "🏁 Сканирование завершено\n"
         f"Найдено сигналов: {approved_pattern_count}\n"
         f"Отправлено в Telegram: {sent_to_telegram_count}\n"
         f"Просканировано тикеров: {total_symbols_scanned}\n"

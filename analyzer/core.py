@@ -119,6 +119,11 @@ def analyze_symbol(symbol):
                 "lows": lows
             }
 
+        # Presentation-only: lets downstream Telegram/chart rendering read the
+        # signal's own timeframe from the result dict rather than reaching
+        # into config.TIMEFRAME independently.
+        result["timeframe"] = str(TIMEFRAME)
+
         if str(TIMEFRAME).strip() == "1":
             result["scanner_geometry_cursor"] = build_scanner_geometry_cursor_anchor(
                 geometry_index=current_index,

@@ -19,6 +19,39 @@ EVENT_OBSERVATION = "OBSERVATION"
 EVENT_OPENED = "OPENED"
 EVENT_CLOSED = "CLOSED"
 
+# Shared Robot admission mode/recovery_status -> Russian presentation labels.
+# Used by both telegram_review.py's per-signal status panel and
+# telegram_monitoring.py's candidate-card Robot line -- never duplicate this
+# mapping elsewhere; import format_robot_status_text() instead.
+ROBOT_MODE_LABELS = {
+    "ROBOT_RUNNING": "Запущен",
+    "ROBOT_STOPPED": "Остановлен",
+}
+
+ROBOT_RECOVERY_LABELS = {
+    "READY": "Готов",
+    "PAUSED": "Пауза",
+    "RECONCILING": "Сверка",
+    "RECONCILIATION_REQUIRED": "Нужна сверка",
+    "ROBOT_STOPPED": "Остановлен",
+}
+
+
+def format_robot_status_text(mode: Any, recovery_status: Any) -> str:
+    """Localize a durable Robot admission (mode, recovery_status) pair.
+
+    Collapses to the bare mode label when mode and recovery_status render
+    identically (e.g. ROBOT_STOPPED/ROBOT_STOPPED -> "Остановлен" rather than
+    "Остановлен / Остановлен"). Unrecognized values map to "Неизвестно"
+    rather than leaking the raw internal string.
+    """
+
+    mode_label = ROBOT_MODE_LABELS.get(str(mode), "Неизвестно")
+    recovery_label = ROBOT_RECOVERY_LABELS.get(str(recovery_status), "Неизвестно")
+    if mode_label == recovery_label:
+        return mode_label
+    return f"{mode_label} / {recovery_label}"
+
 
 class RobotTelegramProjectionError(RuntimeError):
     pass

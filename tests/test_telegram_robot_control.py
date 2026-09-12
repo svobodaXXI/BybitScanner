@@ -68,6 +68,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         answer_mock.assert_called_once_with("cb-1", "Робот: на паузе ⏸")
         send_mock.assert_called_once()
         self.assertIn("Робот: на паузе ⏸", send_mock.call_args.args[2])
+        self.assertIn("Статус робота: Запущен / Пауза", send_mock.call_args.args[2])
 
     def test_owner_resume_callback_invokes_resume_robot(self):
         callback_query = _owner_callback("cb-2", "resume")
@@ -88,6 +89,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         resume_mock.assert_called_once_with()
         answer_mock.assert_called_once_with("cb-2", "Робот: возобновлён ▶")
         send_mock.assert_called_once()
+        self.assertIn("Статус робота: Запущен / Готов", send_mock.call_args.args[2])
 
     def test_owner_start_callback_invokes_start_robot(self):
         callback_query = _owner_callback("cb-3", "start")
@@ -128,6 +130,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         stop_mock.assert_called_once_with()
         answer_mock.assert_called_once_with("cb-4", "Робот: остановлен ⏹")
         send_mock.assert_called_once()
+        self.assertIn("Статус робота: Остановлен", send_mock.call_args.args[2])
 
     def test_rejected_command_answers_with_reason_and_does_not_raise(self):
         callback_query = _owner_callback("cb-5", "pause")

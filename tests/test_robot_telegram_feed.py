@@ -16,6 +16,7 @@ from robot_telegram_feed import (
     build_robot_control_keyboard,
     build_robot_tab_keyboard,
     format_positions_view,
+    format_robot_status_text,
     format_watching_view,
     parse_robot_control_callback,
     parse_robot_view_callback,
@@ -163,6 +164,33 @@ class RobotTelegramFeedTests(unittest.TestCase):
         buttons = [button for row in keyboard for button in row]
         callbacks = [button["callback_data"] for button in buttons]
         self.assertEqual(callbacks, ["robot:cmd:close_all_confirm", "robot:cmd:close_all_cancel"])
+
+
+class RobotStatusTextTests(unittest.TestCase):
+    """The single shared Russian presentation mapping for durable Robot
+    admission (mode, recovery_status), used by both telegram_review.py's
+    per-signal status panel and telegram_monitoring.py's candidate card."""
+
+    def test_running_ready(self):
+        self.assertEqual(format_robot_status_text("ROBOT_RUNNING", "READY"), "Запущен / Готов")
+
+    def test_running_paused(self):
+        self.assertEqual(format_robot_status_text("ROBOT_RUNNING", "PAUSED"), "Запущен / Пауза")
+
+    def test_running_reconciling(self):
+        self.assertEqual(format_robot_status_text("ROBOT_RUNNING", "RECONCILING"), "Запущен / Сверка")
+
+    def test_running_reconciliation_required(self):
+        self.assertEqual(
+            format_robot_status_text("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+            "Запущен / Нужна сверка",
+        )
+
+    def test_stopped_collapses_to_a_single_label(self):
+        self.assertEqual(format_robot_status_text("ROBOT_STOPPED", "ROBOT_STOPPED"), "Остановлен")
+
+    def test_unknown_values_never_leak_the_raw_internal_string(self):
+        self.assertEqual(format_robot_status_text("SOMETHING_NEW", "SOMETHING_NEW"), "Неизвестно")
 
 
 if __name__ == "__main__":

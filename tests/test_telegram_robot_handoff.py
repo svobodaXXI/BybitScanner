@@ -136,7 +136,7 @@ class TelegramRobotHandoffTests(unittest.TestCase):
         self.assertEqual(kwargs["approval"]["message_id"], 100)
         answer_mock.assert_called_once_with(
             "callback-1",
-            "Робот: сигнал принят ✅",
+            "🤖 Сигнал принят: ONGUSDT ✅",
         )
 
         # The status panel becomes the sole entry point into the control
@@ -145,11 +145,62 @@ class TelegramRobotHandoffTests(unittest.TestCase):
         send_mock.assert_called_once()
         args, kwargs = send_mock.call_args
         self.assertEqual(args[1], 42)
-        self.assertIn("Робот: сигнал принят ✅", args[2])
-        self.assertIn("ROBOT_RUNNING", args[2])
-        self.assertIn("READY", args[2])
+        self.assertIn("🤖 Сигнал принят: ONGUSDT ✅", args[2])
+        self.assertIn("Статус робота: Запущен / Готов", args[2])
         confirm_button = kwargs["reply_markup"]["inline_keyboard"][0][0]
         self.assertEqual(confirm_button["callback_data"], "robot:cmd:pause")
+
+    def test_owner_callback_already_admitted_candidate_shows_late_notice(self):
+        callback_query = {
+            "id": "callback-already",
+            "data": "robot:approve:abc123",
+            "from": {"id": 42, "username": "owner"},
+            "message": {"message_id": 106, "chat": {"id": 42}},
+        }
+
+        already_admitted_record = RobotCandidateRecord(
+            candidate_id="abc123",
+            trading_account_id=TradingAccountId("paper"),
+            symbol=Symbol("1000NEIROCTOUSDT"),
+            status="APPROVED",
+            signal_snapshot={},
+            snapshot_sha256="0" * 64,
+            robot_state=None,
+            state_revision=1,
+            approved_at_ms=0,
+            updated_at_ms=0,
+        )
+
+        with patch.object(
+            telegram_review.config,
+            "TELEGRAM_CHAT_ID",
+            "42",
+        ), patch.object(
+            telegram_review,
+            "admit_robot_candidate",
+            return_value=(already_admitted_record, False),
+        ), patch.object(
+            telegram_review,
+            "_answer_callback",
+        ) as answer_mock, patch.object(
+            telegram_review,
+            "get_robot_runtime_status",
+            return_value=_status("ROBOT_RUNNING", "READY"),
+        ), patch.object(
+            telegram_review.telegram_bot,
+            "send_message",
+        ) as send_mock:
+            telegram_review._process_callback(callback_query)
+
+        answer_mock.assert_called_once_with(
+            "callback-already",
+            "🤖 Этот сигнал уже был принят ранее: 1000NEIROCTOUSDT ❗",
+        )
+        send_mock.assert_called_once()
+        args, kwargs = send_mock.call_args
+        self.assertIn(
+            "🤖 Этот сигнал уже был принят ранее: 1000NEIROCTOUSDT ❗", args[2],
+        )
 
     def test_rejected_admission_still_sends_status_panel_with_reason(self):
         callback_query = {
@@ -187,7 +238,7 @@ class TelegramRobotHandoffTests(unittest.TestCase):
         send_mock.assert_called_once()
         args, kwargs = send_mock.call_args
         self.assertIn("Робот: отклонено — Robot admission is not ready", args[2])
-        self.assertIn("ROBOT_STOPPED", args[2])
+        self.assertIn("Статус робота: Остановлен", args[2])
         start_button = kwargs["reply_markup"]["inline_keyboard"][0][0]
         self.assertEqual(start_button["callback_data"], "robot:cmd:start")
 
@@ -304,7 +355,7 @@ class TelegramRobotHandoffTests(unittest.TestCase):
             telegram_review._process_callback(callback_query)
 
         args, kwargs = send_mock.call_args
-        self.assertIn("ROBOT_STOPPED", args[2])
+        self.assertIn("Статус робота: Остановлен", args[2])
         start_button = kwargs["reply_markup"]["inline_keyboard"][0][0]
         self.assertEqual(start_button["callback_data"], "robot:cmd:start")
 

@@ -21,6 +21,7 @@ import requests
 import config
 import telegram_bot
 import telegram_review
+from robot_telegram_feed import format_robot_status_text
 from terminal.application.robot_control import get_robot_runtime_status
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
@@ -37,20 +38,6 @@ PHASE_LABELS = {
     "RETEST_DETECTED": "Ретест обнаружен",
     "EXPIRED_AT_APEX": "Истёк у апекса",
 }
-
-ROBOT_MODE_LABELS = {
-    "ROBOT_RUNNING": "Запущен",
-    "ROBOT_STOPPED": "Остановлен",
-}
-
-ROBOT_RECOVERY_LABELS = {
-    "READY": "Готов",
-    "PAUSED": "Пауза",
-    "RECONCILING": "Сверка",
-    "RECONCILIATION_REQUIRED": "Нужна сверка",
-    "ROBOT_STOPPED": "Остановлен",
-}
-
 
 def _telegram_request(method: str, **params):
     url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/{method}"
@@ -143,12 +130,8 @@ def _potential_text(snapshot: Mapping[str, object]) -> str:
 
 def _robot_status_text(runtime) -> str:
     if runtime is None:
-        return "Остановлен"
-    mode = ROBOT_MODE_LABELS.get(str(runtime.mode), "Неизвестно")
-    recovery = ROBOT_RECOVERY_LABELS.get(str(runtime.recovery_status), "Неизвестно")
-    if mode == recovery:
-        return mode
-    return f"{mode} / {recovery}"
+        return format_robot_status_text("ROBOT_STOPPED", "ROBOT_STOPPED")
+    return format_robot_status_text(runtime.mode, runtime.recovery_status)
 
 
 def format_candidate_card(record: RobotCandidateRecord) -> str:
