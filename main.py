@@ -47,7 +47,15 @@ def build_scan_finished_message(
     )
 
 
-def main():
+def run_scan_pass():
+    """Run exactly one Scanner scan pass over all discovered symbols.
+
+    Extracted from main() as a reusable, throttled-repeatable unit (mirroring
+    Freqtrade's Worker._process_running() pattern) so terminal/runtime's
+    ScannerControlRuntime can invoke it repeatedly while RUNNING, instead of
+    main() only ever being a one-shot script. Behavior is unchanged.
+    """
+
     scan_started_at = time.perf_counter()
     approved_pattern_count = 0
 
@@ -245,6 +253,10 @@ def main():
             "[TELEGRAM SCAN FINISH ERROR]",
             e
         )
+
+
+def main():
+    run_scan_pass()
 
 
 if __name__ == "__main__":

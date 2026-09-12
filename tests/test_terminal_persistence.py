@@ -571,7 +571,11 @@ class TerminalPersistenceTests(unittest.TestCase):
         with self.open_store():
             pass
         connection = sqlite3.connect(self.database_path)
-        for table in ("robot_trades", "robot_candidates", "robot_runtime_state"):
+        # A real v14 database has none of the v15+ tables either -- drop
+        # scanner_runtime_state (v17) too, or the v15->v17 step in this same
+        # migration chain would try to recreate a table that (in this
+        # simulated-downgrade fixture only) was never actually removed.
+        for table in ("robot_trades", "robot_candidates", "robot_runtime_state", "scanner_runtime_state"):
             connection.execute(f"DROP TABLE {table}")
         connection.execute("PRAGMA user_version = 14")
         connection.commit()
@@ -587,6 +591,46 @@ class TerminalPersistenceTests(unittest.TestCase):
         }
         connection.close()
         self.assertTrue({"robot_runtime_state", "robot_candidates", "robot_trades"}.issubset(tables))
+
+    def test_v15_to_current_migration_adds_scanner_runtime_state_transactionally(self):
+        with self.open_store():
+            pass
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DROP TABLE scanner_runtime_state")
+        connection.execute("PRAGMA user_version = 15")
+        connection.commit()
+        connection.close()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+        connection = sqlite3.connect(self.database_path)
+        tables = {
+            row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        connection.close()
+        self.assertIn("scanner_runtime_state", tables)
+
+    def test_scanner_runtime_defaults_stopped_and_uses_cas_updates(self):
+        account_id = TradingAccountId("paper")
+        with self.open_store() as store:
+            initial = store.initialize_scanner_runtime_state(account_id, updated_at_ms=1000)
+            self.assertEqual(initial.mode, "SCANNER_STOPPED")
+            self.assertEqual(initial.version, 1)
+
+            running = store.update_scanner_runtime_state(
+                account_id, mode="SCANNER_RUNNING",
+                expected_version=initial.version, updated_at_ms=1001,
+            )
+            self.assertEqual(running.mode, "SCANNER_RUNNING")
+            self.assertEqual(running.version, 2)
+
+            with self.assertRaises(ConcurrentUpdate):
+                store.update_scanner_runtime_state(
+                    account_id, mode="SCANNER_PAUSED",
+                    expected_version=initial.version, updated_at_ms=1002,
+                )
 
     def test_paper_state_revision_is_durable_and_ignores_idempotent_or_noop_mutations(self):
         account_id = TradingAccountId("paper")

@@ -923,6 +923,60 @@ def test_close_all_post_closes_authoritative_inventory_once():
             runtime.close()
 
 
+def test_scanner_control_routes_follow_the_close_all_trust_model():
+    # ScannerControlRuntime's own background thread only checks its durable
+    # state once per scan_interval_s (default 5s), so this whole test -- well
+    # under that window -- never lets it invoke a real scan_pass() call.
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+
+        def get(path: str) -> dict:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{server.server_port}{path}"
+            ) as response:
+                return json.load(response)
+
+        def post(path: str) -> tuple[int, dict]:
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}{path}",
+                data=b"{}", headers={"Content-Type": "application/json"}, method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status, json.load(response)
+            except urllib.error.HTTPError as exc:
+                return exc.code, json.load(exc)
+
+        try:
+            status = get("/api/scanner/status")
+            assert status["ok"] is True
+            assert status["mode"] == "SCANNER_STOPPED"
+
+            code, started = post("/api/scanner/start")
+            assert (code, started["ok"], started["mode"]) == (200, True, "SCANNER_RUNNING")
+
+            code, rejected = post("/api/scanner/start")
+            assert code == 409
+            assert rejected["ok"] is False
+
+            code, paused = post("/api/scanner/pause")
+            assert (code, paused["ok"], paused["mode"]) == (200, True, "SCANNER_PAUSED")
+
+            code, resumed = post("/api/scanner/resume")
+            assert (code, resumed["ok"], resumed["mode"]) == (200, True, "SCANNER_RUNNING")
+
+            status = get("/api/scanner/status")
+            assert status["mode"] == "SCANNER_RUNNING"
+        finally:
+            server.shutdown()
+            server.server_close()
+            runtime.close()
+
+
 def test_limit_post_returns_completed_and_creates_active_order():
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime_owner(Path(temp) / "paper.sqlite3")

@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 17
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -611,6 +611,21 @@ SCHEMA_V15_MIGRATION_STATEMENTS = (
     """,
 )
 
+SCHEMA_V17_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE scanner_runtime_state (
+        trading_account_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL,
+        reason TEXT,
+        version INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        CHECK (mode IN ('SCANNER_STOPPED', 'SCANNER_RUNNING', 'SCANNER_PAUSED')),
+        CHECK (version >= 1),
+        CHECK (updated_at_ms >= 0)
+    ) WITHOUT ROWID
+    """,
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -627,4 +642,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V13_MIGRATION_STATEMENTS
     + SCHEMA_V14_MIGRATION_STATEMENTS
     + SCHEMA_V15_MIGRATION_STATEMENTS
+    + SCHEMA_V17_MIGRATION_STATEMENTS
 )

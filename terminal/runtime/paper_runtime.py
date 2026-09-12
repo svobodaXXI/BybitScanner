@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
+
+import main as scanner_entrypoint
 import hashlib
 import hmac
 import logging
@@ -58,7 +61,7 @@ from terminal.exchange.bybit_v5_adapter import BybitCredentials, BybitV5ReadAdap
 from terminal.exchange.bybit_v5_mutation_adapter import BybitEnvironment, BybitV5MutationAdapter
 from terminal.market_data.book_provider import MarketBookProvider
 from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
-from terminal.persistence.sqlite_store import ExecutionApplyResult, SQLiteStore
+from terminal.persistence.sqlite_store import ExecutionApplyResult, ScannerRuntimeStateRecord, SQLiteStore
 from terminal.persistence.credential_store import CredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import (
@@ -130,6 +133,157 @@ class _LiveOperationScopeProbe:
 
     def full_close(self, _request):
         return "full_close"
+
+
+SCANNER_STOPPED = "SCANNER_STOPPED"
+SCANNER_RUNNING = "SCANNER_RUNNING"
+SCANNER_PAUSED = "SCANNER_PAUSED"
+
+DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0
+
+# DOCUMENTS/SCANNER_CONTROL_RUNTIME_DECISION.md section 3: exactly these
+# three commands are authoritative; there is no separate "stop" command.
+_SCANNER_VALID_TRANSITIONS = {
+    "start_scanner": ({SCANNER_STOPPED}, SCANNER_RUNNING),
+    "pause_scanner": ({SCANNER_RUNNING}, SCANNER_PAUSED),
+    "resume_scanner": ({SCANNER_PAUSED}, SCANNER_RUNNING),
+}
+
+
+class ScannerControlRuntimeError(RuntimeError):
+    """Raised when a Scanner lifecycle command cannot be safely applied."""
+
+
+class ScannerControlRuntime:
+    """Authoritative Scanner lifecycle coordinator (CR-SCANNER-CONTROL-RUNTIME-001).
+
+    Structurally mirrors terminal.application.robot_recovery.RobotRecoveryCoordinator
+    and terminal.application.robot_breakout_monitor.RobotBreakoutMonitor, but lives
+    directly inside this module rather than under terminal/application/, because it
+    must import main.py's scan-pass entry point and terminal/application/*.py is
+    forbidden from importing scanner/main/config (see
+    tests/test_terminal_execution_engine.py:test_no_mutation_or_network_api_is_exposed).
+
+    Lesson applied from CR-ROBOT-BREAKOUT-MONITOR-001's post-closure fix (see
+    DOCUMENTS/ROBOT_RUN_INDEX.md): SQLiteStore binds to its opening thread and
+    rejects every call from any other thread. This coordinator never accepts a
+    pre-opened SQLiteStore -- it takes a store_factory and opens its own connection
+    lazily, from whichever thread first calls into it, cached per-thread
+    (threading.local()). The real background thread opens and owns its own
+    connection; a synchronous caller (e.g. tests, or the HTTP server's single
+    owner thread) gets its own separate connection on its own calling thread.
+    """
+
+    def __init__(
+        self,
+        store_factory: Callable[[], SQLiteStore],
+        trading_account_id: TradingAccountId,
+        *,
+        scan_pass: Callable[[], None],
+        clock_ms: Callable[[], int],
+        scan_interval_s: float = DEFAULT_SCANNER_SCAN_INTERVAL_S,
+    ) -> None:
+        self._store_factory = store_factory
+        self._local = threading.local()
+        self._account_id = trading_account_id
+        self._scan_pass = scan_pass
+        self._clock_ms = clock_ms
+        self._scan_interval_s = scan_interval_s
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="scanner-control-runtime", daemon=True,
+        )
+        self._started = False
+
+    def _store(self) -> SQLiteStore:
+        store = getattr(self._local, "store", None)
+        if store is None:
+            store = self._store_factory()
+            self._local.store = store
+        return store
+
+    def start(self) -> None:
+        if self._started:
+            return
+        self._started = True
+        # Ensure the durable row exists (defaults to SCANNER_STOPPED -- never
+        # autostart) using whichever thread calls start(), typically the
+        # constructing thread.
+        self._store().initialize_scanner_runtime_state(
+            self._account_id, updated_at_ms=self._now_ms(),
+        )
+        self._thread.start()
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._started and self._thread is not threading.current_thread():
+            self._thread.join(timeout=5)
+        self._close_local_store()
+
+    def _close_local_store(self) -> None:
+        store = getattr(self._local, "store", None)
+        if store is not None:
+            store.close()
+            self._local.store = None
+
+    def _run(self) -> None:
+        try:
+            # Wait a full interval BEFORE the first check (never touch the
+            # store immediately on start): a short-lived caller that starts
+            # and closes this coordinator well within one interval -- as
+            # every existing PaperRuntime-constructing test does -- never
+            # reaches a real scan_pass() call. Mirrors RobotBreakoutMonitor's
+            # same safety pattern.
+            while not self._stop.wait(self._scan_interval_s):
+                try:
+                    state = self._store().get_scanner_runtime_state(self._account_id)
+                    if state is not None and state.mode == SCANNER_RUNNING:
+                        self._scan_pass()
+                except Exception as error:
+                    print(
+                        "[SCANNER CONTROL RUNTIME ERROR] "
+                        f"error={error}"
+                    )
+        finally:
+            self._close_local_store()
+
+    def status(self) -> ScannerRuntimeStateRecord:
+        store = self._store()
+        state = store.get_scanner_runtime_state(self._account_id)
+        if state is None:
+            state = store.initialize_scanner_runtime_state(
+                self._account_id, updated_at_ms=self._now_ms(),
+            )
+        return state
+
+    def start_scanner(self) -> ScannerRuntimeStateRecord:
+        return self._transition("start_scanner")
+
+    def pause_scanner(self) -> ScannerRuntimeStateRecord:
+        return self._transition("pause_scanner")
+
+    def resume_scanner(self) -> ScannerRuntimeStateRecord:
+        return self._transition("resume_scanner")
+
+    def _transition(self, command: str) -> ScannerRuntimeStateRecord:
+        expected_modes, new_mode = _SCANNER_VALID_TRANSITIONS[command]
+        current = self.status()
+        if current.mode not in expected_modes:
+            raise ScannerControlRuntimeError(
+                f"{command} is invalid from Scanner mode {current.mode}"
+            )
+        return self._store().update_scanner_runtime_state(
+            self._account_id, mode=new_mode,
+            expected_version=current.version, updated_at_ms=self._now_ms(),
+        )
+
+    def _now_ms(self) -> int:
+        value = self._clock_ms()
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise ScannerControlRuntimeError(
+                "Scanner control runtime clock returned invalid timestamp"
+            )
+        return value
 
 
 class PaperRuntime:
@@ -364,11 +518,30 @@ class PaperRuntime:
             clock_ms=lambda: int(time.time() * 1000),
         )
         self._robot_recovery.recover()
+        self._scanner_control = ScannerControlRuntime(
+            lambda: SQLiteStore.open(database_path),
+            self._paper_account_id,
+            scan_pass=scanner_entrypoint.run_scan_pass,
+            clock_ms=lambda: int(time.time() * 1000),
+        )
+        self._scanner_control.start()
 
     @property
     def _account_id(self) -> TradingAccountId:
         """Immutable PAPER persistence identity, independent of active session authority."""
         return self._paper_account_id
+
+    def start_scanner(self) -> ScannerRuntimeStateRecord:
+        return self._scanner_control.start_scanner()
+
+    def pause_scanner(self) -> ScannerRuntimeStateRecord:
+        return self._scanner_control.pause_scanner()
+
+    def resume_scanner(self) -> ScannerRuntimeStateRecord:
+        return self._scanner_control.resume_scanner()
+
+    def scanner_status(self) -> ScannerRuntimeStateRecord:
+        return self._scanner_control.status()
 
     def robot_admission_ready(self) -> bool:
         """Return durable Robot startup admission; never infer readiness locally."""
@@ -1103,6 +1276,7 @@ class PaperRuntime:
         )
 
     def close(self) -> None:
+        self._scanner_control.close()
         self.store.close()
         if self._live_account_store is not None:
             self._live_account_store.close()

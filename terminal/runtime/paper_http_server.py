@@ -69,7 +69,7 @@ from terminal.market_data.workspace_errors import (
     WorkspaceSemanticError,
     UpstreamWorkspaceMarketDataFailure,
 )
-from terminal.runtime.paper_runtime import PaperRuntime
+from terminal.runtime.paper_runtime import PaperRuntime, ScannerControlRuntimeError
 from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
 from terminal.exchange.bybit_v5_mutation_adapter import BybitV5MutationAdapter
 from terminal.persistence.credential_store import (
@@ -1484,6 +1484,15 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/api/scanner/status":
+            try:
+                result = self.server.runtime.call(lambda runtime: runtime.scanner_status())
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "scanner_control_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **to_primitive(result)})
+            return
+
         if parsed.path == "/api/instruments":
             self._json_response(200, {"ok": True, "instruments": self.server.market_data.instruments})
             return
@@ -2233,6 +2242,23 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 result = self.server.runtime.call(lambda runtime: runtime.close_all(request))
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
+                return
+            self._json_response(200, {"ok": True, **to_primitive(result)})
+            return
+
+        if self.path in {"/api/scanner/start", "/api/scanner/pause", "/api/scanner/resume"}:
+            command = {
+                "/api/scanner/start": lambda runtime: runtime.start_scanner(),
+                "/api/scanner/pause": lambda runtime: runtime.pause_scanner(),
+                "/api/scanner/resume": lambda runtime: runtime.resume_scanner(),
+            }[self.path]
+            try:
+                result = self.server.runtime.call(command)
+            except ScannerControlRuntimeError as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "scanner_control_unavailable"})
                 return
             self._json_response(200, {"ok": True, **to_primitive(result)})
             return

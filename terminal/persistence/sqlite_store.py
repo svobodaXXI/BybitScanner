@@ -49,6 +49,7 @@ from .schema import (
     SCHEMA_V13_MIGRATION_STATEMENTS,
     SCHEMA_V14_MIGRATION_STATEMENTS,
     SCHEMA_V15_MIGRATION_STATEMENTS,
+    SCHEMA_V17_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -92,6 +93,7 @@ ROBOT_RUNTIME_STATE_PAIRS = {
     ("ROBOT_RUNNING", "READY"),
     ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
 }
+SCANNER_MODES = {"SCANNER_STOPPED", "SCANNER_RUNNING", "SCANNER_PAUSED"}
 ROBOT_CANDIDATE_TRANSITIONS = {
     "APPROVED": {"APPROVED", "EXPIRED", "INVALIDATED"},
     "OPEN": {"OPEN"},
@@ -465,6 +467,15 @@ class RobotRuntimeStateRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class ScannerRuntimeStateRecord:
+    trading_account_id: TradingAccountId
+    mode: str
+    reason: str | None
+    version: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class RobotCandidateRecord:
     candidate_id: str
     trading_account_id: TradingAccountId
@@ -740,6 +751,11 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 15:
+            SQLiteStore._validate_required_tables(connection, version=15)
+            SQLiteStore._migrate_v15_to_v17(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 14:
@@ -1024,6 +1040,19 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v15_to_v17(connection)
+
+    @staticmethod
+    def _migrate_v15_to_v17(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V17_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 17")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -1068,6 +1097,8 @@ class SQLiteStore:
             required.add("live_limit_operations")
         if version >= 15:
             required.update({"robot_runtime_state", "robot_candidates", "robot_trades"})
+        if version >= 17:
+            required.add("scanner_runtime_state")
         actual = {
             row[0]
             for row in connection.execute(
@@ -3399,6 +3430,55 @@ class SQLiteStore:
             if cursor.rowcount != 1:
                 raise ConcurrentUpdate("Robot runtime state changed or timestamp regressed")
         return self.get_robot_runtime_state(trading_account_id)  # type: ignore[return-value]
+
+    def initialize_scanner_runtime_state(
+        self, trading_account_id: TradingAccountId, *, updated_at_ms: int,
+    ) -> ScannerRuntimeStateRecord:
+        self._assert_owner()
+        if updated_at_ms < 0:
+            raise ValueError("Scanner runtime timestamp must not be negative")
+        with self._transaction():
+            self._connection.execute(
+                """INSERT OR IGNORE INTO scanner_runtime_state VALUES (?, ?, NULL, 1, ?)""",
+                (trading_account_id.value, "SCANNER_STOPPED", updated_at_ms),
+            )
+        return self.get_scanner_runtime_state(trading_account_id)  # type: ignore[return-value]
+
+    def get_scanner_runtime_state(
+        self, trading_account_id: TradingAccountId,
+    ) -> ScannerRuntimeStateRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM scanner_runtime_state WHERE trading_account_id=?",
+            (trading_account_id.value,),
+        ).fetchone()
+        if row is None:
+            return None
+        return ScannerRuntimeStateRecord(
+            TradingAccountId(row["trading_account_id"]), row["mode"],
+            row["reason"], int(row["version"]), int(row["updated_at_ms"]),
+        )
+
+    def update_scanner_runtime_state(
+        self, trading_account_id: TradingAccountId, *, mode: str,
+        reason: str | None = None, expected_version: int, updated_at_ms: int,
+    ) -> ScannerRuntimeStateRecord:
+        self._assert_owner()
+        if mode not in SCANNER_MODES:
+            raise ValueError("unsupported Scanner runtime mode")
+        if expected_version < 1 or updated_at_ms < 0:
+            raise ValueError("invalid Scanner runtime revision or timestamp")
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE scanner_runtime_state
+                   SET mode=?, reason=?, version=version+1, updated_at_ms=?
+                   WHERE trading_account_id=? AND version=? AND updated_at_ms<=?""",
+                (mode, reason, updated_at_ms, trading_account_id.value,
+                 expected_version, updated_at_ms),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Scanner runtime state changed or timestamp regressed")
+        return self.get_scanner_runtime_state(trading_account_id)  # type: ignore[return-value]
 
     def create_robot_candidate(
         self, *, candidate_id: str, trading_account_id: TradingAccountId, symbol: Symbol,
