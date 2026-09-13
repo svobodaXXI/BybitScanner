@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 import robot_partial_fill
+import robot_protection
 import robot_state_machine
 from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
 from terminal.api.models import (
@@ -125,6 +126,14 @@ class _FakeActionExecutor:
         self._exec_counter = 0
         self._order_counter = 0
         self.fail_create_limit = False
+        self.fail_create_stop = False
+        # A real PaperRuntime.full_close() both completes and actually
+        # flattens the authoritative position; these two knobs let tests
+        # independently simulate an incomplete/rejected close (status) and a
+        # completed-but-still-non-flat close (flattens), matching the two
+        # distinct "do not terminalize prematurely" scenarios.
+        self.full_close_status = CommandResultStatus.COMPLETED
+        self.full_close_flattens = True
 
     def create_limit(self, request):
         if self.fail_create_limit:
@@ -175,6 +184,8 @@ class _FakeActionExecutor:
         )
 
     def create_stop(self, request):
+        if self.fail_create_stop:
+            raise RuntimeError("boom: simulated protection submission failure")
         self.protection_calls.append(("create_stop", request))
         return PaperStopMutationResult(request.client_action_id.value, CommandResultStatus.COMPLETED, "created")
 
@@ -192,10 +203,37 @@ class _FakeActionExecutor:
 
     def full_close(self, request):
         self.protection_calls.append(("full_close", request))
-        return None
+        if self.full_close_status == CommandResultStatus.COMPLETED and self.full_close_flattens:
+            self._flatten(request.symbol)
+        return CommandResult(
+            request.client_action_id.value, self.full_close_status, "closed", "full close",
+        )
 
     def fill_resting_limit(self, order_id_str, symbol, side, quantity, price):
         self._apply_fill(symbol, side, quantity, price, order_id=OrderId(order_id_str), resting=True)
+
+    def _flatten(self, symbol):
+        key = PositionKey(self.account_id, Category.LINEAR, Symbol(symbol), 0)
+        current = self.store.get_position_projection(key)
+        if current is None or current.quantity.value <= 0:
+            return
+        self._exec_counter += 1
+        self.store.apply_execution_once(
+            Execution(
+                dedup_key=ExecutionDedupKey(
+                    self.account_id, Category.LINEAR, ExecutionId(f"exec-close-{self._exec_counter}"),
+                ),
+                order_id=OrderId(f"test-full-close-{self._exec_counter}"), symbol=Symbol(symbol),
+                side=OrderSide.SELL, price=current.average_entry, quantity=current.quantity,
+                fee=Decimal("0"), exchange_timestamp_ms=self.clock(),
+            ),
+            PositionProjectionUpdate(
+                position_key=key, side=PositionSide.FLAT, quantity=Quantity(Decimal("0")),
+                average_entry=None, realized_pnl=current.realized_pnl,
+                accumulated_fee=current.accumulated_fee, engaged_notional=Notional(Decimal("0")),
+                sync_state="synced", expected_version=current.version, updated_at_ms=self.clock(),
+            ),
+        )
 
     def _apply_fill(self, symbol, side, quantity, price, *, order_id, resting=False):
         self._exec_counter += 1
@@ -603,13 +641,59 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
 
+    def test_pre_plan_exception_after_fill_triggers_emergency_close(self):
+        """Any ordinary exception in the post-fill region BEFORE
+        build_protection_plan() is even reached (here: _frozen_prices()) must
+        fail closed exactly like a plan-validation error does -- the whole
+        derive-build-submit region is one fail-closed unit."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+
+        with patch.object(
+            RobotBreakoutMonitor, "_frozen_prices",
+            side_effect=RuntimeError("boom: pre-plan derivation failure"),
+        ):
+            advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual([name for name, _ in self.executor.protection_calls], ["full_close"])
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
+
+    def test_submit_initial_protection_raises_triggers_emergency_close(self):
+        """A raised exception during submission (not just a non-COMPLETED
+        result) must also fail closed, never leave the fill open."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+
+        self.executor.fail_create_stop = True
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual([name for name, _ in self.executor.protection_calls], ["full_close"])
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
+
     def test_protection_plan_failure_after_fill_closes_flat_without_robot_trade(self):
         """A filled Robot position whose initial protection plan cannot be
         built at all (here: frozen_take_90() rejects a degenerate zero-width
         signal, independent of the structural_stop fallback) must never sit
-        open and unprotected waiting for a retry. RobotBreakoutMonitor must
-        emergency-close it to FLAT immediately, create no robot_trade, and
-        invalidate the candidate so it can never re-enter the same setup."""
+        open and unprotected waiting for a retry. Once the emergency close
+        actually completes and the account authoritatively reads back FLAT,
+        RobotBreakoutMonitor must create no robot_trade and invalidate the
+        candidate so it can never re-enter the same setup."""
         self._create_candidate(start_width=0.0)  # target == reference -> frozen_take_90() rejects
         self._drive_to_retest_detected()
         self.monitor.tick()  # submits the initial LIMIT
@@ -629,13 +713,12 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             ["full_close"],
         )
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
-        self.assertEqual(
-            self.store.get_position_projection(position_key).side, PositionSide.LONG,
-            "the fake executor's full_close is only recorded, not actually applied to the "
-            "projection -- see _FakeActionExecutor; the real PaperRuntime.full_close() path "
-            "flattening the account is covered by tests/test_terminal_persistence.py",
-        )
+        self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
         self.assertIn("protection_failure", record.robot_state["execution"])
+        self.assertEqual(
+            record.robot_state["execution"]["emergency_close_outcome"],
+            robot_protection.RECOVERY_CLOSED,
+        )
 
         # INVALIDATED is terminal: the outer tick() loop must never revisit
         # this candidate, so it can never attempt to re-enter the same setup.
@@ -646,6 +729,93 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             [name for name, _ in self.executor.protection_calls],
             ["full_close"],
         )
+
+    def test_full_close_non_completed_leaves_candidate_recoverable(self):
+        """An incomplete/rejected/unavailable close must never terminalize
+        the candidate prematurely -- the position may still be open."""
+        self._create_candidate(start_width=0.0)  # forces the same plan failure as above
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+
+        self.executor.full_close_status = CommandResultStatus.REJECTED
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertTrue(record.robot_state["execution"]["emergency_close_pending"])
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
+
+    def test_full_close_completed_but_still_non_flat_leaves_candidate_recoverable(self):
+        """A close that reports COMPLETED but the authoritative position
+        somehow still reads back non-flat must also not terminalize --
+        only a proven FLAT may invalidate the candidate."""
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+
+        self.executor.full_close_flattens = False  # status stays COMPLETED
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertTrue(record.robot_state["execution"]["emergency_close_pending"])
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
+
+    def test_repeated_tick_during_pending_emergency_close_is_idempotent_and_no_new_entry(self):
+        """While an emergency close is pending (ambiguous outcome), repeated
+        ticks must keep reconciling the same close -- never open a new entry
+        -- and once the close genuinely completes and reads back FLAT, the
+        candidate becomes terminal exactly once."""
+        self._create_candidate(start_width=0.0)
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        limit_calls_before = list(self.executor.limit_calls)
+        market_calls_before = list(self.executor.market_calls)
+
+        self.executor.full_close_status = CommandResultStatus.REJECTED
+        first_advance = self.monitor.tick()
+        self.assertEqual(first_advance, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(self.executor.limit_calls, limit_calls_before)  # no duplicate LIMIT
+        self.assertEqual(self.executor.market_calls, market_calls_before)  # no duplicate Market entry
+
+        # Recovery: the exchange/runtime now genuinely accepts the close.
+        self.executor.full_close_status = CommandResultStatus.COMPLETED
+        second_advance = self.monitor.tick()
+
+        self.assertEqual(second_advance, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["full_close", "full_close"],
+        )
+        # Both attempts used the exact same deterministic action id.
+        first_request, second_request = (
+            call[1] for call in self.executor.protection_calls
+        )
+        self.assertEqual(first_request.client_action_id, second_request.client_action_id)
+        self.assertEqual(self.executor.limit_calls, limit_calls_before)
+        self.assertEqual(self.executor.market_calls, market_calls_before)
+
+        # Terminal: a further tick must not attempt yet another close.
+        third_advance = self.monitor.tick()
+        self.assertEqual(third_advance, ())
+        self.assertEqual(len(self.executor.protection_calls), 2)
 
     def test_finalize_trade_fails_closed_without_protection_when_entry_projection_is_missing(self):
         """D2.3 ownership-attestation ordering: no protection side effect may

@@ -444,22 +444,28 @@ class RobotBreakoutMonitor:
         average_entry: Decimal,
     ) -> None:
         direction = record.robot_state["direction"]
-        structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
-        tick_size = self._tick_size_provider(record.symbol.value)
-        reference_price, target_price = self._frozen_prices(record.signal_snapshot, direction)
-        existing_stop = (
-            Decimal(execution["stop_price"]) if execution.get("stop_price") else None
-        )
-
-        payload = self._candidate_payload(record)
+        # Everything from here through submit_initial_protection() runs after
+        # a real fill already exists: any ordinary operational failure in
+        # this whole region (geometry/tick-size/frozen-price derivation,
+        # plan validation, or submission) must fail closed rather than
+        # silently leave the fill unprotected for a bare retry next tick.
+        # Deliberately Exception, not BaseException: SystemExit/
+        # KeyboardInterrupt must still propagate.
         try:
+            structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
+            tick_size = self._tick_size_provider(record.symbol.value)
+            reference_price, target_price = self._frozen_prices(record.signal_snapshot, direction)
+            existing_stop = (
+                Decimal(execution["stop_price"]) if execution.get("stop_price") else None
+            )
+            payload = self._candidate_payload(record)
             plan = robot_protection.build_protection_plan(
                 payload, record.robot_state,
                 average_entry=average_entry, structural_extreme=structural_extreme,
                 tick_size=tick_size, frozen_signal_reference_price=reference_price,
                 frozen_scanner_target_price=target_price, existing_stop=existing_stop,
             )
-        except robot_protection.RobotProtectionError as error:
+        except Exception as error:
             self._fail_closed_unprotected_fill(record, error)
             return
 
@@ -480,17 +486,17 @@ class RobotBreakoutMonitor:
         entry_quantity = entry_projection.quantity.value
         entry_position_version = entry_projection.version
 
-        stop_result, take_result = robot_protection.submit_initial_protection(
-            self._action_executor, plan,
-        )
-        if (
-            getattr(stop_result, "status", None) != CommandResultStatus.COMPLETED
-            or getattr(take_result, "status", None) != CommandResultStatus.COMPLETED
-        ):
-            self._fail_closed_unprotected_fill(
-                record,
-                RobotBreakoutMonitorError("initial protection submission did not complete"),
+        try:
+            stop_result, take_result = robot_protection.submit_initial_protection(
+                self._action_executor, plan,
             )
+            if (
+                getattr(stop_result, "status", None) != CommandResultStatus.COMPLETED
+                or getattr(take_result, "status", None) != CommandResultStatus.COMPLETED
+            ):
+                raise RobotBreakoutMonitorError("initial protection submission did not complete")
+        except Exception as error:
+            self._fail_closed_unprotected_fill(record, error)
             return
 
         now_ms = self._now_ms()
@@ -579,22 +585,56 @@ class RobotBreakoutMonitor:
         self, record: RobotCandidateRecord, error: Exception,
     ) -> None:
         """A Robot entry already filled into a real authoritative position, but
-        initial STOP/TAKE protection could not be built, validated, or
-        submitted for it (CR-PAPER-PROTECTION-LIFECYCLE-001 post-BATUSDT-defect
-        fix). Never leave a filled position open and unprotected waiting for
-        the next tick: close it immediately through the same sanctioned PAPER
-        full-close path ``submit_emergency_close()`` already uses elsewhere,
-        then invalidate the candidate so it can never re-enter the same setup.
-        No robot_trade is created for this candidate; it never proved out a
-        protected entry.
+        initial STOP/TAKE protection could not be derived, built, validated,
+        or submitted for it (CR-PAPER-PROTECTION-LIFECYCLE-001
+        post-BATUSDT-defect fix). Never leave a filled position open and
+        unprotected waiting for the next tick without at least attempting a
+        close: submit the same sanctioned PAPER full-close path
+        ``submit_emergency_close()`` already uses elsewhere, using
+        ``emergency_close_request()``'s deterministic action id so a close
+        retried across ticks is idempotent, exactly like
+        ``protection_recovery()``'s own emergency close.
+
+        The candidate is invalidated -- and only then -- once FLAT is itself
+        authoritatively confirmed: an ambiguous, rejected, unavailable, or
+        otherwise incomplete close (or one that completes but the position
+        somehow reads back still non-flat) leaves the candidate APPROVED, so
+        RobotBreakoutMonitor's existing per-tick retry (already relied on
+        elsewhere in _finalize_trade for the ownership-attestation gate)
+        keeps attempting/reconciling the close instead of prematurely
+        terminalizing a position that may still be open. No robot_trade is
+        ever created here; this candidate never proved out a protected entry.
         """
         request = robot_protection.emergency_close_request(record.candidate_id, record.symbol.value)
-        self._action_executor.full_close(request)
-
-        new_state = dict(record.robot_state)
-        execution = dict(new_state.get("execution") or {})
+        execution = dict(record.robot_state.get("execution") or {})
         execution["protection_failure"] = str(error)
+        execution["emergency_close_attempted_at_ms"] = self._now_ms()
+
+        try:
+            result = self._action_executor.full_close(request)
+        except Exception as close_error:
+            execution["emergency_close_pending"] = True
+            execution["emergency_close_error"] = str(close_error)
+            self._persist_execution(record, execution)
+            return
+
+        authoritative_flat = False
+        completed = getattr(result, "status", None) == CommandResultStatus.COMPLETED
+        if completed:
+            position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+            projection = self._store().get_position_projection(position_key)
+            authoritative_flat = projection is None or projection.quantity.value <= 0
+
+        if not (completed and authoritative_flat):
+            execution["emergency_close_pending"] = True
+            self._persist_execution(record, execution)
+            return
+
+        execution.pop("emergency_close_pending", None)
+        execution.pop("emergency_close_error", None)
+        execution["emergency_close_outcome"] = robot_protection.RECOVERY_CLOSED
         execution["emergency_closed_at_ms"] = self._now_ms()
+        new_state = dict(record.robot_state)
         new_state["execution"] = execution
         try:
             self._store().save_robot_candidate_state(
