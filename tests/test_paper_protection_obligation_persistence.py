@@ -86,6 +86,13 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
                 observed_exit_price=Decimal("97.9"),
                 observed_quantity=Decimal("2.5"),
                 market_event_id="BTCUSDT:10:20",
+                source_generation=0,
+                source_sequence=10,
+                source_update_id=20,
+                source_event_at_ms=1199,
+                source_matching_engine_cts_ms=1198,
+                observed_bid_price=Decimal("97.9"),
+                observed_ask_price=Decimal("98.0"),
                 source_received_at_ms=1200,
                 latched_at_ms=1201,
             )
@@ -97,6 +104,13 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
                 observed_exit_price=Decimal("104.5"),
                 observed_quantity=Decimal("2.5"),
                 market_event_id="BTCUSDT:11:21",
+                source_generation=0,
+                source_sequence=10,
+                source_update_id=20,
+                source_event_at_ms=1199,
+                source_matching_engine_cts_ms=1198,
+                observed_bid_price=Decimal("97.9"),
+                observed_ask_price=Decimal("98.0"),
                 source_received_at_ms=1202,
                 latched_at_ms=1203,
             )
@@ -123,6 +137,13 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
             observed_exit_price=Decimal("104.2"),
             observed_quantity=Decimal("2.5"),
             market_event_id="BTCUSDT:12:22",
+            source_generation=0,
+            source_sequence=12,
+            source_update_id=22,
+            source_event_at_ms=1299,
+            source_matching_engine_cts_ms=1298,
+            observed_bid_price=Decimal("104.2"),
+            observed_ask_price=Decimal("104.3"),
             source_received_at_ms=1300,
             latched_at_ms=1301,
         )
@@ -135,6 +156,19 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
             self.assertEqual(unresolved[0].obligation_id, latched.obligation_id)
             self.assertEqual(unresolved[0].order_id, latched.order_id)
             self.assertEqual(unresolved[0].exec_id, latched.exec_id)
+            self.assertEqual(unresolved[0].market_event_id, "BTCUSDT:12:22")
+            self.assertEqual(unresolved[0].source_generation, 0)
+            self.assertEqual(unresolved[0].source_sequence, 12)
+            self.assertEqual(unresolved[0].source_update_id, 22)
+            self.assertEqual(unresolved[0].source_event_at_ms, 1299)
+            self.assertEqual(unresolved[0].source_matching_engine_cts_ms, 1298)
+            self.assertEqual(unresolved[0].source_received_at_ms, 1300)
+            self.assertEqual(unresolved[0].observed_bid_price, Decimal("104.2"))
+            self.assertEqual(unresolved[0].observed_ask_price, Decimal("104.3"))
+            self.assertEqual(unresolved[0].observed_exit_price, Decimal("104.2"))
+            self.assertEqual(unresolved[0].observed_quantity, Decimal("2.5"))
+            self.assertEqual(unresolved[0].protection_version, 2)
+            self.assertEqual(unresolved[0].winning_leg, "TAKE")
         finally:
             reopened.close()
 
@@ -152,6 +186,13 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
                 observed_exit_price=Decimal("97.9"),
                 observed_quantity=Decimal("2.5"),
                 market_event_id="BTCUSDT:14:24",
+                source_generation=0,
+                source_sequence=10,
+                source_update_id=20,
+                source_event_at_ms=1199,
+                source_matching_engine_cts_ms=1198,
+                observed_bid_price=Decimal("97.9"),
+                observed_ask_price=Decimal("98.0"),
                 source_received_at_ms=1500,
                 latched_at_ms=1501,
             )
@@ -237,6 +278,13 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
                 observed_exit_price=Decimal("97.9"),
                 observed_quantity=Decimal("2.5"),
                 market_event_id="BTCUSDT:13:23",
+                source_generation=0,
+                source_sequence=10,
+                source_update_id=20,
+                source_event_at_ms=1199,
+                source_matching_engine_cts_ms=1198,
+                observed_bid_price=Decimal("97.9"),
+                observed_ask_price=Decimal("98.0"),
                 source_received_at_ms=1400,
                 latched_at_ms=1401,
             )

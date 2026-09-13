@@ -451,6 +451,7 @@ class PublicOrderBookBuffer:
         self._update_id = 0
         self._sequence = 0
         self._version = 0
+        self._last_message_type: str | None = None
         self._update_consumer: Callable[[str], None] | None = None
         self._condition = threading.Condition()
         self._stop = threading.Event()
@@ -544,6 +545,7 @@ class PublicOrderBookBuffer:
             self._received_at = int(time.time() * 1000)
             self._update_id = update_id
             self._sequence = sequence
+            self._last_message_type = message_type
             self._version += 1
             book_update_id = f"{self.symbol}:{sequence}:{update_id}"
             update_consumer = self._update_consumer
@@ -611,6 +613,7 @@ class PublicOrderBookBuffer:
         self._matching_engine_cts = None
         self._update_id = 0
         self._sequence = 0
+        self._last_message_type = None
         self._version += 1
         self._condition.notify_all()
 
@@ -630,6 +633,7 @@ class PublicOrderBookBuffer:
             "receivedAt": self._received_at,
             "updateId": self._update_id,
             "sequence": self._sequence,
+            "messageType": self._last_message_type,
             "state": self._state,
             "source": "BYBIT_LINEAR_WS",
             "version": self._version,
@@ -1538,7 +1542,9 @@ def create_symbol_context(symbol: str, tick_size: Decimal) -> SymbolContext:
     return SymbolContext(symbol, public_orderbook, public_trades, public_klines)
 
 
-def _normalized_book_from_snapshot(symbol: str, payload: dict) -> NormalizedOrderBook | None:
+def _normalized_book_from_snapshot(
+    symbol: str, payload: dict, *, source_generation: int | None = None,
+) -> NormalizedOrderBook | None:
     """Build a NormalizedOrderBook from one PublicOrderBookBuffer.snapshot().
 
     Returns None for anything not immediately usable as crossing evidence
@@ -1567,6 +1573,15 @@ def _normalized_book_from_snapshot(symbol: str, payload: dict) -> NormalizedOrde
         health=BookHealth.READY,
         received_at_ms=int(payload["receivedAt"]),
         available_depth=min(len(bids), len(asks)),
+        source_generation=source_generation,
+        source_sequence=int(payload["sequence"]),
+        source_update_id=int(payload["updateId"]),
+        source_event_at_ms=int(payload["timestamp"]),
+        source_matching_engine_cts_ms=(
+            int(payload["matchingEngineCts"])
+            if payload.get("matchingEngineCts") is not None
+            else None
+        ),
     )
 
 
@@ -1672,16 +1687,56 @@ class RobotProtectionCoverageManager:
         if context is None:
             return
         payload = context.public_orderbook.snapshot()
-        book = _normalized_book_from_snapshot(symbol, payload)
+        book = _normalized_book_from_snapshot(
+            symbol,
+            payload,
+            source_generation=context.reconnect_count,
+        )
         if book is None:
             return
-        received_at_ms = int(payload["receivedAt"])
-        try:
-            self._runtime.enqueue(
-                lambda runtime: runtime.evaluate_robot_protection_crossing(
-                    symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
-                )
+        expected_event_id = f"{symbol}:{book.source_sequence}:{book.source_update_id}"
+        if book_update_id != expected_event_id:
+            self._mark_unhealthy(symbol, "event_identity_mismatch")
+            LOGGER.error(
+                "Robot protection book identity mismatch; symbol=%s "
+                "listener_event=%s snapshot_event=%s",
+                symbol,
+                book_update_id,
+                expected_event_id,
             )
+            return
+        received_at_ms = book.received_at_ms
+        message_type = payload.get("messageType")
+        with self._lock:
+            continuity_lost = symbol in self._unhealthy
+        if continuity_lost and message_type != "snapshot":
+            return
+        generation_at_enqueue = book.source_generation
+
+        def _evaluate_if_current_generation(runtime):
+            # Execution-time guard, evaluated on the owner thread whenever
+            # this task actually runs -- not at enqueue time. The owner
+            # queue is shared with all other PAPER runtime work, so a task
+            # built under one connection generation can sit queued long
+            # enough for a reconnect to bump context.reconnect_count before
+            # it runs. Compares only the live generation counter -- never
+            # rereads the mutable current book -- and fails closed rather
+            # than evaluate/latch on evidence a newer generation has already
+            # superseded.
+            if context.reconnect_count != generation_at_enqueue:
+                self._mark_unhealthy(symbol, "stale_generation_discarded")
+                LOGGER.error(
+                    "Robot protection stale-generation event discarded; "
+                    "symbol=%s enqueued_generation=%s current_generation=%s event=%s",
+                    symbol, generation_at_enqueue, context.reconnect_count, book_update_id,
+                )
+                return None
+            return runtime.evaluate_robot_protection_crossing(
+                symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
+            )
+
+        try:
+            self._runtime.enqueue(_evaluate_if_current_generation)
         except ProtectionIngressOverflow:
             self._mark_unhealthy(symbol, "ingress_overflow")
             LOGGER.error(
@@ -1697,7 +1752,8 @@ class RobotProtectionCoverageManager:
                 symbol, book_update_id,
             )
             return
-        self._mark_healthy(symbol)
+        if message_type == "snapshot":
+            self._mark_healthy(symbol)
 
     def _mark_unhealthy(self, symbol: str, reason: str) -> None:
         with self._lock:

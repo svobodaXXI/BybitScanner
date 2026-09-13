@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -690,6 +690,24 @@ SCHEMA_V18_MIGRATION_STATEMENTS = (
     "CHECK (entry_position_version IS NULL OR entry_position_version >= 1)",
 )
 
+SCHEMA_V19_MIGRATION_STATEMENTS = (
+    # D2.4 immutable market-evidence attribution. Nullable only for rows
+    # created before v19; fresh Robot protection latches must supply complete
+    # source identity plus both executable-side observations.
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_generation INTEGER "
+    "CHECK (source_generation IS NULL OR source_generation >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_sequence INTEGER "
+    "CHECK (source_sequence IS NULL OR source_sequence >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_update_id INTEGER "
+    "CHECK (source_update_id IS NULL OR source_update_id >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_event_at_ms INTEGER "
+    "CHECK (source_event_at_ms IS NULL OR source_event_at_ms >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_matching_engine_cts_ms INTEGER "
+    "CHECK (source_matching_engine_cts_ms IS NULL OR source_matching_engine_cts_ms >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN observed_bid_price TEXT",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN observed_ask_price TEXT",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -709,4 +727,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V16_MIGRATION_STATEMENTS
     + SCHEMA_V17_MIGRATION_STATEMENTS
     + SCHEMA_V18_MIGRATION_STATEMENTS
+    + SCHEMA_V19_MIGRATION_STATEMENTS
 )
