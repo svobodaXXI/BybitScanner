@@ -34,14 +34,24 @@ import warnings
 import logging
 import os
 
+import matplotlib as mpl
+
+# Headless backend: must be selected before importing mplfinance or
+# matplotlib.pyplot, since either import resolves and locks in a backend as
+# a side effect. Rendering runs on ScannerControlRuntime's background
+# thread, not the process main thread, and matplotlib's default
+# auto-detected GUI backend (TkAgg, when Tkinter is available) is not
+# thread-safe -- it previously crashed the whole PAPER backend process with
+# a native Tcl error ("Tcl_AsyncDelete: async handler deleted by the wrong
+# thread"). Agg is the non-interactive, thread-safe rendering backend and
+# never opens a GUI/event loop, matching this module's savefig()-only usage.
+mpl.use("Agg")
+
 import pandas as pd
 import numpy as np
 import mplfinance as mpf
-import matplotlib as mpl
 
 from timeframe_format import format_timeframe_ru
-
-import matplotlib as mpl
 
 # Cyrillic-capable font for Russian signal interface.
 mpl.rcParams["font.family"] = "DejaVu Sans"
