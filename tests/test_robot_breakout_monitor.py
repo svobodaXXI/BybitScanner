@@ -8,7 +8,9 @@ from unittest.mock import patch
 import robot_partial_fill
 import robot_state_machine
 from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
-from terminal.api.models import CommandResult, CommandResultStatus, PaperLimitMutationResult
+from terminal.api.models import (
+    CommandResult, CommandResultStatus, PaperLimitMutationResult, PaperStopMutationResult,
+)
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 from terminal.domain.models import (
     Category,
@@ -174,7 +176,7 @@ class _FakeActionExecutor:
 
     def create_stop(self, request):
         self.protection_calls.append(("create_stop", request))
-        return None
+        return PaperStopMutationResult(request.client_action_id.value, CommandResultStatus.COMPLETED, "created")
 
     def amend_stop(self, request):
         self.protection_calls.append(("amend_stop", request))
@@ -182,7 +184,7 @@ class _FakeActionExecutor:
 
     def create_take(self, request):
         self.protection_calls.append(("create_take", request))
-        return None
+        return PaperStopMutationResult(request.client_action_id.value, CommandResultStatus.COMPLETED, "created")
 
     def amend_take(self, request):
         self.protection_calls.append(("amend_take", request))
@@ -565,6 +567,85 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         # Once OPEN, the outer tick() loop skips this candidate entirely.
         self.monitor.tick()
         self.assertEqual(len(self.executor.protection_calls), 2)
+
+    def test_batusdt_like_wrong_side_structural_extreme_falls_back_and_protects(self):
+        """Regression for the real BATUSDT PAPER acceptance defect: the frozen
+        structural extreme (lower_touch_points) can end up on the wrong side
+        of -- or equal to -- the actual fill's average_entry by the time the
+        LIMIT fills (retest slippage, later touches). structural_stop() must
+        fall back to the 2% distance rather than raise, so the filled
+        position still gets a valid STOP/TAKE and a robot_trade, instead of
+        being left open and unprotected."""
+        # lower_touch_points min = 85.0 -- above the 81 fill price used below,
+        # exactly the "structural candidate on the wrong side of entry" shape.
+        self._create_candidate(lower_touch_prices=(85.0, 86.0))
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "OPEN")
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        # Fallback: entry * (1 - 2%) = 81 * 0.98 = 79.38, not the (invalid,
+        # above-entry) structural candidate 85.0 - 0.1 = 84.9.
+        self.assertEqual(trade.stop_price, Decimal("79.38"))
+        self.assertLess(trade.stop_price, trade.average_entry)
+        self.assertEqual(trade.take_price, Decimal("118"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.LONG)
+
+    def test_protection_plan_failure_after_fill_closes_flat_without_robot_trade(self):
+        """A filled Robot position whose initial protection plan cannot be
+        built at all (here: frozen_take_90() rejects a degenerate zero-width
+        signal, independent of the structural_stop fallback) must never sit
+        open and unprotected waiting for a retry. RobotBreakoutMonitor must
+        emergency-close it to FLAT immediately, create no robot_trade, and
+        invalidate the candidate so it can never re-enter the same setup."""
+        self._create_candidate(start_width=0.0)  # target == reference -> frozen_take_90() rejects
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        advanced = self.monitor.tick()
+
+        # The tick did act on this candidate (fail-closed emergency close +
+        # invalidation is itself a durable state change), just not into OPEN.
+        self.assertEqual(advanced, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["full_close"],
+        )
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertEqual(
+            self.store.get_position_projection(position_key).side, PositionSide.LONG,
+            "the fake executor's full_close is only recorded, not actually applied to the "
+            "projection -- see _FakeActionExecutor; the real PaperRuntime.full_close() path "
+            "flattening the account is covered by tests/test_terminal_persistence.py",
+        )
+        self.assertIn("protection_failure", record.robot_state["execution"])
+
+        # INVALIDATED is terminal: the outer tick() loop must never revisit
+        # this candidate, so it can never attempt to re-enter the same setup.
+        self.feed.push(SYMBOL, _candle_at(105, high=99, low=97, close=98))
+        second_advance = self.monitor.tick()
+        self.assertEqual(second_advance, ())
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["full_close"],
+        )
 
     def test_finalize_trade_fails_closed_without_protection_when_entry_projection_is_missing(self):
         """D2.3 ownership-attestation ordering: no protection side effect may

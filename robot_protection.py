@@ -103,6 +103,17 @@ def structural_stop(
     LONG structural stop is one tick below the relevant low. SHORT is one tick
     above the relevant high. If that stop is farther than 2% from authoritative
     average entry, use exactly the 2% fallback instead.
+
+    A filled Robot position must never end up with no STOP at all. The
+    structural candidate is derived from the frozen signal geometry, but
+    ``average_entry`` is the authoritative fill price read after entry --
+    intervening price action (partial fills, top-ups, retest slippage) can
+    leave the structural extreme on the wrong side of, or equal to, the
+    actual entry. Rather than fail closed and leave a filled position with no
+    protection at all (CR-PAPER-PROTECTION-LIFECYCLE-001 post-BATUSDT-defect
+    fix), an invalid structural candidate falls back to the same 2% distance
+    already used for a too-far structural stop, always on the safe side of
+    entry.
     """
 
     entry = _decimal(average_entry, "average_entry")
@@ -112,13 +123,13 @@ def structural_stop(
     if normalized_direction == DIRECTION_LONG:
         candidate = extreme - tick
         if candidate <= 0 or candidate >= entry:
-            raise RobotProtectionError("LONG structural STOP must be below entry")
+            return entry * (Decimal("1") - MAX_STOP_DISTANCE)
         distance = (entry - candidate) / entry
         return entry * (Decimal("1") - MAX_STOP_DISTANCE) if distance > MAX_STOP_DISTANCE else candidate
     if normalized_direction == DIRECTION_SHORT:
         candidate = extreme + tick
         if candidate <= entry:
-            raise RobotProtectionError("SHORT structural STOP must be above entry")
+            return entry * (Decimal("1") + MAX_STOP_DISTANCE)
         distance = (candidate - entry) / entry
         return entry * (Decimal("1") + MAX_STOP_DISTANCE) if distance > MAX_STOP_DISTANCE else candidate
     raise RobotProtectionError("unsupported Robot direction")
@@ -280,3 +291,18 @@ def submit_emergency_close(submitter: ProtectionSubmitter, decision: ProtectionR
     if decision.action != RECOVERY_EMERGENCY_CLOSE or decision.emergency_close_request is None:
         raise RobotProtectionError("decision does not authorize emergency close")
     return submitter.full_close(decision.emergency_close_request)
+
+
+def emergency_close_request(candidate_id: str, symbol: str) -> FullCloseCommandRequest:
+    """Build the emergency full-close request for a filled Robot position whose
+    initial protection could not be built, validated, or submitted.
+
+    Uses the exact same deterministic action-id scheme as
+    ``protection_recovery()``'s own emergency close, so a later recovery-path
+    close attempt for the same candidate is idempotent with this one rather
+    than a distinct action.
+    """
+
+    return FullCloseCommandRequest(
+        _action_id(candidate_id, "emergency-protection-close"), symbol.strip().upper(),
+    )

@@ -452,12 +452,16 @@ class RobotBreakoutMonitor:
         )
 
         payload = self._candidate_payload(record)
-        plan = robot_protection.build_protection_plan(
-            payload, record.robot_state,
-            average_entry=average_entry, structural_extreme=structural_extreme,
-            tick_size=tick_size, frozen_signal_reference_price=reference_price,
-            frozen_scanner_target_price=target_price, existing_stop=existing_stop,
-        )
+        try:
+            plan = robot_protection.build_protection_plan(
+                payload, record.robot_state,
+                average_entry=average_entry, structural_extreme=structural_extreme,
+                tick_size=tick_size, frozen_signal_reference_price=reference_price,
+                frozen_scanner_target_price=target_price, existing_stop=existing_stop,
+            )
+        except robot_protection.RobotProtectionError as error:
+            self._fail_closed_unprotected_fill(record, error)
+            return
 
         # Owner-frozen D2.3 ownership attestation (CR-PAPER-PROTECTION-LIFECYCLE-001):
         # prove the Robot's own entry quantity and the position's version
@@ -476,7 +480,18 @@ class RobotBreakoutMonitor:
         entry_quantity = entry_projection.quantity.value
         entry_position_version = entry_projection.version
 
-        robot_protection.submit_initial_protection(self._action_executor, plan)
+        stop_result, take_result = robot_protection.submit_initial_protection(
+            self._action_executor, plan,
+        )
+        if (
+            getattr(stop_result, "status", None) != CommandResultStatus.COMPLETED
+            or getattr(take_result, "status", None) != CommandResultStatus.COMPLETED
+        ):
+            self._fail_closed_unprotected_fill(
+                record,
+                RobotBreakoutMonitorError("initial protection submission did not complete"),
+            )
+            return
 
         now_ms = self._now_ms()
         self._store().create_robot_trade(
@@ -559,6 +574,41 @@ class RobotBreakoutMonitor:
             payload, state, tick_size=tick_size,
         )
         return robot_entry_limit.submit_initial_retest_limit(self._action_executor, plan)
+
+    def _fail_closed_unprotected_fill(
+        self, record: RobotCandidateRecord, error: Exception,
+    ) -> None:
+        """A Robot entry already filled into a real authoritative position, but
+        initial STOP/TAKE protection could not be built, validated, or
+        submitted for it (CR-PAPER-PROTECTION-LIFECYCLE-001 post-BATUSDT-defect
+        fix). Never leave a filled position open and unprotected waiting for
+        the next tick: close it immediately through the same sanctioned PAPER
+        full-close path ``submit_emergency_close()`` already uses elsewhere,
+        then invalidate the candidate so it can never re-enter the same setup.
+        No robot_trade is created for this candidate; it never proved out a
+        protected entry.
+        """
+        request = robot_protection.emergency_close_request(record.candidate_id, record.symbol.value)
+        self._action_executor.full_close(request)
+
+        new_state = dict(record.robot_state)
+        execution = dict(new_state.get("execution") or {})
+        execution["protection_failure"] = str(error)
+        execution["emergency_closed_at_ms"] = self._now_ms()
+        new_state["execution"] = execution
+        try:
+            self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status="INVALIDATED",
+                robot_state=new_state,
+                expected_revision=record.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except ConcurrentUpdate:
+            # Another writer already advanced this candidate first; the
+            # emergency close above already ran and is idempotent by
+            # deterministic action id if retried on a later tick.
+            pass
 
     def _persist_execution(
         self, record: RobotCandidateRecord, execution: Mapping[str, object],
