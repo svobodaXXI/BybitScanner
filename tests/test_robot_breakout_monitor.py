@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 import robot_partial_fill
 import robot_state_machine
@@ -529,6 +530,13 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
 
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        # Ground truth for the D2.3 ownership attestation: whatever the
+        # authoritative position projection actually is right after the
+        # fill, before _finalize_trade() reads it again for entry_quantity/
+        # entry_position_version.
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        entry_projection = self.store.get_position_projection(position_key)
+
         advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
@@ -539,6 +547,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(trade.entry_path, "LIMIT")
         self.assertEqual(trade.actual_wv, Decimal("1"))
         self.assertEqual(trade.average_entry, Decimal("81"))
+        # D2.3 ownership attestation (owner-frozen convention): must be
+        # exactly the authoritative projection's own quantity/version, not
+        # any derived or re-guessed value.
+        self.assertEqual(trade.entry_quantity, entry_projection.quantity.value)
+        self.assertEqual(trade.entry_position_version, entry_projection.version)
         # structural_extreme = min(counted lower_touch_points) = 80.0; tick=0.1
         # -> candidate stop = 79.9; distance (81-79.9)/81 = 0.0136 <= 2% -> structural, not fallback.
         self.assertEqual(trade.stop_price, Decimal("79.9"))
@@ -552,6 +565,90 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         # Once OPEN, the outer tick() loop skips this candidate entirely.
         self.monitor.tick()
         self.assertEqual(len(self.executor.protection_calls), 2)
+
+    def test_finalize_trade_fails_closed_without_protection_when_entry_projection_is_missing(self):
+        """D2.3 ownership-attestation ordering: no protection side effect may
+        be submitted before Robot-entry ownership is proven from the
+        authoritative position projection. Simulate that projection becoming
+        unprovable at the exact moment _finalize_trade() re-reads it for
+        attestation -- a test-only fault injection (the real fill already
+        happened and average_entry's own earlier read already saw it), not a
+        reachable production code path."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+
+        store = self.monitor._store()
+        real_get_projection = store.get_position_projection
+        calls = {"count": 0}
+
+        def flaky_get_projection(key):
+            calls["count"] += 1
+            # 1st call is _average_entry()'s own pre-check (must still see
+            # the real fill so _finalize_trade() is reached at all); the 2nd
+            # call is the ownership-attestation gate itself.
+            if calls["count"] >= 2:
+                return None
+            return real_get_projection(key)
+
+        with patch.object(store, "get_position_projection", side_effect=flaky_get_projection):
+            advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(self.executor.protection_calls, [])
+
+    def test_finalize_trade_fails_closed_without_protection_when_entry_projection_is_flat(self):
+        """Same invariant, non-positive-quantity variant: the position
+        somehow reads back FLAT (quantity 0) at the exact moment
+        _finalize_trade() checks it. Reached through the real store API
+        (a genuine closing execution+projection), not a fabricated value."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+
+        store = self.monitor._store()
+        real_get_projection = store.get_position_projection
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        calls = {"count": 0}
+
+        def flaky_get_projection(key):
+            calls["count"] += 1
+            if calls["count"] < 2:
+                return real_get_projection(key)
+            # Genuinely flatten the position via the real store API right
+            # before the attestation gate's own read observes it.
+            current = real_get_projection(position_key)
+            store.apply_execution_once(
+                Execution(
+                    dedup_key=ExecutionDedupKey(ACCOUNT_ID, Category.LINEAR, ExecutionId("flatten-exec-1")),
+                    order_id=OrderId("flatten-order-1"), symbol=Symbol(SYMBOL),
+                    side=OrderSide.SELL, price=current.average_entry, quantity=current.quantity,
+                    fee=Decimal("0"), exchange_timestamp_ms=self.clock(),
+                ),
+                PositionProjectionUpdate(
+                    position_key=position_key, side=PositionSide.FLAT, quantity=Quantity(Decimal("0")),
+                    average_entry=None, realized_pnl=current.realized_pnl,
+                    accumulated_fee=current.accumulated_fee, engaged_notional=Notional(Decimal("0")),
+                    sync_state="synced", expected_version=current.version, updated_at_ms=self.clock(),
+                ),
+            )
+            return real_get_projection(key)
+
+        with patch.object(store, "get_position_projection", side_effect=flaky_get_projection):
+            advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(self.executor.protection_calls, [])
 
     def test_partial_fill_waits_then_completes_via_market_and_creates_mixed_trade(self):
         self._create_candidate()

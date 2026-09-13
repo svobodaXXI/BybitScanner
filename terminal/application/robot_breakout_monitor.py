@@ -458,6 +458,24 @@ class RobotBreakoutMonitor:
             tick_size=tick_size, frozen_signal_reference_price=reference_price,
             frozen_scanner_target_price=target_price, existing_stop=existing_stop,
         )
+
+        # Owner-frozen D2.3 ownership attestation (CR-PAPER-PROTECTION-LIFECYCLE-001):
+        # prove the Robot's own entry quantity and the position's version
+        # watermark from the authoritative confirmed position projection --
+        # the same durable evidence average_entry above was already read
+        # from -- BEFORE any protection side effect. No protection may be
+        # submitted before ownership can be proven. create_robot_trade()
+        # stays last: candidate remains APPROVED and RobotBreakoutMonitor.tick()
+        # keeps retrying this same _finalize_trade() call (via the persisted
+        # entry execution state) until it durably commits, which is what
+        # makes protection's own idempotent resubmission safe to retry here.
+        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        entry_projection = self._store().get_position_projection(position_key)
+        if entry_projection is None or entry_projection.quantity.value <= 0:
+            return
+        entry_quantity = entry_projection.quantity.value
+        entry_position_version = entry_projection.version
+
         robot_protection.submit_initial_protection(self._action_executor, plan)
 
         now_ms = self._now_ms()
@@ -476,6 +494,8 @@ class RobotBreakoutMonitor:
             average_entry=average_entry,
             stop_price=plan.stop_price,
             take_price=plan.take_price,
+            entry_quantity=entry_quantity,
+            entry_position_version=entry_position_version,
             created_at_ms=now_ms,
         )
 

@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 19
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -646,6 +646,68 @@ SCHEMA_V16_MIGRATION_STATEMENTS = (
     "ALTER TABLE robot_runtime_state_v16 RENAME TO robot_runtime_state",
 )
 
+SCHEMA_V17_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE paper_protection_obligations (
+        obligation_id TEXT PRIMARY KEY,
+        trade_id TEXT NOT NULL UNIQUE,
+        trading_account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        protection_version INTEGER NOT NULL,
+        winning_leg TEXT NOT NULL,
+        trigger_price TEXT NOT NULL,
+        observed_exit_price TEXT NOT NULL,
+        observed_quantity TEXT NOT NULL,
+        market_event_id TEXT NOT NULL,
+        source_received_at_ms INTEGER NOT NULL,
+        latched_at_ms INTEGER NOT NULL,
+        order_id TEXT NOT NULL UNIQUE,
+        exec_id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        FOREIGN KEY (trade_id) REFERENCES robot_trades(trade_id),
+        CHECK (protection_version >= 1),
+        CHECK (winning_leg IN ('STOP', 'TAKE')),
+        CHECK (status IN ('TRIGGERED', 'DISPATCHING', 'RESOLVED')),
+        CHECK (version >= 1),
+        CHECK (source_received_at_ms >= 0),
+        CHECK (latched_at_ms >= source_received_at_ms),
+        CHECK (updated_at_ms >= latched_at_ms)
+    ) WITHOUT ROWID
+    """,
+)
+
+SCHEMA_V18_MIGRATION_STATEMENTS = (
+    # Owner-frozen D2.3 ownership attestation (CR-PAPER-PROTECTION-LIFECYCLE-001):
+    # the Robot's own entry quantity and the position_projections.version
+    # watermark observed right after Robot entry finalized. Both additive and
+    # nullable so a v17 database upgrades without data loss; NULL on a
+    # pre-existing row means no attestation was ever recorded for it, which
+    # the D2.3 dispatch gate treats as missing attestation and fails closed.
+    "ALTER TABLE robot_trades ADD COLUMN entry_quantity TEXT",
+    "ALTER TABLE robot_trades ADD COLUMN entry_position_version INTEGER "
+    "CHECK (entry_position_version IS NULL OR entry_position_version >= 1)",
+)
+
+SCHEMA_V19_MIGRATION_STATEMENTS = (
+    # D2.4 immutable market-evidence attribution. Nullable only for rows
+    # created before v19; fresh Robot protection latches must supply complete
+    # source identity plus both executable-side observations.
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_generation INTEGER "
+    "CHECK (source_generation IS NULL OR source_generation >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_sequence INTEGER "
+    "CHECK (source_sequence IS NULL OR source_sequence >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_update_id INTEGER "
+    "CHECK (source_update_id IS NULL OR source_update_id >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_event_at_ms INTEGER "
+    "CHECK (source_event_at_ms IS NULL OR source_event_at_ms >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN source_matching_engine_cts_ms INTEGER "
+    "CHECK (source_matching_engine_cts_ms IS NULL OR source_matching_engine_cts_ms >= 0)",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN observed_bid_price TEXT",
+    "ALTER TABLE paper_protection_obligations ADD COLUMN observed_ask_price TEXT",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -663,4 +725,7 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V14_MIGRATION_STATEMENTS
     + SCHEMA_V15_MIGRATION_STATEMENTS
     + SCHEMA_V16_MIGRATION_STATEMENTS
+    + SCHEMA_V17_MIGRATION_STATEMENTS
+    + SCHEMA_V18_MIGRATION_STATEMENTS
+    + SCHEMA_V19_MIGRATION_STATEMENTS
 )
