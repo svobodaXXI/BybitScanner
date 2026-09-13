@@ -22,7 +22,7 @@ from terminal.api.models import (
     TimeInForce,
 )
 from terminal.domain.models import (
-    Category, OrderSide, PositionKey, PositionSide, Price, Quantity, Symbol,
+    Category, ExecutionId, OrderId, OrderSide, PositionKey, PositionSide, Price, Quantity, Symbol,
 )
 from terminal.domain.models import TradingAccountId
 from terminal.application.trading_accounts import (
@@ -245,12 +245,20 @@ def _open_robot_position_with_confirmed_protection(
         signal_snapshot={"symbol": symbol, "pattern": "Falling Wedge"},
         approved_at_ms=1000, updated_at_ms=1000,
     )
+    # Owner-frozen D2.3 ownership attestation: exactly what the real
+    # RobotBreakoutMonitor._finalize_trade() now reads -- the authoritative
+    # position projection's own quantity/version right after entry finalized.
+    entry_projection = runtime.store.get_position_projection(
+        PositionKey(TradingAccountId("paper"), Category.LINEAR, Symbol(symbol), 0)
+    )
     runtime.store.create_robot_trade(
         trade_id=trade_id, trading_account_id=TradingAccountId("paper"),
         candidate_id=candidate_id, symbol=Symbol(symbol), direction="LONG",
         pattern="Falling Wedge", source_timeframe="1", signal_time_ms=900,
         entry_time_ms=1500, entry_path="LIMIT", actual_wv=Decimal("0.8"),
         average_entry=entry_price, stop_price=stop_price, take_price=take_price,
+        entry_quantity=entry_projection.quantity.value,
+        entry_position_version=entry_projection.version,
         created_at_ms=1500,
     )
 
@@ -373,7 +381,8 @@ def test_evaluate_robot_protection_crossing_returns_none_without_confirmed_prote
                 direction="LONG", pattern="Falling Wedge", source_timeframe="1",
                 signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
                 actual_wv=Decimal("0.8"), average_entry=Decimal("64250.5"),
-                stop_price=Decimal("64000"), take_price=Decimal("64600"), created_at_ms=1500,
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                entry_quantity=Decimal("0.004"), entry_position_version=1, created_at_ms=1500,
             )
 
             result = runtime.evaluate_robot_protection_crossing(
@@ -409,7 +418,8 @@ def test_evaluate_robot_protection_crossing_fails_closed_on_ambiguous_open_trade
                 direction="LONG", pattern="second", source_timeframe="1",
                 signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
                 actual_wv=Decimal("0.2"), average_entry=Decimal("64250.5"),
-                stop_price=Decimal("64000"), take_price=Decimal("64600"), created_at_ms=1500,
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                entry_quantity=Decimal("0.002"), entry_position_version=1, created_at_ms=1500,
             )
 
             result = runtime.evaluate_robot_protection_crossing(
@@ -476,7 +486,8 @@ def test_robot_protection_coverage_symbols_unions_open_trades_and_unresolved_obl
                 direction="LONG", pattern="Falling Wedge", source_timeframe="1",
                 signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
                 actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
-                stop_price=Decimal("98"), take_price=Decimal("104"), created_at_ms=1500,
+                stop_price=Decimal("98"), take_price=Decimal("104"),
+                entry_quantity=Decimal("1"), entry_position_version=1, created_at_ms=1500,
             )
             runtime.store.latch_paper_protection_obligation(
                 trade_id="trade-unresolved-only", protection_version=1, winning_leg="STOP",
@@ -835,6 +846,277 @@ def test_dispatch_fails_closed_when_manual_close_wins_race_before_our_exec():
             assert next(
                 c for c in candidates if c.candidate_id == "candidate-manual-race"
             ).status == "OPEN"
+        finally:
+            runtime.close()
+
+
+def test_dispatch_fails_closed_when_entry_quantity_attestation_is_missing():
+    """D2.3 review-fix: a legacy (pre-v18) trade with NULL entry_quantity
+    must fail closed rather than fall back to guessing the aggregate."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-missing-qty", candidate_id="candidate-missing-qty",
+            )
+            runtime.store._connection.execute(
+                "UPDATE robot_trades SET entry_quantity=NULL WHERE trade_id=?",
+                ("trade-missing-qty",),
+            )
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-missing-qty", received_at_ms=5000,
+            )
+
+            assert result is not None
+            assert result.status == "TRIGGERED"
+            assert runtime.store.get_robot_trade("trade-missing-qty").exit_time_ms is None
+        finally:
+            runtime.close()
+
+
+def test_dispatch_fails_closed_when_entry_position_version_attestation_is_missing():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-missing-version", candidate_id="candidate-missing-version",
+            )
+            runtime.store._connection.execute(
+                "UPDATE robot_trades SET entry_position_version=NULL WHERE trade_id=?",
+                ("trade-missing-version",),
+            )
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-missing-version", received_at_ms=5000,
+            )
+
+            assert result is not None
+            assert result.status == "TRIGGERED"
+            assert runtime.store.get_robot_trade("trade-missing-version").exit_time_ms is None
+        finally:
+            runtime.close()
+
+
+def test_dispatch_fails_closed_on_entry_quantity_mismatch():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-qty-mismatch", candidate_id="candidate-qty-mismatch",
+            )
+            trade = runtime.store.get_robot_trade("trade-qty-mismatch")
+            corrupted_quantity = trade.entry_quantity + Decimal("1")
+            runtime.store._connection.execute(
+                "UPDATE robot_trades SET entry_quantity=? WHERE trade_id=?",
+                (str(corrupted_quantity), "trade-qty-mismatch"),
+            )
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-qty-mismatch", received_at_ms=5000,
+            )
+
+            assert result is not None
+            assert result.status == "TRIGGERED"
+            assert runtime.store.get_robot_trade("trade-qty-mismatch").exit_time_ms is None
+        finally:
+            runtime.close()
+
+
+def test_dispatch_fails_closed_on_entry_position_version_mismatch():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-version-mismatch", candidate_id="candidate-version-mismatch",
+            )
+            trade = runtime.store.get_robot_trade("trade-version-mismatch")
+            runtime.store._connection.execute(
+                "UPDATE robot_trades SET entry_position_version=? WHERE trade_id=?",
+                (trade.entry_position_version + 1, "trade-version-mismatch"),
+            )
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-version-mismatch", received_at_ms=5000,
+            )
+
+            assert result is not None
+            assert result.status == "TRIGGERED"
+            assert runtime.store.get_robot_trade("trade-version-mismatch").exit_time_ms is None
+        finally:
+            runtime.close()
+
+
+def test_dispatch_fails_closed_after_manual_add_to_robot_position():
+    """Owner counterexample: Robot 100 + manual +40 -> aggregate 140. Proves
+    the fail-closed path end to end through evaluate_robot_protection_crossing,
+    not only at the raw attestation comparison."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-manual-add", candidate_id="candidate-manual-add",
+            )
+            # Manual LONG add on the same shared aggregate position.
+            runtime._market_executor.execute(
+                trading_account_id=TradingAccountId("paper"), symbol=Symbol("BTCUSDT"),
+                side=OrderSide.BUY, quantity=Quantity(Decimal("0.001")),
+                order_link_id="manual-add-1", order_id=OrderId("manual-add-order-1"),
+                exec_id=ExecutionId("manual-add-exec-1"),
+            )
+
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-manual-add", received_at_ms=5000,
+            )
+
+            assert result is not None
+            assert result.status == "TRIGGERED"
+            assert runtime.store.get_robot_trade("trade-manual-add").exit_time_ms is None
+        finally:
+            runtime.close()
+
+
+def test_dispatch_fails_closed_after_manual_add_then_reduce_nets_back_to_original_quantity():
+    """Owner counterexample: Robot 100, manual +40, manual -40 -> aggregate
+    back to 100. A quantity-only check would wrongly pass; the
+    entry_position_version watermark (bumped by both manual fills) must
+    still catch it."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-manual-round-trip", candidate_id="candidate-manual-round-trip",
+            )
+            trade = runtime.store.get_robot_trade("trade-manual-round-trip")
+
+            runtime._market_executor.execute(
+                trading_account_id=TradingAccountId("paper"), symbol=Symbol("BTCUSDT"),
+                side=OrderSide.BUY, quantity=Quantity(Decimal("0.001")),
+                order_link_id="manual-round-trip-add",
+                order_id=OrderId("manual-round-trip-add-order"),
+                exec_id=ExecutionId("manual-round-trip-add-exec"),
+            )
+            runtime._market_executor.execute(
+                trading_account_id=TradingAccountId("paper"), symbol=Symbol("BTCUSDT"),
+                side=OrderSide.SELL, quantity=Quantity(Decimal("0.001")),
+                order_link_id="manual-round-trip-reduce",
+                order_id=OrderId("manual-round-trip-reduce-order"),
+                exec_id=ExecutionId("manual-round-trip-reduce-exec"),
+            )
+
+            position_key = PositionKey(
+                TradingAccountId("paper"), Category.LINEAR, Symbol("BTCUSDT"), 0,
+            )
+            position_after = runtime.store.get_position_projection(position_key)
+            # Quantity really did net back to exactly the Robot's own entry --
+            # only the version watermark can still see the round trip.
+            assert position_after.quantity.value == trade.entry_quantity
+            assert position_after.version != trade.entry_position_version
+
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-manual-round-trip", received_at_ms=5000,
+            )
+
+            assert result is not None
+            assert result.status == "TRIGGERED"
+            assert runtime.store.get_robot_trade("trade-manual-round-trip").exit_time_ms is None
+        finally:
+            runtime.close()
+
+
+def test_dispatch_fails_closed_on_replacement_lifecycle_with_same_quantity():
+    """Owner counterexample: a replacement lifecycle could end up with the
+    same side/quantity as the original Robot entry. The version watermark
+    (bumped by the flatten and the new entry) must still distinguish it from
+    the untouched original lifecycle even though the quantity coincides."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-replacement", candidate_id="candidate-replacement",
+            )
+            trade = runtime.store.get_robot_trade("trade-replacement")
+            original_quantity = trade.entry_quantity
+
+            latched, _ = runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-replacement", protection_version=1, winning_leg="STOP",
+                trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
+                observed_quantity=Decimal("1"), market_event_id="evt-replacement-latch",
+                source_received_at_ms=4000, latched_at_ms=4000,
+            )
+
+            # The original lifecycle is flattened by something other than our
+            # own dispatch (e.g. manual full_close, which never calls
+            # close_robot_trade()), then a replacement position opens on the
+            # same symbol with the SAME quantity.
+            manual_close = runtime.api.full_close(
+                FullCloseCommandRequest(ClientActionId("replacement-close"), "BTCUSDT")
+            )
+            assert manual_close.status is CommandResultStatus.COMPLETED
+            runtime._market_executor.execute(
+                trading_account_id=TradingAccountId("paper"), symbol=Symbol("BTCUSDT"),
+                side=OrderSide.BUY, quantity=Quantity(original_quantity),
+                order_link_id="replacement-entry", order_id=OrderId("replacement-entry-order"),
+                exec_id=ExecutionId("replacement-entry-exec"),
+            )
+            position_key = PositionKey(
+                TradingAccountId("paper"), Category.LINEAR, Symbol("BTCUSDT"), 0,
+            )
+            replacement_position = runtime.store.get_position_projection(position_key)
+            # The coincidence the owner described: quantity/side match again.
+            assert replacement_position.quantity.value == original_quantity
+            assert replacement_position.side is PositionSide.LONG
+            assert replacement_position.version != trade.entry_position_version
+
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-replacement-dispatch", received_at_ms=4200,
+            )
+
+            assert result is not None
+            assert result.status == "TRIGGERED"
+            assert result.obligation_id == latched.obligation_id
+            # The replacement position must remain untouched -- never closed
+            # under the old obligation's identity.
+            assert (
+                runtime.store.get_position_projection(position_key).quantity.value
+                == original_quantity
+            )
+            assert runtime.store.get_robot_trade("trade-replacement").exit_time_ms is None
         finally:
             runtime.close()
 
@@ -1243,6 +1525,8 @@ def _open_robot_position(runtime, *, candidate_id, trade_id, symbol="BTCUSDT"):
         average_entry=Decimal("64250"),
         stop_price=Decimal("60000"),
         take_price=Decimal("70000"),
+        entry_quantity=Decimal("1"),
+        entry_position_version=1,
         created_at_ms=1001,
     )
 

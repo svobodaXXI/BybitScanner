@@ -9,6 +9,7 @@ from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.schema import SCHEMA_VERSION
 from terminal.persistence.sqlite_store import (
     ConcurrentUpdate,
+    DuplicateIdentity,
     SQLiteStore,
 )
 
@@ -22,7 +23,10 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def _open_trade(self, store: SQLiteStore, *, trade_id: str = "robot-trade-c1") -> None:
+    def _open_trade(
+        self, store: SQLiteStore, *, trade_id: str = "robot-trade-c1",
+        entry_quantity: Decimal = Decimal("2.5"), entry_position_version: int = 1,
+    ) -> None:
         store.create_robot_candidate(
             candidate_id="c1",
             trading_account_id=self.account,
@@ -47,7 +51,18 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
             average_entry=Decimal("100"),
             stop_price=Decimal("98"),
             take_price=Decimal("104"),
+            entry_quantity=entry_quantity,
+            entry_position_version=entry_position_version,
             created_at_ms=1100,
+        )
+
+    def _make_trade_legacy(self, store: SQLiteStore, trade_id: str) -> None:
+        """Simulate a v17 (pre-attestation) row: NULL entry_quantity/
+        entry_position_version, exactly what a migrated legacy trade has."""
+        store._connection.execute(
+            "UPDATE robot_trades SET entry_quantity=NULL, entry_position_version=NULL "
+            "WHERE trade_id=?",
+            (trade_id,),
         )
 
     def test_schema_contains_durable_protection_obligation_migration(self) -> None:
@@ -143,6 +158,70 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
             found = store.get_paper_protection_obligation_for_trade("robot-trade-c1")
             self.assertEqual(found, latched)
             self.assertIsNone(store.get_paper_protection_obligation_for_trade("no-such-trade"))
+        finally:
+            store.close()
+
+    def test_create_robot_trade_persists_entry_attestation(self) -> None:
+        store = SQLiteStore.open(self.db_path)
+        try:
+            self._open_trade(store, entry_quantity=Decimal("3.75"), entry_position_version=4)
+            trade = store.get_robot_trade("robot-trade-c1")
+            self.assertEqual(trade.entry_quantity, Decimal("3.75"))
+            self.assertEqual(trade.entry_position_version, 4)
+        finally:
+            store.close()
+
+    def test_create_robot_trade_rejects_invalid_attestation(self) -> None:
+        store = SQLiteStore.open(self.db_path)
+        try:
+            with self.assertRaises(ValueError):
+                self._open_trade(store, entry_quantity=Decimal("0"), entry_position_version=1)
+        finally:
+            store.close()
+        store = SQLiteStore.open(self.db_path)
+        try:
+            with self.assertRaises(ValueError):
+                self._open_trade(store, entry_quantity=Decimal("1"), entry_position_version=0)
+        finally:
+            store.close()
+
+    def test_create_robot_trade_duplicate_with_different_attestation_fails_closed(self) -> None:
+        store = SQLiteStore.open(self.db_path)
+        try:
+            self._open_trade(store, entry_quantity=Decimal("2.5"), entry_position_version=1)
+            with self.assertRaises(DuplicateIdentity):
+                store.create_robot_trade(
+                    trade_id="robot-trade-c1",
+                    trading_account_id=self.account,
+                    candidate_id="c1",
+                    symbol=Symbol("BTCUSDT"),
+                    direction="LONG",
+                    pattern="Falling Wedge",
+                    source_timeframe="1",
+                    signal_time_ms=1000,
+                    entry_time_ms=1100,
+                    entry_path="LIMIT",
+                    actual_wv=Decimal("1"),
+                    average_entry=Decimal("100"),
+                    stop_price=Decimal("98"),
+                    take_price=Decimal("104"),
+                    entry_quantity=Decimal("999"),
+                    entry_position_version=1,
+                    created_at_ms=1100,
+                )
+        finally:
+            store.close()
+
+    def test_legacy_trade_has_null_attestation(self) -> None:
+        """A pre-v18 (v17) row migrated forward has no attestation at all --
+        the exact state D2.3 dispatch must treat as missing and fail closed."""
+        store = SQLiteStore.open(self.db_path)
+        try:
+            self._open_trade(store)
+            self._make_trade_legacy(store, "robot-trade-c1")
+            trade = store.get_robot_trade("robot-trade-c1")
+            self.assertIsNone(trade.entry_quantity)
+            self.assertIsNone(trade.entry_position_version)
         finally:
             store.close()
 

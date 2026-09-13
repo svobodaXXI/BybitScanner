@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -678,6 +678,18 @@ SCHEMA_V17_MIGRATION_STATEMENTS = (
     """,
 )
 
+SCHEMA_V18_MIGRATION_STATEMENTS = (
+    # Owner-frozen D2.3 ownership attestation (CR-PAPER-PROTECTION-LIFECYCLE-001):
+    # the Robot's own entry quantity and the position_projections.version
+    # watermark observed right after Robot entry finalized. Both additive and
+    # nullable so a v17 database upgrades without data loss; NULL on a
+    # pre-existing row means no attestation was ever recorded for it, which
+    # the D2.3 dispatch gate treats as missing attestation and fails closed.
+    "ALTER TABLE robot_trades ADD COLUMN entry_quantity TEXT",
+    "ALTER TABLE robot_trades ADD COLUMN entry_position_version INTEGER "
+    "CHECK (entry_position_version IS NULL OR entry_position_version >= 1)",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -696,4 +708,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V15_MIGRATION_STATEMENTS
     + SCHEMA_V16_MIGRATION_STATEMENTS
     + SCHEMA_V17_MIGRATION_STATEMENTS
+    + SCHEMA_V18_MIGRATION_STATEMENTS
 )

@@ -51,6 +51,7 @@ from .schema import (
     SCHEMA_V15_MIGRATION_STATEMENTS,
     SCHEMA_V16_MIGRATION_STATEMENTS,
     SCHEMA_V17_MIGRATION_STATEMENTS,
+    SCHEMA_V18_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -512,6 +513,8 @@ class RobotTradeRecord:
     version: int
     created_at_ms: int
     updated_at_ms: int
+    entry_quantity: Decimal | None
+    entry_position_version: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -721,6 +724,10 @@ def _robot_trade_from_row(row: sqlite3.Row) -> RobotTradeRecord:
         realized_pnl_pct=optional_decimal(row["realized_pnl_pct"]),
         fees_costs_usdt=optional_decimal(row["fees_costs_usdt"]), version=int(row["version"]),
         created_at_ms=int(row["created_at_ms"]), updated_at_ms=int(row["updated_at_ms"]),
+        entry_quantity=optional_decimal(row["entry_quantity"]),
+        entry_position_version=(
+            int(row["entry_position_version"]) if row["entry_position_version"] is not None else None
+        ),
     )
 
 
@@ -801,6 +808,11 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 17:
+            SQLiteStore._validate_required_tables(connection, version=17)
+            SQLiteStore._migrate_v17_to_v18(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 16:
@@ -1117,6 +1129,19 @@ class SQLiteStore:
             for statement in SCHEMA_V17_MIGRATION_STATEMENTS:
                 connection.execute(statement)
             connection.execute("PRAGMA user_version = 17")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        SQLiteStore._migrate_v17_to_v18(connection)
+
+    @staticmethod
+    def _migrate_v17_to_v18(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V18_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 18")
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")
@@ -3594,8 +3619,16 @@ class SQLiteStore:
         symbol: Symbol, direction: str, pattern: str, source_timeframe: str,
         signal_time_ms: int, entry_time_ms: int, entry_path: str, actual_wv: Decimal,
         average_entry: Decimal, stop_price: Decimal, take_price: Decimal,
+        entry_quantity: Decimal, entry_position_version: int,
         created_at_ms: int,
     ) -> tuple[RobotTradeRecord, bool]:
+        """entry_quantity/entry_position_version are the owner-frozen D2.3
+        ownership attestation (CR-PAPER-PROTECTION-LIFECYCLE-001): the
+        Robot's own entry fill quantity and the position_projections.version
+        watermark observed right after that entry finalized. Both are
+        required here -- only pre-existing (v17) rows migrated before this
+        attestation existed may lack them, and D2.3 dispatch fails closed on
+        that absence rather than guessing."""
         self._assert_owner()
         if not trade_id.strip() or direction not in ROBOT_DIRECTIONS or entry_path not in ROBOT_ENTRY_PATHS:
             raise ValueError("invalid Robot trade identity, direction or entry path")
@@ -3609,11 +3642,17 @@ class SQLiteStore:
             _decimal_text(value)
         if not (Decimal("0") < actual_wv <= Decimal("1")) or any(value <= 0 for value in decimals[1:]):
             raise ValueError("invalid Robot trade size or price")
+        _decimal_text(entry_quantity)
+        if entry_quantity <= 0:
+            raise ValueError("invalid Robot trade entry quantity")
+        if entry_position_version < 1:
+            raise ValueError("invalid Robot trade entry position version")
         values = (
             trade_id, trading_account_id.value, candidate_id, symbol.value, direction, pattern,
             source_timeframe, signal_time_ms, entry_time_ms, entry_path,
             *(_decimal_text(value) for value in decimals),
             None, None, None, None, None, None, 1, created_at_ms, created_at_ms,
+            _decimal_text(entry_quantity), entry_position_version,
         )
         with self._transaction():
             existing = self._connection.execute(
@@ -3630,6 +3669,8 @@ class SQLiteStore:
                     and record.entry_path == entry_path and record.actual_wv == actual_wv
                     and record.average_entry == average_entry and record.stop_price == stop_price
                     and record.take_price == take_price
+                    and record.entry_quantity == entry_quantity
+                    and record.entry_position_version == entry_position_version
                 )
                 if not same:
                     raise DuplicateIdentity("Robot trade identity conflicts with durable trade")

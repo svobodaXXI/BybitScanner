@@ -1097,14 +1097,25 @@ class PaperRuntime:
             position_key = PositionKey(trade.trading_account_id, Category.LINEAR, trade.symbol, 0)
             position = self.store.get_position_projection(position_key)
             expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
+            # Owner-frozen D2.3 ownership attestation gate
+            # (CR-PAPER-PROTECTION-LIFECYCLE-001): autonomous close is allowed
+            # only when the CURRENT aggregate position can be proven to
+            # descend from Robot's own entry with no unknown mutation since.
+            # entry_position_version alone would miss a manual add+reduce
+            # that nets back to the original quantity; entry_quantity alone
+            # would miss a same-quantity replacement lifecycle. Together they
+            # close both gaps. Missing (legacy, pre-attestation) trades and
+            # any mismatch fail closed -- never guess which portion of a
+            # mixed/replaced aggregate belongs to the Robot.
             if (
-                position is None
+                trade.entry_position_version is None
+                or trade.entry_quantity is None
+                or trade.entry_quantity <= 0
+                or position is None
                 or position.side is not expected_side
-                or position.quantity.value <= 0
+                or position.quantity.value != trade.entry_quantity
+                or position.version != trade.entry_position_version
             ):
-                # Flat, or the current exposure no longer matches this
-                # lifecycle's own direction (replacement/mixed ambiguity):
-                # fail closed rather than close whatever is there now.
                 return obligation
             if obligation.status == "TRIGGERED":
                 obligation = self.store.transition_paper_protection_obligation(
@@ -1157,6 +1168,17 @@ class PaperRuntime:
             # DISPATCHING for reconciliation rather than finalize from an
             # unproven position state.
             return obligation
+        if trade.entry_quantity is None:
+            # Reached only if an exec was somehow recorded for a trade
+            # lacking the ownership attestation (e.g. resuming a lifecycle
+            # dispatched before this gate existed): missing attestation
+            # fails closed here too, not only at the pre-execute gate.
+            LOGGER.error(
+                "Robot protection finalize cannot prove entry attestation; "
+                "leaving for reconciliation; obligation=%s trade_id=%s",
+                obligation.obligation_id, trade.trade_id,
+            )
+            return obligation
         exit_price = execution.price.value
         exit_quantity = execution.quantity.value
         fees_costs_usdt = execution.fee
@@ -1166,12 +1188,13 @@ class PaperRuntime:
         else:
             realized_pnl_usdt = exit_quantity * (trade.average_entry - exit_price)
         # Owner-frozen convention (CR-PAPER-PROTECTION-LIFECYCLE-001 section 12):
-        # actual_entry_notional_usdt is the actual Robot-owned entry quantity
-        # (this closing fill's own quantity -- the full residual of a
-        # lifecycle with no other reduction path) times the actual average
-        # entry price; actual_wv is a WV fraction, never a USDT notional, and
-        # must never be substituted here.
-        actual_entry_notional_usdt = exit_quantity * trade.average_entry
+        # actual_entry_notional_usdt is the attested Robot-owned entry
+        # quantity (trade.entry_quantity, proven -- not merely assumed --
+        # equal to the aggregate at dispatch time by the ownership gate
+        # above) times the actual average entry price; never the closing
+        # execution/aggregate quantity, and never actual_wv, which is a WV
+        # fraction, not a USDT notional.
+        actual_entry_notional_usdt = trade.entry_quantity * trade.average_entry
         if actual_entry_notional_usdt <= 0:
             LOGGER.error(
                 "Robot protection close cannot prove a positive entry notional; "

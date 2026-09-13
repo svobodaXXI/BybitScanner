@@ -351,6 +351,12 @@ class TerminalPersistenceTests(unittest.TestCase):
         connection = sqlite3.connect(self.database_path)
         connection.execute("DROP TABLE paper_protection_obligations")
         connection.execute("DROP TABLE robot_runtime_state")
+        # robot_trades is v18-shaped from the fresh open_store() above; strip
+        # the v18-only columns so this genuinely looks like a v15 database
+        # (otherwise the v17->v18 step later in the chain hits "duplicate
+        # column name" trying to add them again).
+        connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_quantity")
+        connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_position_version")
         connection.execute(
             """
             CREATE TABLE robot_runtime_state (
@@ -455,7 +461,8 @@ class TerminalPersistenceTests(unittest.TestCase):
                 symbol=Symbol("BTCUSDT"), direction="LONG", pattern="Falling Wedge",
                 source_timeframe="1", signal_time_ms=900, entry_time_ms=1500,
                 entry_path="MIXED", actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
-                stop_price=Decimal("98"), take_price=Decimal("106"), created_at_ms=1500,
+                stop_price=Decimal("98"), take_price=Decimal("106"),
+                entry_quantity=Decimal("1"), entry_position_version=1, created_at_ms=1500,
             )
             self.assertTrue(created)
             self.assertEqual(store.get_robot_candidate("candidate-trade").status, "OPEN")
@@ -499,7 +506,8 @@ class TerminalPersistenceTests(unittest.TestCase):
                 symbol=Symbol("BTCUSDT"), direction="LONG", pattern="Falling Wedge",
                 source_timeframe="1", signal_time_ms=900, entry_time_ms=1500,
                 entry_path="LIMIT", actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
-                stop_price=Decimal("98"), take_price=Decimal("106"), created_at_ms=1500,
+                stop_price=Decimal("98"), take_price=Decimal("106"),
+                entry_quantity=Decimal("1"), entry_position_version=1, created_at_ms=1500,
             )
             self.assertEqual(
                 store.get_open_robot_trade_for_symbol(account, Symbol("BTCUSDT")), trade,
@@ -530,7 +538,8 @@ class TerminalPersistenceTests(unittest.TestCase):
                     direction="LONG", pattern=f"pattern-{index}", source_timeframe="1",
                     signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
                     actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
-                    stop_price=Decimal("98"), take_price=Decimal("106"), created_at_ms=1500,
+                    stop_price=Decimal("98"), take_price=Decimal("106"),
+                    entry_quantity=Decimal("1"), entry_position_version=1, created_at_ms=1500,
                 )
             self.assertIsNone(
                 store.get_open_robot_trade_for_symbol(account, Symbol("ETHUSDT"))
@@ -725,7 +734,8 @@ class TerminalPersistenceTests(unittest.TestCase):
                 symbol=Symbol("BTCUSDT"), direction="LONG", pattern="Falling Wedge",
                 source_timeframe="1", signal_time_ms=900, entry_time_ms=1000,
                 entry_path="LIMIT", actual_wv=Decimal("1"), average_entry=Decimal("100"),
-                stop_price=Decimal("98"), take_price=Decimal("104"), created_at_ms=1000,
+                stop_price=Decimal("98"), take_price=Decimal("104"),
+                entry_quantity=Decimal("1"), entry_position_version=1, created_at_ms=1000,
             )
 
         # Simulate a real pre-v17 database: drop the v17-only table and pin
@@ -733,6 +743,13 @@ class TerminalPersistenceTests(unittest.TestCase):
         # migration rather than a fresh create.
         connection = sqlite3.connect(self.database_path)
         connection.execute("DROP TABLE paper_protection_obligations")
+        # robot_trades is v18-shaped from the create_robot_trade() call above;
+        # strip the v18-only columns so this genuinely looks like a v16
+        # database (the row's own attestation is not what this test proves --
+        # test_v17_to_v18_migration_preserves_robot_trades_with_null_attestation
+        # owns that).
+        connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_quantity")
+        connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_position_version")
         connection.execute("PRAGMA user_version = 16")
         connection.commit()
         connection.close()
@@ -756,6 +773,51 @@ class TerminalPersistenceTests(unittest.TestCase):
             )
             self.assertTrue(created)
             self.assertEqual(latched.trade_id, "trade-v16")
+
+    def test_v17_to_v18_migration_preserves_robot_trades_with_null_attestation(self):
+        """D2.3 review-fix: entry_quantity/entry_position_version are new
+        additive nullable columns. A real pre-v18 database has robot_trades
+        rows with no attestation at all -- upgrading must preserve them
+        exactly, with both new columns NULL, not fabricate or backfill a
+        value the v17 data never proved."""
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            store.create_robot_candidate(
+                candidate_id="candidate-v17", trading_account_id=account, symbol=Symbol("BTCUSDT"),
+                status="APPROVED", signal_snapshot={"pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            store.create_robot_trade(
+                trade_id="trade-v17", trading_account_id=account, candidate_id="candidate-v17",
+                symbol=Symbol("BTCUSDT"), direction="LONG", pattern="Falling Wedge",
+                source_timeframe="1", signal_time_ms=900, entry_time_ms=1000,
+                entry_path="LIMIT", actual_wv=Decimal("1"), average_entry=Decimal("100"),
+                stop_price=Decimal("98"), take_price=Decimal("104"),
+                entry_quantity=Decimal("1"), entry_position_version=1, created_at_ms=1000,
+            )
+
+        # Simulate a real pre-v18 database: remove the v18-only columns and
+        # pin user_version=17 so SQLiteStore exercises the actual v17->v18
+        # migration rather than a fresh create.
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_quantity")
+        connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_position_version")
+        connection.execute("PRAGMA user_version = 17")
+        connection.commit()
+        connection.close()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+            preserved_trade = store.get_robot_trade("trade-v17")
+            self.assertEqual(preserved_trade.average_entry, Decimal("100"))
+            self.assertEqual(preserved_trade.stop_price, Decimal("98"))
+            self.assertEqual(preserved_trade.take_price, Decimal("104"))
+            self.assertIsNone(preserved_trade.exit_time_ms)
+            self.assertIsNone(preserved_trade.entry_quantity)
+            self.assertIsNone(preserved_trade.entry_position_version)
+            self.assertEqual(
+                store.get_robot_candidate("candidate-v17").status, "OPEN",
+            )
 
     def test_paper_state_revision_is_durable_and_ignores_idempotent_or_noop_mutations(self):
         account_id = TradingAccountId("paper")
