@@ -21,7 +21,9 @@ from terminal.api.models import (
     PaperLimitAmendRequest,
     TimeInForce,
 )
-from terminal.domain.models import Category, OrderSide, PositionSide, Price, Quantity, Symbol
+from terminal.domain.models import (
+    Category, OrderSide, PositionKey, PositionSide, Price, Quantity, Symbol,
+)
 from terminal.domain.models import TradingAccountId
 from terminal.application.trading_accounts import (
     TradingAccount,
@@ -67,6 +69,22 @@ class ToggleBookProvider(StaticBookProvider):
         return book
 
 
+class MutableBookProvider:
+    """Independently controls the execution-time book a dispatch reads
+    (self.book_provider.get_book(symbol)) from whatever trigger book a test
+    passes into evaluate_robot_protection_crossing -- mirrors the CR's
+    trigger-evidence-vs-execution-evidence distinction (section 9)."""
+
+    def __init__(self, symbol: str, book: NormalizedOrderBook) -> None:
+        self._books: dict[str, NormalizedOrderBook] = {symbol: book}
+
+    def set_book(self, symbol: str, book: NormalizedOrderBook) -> None:
+        self._books[symbol] = book
+
+    def get_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
+        return self._books.get(symbol.value)
+
+
 def _instrument() -> InstrumentSnapshot:
     return InstrumentSnapshot(
         Category.LINEAR, "BTCUSDT", "LinearPerpetual", "Trading",
@@ -81,6 +99,16 @@ def _runtime(path: Path) -> PaperRuntime:
     return PaperRuntime(
         path,
         book_provider=StaticBookProvider(),
+        instrument_snapshot=primary,
+        instrument_provider=lambda symbol: replace(primary, symbol=symbol),
+    )
+
+
+def _runtime_with_provider(path: Path, provider) -> PaperRuntime:
+    primary = _instrument()
+    return PaperRuntime(
+        path,
+        book_provider=provider,
         instrument_snapshot=primary,
         instrument_provider=lambda symbol: replace(primary, symbol=symbol),
     )
@@ -178,7 +206,11 @@ def _crossing_book(symbol: str, *, bid: str, ask: str) -> NormalizedOrderBook:
         bids=(PriceLevel(Price(Decimal(bid)), Quantity(Decimal("1"))),),
         asks=(PriceLevel(Price(Decimal(ask)), Quantity(Decimal("1"))),),
         health=BookHealth.READY,
-        received_at_ms=1_700_000_000_000,
+        # Fresh real time -- D2.3 dispatch may feed this same book straight
+        # into PaperMarketExecutor.execute(), which fails closed on a stale
+        # (max_book_age_ms) book; a fixed historical timestamp would make
+        # every real close attempt in these tests spuriously stale.
+        received_at_ms=int(__import__("time").time() * 1000),
         available_depth=1,
     )
 
@@ -250,14 +282,24 @@ def test_robot_protection_crossing_leg_preserves_long_short_and_stop_precedence(
 
 
 def test_evaluate_robot_protection_crossing_latches_first_leg_and_survives_retreat_and_duplicates():
+    """D2.1 latch survives retreat/duplicate observations; D2.3 dispatch is
+    attempted on every observation once latched (never re-evaluating the
+    crossing predicate) but fails closed while no execution-time book is
+    available, without losing or duplicating the obligation -- only a later
+    valid book actually resolves it (CR sections 9/11, T08/T09)."""
     with tempfile.TemporaryDirectory() as temp:
-        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        # No execution-time book yet: any dispatch attempt must fail closed
+        # (RuntimeError from PaperMarketExecutor) rather than erase the latch.
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
         try:
             _open_robot_position_with_confirmed_protection(
                 runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
                 stop_price=Decimal("64000"), take_price=Decimal("64600"),
                 trade_id="trade-crossing-1", candidate_id="candidate-crossing-1",
             )
+            executions_after_entry = len(runtime.store.load_executions())
+            provider.set_book("BTCUSDT", None)
 
             latched = runtime.evaluate_robot_protection_crossing(
                 "BTCUSDT", _crossing_book("BTCUSDT", bid="63990", ask="63995"),
@@ -266,13 +308,17 @@ def test_evaluate_robot_protection_crossing_latches_first_leg_and_survives_retre
             assert latched is not None
             assert latched.winning_leg == "STOP"
             assert latched.trade_id == "trade-crossing-1"
+            assert latched.status == "DISPATCHING"
 
-            # Retreat: this observation crosses neither leg -- must not erase it.
+            # Retreat: this observation crosses neither leg, but the
+            # obligation is already latched -- dispatch is attempted
+            # regardless (using whatever the current book is), and it must
+            # survive the still-unavailable execution book unchanged.
             retreated = runtime.evaluate_robot_protection_crossing(
                 "BTCUSDT", _crossing_book("BTCUSDT", bid="64300", ask="64305"),
                 event_id="evt-2", received_at_ms=2100,
             )
-            assert retreated is None
+            assert retreated == latched
             assert runtime.store.get_paper_protection_obligation(
                 latched.obligation_id
             ) == latched
@@ -283,6 +329,20 @@ def test_evaluate_robot_protection_crossing_latches_first_leg_and_survives_retre
                 event_id="evt-3", received_at_ms=2200,
             )
             assert duplicate == latched
+            assert len(runtime.store.load_executions()) == executions_after_entry
+
+            # Only once a valid execution-time book actually appears does the
+            # committed obligation resolve -- using that current book, not
+            # any of the earlier (trigger-only) observations above.
+            provider.set_book("BTCUSDT", _crossing_book("BTCUSDT", bid="63970", ask="63975"))
+            resolved = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", _crossing_book("BTCUSDT", bid="63960", ask="63965"),
+                event_id="evt-4", received_at_ms=2300,
+            )
+            assert resolved.status == "RESOLVED"
+            trade = runtime.store.get_robot_trade("trade-crossing-1")
+            assert trade.exit_time_ms is not None
+            assert trade.exit_price == Decimal("63970")
         finally:
             runtime.close()
 
@@ -432,6 +492,349 @@ def test_robot_protection_coverage_symbols_unions_open_trades_and_unresolved_obl
             )
 
             assert runtime.robot_protection_coverage_symbols() == ("BTCUSDT", "ETHUSDT")
+        finally:
+            runtime.close()
+
+
+def _entry_book() -> NormalizedOrderBook:
+    return _crossing_book("BTCUSDT", bid="64249.5", ask="64250.5")
+
+
+def test_dispatch_resolves_stop_close_and_finalizes_robot_trade_with_frozen_pnl_pct():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-stop-1", candidate_id="candidate-stop-1",
+            )
+            position_key = PositionKey(
+                TradingAccountId("paper"), Category.LINEAR, Symbol("BTCUSDT"), 0,
+            )
+            entry_quantity = runtime.store.get_position_projection(position_key).quantity.value
+
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+
+            obligation = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-stop", received_at_ms=5000,
+            )
+
+            assert obligation is not None
+            assert obligation.status == "RESOLVED"
+            assert obligation.winning_leg == "STOP"
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+
+            trade = runtime.store.get_robot_trade("trade-stop-1")
+            assert trade.exit_time_ms is not None
+            assert trade.exit_reason == "STOP"
+            assert trade.exit_price == Decimal("63990")
+            expected_pnl = entry_quantity * (Decimal("63990") - Decimal("64250.5"))
+            assert trade.realized_pnl_usdt == expected_pnl
+            expected_notional = entry_quantity * Decimal("64250.5")
+            expected_pct = (
+                (expected_pnl - trade.fees_costs_usdt) / expected_notional * 100
+            )
+            assert trade.realized_pnl_pct == expected_pct
+
+            candidates = runtime.store.load_robot_candidates(TradingAccountId("paper"))
+            candidate = next(c for c in candidates if c.candidate_id == "candidate-stop-1")
+            assert candidate.status == "CLOSED"
+
+            executions_after_first_resolution = len(runtime.store.load_executions())
+            assert any(
+                execution.order_id == obligation.order_id
+                for execution in runtime.store.load_executions()
+            )
+
+            # A duplicate/late quote after resolution must be a safe no-op:
+            # no re-execution, no obligation/trade mutation, no crash.
+            repeat = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-stop-dup", received_at_ms=5100,
+            )
+            assert repeat is None
+            assert len(runtime.store.load_executions()) == executions_after_first_resolution
+            assert runtime.store.get_robot_trade("trade-stop-1") == trade
+        finally:
+            runtime.close()
+
+
+def test_dispatch_resolves_take_close_and_finalizes_robot_trade():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-take-1", candidate_id="candidate-take-1",
+            )
+            close_book = _crossing_book("BTCUSDT", bid="64650", ask="64655")
+            provider.set_book("BTCUSDT", close_book)
+
+            obligation = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-take", received_at_ms=5000,
+            )
+
+            assert obligation is not None
+            assert obligation.status == "RESOLVED"
+            assert obligation.winning_leg == "TAKE"
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+
+            trade = runtime.store.get_robot_trade("trade-take-1")
+            assert trade.exit_reason == "TAKE"
+            assert trade.exit_price == Decimal("64650")
+            assert trade.realized_pnl_usdt > 0
+        finally:
+            runtime.close()
+
+
+def test_dispatch_uses_current_position_quantity_not_stale_observed_quantity():
+    """CR section 7/9: shared position evidence remains current-quantity
+    authority. An obligation's own observed_quantity (recorded at latch time)
+    must never be used to size the close -- only the position's actual
+    current quantity at dispatch time."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-qty-1", candidate_id="candidate-qty-1",
+            )
+            position_key = PositionKey(
+                TradingAccountId("paper"), Category.LINEAR, Symbol("BTCUSDT"), 0,
+            )
+            entry_quantity = runtime.store.get_position_projection(position_key).quantity.value
+
+            # Manually latch with a deliberately wrong observed_quantity --
+            # dispatch must ignore it and close the real current quantity.
+            runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-qty-1", protection_version=1, winning_leg="STOP",
+                trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
+                observed_quantity=Decimal("999"), market_event_id="evt-qty-latch",
+                source_received_at_ms=4000, latched_at_ms=4000,
+            )
+
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+            obligation = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-qty-dispatch", received_at_ms=4100,
+            )
+
+            assert obligation.status == "RESOLVED"
+            executions = runtime.store.load_executions()
+            closing_execution = next(e for e in executions if e.order_id == obligation.order_id)
+            assert closing_execution.quantity.value == entry_quantity
+        finally:
+            runtime.close()
+
+
+def test_dispatch_resumes_from_triggered_after_restart():
+    with tempfile.TemporaryDirectory() as temp:
+        db_path = Path(temp) / "paper.sqlite3"
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(db_path, provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-restart-triggered", candidate_id="candidate-restart-triggered",
+            )
+            # Only latch (D2.1) -- simulate a crash before any dispatch attempt.
+            latched, _ = runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-restart-triggered", protection_version=1, winning_leg="STOP",
+                trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
+                observed_quantity=Decimal("1"), market_event_id="evt-restart-latch",
+                source_received_at_ms=4000, latched_at_ms=4000,
+            )
+            assert latched.status == "TRIGGERED"
+        finally:
+            runtime.close()
+
+        resumed_provider = MutableBookProvider(
+            "BTCUSDT", _crossing_book("BTCUSDT", bid="63990", ask="63995"),
+        )
+        resumed = _runtime_with_provider(db_path, resumed_provider)
+        try:
+            obligation = resumed.evaluate_robot_protection_crossing(
+                "BTCUSDT", resumed_provider.get_book(Symbol("BTCUSDT")),
+                event_id="evt-restart-resume", received_at_ms=6000,
+            )
+            assert obligation is not None
+            assert obligation.status == "RESOLVED"
+            trade = resumed.store.get_robot_trade("trade-restart-triggered")
+            assert trade.exit_time_ms is not None
+            assert trade.exit_reason == "STOP"
+        finally:
+            resumed.close()
+
+
+def test_dispatch_resumes_from_dispatching_before_execution_after_restart():
+    with tempfile.TemporaryDirectory() as temp:
+        db_path = Path(temp) / "paper.sqlite3"
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(db_path, provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-restart-dispatching", candidate_id="candidate-restart-dispatching",
+            )
+            latched, _ = runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-restart-dispatching", protection_version=1, winning_leg="STOP",
+                trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
+                observed_quantity=Decimal("1"), market_event_id="evt-restart-latch-2",
+                source_received_at_ms=4000, latched_at_ms=4000,
+            )
+            # Simulate a crash right after the claim, before execute() ran.
+            claimed = runtime.store.transition_paper_protection_obligation(
+                latched.obligation_id, expected_status="TRIGGERED", next_status="DISPATCHING",
+                expected_version=latched.version, updated_at_ms=4001,
+            )
+            assert claimed.status == "DISPATCHING"
+            executions_before_execute = len(runtime.store.load_executions())
+        finally:
+            runtime.close()
+
+        resumed_provider = MutableBookProvider(
+            "BTCUSDT", _crossing_book("BTCUSDT", bid="63990", ask="63995"),
+        )
+        resumed = _runtime_with_provider(db_path, resumed_provider)
+        try:
+            assert len(resumed.store.load_executions()) == executions_before_execute
+            obligation = resumed.evaluate_robot_protection_crossing(
+                "BTCUSDT", resumed_provider.get_book(Symbol("BTCUSDT")),
+                event_id="evt-restart-resume-2", received_at_ms=6000,
+            )
+            assert obligation is not None
+            assert obligation.status == "RESOLVED"
+            trade = resumed.store.get_robot_trade("trade-restart-dispatching")
+            assert trade.exit_time_ms is not None
+        finally:
+            resumed.close()
+
+
+def test_dispatch_resumes_from_dispatching_after_execution_before_finalization_after_restart():
+    with tempfile.TemporaryDirectory() as temp:
+        db_path = Path(temp) / "paper.sqlite3"
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(db_path, provider)
+        close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-restart-executed", candidate_id="candidate-restart-executed",
+            )
+            position_key = PositionKey(
+                TradingAccountId("paper"), Category.LINEAR, Symbol("BTCUSDT"), 0,
+            )
+            quantity = runtime.store.get_position_projection(position_key).quantity.value
+            latched, _ = runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-restart-executed", protection_version=1, winning_leg="STOP",
+                trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
+                observed_quantity=Decimal("1"), market_event_id="evt-restart-latch-3",
+                source_received_at_ms=4000, latched_at_ms=4000,
+            )
+            claimed = runtime.store.transition_paper_protection_obligation(
+                latched.obligation_id, expected_status="TRIGGERED", next_status="DISPATCHING",
+                expected_version=latched.version, updated_at_ms=4001,
+            )
+            provider.set_book("BTCUSDT", close_book)
+            # Simulate the close having actually executed before the crash --
+            # using the obligation's own stable D2.1 order/exec identity, exactly
+            # as _dispatch_paper_protection_obligation would.
+            runtime._market_executor.execute(
+                trading_account_id=TradingAccountId("paper"),
+                symbol=Symbol("BTCUSDT"),
+                side=OrderSide.SELL,
+                quantity=Quantity(quantity),
+                order_link_id=claimed.obligation_id,
+                order_id=claimed.order_id,
+                exec_id=claimed.exec_id,
+            )
+            executions_before_restart = len(runtime.store.load_executions())
+            # Neither the trade nor the candidate may be finalized yet -- proven
+            # execution evidence alone is not proven finalization.
+            assert runtime.store.get_robot_trade("trade-restart-executed").exit_time_ms is None
+            candidates = runtime.store.load_robot_candidates(TradingAccountId("paper"))
+            assert next(
+                c for c in candidates if c.candidate_id == "candidate-restart-executed"
+            ).status == "OPEN"
+        finally:
+            runtime.close()
+
+        resumed_provider = MutableBookProvider("BTCUSDT", close_book)
+        resumed = _runtime_with_provider(db_path, resumed_provider)
+        try:
+            obligation = resumed.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-restart-resume-3", received_at_ms=6000,
+            )
+            assert obligation is not None
+            assert obligation.status == "RESOLVED"
+            assert len(resumed.store.load_executions()) == executions_before_restart
+
+            trade = resumed.store.get_robot_trade("trade-restart-executed")
+            assert trade.exit_time_ms is not None
+            assert trade.exit_reason == "STOP"
+            candidates = resumed.store.load_robot_candidates(TradingAccountId("paper"))
+            assert next(
+                c for c in candidates if c.candidate_id == "candidate-restart-executed"
+            ).status == "CLOSED"
+        finally:
+            resumed.close()
+
+
+def test_dispatch_fails_closed_when_manual_close_wins_race_before_our_exec():
+    """Manual/replacement ambiguity must fail closed (CR failure-mode table):
+    if the position is flattened by something other than this obligation's
+    own stable exec before dispatch runs, dispatch must not attribute that
+    fill to itself, must not call close_robot_trade(), and must leave the
+    obligation for reconciliation instead of guessing."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-manual-race", candidate_id="candidate-manual-race",
+            )
+            latched, _ = runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-manual-race", protection_version=1, winning_leg="STOP",
+                trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
+                observed_quantity=Decimal("1"), market_event_id="evt-manual-latch",
+                source_received_at_ms=4000, latched_at_ms=4000,
+            )
+
+            # A manual full_close wins the race and flattens the position
+            # through a different (non-obligation) exec before our dispatch runs.
+            manual_close = runtime.api.full_close(
+                FullCloseCommandRequest(ClientActionId("manual-race-close"), "BTCUSDT")
+            )
+            assert manual_close.status is CommandResultStatus.COMPLETED
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", close_book, event_id="evt-manual-dispatch", received_at_ms=4100,
+            )
+
+            assert result is not None
+            assert result.status == "TRIGGERED"
+            assert result.obligation_id == latched.obligation_id
+
+            trade = runtime.store.get_robot_trade("trade-manual-race")
+            assert trade.exit_time_ms is None
+            candidates = runtime.store.load_robot_candidates(TradingAccountId("paper"))
+            assert next(
+                c for c in candidates if c.candidate_id == "candidate-manual-race"
+            ).status == "OPEN"
         finally:
             runtime.close()
 

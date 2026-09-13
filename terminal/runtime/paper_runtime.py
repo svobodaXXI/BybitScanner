@@ -51,8 +51,8 @@ from terminal.application.live_account_reconciliation import (
 from terminal.application.robot_recovery import RobotRecoveryCoordinator
 from scanner_geometry_cursor import latest_scanner_closed_candle
 from terminal.domain.models import (
-    ExecutionId, OrderId, OrderSide, PositionSide, Quantity, Symbol,
-    TradingAccountId,
+    Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
+    PositionSide, Quantity, Symbol, TradingAccountId,
 )
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.exchange.bybit_account_validation import BybitAccountValidator
@@ -62,7 +62,7 @@ from terminal.market_data.book_provider import MarketBookProvider
 from terminal.market_data.models import NormalizedOrderBook
 from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
 from terminal.persistence.sqlite_store import (
-    ExecutionApplyResult, PaperProtectionObligationRecord, SQLiteStore,
+    ExecutionApplyResult, PaperProtectionObligationRecord, RobotTradeRecord, SQLiteStore,
 )
 from terminal.persistence.credential_store import CredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
@@ -977,23 +977,48 @@ class PaperRuntime:
         self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,
     ) -> PaperProtectionObligationRecord | None:
         """Durably latch the first qualifying STOP/TAKE crossing for the
-        Robot trade owning ``symbol``, independent of Workspace selection,
-        UI active account, or Robot entry-admission state.
+        Robot trade owning ``symbol``, then drive it towards a real PAPER
+        close (D2.3), independent of Workspace selection, UI active account,
+        or Robot entry-admission state.
 
-        Never dispatches a close: this only proves and durably records which
-        leg first qualified (SQLiteStore.latch_paper_protection_obligation),
-        so a later retreat or duplicate quote cannot erase or duplicate it.
-        Returns None -- not an error -- for anything that is not yet (or no
-        longer) a qualifying Robot protection crossing: no open Robot trade
-        for the symbol, ambiguous attribution (more than one open trade for
-        the symbol), no confirmed protection, an already-flat position, or a
+        A trade whose obligation is already latched skips straight to
+        dispatch/resume using the CURRENT valid book -- a retreat after latch
+        or a restart between latch and finalization must not require a fresh
+        crossing to make progress (CR section 9/11). Returns None -- not an
+        error -- for anything that is not yet (or no longer) actionable: no
+        open Robot trade and no orphaned unresolved obligation for the
+        symbol, ambiguous attribution (more than one open trade for the
+        symbol), no confirmed protection, an already-flat position, or a
         quote that does not cross either leg.
         """
         normalized = Symbol(symbol.strip().upper())
         trade = self.store.get_open_robot_trade_for_symbol(self._paper_account_id, normalized)
-        if trade is None:
-            return None
-        context = self._robot_context.context_for(normalized.value)
+        if trade is not None:
+            obligation = self.store.get_paper_protection_obligation_for_trade(trade.trade_id)
+            if obligation is not None and obligation.status != "RESOLVED":
+                return self._dispatch_paper_protection_obligation(obligation, now_ms=received_at_ms)
+            return self._evaluate_fresh_protection_crossing(
+                trade, book, event_id=event_id, received_at_ms=received_at_ms,
+            )
+        # No currently open Robot trade for this symbol -- but coverage
+        # (robot_protection_coverage_symbols) keeps this symbol subscribed
+        # whenever a durable obligation from an already-exited lifecycle is
+        # still unresolved (e.g. crash between our own execution and
+        # finalization). Resume it here instead of silently dropping it.
+        for obligation in self.store.load_unresolved_paper_protection_obligations(
+            self._paper_account_id,
+        ):
+            if obligation.symbol == normalized:
+                return self._dispatch_paper_protection_obligation(obligation, now_ms=received_at_ms)
+        return None
+
+    def _evaluate_fresh_protection_crossing(
+        self, trade: RobotTradeRecord, book: NormalizedOrderBook, *, event_id: str,
+        received_at_ms: int,
+    ) -> PaperProtectionObligationRecord | None:
+        """Latch (D2.1) and immediately attempt dispatch (D2.3) for a Robot
+        trade that does not yet own a durable protection obligation."""
+        context = self._robot_context.context_for(trade.symbol.value)
         position_key = context.pretrade.position_key
         protection = self.store.get_protection_projection(position_key)
         if protection is None or (
@@ -1029,7 +1054,153 @@ class PaperRuntime:
             source_received_at_ms=received_at_ms,
             latched_at_ms=received_at_ms,
         )
-        return record
+        return self._dispatch_paper_protection_obligation(record, now_ms=received_at_ms)
+
+    def _dispatch_paper_protection_obligation(
+        self, obligation: PaperProtectionObligationRecord, *, now_ms: int,
+    ) -> PaperProtectionObligationRecord:
+        """Idempotently drive one durable D2.1 obligation from
+        TRIGGERED/DISPATCHING to RESOLVED (D2.3).
+
+        Dispatches the real PAPER close through the shared PaperMarketExecutor
+        using the obligation's own D2.1 stable order/exec identity, then
+        finalizes the Robot trade only from proven execution evidence. Safe
+        to call repeatedly for the same obligation -- new quotes, restart
+        resume, duplicate delivery -- because it never re-executes an
+        already-recorded stable exec (checked by identity before dispatch)
+        and never advances a step it cannot prove; any ownership/lifecycle
+        mismatch (manual close, replacement position) fails closed and
+        leaves the obligation for reconciliation rather than guessing.
+        """
+        if obligation.status == "RESOLVED":
+            return obligation
+        trade = self.store.get_robot_trade(obligation.trade_id)
+        if trade is None:
+            LOGGER.error(
+                "Robot protection obligation references a missing trade; "
+                "obligation=%s trade_id=%s", obligation.obligation_id, obligation.trade_id,
+            )
+            return obligation
+        dedup_key = ExecutionDedupKey(trade.trading_account_id, Category.LINEAR, obligation.exec_id)
+        execution = self.store.get_execution(dedup_key)
+        if execution is None:
+            if trade.exit_time_ms is not None:
+                # The lifecycle already ended without our stable exec -- a
+                # manual/replacement close won the race. Never attribute a
+                # fill we did not make; leave the obligation for reconciliation.
+                LOGGER.error(
+                    "Robot protection obligation trade already closed without "
+                    "our stable exec -- leaving for reconciliation; "
+                    "obligation=%s trade_id=%s", obligation.obligation_id, trade.trade_id,
+                )
+                return obligation
+            position_key = PositionKey(trade.trading_account_id, Category.LINEAR, trade.symbol, 0)
+            position = self.store.get_position_projection(position_key)
+            expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
+            if (
+                position is None
+                or position.side is not expected_side
+                or position.quantity.value <= 0
+            ):
+                # Flat, or the current exposure no longer matches this
+                # lifecycle's own direction (replacement/mixed ambiguity):
+                # fail closed rather than close whatever is there now.
+                return obligation
+            if obligation.status == "TRIGGERED":
+                obligation = self.store.transition_paper_protection_obligation(
+                    obligation.obligation_id,
+                    expected_status="TRIGGERED",
+                    next_status="DISPATCHING",
+                    expected_version=obligation.version,
+                    updated_at_ms=now_ms,
+                )
+            close_side = OrderSide.SELL if expected_side is PositionSide.LONG else OrderSide.BUY
+            try:
+                self._market_executor.execute(
+                    trading_account_id=trade.trading_account_id,
+                    symbol=trade.symbol,
+                    side=close_side,
+                    quantity=Quantity(position.quantity.value),
+                    order_link_id=obligation.obligation_id,
+                    order_id=obligation.order_id,
+                    exec_id=obligation.exec_id,
+                )
+            except (RuntimeError, ValueError):
+                LOGGER.exception(
+                    "Robot protection close dispatch failed; will resume from "
+                    "current book on the next quote/restart; obligation=%s",
+                    obligation.obligation_id,
+                )
+                return obligation
+            # execute() either raised (handled above) or applied the execution
+            # durably (fresh or DUPLICATE) -- the row is guaranteed present.
+            execution = self.store.get_execution(dedup_key)
+        return self._finalize_paper_protection_obligation(obligation, trade, execution, now_ms=now_ms)
+
+    def _finalize_paper_protection_obligation(
+        self, obligation: PaperProtectionObligationRecord, trade: RobotTradeRecord,
+        execution: Execution, *, now_ms: int,
+    ) -> PaperProtectionObligationRecord:
+        """Call close_robot_trade() from proven execution/position evidence
+        and resolve the obligation, only once FLAT is itself proven.
+
+        Deterministic from durable evidence alone (the obligation's own
+        recorded execution plus the trade's own recorded entry), so a restart
+        between execution and finalization reproduces the exact same close
+        evidence and close_robot_trade()'s own idempotent replay guard
+        (matching evidence -> no-op) makes this safe to repeat.
+        """
+        position_key = PositionKey(trade.trading_account_id, Category.LINEAR, trade.symbol, 0)
+        position = self.store.get_position_projection(position_key)
+        if position is None or position.side is not PositionSide.FLAT:
+            # Our own exec is recorded but FLAT is not yet proven: leave
+            # DISPATCHING for reconciliation rather than finalize from an
+            # unproven position state.
+            return obligation
+        exit_price = execution.price.value
+        exit_quantity = execution.quantity.value
+        fees_costs_usdt = execution.fee
+        expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
+        if expected_side is PositionSide.LONG:
+            realized_pnl_usdt = exit_quantity * (exit_price - trade.average_entry)
+        else:
+            realized_pnl_usdt = exit_quantity * (trade.average_entry - exit_price)
+        # Owner-frozen convention (CR-PAPER-PROTECTION-LIFECYCLE-001 section 12):
+        # actual_entry_notional_usdt is the actual Robot-owned entry quantity
+        # (this closing fill's own quantity -- the full residual of a
+        # lifecycle with no other reduction path) times the actual average
+        # entry price; actual_wv is a WV fraction, never a USDT notional, and
+        # must never be substituted here.
+        actual_entry_notional_usdt = exit_quantity * trade.average_entry
+        if actual_entry_notional_usdt <= 0:
+            LOGGER.error(
+                "Robot protection close cannot prove a positive entry notional; "
+                "leaving for reconciliation; obligation=%s trade_id=%s",
+                obligation.obligation_id, trade.trade_id,
+            )
+            return obligation
+        realized_pnl_pct = (
+            (realized_pnl_usdt - fees_costs_usdt) / actual_entry_notional_usdt * 100
+        )
+        self.store.close_robot_trade(
+            trade.trade_id,
+            exit_time_ms=execution.exchange_timestamp_ms,
+            exit_price=exit_price,
+            exit_reason=obligation.winning_leg,
+            realized_pnl_usdt=realized_pnl_usdt,
+            realized_pnl_pct=realized_pnl_pct,
+            fees_costs_usdt=fees_costs_usdt,
+            updated_at_ms=now_ms,
+        )
+        if obligation.status == "DISPATCHING":
+            obligation = self.store.transition_paper_protection_obligation(
+                obligation.obligation_id,
+                expected_status="DISPATCHING",
+                next_status="RESOLVED",
+                expected_version=obligation.version,
+                updated_at_ms=now_ms,
+            )
+        return obligation
 
     def paper_state(self, symbol: str) -> dict[str, object]:
         normalized_symbol = symbol.strip().upper()

@@ -3822,6 +3822,16 @@ class SQLiteStore:
             raise PersistenceError("latched PAPER protection obligation disappeared")
         return created, True
 
+    def get_paper_protection_obligation_for_trade(
+        self, trade_id: str,
+    ) -> PaperProtectionObligationRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM paper_protection_obligations WHERE trade_id=?",
+            (trade_id,),
+        ).fetchone()
+        return _paper_protection_obligation_from_row(row) if row is not None else None
+
     def load_unresolved_paper_protection_obligations(
         self, trading_account_id: TradingAccountId,
     ) -> tuple[PaperProtectionObligationRecord, ...]:

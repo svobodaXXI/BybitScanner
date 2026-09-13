@@ -123,6 +123,29 @@ class PaperProtectionObligationPersistenceTests(unittest.TestCase):
         finally:
             reopened.close()
 
+    def test_get_paper_protection_obligation_for_trade(self) -> None:
+        store = SQLiteStore.open(self.db_path)
+        try:
+            self._open_trade(store)
+            self.assertIsNone(store.get_paper_protection_obligation_for_trade("robot-trade-c1"))
+
+            latched, _ = store.latch_paper_protection_obligation(
+                trade_id="robot-trade-c1",
+                protection_version=1,
+                winning_leg="STOP",
+                trigger_price=Decimal("98"),
+                observed_exit_price=Decimal("97.9"),
+                observed_quantity=Decimal("2.5"),
+                market_event_id="BTCUSDT:14:24",
+                source_received_at_ms=1500,
+                latched_at_ms=1501,
+            )
+            found = store.get_paper_protection_obligation_for_trade("robot-trade-c1")
+            self.assertEqual(found, latched)
+            self.assertIsNone(store.get_paper_protection_obligation_for_trade("no-such-trade"))
+        finally:
+            store.close()
+
     def test_obligation_transition_is_optimistic_and_idempotent(self) -> None:
         store = SQLiteStore.open(self.db_path)
         try:
