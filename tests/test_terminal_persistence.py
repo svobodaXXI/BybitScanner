@@ -483,6 +483,59 @@ class TerminalPersistenceTests(unittest.TestCase):
         with self.open_store() as reopened:
             self.assertEqual(reopened.get_robot_trade("trade-1"), closed)
 
+    def test_get_open_robot_trade_for_symbol_finds_exactly_one_non_flat_trade(self):
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            self.assertIsNone(
+                store.get_open_robot_trade_for_symbol(account, Symbol("BTCUSDT"))
+            )
+            store.create_robot_candidate(
+                candidate_id="candidate-open", trading_account_id=account, symbol=Symbol("BTCUSDT"),
+                status="APPROVED", signal_snapshot={"symbol": "BTCUSDT", "pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            trade, _ = store.create_robot_trade(
+                trade_id="trade-open", trading_account_id=account, candidate_id="candidate-open",
+                symbol=Symbol("BTCUSDT"), direction="LONG", pattern="Falling Wedge",
+                source_timeframe="1", signal_time_ms=900, entry_time_ms=1500,
+                entry_path="LIMIT", actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
+                stop_price=Decimal("98"), take_price=Decimal("106"), created_at_ms=1500,
+            )
+            self.assertEqual(
+                store.get_open_robot_trade_for_symbol(account, Symbol("BTCUSDT")), trade,
+            )
+
+            store.close_robot_trade(
+                "trade-open", exit_time_ms=2000, exit_price=Decimal("106"), exit_reason="TAKE",
+                realized_pnl_usdt=Decimal("12.5"), realized_pnl_pct=Decimal("6"),
+                fees_costs_usdt=Decimal("0.4"), updated_at_ms=2000,
+            )
+            self.assertIsNone(
+                store.get_open_robot_trade_for_symbol(account, Symbol("BTCUSDT"))
+            )
+
+    def test_get_open_robot_trade_for_symbol_fails_closed_on_ambiguous_attribution(self):
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            for index in (1, 2):
+                store.create_robot_candidate(
+                    candidate_id=f"candidate-ambiguous-{index}", trading_account_id=account,
+                    symbol=Symbol("ETHUSDT"), status="APPROVED",
+                    signal_snapshot={"symbol": "ETHUSDT", "pattern": f"pattern-{index}"},
+                    approved_at_ms=1000, updated_at_ms=1000,
+                )
+                store.create_robot_trade(
+                    trade_id=f"trade-ambiguous-{index}", trading_account_id=account,
+                    candidate_id=f"candidate-ambiguous-{index}", symbol=Symbol("ETHUSDT"),
+                    direction="LONG", pattern=f"pattern-{index}", source_timeframe="1",
+                    signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
+                    actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
+                    stop_price=Decimal("98"), take_price=Decimal("106"), created_at_ms=1500,
+                )
+            self.assertIsNone(
+                store.get_open_robot_trade_for_symbol(account, Symbol("ETHUSDT"))
+            )
+
     def test_v1_migration_preserves_commands_executions_and_projection(self):
         self.create_v1_database()
 

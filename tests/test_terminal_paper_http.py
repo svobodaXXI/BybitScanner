@@ -16,6 +16,7 @@ from terminal.domain.models import (
     Category, OrderId, OrderSide, Price, Quantity, Symbol, TradingAccountId,
 )
 from terminal.exchange.events import InstrumentSnapshot
+from terminal.market_data.hub import MarketDataHub, SymbolContext
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.market_data.workspace_errors import WorkspaceCandidateNotReady
 from terminal.runtime.paper_http_server import (
@@ -26,6 +27,7 @@ from terminal.runtime.paper_http_server import (
     PublicOrderBookBuffer,
     PublicTradeBuffer,
     PublicTradeKlineBuffer,
+    RobotProtectionCoverageManager,
     SerializedPaperRuntime,
     WorkspaceMarketDataManager,
     configure_bybit_proxy_environment,
@@ -1526,6 +1528,182 @@ def test_book_update_notification_reaches_serialized_owner_thread():
         assert target.received[0][1] != publisher_thread
     finally:
         runtime.close()
+
+
+def test_enqueue_runs_ordered_tasks_on_the_serialized_owner_thread_without_coalescing():
+    """enqueue() is the non-blocking ordered admission path Robot protection
+    coverage uses instead of the lossy enqueue_book_update coalescing queue:
+    every call must survive as a distinct processed item, in arrival order."""
+    publisher_thread = threading.get_ident()
+
+    class RecordingRuntime:
+        def __init__(self) -> None:
+            self.received: list[tuple[int, int]] = []
+
+        def close(self) -> None:
+            return None
+
+    target = RecordingRuntime()
+    runtime = SerializedPaperRuntime(lambda: target)
+    try:
+        for index in range(5):
+            runtime.enqueue(
+                lambda owner, captured=index: owner.received.append(
+                    (captured, threading.get_ident())
+                )
+            )
+        runtime.call(lambda _: None)
+        assert [item[0] for item in target.received] == [0, 1, 2, 3, 4]
+        assert all(item[1] == runtime._thread.ident for item in target.received)
+        assert target.received[0][1] != publisher_thread
+    finally:
+        runtime.close()
+
+
+def test_enqueue_task_failure_is_isolated_and_does_not_stop_the_owner():
+    class RecordingRuntime:
+        def __init__(self) -> None:
+            self.received: list[str] = []
+
+        def close(self) -> None:
+            return None
+
+    target = RecordingRuntime()
+    runtime = SerializedPaperRuntime(lambda: target)
+    try:
+        def failing(_owner: object) -> None:
+            raise RuntimeError("boom")
+
+        runtime.enqueue(failing)
+        runtime.enqueue(lambda owner: owner.received.append("ok"))
+        runtime.call(lambda _: None)
+        assert target.received == ["ok"]
+    finally:
+        runtime.close()
+
+
+class _CoverageTrades:
+    def apply_message(self, message: dict) -> str:
+        return "IGNORED"
+
+    def snapshot_after(self, after: int) -> list:
+        return []
+
+    def close(self) -> None:
+        return None
+
+
+class _CoverageRegistry:
+    def __init__(self, symbols: list[str]) -> None:
+        self._symbols = {symbol.upper() for symbol in symbols}
+
+    def get(self, symbol: str):
+        normalized = symbol.strip().upper()
+        if normalized not in self._symbols:
+            raise LookupError(normalized)
+        return type("Instrument", (), {"symbol": normalized, "tick_size": Decimal("0.01")})()
+
+
+def _coverage_context(symbol: str, tick_size: Decimal) -> SymbolContext:
+    return SymbolContext(symbol, PublicOrderBookBuffer(symbol, depth=50), _CoverageTrades(), {})
+
+
+def _apply_book_snapshot(book: PublicOrderBookBuffer, *, bid: str, ask: str, update_id: int) -> None:
+    assert book.apply_message({
+        "topic": f"orderbook.{book.depth}.{book.symbol}",
+        "type": "snapshot",
+        "ts": update_id,
+        "data": {"u": update_id, "seq": update_id, "b": [[bid, "1"]], "a": [[ask, "1"]]},
+    }) == "APPLIED"
+
+
+class _FakeCoverageRuntime:
+    def __init__(self, symbols: list[str] = ()) -> None:
+        self.symbols = list(symbols)
+        self.crossing_calls: list[tuple[str, str, int]] = []
+
+    def call(self, operation):
+        return operation(self)
+
+    def enqueue(self, operation) -> None:
+        operation(self)
+
+    def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
+        return tuple(self.symbols)
+
+    def evaluate_robot_protection_crossing(self, symbol, book, *, event_id, received_at_ms):
+        self.crossing_calls.append((symbol, event_id, received_at_ms))
+        return None
+
+
+def test_robot_protection_coverage_manager_subscribes_and_forwards_updates():
+    hub = MarketDataHub(
+        _CoverageRegistry(["BTCUSDT"]), _coverage_context,
+        connection_factory=lambda *args, **kwargs: None,
+    )
+    runtime = _FakeCoverageRuntime(["BTCUSDT"])
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+
+    manager.resync()
+    assert hub.has_context("BTCUSDT") is True
+    context = hub.get("BTCUSDT")
+
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=1)
+
+    assert len(runtime.crossing_calls) == 1
+    symbol, event_id, received_at_ms = runtime.crossing_calls[0]
+    assert symbol == "BTCUSDT"
+    assert event_id == "BTCUSDT:1:1"
+    assert received_at_ms > 0
+
+    manager.close()
+    assert hub.has_context("BTCUSDT") is False
+
+
+def test_robot_protection_coverage_manager_releases_symbol_no_longer_needed():
+    hub = MarketDataHub(
+        _CoverageRegistry(["BTCUSDT"]), _coverage_context,
+        connection_factory=lambda *args, **kwargs: None,
+    )
+    runtime = _FakeCoverageRuntime(["BTCUSDT"])
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    manager.resync()
+    assert hub.has_context("BTCUSDT") is True
+
+    runtime.symbols = []
+    manager.resync()
+
+    assert hub.has_context("BTCUSDT") is False
+
+
+def test_robot_protection_coverage_manager_coexists_with_workspace_consumer():
+    """The Workspace's own coalescing listener and Robot protection coverage's
+    ordered listener must both keep receiving updates on a shared symbol, and
+    releasing coverage interest must never sever Workspace's own interest."""
+    hub = MarketDataHub(
+        _CoverageRegistry(["BTCUSDT"]), _coverage_context,
+        connection_factory=lambda *args, **kwargs: None,
+    )
+    context = hub.subscribe("BTCUSDT")
+    workspace_received = []
+    context.add_update_listener(
+        WorkspaceMarketDataManager._WORKSPACE_LISTENER, workspace_received.append,
+    )
+
+    runtime = _FakeCoverageRuntime(["BTCUSDT"])
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    manager.resync()
+
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=1)
+
+    assert len(workspace_received) == 1
+    assert len(runtime.crossing_calls) == 1
+
+    manager.close()
+    assert hub.has_context("BTCUSDT") is True
+    context.remove_update_listener(WorkspaceMarketDataManager._WORKSPACE_LISTENER)
+    hub.discard(context)
+    assert hub.has_context("BTCUSDT") is False
 
 
 def test_duplicate_book_update_does_not_repeat_partial_limit_fill():

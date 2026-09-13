@@ -3716,6 +3716,23 @@ class SQLiteStore:
                 raise ConcurrentUpdate("Robot candidate changed before trade close")
         return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
 
+    def get_open_robot_trade_for_symbol(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> RobotTradeRecord | None:
+        """Single non-flat Robot trade for ``symbol``, or None if there is
+        none or the attribution is ambiguous (more than one open trade for
+        the same symbol) -- ambiguity fails closed rather than guessing which
+        trade a quote's evidence belongs to."""
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM robot_trades
+               WHERE trading_account_id=? AND symbol=? AND exit_time_ms IS NULL""",
+            (trading_account_id.value, symbol.value),
+        ).fetchall()
+        if len(rows) != 1:
+            return None
+        return _robot_trade_from_row(rows[0])
+
     def get_paper_protection_obligation(
         self, obligation_id: str,
     ) -> PaperProtectionObligationRecord | None:
