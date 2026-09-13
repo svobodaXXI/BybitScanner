@@ -769,7 +769,11 @@ class TerminalPersistenceTests(unittest.TestCase):
                 trade_id="trade-v16", protection_version=1, winning_leg="STOP",
                 trigger_price=Decimal("98"), observed_exit_price=Decimal("97.9"),
                 observed_quantity=Decimal("1"), market_event_id="BTCUSDT:1:2",
-                source_received_at_ms=1100, latched_at_ms=1101,
+                source_received_at_ms=1100,
+                source_generation=0, source_sequence=1100, source_update_id=1100,
+                source_event_at_ms=1100, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("97.9"), observed_ask_price=Decimal("98.1"),
+                latched_at_ms=1101,
             )
             self.assertTrue(created)
             self.assertEqual(latched.trade_id, "trade-v16")
@@ -802,6 +806,16 @@ class TerminalPersistenceTests(unittest.TestCase):
         connection = sqlite3.connect(self.database_path)
         connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_quantity")
         connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_position_version")
+        # paper_protection_obligations is v19-shaped from the fresh
+        # open_store() above; strip the v19-only columns too, or the
+        # v18->v19 step in the migration chain this test triggers hits
+        # "duplicate column name" against columns that already exist.
+        for column in (
+            "source_generation", "source_sequence", "source_update_id",
+            "source_event_at_ms", "source_matching_engine_cts_ms",
+            "observed_bid_price", "observed_ask_price",
+        ):
+            connection.execute(f"ALTER TABLE paper_protection_obligations DROP COLUMN {column}")
         connection.execute("PRAGMA user_version = 17")
         connection.commit()
         connection.close()

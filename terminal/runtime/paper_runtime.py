@@ -1032,10 +1032,19 @@ class PaperRuntime:
             return None
         if not book.bids or not book.asks:
             return None
+        if (
+            book.source_generation is None
+            or book.source_sequence is None
+            or book.source_update_id is None
+            or book.source_event_at_ms is None
+        ):
+            return None
+        observed_bid = book.bids[0].price.value
+        observed_ask = book.asks[0].price.value
         exit_market = (
-            book.bids[0].price.value
+            observed_bid
             if position.side is PositionSide.LONG
-            else book.asks[0].price.value
+            else observed_ask
         )
         leg = _robot_protection_crossing_leg(
             position.side, protection.stop_loss, protection.take_profit, exit_market,
@@ -1052,6 +1061,13 @@ class PaperRuntime:
             observed_quantity=position.quantity.value,
             market_event_id=event_id,
             source_received_at_ms=received_at_ms,
+            source_generation=book.source_generation,
+            source_sequence=book.source_sequence,
+            source_update_id=book.source_update_id,
+            source_event_at_ms=book.source_event_at_ms,
+            source_matching_engine_cts_ms=book.source_matching_engine_cts_ms,
+            observed_bid_price=observed_bid,
+            observed_ask_price=observed_ask,
             latched_at_ms=received_at_ms,
         )
         return self._dispatch_paper_protection_obligation(record, now_ms=received_at_ms)

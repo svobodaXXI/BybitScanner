@@ -52,6 +52,7 @@ from .schema import (
     SCHEMA_V16_MIGRATION_STATEMENTS,
     SCHEMA_V17_MIGRATION_STATEMENTS,
     SCHEMA_V18_MIGRATION_STATEMENTS,
+    SCHEMA_V19_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -530,6 +531,13 @@ class PaperProtectionObligationRecord:
     observed_quantity: Decimal
     market_event_id: str
     source_received_at_ms: int
+    source_generation: int | None
+    source_sequence: int | None
+    source_update_id: int | None
+    source_event_at_ms: int | None
+    source_matching_engine_cts_ms: int | None
+    observed_bid_price: Decimal | None
+    observed_ask_price: Decimal | None
     latched_at_ms: int
     order_id: OrderId
     exec_id: ExecutionId
@@ -744,6 +752,33 @@ def _paper_protection_obligation_from_row(row: sqlite3.Row) -> PaperProtectionOb
         observed_quantity=_load_decimal(row["observed_quantity"]),
         market_event_id=row["market_event_id"],
         source_received_at_ms=int(row["source_received_at_ms"]),
+        source_generation=(
+            int(row["source_generation"]) if row["source_generation"] is not None else None
+        ),
+        source_sequence=(
+            int(row["source_sequence"]) if row["source_sequence"] is not None else None
+        ),
+        source_update_id=(
+            int(row["source_update_id"]) if row["source_update_id"] is not None else None
+        ),
+        source_event_at_ms=(
+            int(row["source_event_at_ms"]) if row["source_event_at_ms"] is not None else None
+        ),
+        source_matching_engine_cts_ms=(
+            int(row["source_matching_engine_cts_ms"])
+            if row["source_matching_engine_cts_ms"] is not None
+            else None
+        ),
+        observed_bid_price=(
+            _load_decimal(row["observed_bid_price"])
+            if row["observed_bid_price"] is not None
+            else None
+        ),
+        observed_ask_price=(
+            _load_decimal(row["observed_ask_price"])
+            if row["observed_ask_price"] is not None
+            else None
+        ),
         latched_at_ms=int(row["latched_at_ms"]),
         order_id=OrderId(row["order_id"]),
         exec_id=ExecutionId(row["exec_id"]),
@@ -808,6 +843,11 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 18:
+            SQLiteStore._validate_required_tables(connection, version=18)
+            SQLiteStore._migrate_v18_to_v19(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 17:
@@ -1142,6 +1182,19 @@ class SQLiteStore:
             for statement in SCHEMA_V18_MIGRATION_STATEMENTS:
                 connection.execute(statement)
             connection.execute("PRAGMA user_version = 18")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        SQLiteStore._migrate_v18_to_v19(connection)
+
+    @staticmethod
+    def _migrate_v18_to_v19(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V19_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 19")
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")
@@ -3788,7 +3841,15 @@ class SQLiteStore:
         self, *, trade_id: str, protection_version: int, winning_leg: str,
         trigger_price: Decimal, observed_exit_price: Decimal,
         observed_quantity: Decimal, market_event_id: str,
-        source_received_at_ms: int, latched_at_ms: int,
+        source_received_at_ms: int,
+        source_generation: int,
+        source_sequence: int,
+        source_update_id: int,
+        source_event_at_ms: int,
+        source_matching_engine_cts_ms: int | None,
+        observed_bid_price: Decimal,
+        observed_ask_price: Decimal,
+        latched_at_ms: int,
     ) -> tuple[PaperProtectionObligationRecord, bool]:
         self._assert_owner()
         if not isinstance(trade_id, str) or not trade_id.strip():
@@ -3797,12 +3858,30 @@ class SQLiteStore:
             raise ValueError("protection_version must be positive")
         if winning_leg not in PAPER_PROTECTION_WINNING_LEGS:
             raise ValueError("winning_leg must be STOP or TAKE")
-        for value in (trigger_price, observed_exit_price, observed_quantity):
+        for value in (
+            trigger_price, observed_exit_price, observed_quantity,
+            observed_bid_price, observed_ask_price,
+        ):
             _decimal_text(value)
-        if trigger_price <= 0 or observed_exit_price <= 0 or observed_quantity <= 0:
+        if (
+            trigger_price <= 0
+            or observed_exit_price <= 0
+            or observed_quantity <= 0
+            or observed_bid_price <= 0
+            or observed_ask_price <= 0
+        ):
             raise ValueError("protection obligation prices/quantity must be positive")
         if not isinstance(market_event_id, str) or not market_event_id.strip():
             raise ValueError("market_event_id must be non-empty")
+        if source_generation < 0 or source_sequence < 0 or source_update_id < 0:
+            raise ValueError("protection obligation source identity is invalid")
+        if source_event_at_ms < 0:
+            raise ValueError("protection obligation source timestamp is invalid")
+        if (
+            source_matching_engine_cts_ms is not None
+            and source_matching_engine_cts_ms < 0
+        ):
+            raise ValueError("protection obligation matching-engine timestamp is invalid")
         if source_received_at_ms < 0 or latched_at_ms < source_received_at_ms:
             raise ValueError("protection obligation timestamps are invalid")
 
@@ -3837,14 +3916,24 @@ class SQLiteStore:
                         protection_version, winning_leg, trigger_price,
                         observed_exit_price, observed_quantity, market_event_id,
                         source_received_at_ms, latched_at_ms, order_id, exec_id,
-                        status, version, updated_at_ms
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'TRIGGERED', 1, ?)""",
+                        status, version, updated_at_ms,
+                        source_generation, source_sequence, source_update_id,
+                        source_event_at_ms, source_matching_engine_cts_ms,
+                        observed_bid_price, observed_ask_price
+                    ) VALUES (
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        'TRIGGERED', 1, ?, ?, ?, ?, ?, ?, ?, ?
+                    )""",
                     (
                         obligation_id, trade_id, trade["trading_account_id"], trade["symbol"],
                         protection_version, winning_leg, _decimal_text(trigger_price),
                         _decimal_text(observed_exit_price), _decimal_text(observed_quantity),
                         market_event_id.strip(), source_received_at_ms, latched_at_ms,
                         order_id.value, exec_id.value, latched_at_ms,
+                        source_generation, source_sequence, source_update_id,
+                        source_event_at_ms, source_matching_engine_cts_ms,
+                        _decimal_text(observed_bid_price),
+                        _decimal_text(observed_ask_price),
                     ),
                 )
         except sqlite3.IntegrityError as exc:

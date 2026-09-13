@@ -1,4 +1,5 @@
-﻿import tempfile
+﻿import itertools
+import tempfile
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -200,7 +201,12 @@ def test_robot_paper_execution_is_independent_of_ui_selected_account():
             runtime.close()
 
 
+_crossing_book_sequence = itertools.count(1)
+
+
 def _crossing_book(symbol: str, *, bid: str, ask: str) -> NormalizedOrderBook:
+    now_ms = int(__import__("time").time() * 1000)
+    sequence = next(_crossing_book_sequence)
     return NormalizedOrderBook(
         symbol=Symbol(symbol),
         bids=(PriceLevel(Price(Decimal(bid)), Quantity(Decimal("1"))),),
@@ -210,8 +216,18 @@ def _crossing_book(symbol: str, *, bid: str, ask: str) -> NormalizedOrderBook:
         # into PaperMarketExecutor.execute(), which fails closed on a stale
         # (max_book_age_ms) book; a fixed historical timestamp would make
         # every real close attempt in these tests spuriously stale.
-        received_at_ms=int(__import__("time").time() * 1000),
+        received_at_ms=now_ms,
         available_depth=1,
+        # D2.4 immutable event identity: the fresh-crossing gate in
+        # PaperRuntime fails closed when any of these is None. A single
+        # WS connection (generation 0) with a monotonically increasing
+        # sequence/update_id mirrors real Bybit delivery; matching-engine
+        # cts is legitimately optional (not every message carries it).
+        source_generation=0,
+        source_sequence=sequence,
+        source_update_id=sequence,
+        source_event_at_ms=now_ms,
+        source_matching_engine_cts_ms=None,
     )
 
 
@@ -493,7 +509,11 @@ def test_robot_protection_coverage_symbols_unions_open_trades_and_unresolved_obl
                 trade_id="trade-unresolved-only", protection_version=1, winning_leg="STOP",
                 trigger_price=Decimal("98"), observed_exit_price=Decimal("97.9"),
                 observed_quantity=Decimal("1"), market_event_id="evt-1",
-                source_received_at_ms=2000, latched_at_ms=2000,
+                source_received_at_ms=2000,
+                source_generation=0, source_sequence=2000, source_update_id=2000,
+                source_event_at_ms=2000, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("97.9"), observed_ask_price=Decimal("98.1"),
+                latched_at_ms=2000,
             )
             runtime.store.close_robot_trade(
                 "trade-unresolved-only", exit_time_ms=3000, exit_price=Decimal("98"),
@@ -627,7 +647,11 @@ def test_dispatch_uses_current_position_quantity_not_stale_observed_quantity():
                 trade_id="trade-qty-1", protection_version=1, winning_leg="STOP",
                 trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
                 observed_quantity=Decimal("999"), market_event_id="evt-qty-latch",
-                source_received_at_ms=4000, latched_at_ms=4000,
+                source_received_at_ms=4000,
+                source_generation=0, source_sequence=4000, source_update_id=4000,
+                source_event_at_ms=4000, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("63990"), observed_ask_price=Decimal("63995"),
+                latched_at_ms=4000,
             )
 
             close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
@@ -660,7 +684,11 @@ def test_dispatch_resumes_from_triggered_after_restart():
                 trade_id="trade-restart-triggered", protection_version=1, winning_leg="STOP",
                 trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
                 observed_quantity=Decimal("1"), market_event_id="evt-restart-latch",
-                source_received_at_ms=4000, latched_at_ms=4000,
+                source_received_at_ms=4000,
+                source_generation=0, source_sequence=4000, source_update_id=4000,
+                source_event_at_ms=4000, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("63990"), observed_ask_price=Decimal("63995"),
+                latched_at_ms=4000,
             )
             assert latched.status == "TRIGGERED"
         finally:
@@ -699,7 +727,11 @@ def test_dispatch_resumes_from_dispatching_before_execution_after_restart():
                 trade_id="trade-restart-dispatching", protection_version=1, winning_leg="STOP",
                 trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
                 observed_quantity=Decimal("1"), market_event_id="evt-restart-latch-2",
-                source_received_at_ms=4000, latched_at_ms=4000,
+                source_received_at_ms=4000,
+                source_generation=0, source_sequence=4000, source_update_id=4000,
+                source_event_at_ms=4000, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("63990"), observed_ask_price=Decimal("63995"),
+                latched_at_ms=4000,
             )
             # Simulate a crash right after the claim, before execute() ran.
             claimed = runtime.store.transition_paper_protection_obligation(
@@ -749,7 +781,11 @@ def test_dispatch_resumes_from_dispatching_after_execution_before_finalization_a
                 trade_id="trade-restart-executed", protection_version=1, winning_leg="STOP",
                 trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
                 observed_quantity=Decimal("1"), market_event_id="evt-restart-latch-3",
-                source_received_at_ms=4000, latched_at_ms=4000,
+                source_received_at_ms=4000,
+                source_generation=0, source_sequence=4000, source_update_id=4000,
+                source_event_at_ms=4000, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("63990"), observed_ask_price=Decimal("63995"),
+                latched_at_ms=4000,
             )
             claimed = runtime.store.transition_paper_protection_obligation(
                 latched.obligation_id, expected_status="TRIGGERED", next_status="DISPATCHING",
@@ -819,7 +855,11 @@ def test_dispatch_fails_closed_when_manual_close_wins_race_before_our_exec():
                 trade_id="trade-manual-race", protection_version=1, winning_leg="STOP",
                 trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
                 observed_quantity=Decimal("1"), market_event_id="evt-manual-latch",
-                source_received_at_ms=4000, latched_at_ms=4000,
+                source_received_at_ms=4000,
+                source_generation=0, source_sequence=4000, source_update_id=4000,
+                source_event_at_ms=4000, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("63990"), observed_ask_price=Decimal("63995"),
+                latched_at_ms=4000,
             )
 
             # A manual full_close wins the race and flattens the position
@@ -1075,7 +1115,11 @@ def test_dispatch_fails_closed_on_replacement_lifecycle_with_same_quantity():
                 trade_id="trade-replacement", protection_version=1, winning_leg="STOP",
                 trigger_price=Decimal("64000"), observed_exit_price=Decimal("63990"),
                 observed_quantity=Decimal("1"), market_event_id="evt-replacement-latch",
-                source_received_at_ms=4000, latched_at_ms=4000,
+                source_received_at_ms=4000,
+                source_generation=0, source_sequence=4000, source_update_id=4000,
+                source_event_at_ms=4000, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("63990"), observed_ask_price=Decimal("63995"),
+                latched_at_ms=4000,
             )
 
             # The original lifecycle is flattened by something other than our

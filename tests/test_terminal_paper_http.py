@@ -1655,6 +1655,15 @@ def _apply_book_snapshot(book: PublicOrderBookBuffer, *, bid: str, ask: str, upd
     }) == "APPLIED"
 
 
+def _apply_book_delta(book: PublicOrderBookBuffer, *, bid: str, ask: str, update_id: int) -> None:
+    assert book.apply_message({
+        "topic": f"orderbook.{book.depth}.{book.symbol}",
+        "type": "delta",
+        "ts": update_id,
+        "data": {"u": update_id, "seq": update_id, "b": [[bid, "1"]], "a": [[ask, "1"]]},
+    }) == "APPLIED"
+
+
 class _FakeCoverageRuntime:
     def __init__(self, symbols: list[str] = ()) -> None:
         self.symbols = list(symbols)
@@ -1703,11 +1712,49 @@ def test_robot_protection_coverage_manager_subscribes_and_forwards_updates():
     assert hub.has_context("BTCUSDT") is False
 
 
-def test_robot_protection_coverage_manager_marks_unhealthy_on_overflow_and_recovers():
-    """D2.2 review fix: overflow/admission failure must explicitly flip
-    protection coverage unhealthy -- never continue reporting healthy while
-    silently dropping the event -- and recover once admission next
-    succeeds."""
+def test_robot_protection_coverage_manager_rejects_event_snapshot_identity_mismatch():
+    """D2.4 reviewed equivalent: the listener may synchronously snapshot the
+    book only if that immutable copy still proves it belongs to the exact
+    callback identity. A mismatch is continuity loss, never a best-effort
+    reread of mutable current state.
+    """
+    hub = MarketDataHub(
+        _CoverageRegistry(["BTCUSDT"]), _coverage_context,
+        connection_factory=lambda *args, **kwargs: None,
+    )
+    runtime = _FakeCoverageRuntime(["BTCUSDT"])
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    manager.resync()
+    context = hub.get("BTCUSDT")
+
+    original_snapshot = context.public_orderbook.snapshot
+
+    def mismatched_snapshot():
+        payload = original_snapshot()
+        if payload["state"] == "READY":
+            payload = dict(payload)
+            payload["sequence"] = int(payload["sequence"]) + 1
+        return payload
+
+    context.public_orderbook.snapshot = mismatched_snapshot
+
+    _apply_book_snapshot(
+        context.public_orderbook, bid="100", ask="101", update_id=1,
+    )
+
+    assert runtime.crossing_calls == []
+    assert manager.is_healthy() is False
+    assert manager.health()["unhealthy_symbols"] == {
+        "BTCUSDT": "event_identity_mismatch"
+    }
+
+    manager.close()
+
+
+def test_robot_protection_coverage_manager_marks_unhealthy_until_authoritative_snapshot():
+    """D2.4: once ingress loses an event, ordinary deltas cannot prove
+    continuity. Coverage stays unhealthy and crossing evaluation remains
+    fail-closed until a fresh authoritative snapshot is admitted."""
     hub = MarketDataHub(
         _CoverageRegistry(["BTCUSDT"]), _coverage_context,
         connection_factory=lambda *args, **kwargs: None,
@@ -1730,10 +1777,73 @@ def test_robot_protection_coverage_manager_marks_unhealthy_on_overflow_and_recov
     # fail closed, not a silent drop that still calls through.
     assert runtime.crossing_calls == []
 
-    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=2)
+    _apply_book_delta(context.public_orderbook, bid="100", ask="101", update_id=2)
+    assert manager.is_healthy() is False
+    assert manager.health()["unhealthy_symbols"] == {"BTCUSDT": "ingress_overflow"}
+    assert runtime.crossing_calls == []
+
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=3)
     assert manager.is_healthy() is True
     assert manager.health()["unhealthy_symbols"] == {}
     assert len(runtime.crossing_calls) == 1
+    assert runtime.crossing_calls[0][1] == "BTCUSDT:3:3"
+
+    manager.close()
+
+
+def test_robot_protection_coverage_manager_rejects_stale_generation_after_reconnect():
+    """T22: an owner task built under one connection generation must not
+    evaluate/latch once a reconnect has advanced context.reconnect_count by
+    the time it actually executes -- the shared owner queue's latency means
+    enqueue-time and execution-time can straddle a reconnect. Coverage must
+    fail closed and expose the gap explicitly (never a silent drop), and
+    only a fresh authoritative snapshot of the new generation may recover
+    it -- an ordinary delta must not."""
+    hub = MarketDataHub(
+        _CoverageRegistry(["BTCUSDT"]), _coverage_context,
+        connection_factory=lambda *args, **kwargs: None,
+    )
+    runtime = _FakeCoverageRuntime(["BTCUSDT"])
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    manager.resync()
+    context = hub.get("BTCUSDT")
+
+    # Simulate the real owner queue's latency: capture the task instead of
+    # running it inline, so a reconnect can happen before it executes.
+    captured: list = []
+    real_enqueue = runtime.enqueue
+    runtime.enqueue = captured.append
+
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=1)
+    assert len(captured) == 1
+    # Admission itself succeeded (a snapshot was admitted); the task just
+    # has not run yet.
+    assert manager.is_healthy() is True
+
+    # Reconnect happens before the owner thread drains the queued task.
+    context.reconnect_count = 1
+
+    stale_task = captured[0]
+    stale_task(runtime)
+
+    assert runtime.crossing_calls == []
+    assert manager.is_healthy() is False
+    assert manager.health()["unhealthy_symbols"] == {"BTCUSDT": "stale_generation_discarded"}
+
+    # An ordinary delta under the new generation must not silently recover
+    # coverage -- same rule as any other continuity gap.
+    runtime.enqueue = real_enqueue
+    _apply_book_delta(context.public_orderbook, bid="100", ask="101", update_id=2)
+    assert manager.is_healthy() is False
+    assert manager.health()["unhealthy_symbols"] == {"BTCUSDT": "stale_generation_discarded"}
+    assert runtime.crossing_calls == []
+
+    # Only a fresh authoritative snapshot of the current generation recovers it.
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=3)
+    assert manager.is_healthy() is True
+    assert manager.health()["unhealthy_symbols"] == {}
+    assert len(runtime.crossing_calls) == 1
+    assert runtime.crossing_calls[0][1] == "BTCUSDT:3:3"
 
     manager.close()
 
