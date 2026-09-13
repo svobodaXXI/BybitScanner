@@ -31,16 +31,35 @@ from notification import (
 )
 
 
+def build_scan_started_message(
+    mode,
+    min_score,
+    symbol_count,
+):
+    """Build the Scanner-started notification announced before the scan loop."""
+
+    return (
+        "Сканер запущен\n"
+        f"Mode: {mode}\n"
+        f"Minimum Score: {min_score}\n"
+        f"Symbols: {symbol_count}"
+    )
+
+
 def build_scan_finished_message(
     approved_pattern_count,
+    sent_to_telegram_count,
+    total_symbols_scanned,
     elapsed_minutes,
     elapsed_remainder,
 ):
     """Build the final Scanner notification from the admission-owned count."""
 
     return (
-        "Сканирование завершено\n"
+        "🏁 Сканирование завершено\n"
         f"Найдено сигналов: {approved_pattern_count}\n"
+        f"Отправлено в Telegram: {sent_to_telegram_count}\n"
+        f"Просканировано тикеров: {total_symbols_scanned}\n"
         f"Elapsed: "
         f"{elapsed_minutes:02d}:"
         f"{elapsed_remainder:02d}"
@@ -58,6 +77,7 @@ def run_scan_pass():
 
     scan_started_at = time.perf_counter()
     approved_pattern_count = 0
+    sent_to_telegram_count = 0
 
     symbols = get_symbols()
 
@@ -78,6 +98,20 @@ def run_scan_pass():
 
     print("=" * 60)
     print()
+
+    try:
+        send_message(
+            build_scan_started_message(
+                MODE,
+                MIN_SCORE,
+                len(symbols),
+            )
+        )
+    except Exception as e:
+        print(
+            "[TELEGRAM SCAN START ERROR]",
+            e
+        )
 
     for symbol in symbols:
         try:
@@ -195,6 +229,9 @@ def run_scan_pass():
                     telegram_payload
                 )
 
+            if telegram_sent:
+                sent_to_telegram_count += 1
+
             print(
                 f"{symbol:<15} "
                 f"{pattern:<20} "
@@ -216,6 +253,8 @@ def run_scan_pass():
             )
 
     print(f"Найдено паттернов: {approved_pattern_count}")
+    print(f"Отправлено в Telegram: {sent_to_telegram_count}")
+    print(f"Просканировано тикеров: {len(symbols)}")
 
     elapsed_seconds = (
         time.perf_counter()
@@ -244,6 +283,8 @@ def run_scan_pass():
         send_message(
             build_scan_finished_message(
                 approved_pattern_count,
+                sent_to_telegram_count,
+                len(symbols),
                 elapsed_minutes,
                 elapsed_remainder,
             )

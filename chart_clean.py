@@ -39,6 +39,8 @@ import numpy as np
 import mplfinance as mpf
 import matplotlib as mpl
 
+from timeframe_format import format_timeframe_ru
+
 import matplotlib as mpl
 
 # Cyrillic-capable font for Russian signal interface.
@@ -87,6 +89,164 @@ def ensure_charts_dir():
         os.makedirs(
             CHARTS_DIR
         )
+
+
+def build_chart_title(symbol, result):
+    """Build the chart's title/header text. Pure string-building, no plotting
+    side effects -- extracted so the timeframe annotation is unit-testable
+    without a full mplfinance render."""
+
+    if not result:
+        return symbol
+
+    pattern = result.get(
+        "pattern",
+        "No wedge"
+    )
+
+    pattern_names = {
+        "Falling Wedge":
+            'Нисходящий клин',
+
+        "Rising Wedge":
+            'Восходящий клин',
+
+        "Triangle Compression":
+            'Сжимающийся треугольник',
+
+        "No wedge":
+            'Клин не найден',
+
+        "Unknown":
+            'Неизвестная структура',
+    }
+
+    structure_name = pattern_names.get(
+        pattern,
+        pattern
+    )
+
+    geometry = (
+        result.get(
+            "geometry"
+        )
+        or {}
+    )
+
+    pair_metrics = (
+        geometry.get(
+            "pair_metrics"
+        )
+        or {}
+    )
+
+    geometry_mode = result.get(
+        "geometry_mode"
+    )
+
+    if not geometry_mode:
+        geometry_mode = pair_metrics.get(
+            "geometry_mode",
+            "NONE"
+        )
+
+    geometry_names = {
+        "CANONICAL":
+            'КАНОНИЧЕСКАЯ',
+
+        "EXPLORATORY":
+            'ИССЛЕДОВАТЕЛЬСКАЯ',
+
+        "NONE":
+            'НЕТ',
+
+        "UNKNOWN":
+            'НЕТ',
+
+        "REJECT":
+            'ОТКЛОНЕНА',
+    }
+
+    geometry_name = geometry_names.get(
+        geometry_mode,
+        str(geometry_mode)
+    )
+
+    detection = (
+        result.get(
+            "detection"
+        )
+        or {}
+    )
+
+    pattern_confirmed = bool(
+        detection.get(
+            "detected",
+            False
+        )
+    )
+
+    detection_name = (
+        "ПОДТВЕРЖДЕН"
+        if pattern_confirmed
+        else "НЕ ПОДТВЕРЖДЕН"
+    )
+
+    score = result.get(
+        "final_score",
+        result.get(
+            "score",
+            0
+        )
+    )
+
+    training_name = (
+        "ПОДХОДИТ"
+        if (
+            geometry_mode == "CANONICAL"
+            and pattern_confirmed
+        )
+        else "НЕ ИСПОЛЬЗУЕТСЯ"
+    )
+
+    potential = (
+        result.get("potential")
+        or {}
+    )
+
+    signed_potential = potential.get(
+        "signed_percent"
+    )
+
+    if signed_potential is None:
+
+        potential_name = (
+            'РАСЧЁТ НЕДОСТУПЕН'
+        )
+
+    else:
+
+        potential_name = (
+            f"{signed_potential:+.2f}%"
+        )
+
+    chart_timeframe = result.get("timeframe")
+
+    title_symbol_line = (
+        f"{symbol} · {format_timeframe_ru(chart_timeframe)}"
+        if chart_timeframe
+        else symbol
+    )
+
+    return (
+        f"{title_symbol_line}\n"
+        f"СТРУКТУРА: {structure_name}\n"
+        f"ГЕОМЕТРИЯ: {geometry_name}\n"
+        f"ПАТТЕРН: {detection_name}\n"
+        f"КАЧЕСТВО СТРУКТУРЫ: {score}/100\n"
+        f"ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}\n"
+        f"ОБУЧЕНИЕ: {training_name}"
+    )
 
 
 
@@ -603,152 +763,7 @@ def draw_chart(
     # заголовок
     # =====================================
 
-
-    title = symbol
-
-
-    if result:
-
-        pattern = result.get(
-            "pattern",
-            "No wedge"
-        )
-
-        pattern_names = {
-            "Falling Wedge":
-                'Нисходящий клин',
-
-            "Rising Wedge":
-                'Восходящий клин',
-
-            "Triangle Compression":
-                'Сжимающийся треугольник',
-
-            "No wedge":
-                'Клин не найден',
-
-            "Unknown":
-                'Неизвестная структура',
-        }
-
-        structure_name = pattern_names.get(
-            pattern,
-            pattern
-        )
-
-        geometry = (
-            result.get(
-                "geometry"
-            )
-            or {}
-        )
-
-        pair_metrics = (
-            geometry.get(
-                "pair_metrics"
-            )
-            or {}
-        )
-
-        geometry_mode = result.get(
-            "geometry_mode"
-        )
-
-        if not geometry_mode:
-            geometry_mode = pair_metrics.get(
-                "geometry_mode",
-                "NONE"
-            )
-
-        geometry_names = {
-            "CANONICAL":
-                'КАНОНИЧЕСКАЯ',
-
-            "EXPLORATORY":
-                'ИССЛЕДОВАТЕЛЬСКАЯ',
-
-            "NONE":
-                'НЕТ',
-
-            "UNKNOWN":
-                'НЕТ',
-
-            "REJECT":
-                'ОТКЛОНЕНА',
-        }
-
-        geometry_name = geometry_names.get(
-            geometry_mode,
-            str(geometry_mode)
-        )
-
-        detection = (
-            result.get(
-                "detection"
-            )
-            or {}
-        )
-
-        pattern_confirmed = bool(
-            detection.get(
-                "detected",
-                False
-            )
-        )
-
-        detection_name = (
-            "ПОДТВЕРЖДЕН"
-            if pattern_confirmed
-            else "НЕ ПОДТВЕРЖДЕН"
-        )
-
-        score = result.get(
-            "final_score",
-            result.get(
-                "score",
-                0
-            )
-        )
-
-        training_name = (
-            "ПОДХОДИТ"
-            if (
-                geometry_mode == "CANONICAL"
-                and pattern_confirmed
-            )
-            else "НЕ ИСПОЛЬЗУЕТСЯ"
-        )
-
-        potential = (
-            result.get("potential")
-            or {}
-        )
-
-        signed_potential = potential.get(
-            "signed_percent"
-        )
-
-        if signed_potential is None:
-
-            potential_name = (
-                'РАСЧЁТ НЕДОСТУПЕН'
-            )
-
-        else:
-
-            potential_name = (
-                f"{signed_potential:+.2f}%"
-            )
-
-        title = (
-            f"{symbol}\n"
-            f"СТРУКТУРА: {structure_name}\n"
-            f"ГЕОМЕТРИЯ: {geometry_name}\n"
-            f"ПАТТЕРН: {detection_name}\n"
-            f"КАЧЕСТВО СТРУКТУРЫ: {score}/100\n"
-            f"ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}\n"
-            f"ОБУЧЕНИЕ: {training_name}"
-        )
+    title = build_chart_title(symbol, result)
 
 
     ax.set_title(

@@ -122,7 +122,8 @@ def evaluate_candidate_pair(
         upper_line,
         lower_line,
         upper_points,
-        lower_points
+        lower_points,
+        candles=candles
     )
 
     #

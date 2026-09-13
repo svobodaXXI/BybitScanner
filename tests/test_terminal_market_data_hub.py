@@ -246,12 +246,70 @@ def test_workspace_switch_reuses_hub_context_and_preserves_previous_context():
     manager.close()
 
 
+def test_symbol_context_fans_out_updates_to_independent_named_listeners():
+    context = _context("BTCUSDT", Decimal("0.01"))
+    received_a = []
+    received_b = []
+    context.add_update_listener("a", received_a.append)
+    context.add_update_listener("b", received_b.append)
+    assert context.public_orderbook.consumer == context._dispatch_update
+    context._dispatch_update("BTCUSDT:1:1")
+
+    assert received_a == ["BTCUSDT:1:1"]
+    assert received_b == ["BTCUSDT:1:1"]
+
+    context.remove_update_listener("a")
+    assert context.has_update_listeners() is True
+    assert context.public_orderbook.consumer == context._dispatch_update
+    context._dispatch_update("BTCUSDT:2:2")
+    assert received_a == ["BTCUSDT:1:1"]
+    assert received_b == ["BTCUSDT:1:1", "BTCUSDT:2:2"]
+
+    context.remove_update_listener("b")
+    assert context.has_update_listeners() is False
+    assert context.public_orderbook.consumer is None
+
+
+def test_symbol_context_listener_failure_does_not_block_sibling_listener():
+    context = _context("BTCUSDT", Decimal("0.01"))
+    received = []
+
+    def failing(_book_update_id):
+        raise RuntimeError("boom")
+
+    context.add_update_listener("failing", failing)
+    context.add_update_listener("ok", received.append)
+    context._dispatch_update("BTCUSDT:1:1")
+
+    assert received == ["BTCUSDT:1:1"]
+
+
+def test_hub_discard_is_deferred_while_an_independent_listener_remains():
+    hub = MarketDataHub(_Registry(), _context, connection_factory=lambda *args, **kwargs: None)
+    context = hub.subscribe("BTCUSDT")
+    context.add_update_listener("robot-protection", lambda _book_update_id: None)
+
+    hub.discard(context)
+
+    assert hub.has_context("BTCUSDT") is True
+    assert context.public_orderbook.closed is False
+
+    context.remove_update_listener("robot-protection")
+    hub.discard(context)
+
+    assert hub.has_context("BTCUSDT") is False
+    assert context.public_orderbook.closed is True
+
+
 TESTS = (
     test_hub_uses_one_connection_for_multiple_reusable_symbol_contexts,
     test_hub_rejects_unsupported_symbol_without_creating_context,
     test_subscription_ack_makes_quiet_trades_bootstrap_explicitly_valid,
     test_hub_reconnects_and_resubscribes_existing_contexts,
     test_workspace_switch_reuses_hub_context_and_preserves_previous_context,
+    test_symbol_context_fans_out_updates_to_independent_named_listeners,
+    test_symbol_context_listener_failure_does_not_block_sibling_listener,
+    test_hub_discard_is_deferred_while_an_independent_listener_remains,
 )
 
 

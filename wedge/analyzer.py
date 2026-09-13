@@ -139,7 +139,8 @@ def analyze_wedge(
     #
 
     detection = detect_structure(
-        geometry_data
+        geometry_data,
+        candles=candles
     )
 
     if not detection["detected"]:

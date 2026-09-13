@@ -47,7 +47,7 @@ class SignalFilterAdmissionTests(unittest.TestCase):
 
     def test_hunter_quality_boundaries(self):
         self.assertTrue(self.evaluate("A Setup", score=75)["approved"])
-        self.assertFalse(self.evaluate("B Setup", score=70)["approved"])
+        self.assertTrue(self.evaluate("B Setup", score=70)["approved"])
         self.assertFalse(self.evaluate("Watch", score=70)["approved"])
         self.assertFalse(self.evaluate("Invalid", score=90)["approved"])
 

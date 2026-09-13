@@ -1,8 +1,10 @@
 # Robot v0.1 Emergency Stop Decision
 
-Status: ACTIVE / DESIGN-ONLY
+Status: SUPERSEDED
 Date: 2026-09-08
 Implementation authorization: NONE
+
+SUPERSEDED by DOCUMENTS/AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.1 (2026-09-10). This document was never implemented: the actual Terminal SQLite schema (terminal/persistence/schema.py) only supports mode IN ('ROBOT_STOPPED', 'ROBOT_RUNNING') and has no STOPPING intermediate state as this document required. The whole-account flattening scope (including non-robot manual positions) described below was explicitly reconsidered and rejected in favour of a robot-owned-positions-only scope in the superseding document.
 
 ## Scope
 

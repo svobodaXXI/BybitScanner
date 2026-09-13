@@ -33,7 +33,57 @@ from robot_candidate_store import (
     create_signal_snapshot,
 )
 
+from timeframe_format import format_timeframe_ru
+
 import config
+
+
+# Presentation-only Russian pattern labels, mirrored from chart_clean.py's
+# chart-title pattern_names mapping (kept as a separate copy since the two
+# modules must not import each other).
+PATTERN_LABELS_RU = {
+    "Falling Wedge": "Нисходящий клин",
+    "Rising Wedge": "Восходящий клин",
+    "Triangle Compression": "Сжимающийся треугольник",
+    "No wedge": "Клин не найден",
+    "Unknown": "Неизвестная структура",
+}
+
+# Presentation-only stage -> status-circle mapping, derived entirely from the
+# existing Scanner confirmation/quality classification (confirmation.py's
+# breakout/retest booleans and signal/quality.py's tier names) -- no new
+# strategy semantics. See report for the full mapping rationale.
+_MATURE_QUALITY_TIERS = {"B Setup", "A Setup", "Elite Setup"}
+
+CIRCLE_FORMING = "🟢"
+CIRCLE_MATURE_PRE_BREAKOUT = "🟡"
+CIRCLE_POST_BREAKOUT_WAITING_RETEST = "🟠"
+CIRCLE_POST_RETEST_LATE_ENTRY = "🔴"
+
+
+def signal_stage_circle(result):
+    """Map the existing Scanner confirmation/quality classification onto one
+    of four presentation stages, without inventing new internal states.
+
+    breakout + retest       -> POST-RETEST / LATE ENTRY  (🔴)
+    breakout only           -> POST-BREAKOUT / WAITING RETEST (🟠)
+    no breakout, mature     -> MATURE / NEAR APEX / PRE-BREAKOUT (🟡)
+    no breakout, not mature -> FORMING (🟢)
+    """
+
+    confirmation = result.get("confirmation") or {}
+    breakout = bool(confirmation.get("breakout", False))
+    retest = bool(confirmation.get("retest", False))
+
+    if breakout and retest:
+        return CIRCLE_POST_RETEST_LATE_ENTRY
+    if breakout:
+        return CIRCLE_POST_BREAKOUT_WAITING_RETEST
+
+    quality_tier = (result.get("quality") or {}).get("quality")
+    if quality_tier in _MATURE_QUALITY_TIERS:
+        return CIRCLE_MATURE_PRE_BREAKOUT
+    return CIRCLE_FORMING
 
 
 CHARTS_DIR = "charts"
@@ -159,15 +209,9 @@ def format_signal(
         "Unknown"
     )
 
-    direction = (
-        result.get(
-            "confirmation",
-            {}
-        )
-        .get(
-            "direction",
-            "WAIT"
-        )
+    pattern_label = PATTERN_LABELS_RU.get(
+        pattern,
+        pattern
     )
 
     score = result.get(
@@ -183,50 +227,27 @@ def format_signal(
         "UNKNOWN"
     )
 
-    display_symbol = format_symbol_for_telegram(
-        symbol
-    )
+    circle = signal_stage_circle(result)
 
-    confirmed = (
+    timeframe_label = format_timeframe_ru(
         result.get(
-            "confirmation",
-            {}
+            "timeframe",
+            getattr(config, "TIMEFRAME", "1"),
         )
-        .get(
-            "confirmed",
-            False
-        )
-    )
-
-    status = (
-        "✅ CONFIRMED"
-        if confirmed
-        else
-        "⚡ EARLY SIGNAL"
     )
 
     test_marker = (
-        "\n🧪 TEST MODE\n"
+        "\n🧪 TEST MODE"
         if test_mode
         else ""
     )
 
     message = f"""
-🤖 BybitCleanScanner
-{test_marker}
-{status}
+Сканер: {symbol} {circle}
+Паттерн: {pattern_label}
+Таймфрейм: {timeframe_label}{test_marker}
 
-📌 Symbol:
-{display_symbol}
-
-📐 Pattern:
-{pattern}
-
-📈 Direction:
-{direction}
-
-⭐ Score:
-{score}/100
+Баллы: {score}
 """
 
     return message.strip()

@@ -19,6 +19,39 @@ EVENT_OBSERVATION = "OBSERVATION"
 EVENT_OPENED = "OPENED"
 EVENT_CLOSED = "CLOSED"
 
+# Shared Robot admission mode/recovery_status -> Russian presentation labels.
+# Used by both telegram_review.py's per-signal status panel and
+# telegram_monitoring.py's candidate-card Robot line -- never duplicate this
+# mapping elsewhere; import format_robot_status_text() instead.
+ROBOT_MODE_LABELS = {
+    "ROBOT_RUNNING": "Запущен",
+    "ROBOT_STOPPED": "Остановлен",
+}
+
+ROBOT_RECOVERY_LABELS = {
+    "READY": "Готов",
+    "PAUSED": "Пауза",
+    "RECONCILING": "Сверка",
+    "RECONCILIATION_REQUIRED": "Нужна сверка",
+    "ROBOT_STOPPED": "Остановлен",
+}
+
+
+def format_robot_status_text(mode: Any, recovery_status: Any) -> str:
+    """Localize a durable Robot admission (mode, recovery_status) pair.
+
+    Collapses to the bare mode label when mode and recovery_status render
+    identically (e.g. ROBOT_STOPPED/ROBOT_STOPPED -> "Остановлен" rather than
+    "Остановлен / Остановлен"). Unrecognized values map to "Неизвестно"
+    rather than leaking the raw internal string.
+    """
+
+    mode_label = ROBOT_MODE_LABELS.get(str(mode), "Неизвестно")
+    recovery_label = ROBOT_RECOVERY_LABELS.get(str(recovery_status), "Неизвестно")
+    if mode_label == recovery_label:
+        return mode_label
+    return f"{mode_label} / {recovery_label}"
+
 
 class RobotTelegramProjectionError(RuntimeError):
     pass
@@ -62,6 +95,80 @@ def parse_robot_view_callback(data: Any) -> str | None:
         return None
     view = parts[2]
     return view if view in {VIEW_FEED, VIEW_POSITIONS, VIEW_WATCHING} else None
+
+
+CONTROL_START = "start"
+CONTROL_PAUSE = "pause"
+CONTROL_RESUME = "resume"
+CONTROL_STOP = "stop"
+CONTROL_CLOSE_ALL = "close_all"
+CONTROL_CLOSE_ALL_CONFIRM = "close_all_confirm"
+CONTROL_CLOSE_ALL_CANCEL = "close_all_cancel"
+ROBOT_CONTROL_COMMANDS = {
+    CONTROL_START, CONTROL_PAUSE, CONTROL_RESUME, CONTROL_STOP,
+    CONTROL_CLOSE_ALL, CONTROL_CLOSE_ALL_CONFIRM, CONTROL_CLOSE_ALL_CANCEL,
+}
+
+
+def parse_robot_control_callback(data: Any) -> str | None:
+    parts = str(data).split(":")
+    if len(parts) != 3 or parts[:2] != ["robot", "cmd"]:
+        return None
+    command = parts[2]
+    return command if command in ROBOT_CONTROL_COMMANDS else None
+
+
+def build_robot_control_keyboard(
+    mode: str, recovery_status: str,
+) -> dict[str, list[list[dict[str, str]]]]:
+    """Render the operator control panel from live durable admission state.
+
+    Exactly one button ever occupies the pause/resume slot (its label and
+    callback_data flip with current state, per
+    AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale) so a
+    rejected transition is structurally unreachable from this keyboard.
+    RECONCILIATION_REQUIRED offers no buttons: recovering out of it is a
+    separate, unresolved problem this control surface does not attempt.
+    """
+    if recovery_status == "RECONCILIATION_REQUIRED":
+        return {"inline_keyboard": []}
+    if mode == "ROBOT_STOPPED":
+        return {
+            "inline_keyboard": [
+                [{"text": "▶ Старт", "callback_data": f"robot:cmd:{CONTROL_START}"}],
+            ]
+        }
+    toggle = (
+        {"text": "▶ Старт", "callback_data": f"robot:cmd:{CONTROL_RESUME}"}
+        if recovery_status == "PAUSED"
+        else {"text": "⏸ Пауза", "callback_data": f"robot:cmd:{CONTROL_PAUSE}"}
+    )
+    return {
+        "inline_keyboard": [
+            [toggle],
+            [
+                {"text": "❌ Закрыть всё", "callback_data": f"robot:cmd:{CONTROL_CLOSE_ALL}"},
+                {"text": "⏹ Стоп", "callback_data": f"robot:cmd:{CONTROL_STOP}"},
+            ],
+        ]
+    }
+
+
+def build_robot_close_all_confirmation_keyboard() -> dict[str, list[list[dict[str, str]]]]:
+    """One lightweight confirmation tap before close_all_now() executes.
+
+    close_all_now() is the one command in this set that forces an immediate
+    Market close of a live (PAPER) position, so — unlike start/pause/resume/
+    stop — it is never fired directly from the control panel button.
+    """
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "✅ Подтвердить", "callback_data": f"robot:cmd:{CONTROL_CLOSE_ALL_CONFIRM}"},
+                {"text": "Отмена", "callback_data": f"robot:cmd:{CONTROL_CLOSE_ALL_CANCEL}"},
+            ],
+        ]
+    }
 
 
 def _required_text(source: Mapping[str, Any], key: str) -> str:

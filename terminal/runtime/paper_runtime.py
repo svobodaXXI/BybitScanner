@@ -13,7 +13,7 @@ import logging
 from uuid import uuid4
 from decimal import Decimal
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 from terminal.api.models import (
@@ -24,6 +24,7 @@ from terminal.api.models import (
     PaperStopMutationResult, TimeInForce, to_primitive,
     LiveMarketCommandRequest,
 )
+from terminal.application.robot_breakout_monitor import DEFAULT_TICK_INTERVAL_S, RobotBreakoutMonitor
 from terminal.application.live_market_execution import LiveMarketMutationCoordinator, LiveMarketMutationGates
 from terminal.application.live_execution import LiveExecutionCoordinator, LiveParityMutationGates
 from terminal.application.live_limit_acceptance import (
@@ -51,17 +52,22 @@ from terminal.application.live_account_reconciliation import (
     LiveAccountReconciliationError,
 )
 from terminal.application.robot_recovery import RobotRecoveryCoordinator
+from scanner_geometry_cursor import latest_scanner_closed_candle
 from terminal.domain.models import (
-    ExecutionId, OrderId, OrderSide, PositionSide, Quantity, Symbol,
-    TradingAccountId,
+    Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
+    PositionSide, Quantity, Symbol, TradingAccountId,
 )
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.exchange.bybit_account_validation import BybitAccountValidator
 from terminal.exchange.bybit_v5_adapter import BybitCredentials, BybitV5ReadAdapter
 from terminal.exchange.bybit_v5_mutation_adapter import BybitEnvironment, BybitV5MutationAdapter
 from terminal.market_data.book_provider import MarketBookProvider
+from terminal.market_data.models import NormalizedOrderBook
 from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
-from terminal.persistence.sqlite_store import ExecutionApplyResult, ScannerRuntimeStateRecord, SQLiteStore
+from terminal.persistence.sqlite_store import (
+    ExecutionApplyResult, PaperProtectionObligationRecord, RobotTradeRecord,
+    ScannerRuntimeStateRecord, SQLiteStore,
+)
 from terminal.persistence.credential_store import CredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import (
@@ -103,6 +109,26 @@ def _live_working_volume_projection(
     return one_wv, positions
 
 
+def _robot_protection_crossing_leg(
+    side: PositionSide, stop_loss: Decimal | None, take_profit: Decimal | None,
+    exit_market: Decimal,
+) -> str | None:
+    """First-qualifying winning leg for one valid executable-side quote.
+
+    LONG: bid<=STOP / bid>=TAKE. SHORT: ask>=STOP / ask<=TAKE. STOP wins if a
+    single observation qualifies both legs (invalid/crossed geometry is
+    reported by latching STOP, never repaired here)."""
+    stop_triggered = stop_loss is not None and (
+        exit_market <= stop_loss if side is PositionSide.LONG else exit_market >= stop_loss
+    )
+    if stop_triggered:
+        return "STOP"
+    take_triggered = take_profit is not None and (
+        exit_market >= take_profit if side is PositionSide.LONG else exit_market <= take_profit
+    )
+    return "TAKE" if take_triggered else None
+
+
 class PaperOnlyAdapter:
     """Fail closed if any non-PAPER mutation path is reached."""
 
@@ -133,6 +159,54 @@ class _LiveOperationScopeProbe:
 
     def full_close(self, _request):
         return "full_close"
+
+
+class RobotPaperActionExecutor:
+    """Robot v0.1 PAPER execution port (terminal.application.robot_breakout_monitor.ActionExecutor).
+
+    Reuses PaperRuntime's existing guard/store/ExecutionEngine exactly as the
+    UI-facing methods do, through the ``_robot_*`` helpers below, but never
+    calls PaperRuntime.require_paper_mutations() -- Robot's authority to
+    submit PAPER orders is the durable robot_runtime_state admission gate
+    (terminal.application.robot_recovery.RobotRecoveryCoordinator), never
+    whichever account the Workspace UI currently has selected.
+
+    RobotBreakoutMonitor calls every method here from its OWN background
+    thread ("robot-breakout-monitor"), never from the thread that
+    constructed PaperRuntime/its SQLiteStore. Every call is therefore routed
+    through PaperRuntime._dispatch_robot_command(), which forwards to the
+    runtime's bound command dispatcher (SerializedPaperRuntime.call() in
+    production) so the actual store/TradingApplication/ExecutionEngine work
+    always runs on PaperRuntime's single owning writer thread -- exactly like
+    every other externally triggered mutation already does.
+    """
+
+    def __init__(self, runtime: "PaperRuntime") -> None:
+        self._runtime = runtime
+
+    def create_limit(self, request):
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_create_limit(request))
+
+    def cancel_limit(self, request):
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_cancel_limit(request))
+
+    def market(self, request):
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_market(request))
+
+    def create_stop(self, request):
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_create_stop(request))
+
+    def amend_stop(self, request):
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_stop(request))
+
+    def create_take(self, request):
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_create_take(request))
+
+    def amend_take(self, request):
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_take(request))
+
+    def full_close(self, request):
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_full_close(request))
 
 
 SCANNER_STOPPED = "SCANNER_STOPPED"
@@ -311,7 +385,14 @@ class PaperRuntime:
         live_limit_build_sha: str = "",
         deployment_identity: str = "local",
         robot_latest_geometry_index_provider: Callable[[str], int] | None = None,
+        robot_closed_candle_provider: Callable[[str], Mapping[str, object] | None] | None = None,
+        robot_command_dispatcher: Callable[[Callable[["PaperRuntime"], object]], object] | None = None,
+        robot_tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
     ) -> None:
+        # Bound (if given) via this constructor argument, or later via
+        # start_robot_monitor() once a real one exists -- see the class
+        # docstring note on RobotBreakoutMonitor's thread ownership below.
+        self._robot_command_dispatcher = robot_command_dispatcher
         self._account_manager = account_manager or paper_account_manager()
         self._paper_account_id = TradingAccountId("paper")
         self._credential_store = credential_store
@@ -429,6 +510,19 @@ class PaperRuntime:
             instrument_provider=instrument_provider,
             active_account_id_provider=lambda: self._account_manager.active_account_id,
         )
+        # Robot v0.1 PAPER execution port: bound to the durable PAPER account
+        # only, never to whichever account the Workspace UI currently has
+        # selected (active_account_id_provider=None skips that fence in
+        # PaperCommandContextProvider.context_for()). Robot's own authority to
+        # trade is the durable robot_runtime_state admission gate
+        # (RobotRecoveryCoordinator below), not UI account selection.
+        self._robot_context = PaperCommandContextProvider(
+            store=self.store,
+            account_id=account_id,
+            instrument=instrument_snapshot,
+            instrument_provider=instrument_provider,
+            active_account_id_provider=None,
+        )
 
         application = TradingApplication(
             PreTradeGuard(gate=MutationGate(mutations_enabled=True)),
@@ -441,6 +535,9 @@ class PaperRuntime:
         )
 
         self.api = TerminalCommandApi(application, context_provider)
+        # Shares the same TradingApplication/ExecutionEngine as self.api --
+        # only the context provider differs (UI-independent PAPER account).
+        self._robot_api = TerminalCommandApi(application, self._robot_context)
         self._live_market = LiveMarketMutationCoordinator(
             self._account_manager, self.store,
             lambda account_id: live_mutation_adapter_factory(
@@ -518,6 +615,27 @@ class PaperRuntime:
             clock_ms=lambda: int(time.time() * 1000),
         )
         self._robot_recovery.recover()
+        # RobotBreakoutMonitor runs on its own background thread
+        # ("robot-breakout-monitor"), never the thread that constructed this
+        # runtime (self.store's SQLiteStore owning thread). Its action
+        # executor and match_resting_orders callable therefore both go
+        # through _dispatch_robot_command()/_dispatch_robot_match_symbol(),
+        # which forward to self._robot_command_dispatcher -- bound above from
+        # the constructor argument, or later via start_robot_monitor(). Only
+        # start the monitor once a dispatcher exists: without one, there is
+        # no safe way to route its mutations back onto the owning thread.
+        self._robot_breakout_monitor = RobotBreakoutMonitor(
+            lambda: SQLiteStore.open(database_path),
+            self._paper_account_id,
+            get_closed_candle=robot_closed_candle_provider or latest_scanner_closed_candle,
+            action_executor=RobotPaperActionExecutor(self),
+            tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
+            clock_ms=lambda: int(time.time() * 1000),
+            match_resting_orders=self._dispatch_robot_match_symbol,
+            tick_interval_s=robot_tick_interval_s,
+        )
+        if self._robot_command_dispatcher is not None:
+            self._robot_breakout_monitor.start()
         self._scanner_control = ScannerControlRuntime(
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
@@ -525,6 +643,30 @@ class PaperRuntime:
             clock_ms=lambda: int(time.time() * 1000),
         )
         self._scanner_control.start()
+
+    def start_robot_monitor(
+        self, dispatcher: Callable[[Callable[["PaperRuntime"], object]], object],
+    ) -> None:
+        """Bind the Robot command dispatcher and start ticking.
+
+        Call this from the composition root once a real cross-thread
+        dispatcher exists (SerializedPaperRuntime.call in production) --
+        never before, and never with a same-thread/direct dispatcher for a
+        runtime whose RobotBreakoutMonitor will actually tick in the
+        background, or its mutations will hit the wrong SQLiteStore thread.
+        """
+        if self._robot_command_dispatcher is not None:
+            raise RuntimeError("Robot command dispatcher is already bound")
+        self._robot_command_dispatcher = dispatcher
+        self._robot_breakout_monitor.start()
+
+    def _dispatch_robot_command(self, operation: Callable[["PaperRuntime"], object]) -> object:
+        if self._robot_command_dispatcher is None:
+            raise RuntimeError("Robot command dispatcher is not bound")
+        return self._robot_command_dispatcher(operation)
+
+    def _dispatch_robot_match_symbol(self, symbol: str) -> int:
+        return self._dispatch_robot_command(lambda runtime: runtime.robot_match_symbol(symbol))
 
     @property
     def _account_id(self) -> TradingAccountId:
@@ -759,6 +901,9 @@ class PaperRuntime:
         self.require_paper_mutations()
         return self.api.market(request)
 
+    def _robot_market(self, request):
+        return self._robot_api.market(request)
+
     def live_market(self, request: LiveMarketCommandRequest):
         return self._live_market.submit(request)
 
@@ -810,6 +955,9 @@ class PaperRuntime:
     def full_close(self, request):
         self.require_paper_mutations()
         return self.api.full_close(request)
+
+    def _robot_full_close(self, request):
+        return self._robot_api.full_close(request)
 
     def add_bybit_account(self, display_name: str, api_key: str, api_secret: str) -> dict[str, object]:
         if not self._credential_store or not self._account_validator:
@@ -884,16 +1032,42 @@ class PaperRuntime:
         # Claim the authoritative snapshot before applying its orders. A queued
         # duplicate therefore cannot replay fills if one order raises midway.
         self._last_processed_book_update_id = book_update_id
+        return self._match_symbol(book.symbol, book, book_update_id, self._context)
+
+    def robot_match_symbol(self, symbol: str) -> int:
+        """Match Robot-owned resting PAPER limit fills and stop/take protection
+        for ``symbol``, independent of the Workspace UI's selected account and
+        of which symbol the UI currently has live-streamed.
+
+        Uses book_provider.get_book() (REST fallback when the symbol is not
+        the UI's currently live-buffered one) rather than
+        get_current_book_update() (buffer-only, single-symbol), so a Robot
+        candidate never depends on the operator viewing its symbol.
+        """
+        normalized = Symbol(symbol.strip().upper())
+        book = self._book_provider.get_book(normalized)
+        if book is None:
+            return 0
+        match_event_id = f"robot:{normalized.value}:{int(book.received_at_ms)}"
+        return self._match_symbol(normalized, book, match_event_id, self._robot_context)
+
+    def _match_symbol(
+        self,
+        symbol: Symbol,
+        book,
+        match_event_id: str,
+        context_provider: "PaperCommandContextProvider",
+    ) -> int:
         applied = 0
-        for order in self.store.load_active_paper_limits(self._account_id, book.symbol):
+        for order in self.store.load_active_paper_limits(self._account_id, symbol):
             result = self._limit_executor.execute(
                 order=order,
                 book=book,
-                match_event_id=book_update_id,
+                match_event_id=match_event_id,
             )
             if result is not None and result.apply_result is ExecutionApplyResult.APPLIED:
                 applied += 1
-        context = self._context.context_for(book.symbol.value)
+        context = context_provider.context_for(symbol.value)
         protection = self.store.get_protection_projection(
             context.pretrade.position_key
         )
@@ -930,7 +1104,7 @@ class PaperRuntime:
         digest = hashlib.sha256(
             (
                 f"{context.pretrade.position_key.symbol.value}\0{protection.version}"
-                f"\0{book_update_id}"
+                f"\0{match_event_id}"
             ).encode("utf-8")
         ).hexdigest()
         side = (
@@ -950,6 +1124,296 @@ class PaperRuntime:
         if stop_result.apply_result is ExecutionApplyResult.APPLIED:
             applied += 1
         return applied
+
+    def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
+        """Symbols needing independent Robot protection coverage right now:
+        the union of (a) symbols with a non-flat Robot-owned PAPER trade and
+        (b) symbols with a durable D2.1 obligation still unresolved.
+
+        (b) matters on its own: a TRIGGERED/DISPATCHING obligation must keep
+        market-data responsibility even if candidate/trade projection state
+        alone would no longer be sufficient to prove it. Independent of
+        Robot entry-admission state and of whatever account/symbol the
+        Workspace UI currently has selected; callers use this to decide
+        which symbols need an independent MarketDataHub feed for coverage.
+        """
+        candidates = self.store.load_robot_candidates(self._paper_account_id)
+        open_symbols = {
+            candidate.symbol.value for candidate in candidates if candidate.status == "OPEN"
+        }
+        unresolved = self.store.load_unresolved_paper_protection_obligations(
+            self._paper_account_id,
+        )
+        unresolved_symbols = {obligation.symbol.value for obligation in unresolved}
+        return tuple(sorted(open_symbols | unresolved_symbols))
+
+    def evaluate_robot_protection_crossing(
+        self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,
+    ) -> PaperProtectionObligationRecord | None:
+        """Durably latch the first qualifying STOP/TAKE crossing for the
+        Robot trade owning ``symbol``, then drive it towards a real PAPER
+        close (D2.3), independent of Workspace selection, UI active account,
+        or Robot entry-admission state.
+
+        A trade whose obligation is already latched skips straight to
+        dispatch/resume using the CURRENT valid book -- a retreat after latch
+        or a restart between latch and finalization must not require a fresh
+        crossing to make progress (CR section 9/11). Returns None -- not an
+        error -- for anything that is not yet (or no longer) actionable: no
+        open Robot trade and no orphaned unresolved obligation for the
+        symbol, ambiguous attribution (more than one open trade for the
+        symbol), no confirmed protection, an already-flat position, or a
+        quote that does not cross either leg.
+        """
+        normalized = Symbol(symbol.strip().upper())
+        trade = self.store.get_open_robot_trade_for_symbol(self._paper_account_id, normalized)
+        if trade is not None:
+            obligation = self.store.get_paper_protection_obligation_for_trade(trade.trade_id)
+            if obligation is not None and obligation.status != "RESOLVED":
+                return self._dispatch_paper_protection_obligation(obligation, now_ms=received_at_ms)
+            return self._evaluate_fresh_protection_crossing(
+                trade, book, event_id=event_id, received_at_ms=received_at_ms,
+            )
+        # No currently open Robot trade for this symbol -- but coverage
+        # (robot_protection_coverage_symbols) keeps this symbol subscribed
+        # whenever a durable obligation from an already-exited lifecycle is
+        # still unresolved (e.g. crash between our own execution and
+        # finalization). Resume it here instead of silently dropping it.
+        for obligation in self.store.load_unresolved_paper_protection_obligations(
+            self._paper_account_id,
+        ):
+            if obligation.symbol == normalized:
+                return self._dispatch_paper_protection_obligation(obligation, now_ms=received_at_ms)
+        return None
+
+    def _evaluate_fresh_protection_crossing(
+        self, trade: RobotTradeRecord, book: NormalizedOrderBook, *, event_id: str,
+        received_at_ms: int,
+    ) -> PaperProtectionObligationRecord | None:
+        """Latch (D2.1) and immediately attempt dispatch (D2.3) for a Robot
+        trade that does not yet own a durable protection obligation."""
+        context = self._robot_context.context_for(trade.symbol.value)
+        position_key = context.pretrade.position_key
+        protection = self.store.get_protection_projection(position_key)
+        if protection is None or (
+            protection.stop_loss is None and protection.take_profit is None
+        ):
+            return None
+        position = self.store.get_position_projection(position_key)
+        if position is None or (
+            position.side is PositionSide.FLAT or position.quantity.value == 0
+        ):
+            return None
+        if not book.bids or not book.asks:
+            return None
+        if (
+            book.source_generation is None
+            or book.source_sequence is None
+            or book.source_update_id is None
+            or book.source_event_at_ms is None
+        ):
+            return None
+        observed_bid = book.bids[0].price.value
+        observed_ask = book.asks[0].price.value
+        exit_market = (
+            observed_bid
+            if position.side is PositionSide.LONG
+            else observed_ask
+        )
+        leg = _robot_protection_crossing_leg(
+            position.side, protection.stop_loss, protection.take_profit, exit_market,
+        )
+        if leg is None:
+            return None
+        trigger_price = protection.stop_loss if leg == "STOP" else protection.take_profit
+        record, _created = self.store.latch_paper_protection_obligation(
+            trade_id=trade.trade_id,
+            protection_version=protection.version,
+            winning_leg=leg,
+            trigger_price=trigger_price,
+            observed_exit_price=exit_market,
+            observed_quantity=position.quantity.value,
+            market_event_id=event_id,
+            source_received_at_ms=received_at_ms,
+            source_generation=book.source_generation,
+            source_sequence=book.source_sequence,
+            source_update_id=book.source_update_id,
+            source_event_at_ms=book.source_event_at_ms,
+            source_matching_engine_cts_ms=book.source_matching_engine_cts_ms,
+            observed_bid_price=observed_bid,
+            observed_ask_price=observed_ask,
+            latched_at_ms=received_at_ms,
+        )
+        return self._dispatch_paper_protection_obligation(record, now_ms=received_at_ms)
+
+    def _dispatch_paper_protection_obligation(
+        self, obligation: PaperProtectionObligationRecord, *, now_ms: int,
+    ) -> PaperProtectionObligationRecord:
+        """Idempotently drive one durable D2.1 obligation from
+        TRIGGERED/DISPATCHING to RESOLVED (D2.3).
+
+        Dispatches the real PAPER close through the shared PaperMarketExecutor
+        using the obligation's own D2.1 stable order/exec identity, then
+        finalizes the Robot trade only from proven execution evidence. Safe
+        to call repeatedly for the same obligation -- new quotes, restart
+        resume, duplicate delivery -- because it never re-executes an
+        already-recorded stable exec (checked by identity before dispatch)
+        and never advances a step it cannot prove; any ownership/lifecycle
+        mismatch (manual close, replacement position) fails closed and
+        leaves the obligation for reconciliation rather than guessing.
+        """
+        if obligation.status == "RESOLVED":
+            return obligation
+        trade = self.store.get_robot_trade(obligation.trade_id)
+        if trade is None:
+            LOGGER.error(
+                "Robot protection obligation references a missing trade; "
+                "obligation=%s trade_id=%s", obligation.obligation_id, obligation.trade_id,
+            )
+            return obligation
+        dedup_key = ExecutionDedupKey(trade.trading_account_id, Category.LINEAR, obligation.exec_id)
+        execution = self.store.get_execution(dedup_key)
+        if execution is None:
+            if trade.exit_time_ms is not None:
+                # The lifecycle already ended without our stable exec -- a
+                # manual/replacement close won the race. Never attribute a
+                # fill we did not make; leave the obligation for reconciliation.
+                LOGGER.error(
+                    "Robot protection obligation trade already closed without "
+                    "our stable exec -- leaving for reconciliation; "
+                    "obligation=%s trade_id=%s", obligation.obligation_id, trade.trade_id,
+                )
+                return obligation
+            position_key = PositionKey(trade.trading_account_id, Category.LINEAR, trade.symbol, 0)
+            position = self.store.get_position_projection(position_key)
+            expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
+            # Owner-frozen D2.3 ownership attestation gate
+            # (CR-PAPER-PROTECTION-LIFECYCLE-001): autonomous close is allowed
+            # only when the CURRENT aggregate position can be proven to
+            # descend from Robot's own entry with no unknown mutation since.
+            # entry_position_version alone would miss a manual add+reduce
+            # that nets back to the original quantity; entry_quantity alone
+            # would miss a same-quantity replacement lifecycle. Together they
+            # close both gaps. Missing (legacy, pre-attestation) trades and
+            # any mismatch fail closed -- never guess which portion of a
+            # mixed/replaced aggregate belongs to the Robot.
+            if (
+                trade.entry_position_version is None
+                or trade.entry_quantity is None
+                or trade.entry_quantity <= 0
+                or position is None
+                or position.side is not expected_side
+                or position.quantity.value != trade.entry_quantity
+                or position.version != trade.entry_position_version
+            ):
+                return obligation
+            if obligation.status == "TRIGGERED":
+                obligation = self.store.transition_paper_protection_obligation(
+                    obligation.obligation_id,
+                    expected_status="TRIGGERED",
+                    next_status="DISPATCHING",
+                    expected_version=obligation.version,
+                    updated_at_ms=now_ms,
+                )
+            close_side = OrderSide.SELL if expected_side is PositionSide.LONG else OrderSide.BUY
+            try:
+                self._market_executor.execute(
+                    trading_account_id=trade.trading_account_id,
+                    symbol=trade.symbol,
+                    side=close_side,
+                    quantity=Quantity(position.quantity.value),
+                    order_link_id=obligation.obligation_id,
+                    order_id=obligation.order_id,
+                    exec_id=obligation.exec_id,
+                )
+            except (RuntimeError, ValueError):
+                LOGGER.exception(
+                    "Robot protection close dispatch failed; will resume from "
+                    "current book on the next quote/restart; obligation=%s",
+                    obligation.obligation_id,
+                )
+                return obligation
+            # execute() either raised (handled above) or applied the execution
+            # durably (fresh or DUPLICATE) -- the row is guaranteed present.
+            execution = self.store.get_execution(dedup_key)
+        return self._finalize_paper_protection_obligation(obligation, trade, execution, now_ms=now_ms)
+
+    def _finalize_paper_protection_obligation(
+        self, obligation: PaperProtectionObligationRecord, trade: RobotTradeRecord,
+        execution: Execution, *, now_ms: int,
+    ) -> PaperProtectionObligationRecord:
+        """Call close_robot_trade() from proven execution/position evidence
+        and resolve the obligation, only once FLAT is itself proven.
+
+        Deterministic from durable evidence alone (the obligation's own
+        recorded execution plus the trade's own recorded entry), so a restart
+        between execution and finalization reproduces the exact same close
+        evidence and close_robot_trade()'s own idempotent replay guard
+        (matching evidence -> no-op) makes this safe to repeat.
+        """
+        position_key = PositionKey(trade.trading_account_id, Category.LINEAR, trade.symbol, 0)
+        position = self.store.get_position_projection(position_key)
+        if position is None or position.side is not PositionSide.FLAT:
+            # Our own exec is recorded but FLAT is not yet proven: leave
+            # DISPATCHING for reconciliation rather than finalize from an
+            # unproven position state.
+            return obligation
+        if trade.entry_quantity is None:
+            # Reached only if an exec was somehow recorded for a trade
+            # lacking the ownership attestation (e.g. resuming a lifecycle
+            # dispatched before this gate existed): missing attestation
+            # fails closed here too, not only at the pre-execute gate.
+            LOGGER.error(
+                "Robot protection finalize cannot prove entry attestation; "
+                "leaving for reconciliation; obligation=%s trade_id=%s",
+                obligation.obligation_id, trade.trade_id,
+            )
+            return obligation
+        exit_price = execution.price.value
+        exit_quantity = execution.quantity.value
+        fees_costs_usdt = execution.fee
+        expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
+        if expected_side is PositionSide.LONG:
+            realized_pnl_usdt = exit_quantity * (exit_price - trade.average_entry)
+        else:
+            realized_pnl_usdt = exit_quantity * (trade.average_entry - exit_price)
+        # Owner-frozen convention (CR-PAPER-PROTECTION-LIFECYCLE-001 section 12):
+        # actual_entry_notional_usdt is the attested Robot-owned entry
+        # quantity (trade.entry_quantity, proven -- not merely assumed --
+        # equal to the aggregate at dispatch time by the ownership gate
+        # above) times the actual average entry price; never the closing
+        # execution/aggregate quantity, and never actual_wv, which is a WV
+        # fraction, not a USDT notional.
+        actual_entry_notional_usdt = trade.entry_quantity * trade.average_entry
+        if actual_entry_notional_usdt <= 0:
+            LOGGER.error(
+                "Robot protection close cannot prove a positive entry notional; "
+                "leaving for reconciliation; obligation=%s trade_id=%s",
+                obligation.obligation_id, trade.trade_id,
+            )
+            return obligation
+        realized_pnl_pct = (
+            (realized_pnl_usdt - fees_costs_usdt) / actual_entry_notional_usdt * 100
+        )
+        self.store.close_robot_trade(
+            trade.trade_id,
+            exit_time_ms=execution.exchange_timestamp_ms,
+            exit_price=exit_price,
+            exit_reason=obligation.winning_leg,
+            realized_pnl_usdt=realized_pnl_usdt,
+            realized_pnl_pct=realized_pnl_pct,
+            fees_costs_usdt=fees_costs_usdt,
+            updated_at_ms=now_ms,
+        )
+        if obligation.status == "DISPATCHING":
+            obligation = self.store.transition_paper_protection_obligation(
+                obligation.obligation_id,
+                expected_status="DISPATCHING",
+                next_status="RESOLVED",
+                expected_version=obligation.version,
+                updated_at_ms=now_ms,
+            )
+        return obligation
 
     def paper_state(self, symbol: str) -> dict[str, object]:
         normalized_symbol = symbol.strip().upper()
@@ -1093,12 +1557,66 @@ class PaperRuntime:
             request.client_action_id.value, tuple(results), refreshed.positions,
         )
 
+    def robot_close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
+        """Market-close exclusively Robot-owned open positions (close_all_now()).
+
+        Unlike close_all(), which is account-wide, this filters strictly to
+        symbols with an OPEN robot_candidates row for this account, per
+        AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Section 4 Scope:
+        manual/non-robot positions on the same PAPER account are never
+        checked, cancelled, or closed by this method. If any close cannot be
+        authoritatively confirmed as filled, the durable Robot admission gate
+        is handed to RECONCILIATION_REQUIRED for manual resolution, per
+        Section 4 -- this method never itself changes admission mode
+        otherwise.
+        """
+        self.require_paper_mutations()
+        candidates = self.store.load_robot_candidates(self._account_id)
+        robot_symbols = sorted({
+            item.symbol.value for item in candidates if item.status == "OPEN"
+        })
+        results = []
+        any_unconfirmed = False
+        for symbol in robot_symbols:
+            digest = hashlib.sha256(
+                f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
+            ).hexdigest()[:32]
+            result = self.api.full_close(FullCloseCommandRequest(
+                ClientActionId(f"robot-close-all-{digest}"), symbol,
+            ))
+            results.append(result)
+            if result.status != CommandResultStatus.COMPLETED:
+                any_unconfirmed = True
+        if any_unconfirmed:
+            runtime = self.store.get_robot_runtime_state(self._account_id)
+            if runtime is not None and runtime.mode == "ROBOT_RUNNING":
+                self.store.update_robot_runtime_state(
+                    self._account_id,
+                    mode="ROBOT_RUNNING",
+                    recovery_status="RECONCILIATION_REQUIRED",
+                    reason="close_all_now could not confirm a Robot-owned position close",
+                    expected_version=runtime.version,
+                    updated_at_ms=int(time.time() * 1000),
+                )
+        refreshed = self.open_positions()
+        return CloseAllCommandResponse(
+            request.client_action_id.value, tuple(results), refreshed.positions,
+        )
+
     def create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
         self.require_paper_mutations()
+        return self._create_limit(request, self._context)
+
+    def _robot_create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
+        return self._create_limit(request, self._robot_context)
+
+    def _create_limit(
+        self, request: LimitCommandRequest, context_provider: PaperCommandContextProvider,
+    ) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()
         if request.time_in_force is not TimeInForce.GTC:
             raise ValueError("PAPER Limit supports GTC only")
-        context = self._context.context_for(symbol)
+        context = context_provider.context_for(symbol)
         volume = (
             NotionalIntent(request.volume.amount)
             if request.volume.unit.value == "usdt"
@@ -1141,9 +1659,13 @@ class PaperRuntime:
 
     def cancel_limit(self, request: PaperLimitCancelRequest) -> PaperLimitMutationResult:
         self.require_paper_mutations()
+        return self._cancel_limit(request)
+
+    def _robot_cancel_limit(self, request: PaperLimitCancelRequest) -> PaperLimitMutationResult:
+        return self._cancel_limit(request)
+
+    def _cancel_limit(self, request: PaperLimitCancelRequest) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()
-        if symbol != self._context.instrument.symbol:
-            raise ValueError("unsupported PAPER symbol")
         existing = self.store.get_paper_limit(request.order_id, self._account_id)
         if existing is not None and existing.symbol.value != symbol:
             raise ValueError("order symbol does not match")
@@ -1220,6 +1742,18 @@ class PaperRuntime:
     def amend_take(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
         return self._mutate_protection("take", "amend", request)
 
+    def _robot_create_stop(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("stop", "create", request, context_provider=self._robot_context)
+
+    def _robot_amend_stop(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("stop", "amend", request, context_provider=self._robot_context)
+
+    def _robot_create_take(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("take", "create", request, context_provider=self._robot_context)
+
+    def _robot_amend_take(self, request: PaperStopMutationRequest) -> PaperStopMutationResult:
+        return self._mutate_protection("take", "amend", request, context_provider=self._robot_context)
+
     def delete_take(self, request: PaperStopDeleteRequest) -> PaperStopMutationResult:
         return self._delete_protection("take", request)
 
@@ -1247,10 +1781,13 @@ class PaperRuntime:
 
     def _mutate_protection(
         self, leg: str, operation: str, request: PaperStopMutationRequest,
+        *, context_provider: PaperCommandContextProvider | None = None,
     ) -> PaperStopMutationResult:
-        self.require_paper_mutations()
+        if context_provider is None:
+            self.require_paper_mutations()
+            context_provider = self._context
         symbol = request.symbol.strip().upper()
-        context = self._context.context_for(symbol)
+        context = context_provider.context_for(symbol)
         normalized = normalize_paper_protection_trigger(
             context.position, context.instrument, request.trigger_price, leg,
         )
@@ -1276,6 +1813,7 @@ class PaperRuntime:
         )
 
     def close(self) -> None:
+        self._robot_breakout_monitor.close()
         self._scanner_control.close()
         self.store.close()
         if self._live_account_store is not None:

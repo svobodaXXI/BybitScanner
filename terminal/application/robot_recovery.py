@@ -30,6 +30,7 @@ from terminal.persistence.sqlite_store import (
 
 RECONCILING = "RECONCILING"
 READY = "READY"
+PAUSED = "PAUSED"
 
 
 class RobotRecoveryError(RuntimeError):
@@ -72,13 +73,7 @@ class RobotRecoveryCoordinator:
         runtime = self._store.initialize_robot_runtime_state(
             self._account_id, updated_at_ms=now_ms,
         )
-        candidates = self._store.load_robot_candidates(self._account_id)
-        open_positions = tuple(
-            {"candidate_id": item.candidate_id, "symbol": item.symbol.value}
-            for item in candidates
-            if item.status == "OPEN"
-        )
-        approved = tuple(item for item in candidates if item.status == "APPROVED")
+        _candidates, open_positions, approved = self._load_candidate_sets()
 
         if runtime.mode == ROBOT_STOPPED:
             status, decisions = reconcile_restart(
@@ -96,6 +91,49 @@ class RobotRecoveryCoordinator:
                 )
             return RobotRecoveryResult(runtime, decisions)
 
+        was_paused = runtime.recovery_status == PAUSED
+        return self._reconcile_running(runtime, open_positions, approved, was_paused=was_paused)
+
+    def start(self) -> RobotRecoveryResult:
+        """Explicit operator start from durable ``ROBOT_STOPPED``.
+
+        This is the ``Запустить робота`` action, distinct from ``recover()``:
+        ``recover()`` never lifts ``ROBOT_STOPPED`` on its own (it must survive
+        process/PC restart per
+        AUTOPILOT_ROBOT_V0_1_RESTART_FROM_STOPPED_DECISION.md), while ``start()``
+        is the one path that actively reconciles into ``ROBOT_RUNNING``. Callers
+        (``terminal.application.robot_control.start_robot``) are responsible for
+        rejecting the call outright when durable mode is not already
+        ``ROBOT_STOPPED``; this method assumes that precondition already holds.
+        Per that same decision, previously stopped/terminal candidates are never
+        revived here: only candidates still ``APPROVED`` are reconciled, exactly
+        as an ordinary running-mode restart would.
+        """
+        now_ms = self._now_ms()
+        runtime = self._store.initialize_robot_runtime_state(
+            self._account_id, updated_at_ms=now_ms,
+        )
+        _candidates, open_positions, approved = self._load_candidate_sets()
+        return self._reconcile_running(runtime, open_positions, approved, was_paused=False)
+
+    def _load_candidate_sets(self):
+        candidates = self._store.load_robot_candidates(self._account_id)
+        open_positions = tuple(
+            {"candidate_id": item.candidate_id, "symbol": item.symbol.value}
+            for item in candidates
+            if item.status == "OPEN"
+        )
+        approved = tuple(item for item in candidates if item.status == "APPROVED")
+        return candidates, open_positions, approved
+
+    def _reconcile_running(
+        self,
+        runtime: RobotRuntimeStateRecord,
+        open_positions: tuple[dict[str, object], ...],
+        approved: tuple,
+        *,
+        was_paused: bool,
+    ) -> RobotRecoveryResult:
         runtime = self._set_runtime(
             runtime,
             mode=ROBOT_RUNNING,
@@ -126,10 +164,14 @@ class RobotRecoveryCoordinator:
                     expected_revision=candidate.state_revision,
                     updated_at_ms=self._now_ms(),
                 )
+            # An operator's pause is a durable admission decision (see
+            # AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md Section 2/6): a
+            # restart must not silently resume admission on its own, so a
+            # reconciliation that started PAUSED lands back on PAUSED, not READY.
             runtime = self._set_runtime(
                 runtime,
                 mode=ROBOT_RUNNING,
-                recovery_status=READY,
+                recovery_status=PAUSED if was_paused else READY,
                 reason=None,
             )
             return RobotRecoveryResult(runtime, decisions)

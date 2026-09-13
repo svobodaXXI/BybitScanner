@@ -143,6 +143,8 @@ class RobotRuntimeWiringTests(unittest.TestCase):
                     average_entry=Decimal("100"),
                     stop_price=Decimal("98"),
                     take_price=Decimal("103"),
+                    entry_quantity=Decimal("1"),
+                    entry_position_version=1,
                     created_at_ms=1003,
                 )
                 self.assertTrue(trade_created)
