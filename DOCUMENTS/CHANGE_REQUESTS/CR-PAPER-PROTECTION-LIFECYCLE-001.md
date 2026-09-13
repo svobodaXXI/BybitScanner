@@ -7,7 +7,7 @@
   "id": "CR-PAPER-PROTECTION-LIFECYCLE-001",
   "title": "Autonomous PAPER Protection Execution Lifecycle",
   "status": "AWAITING_APPROVAL",
-  "revision": "1.0",
+  "revision": "1.1",
   "lifecycle_stage": "CONTEXT",
   "objective": "Specify D2 correction: autonomous event-driven PAPER protection, durable crossing obligations, restart-safe serialized closing and evidence-based Robot trade finalization, independent of UI and entry admission.",
   "non_goals": [
@@ -48,12 +48,13 @@
     "Reuse MarketDataHub, serialized runtime, PAPER executor and shared accounting",
     "Duplicate events, ambiguity and restart cannot lose committed obligations or duplicate close effects",
     "Actual execution evidence proves fill economics and FLAT; Robot closure is idempotent",
-    "Unobserved downtime-only crossings are a separate semantic decision; no fabricated historical execution"
+    "Unobserved downtime-only crossings are a separate semantic decision; no fabricated historical execution",
+    "D2.3 realized_pnl_pct is frozen (owner decision, 2026-09-13) as (realized_pnl_usdt - fees_costs_usdt) / actual_entry_notional_usdt * 100, where realized_pnl_usdt is gross realized trading PnL from actual execution evidence, fees_costs_usdt is the actual accumulated fee cost attributable to this Robot trade close lifecycle, and actual_entry_notional_usdt is the actual Robot-owned entry quantity multiplied by the actual average entry price (leverage ignored); actual_wv MUST NOT be used as the denominator because it represents a WV fraction, not an absolute USDT notional, in this repository; fail closed if actual_entry_notional_usdt cannot be proven from authoritative Robot-owned execution/position evidence -- never guess or substitute aggregate/manual-owned quantity"
   ],
   "unresolved_decisions": [
     "Approve proposed detailed lifecycle and choose exact durable schema plus atomic dispatch/correlation API before IMPLEMENT",
     "Freeze event admission/backpressure, maximum healthy processing latency and ingress-to-durability crash handling",
-    "Prove position lifecycle/controller and execution-to-trade attribution; freeze percentage-PnL denominator and fee allocation against owning accounting semantics"
+    "Prove position lifecycle/controller and execution-to-trade attribution against owning accounting semantics"
   ],
   "acceptance_criteria": [
     "All section 14 invariants hold",
@@ -121,6 +122,11 @@
       "revision": "1.0",
       "date": "2026-09-13",
       "reason": "User-authorized D2 TASK/SPEC/CONTEXT capture; no runtime or Git-write authorization"
+    },
+    {
+      "revision": "1.1",
+      "date": "2026-09-13",
+      "reason": "Owner froze D2.3 realized_pnl_pct denominator/fee-allocation accounting convention prior to resuming D2.3 IMPLEMENT"
     }
   ]
 }
@@ -370,8 +376,13 @@ After proven closure, call SQLiteStore.close_robot_trade() idempotently. Use:
 - exit_reason: durable winning STOP/TAKE leg when that execution actually caused closure;
 - realized PnL/fees: attributable shared execution economics, not cumulative symbol values from
   unrelated trades;
-- realized_pnl_pct: existing owning convention, with denominator and gross/net treatment frozen
-  before IMPLEMENT rather than guessed here.
+- realized_pnl_pct: owner-frozen (2026-09-13) as
+  `(realized_pnl_usdt - fees_costs_usdt) / actual_entry_notional_usdt * 100`, where
+  `actual_entry_notional_usdt` is the actual Robot-owned entry quantity multiplied by the actual
+  average entry price (leverage ignored). `actual_wv` MUST NOT be used as the denominator: in this
+  repository it represents a WV fraction, not an absolute USDT notional. Fail closed if
+  `actual_entry_notional_usdt` cannot be proven from authoritative Robot-owned execution/position
+  evidence; never guess or substitute aggregate/manual-owned quantity.
 
 Planning prices may differ from normalized protection prices. Effective trigger prices come from
 the confirmed projection; exit prices always come from execution. Do not invent Robot trades for
