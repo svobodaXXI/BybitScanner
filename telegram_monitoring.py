@@ -1,7 +1,7 @@
 """Telegram owner menu for read-only Robot candidate monitoring.
 
 This listener extends the existing Telegram review/Robot callback surface without
-changing Robot state.  It reads authoritative candidate state from the Terminal
+changing Robot state. It reads authoritative candidate state from the Terminal
 SQLite store and delegates all non-monitoring callbacks to ``telegram_review``.
 
 Run this listener instead of ``telegram_review.py``; two long-polling getUpdates
@@ -12,25 +12,133 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
 import config
 import telegram_bot
-import telegram_review
 from robot_telegram_feed import format_robot_status_text
 from terminal.application.robot_control import get_robot_runtime_status
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
 
 
-PROJECT_ROOT = Path(r"C:\BybitScanner")
+PROJECT_ROOT = Path(__file__).resolve().parent
 OFFSET_FILE = PROJECT_ROOT / "review_queue" / ".telegram_offset"
 PAPER_ACCOUNT_ID = TradingAccountId("paper")
 DB_PATH = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
+
+SCANNER_ACTIONS = {
+    "SCANNER_RUNNING": ("Остановить сканер", "pause"),
+    "SCANNER_PAUSED": ("Запустить сканер", "resume"),
+    "SCANNER_STOPPED": ("Запустить сканер", "start"),
+}
+
+
+@contextmanager
+def _robot_store():
+    # Read Robot projections without creating or migrating a database.
+    connection = sqlite3.connect(DB_PATH.resolve().as_uri() + "?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    connection.execute("BEGIN")
+    store = SQLiteStore(connection, DB_PATH, 5000)
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+def _scanner_request(action=None):
+    base = os.environ.get("BYBITSCANNER_PAPER_BACKEND_URL", "http://127.0.0.1:8765").rstrip("/")
+    url = base + "/api/scanner/" + (action or "status")
+    response = (
+        requests.post(url, json={}, timeout=10, allow_redirects=False)
+        if action
+        else requests.get(url, timeout=10, allow_redirects=False)
+    )
+    response.raise_for_status()
+    result = response.json()
+    if result.get("ok") is not True or result.get("mode") not in SCANNER_ACTIONS:
+        raise ValueError("Scanner authority unavailable")
+    return result
+
+
+def _send_text(chat_id, text, **kwargs):
+    telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text, **kwargs)
+
+
+def _send_scanner_control(chat_id):
+    try:
+        state = _scanner_request()
+        # One dispatch only. Never retry a mutation after an ambiguous response.
+        _scanner_request(SCANNER_ACTIONS[state["mode"]][1])
+    except Exception:
+        _send_text(
+            chat_id,
+            "Команда сканера не подтверждена. Состояние будет проверено; автоматического повтора нет.",
+        )
+    try:
+        state = _scanner_request()
+        _send_text(
+            chat_id,
+            "Сканер: "
+            + {
+                "SCANNER_RUNNING": "запущен",
+                "SCANNER_PAUSED": "на паузе",
+                "SCANNER_STOPPED": "остановлен",
+            }[state["mode"]],
+        )
+    except Exception:
+        _send_text(chat_id, "Состояние сканера недоступно.")
+    refresh_command_menu()
+
+
+def _send_robot_status(chat_id):
+    try:
+        with _robot_store() as store:
+            runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+            candidates = store.load_robot_candidates(PAPER_ACCOUNT_ID)
+        opened = sum(item.status == "OPEN" for item in candidates)
+        watching = sum(item.status == "APPROVED" for item in candidates)
+        _send_text(
+            chat_id,
+            f"Робот: {_robot_status_text(runtime)}\n"
+            f"Статус робота: Наблюдение: {watching} кандидатов\n"
+            f"Открытых позиций: {opened}",
+        )
+    except Exception:
+        _send_text(chat_id, "Состояние робота и число открытых позиций недоступны.")
+
+
+def _send_workspace(chat_id, *, positions=False):
+    url = os.environ.get("BYBITSCANNER_WORKSPACE_URL", "").strip()
+    parts = urlsplit(url)
+    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
+        _send_text(chat_id, "HTTPS-адрес терминала не настроен (BYBITSCANNER_WORKSPACE_URL).")
+        return
+    if positions:
+        query = [
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if key != "view"
+        ]
+        query.append(("view", "positions"))
+        url = urlunsplit(parts._replace(query=urlencode(query)))
+    label = "Все открытые позиции" if positions else "Терминал"
+    _send_text(
+        chat_id,
+        label,
+        reply_markup={
+            "inline_keyboard": [[{"text": label, "web_app": {"url": url}}]],
+        },
+    )
+
 
 PHASE_LABELS = {
     "WAITING_BREAKOUT": "Ожидание пробоя",
@@ -38,6 +146,7 @@ PHASE_LABELS = {
     "RETEST_DETECTED": "Ретест обнаружен",
     "EXPIRED_AT_APEX": "Истёк у апекса",
 }
+
 
 def _telegram_request(method: str, **params):
     url = f"https://api.telegram.org/bot{config.TELEGRAM_TOKEN}/{method}"
@@ -95,10 +204,12 @@ def _candidate_button_label(record: RobotCandidateRecord) -> str:
 
 def build_candidate_keyboard(records: tuple[RobotCandidateRecord, ...]):
     rows = [
-        [{
-            "text": _candidate_button_label(record),
-            "callback_data": f"monitor:candidate:{record.candidate_id}",
-        }]
+        [
+            {
+                "text": _candidate_button_label(record),
+                "callback_data": f"monitor:candidate:{record.candidate_id}",
+            }
+        ]
         for record in records
     ]
     rows.append([{"text": "🔄 Обновить", "callback_data": "monitor:list"}])
@@ -191,14 +302,18 @@ def _send_candidate_card(chat_id, candidate_id: str) -> None:
             config.TELEGRAM_TOKEN,
             chat_id,
             "Кандидат больше не активен. Обновите список мониторинга.",
-            reply_markup={"inline_keyboard": [[{"text": "🔄 Мониторинг", "callback_data": "monitor:list"}]]},
+            reply_markup={
+                "inline_keyboard": [[{"text": "🔄 Мониторинг", "callback_data": "monitor:list"}]]
+            },
         )
         return
     telegram_bot.send_message(
         config.TELEGRAM_TOKEN,
         chat_id,
         format_candidate_card(record),
-        reply_markup={"inline_keyboard": [[{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}]]},
+        reply_markup={
+            "inline_keyboard": [[{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}]]
+        },
     )
 
 
@@ -236,21 +351,56 @@ def _process_message(message) -> bool:
     if not _is_owner(from_user.get("id")):
         return False
     text = str(message.get("text", "")).strip()
-    if text not in {"/monitoring", "/monitoring@BybitCleanScannerBot", "Мониторинг"}:
+    command = text.split("@", 1)[0]
+    handlers = {
+        "/terminal": _send_workspace,
+        "/scanner": _send_scanner_control,
+        "/robot": _send_robot_status,
+        "/positions": lambda chat_id: _send_workspace(chat_id, positions=True),
+        "/monitoring": _send_candidate_list,
+        "Мониторинг": _send_candidate_list,
+    }
+    handler = handlers.get(command)
+    if handler is None:
         return False
-    chat_id = (message.get("chat") or {}).get("id")
-    if chat_id is not None:
-        _send_candidate_list(chat_id)
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    # Web App navigation and runtime controls belong to the owner's private chat.
+    if chat_id is not None and str(chat_id) == _owner_id():
+        handler(chat_id)
     return True
 
 
+_published_commands = None
+
+
+def refresh_command_menu() -> None:
+    global _published_commands
+    try:
+        state = _scanner_request()
+        scanner_label = SCANNER_ACTIONS[state["mode"]][0]
+    except Exception:
+        scanner_label = "Сканер: состояние недоступно"
+    commands = json.dumps(
+        [
+            {"command": "terminal", "description": "Терминал"},
+            {"command": "scanner", "description": scanner_label},
+            {"command": "robot", "description": "Робот"},
+            {"command": "positions", "description": "Все открытые позиции"},
+            {"command": "monitoring", "description": "Мониторинг кандидатов"},
+        ],
+        ensure_ascii=False,
+    )
+    # Cache only successful Telegram publication, never runtime truth.
+    if commands != _published_commands:
+        response = _telegram_request("setMyCommands", commands=commands)
+        if not response.get("ok"):
+            raise RuntimeError("setMyCommands failed")
+        _published_commands = commands
+
+
 def configure_monitoring_menu() -> None:
-    commands = json.dumps([
-        {"command": "monitoring", "description": "Мониторинг кандидатов"},
-    ], ensure_ascii=False)
-    response = _telegram_request("setMyCommands", commands=commands)
-    if not response.get("ok"):
-        raise RuntimeError(f"setMyCommands failed: {response}")
+    refresh_command_menu()
 
     owner = _owner_id()
     if owner:
@@ -273,6 +423,7 @@ def run() -> None:
 
     while True:
         try:
+            refresh_command_menu()
             params = {
                 "timeout": 30,
                 "allowed_updates": json.dumps(["callback_query", "message"]),
@@ -294,6 +445,8 @@ def run() -> None:
                 callback_query = update.get("callback_query")
                 if callback_query:
                     if not _process_monitor_callback(callback_query):
+                        import telegram_review
+
                         telegram_review._process_callback(callback_query)
                     continue
 
