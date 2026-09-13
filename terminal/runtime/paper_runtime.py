@@ -952,17 +952,26 @@ class PaperRuntime:
         return applied
 
     def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
-        """Symbols with a non-flat Robot-owned PAPER trade right now.
+        """Symbols needing independent Robot protection coverage right now:
+        the union of (a) symbols with a non-flat Robot-owned PAPER trade and
+        (b) symbols with a durable D2.1 obligation still unresolved.
 
-        Independent of Robot entry-admission state and of whatever
-        account/symbol the Workspace UI currently has selected; callers use
-        this to decide which symbols need an independent MarketDataHub feed
-        for protection coverage.
+        (b) matters on its own: a TRIGGERED/DISPATCHING obligation must keep
+        market-data responsibility even if candidate/trade projection state
+        alone would no longer be sufficient to prove it. Independent of
+        Robot entry-admission state and of whatever account/symbol the
+        Workspace UI currently has selected; callers use this to decide
+        which symbols need an independent MarketDataHub feed for coverage.
         """
         candidates = self.store.load_robot_candidates(self._paper_account_id)
-        return tuple(sorted({
+        open_symbols = {
             candidate.symbol.value for candidate in candidates if candidate.status == "OPEN"
-        }))
+        }
+        unresolved = self.store.load_unresolved_paper_protection_obligations(
+            self._paper_account_id,
+        )
+        unresolved_symbols = {obligation.symbol.value for obligation in unresolved}
+        return tuple(sorted(open_symbols | unresolved_symbols))
 
     def evaluate_robot_protection_crossing(
         self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,

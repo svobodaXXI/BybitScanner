@@ -27,6 +27,7 @@ from terminal.runtime.paper_http_server import (
     PublicOrderBookBuffer,
     PublicTradeBuffer,
     PublicTradeKlineBuffer,
+    ProtectionIngressOverflow,
     RobotProtectionCoverageManager,
     SerializedPaperRuntime,
     WorkspaceMarketDataManager,
@@ -1582,6 +1583,43 @@ def test_enqueue_task_failure_is_isolated_and_does_not_stop_the_owner():
         runtime.close()
 
 
+def test_enqueue_is_bounded_and_fails_closed_with_protection_ingress_overflow():
+    """Protection ingress must be bounded: once protection_ingress_capacity
+    admitted tasks are pending, enqueue() must raise explicitly instead of
+    growing the owner's queue without limit, coalescing, or silently
+    dropping the event. Capacity frees up again once the owner drains the
+    tasks that were actually admitted."""
+    release = threading.Event()
+    started = threading.Event()
+
+    class BlockingRuntime:
+        def close(self) -> None:
+            return None
+
+    target = BlockingRuntime()
+    runtime = SerializedPaperRuntime(lambda: target, protection_ingress_capacity=2)
+    try:
+        def blocking_task(_owner: object) -> None:
+            started.set()
+            assert release.wait(timeout=2)
+
+        runtime.enqueue(blocking_task)
+        assert started.wait(timeout=1)
+        runtime.enqueue(lambda _owner: None)  # pending == capacity (2)
+
+        with pytest.raises(ProtectionIngressOverflow):
+            runtime.enqueue(lambda _owner: None)  # would exceed capacity
+
+        release.set()
+        # call() is FIFO-ordered behind both already-admitted tasks, so its
+        # return proves the owner has drained them and capacity is free.
+        runtime.call(lambda _: None)
+        runtime.enqueue(lambda _owner: None)
+    finally:
+        release.set()
+        runtime.close()
+
+
 class _CoverageTrades:
     def apply_message(self, message: dict) -> str:
         return "IGNORED"
@@ -1621,11 +1659,16 @@ class _FakeCoverageRuntime:
     def __init__(self, symbols: list[str] = ()) -> None:
         self.symbols = list(symbols)
         self.crossing_calls: list[tuple[str, str, int]] = []
+        self.fail_next_enqueue: BaseException | None = None
 
     def call(self, operation):
         return operation(self)
 
     def enqueue(self, operation) -> None:
+        if self.fail_next_enqueue is not None:
+            failure = self.fail_next_enqueue
+            self.fail_next_enqueue = None
+            raise failure
         operation(self)
 
     def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
@@ -1658,6 +1701,60 @@ def test_robot_protection_coverage_manager_subscribes_and_forwards_updates():
 
     manager.close()
     assert hub.has_context("BTCUSDT") is False
+
+
+def test_robot_protection_coverage_manager_marks_unhealthy_on_overflow_and_recovers():
+    """D2.2 review fix: overflow/admission failure must explicitly flip
+    protection coverage unhealthy -- never continue reporting healthy while
+    silently dropping the event -- and recover once admission next
+    succeeds."""
+    hub = MarketDataHub(
+        _CoverageRegistry(["BTCUSDT"]), _coverage_context,
+        connection_factory=lambda *args, **kwargs: None,
+    )
+    runtime = _FakeCoverageRuntime(["BTCUSDT"])
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    manager.resync()
+    context = hub.get("BTCUSDT")
+
+    assert manager.is_healthy() is True
+
+    runtime.fail_next_enqueue = ProtectionIngressOverflow("saturated")
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=1)
+
+    assert manager.is_healthy() is False
+    health = manager.health()
+    assert health["healthy"] is False
+    assert health["unhealthy_symbols"] == {"BTCUSDT": "ingress_overflow"}
+    # The failed attempt must never have reached the crossing evaluator --
+    # fail closed, not a silent drop that still calls through.
+    assert runtime.crossing_calls == []
+
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=2)
+    assert manager.is_healthy() is True
+    assert manager.health()["unhealthy_symbols"] == {}
+    assert len(runtime.crossing_calls) == 1
+
+    manager.close()
+
+
+def test_robot_protection_coverage_manager_marks_unhealthy_on_any_admission_failure():
+    hub = MarketDataHub(
+        _CoverageRegistry(["BTCUSDT"]), _coverage_context,
+        connection_factory=lambda *args, **kwargs: None,
+    )
+    runtime = _FakeCoverageRuntime(["BTCUSDT"])
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    manager.resync()
+    context = hub.get("BTCUSDT")
+
+    runtime.fail_next_enqueue = RuntimeError("PAPER runtime owner is unavailable")
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=1)
+
+    assert manager.is_healthy() is False
+    assert manager.health()["unhealthy_symbols"] == {"BTCUSDT": "admission_failed"}
+
+    manager.close()
 
 
 def test_robot_protection_coverage_manager_releases_symbol_no_longer_needed():

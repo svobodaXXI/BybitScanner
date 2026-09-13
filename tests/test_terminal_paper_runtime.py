@@ -384,6 +384,58 @@ def test_robot_protection_coverage_symbols_reflects_open_robot_candidates_only()
             runtime.close()
 
 
+def test_robot_protection_coverage_symbols_unions_open_trades_and_unresolved_obligations():
+    """D2.2 review fix: a persisted TRIGGERED/DISPATCHING obligation must keep
+    market-data coverage even once candidate/trade projection state alone
+    (status == OPEN) is no longer sufficient to prove it -- e.g. after some
+    later process closes the trade while the durable obligation is still
+    unresolved (no dispatch/finalization exists in this slice)."""
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            account = TradingAccountId("paper")
+
+            # BTCUSDT: currently OPEN Robot trade, no obligation latched yet.
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-open-only", candidate_id="candidate-open-only",
+            )
+
+            # ETHUSDT: trade already closed, but its obligation is not
+            # resolved -- coverage responsibility must still follow it.
+            runtime.store.create_robot_candidate(
+                candidate_id="candidate-unresolved-only", trading_account_id=account,
+                symbol=Symbol("ETHUSDT"), status="APPROVED",
+                signal_snapshot={"symbol": "ETHUSDT", "pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            runtime.store.create_robot_trade(
+                trade_id="trade-unresolved-only", trading_account_id=account,
+                candidate_id="candidate-unresolved-only", symbol=Symbol("ETHUSDT"),
+                direction="LONG", pattern="Falling Wedge", source_timeframe="1",
+                signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
+                actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
+                stop_price=Decimal("98"), take_price=Decimal("104"), created_at_ms=1500,
+            )
+            runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-unresolved-only", protection_version=1, winning_leg="STOP",
+                trigger_price=Decimal("98"), observed_exit_price=Decimal("97.9"),
+                observed_quantity=Decimal("1"), market_event_id="evt-1",
+                source_received_at_ms=2000, latched_at_ms=2000,
+            )
+            runtime.store.close_robot_trade(
+                "trade-unresolved-only", exit_time_ms=3000, exit_price=Decimal("98"),
+                exit_reason="STOP", realized_pnl_usdt=Decimal("-2"),
+                realized_pnl_pct=Decimal("-2"), fees_costs_usdt=Decimal("0.1"),
+                updated_at_ms=3000,
+            )
+
+            assert runtime.robot_protection_coverage_symbols() == ("BTCUSDT", "ETHUSDT")
+        finally:
+            runtime.close()
+
+
 def test_cancel_limit_succeeds_for_a_symbol_other_than_the_startup_instrument():
     """cancel_limit() used to reject any symbol other than the runtime's fixed
     startup instrument (self._context.instrument.symbol) even though the

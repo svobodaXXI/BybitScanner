@@ -1006,12 +1006,33 @@ class _OwnerTask:
     operation: Callable[[object], None]
 
 
+class ProtectionIngressOverflow(RuntimeError):
+    """Raised when bounded Robot protection ingress cannot admit another
+    event without coalescing or dropping it.
+
+    Never caught-and-ignored: the only correct response is to surface
+    unhealthy/continuity-lost protection coverage, not to claim healthy
+    coverage while quietly discarding evidence.
+    """
+
+
 class SerializedPaperRuntime:
-    def __init__(self, factory) -> None:
+    def __init__(self, factory, *, protection_ingress_capacity: int = 64) -> None:
+        if protection_ingress_capacity <= 0:
+            raise ValueError("protection_ingress_capacity must be positive")
         self._requests: queue.Queue = queue.Queue()
         self._book_update_lock = threading.Lock()
         self._latest_book_update_id: str | None = None
         self._book_update_pending = False
+        # Bounds only the Robot protection admission path (enqueue()/
+        # _OwnerTask): every accepted event stays ordered and distinct
+        # (never coalesced), but once this many are admitted and not yet
+        # processed, a further enqueue() fails closed instead of growing
+        # self._requests without bound. call()/enqueue_book_update's
+        # Workspace coalescing path are untouched by this limit.
+        self._protection_ingress_capacity = protection_ingress_capacity
+        self._protection_ingress_lock = threading.Lock()
+        self._protection_ingress_pending = 0
         self._ready = threading.Event()
         self._initialization_error: BaseException | None = None
         self._thread = threading.Thread(
@@ -1064,14 +1085,28 @@ class SerializedPaperRuntime:
     def enqueue(self, operation: Callable[[object], None]) -> None:
         """Submit ``operation`` to the serialized owner without waiting for it.
 
-        Unlike ``enqueue_book_update``, every call is a distinct queued item:
-        nothing is coalesced or overwritten, so ordered admission (e.g. Robot
-        protection crossing evidence) survives a burst intact. Unlike
-        ``call()``, the caller never blocks on the owner thread -- required so
-        a market-data thread can never stall behind PAPER runtime/SQLite work.
+        Unlike ``enqueue_book_update``, every admitted call is a distinct
+        queued item: nothing is coalesced or overwritten, so ordered
+        admission (e.g. Robot protection crossing evidence) survives a burst
+        intact. Unlike ``call()``, the caller never blocks on the owner
+        thread -- required so a market-data thread can never stall behind
+        PAPER runtime/SQLite work.
+
+        Bounded: once ``protection_ingress_capacity`` admitted tasks are
+        pending, this raises ``ProtectionIngressOverflow`` instead of
+        growing ``self._requests`` without limit. Callers must treat that as
+        a fail-closed continuity-loss signal, never a silent drop -- this
+        method never coalesces, drops, or blocks to paper over overload.
         """
         if not self._thread.is_alive():
             raise RuntimeError("PAPER runtime owner is unavailable")
+        with self._protection_ingress_lock:
+            if self._protection_ingress_pending >= self._protection_ingress_capacity:
+                raise ProtectionIngressOverflow(
+                    "Robot protection ingress is saturated "
+                    f"(capacity={self._protection_ingress_capacity})"
+                )
+            self._protection_ingress_pending += 1
         self._requests.put(_OwnerTask(operation))
 
     def close(self) -> None:
@@ -1113,6 +1148,9 @@ class SerializedPaperRuntime:
                         request.operation(runtime)
                     except BaseException:
                         LOGGER.exception("PAPER owner task failed")
+                    finally:
+                        with self._protection_ingress_lock:
+                            self._protection_ingress_pending -= 1
                     continue
                 operation, completed, response = request
                 if operation is None:
@@ -1559,6 +1597,11 @@ class RobotProtectionCoverageManager:
         self._resync_interval_s = resync_interval_s
         self._lock = threading.Lock()
         self._covered: dict[str, SymbolContext] = {}
+        # Explicit fail-closed continuity state: a symbol lands here the
+        # moment its protection evidence could not be admitted (overflow or
+        # any other admission failure), and only leaves once admission for
+        # that symbol succeeds again. Never cleared by silently continuing.
+        self._unhealthy: dict[str, str] = {}
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, name="robot-protection-coverage", daemon=True,
@@ -1567,6 +1610,21 @@ class RobotProtectionCoverageManager:
     def start(self) -> None:
         self.resync()
         self._thread.start()
+
+    def is_healthy(self) -> bool:
+        """False whenever any covered symbol's most recent admission attempt
+        was refused (overflow or otherwise) -- never claim healthy coverage
+        while continuity was actually lost."""
+        with self._lock:
+            return not self._unhealthy
+
+    def health(self) -> dict[str, object]:
+        with self._lock:
+            return {
+                "healthy": not self._unhealthy,
+                "covered_symbols": tuple(sorted(self._covered)),
+                "unhealthy_symbols": dict(self._unhealthy),
+            }
 
     def resync(self) -> None:
         """Reconcile subscriptions with the owner's current coverage targets.
@@ -1599,6 +1657,7 @@ class RobotProtectionCoverageManager:
         for symbol in sorted(to_drop):
             with self._lock:
                 context = self._covered.pop(symbol, None)
+                self._unhealthy.pop(symbol, None)
             if context is None:
                 continue
             context.remove_update_listener(self._LISTENER)
@@ -1623,11 +1682,30 @@ class RobotProtectionCoverageManager:
                     symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
                 )
             )
+        except ProtectionIngressOverflow:
+            self._mark_unhealthy(symbol, "ingress_overflow")
+            LOGGER.error(
+                "Robot protection ingress overflow -- coverage is unhealthy; "
+                "symbol=%s event=%s",
+                symbol, book_update_id,
+            )
+            return
         except Exception:
+            self._mark_unhealthy(symbol, "admission_failed")
             LOGGER.exception(
                 "Robot protection coverage admission failed; symbol=%s event=%s",
                 symbol, book_update_id,
             )
+            return
+        self._mark_healthy(symbol)
+
+    def _mark_unhealthy(self, symbol: str, reason: str) -> None:
+        with self._lock:
+            self._unhealthy[symbol] = reason
+
+    def _mark_healthy(self, symbol: str) -> None:
+        with self._lock:
+            self._unhealthy.pop(symbol, None)
 
     def _run(self) -> None:
         while not self._stop.wait(self._resync_interval_s):
