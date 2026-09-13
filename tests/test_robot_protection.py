@@ -9,7 +9,6 @@ from robot_protection import (
     RECOVERY_PROTECTED,
     RECOVERY_TAKE_ONLY,
     RECOVERY_WAIT,
-    RobotProtectionError,
     build_protection_plan,
     frozen_take_90,
     protection_recovery,
@@ -225,13 +224,44 @@ class RobotProtectionTests(unittest.TestCase):
         )
         self.assertEqual(decision.action, RECOVERY_PROTECTED)
 
-    def test_invalid_geometry_fails_closed(self):
-        with self.assertRaises(RobotProtectionError):
-            structural_stop(
-                DIRECTION_LONG,
-                average_entry=Decimal("100"), structural_extreme=Decimal("101"),
-                tick_size=Decimal("0.1"),
-            )
+    def test_long_structural_at_or_above_entry_falls_back_to_two_percent(self):
+        # Post-BATUSDT-defect fix: a structural candidate on the wrong side of
+        # (or equal to) the actual authoritative entry must never leave a
+        # filled position with no computable STOP at all.
+        at_entry = structural_stop(
+            DIRECTION_LONG,
+            average_entry=Decimal("100"), structural_extreme=Decimal("100.1"),
+            tick_size=Decimal("0.1"),
+        )
+        above_entry = structural_stop(
+            DIRECTION_LONG,
+            average_entry=Decimal("100"), structural_extreme=Decimal("101"),
+            tick_size=Decimal("0.1"),
+        )
+        non_positive = structural_stop(
+            DIRECTION_LONG,
+            average_entry=Decimal("100"), structural_extreme=Decimal("0.05"),
+            tick_size=Decimal("0.1"),
+        )
+        self.assertEqual(at_entry, Decimal("98.00"))
+        self.assertEqual(above_entry, Decimal("98.00"))
+        self.assertEqual(non_positive, Decimal("98.00"))
+        self.assertLess(above_entry, Decimal("100"))
+
+    def test_short_structural_at_or_below_entry_falls_back_to_two_percent(self):
+        at_entry = structural_stop(
+            DIRECTION_SHORT,
+            average_entry=Decimal("100"), structural_extreme=Decimal("99.9"),
+            tick_size=Decimal("0.1"),
+        )
+        below_entry = structural_stop(
+            DIRECTION_SHORT,
+            average_entry=Decimal("100"), structural_extreme=Decimal("99"),
+            tick_size=Decimal("0.1"),
+        )
+        self.assertEqual(at_entry, Decimal("102.00"))
+        self.assertEqual(below_entry, Decimal("102.00"))
+        self.assertGreater(below_entry, Decimal("100"))
 
 
 if __name__ == "__main__":
