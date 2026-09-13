@@ -6505,3 +6505,4 @@ are live in the scanner's output today with zero containment protection, by expl
 - Контрольная точка: `ROBOT_RUNNING + READY`; AAVEUSDT и BLURUSDT > `APPROVED`; `robot_trades = 0`.
 - Причина отсутствия Robot-сделок в этом запуске не исследовалась. При дальнейшем расследовании сначала читать `ROBOT_RUN_INDEX.md` и полный отчёт.
 
+---

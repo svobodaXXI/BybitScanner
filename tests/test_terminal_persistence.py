@@ -351,6 +351,10 @@ class TerminalPersistenceTests(unittest.TestCase):
         connection = sqlite3.connect(self.database_path)
         connection.execute("DROP TABLE paper_protection_obligations")
         connection.execute("DROP TABLE robot_runtime_state")
+        # scanner_runtime_state is v20-shaped from the fresh open_store()
+        # above; drop it too, or the v19->v20 step later in the chain hits
+        # "table scanner_runtime_state already exists" trying to recreate it.
+        connection.execute("DROP TABLE scanner_runtime_state")
         # robot_trades is v18-shaped from the fresh open_store() above; strip
         # the v18-only columns so this genuinely looks like a v15 database
         # (otherwise the v17->v18 step later in the chain hits "duplicate
@@ -701,9 +705,13 @@ class TerminalPersistenceTests(unittest.TestCase):
         with self.open_store():
             pass
         connection = sqlite3.connect(self.database_path)
+        # A real v14 database has none of the v15+ tables either -- drop
+        # scanner_runtime_state (now v20) too, or the v19->v20 step in this
+        # same migration chain would try to recreate a table that (in this
+        # simulated-downgrade fixture only) was never actually removed.
         for table in (
             "paper_protection_obligations", "robot_trades",
-            "robot_candidates", "robot_runtime_state",
+            "robot_candidates", "robot_runtime_state", "scanner_runtime_state",
         ):
             connection.execute(f"DROP TABLE {table}")
         connection.execute("PRAGMA user_version = 14")
@@ -743,6 +751,10 @@ class TerminalPersistenceTests(unittest.TestCase):
         # migration rather than a fresh create.
         connection = sqlite3.connect(self.database_path)
         connection.execute("DROP TABLE paper_protection_obligations")
+        # scanner_runtime_state is v20-shaped from the fresh open_store()
+        # above; drop it too, or the v19->v20 step later in the chain hits
+        # "table scanner_runtime_state already exists" trying to recreate it.
+        connection.execute("DROP TABLE scanner_runtime_state")
         # robot_trades is v18-shaped from the create_robot_trade() call above;
         # strip the v18-only columns so this genuinely looks like a v16
         # database (the row's own attestation is not what this test proves --
@@ -816,6 +828,10 @@ class TerminalPersistenceTests(unittest.TestCase):
             "observed_bid_price", "observed_ask_price",
         ):
             connection.execute(f"ALTER TABLE paper_protection_obligations DROP COLUMN {column}")
+        # scanner_runtime_state is v20-shaped from the fresh open_store()
+        # above; drop it too, or the v19->v20 step later in the chain hits
+        # "table scanner_runtime_state already exists" trying to recreate it.
+        connection.execute("DROP TABLE scanner_runtime_state")
         connection.execute("PRAGMA user_version = 17")
         connection.commit()
         connection.close()
@@ -832,6 +848,46 @@ class TerminalPersistenceTests(unittest.TestCase):
             self.assertEqual(
                 store.get_robot_candidate("candidate-v17").status, "OPEN",
             )
+
+    def test_v19_to_current_migration_adds_scanner_runtime_state_transactionally(self):
+        with self.open_store():
+            pass
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DROP TABLE scanner_runtime_state")
+        connection.execute("PRAGMA user_version = 19")
+        connection.commit()
+        connection.close()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+        connection = sqlite3.connect(self.database_path)
+        tables = {
+            row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        connection.close()
+        self.assertIn("scanner_runtime_state", tables)
+
+    def test_scanner_runtime_defaults_stopped_and_uses_cas_updates(self):
+        account_id = TradingAccountId("paper")
+        with self.open_store() as store:
+            initial = store.initialize_scanner_runtime_state(account_id, updated_at_ms=1000)
+            self.assertEqual(initial.mode, "SCANNER_STOPPED")
+            self.assertEqual(initial.version, 1)
+
+            running = store.update_scanner_runtime_state(
+                account_id, mode="SCANNER_RUNNING",
+                expected_version=initial.version, updated_at_ms=1001,
+            )
+            self.assertEqual(running.mode, "SCANNER_RUNNING")
+            self.assertEqual(running.version, 2)
+
+            with self.assertRaises(ConcurrentUpdate):
+                store.update_scanner_runtime_state(
+                    account_id, mode="SCANNER_PAUSED",
+                    expected_version=initial.version, updated_at_ms=1002,
+                )
 
     def test_paper_state_revision_is_durable_and_ignores_idempotent_or_noop_mutations(self):
         account_id = TradingAccountId("paper")

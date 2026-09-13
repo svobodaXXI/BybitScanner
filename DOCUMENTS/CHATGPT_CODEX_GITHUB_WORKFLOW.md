@@ -146,6 +146,37 @@ Never automatically:
 
 When repository/local authority conflicts or local state is unknown, stop rather than repair destructively.
 
+## Harness optimization note — 2026-09-12
+
+The current task harness is valuable as a final safety boundary, but its heavy verification path should not be repeated after every micro-slice.
+
+Preferred future operating model:
+
+- open one protected `task start` for the whole authorized implementation packet and include the expected package scope up front;
+- execute the packet as multiple narrow micro-slices, with ChatGPT retaining architectural control and Codex receiving one dependent implementation step at a time;
+- between micro-slices, use targeted tests, `git diff --check`, and focused verification only as needed;
+- run `task finish` once, at the end of the completed packet, to perform isolated exact-scope verification and create the PASS receipt;
+- then perform one checkpoint/commit/push for the verified package.
+
+The optimization goal is to preserve scope protection, user-owned-work protection, fail-closed verification, and checkpoint receipts while reducing repeated transaction setup, isolated worktrees, redundant full verification, and agent/context overhead.
+
+No harness code change is authorized by this note. Before changing `AGENTS.md` or `tools/dev/*`, first validate this lighter operating pattern on several real tasks. If Codex continues opening separate task transactions for each micro-slice, add a small explicit rule clarifying that micro-slices inside one authorized implementation packet share one task transaction and one final `task finish`.
+
+### Adopted operating rule — 2026-09-12
+
+For small and medium implementation work, the default workflow is now:
+
+1. one `task start` for the complete authorized package scope;
+2. any number of narrow dependent micro-slices inside that same task transaction;
+3. targeted tests, `git diff --check`, or `tools.dev.verify --focused` between micro-slices only when they add useful feedback;
+4. no new `task start` / `task finish` pair for each individual micro-slice;
+5. one `task finish` only after the package is complete and ready for final verification;
+6. one checkpoint/commit/push for that verified package.
+
+This rule is intended to reduce Codex/context/verification overhead and preserve development throughput. It does not weaken authorization boundaries: a materially expanded scope, a new product decision, a risk/LIVE boundary change, or a new logical task still requires its normal approval and, when needed, a revised protected task scope.
+
+If a blocker discovered during final verification is unrelated to the package itself, diagnose it narrowly first. Do not automatically explode a small task into multiple protected transactions unless the blocker must actually be repaired to make the repository reproducible or to complete the authorized package safely.
+
 ## Activation state
 
 As of 2026-09-10 this workflow is documented for use but is not enabled: the user has not yet provided a GitHub token scoped to `Pull requests: Read and write` on this repository for Claude to use.
