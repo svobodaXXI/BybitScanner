@@ -154,7 +154,9 @@ export function ModePanel({
   const tradingInputFocus = useTradingNumericInputFocusPolicy();
   const [executionStatus, setExecutionStatus] = useState("");
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
-  const [openPositionsVisible, setOpenPositionsVisible] = useState(false);
+  const [openPositionsVisible, setOpenPositionsVisible] = useState(
+    () => new URLSearchParams(window.location.search).get("view") === "positions",
+  );
   const [diaryVisible, setDiaryVisible] = useState(false);
   const [activeAccountLabel, setActiveAccountLabel] = useState<{ id: string; name: string } | null>(null);
   const [limitPresentationSide, setLimitPresentationSide] =
