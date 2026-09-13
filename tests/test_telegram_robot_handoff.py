@@ -233,11 +233,11 @@ class TelegramRobotHandoffTests(unittest.TestCase):
 
         answer_mock.assert_called_once_with(
             "callback-3",
-            "Робот: отклонено — Robot admission is not ready",
+            "Робот: отклонено — Робот не готов к приёму новых сделок",
         )
         send_mock.assert_called_once()
         args, kwargs = send_mock.call_args
-        self.assertIn("Робот: отклонено — Robot admission is not ready", args[2])
+        self.assertIn("Робот: отклонено — Робот не готов к приёму новых сделок", args[2])
         self.assertIn("Статус робота: Остановлен", args[2])
         start_button = kwargs["reply_markup"]["inline_keyboard"][0][0]
         self.assertEqual(start_button["callback_data"], "robot:cmd:start")

@@ -48,6 +48,21 @@ ACTION_LABELS = {
 }
 
 
+ROBOT_ADMISSION_REASON_LABELS = {
+    "Robot admission is not ready": "Робот не готов к приёму новых сделок",
+    "Robot runtime state is unavailable": "Состояние робота недоступно",
+    "Scanner candidate is not admissible": "Сигнал сканера не допускается к приёму",
+    "Scanner candidate snapshot is invalid": "Данные сигнала сканера некорректны",
+    "Robot admission clock returned invalid timestamp": "Некорректная временная метка при приёме сигнала",
+    "Robot candidate identity conflicts with durable state": "Идентификатор сигнала конфликтует с сохранёнными данными",
+}
+
+
+def _robot_admission_reason_text(reason):
+    text = str(reason)
+    return ROBOT_ADMISSION_REASON_LABELS.get(text, text)
+
+
 def _safe_name(value):
     value = str(value)
     value = re.sub(
@@ -585,7 +600,7 @@ def _process_callback(
                 record.symbol.value,
             )
         except RobotAdmissionRejected as exc:
-            prefix = f"Робот: отклонено — {exc}"
+            prefix = f"Робот: отклонено — {_robot_admission_reason_text(exc)}"
             print(
                 "[ROBOT CANDIDATE REJECTED]",
                 exc,
