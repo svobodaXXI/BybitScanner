@@ -14,13 +14,14 @@ from terminal.api.models import (
     FullCloseCommandRequest,
     LimitCommandRequest,
     MarketCommandRequest,
+    PaperStopMutationRequest,
     VolumeRequest,
     VolumeUnit,
     PaperLimitCancelRequest,
     PaperLimitAmendRequest,
     TimeInForce,
 )
-from terminal.domain.models import Category, OrderSide, Price, Quantity, Symbol
+from terminal.domain.models import Category, OrderSide, PositionSide, Price, Quantity, Symbol
 from terminal.domain.models import TradingAccountId
 from terminal.application.trading_accounts import (
     TradingAccount,
@@ -31,7 +32,9 @@ from terminal.application.trading_accounts import (
 )
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
-from terminal.runtime.paper_runtime import PaperRuntime, RobotPaperActionExecutor
+from terminal.runtime.paper_runtime import (
+    PaperRuntime, RobotPaperActionExecutor, _robot_protection_crossing_leg,
+)
 from terminal.persistence.sqlite_store import DuplicateIdentity
 
 
@@ -165,6 +168,270 @@ def test_robot_paper_execution_is_independent_of_ui_selected_account():
             state = runtime.paper_state("BTCUSDT")
             assert state["position_side"] == "Long"
             assert Decimal(state["position_quantity"]) > 0
+        finally:
+            runtime.close()
+
+
+def _crossing_book(symbol: str, *, bid: str, ask: str) -> NormalizedOrderBook:
+    return NormalizedOrderBook(
+        symbol=Symbol(symbol),
+        bids=(PriceLevel(Price(Decimal(bid)), Quantity(Decimal("1"))),),
+        asks=(PriceLevel(Price(Decimal(ask)), Quantity(Decimal("1"))),),
+        health=BookHealth.READY,
+        received_at_ms=1_700_000_000_000,
+        available_depth=1,
+    )
+
+
+def _open_robot_position_with_confirmed_protection(
+    runtime: PaperRuntime, *, symbol: str, entry_price: Decimal,
+    stop_price: Decimal, take_price: Decimal, trade_id: str, candidate_id: str,
+) -> None:
+    """Real Robot LIMIT fill + confirmed STOP/TAKE, then the D2.1 robot_trades
+    row a production RobotBreakoutMonitor tick would create in the same tick
+    -- everything evaluate_robot_protection_crossing() needs to cover."""
+    runtime._robot_command_dispatcher = lambda operation: operation(runtime)
+    executor = RobotPaperActionExecutor(runtime)
+    submitted = executor.create_limit(LimitCommandRequest(
+        ClientActionId(f"{trade_id}-limit"), symbol, OrderSide.BUY,
+        VolumeRequest(VolumeUnit.USDT, Decimal("321")),
+        entry_price, entry_price, TimeInForce.GTC,
+    ))
+    assert submitted.status is CommandResultStatus.COMPLETED
+    assert runtime.robot_match_symbol(symbol) == 1
+
+    executor.create_stop(PaperStopMutationRequest(
+        ClientActionId(f"{trade_id}-stop"), symbol, stop_price,
+    ))
+    executor.create_take(PaperStopMutationRequest(
+        ClientActionId(f"{trade_id}-take"), symbol, take_price,
+    ))
+
+    runtime.store.create_robot_candidate(
+        candidate_id=candidate_id, trading_account_id=TradingAccountId("paper"),
+        symbol=Symbol(symbol), status="APPROVED",
+        signal_snapshot={"symbol": symbol, "pattern": "Falling Wedge"},
+        approved_at_ms=1000, updated_at_ms=1000,
+    )
+    runtime.store.create_robot_trade(
+        trade_id=trade_id, trading_account_id=TradingAccountId("paper"),
+        candidate_id=candidate_id, symbol=Symbol(symbol), direction="LONG",
+        pattern="Falling Wedge", source_timeframe="1", signal_time_ms=900,
+        entry_time_ms=1500, entry_path="LIMIT", actual_wv=Decimal("0.8"),
+        average_entry=entry_price, stop_price=stop_price, take_price=take_price,
+        created_at_ms=1500,
+    )
+
+
+def test_robot_protection_crossing_leg_preserves_long_short_and_stop_precedence():
+    assert _robot_protection_crossing_leg(
+        PositionSide.LONG, Decimal("98"), Decimal("104"), Decimal("97.9"),
+    ) == "STOP"
+    assert _robot_protection_crossing_leg(
+        PositionSide.LONG, Decimal("98"), Decimal("104"), Decimal("104.1"),
+    ) == "TAKE"
+    assert _robot_protection_crossing_leg(
+        PositionSide.LONG, Decimal("98"), Decimal("104"), Decimal("100"),
+    ) is None
+    assert _robot_protection_crossing_leg(
+        PositionSide.SHORT, Decimal("104"), Decimal("98"), Decimal("104.1"),
+    ) == "STOP"
+    assert _robot_protection_crossing_leg(
+        PositionSide.SHORT, Decimal("104"), Decimal("98"), Decimal("97.9"),
+    ) == "TAKE"
+    # Invalid/crossed geometry (STOP above TAKE for LONG) can still qualify
+    # both legs on one valid observation -- STOP must win, not be repaired.
+    assert _robot_protection_crossing_leg(
+        PositionSide.LONG, Decimal("100"), Decimal("90"), Decimal("95"),
+    ) == "STOP"
+    assert _robot_protection_crossing_leg(
+        PositionSide.LONG, None, Decimal("104"), Decimal("50"),
+    ) is None
+
+
+def test_evaluate_robot_protection_crossing_latches_first_leg_and_survives_retreat_and_duplicates():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-crossing-1", candidate_id="candidate-crossing-1",
+            )
+
+            latched = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", _crossing_book("BTCUSDT", bid="63990", ask="63995"),
+                event_id="evt-1", received_at_ms=2000,
+            )
+            assert latched is not None
+            assert latched.winning_leg == "STOP"
+            assert latched.trade_id == "trade-crossing-1"
+
+            # Retreat: this observation crosses neither leg -- must not erase it.
+            retreated = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", _crossing_book("BTCUSDT", bid="64300", ask="64305"),
+                event_id="evt-2", received_at_ms=2100,
+            )
+            assert retreated is None
+            assert runtime.store.get_paper_protection_obligation(
+                latched.obligation_id
+            ) == latched
+
+            # Duplicate crossing evidence must not create a second obligation.
+            duplicate = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", _crossing_book("BTCUSDT", bid="63980", ask="63985"),
+                event_id="evt-3", received_at_ms=2200,
+            )
+            assert duplicate == latched
+        finally:
+            runtime.close()
+
+
+def test_evaluate_robot_protection_crossing_returns_none_without_confirmed_protection():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            runtime._robot_command_dispatcher = lambda operation: operation(runtime)
+            executor = RobotPaperActionExecutor(runtime)
+            submitted = executor.create_limit(LimitCommandRequest(
+                ClientActionId("no-protection-limit"), "BTCUSDT", OrderSide.BUY,
+                VolumeRequest(VolumeUnit.USDT, Decimal("321")),
+                Decimal("64250.5"), Decimal("64250.5"), TimeInForce.GTC,
+            ))
+            assert submitted.status is CommandResultStatus.COMPLETED
+            assert runtime.robot_match_symbol("BTCUSDT") == 1
+
+            runtime.store.create_robot_candidate(
+                candidate_id="candidate-no-protection", trading_account_id=TradingAccountId("paper"),
+                symbol=Symbol("BTCUSDT"), status="APPROVED",
+                signal_snapshot={"symbol": "BTCUSDT", "pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            runtime.store.create_robot_trade(
+                trade_id="trade-no-protection", trading_account_id=TradingAccountId("paper"),
+                candidate_id="candidate-no-protection", symbol=Symbol("BTCUSDT"),
+                direction="LONG", pattern="Falling Wedge", source_timeframe="1",
+                signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
+                actual_wv=Decimal("0.8"), average_entry=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"), created_at_ms=1500,
+            )
+
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", _crossing_book("BTCUSDT", bid="63000", ask="63005"),
+                event_id="evt-1", received_at_ms=2000,
+            )
+            assert result is None
+            assert runtime.store.load_unresolved_paper_protection_obligations(
+                TradingAccountId("paper")
+            ) == ()
+        finally:
+            runtime.close()
+
+
+def test_evaluate_robot_protection_crossing_fails_closed_on_ambiguous_open_trades():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-ambiguous-1", candidate_id="candidate-ambiguous-1",
+            )
+            runtime.store.create_robot_candidate(
+                candidate_id="candidate-ambiguous-2", trading_account_id=TradingAccountId("paper"),
+                symbol=Symbol("BTCUSDT"), status="APPROVED",
+                signal_snapshot={"symbol": "BTCUSDT", "pattern": "second"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            runtime.store.create_robot_trade(
+                trade_id="trade-ambiguous-2", trading_account_id=TradingAccountId("paper"),
+                candidate_id="candidate-ambiguous-2", symbol=Symbol("BTCUSDT"),
+                direction="LONG", pattern="second", source_timeframe="1",
+                signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
+                actual_wv=Decimal("0.2"), average_entry=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"), created_at_ms=1500,
+            )
+
+            result = runtime.evaluate_robot_protection_crossing(
+                "BTCUSDT", _crossing_book("BTCUSDT", bid="63000", ask="63005"),
+                event_id="evt-1", received_at_ms=2000,
+            )
+            assert result is None
+        finally:
+            runtime.close()
+
+
+def test_robot_protection_coverage_symbols_reflects_open_robot_candidates_only():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            assert runtime.robot_protection_coverage_symbols() == ()
+
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-coverage-1", candidate_id="candidate-coverage-1",
+            )
+            assert runtime.robot_protection_coverage_symbols() == ("BTCUSDT",)
+
+            runtime.store.close_robot_trade(
+                "trade-coverage-1", exit_time_ms=3000, exit_price=Decimal("64600"),
+                exit_reason="TAKE", realized_pnl_usdt=Decimal("1"), realized_pnl_pct=Decimal("0.5"),
+                fees_costs_usdt=Decimal("0.1"), updated_at_ms=3000,
+            )
+            assert runtime.robot_protection_coverage_symbols() == ()
+        finally:
+            runtime.close()
+
+
+def test_robot_protection_coverage_symbols_unions_open_trades_and_unresolved_obligations():
+    """D2.2 review fix: a persisted TRIGGERED/DISPATCHING obligation must keep
+    market-data coverage even once candidate/trade projection state alone
+    (status == OPEN) is no longer sufficient to prove it -- e.g. after some
+    later process closes the trade while the durable obligation is still
+    unresolved (no dispatch/finalization exists in this slice)."""
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            account = TradingAccountId("paper")
+
+            # BTCUSDT: currently OPEN Robot trade, no obligation latched yet.
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-open-only", candidate_id="candidate-open-only",
+            )
+
+            # ETHUSDT: trade already closed, but its obligation is not
+            # resolved -- coverage responsibility must still follow it.
+            runtime.store.create_robot_candidate(
+                candidate_id="candidate-unresolved-only", trading_account_id=account,
+                symbol=Symbol("ETHUSDT"), status="APPROVED",
+                signal_snapshot={"symbol": "ETHUSDT", "pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            runtime.store.create_robot_trade(
+                trade_id="trade-unresolved-only", trading_account_id=account,
+                candidate_id="candidate-unresolved-only", symbol=Symbol("ETHUSDT"),
+                direction="LONG", pattern="Falling Wedge", source_timeframe="1",
+                signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
+                actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
+                stop_price=Decimal("98"), take_price=Decimal("104"), created_at_ms=1500,
+            )
+            runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-unresolved-only", protection_version=1, winning_leg="STOP",
+                trigger_price=Decimal("98"), observed_exit_price=Decimal("97.9"),
+                observed_quantity=Decimal("1"), market_event_id="evt-1",
+                source_received_at_ms=2000, latched_at_ms=2000,
+            )
+            runtime.store.close_robot_trade(
+                "trade-unresolved-only", exit_time_ms=3000, exit_price=Decimal("98"),
+                exit_reason="STOP", realized_pnl_usdt=Decimal("-2"),
+                realized_pnl_pct=Decimal("-2"), fees_costs_usdt=Decimal("0.1"),
+                updated_at_ms=3000,
+            )
+
+            assert runtime.robot_protection_coverage_symbols() == ("BTCUSDT", "ETHUSDT")
         finally:
             runtime.close()
 

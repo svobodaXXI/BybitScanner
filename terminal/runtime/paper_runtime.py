@@ -59,8 +59,11 @@ from terminal.exchange.bybit_account_validation import BybitAccountValidator
 from terminal.exchange.bybit_v5_adapter import BybitCredentials, BybitV5ReadAdapter
 from terminal.exchange.bybit_v5_mutation_adapter import BybitEnvironment, BybitV5MutationAdapter
 from terminal.market_data.book_provider import MarketBookProvider
+from terminal.market_data.models import NormalizedOrderBook
 from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
-from terminal.persistence.sqlite_store import ExecutionApplyResult, SQLiteStore
+from terminal.persistence.sqlite_store import (
+    ExecutionApplyResult, PaperProtectionObligationRecord, SQLiteStore,
+)
 from terminal.persistence.credential_store import CredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import (
@@ -100,6 +103,26 @@ def _live_working_volume_projection(
         position["engaged_wv"] = str(engaged_wv) if engaged_wv is not None else None
         positions.append(position)
     return one_wv, positions
+
+
+def _robot_protection_crossing_leg(
+    side: PositionSide, stop_loss: Decimal | None, take_profit: Decimal | None,
+    exit_market: Decimal,
+) -> str | None:
+    """First-qualifying winning leg for one valid executable-side quote.
+
+    LONG: bid<=STOP / bid>=TAKE. SHORT: ask>=STOP / ask<=TAKE. STOP wins if a
+    single observation qualifies both legs (invalid/crossed geometry is
+    reported by latching STOP, never repaired here)."""
+    stop_triggered = stop_loss is not None and (
+        exit_market <= stop_loss if side is PositionSide.LONG else exit_market >= stop_loss
+    )
+    if stop_triggered:
+        return "STOP"
+    take_triggered = take_profit is not None and (
+        exit_market >= take_profit if side is PositionSide.LONG else exit_market <= take_profit
+    )
+    return "TAKE" if take_triggered else None
 
 
 class PaperOnlyAdapter:
@@ -927,6 +950,86 @@ class PaperRuntime:
         if stop_result.apply_result is ExecutionApplyResult.APPLIED:
             applied += 1
         return applied
+
+    def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
+        """Symbols needing independent Robot protection coverage right now:
+        the union of (a) symbols with a non-flat Robot-owned PAPER trade and
+        (b) symbols with a durable D2.1 obligation still unresolved.
+
+        (b) matters on its own: a TRIGGERED/DISPATCHING obligation must keep
+        market-data responsibility even if candidate/trade projection state
+        alone would no longer be sufficient to prove it. Independent of
+        Robot entry-admission state and of whatever account/symbol the
+        Workspace UI currently has selected; callers use this to decide
+        which symbols need an independent MarketDataHub feed for coverage.
+        """
+        candidates = self.store.load_robot_candidates(self._paper_account_id)
+        open_symbols = {
+            candidate.symbol.value for candidate in candidates if candidate.status == "OPEN"
+        }
+        unresolved = self.store.load_unresolved_paper_protection_obligations(
+            self._paper_account_id,
+        )
+        unresolved_symbols = {obligation.symbol.value for obligation in unresolved}
+        return tuple(sorted(open_symbols | unresolved_symbols))
+
+    def evaluate_robot_protection_crossing(
+        self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,
+    ) -> PaperProtectionObligationRecord | None:
+        """Durably latch the first qualifying STOP/TAKE crossing for the
+        Robot trade owning ``symbol``, independent of Workspace selection,
+        UI active account, or Robot entry-admission state.
+
+        Never dispatches a close: this only proves and durably records which
+        leg first qualified (SQLiteStore.latch_paper_protection_obligation),
+        so a later retreat or duplicate quote cannot erase or duplicate it.
+        Returns None -- not an error -- for anything that is not yet (or no
+        longer) a qualifying Robot protection crossing: no open Robot trade
+        for the symbol, ambiguous attribution (more than one open trade for
+        the symbol), no confirmed protection, an already-flat position, or a
+        quote that does not cross either leg.
+        """
+        normalized = Symbol(symbol.strip().upper())
+        trade = self.store.get_open_robot_trade_for_symbol(self._paper_account_id, normalized)
+        if trade is None:
+            return None
+        context = self._robot_context.context_for(normalized.value)
+        position_key = context.pretrade.position_key
+        protection = self.store.get_protection_projection(position_key)
+        if protection is None or (
+            protection.stop_loss is None and protection.take_profit is None
+        ):
+            return None
+        position = self.store.get_position_projection(position_key)
+        if position is None or (
+            position.side is PositionSide.FLAT or position.quantity.value == 0
+        ):
+            return None
+        if not book.bids or not book.asks:
+            return None
+        exit_market = (
+            book.bids[0].price.value
+            if position.side is PositionSide.LONG
+            else book.asks[0].price.value
+        )
+        leg = _robot_protection_crossing_leg(
+            position.side, protection.stop_loss, protection.take_profit, exit_market,
+        )
+        if leg is None:
+            return None
+        trigger_price = protection.stop_loss if leg == "STOP" else protection.take_profit
+        record, _created = self.store.latch_paper_protection_obligation(
+            trade_id=trade.trade_id,
+            protection_version=protection.version,
+            winning_leg=leg,
+            trigger_price=trigger_price,
+            observed_exit_price=exit_market,
+            observed_quantity=position.quantity.value,
+            market_event_id=event_id,
+            source_received_at_ms=received_at_ms,
+            latched_at_ms=received_at_ms,
+        )
+        return record
 
     def paper_state(self, symbol: str) -> dict[str, object]:
         normalized_symbol = symbol.strip().upper()

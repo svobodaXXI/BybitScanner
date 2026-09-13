@@ -349,6 +349,7 @@ class TerminalPersistenceTests(unittest.TestCase):
         # user_version=15, then reopen through SQLiteStore to exercise the
         # actual v15->v16 rebuild-table migration rather than a fresh create.
         connection = sqlite3.connect(self.database_path)
+        connection.execute("DROP TABLE paper_protection_obligations")
         connection.execute("DROP TABLE robot_runtime_state")
         connection.execute(
             """
@@ -481,6 +482,59 @@ class TerminalPersistenceTests(unittest.TestCase):
 
         with self.open_store() as reopened:
             self.assertEqual(reopened.get_robot_trade("trade-1"), closed)
+
+    def test_get_open_robot_trade_for_symbol_finds_exactly_one_non_flat_trade(self):
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            self.assertIsNone(
+                store.get_open_robot_trade_for_symbol(account, Symbol("BTCUSDT"))
+            )
+            store.create_robot_candidate(
+                candidate_id="candidate-open", trading_account_id=account, symbol=Symbol("BTCUSDT"),
+                status="APPROVED", signal_snapshot={"symbol": "BTCUSDT", "pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            trade, _ = store.create_robot_trade(
+                trade_id="trade-open", trading_account_id=account, candidate_id="candidate-open",
+                symbol=Symbol("BTCUSDT"), direction="LONG", pattern="Falling Wedge",
+                source_timeframe="1", signal_time_ms=900, entry_time_ms=1500,
+                entry_path="LIMIT", actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
+                stop_price=Decimal("98"), take_price=Decimal("106"), created_at_ms=1500,
+            )
+            self.assertEqual(
+                store.get_open_robot_trade_for_symbol(account, Symbol("BTCUSDT")), trade,
+            )
+
+            store.close_robot_trade(
+                "trade-open", exit_time_ms=2000, exit_price=Decimal("106"), exit_reason="TAKE",
+                realized_pnl_usdt=Decimal("12.5"), realized_pnl_pct=Decimal("6"),
+                fees_costs_usdt=Decimal("0.4"), updated_at_ms=2000,
+            )
+            self.assertIsNone(
+                store.get_open_robot_trade_for_symbol(account, Symbol("BTCUSDT"))
+            )
+
+    def test_get_open_robot_trade_for_symbol_fails_closed_on_ambiguous_attribution(self):
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            for index in (1, 2):
+                store.create_robot_candidate(
+                    candidate_id=f"candidate-ambiguous-{index}", trading_account_id=account,
+                    symbol=Symbol("ETHUSDT"), status="APPROVED",
+                    signal_snapshot={"symbol": "ETHUSDT", "pattern": f"pattern-{index}"},
+                    approved_at_ms=1000, updated_at_ms=1000,
+                )
+                store.create_robot_trade(
+                    trade_id=f"trade-ambiguous-{index}", trading_account_id=account,
+                    candidate_id=f"candidate-ambiguous-{index}", symbol=Symbol("ETHUSDT"),
+                    direction="LONG", pattern=f"pattern-{index}", source_timeframe="1",
+                    signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
+                    actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
+                    stop_price=Decimal("98"), take_price=Decimal("106"), created_at_ms=1500,
+                )
+            self.assertIsNone(
+                store.get_open_robot_trade_for_symbol(account, Symbol("ETHUSDT"))
+            )
 
     def test_v1_migration_preserves_commands_executions_and_projection(self):
         self.create_v1_database()
@@ -638,7 +692,10 @@ class TerminalPersistenceTests(unittest.TestCase):
         with self.open_store():
             pass
         connection = sqlite3.connect(self.database_path)
-        for table in ("robot_trades", "robot_candidates", "robot_runtime_state"):
+        for table in (
+            "paper_protection_obligations", "robot_trades",
+            "robot_candidates", "robot_runtime_state",
+        ):
             connection.execute(f"DROP TABLE {table}")
         connection.execute("PRAGMA user_version = 14")
         connection.commit()
@@ -654,6 +711,51 @@ class TerminalPersistenceTests(unittest.TestCase):
         }
         connection.close()
         self.assertTrue({"robot_runtime_state", "robot_candidates", "robot_trades"}.issubset(tables))
+
+    def test_v16_to_v17_migration_preserves_robot_data_and_creates_obligations_table(self):
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            store.create_robot_candidate(
+                candidate_id="candidate-v16", trading_account_id=account, symbol=Symbol("BTCUSDT"),
+                status="APPROVED", signal_snapshot={"pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            store.create_robot_trade(
+                trade_id="trade-v16", trading_account_id=account, candidate_id="candidate-v16",
+                symbol=Symbol("BTCUSDT"), direction="LONG", pattern="Falling Wedge",
+                source_timeframe="1", signal_time_ms=900, entry_time_ms=1000,
+                entry_path="LIMIT", actual_wv=Decimal("1"), average_entry=Decimal("100"),
+                stop_price=Decimal("98"), take_price=Decimal("104"), created_at_ms=1000,
+            )
+
+        # Simulate a real pre-v17 database: drop the v17-only table and pin
+        # user_version=16 so SQLiteStore exercises the actual v16->v17
+        # migration rather than a fresh create.
+        connection = sqlite3.connect(self.database_path)
+        connection.execute("DROP TABLE paper_protection_obligations")
+        connection.execute("PRAGMA user_version = 16")
+        connection.commit()
+        connection.close()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+            self.assertTrue(store.has_table("paper_protection_obligations"))
+            preserved_candidate = store.get_robot_candidate("candidate-v16")
+            preserved_trade = store.get_robot_trade("trade-v16")
+            self.assertEqual(preserved_candidate.status, "OPEN")
+            self.assertEqual(preserved_trade.average_entry, Decimal("100"))
+            self.assertEqual(preserved_trade.stop_price, Decimal("98"))
+            self.assertEqual(preserved_trade.take_price, Decimal("104"))
+            self.assertIsNone(preserved_trade.exit_time_ms)
+
+            latched, created = store.latch_paper_protection_obligation(
+                trade_id="trade-v16", protection_version=1, winning_leg="STOP",
+                trigger_price=Decimal("98"), observed_exit_price=Decimal("97.9"),
+                observed_quantity=Decimal("1"), market_event_id="BTCUSDT:1:2",
+                source_received_at_ms=1100, latched_at_ms=1101,
+            )
+            self.assertTrue(created)
+            self.assertEqual(latched.trade_id, "trade-v16")
 
     def test_paper_state_revision_is_durable_and_ignores_idempotent_or_noop_mutations(self):
         account_id = TradingAccountId("paper")

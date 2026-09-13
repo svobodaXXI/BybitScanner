@@ -1001,12 +1001,38 @@ class _BookUpdateNotification:
     book_update_id: str
 
 
+@dataclass(frozen=True)
+class _OwnerTask:
+    operation: Callable[[object], None]
+
+
+class ProtectionIngressOverflow(RuntimeError):
+    """Raised when bounded Robot protection ingress cannot admit another
+    event without coalescing or dropping it.
+
+    Never caught-and-ignored: the only correct response is to surface
+    unhealthy/continuity-lost protection coverage, not to claim healthy
+    coverage while quietly discarding evidence.
+    """
+
+
 class SerializedPaperRuntime:
-    def __init__(self, factory) -> None:
+    def __init__(self, factory, *, protection_ingress_capacity: int = 64) -> None:
+        if protection_ingress_capacity <= 0:
+            raise ValueError("protection_ingress_capacity must be positive")
         self._requests: queue.Queue = queue.Queue()
         self._book_update_lock = threading.Lock()
         self._latest_book_update_id: str | None = None
         self._book_update_pending = False
+        # Bounds only the Robot protection admission path (enqueue()/
+        # _OwnerTask): every accepted event stays ordered and distinct
+        # (never coalesced), but once this many are admitted and not yet
+        # processed, a further enqueue() fails closed instead of growing
+        # self._requests without bound. call()/enqueue_book_update's
+        # Workspace coalescing path are untouched by this limit.
+        self._protection_ingress_capacity = protection_ingress_capacity
+        self._protection_ingress_lock = threading.Lock()
+        self._protection_ingress_pending = 0
         self._ready = threading.Event()
         self._initialization_error: BaseException | None = None
         self._thread = threading.Thread(
@@ -1056,6 +1082,33 @@ class SerializedPaperRuntime:
             self._book_update_pending = True
         self._requests.put(_BookUpdateNotification(book_update_id))
 
+    def enqueue(self, operation: Callable[[object], None]) -> None:
+        """Submit ``operation`` to the serialized owner without waiting for it.
+
+        Unlike ``enqueue_book_update``, every admitted call is a distinct
+        queued item: nothing is coalesced or overwritten, so ordered
+        admission (e.g. Robot protection crossing evidence) survives a burst
+        intact. Unlike ``call()``, the caller never blocks on the owner
+        thread -- required so a market-data thread can never stall behind
+        PAPER runtime/SQLite work.
+
+        Bounded: once ``protection_ingress_capacity`` admitted tasks are
+        pending, this raises ``ProtectionIngressOverflow`` instead of
+        growing ``self._requests`` without limit. Callers must treat that as
+        a fail-closed continuity-loss signal, never a silent drop -- this
+        method never coalesces, drops, or blocks to paper over overload.
+        """
+        if not self._thread.is_alive():
+            raise RuntimeError("PAPER runtime owner is unavailable")
+        with self._protection_ingress_lock:
+            if self._protection_ingress_pending >= self._protection_ingress_capacity:
+                raise ProtectionIngressOverflow(
+                    "Robot protection ingress is saturated "
+                    f"(capacity={self._protection_ingress_capacity})"
+                )
+            self._protection_ingress_pending += 1
+        self._requests.put(_OwnerTask(operation))
+
     def close(self) -> None:
         if not self._thread.is_alive():
             return
@@ -1089,6 +1142,15 @@ class SerializedPaperRuntime:
                             "PAPER Limit update processing failed; book_update_id=%s",
                             book_update_id,
                         )
+                    continue
+                if isinstance(request, _OwnerTask):
+                    try:
+                        request.operation(runtime)
+                    except BaseException:
+                        LOGGER.exception("PAPER owner task failed")
+                    finally:
+                        with self._protection_ingress_lock:
+                            self._protection_ingress_pending -= 1
                     continue
                 operation, completed, response = request
                 if operation is None:
@@ -1230,20 +1292,28 @@ class WorkspaceMarketDataManager:
             self.client_projection, self.client_instrument,
         )
 
+    _WORKSPACE_LISTENER = "workspace"
+
     def _activate_hub_context(
         self, previous: SymbolContext, replacement: SymbolContext,
     ) -> None:
+        """Install the coalescing Workspace consumer via the shared fan-out.
+
+        Uses add/remove_update_listener rather than set_update_consumer
+        directly, so an independent consumer on the same buffer (e.g. Robot
+        protection coverage) is never clobbered by a Workspace symbol switch.
+        """
         try:
-            replacement.public_orderbook.set_update_consumer(
-                self._runtime.enqueue_book_update,
+            replacement.add_update_listener(
+                self._WORKSPACE_LISTENER, self._runtime.enqueue_book_update,
             )
             self._provider.set_buffer(replacement.public_orderbook)
-            previous.public_orderbook.set_update_consumer(None)
+            previous.remove_update_listener(self._WORKSPACE_LISTENER)
         except Exception:
-            replacement.public_orderbook.set_update_consumer(None)
+            replacement.remove_update_listener(self._WORKSPACE_LISTENER)
             self._provider.set_buffer(previous.public_orderbook)
-            previous.public_orderbook.set_update_consumer(
-                self._runtime.enqueue_book_update,
+            previous.add_update_listener(
+                self._WORKSPACE_LISTENER, self._runtime.enqueue_book_update,
             )
             raise
 
@@ -1466,6 +1536,191 @@ def create_symbol_context(symbol: str, tick_size: Decimal) -> SymbolContext:
     for public_kline in public_klines.values():
         public_kline.start()
     return SymbolContext(symbol, public_orderbook, public_trades, public_klines)
+
+
+def _normalized_book_from_snapshot(symbol: str, payload: dict) -> NormalizedOrderBook | None:
+    """Build a NormalizedOrderBook from one PublicOrderBookBuffer.snapshot().
+
+    Returns None for anything not immediately usable as crossing evidence
+    (not READY, wrong symbol, or a malformed/empty side) rather than raising,
+    so one bad quote cannot interrupt Robot protection coverage.
+    """
+    if payload.get("state") != "READY" or payload.get("symbol") != symbol:
+        return None
+    try:
+        bids = tuple(
+            PriceLevel(Price(Decimal(level["price"])), Quantity(Decimal(level["size"])))
+            for level in payload["bids"]
+        )
+        asks = tuple(
+            PriceLevel(Price(Decimal(level["price"])), Quantity(Decimal(level["size"])))
+            for level in payload["asks"]
+        )
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return None
+    if not bids or not asks:
+        return None
+    return NormalizedOrderBook(
+        symbol=Symbol(symbol),
+        bids=bids,
+        asks=asks,
+        health=BookHealth.READY,
+        received_at_ms=int(payload["receivedAt"]),
+        available_depth=min(len(bids), len(asks)),
+    )
+
+
+class RobotProtectionCoverageManager:
+    """Keep independent MarketDataHub coverage for every symbol with a
+    non-flat Robot-owned PAPER trade, regardless of Workspace selection or
+    Robot entry-admission state, and forward each ordered book update to the
+    serialized PAPER owner for durable crossing evaluation.
+
+    Every individual update is admitted through SerializedPaperRuntime.enqueue
+    (never the coalescing enqueue_book_update path), so a retreat between two
+    quotes cannot erase evidence the owner has not evaluated yet. resync() is
+    a subscription-set watchdog only -- it decides which symbols need a live
+    feed, never the crossing decision itself, which process_orderbook_update's
+    sibling evaluate_robot_protection_crossing() makes on the owner thread.
+    """
+
+    _LISTENER = "robot-protection"
+
+    def __init__(
+        self, hub: MarketDataHub, runtime: SerializedPaperRuntime, *,
+        resync_interval_s: float = 5.0,
+    ) -> None:
+        if resync_interval_s <= 0:
+            raise ValueError("resync_interval_s must be positive")
+        self._hub = hub
+        self._runtime = runtime
+        self._resync_interval_s = resync_interval_s
+        self._lock = threading.Lock()
+        self._covered: dict[str, SymbolContext] = {}
+        # Explicit fail-closed continuity state: a symbol lands here the
+        # moment its protection evidence could not be admitted (overflow or
+        # any other admission failure), and only leaves once admission for
+        # that symbol succeeds again. Never cleared by silently continuing.
+        self._unhealthy: dict[str, str] = {}
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run, name="robot-protection-coverage", daemon=True,
+        )
+
+    def start(self) -> None:
+        self.resync()
+        self._thread.start()
+
+    def is_healthy(self) -> bool:
+        """False whenever any covered symbol's most recent admission attempt
+        was refused (overflow or otherwise) -- never claim healthy coverage
+        while continuity was actually lost."""
+        with self._lock:
+            return not self._unhealthy
+
+    def health(self) -> dict[str, object]:
+        with self._lock:
+            return {
+                "healthy": not self._unhealthy,
+                "covered_symbols": tuple(sorted(self._covered)),
+                "unhealthy_symbols": dict(self._unhealthy),
+            }
+
+    def resync(self) -> None:
+        """Reconcile subscriptions with the owner's current coverage targets.
+
+        Safe to call repeatedly (startup/restart and periodic watchdog); adds
+        coverage for newly-admitted symbols and releases it only once the
+        owner no longer reports the symbol as needing coverage.
+        """
+        try:
+            symbols = self._runtime.call(
+                lambda runtime: runtime.robot_protection_coverage_symbols(),
+            )
+        except Exception:
+            LOGGER.exception("Robot protection coverage resync failed to read coverage targets")
+            return
+        wanted = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
+        with self._lock:
+            current = set(self._covered)
+            to_add = wanted - current
+            to_drop = current - wanted
+        for symbol in sorted(to_add):
+            try:
+                context = self._hub.subscribe(symbol)
+            except Exception:
+                LOGGER.exception("Robot protection coverage subscribe failed; symbol=%s", symbol)
+                continue
+            context.add_update_listener(self._LISTENER, self._listener_for(symbol))
+            with self._lock:
+                self._covered[symbol] = context
+        for symbol in sorted(to_drop):
+            with self._lock:
+                context = self._covered.pop(symbol, None)
+                self._unhealthy.pop(symbol, None)
+            if context is None:
+                continue
+            context.remove_update_listener(self._LISTENER)
+            self._hub.discard(context)
+
+    def _listener_for(self, symbol: str) -> Callable[[str], None]:
+        return lambda book_update_id: self._on_update(symbol, book_update_id)
+
+    def _on_update(self, symbol: str, book_update_id: str) -> None:
+        with self._lock:
+            context = self._covered.get(symbol)
+        if context is None:
+            return
+        payload = context.public_orderbook.snapshot()
+        book = _normalized_book_from_snapshot(symbol, payload)
+        if book is None:
+            return
+        received_at_ms = int(payload["receivedAt"])
+        try:
+            self._runtime.enqueue(
+                lambda runtime: runtime.evaluate_robot_protection_crossing(
+                    symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
+                )
+            )
+        except ProtectionIngressOverflow:
+            self._mark_unhealthy(symbol, "ingress_overflow")
+            LOGGER.error(
+                "Robot protection ingress overflow -- coverage is unhealthy; "
+                "symbol=%s event=%s",
+                symbol, book_update_id,
+            )
+            return
+        except Exception:
+            self._mark_unhealthy(symbol, "admission_failed")
+            LOGGER.exception(
+                "Robot protection coverage admission failed; symbol=%s event=%s",
+                symbol, book_update_id,
+            )
+            return
+        self._mark_healthy(symbol)
+
+    def _mark_unhealthy(self, symbol: str, reason: str) -> None:
+        with self._lock:
+            self._unhealthy[symbol] = reason
+
+    def _mark_healthy(self, symbol: str) -> None:
+        with self._lock:
+            self._unhealthy.pop(symbol, None)
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._resync_interval_s):
+            self.resync()
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=5)
+        with self._lock:
+            covered = dict(self._covered)
+            self._covered.clear()
+        for symbol, context in covered.items():
+            context.remove_update_listener(self._LISTENER)
+            self._hub.discard(context)
 
 
 class PaperHttpHandler(BaseHTTPRequestHandler):
@@ -2583,7 +2838,9 @@ def main() -> None:
         deployment_identity=os.environ.get("BYBITSCANNER_DEPLOYMENT_IDENTITY", "local"),
     ))
     runtime.start_robot_monitor()
-    initial_market.public_orderbook.set_update_consumer(runtime.enqueue_book_update)
+    initial_market.add_update_listener(
+        WorkspaceMarketDataManager._WORKSPACE_LISTENER, runtime.enqueue_book_update,
+    )
     market_data = WorkspaceMarketDataManager(
         instruments,
         book_provider,
@@ -2593,6 +2850,8 @@ def main() -> None:
         initial_readiness_timeout=INITIAL_WORKSPACE_READINESS_TIMEOUT,
     )
     market_data.ensure_initial_ready()
+    robot_protection_coverage = RobotProtectionCoverageManager(hub, runtime)
+    robot_protection_coverage.start()
 
     server = ThreadingHTTPServer((HOST, port), PaperHttpHandler)
     server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
@@ -2606,6 +2865,7 @@ def main() -> None:
         print("Bybit public market data streams: active workspace symbol (initial ONGUSDT)")
         server.serve_forever()
     finally:
+        robot_protection_coverage.close()
         market_data.close()
         runtime.close()
         server.server_close()

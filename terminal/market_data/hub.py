@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
@@ -11,6 +12,8 @@ from typing import Callable, Protocol
 import websocket
 
 from terminal.market_data.instrument_registry import InstrumentRegistry
+
+LOGGER = logging.getLogger(__name__)
 
 
 class _BookBuffer(Protocol):
@@ -46,6 +49,47 @@ class SymbolContext:
     reconnect_count: int = 0
     last_error: str | None = None
     created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
+    _update_listeners: dict[str, Callable[[str], None]] = field(default_factory=dict)
+    _listener_lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def add_update_listener(self, name: str, callback: Callable[[str], None]) -> None:
+        """Register ``callback`` under ``name`` without disturbing any other
+        listener already registered on this symbol's book buffer.
+
+        Independent consumers (Workspace display, Robot protection coverage)
+        must coexist on the same ``public_orderbook`` single-consumer slot;
+        this fan-out owns that slot exclusively once any listener exists.
+        """
+        if not name:
+            raise ValueError("update listener name must be non-empty")
+        with self._listener_lock:
+            first = not self._update_listeners
+            self._update_listeners[name] = callback
+        if first:
+            self.public_orderbook.set_update_consumer(self._dispatch_update)
+
+    def remove_update_listener(self, name: str) -> None:
+        with self._listener_lock:
+            self._update_listeners.pop(name, None)
+            empty = not self._update_listeners
+        if empty:
+            self.public_orderbook.set_update_consumer(None)
+
+    def has_update_listeners(self) -> bool:
+        with self._listener_lock:
+            return bool(self._update_listeners)
+
+    def _dispatch_update(self, book_update_id: str) -> None:
+        with self._listener_lock:
+            listeners = tuple(self._update_listeners.values())
+        for listener in listeners:
+            try:
+                listener(book_update_id)
+            except Exception:
+                LOGGER.exception(
+                    "Symbol context update listener failed; symbol=%s book_update_id=%s",
+                    self.symbol, book_update_id,
+                )
 
     def wait_until_ready(self, timeout: float) -> bool:
         return self.public_orderbook.wait_until_ready(timeout)
@@ -75,6 +119,8 @@ class SymbolContext:
         }
 
     def close(self) -> None:
+        with self._listener_lock:
+            self._update_listeners.clear()
         self.public_orderbook.set_update_consumer(None)
         self.public_orderbook.close()
         self.public_trades.close()
@@ -147,6 +193,14 @@ class MarketDataHub:
             return tuple(self._contexts[symbol] for symbol in sorted(self._contexts))
 
     def discard(self, context: SymbolContext) -> None:
+        """Drop ``context`` only when no independent consumer still needs it.
+
+        Workspace symbol switching and warm-context expiry must never sever
+        Robot protection coverage (or any other active listener) for a symbol
+        Workspace itself no longer needs; release is last-consumer-out.
+        """
+        if context.has_update_listeners():
+            return
         with self._lock:
             if self._contexts.get(context.symbol) is not context:
                 return
