@@ -77,6 +77,13 @@ class DailyTickerPnl:
 
 
 @dataclass(frozen=True, slots=True)
+class TickerRankingRow:
+    symbol: str
+    selected_pnl_usdt: Decimal
+    trade_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class DailyPnlResult:
     day: str
     selected_pnl_usdt: Decimal

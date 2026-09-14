@@ -5,12 +5,14 @@ from decimal import Decimal
 
 from terminal.statistics.aggregation import (
     aggregate_daily_pnl,
+    aggregate_ticker_ranking,
     build_cumulative_pnl,
     summarize_robot_trades,
 )
 from terminal.statistics.models import (
     PnlBasis,
     RobotStatisticsTrade,
+    TickerRankingRow,
 )
 
 
@@ -60,6 +62,108 @@ def _trade(
 
 
 class RobotStatisticsAggregationTests(unittest.TestCase):
+    def test_ticker_ranking_aggregates_symbols(self) -> None:
+        rows = aggregate_ticker_ranking(
+            iter((
+                _trade(trade_id="b1", pnl="1.1", symbol="BTCUSDT"),
+                _trade(trade_id="e1", pnl="2.2", symbol="ETHUSDT"),
+                _trade(trade_id="b2", pnl="3.3", symbol="BTCUSDT"),
+            )),
+            basis=PnlBasis.GROSS,
+        )
+        self.assertEqual(rows, (
+            TickerRankingRow("BTCUSDT", Decimal("4.4"), 2),
+            TickerRankingRow("ETHUSDT", Decimal("2.2"), 1),
+        ))
+
+    def test_ticker_ranking_orders_pnl_descending(self) -> None:
+        rows = aggregate_ticker_ranking(
+            (
+                _trade(trade_id="loss", pnl="-2", symbol="AUSDT"),
+                _trade(trade_id="zero", pnl="0", symbol="BUSDT"),
+                _trade(trade_id="profit", pnl="3", symbol="ZUSDT"),
+                _trade(trade_id="larger-loss", pnl="-10", symbol="CUSDT"),
+            ),
+            basis=PnlBasis.GROSS,
+        )
+        self.assertEqual(
+            [row.symbol for row in rows], ["ZUSDT", "BUSDT", "AUSDT", "CUSDT"],
+        )
+
+    def test_ticker_ranking_pnl_tie_orders_trade_count_descending(self) -> None:
+        rows = aggregate_ticker_ranking(
+            (
+                _trade(trade_id="a", pnl="2", symbol="AUSDT"),
+                _trade(trade_id="z1", pnl="1", symbol="ZUSDT"),
+                _trade(trade_id="z2", pnl="1", symbol="ZUSDT"),
+            ),
+            basis=PnlBasis.GROSS,
+        )
+        self.assertEqual([row.symbol for row in rows], ["ZUSDT", "AUSDT"])
+
+    def test_ticker_ranking_full_tie_orders_symbol_ascending(self) -> None:
+        trades = (
+            _trade(trade_id="z", pnl="2", symbol="ZUSDT"),
+            _trade(trade_id="a", pnl="2", symbol="AUSDT"),
+            _trade(trade_id="b", pnl="2", symbol="BUSDT"),
+        )
+        for source in (trades, tuple(reversed(trades))):
+            with self.subTest(source=source):
+                rows = aggregate_ticker_ranking(source, basis=PnlBasis.GROSS)
+                self.assertEqual(
+                    [row.symbol for row in rows], ["AUSDT", "BUSDT", "ZUSDT"],
+                )
+
+    def test_ticker_ranking_adjusted_excludes_unknown_costs(self) -> None:
+        trades = (
+            _trade(trade_id="known", pnl="10", fee="3", symbol="BTCUSDT"),
+            _trade(trade_id="unknown", pnl="100", fee=None, symbol="BTCUSDT"),
+            _trade(trade_id="only-unknown", pnl="200", fee=None, symbol="ETHUSDT"),
+            _trade(trade_id="other", pnl="8", fee="0", symbol="SOLUSDT"),
+        )
+        self.assertEqual(
+            aggregate_ticker_ranking(trades, basis=PnlBasis.KNOWN_COST_ADJUSTED),
+            (
+                TickerRankingRow("SOLUSDT", Decimal("8"), 1),
+                TickerRankingRow("BTCUSDT", Decimal("7"), 1),
+            ),
+        )
+        self.assertEqual(
+            aggregate_ticker_ranking(trades, basis=PnlBasis.GROSS),
+            (
+                TickerRankingRow("ETHUSDT", Decimal("200"), 1),
+                TickerRankingRow("BTCUSDT", Decimal("110"), 2),
+                TickerRankingRow("SOLUSDT", Decimal("8"), 1),
+            ),
+        )
+        self.assertEqual(
+            aggregate_ticker_ranking(
+                (trades[2],), basis=PnlBasis.KNOWN_COST_ADJUSTED,
+            ),
+            (),
+        )
+
+    def test_ticker_ranking_preserves_decimal_math(self) -> None:
+        for basis, expected in (
+            (PnlBasis.GROSS, Decimal("0.3000000000000000003")),
+            (PnlBasis.KNOWN_COST_ADJUSTED, Decimal("0.2700000000000000003")),
+        ):
+            with self.subTest(basis=basis):
+                rows = aggregate_ticker_ranking(
+                    (
+                        _trade(trade_id="a", pnl="0.1000000000000000001", fee="0.01"),
+                        _trade(trade_id="b", pnl="0.2000000000000000002", fee="0.02"),
+                    ),
+                    basis=basis,
+                )
+                self.assertIsInstance(rows[0].selected_pnl_usdt, Decimal)
+                self.assertEqual(rows[0].selected_pnl_usdt, expected)
+
+    def test_ticker_ranking_empty_input_returns_empty_tuple(self) -> None:
+        for basis in PnlBasis:
+            with self.subTest(basis=basis):
+                self.assertEqual(aggregate_ticker_ranking((), basis=basis), ())
+
     def test_daily_pnl_groups_two_days_by_msk_close_date(self) -> None:
         trades = (
             _trade(trade_id="day-1", pnl="1.25", exit_time_ms=0),
