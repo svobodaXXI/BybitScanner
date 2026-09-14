@@ -170,6 +170,93 @@ class AccountSwitchingTests(unittest.TestCase):
             thread.join(timeout=5)
             server.server_close()
 
+    def test_robot_safety_routes_bypass_workspace_gate_but_keep_durable_legality(self):
+        class DurableState:
+            def __init__(self, mode, recovery_status):
+                self.mode = mode
+                self.recovery_status = recovery_status
+
+        class Store:
+            state = DurableState("ROBOT_RUNNING", "PAUSED")
+
+            def get_robot_runtime_state(self, account_id):
+                self.last_account_id = account_id
+                return self.state
+
+        class LiveRuntime:
+            def __init__(self):
+                self.store = Store()
+                self.workspace_gate_calls = 0
+                self.robot_close_calls = 0
+                self.robot_sync_calls = 0
+
+            def call(self, operation, timeout=15.0):
+                return operation(self)
+
+            def require_paper_mutations(self):
+                self.workspace_gate_calls += 1
+                raise RuntimeError("live_mutations_disabled")
+
+            def robot_close_all(self, request):
+                self.robot_close_calls += 1
+                return {}
+
+            def robot_synchronize_pending_entries(self):
+                self.robot_sync_calls += 1
+                return {}
+
+        runtime = LiveRuntime()
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def post(route, payload):
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{server.server_port}{route}",
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status, json.load(response)
+            except urllib.error.HTTPError as error:
+                return error.code, json.load(error)
+
+        try:
+            code, body = post("/api/close-all", {"client_action_id": "manual-close"})
+            self.assertEqual((code, body), (409, {
+                "ok": False, "error": "live_mutations_disabled",
+            }))
+            self.assertEqual(runtime.workspace_gate_calls, 1)
+
+            code, body = post(
+                "/api/robot/close-all-now", {"client_action_id": "robot-close"},
+            )
+            self.assertEqual((code, body["ok"]), (200, True))
+            code, body = post("/api/robot/synchronize-pending-entries", {})
+            self.assertEqual((code, body["ok"]), (200, True))
+            self.assertEqual((runtime.robot_close_calls, runtime.robot_sync_calls), (1, 1))
+            self.assertEqual(runtime.workspace_gate_calls, 1)
+
+            runtime.store.state = DurableState("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
+            code, body = post(
+                "/api/robot/close-all-now", {"client_action_id": "illegal-close"},
+            )
+            self.assertEqual(code, 409)
+            self.assertEqual(body["ok"], False)
+            self.assertEqual(runtime.robot_close_calls, 1)
+
+            runtime.store.state = DurableState("ROBOT_RUNNING", "READY")
+            code, body = post("/api/robot/synchronize-pending-entries", {})
+            self.assertEqual(code, 409)
+            self.assertEqual(body["ok"], False)
+            self.assertEqual(runtime.robot_sync_calls, 1)
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
     def test_paper_live_paper_switch_is_atomic_and_restores_paper_projection(self):
         with tempfile.TemporaryDirectory() as temp:
             manager = manager_with_bybit()
