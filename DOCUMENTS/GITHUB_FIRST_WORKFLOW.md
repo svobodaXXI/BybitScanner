@@ -16,6 +16,17 @@ Default flow:
 4. After local verification PASS, integration is performed on GitHub through the PR/merge workflow.
 5. After GitHub merge, the local machine synchronizes with `git pull` (or an equally safe fast-forward synchronization when explicitly required).
 
+## Review-fix continuity
+
+One logical PR remains one integration surface. Small review fixes within its authorized scope are published
+to that same branch and PR, then re-reviewed; preserve the usable local worktree under
+`ASSISTANT_PROTOCOL.md` §7.3. The local harness certifies the new delta and protects unrelated work; it does not
+require an artificial new publication branch or consolidation cycle just because an earlier receipt is stale.
+
+Create a new PR/branch only for a real logical scope split or a demonstrated technical inability to continue
+safely. A separate new logical task must not be mixed into an unrelated PR. These rules preserve GitHub-first
+publication and existing review/merge approvals; local certification never authorizes integration by itself.
+
 ## Prohibited default behavior
 
 For a GitHub origin, the harness must not automatically run:
