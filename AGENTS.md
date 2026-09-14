@@ -105,6 +105,13 @@ an existing dump; generate one only for multi-session/context-heavy/recovery-pac
 `PASS`/`ADVISORY` continue; `STALE`/`FAIL`/`BLOCKING` stop. A missing ContextDump permits direct recovery but never
 bypasses scoped LegacyWarnings; ContextDump stays derived and non-authoritative.
 
+## Workflow proportionality
+
+For small review fixes within an authorized scope, preserve the same PR, branch and usable worktree by default.
+Apply `ASSISTANT_PROTOCOL.md` §7.3 before adding isolation, recovery or verification layers; an expired PASS
+receipt requires fresh delta evidence, not automatic branch/worktree/consolidation churn. Keep required harness
+gates and user-owned-work protection. GitHub publication continuity is owned by `DOCUMENTS/GITHUB_FIRST_WORKFLOW.md`.
+
 ## Change safety
 
 Before editing, inspect actual targets and `git status --short`. Treat unrelated pre-existing changes and untracked

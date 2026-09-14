@@ -2,11 +2,11 @@
 
 Version:
 
-4.38
+4.39
 
 Date:
 
-2026-09-06
+2026-09-14
 
 Document Type:
 
@@ -460,6 +460,48 @@ Git writes or a checkpoint action request; leave the lifecycle's RECORD/Git chec
 
 ---
 
+## 7.3 WORKFLOW_PROPORTIONALITY / ANTI-OVERPROCESSING RULE
+
+Workflow and governance serve safe, timely delivery; they are not independent product goals. Scale process to
+the actual risk and size of the delta, not to the availability of a mechanism. At equal safety, choose fewer
+worktrees, branches, tasks, commands, user turns and less context.
+
+For a small review fix in an already-authorized logical scope, continue in the same PR, branch and worktree
+when architecture, risk and product decisions are unchanged, the branch/worktree remain usable, and user-owned
+work can be protected. Do not default to a new feature/review-fix branch, PR, consolidation worktree or cycle,
+copying delta between worktrees, full recovery, or repeated full regression when targeted checks plus required
+harness verification are sufficient and no new evidence calls for more.
+
+**PASS receipt boundary:** a review-fix delta after `task finish STATUS PASS` is not covered by the old receipt.
+First attempt the smallest protected task for the new delta in the same branch/worktree, using exact paths and
+task-only proof under §7.2. A still-open transaction covering the authorized changes should be continued, not
+fragmented. Certify the new delta without redoing unrelated accepted work; this does not waive required harness
+checks or extend an old receipt to changed content. Fresh certification does not itself require fresh isolation.
+
+A heavier isolation cycle requires a concrete reason: conflicting branch/base ancestry; unrelated dirty work
+that cannot safely be isolated in place; a demonstrated harness inability to prove task-only delta there;
+materially expanded scope or a new financial/LIVE/risk/architecture decision; cross-PR/shared-file conflict; or
+specific evidence that baseline/reproducibility is unreliable. State the reason before escalating and retain
+normal approval boundaries. An old PASS, project size, or "just in case" is not a reason. On a harness failure,
+stop and resolve its actual cause; never bypass it or assume a new worktree is the only remedy.
+
+Before adding any workflow layer, assess internally:
+
+1. What concrete risk does it address?
+2. Why does the existing branch/worktree/task/PR not already address it?
+3. Is its expected benefit greater than its cost in turns, context and time?
+
+Without clear answers, do not add the layer. This is an agent judgement check, not a new mandatory user approval
+round, report artifact or procedural skill.
+
+**Small review-blocker fast path:** fix only the blocker within the protected scope; run targeted tests relevant
+to the delta and broader regression only when risk/contract requires it; run `git diff --check`; complete the
+minimum required harness certification with `task finish`; publish through GitHub-first into the same PR; request
+re-review. Open the protected task before editing when fresh certification is needed. Do not turn the review
+loop into a new project or repeat successful required checks without new cause.
+
+---
+
 # 8. WORKFLOW RULE MAINTENANCE
 
 Consult `.agents/references/workflow-improvement.md` only for an explicit process audit, evidenced recurring
@@ -693,10 +735,8 @@ fix with a proven local cause, and it must not become broad browsing that delays
 
 # 9. CURRENT REVISION RECORD
 
-`4.38` establishes GitHub-first ChatGPT-led work: committed project code/docs/config/tests/tooling are inspected and
-changed through repository connectors when available, while the local PC is primarily a pull/runtime/test/build/
-acceptance surface rather than a code-edit surface. It also broadens external-reference use from regression-only
-escalation to proactive acceleration for non-trivial engineering problems, without weakening project authority,
-verification, safety, or approval boundaries. Detailed history remains in Git.
+`4.39` adds workflow proportionality and review-fix continuity (§7.3): preserve usable PR/branch/worktree state,
+certify new delta without artificial fragmentation, and justify additional process by concrete risk and cost.
+Required verification, approval and user-owned-work protections remain binding. Detailed history remains in Git.
 
 # END_OF_DOCUMENT

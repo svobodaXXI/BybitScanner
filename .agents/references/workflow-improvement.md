@@ -23,6 +23,20 @@ Consult this reference for an explicit workflow audit, or when friction has repe
 5. Compare expected benefit—less repeated work, context, error probability, user cost, or risk—with permanent cost—always-loaded context, maintenance, routes, authority duplication, ceremony, and mandatory steps. Prefer, in order: no change; better routing; existing artifact/tool; small amendment; deterministic check; small skill; new governance; new subsystem. Stronger evidence is required farther down this list.
 6. Define how the improvement would later be verified and simplified or removed if it does not reduce the observed friction.
 
+## Anti-overprocessing check
+
+Apply `DOCUMENTS/ASSISTANT_PROTOCOL.md` §7.3 when judging a proposed improvement:
+
+- Does it remove more permanent ceremony than it creates? Include always-loaded context and repeated user turns.
+- Can existing mechanisms be removed, simplified or better routed first? A new skill or governance artifact is
+  a last resort, not the default output of this checklist.
+- If friction comes from over-applying an existing safety mechanism, fix its routing/applicability instead of
+  adding another safety layer.
+- Does the proposal preserve the usable PR/branch/worktree and require fresh proof only where evidence changed?
+
+Use these questions within the existing Distill assessment; do not create a separate checklist artifact or
+approval round. Explicit user authorization to record a permanent rule remains sufficient under the authority gate.
+
 ## Authority gate
 
 Candidate lifecycle is `OBSERVED → CANDIDATE → REVIEW_REQUIRED → APPROVED/IMPLEMENTED` or `REJECTED`; no persistent candidate database is required. Auto-discovery is not auto-authority.
