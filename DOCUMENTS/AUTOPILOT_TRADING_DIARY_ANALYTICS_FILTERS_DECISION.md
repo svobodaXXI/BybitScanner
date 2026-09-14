@@ -1,4 +1,4 @@
-﻿# AUTOPILOT Trading Diary — Analytics Filters and Rankings
+# AUTOPILOT Trading Diary — Analytics Filters and Rankings
 
 Date: 2026-09-14
 Status: ACTIVE / DESIGN-ONLY
@@ -87,9 +87,11 @@ It must not be described as account return or portfolio return.
 
 Robot Statistics v1 defines aggregate period percentage as:
 
-`Return on traded notional = SUM(selected_pnl_basis) / SUM(entry_quantity * average_entry) * 100`
+`Return on traded notional = SUM(selected_pnl_basis for eligible trades) / SUM(entry_quantity * average_entry for the same eligible trades) * 100`
 
-Only trades with sufficient entry-notional evidence may contribute to that denominator.
+Only trades with sufficient entry-notional evidence are eligible for this metric.
+
+The numerator and denominator must use exactly the same eligible trade subset. PnL from a trade excluded from the denominator must also be excluded from the numerator.
 
 Coverage must report excluded/incomplete trades.
 
@@ -103,7 +105,7 @@ The Statistics view must include a cumulative profit chart.
 
 v1 semantics:
 
-- X axis: completed Robot trades ordered by `exit_time_ms`;
+- X axis: completed Robot trades ordered deterministically by `exit_time_ms`, then `trade_id` as the stable tie-breaker;
 - displayed time: MSK;
 - Y axis: cumulative PnL in USDT;
 - each point adds the selected PnL basis for that closed trade;
@@ -345,7 +347,7 @@ A future Robot Statistics v1 implementation slice is acceptable only when:
 - only completed Robot trades contribute to realized performance aggregates;
 - Decimal arithmetic is used for authoritative calculations;
 - daily and time-of-day grouping is deterministic in MSK;
-- cumulative PnL is deterministically ordered by exit timestamp;
+- cumulative PnL is deterministically ordered by `exit_time_ms`, then `trade_id` as the stable tie-breaker;
 - PnL basis and cost coverage are explicit;
 - incomplete cost evidence is not represented as full net PnL;
 - Return on traded notional is not represented as account/equity return;
