@@ -29,6 +29,66 @@ A current-state position post must include a fresh chart image with the currentl
 
 The renderer must consume the stored/versioned signal/trade snapshot plus authoritative execution state. It must not create a second source of trading state or recompute scanner geometry independently.
 
+The two concrete card types this applies to -- the pre-entry candidate view and the post-entry position view -- are specified in full below (Candidate Monitoring card / Open Position Details card).
+
+## Candidate Monitoring card
+
+Shown for an approved Robot candidate that has not yet opened a position (this is what `Под наблюдением` below lists and opens). Backs the `/monitoring` command and the `monitor:candidate:*` callback.
+
+Explicit status, one of exactly:
+- `Ожидание пробоя` -- state machine phase `WAITING_BREAKOUT`;
+- `Ожидание ретеста` -- phase `WAITING_RETEST`;
+- `Ретест обнаружен` -- phase `RETEST_DETECTED`, no working LIMIT submitted yet (`execution.limit_order_id` absent);
+- `Лимитный ордер выставлен` -- a Robot LIMIT exists for this candidate (`execution.limit_order_id` present), regardless of underlying state-machine phase, until it resolves into a real position or is fully cancelled;
+- `Истёк / отменён` -- phase `EXPIRED_AT_APEX`, or candidate status `INVALIDATED`/`EXPIRED`.
+
+Chart contents:
+- the frozen pattern geometry exactly as originally handed from Scanner to Robot (wedge lines, apex) -- read from the candidate's stored signal snapshot, never recomputed from current market data;
+- the pending Robot LIMIT order (price/quantity) if one currently exists for this candidate;
+- execution markers for any partial/full fill(s) already recorded against that LIMIT, if any exist yet.
+
+Explicit exclusions (fail closed toward showing nothing rather than showing an unproven value):
+- no average-entry line/value before a real position exists (i.e. before a `robot_trades` row exists for this candidate) -- average entry is a position-only concept, never a projection from an unfilled or partially-filled LIMIT;
+- no STOP/TAKE line unless it is already authoritative and tied to a real position -- a pre-entry candidate never has a legitimate STOP/TAKE of its own to display.
+
+## Open Position Details card
+
+Shown once a candidate has produced a real position (`robot_trades` row exists), whether still open or already closed. Replaces the Candidate Monitoring card for that candidate/symbol from that point on (see UX routing below).
+
+Fields:
+- ticker (symbol);
+- direction, `LONG`/`SHORT`;
+- position status (open / closed, plus close reason once closed);
+- current position size;
+- average entry price;
+- current PnL;
+- STOP (current authoritative value);
+- TAKE (current authoritative value);
+- entry rationale/pattern (the frozen wedge pattern and direction that produced this entry).
+
+Chart contents, all read from the same frozen signal snapshot that caused this entry (never re-derived from current market data after entry):
+- pattern lines (the frozen wedge geometry);
+- executed entry marker(s) (triangles) for the actual fill(s) that opened the position;
+- average-entry line;
+- STOP line;
+- TAKE line;
+- once closed: exit marker(s) and the close reason, added on top of the same frozen setup.
+
+## Data contract
+
+These constraints govern both cards above and any future consumer of the same monitoring data (including a future `/positions` list):
+
+- **Durable candidate -> trade linkage**: every open or closed position must retain a durable link back to the originating Robot candidate and its frozen signal snapshot (the existing `robot_trades.candidate_id` -> `robot_candidates` relationship). Monitoring must always resolve a position back through this link, never through a separate/duplicate copy of the signal.
+- **No geometry reconstruction after entry**: pattern lines/apex rendered on any chart, pre- or post-entry, must always be read from the frozen signal snapshot recorded at candidate admission. Recomputing or re-fitting geometry from live market data after entry is prohibited -- the whole point of freezing it is that it must not drift.
+- **Authoritative overlay only**: order, execution, protection and trade data drawn on a chart or shown as a field must come from the authoritative persisted records (`paper_limit_orders`, `robot_trades`, current STOP/TAKE, protection obligations) overlaid on top of the frozen setup -- never invented, estimated, or interpolated by the presentation layer itself.
+- **Read-only monitoring**: every monitoring view (Candidate Monitoring card, Open Position Details card, `Под наблюдением`, `Все позиции`, `/positions`) is read-only. None of them may create, cancel, or amend an order, or write to candidate/trade state. Trading-state mutation stays exclusively on the existing Robot control surface (`start_robot`/`pause_robot`/`resume_robot`/`close_all_now`/`stop_robot`).
+
+## UX routing
+
+- An active (non-terminal, no `robot_trades` row yet) candidate opens the Candidate Monitoring card.
+- Once a `robot_trades` row exists for that candidate -- position open or already closed -- monitoring must route to/open the Open Position Details card instead. The system must not keep presenting a candidate-only view once real exposure or trade history exists for it.
+- `/positions` is intended to eventually list open positions and open this same Open Position Details card/chart for a selected one, reusing this one rendering path rather than a separate implementation (see also the existing `Все позиции` ranking policy above, which this should converge with rather than duplicate).
+
 ## `Все позиции`
 
 `Все позиции` is a separate screen.
@@ -44,7 +104,7 @@ Selecting a position from this screen returns to / updates the main `Робот`
 
 The Robot menu includes a separate `Под наблюдением` action/screen.
 
-It shows approved robot candidates that have been handed to the robot but have not yet opened a position, including their current lifecycle state such as `WAITING_BREAKOUT` and remaining validity where available.
+It shows approved robot candidates that have been handed to the robot but have not yet opened a position, including their current lifecycle state such as `WAITING_BREAKOUT` and remaining validity where available. Selecting a candidate opens the Candidate Monitoring card specified below.
 
 ## Direction support in v0.1
 
