@@ -201,6 +201,83 @@ def test_robot_paper_execution_is_independent_of_ui_selected_account():
             runtime.close()
 
 
+def test_robot_close_all_and_synchronize_pending_entries_independent_of_ui_selected_account():
+    """P0.1 (CR-ROBOT-SAFETY-P0-001, AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md
+    v1.6 Section 9): reproduces the pause_robot()/close_all_now() defect
+    observed in live PAPER runtime -- robot_synchronize_pending_entries() and
+    robot_close_all() raising live_mutations_disabled purely because the
+    Workspace UI had a non-PAPER account selected -- and proves the fix.
+    Mirrors test_robot_paper_execution_is_independent_of_ui_selected_account
+    above: the UI-facing mutation path stays fenced exactly as before, while
+    Robot's own safety reconciliation and Robot-owned close are unaffected by
+    UI account selection. Does not touch operator command legality (the
+    durable robot_runtime_state matrix in terminal.application.robot_control,
+    exercised unchanged by tests/test_robot_control.py) at all."""
+
+    paper_account = TradingAccount(
+        TradingAccountId("paper"), "Paper / Virtual", TradingAccountProvider.PAPER,
+        TradingAccountEnvironment.PAPER, TradingAccountStatus.READY,
+    )
+    live_account = TradingAccount(
+        TradingAccountId("bybit-1"), "Live Mainnet", TradingAccountProvider.BYBIT,
+        TradingAccountEnvironment.MAINNET, TradingAccountStatus.READY,
+    )
+    manager = TradingAccountManager(
+        (paper_account, live_account), active_account_id=paper_account.id,
+    )
+
+    with tempfile.TemporaryDirectory() as temp:
+        primary = _instrument()
+        runtime = PaperRuntime(
+            Path(temp) / "paper.sqlite3",
+            book_provider=StaticBookProvider(),
+            instrument_snapshot=primary,
+            instrument_provider=lambda symbol: replace(primary, symbol=symbol),
+            account_manager=manager,
+        )
+        try:
+            # An OPEN Robot position (for robot_close_all) and a still-pending
+            # candidate with a resting entry LIMIT (for
+            # robot_synchronize_pending_entries), both seeded while the
+            # Workspace UI is still on the PAPER account -- exactly as they
+            # would already exist in production before an operator ever
+            # switches the Workspace to a LIVE account.
+            _open_robot_position(runtime, candidate_id="candidate-btc", trade_id="trade-btc", symbol="BTCUSDT")
+            _seed_pending_candidate_with_resting_limit(
+                runtime, candidate_id="candidate-eth", order_id="pending-eth-1", symbol="ETHUSDT",
+            )
+            _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="PAUSED")
+
+            # Operator switches the Workspace UI to a live Bybit account --
+            # exactly the reproduced production trigger.
+            manager.activate(live_account.id)
+
+            # Sibling UI-facing mutation stays fenced exactly as before.
+            with pytest.raises(RuntimeError, match="live_mutations_disabled"):
+                runtime.full_close(FullCloseCommandRequest(ClientActionId("ui-close"), "BTCUSDT"))
+
+            # Robot's own synchronous safety reconciliation must still run:
+            # this used to raise live_mutations_disabled here.
+            sync_response = runtime.robot_synchronize_pending_entries()
+            assert "pending-eth-1" in sync_response.cancelled_order_ids
+            order = runtime.store.get_paper_limit("pending-eth-1", TradingAccountId("paper"))
+            assert order.status == "cancelled"
+
+            # Robot-owned close_all_now() must still execute and must still
+            # act through the Robot-scoped (UI-independent) execution port,
+            # not the Workspace-scoped one.
+            close_response = runtime.robot_close_all(
+                CloseAllCommandRequest(ClientActionId("robot-close-live"))
+            )
+            assert len(close_response.results) == 1
+            assert close_response.results[0].status is CommandResultStatus.COMPLETED
+
+            manager.activate(paper_account.id)
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+        finally:
+            runtime.close()
+
+
 _crossing_book_sequence = itertools.count(1)
 
 
@@ -1622,7 +1699,7 @@ def test_robot_close_all_marks_reconciliation_required_on_unconfirmed_close():
             rejected = CommandResult(
                 "robot-close-all-x", CommandResultStatus.REJECTED, "exchange_rejected", "rejected",
             )
-            with patch.object(runtime.api, "full_close", return_value=rejected):
+            with patch.object(runtime._robot_api, "full_close", return_value=rejected):
                 runtime.robot_close_all(CloseAllCommandRequest(ClientActionId("robot-bulk-close-2")))
 
             state = runtime.store.get_robot_runtime_state(account_id)

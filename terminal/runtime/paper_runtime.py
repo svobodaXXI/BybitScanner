@@ -1621,8 +1621,19 @@ class PaperRuntime:
         is handed to RECONCILIATION_REQUIRED for manual resolution, per
         Section 4 -- this method never itself changes admission mode
         otherwise.
+
+        Robot safety authority (v1.6 Section 9): deliberately never calls
+        require_paper_mutations() and never executes through self.api --
+        both are gated on whichever account the Workspace UI currently has
+        selected, which must never be able to block Robot's own close of its
+        own exposure. Uses self._robot_api (bound to self._robot_context,
+        the same UI-independent PAPER context RobotPaperActionExecutor/
+        _DirectRobotActionExecutor already use) instead. This does not
+        change *command legality*: close_all_now()'s own durable-state
+        legality check already ran in terminal.application.robot_control
+        before this method is ever reached; this method only reuses the
+        existing Robot-scoped execution path, never a second one.
         """
-        self.require_paper_mutations()
         candidates = self.store.load_robot_candidates(self._account_id)
         robot_symbols = sorted({
             item.symbol.value for item in candidates if item.status == "OPEN"
@@ -1633,7 +1644,7 @@ class PaperRuntime:
             digest = hashlib.sha256(
                 f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
             ).hexdigest()[:32]
-            result = self.api.full_close(FullCloseCommandRequest(
+            result = self._robot_api.full_close(FullCloseCommandRequest(
                 ClientActionId(f"robot-close-all-{digest}"), symbol,
             ))
             results.append(result)
@@ -1681,8 +1692,17 @@ class PaperRuntime:
         transition before calling this, and is responsible for escalating to
         ``RECONCILIATION_REQUIRED`` if ``unresolved_candidate_ids`` is
         non-empty -- this method only reports what it observed.
+
+        Robot safety authority (v1.6 Section 9): deliberately never calls
+        require_paper_mutations(). This is Robot's own synchronous safety
+        reconciliation and must keep working under PAUSED/RECONCILIATION_REQUIRED
+        regardless of whichever account the Workspace UI currently has
+        selected -- the ``_DirectRobotActionExecutor`` below already routes
+        every mutation through the UI-independent ``_robot_*`` helpers, so
+        this method needs no gate of its own. This is not a blanket allow
+        rule: pause_robot()/stop_robot()'s own durable-state legality check
+        already ran before this method was ever reached.
         """
-        self.require_paper_mutations()
         before = {
             item.candidate_id: item
             for item in self.store.load_robot_candidates(self._account_id)

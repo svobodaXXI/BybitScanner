@@ -2492,12 +2492,21 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(status_code, {"ok": status_code == 200, **to_primitive(result)})
             return
 
+        # Workspace-facing PAPER mutation gate, keyed to whichever account the
+        # Workspace UI currently has selected. Deliberately excludes the two
+        # /api/robot/* routes below: Robot safety authority (v1.6 Section 9,
+        # CR-ROBOT-SAFETY-P0-001 P0.1) must never depend on Workspace account
+        # selection. This is not a blanket "Robot mutation always allowed"
+        # rule -- it removes a gate that was never the actual enforcer of
+        # Robot command legality in the first place; that legality (durable
+        # robot_runtime_state matrix) is checked earlier, in
+        # terminal.application.robot_control, before either route is ever
+        # called.
         mutation_paths = {
             "/api/market", "/api/limit", "/api/limit/amend", "/api/limit/cancel",
             "/api/stop", "/api/stop/amend", "/api/stop/delete",
             "/api/take", "/api/take/amend", "/api/take/delete",
-            "/api/full-close", "/api/close-all", "/api/robot/close-all-now",
-            "/api/robot/synchronize-pending-entries",
+            "/api/full-close", "/api/close-all",
         }
         if urlparse(self.path).path in mutation_paths:
             try:
@@ -2576,7 +2585,12 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             # v1.2 Section 4): unlike /api/close-all above, scoped strictly to
             # Robot-owned open positions via PaperRuntime.robot_close_all().
             # Same localhost-only, no-extra-token trust model as /api/full-close
-            # and /api/close-all (gated only by require_paper_mutations() above).
+            # and /api/close-all, but deliberately NOT gated by
+            # require_paper_mutations() (v1.6 Section 9, P0.1): Robot safety
+            # authority must not depend on Workspace account selection.
+            # Command legality is enforced earlier, in
+            # terminal.application.robot_control.close_all_now(), before this
+            # route is ever called.
             try:
                 payload = self._payload(CLOSE_ALL_FIELDS)
                 request = CloseAllCommandRequest(ClientActionId(payload["client_action_id"]))
@@ -2594,7 +2608,13 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             # ROBOT_STOPPED, so their cancellation/terminalization/
             # partial-fill-protection effects are confirmed before the
             # command reports success to the operator. Same localhost-only,
-            # no-extra-token trust model as the routes above.
+            # no-extra-token trust model as the routes above, but
+            # deliberately NOT gated by require_paper_mutations() (v1.6
+            # Section 9, P0.1): this IS Robot's own safety reconciliation and
+            # must keep working under PAUSED/RECONCILIATION_REQUIRED
+            # regardless of Workspace account selection. Command legality is
+            # enforced earlier, in pause_robot()/stop_robot() themselves,
+            # before this route is ever called.
             try:
                 self._payload(ROBOT_SYNCHRONIZE_PENDING_ENTRIES_FIELDS)
                 result = self.server.runtime.call(
