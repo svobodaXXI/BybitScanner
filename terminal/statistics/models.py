@@ -70,6 +70,22 @@ class CumulativePnlPoint:
 
 
 @dataclass(frozen=True, slots=True)
+class DailyTickerPnl:
+    symbol: str
+    selected_pnl_usdt: Decimal
+    trade_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class DailyPnlResult:
+    day: str
+    selected_pnl_usdt: Decimal
+    completed_trade_count: int
+    selected_trade_count: int
+    tickers: tuple[DailyTickerPnl, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RobotStatisticsSummary:
     pnl_basis: PnlBasis
     total_pnl_usdt: Decimal

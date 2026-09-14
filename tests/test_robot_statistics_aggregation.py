@@ -4,6 +4,7 @@ import unittest
 from decimal import Decimal
 
 from terminal.statistics.aggregation import (
+    aggregate_daily_pnl,
     build_cumulative_pnl,
     summarize_robot_trades,
 )
@@ -22,12 +23,13 @@ def _trade(
     average_entry: str = "10",
     entry_time_ms: int = 1000,
     exit_time_ms: int = 2000,
+    symbol: str = "BTCUSDT",
 ) -> RobotStatisticsTrade:
     return RobotStatisticsTrade(
         trade_id=trade_id,
         trading_account_id="account-a",
         candidate_id=f"candidate-{trade_id}",
-        symbol="BTCUSDT",
+        symbol=symbol,
         direction="LONG",
         pattern="FALLING_WEDGE",
         source_timeframe="1",
@@ -58,6 +60,95 @@ def _trade(
 
 
 class RobotStatisticsAggregationTests(unittest.TestCase):
+    def test_daily_pnl_groups_two_days_by_msk_close_date(self) -> None:
+        trades = (
+            _trade(trade_id="day-1", pnl="1.25", exit_time_ms=0),
+            _trade(trade_id="day-2", pnl="2.75", exit_time_ms=75_600_000),
+        )
+
+        results = aggregate_daily_pnl(trades, basis=PnlBasis.GROSS)
+
+        self.assertEqual([item.day for item in results], ["1970-01-01", "1970-01-02"])
+        self.assertEqual(
+            [item.selected_pnl_usdt for item in results],
+            [Decimal("1.25"), Decimal("2.75")],
+        )
+
+    def test_daily_pnl_uses_msk_day_for_utc_timestamp(self) -> None:
+        results = aggregate_daily_pnl(
+            (_trade(trade_id="utc-next-msk-day", pnl="3", exit_time_ms=75_600_000),),
+            basis=PnlBasis.GROSS,
+        )
+
+        self.assertEqual(results[0].day, "1970-01-02")
+
+    def test_daily_pnl_aggregates_multiple_tickers(self) -> None:
+        results = aggregate_daily_pnl(
+            (
+                _trade(trade_id="btc-1", pnl="1.1", symbol="BTCUSDT"),
+                _trade(trade_id="eth", pnl="2.2", symbol="ETHUSDT"),
+                _trade(trade_id="btc-2", pnl="3.3", symbol="BTCUSDT"),
+            ),
+            basis=PnlBasis.GROSS,
+        )
+
+        day = results[0]
+        self.assertEqual(day.selected_pnl_usdt, Decimal("6.6"))
+        self.assertEqual(day.completed_trade_count, 3)
+        self.assertEqual(day.selected_trade_count, 3)
+        self.assertEqual(
+            [(ticker.symbol, ticker.selected_pnl_usdt, ticker.trade_count) for ticker in day.tickers],
+            [
+                ("BTCUSDT", Decimal("4.4"), 2),
+                ("ETHUSDT", Decimal("2.2"), 1),
+            ],
+        )
+
+    def test_daily_pnl_orders_days_and_tickers_deterministically(self) -> None:
+        results = aggregate_daily_pnl(
+            (
+                _trade(
+                    trade_id="later-z",
+                    pnl="1",
+                    symbol="ZUSDT",
+                    exit_time_ms=75_600_000,
+                ),
+                _trade(trade_id="earlier-b", pnl="1", symbol="BUSDT", exit_time_ms=0),
+                _trade(trade_id="earlier-a", pnl="1", symbol="AUSDT", exit_time_ms=0),
+            ),
+            basis=PnlBasis.GROSS,
+        )
+
+        self.assertEqual([item.day for item in results], ["1970-01-01", "1970-01-02"])
+        self.assertEqual([ticker.symbol for ticker in results[0].tickers], ["AUSDT", "BUSDT"])
+
+    def test_daily_adjusted_pnl_skips_unknown_cost_trade(self) -> None:
+        results = aggregate_daily_pnl(
+            (
+                _trade(trade_id="known", pnl="10.5", fee="0.4", symbol="BTCUSDT"),
+                _trade(trade_id="unknown", pnl="20", fee=None, symbol="ETHUSDT"),
+            ),
+            basis=PnlBasis.KNOWN_COST_ADJUSTED,
+        )
+
+        day = results[0]
+        self.assertEqual(day.selected_pnl_usdt, Decimal("10.1"))
+        self.assertEqual(day.completed_trade_count, 2)
+        self.assertEqual(day.selected_trade_count, 1)
+        self.assertEqual([ticker.symbol for ticker in day.tickers], ["BTCUSDT"])
+
+    def test_daily_pnl_preserves_decimal_arithmetic(self) -> None:
+        result = aggregate_daily_pnl(
+            (
+                _trade(trade_id="a", pnl="0.1"),
+                _trade(trade_id="b", pnl="0.2"),
+            ),
+            basis=PnlBasis.GROSS,
+        )[0]
+
+        self.assertIsInstance(result.selected_pnl_usdt, Decimal)
+        self.assertEqual(result.selected_pnl_usdt, Decimal("0.3"))
+
     def test_gross_summary_classifies_profit_loss_and_breakeven(self) -> None:
         trades = (
             _trade(trade_id="t1", pnl="10"),
