@@ -139,6 +139,17 @@ class RobotControlCommandTests(unittest.TestCase):
             "unresolved_candidate_ids": ["candidate-1"],
         }
 
+    def _still_pending_protection_synchronize_post(self, url, payload):
+        return {
+            "ok": True, "cancelled_order_ids": [], "finalized_candidate_ids": [],
+            "terminalized_candidate_ids": [], "still_pending_protection": ["candidate-1"],
+            "unresolved_candidate_ids": [],
+        }
+
+    @staticmethod
+    def _rejecting_synchronize_post(url, payload):
+        raise RobotControlRejected(f"PAPER backend rejected synchronize_pending_entries: {{}}")
+
     def test_pause_robot_from_running_ready_reaches_paused(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
         result = pause_robot(
@@ -198,6 +209,35 @@ class RobotControlCommandTests(unittest.TestCase):
 
         with self.assertRaises(RobotControlRejected):
             pause_robot(database_path=self.db_path, clock_ms=lambda: 2000, http_post=unreachable)
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_RUNNING")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
+
+    def test_pause_robot_escalates_and_rejects_when_protection_unproven(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        with self.assertRaises(RobotControlRejected):
+            pause_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=self._still_pending_protection_synchronize_post,
+            )
+        # A real partial fill (still_pending_protection) is already exposure
+        # -- fail-closed exactly like an unresolved cancellation, never a
+        # silently-clean PAUSED success over unproven protection ownership.
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_RUNNING")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
+
+    def test_pause_robot_escalates_and_rejects_when_backend_rejects_synchronization(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        with self.assertRaises(RobotControlRejected):
+            pause_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=self._rejecting_synchronize_post,
+            )
+        # A backend-rejected (non-200/ok=false) synchronization response
+        # raises RobotControlRejected from http_post itself -- must still
+        # escalate to RECONCILIATION_REQUIRED, not bypass escalation just
+        # because the failure already arrives as RobotControlRejected.
         state = self._read_state()
         self.assertEqual(state.mode, "ROBOT_RUNNING")
         self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
@@ -321,6 +361,31 @@ class RobotControlCommandTests(unittest.TestCase):
 
         with self.assertRaises(RobotControlRejected):
             stop_robot(database_path=self.db_path, clock_ms=lambda: 2000, http_post=unreachable)
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_STOPPED")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
+
+    def test_stop_robot_escalates_and_rejects_when_protection_unproven(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        with self.assertRaises(RobotControlRejected):
+            stop_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=self._still_pending_protection_synchronize_post,
+            )
+        # Durable mode already committed to ROBOT_STOPPED stays that way,
+        # but a real partial fill left unproven-protected escalates to
+        # RECONCILIATION_REQUIRED rather than reporting a clean STOP.
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_STOPPED")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
+
+    def test_stop_robot_escalates_and_rejects_when_backend_rejects_synchronization(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        with self.assertRaises(RobotControlRejected):
+            stop_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=self._rejecting_synchronize_post,
+            )
         state = self._read_state()
         self.assertEqual(state.mode, "ROBOT_STOPPED")
         self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")

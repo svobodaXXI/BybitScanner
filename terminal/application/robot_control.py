@@ -41,10 +41,12 @@ exposure after PAUSE/STOP were asserted
 commands now bridge, synchronously and after committing their durable
 transition, to ``PaperRuntime.robot_synchronize_pending_entries()`` (same
 localhost REST trust model as ``close_all_now()``) before reporting success.
-If that bridge call fails or reports a candidate whose working entry LIMIT
-could not be confirmed cancelled, durable state is escalated to
-``RECONCILIATION_REQUIRED`` and ``RobotControlRejected`` is raised --
-neither command silently reports clean success in that case.
+If that bridge call fails or transport-rejects, or reports a candidate whose
+working entry LIMIT could not be confirmed cancelled (``unresolved_candidate_ids``)
+or whose real exposure could not be proven to have protection ownership this
+pass (``still_pending_protection``), durable state is escalated to
+``RECONCILIATION_REQUIRED`` and ``RobotControlRejected`` is raised -- neither
+command silently reports clean success in that case.
 """
 
 from __future__ import annotations
@@ -194,7 +196,16 @@ def _synchronize_pending_entries_or_escalate(
     url = f"{backend_url or DEFAULT_PAPER_BACKEND_URL}/api/robot/synchronize-pending-entries"
     try:
         result = http_post(url, {})
-    except RobotControlRejected:
+    except RobotControlRejected as exc:
+        # The backend itself rejected the request (non-200/ok=false) -- this
+        # is still a synchronization failure, not proof that escalation
+        # already happened, so it must fail closed exactly like a transport
+        # exception below rather than bypass escalation.
+        _escalate_to_reconciliation_required(
+            database_path=database_path, clock_ms=clock_ms,
+            reason=f"{command} could not confirm pending Robot entries were reconciled "
+            f"(PAPER backend rejected synchronize-pending-entries at {url}): {exc}",
+        )
         raise
     except Exception as exc:
         _escalate_to_reconciliation_required(
@@ -207,15 +218,26 @@ def _synchronize_pending_entries_or_escalate(
         ) from exc
 
     unresolved = result.get("unresolved_candidate_ids") or []
-    if unresolved:
+    # A partial fill is real exposure the instant it exists. still_pending_protection
+    # means this synchronous pass could not prove that exposure now has proven
+    # Robot trade/protection ownership (e.g. _average_entry()/_finalize_trade()
+    # could not complete this pass) -- treated exactly like an unresolved
+    # cancellation: fail closed into RECONCILIATION_REQUIRED rather than report
+    # a clean PAUSED/ROBOT_STOPPED success over unproven exposure.
+    still_pending_protection = result.get("still_pending_protection") or []
+    if unresolved or still_pending_protection:
         _escalate_to_reconciliation_required(
             database_path=database_path, clock_ms=clock_ms,
-            reason=f"{command} could not confirm cancellation for candidates: {unresolved}",
+            reason=(
+                f"{command} could not confirm cancellation for candidates: {unresolved}; "
+                f"could not confirm protection ownership for candidates: {still_pending_protection}"
+            ),
         )
         raise RobotControlRejected(
-            f"{command} committed its durable transition, but cancellation could not be "
-            f"confirmed for pending Robot candidate(s) {unresolved} -- escalated to "
-            "RECONCILIATION_REQUIRED"
+            f"{command} committed its durable transition, but reconciliation could not "
+            f"prove safety for pending Robot candidate(s) -- unresolved cancellation="
+            f"{unresolved}, unproven protection={still_pending_protection} -- escalated "
+            "to RECONCILIATION_REQUIRED"
         )
     return result
 

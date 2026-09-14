@@ -185,13 +185,18 @@ class RobotSynchronizePendingEntriesResponse:
     v1.3 Section 7) so their cancellation/terminalization/partial-fill-protection
     effects are guaranteed applied before the command reports success.
 
-    ``unresolved_candidate_ids`` is the only field that represents a genuine
-    failure: a candidate whose working entry LIMIT could not be confirmed
-    cancelled. ``still_pending_protection`` is informational, not a failure --
-    a partial fill whose immediate finalize/protect attempt could not
-    complete this pass (e.g. no closed candle available yet) remains
-    APPROVED with real exposure, still safely blocked from further top-up,
-    and is retried by the periodic background monitor.
+    ``unresolved_candidate_ids`` is a candidate whose working entry LIMIT
+    could not be confirmed cancelled. ``still_pending_protection`` reports a
+    candidate that remains APPROVED with real, non-flat exposure after this
+    pass -- e.g. a partial fill whose immediate finalize/protect attempt
+    could not complete (no closed candle available yet) -- still safely
+    blocked from further top-up and retried by the periodic background
+    monitor at the account level. At the pause_robot()/stop_robot() control
+    boundary, though, any actual partial fill is already real exposure: both
+    fields are treated as a synchronization failure there and escalate the
+    command to RECONCILIATION_REQUIRED rather than report success over
+    unproven protection ownership (see
+    ``terminal.application.robot_control._synchronize_pending_entries_or_escalate``).
     """
 
     cancelled_order_ids: tuple[str, ...]
