@@ -218,6 +218,38 @@ INITIAL_WORKSPACE_READINESS_TIMEOUT = 30.0
 SUPPORTED_KLINE_INTERVALS = ("15s", *NATIVE_KLINE_INTERVALS)
 
 
+class RobotRouteLegalityError(RuntimeError):
+    """Direct Robot HTTP route is illegal for the durable Robot state."""
+
+
+def _require_robot_route_legality(runtime: PaperRuntime, command: str) -> None:
+    state = runtime.store.get_robot_runtime_state(TradingAccountId("paper"))
+    if state is None:
+        raise RobotRouteLegalityError("Robot runtime state is unavailable")
+    pair = (state.mode, state.recovery_status)
+    allowed = {
+        "close_all_now": {
+            ("ROBOT_RUNNING", "READY"),
+            ("ROBOT_RUNNING", "PAUSED"),
+        },
+        "synchronize_pending_entries": {
+            ("ROBOT_RUNNING", "PAUSED"),
+            ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+            ("ROBOT_STOPPED", "ROBOT_STOPPED"),
+            ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"),
+        },
+    }.get(command)
+    if allowed is None or pair not in allowed:
+        raise RobotRouteLegalityError(
+            f"{command} is illegal from ({state.mode}, {state.recovery_status})"
+        )
+
+
+def _execute_robot_route(runtime: PaperRuntime, command: str, operation):
+    _require_robot_route_legality(runtime, command)
+    return operation()
+
+
 class PublicTradeBuffer:
     def __init__(
         self,
@@ -2496,12 +2528,9 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         # Workspace UI currently has selected. Deliberately excludes the two
         # /api/robot/* routes below: Robot safety authority (v1.6 Section 9,
         # CR-ROBOT-SAFETY-P0-001 P0.1) must never depend on Workspace account
-        # selection. This is not a blanket "Robot mutation always allowed"
-        # rule -- it removes a gate that was never the actual enforcer of
-        # Robot command legality in the first place; that legality (durable
-        # robot_runtime_state matrix) is checked earlier, in
-        # terminal.application.robot_control, before either route is ever
-        # called.
+        # selection. Direct Robot HTTP routes below re-check their own durable
+        # Robot state legality inside the serialized owner call before invoking
+        # any Robot mutation method.
         mutation_paths = {
             "/api/market", "/api/limit", "/api/limit/amend", "/api/limit/cancel",
             "/api/stop", "/api/stop/amend", "/api/stop/delete",
@@ -2581,20 +2610,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/robot/close-all-now":
-            # Robot v0.1 close_all_now() (AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md
-            # v1.2 Section 4): unlike /api/close-all above, scoped strictly to
-            # Robot-owned open positions via PaperRuntime.robot_close_all().
-            # Same localhost-only, no-extra-token trust model as /api/full-close
-            # and /api/close-all, but deliberately NOT gated by
-            # require_paper_mutations() (v1.6 Section 9, P0.1): Robot safety
-            # authority must not depend on Workspace account selection.
-            # Command legality is enforced earlier, in
-            # terminal.application.robot_control.close_all_now(), before this
-            # route is ever called.
             try:
                 payload = self._payload(CLOSE_ALL_FIELDS)
                 request = CloseAllCommandRequest(ClientActionId(payload["client_action_id"]))
-                result = self.server.runtime.call(lambda runtime: runtime.robot_close_all(request))
+                result = self.server.runtime.call(
+                    lambda runtime: _execute_robot_route(
+                        runtime,
+                        "close_all_now",
+                        lambda: runtime.robot_close_all(request),
+                    )
+                )
+            except RobotRouteLegalityError as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
@@ -2602,24 +2630,18 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/robot/synchronize-pending-entries":
-            # Robot v0.1 pause_robot()/stop_robot() synchronous bridge
-            # (AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.3 Section 7):
-            # called by robot_control.py AFTER durably committing PAUSED/
-            # ROBOT_STOPPED, so their cancellation/terminalization/
-            # partial-fill-protection effects are confirmed before the
-            # command reports success to the operator. Same localhost-only,
-            # no-extra-token trust model as the routes above, but
-            # deliberately NOT gated by require_paper_mutations() (v1.6
-            # Section 9, P0.1): this IS Robot's own safety reconciliation and
-            # must keep working under PAUSED/RECONCILIATION_REQUIRED
-            # regardless of Workspace account selection. Command legality is
-            # enforced earlier, in pause_robot()/stop_robot() themselves,
-            # before this route is ever called.
             try:
                 self._payload(ROBOT_SYNCHRONIZE_PENDING_ENTRIES_FIELDS)
                 result = self.server.runtime.call(
-                    lambda runtime: runtime.robot_synchronize_pending_entries(),
+                    lambda runtime: _execute_robot_route(
+                        runtime,
+                        "synchronize_pending_entries",
+                        runtime.robot_synchronize_pending_entries,
+                    )
                 )
+            except RobotRouteLegalityError as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
