@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 from .models import (
     CumulativePnlPoint,
+    DailyPnlResult,
+    DailyTickerPnl,
     PnlBasis,
     RobotStatisticsCoverage,
     RobotStatisticsSummary,
@@ -16,6 +20,8 @@ from .models import (
 
 _HUNDRED = Decimal("100")
 _ZERO = Decimal("0")
+_MSK = ZoneInfo("Europe/Moscow")
+_UNIX_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _selected_trade_pnl(
@@ -56,6 +62,61 @@ def build_cumulative_pnl(
         )
 
     return tuple(points)
+
+
+def aggregate_daily_pnl(
+    trades: Iterable[RobotStatisticsTrade],
+    *,
+    basis: PnlBasis,
+) -> tuple[DailyPnlResult, ...]:
+    """Aggregate completed Robot trades by their MSK close date."""
+    days: dict[str, dict[str, object]] = {}
+
+    for trade in trades:
+        day = (
+            _UNIX_EPOCH + timedelta(milliseconds=trade.exit_time_ms)
+        ).astimezone(_MSK).date().isoformat()
+        bucket = days.setdefault(
+            day,
+            {"completed": 0, "selected": 0, "pnl": _ZERO, "tickers": {}},
+        )
+        bucket["completed"] = int(bucket["completed"]) + 1
+
+        pnl = _selected_trade_pnl(trade, basis=basis)
+        if pnl is None:
+            continue
+
+        bucket["selected"] = int(bucket["selected"]) + 1
+        bucket["pnl"] = bucket["pnl"] + pnl
+        ticker_buckets = bucket["tickers"]
+        assert isinstance(ticker_buckets, dict)
+        ticker_pnl, ticker_count = ticker_buckets.get(trade.symbol, (_ZERO, 0))
+        ticker_buckets[trade.symbol] = (ticker_pnl + pnl, ticker_count + 1)
+
+    results: list[DailyPnlResult] = []
+    for day in sorted(days):
+        bucket = days[day]
+        ticker_buckets = bucket["tickers"]
+        assert isinstance(ticker_buckets, dict)
+        tickers = tuple(
+            DailyTickerPnl(
+                symbol=symbol,
+                selected_pnl_usdt=ticker_buckets[symbol][0],
+                trade_count=ticker_buckets[symbol][1],
+            )
+            for symbol in sorted(ticker_buckets)
+        )
+        results.append(
+            DailyPnlResult(
+                day=day,
+                selected_pnl_usdt=bucket["pnl"],
+                completed_trade_count=int(bucket["completed"]),
+                selected_trade_count=int(bucket["selected"]),
+                tickers=tickers,
+            )
+        )
+
+    return tuple(results)
 
 
 def summarize_robot_trades(
