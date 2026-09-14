@@ -15,6 +15,7 @@ from .models import (
     RobotStatisticsCoverage,
     RobotStatisticsSummary,
     RobotStatisticsTrade,
+    TickerRankingRow,
 )
 
 
@@ -117,6 +118,34 @@ def aggregate_daily_pnl(
         )
 
     return tuple(results)
+
+
+def aggregate_ticker_ranking(
+    trades: Iterable[RobotStatisticsTrade],
+    *,
+    basis: PnlBasis,
+) -> tuple[TickerRankingRow, ...]:
+    """Rank symbols by selected PnL, selected trade count, then symbol."""
+    buckets: dict[str, tuple[Decimal, int]] = {}
+    for trade in trades:
+        pnl = _selected_trade_pnl(trade, basis=basis)
+        if pnl is None:
+            continue
+        total, count = buckets.get(trade.symbol, (_ZERO, 0))
+        buckets[trade.symbol] = (total + pnl, count + 1)
+
+    rows = [
+        TickerRankingRow(symbol=symbol, selected_pnl_usdt=pnl, trade_count=count)
+        for symbol, (pnl, count) in buckets.items()
+    ]
+    return tuple(sorted(
+        rows,
+        key=lambda row: (
+            -row.selected_pnl_usdt,
+            -row.trade_count,
+            row.symbol,
+        ),
+    ))
 
 
 def summarize_robot_trades(
