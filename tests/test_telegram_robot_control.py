@@ -64,7 +64,9 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         ) as send_mock:
             telegram_review._process_callback(callback_query)
 
-        pause_mock.assert_called_once_with()
+        pause_mock.assert_called_once_with(
+            http_post=telegram_review._post_robot_synchronize_pending_entries,
+        )
         answer_mock.assert_called_once_with("cb-1", "Робот: на паузе ⏸")
         send_mock.assert_called_once()
         self.assertIn("Робот: на паузе ⏸", send_mock.call_args.args[2])
@@ -127,7 +129,9 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         ) as send_mock:
             telegram_review._process_callback(callback_query)
 
-        stop_mock.assert_called_once_with()
+        stop_mock.assert_called_once_with(
+            http_post=telegram_review._post_robot_synchronize_pending_entries,
+        )
         answer_mock.assert_called_once_with("cb-4", "Робот: остановлен ⏹")
         send_mock.assert_called_once()
         self.assertIn("Статус робота: Остановлен", send_mock.call_args.args[2])

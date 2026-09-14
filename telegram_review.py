@@ -350,11 +350,11 @@ def _call_robot_control_command(command):
     if command == "start":
         return start_robot()
     if command == "pause":
-        return pause_robot()
+        return pause_robot(http_post=_post_robot_synchronize_pending_entries)
     if command == "resume":
         return resume_robot()
     if command == "stop":
-        return stop_robot()
+        return stop_robot(http_post=_post_robot_synchronize_pending_entries)
     raise ValueError(f"unsupported Robot control command: {command}")
 
 
@@ -367,6 +367,17 @@ def _post_robot_close_all_now(url, payload):
     body = response.json()
     if response.status_code != 200 or not body.get("ok", False):
         raise RobotControlRejected(f"PAPER backend rejected close_all_now: {body}")
+    return body
+
+
+def _post_robot_synchronize_pending_entries(url, payload):
+    # pause_robot()/stop_robot()'s synchronous bridge (AUTOPILOT_ROBOT_V0_1_
+    # ROBOT_CONTROL_DECISION.md v1.3 Section 7) -- same transport pattern as
+    # _post_robot_close_all_now above.
+    response = requests.post(url, json=payload, timeout=15)
+    body = response.json()
+    if response.status_code != 200 or not body.get("ok", False):
+        raise RobotControlRejected(f"PAPER backend rejected synchronize_pending_entries: {body}")
     return body
 
 

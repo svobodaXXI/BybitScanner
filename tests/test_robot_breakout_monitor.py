@@ -289,6 +289,17 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "terminal.db"
         self.store = SQLiteStore.open(self.db_path)
+        # Default admission state for every pre-existing test in this module:
+        # (ROBOT_RUNNING, READY), matching what RobotRecoveryCoordinator.recover()
+        # would have already established before RobotBreakoutMonitor ever ticks
+        # in production. Tests covering the PAUSE/STOP/RECONCILIATION_REQUIRED
+        # admission gate override this explicitly via
+        # self.store.update_robot_runtime_state(...).
+        self.store.initialize_robot_runtime_state(ACCOUNT_ID, updated_at_ms=1)
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode="ROBOT_RUNNING", recovery_status="READY",
+            reason=None, expected_version=1, updated_at_ms=1,
+        )
         self.feed = _ScriptedCandleFeed()
         self.clock = _Clock()
         self.executor = _FakeActionExecutor(self.store, ACCOUNT_ID, self.clock)
@@ -934,6 +945,42 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(trade.entry_path, "MIXED")
         self.assertEqual(trade.actual_wv, Decimal("1"))
 
+    def test_mixed_completion_protection_failure_terminalizes_in_a_single_tick(self):
+        """Regression for a stale-state_revision hazard this session's
+        testing surfaced (pre-existing, independent of the PAUSE/STOP admission
+        gate): _persist_execution() earlier in the SAME tick already advances
+        this candidate's durable state_revision past what the in-hand
+        `record` carries, so a downstream _finalize_trade() call using that
+        stale record could have its OWN fail-closed terminal status write
+        silently lost to a spurious ConcurrentUpdate -- even though the
+        emergency close itself already ran and flattened the position,
+        leaving the candidate stuck APPROVED forever (average_entry reads
+        None once flat, so no later tick would ever revisit it). Fixed by
+        reloading the record immediately before every _finalize_trade() call
+        that follows a same-tick _persist_execution()."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
+        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
+        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
+
+        self.executor.fail_create_stop = True
+        self.clock.advance(robot_partial_fill.PARTIAL_COMPLETION_WAIT_MS + 1000)
+        self.feed.push(SYMBOL, _candle_at(105, high=82, low=80.5, close=81))
+        advanced = self.monitor.tick()  # MARKET_COMPLETE -> finalize -> create_stop raises -> fail closed
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.executor.market_calls), 1)  # top-up still submitted (READY, unblocked)
+        self.assertEqual([name for name, _ in self.executor.protection_calls], ["full_close"])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
+
     def test_unavailable_candle_leaves_state_untouched_and_does_not_crash(self):
         self._create_candidate()
         self.monitor.tick()  # initialize
@@ -1003,6 +1050,420 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(self.feed.calls, [])
         record = self.store.get_robot_candidate("candidate-1")
         self.assertIsNone(record.robot_state)
+
+    # -- PAUSE / STOP / RECONCILIATION_REQUIRED admission gate --
+    #
+    # RobotBreakoutMonitor is the sole owner of already-admitted APPROVED
+    # candidates (module docstring), but until this gate it never consulted
+    # robot_runtime_state at all: a PAUSED or even a fully ROBOT_STOPPED
+    # robot could still submit new entry LIMIT/Market orders for candidates
+    # approved before the pause/stop -- a real gap surfaced during live
+    # PAPER acceptance (NEOUSDT/HAJIMIUSDT LIMIT orders appearing after
+    # Robot was PAUSED). These tests cover the authoritative PAUSE=variant-B
+    # contract: PAUSE/RECONCILIATION_REQUIRED block and cancel but stay
+    # recoverable; ROBOT_STOPPED additionally gives terminal disposition to
+    # pending pre-entry intent, per
+    # AUTOPILOT_ROBOT_V0_1_RESTART_FROM_STOPPED_DECISION.md. Protection for
+    # an already-filled/open position is never gated by any of this.
+
+    def _set_admission_state(self, mode, recovery_status):
+        current = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode=mode, recovery_status=recovery_status,
+            reason=None, expected_version=current.version, updated_at_ms=self.clock(),
+        )
+
+    def test_paused_with_no_working_order_never_submits_entry(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self._set_admission_state("ROBOT_RUNNING", "PAUSED")
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertNotIn("limit_order_id", record.robot_state.get("execution") or {})
+
+    def test_pause_cancels_working_entry_limit_and_creates_no_position(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+        self._set_admission_state("ROBOT_RUNNING", "PAUSED")
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertEqual(self.executor.cancel_calls[0].order_id, order_id)
+        order = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(order.status, "cancelled")
+        self.assertEqual(self.executor.market_calls, [])
+        self.assertEqual(self.executor.protection_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")  # recoverable, never invalidated by PAUSE
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertIsNone(self.store.get_position_projection(position_key))
+
+        # A later tick while still PAUSED does not resubmit.
+        self.monitor.tick()
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+    def test_paused_does_not_disturb_an_already_open_robot_position(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        self.monitor.tick()  # finalizes -> OPEN, STOP/TAKE submitted
+        before = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(before.status, "OPEN")
+        protection_before = list(self.executor.protection_calls)
+
+        self._set_admission_state("ROBOT_RUNNING", "PAUSED")
+        advanced = self.monitor.tick()
+
+        # tick()'s own status=="APPROVED" filter skips this OPEN candidate
+        # entirely -- PAUSE introduces no new suppression of it, and no new
+        # one is needed: existing STOP/TAKE/protection/recovery ownership
+        # for an OPEN position lives outside this monitor.
+        self.assertEqual(advanced, ())
+        after = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(after.status, "OPEN")
+        self.assertEqual(after.state_revision, before.state_revision)
+        self.assertEqual(after.robot_state, before.robot_state)
+        self.assertEqual(self.executor.protection_calls, protection_before)
+
+    def test_robot_stopped_before_any_entry_order_invalidates_the_candidate(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self._set_admission_state("ROBOT_STOPPED", "ROBOT_STOPPED")
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertIn("stopped_without_entry_reason", record.robot_state["execution"])
+
+    def test_robot_stopped_cancels_and_invalidates_a_still_unfilled_working_entry_limit(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self._set_admission_state("ROBOT_STOPPED", "ROBOT_STOPPED")
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertEqual(self.executor.cancel_calls[0].order_id, order_id)
+        order = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(order.status, "cancelled")
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+
+    def test_restart_after_stop_never_revives_an_invalidated_candidate(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self._set_admission_state("ROBOT_STOPPED", "ROBOT_STOPPED")
+        self.monitor.tick()  # invalidates candidate-1
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "INVALIDATED")
+
+        # Restart: durable admission returns to (ROBOT_RUNNING, READY),
+        # exactly what start_robot()/RobotRecoveryCoordinator.start() would
+        # durably establish. This monitor never decides restart itself; it
+        # only reacts to the same authoritative robot_runtime_state.
+        self._set_admission_state("ROBOT_RUNNING", "READY")
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())  # tick()'s APPROVED-only filter permanently skips it
+        self.assertEqual(self.executor.limit_calls, [])
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "INVALIDATED")
+
+        # Only a genuinely new candidate (a new explicit approval) creates
+        # new work after restart. A different symbol keeps its signal
+        # snapshot distinct from candidate-1's (durable admission dedupes
+        # identical snapshots by content hash).
+        self._create_candidate("candidate-2", symbol="OTHERUSDT")
+        self.monitor.tick()
+        record2 = self.store.get_robot_candidate("candidate-2")
+        self.assertEqual(record2.status, "APPROVED")
+        self.assertEqual(record2.robot_state["phase"], robot_state_machine.PHASE_WAITING_BREAKOUT)
+
+    def test_reconciliation_required_blocks_new_entry_submission(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self._set_admission_state("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        # Never invalidated by RECONCILIATION_REQUIRED -- only ROBOT_STOPPED
+        # gives terminal disposition; this candidate stays recoverable.
+        self.assertEqual(record.status, "APPROVED")
+
+    def test_reconciliation_required_does_not_block_protection_of_an_already_filled_entry(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+
+        # The fill already exists before reconciliation is required (e.g. it
+        # filled, then something elsewhere triggered RECONCILIATION_REQUIRED
+        # before this monitor's next tick) -- finalize/protection must still
+        # run: RECONCILIATION_REQUIRED blocks only NEW entry risk.
+        self._set_admission_state("ROBOT_RUNNING", "RECONCILIATION_REQUIRED")
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "OPEN")
+        self.assertIsNotNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+
+    def test_paused_partial_fill_finalizes_actual_quantity_instead_of_waiting_for_market_top_up(self):
+        """AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.3 Section 7 /
+        Recovery State Batch's 5-second STOP-not-proven contract: a partial
+        fill is already exposure and must not be left waiting indefinitely
+        on a Market top-up while PAUSED -- the actual filled_fraction must
+        be protected now, reusing the same finalize/protection path."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
+        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
+        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT (timer not elapsed)
+        self.assertEqual(self.executor.market_calls, [])
+
+        self._set_admission_state("ROBOT_RUNNING", "PAUSED")
+        self.clock.advance(robot_partial_fill.PARTIAL_COMPLETION_WAIT_MS + 1000)
+        self.feed.push(SYMBOL, _candle_at(105, high=82, low=80.5, close=81))
+        advanced = self.monitor.tick()  # elapsed, would normally MARKET_COMPLETE -- blocked instead
+
+        self.assertEqual(advanced, ("candidate-1",))
+        # Never tops up via Market while blocked -- that would be new entry risk.
+        self.assertEqual(self.executor.market_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "OPEN")
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        # Sized to the ACTUAL filled fraction (0.6), never the originally
+        # intended full wave-volume (1) and never synthesized.
+        self.assertEqual(trade.entry_path, "LIMIT")
+        self.assertEqual(trade.actual_wv, Decimal("0.6"))
+        self.assertEqual(trade.average_entry, Decimal("81"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+        # PAUSED never affected: still paused, not silently resumed.
+        self.assertEqual(self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "PAUSED")
+
+    def test_robot_stopped_partial_fill_finalizes_actual_quantity_never_orphaning_exposure(self):
+        """Symmetric to the PAUSED case: ROBOT_STOPPED must never invalidate
+        a candidate that already has real exposure (that would orphan a live
+        position with no robot_trade/protection ownership) -- it finalizes
+        the actual filled quantity instead, exactly like PAUSE/
+        RECONCILIATION_REQUIRED."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
+        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
+        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
+
+        self._set_admission_state("ROBOT_STOPPED", "ROBOT_STOPPED")
+        self.clock.advance(robot_partial_fill.PARTIAL_COMPLETION_WAIT_MS + 1000)
+        self.feed.push(SYMBOL, _candle_at(105, high=82, low=80.5, close=81))
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.executor.market_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "OPEN")  # never INVALIDATED -- real exposure exists
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.actual_wv, Decimal("0.6"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+
+    def test_paused_partial_fill_protection_failure_uses_fail_closed_emergency_close(self):
+        """Part E race scenario 5: a partial fill finalized while PAUSED (per
+        the two tests above) must still go through PR #89's exact
+        fail-closed emergency-close path if protection itself cannot be
+        established -- no robot_trade with fabricated ownership is ever
+        created, and the candidate is only terminalized once FLAT is
+        authoritatively confirmed."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
+        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
+        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
+
+        self._set_admission_state("ROBOT_RUNNING", "PAUSED")
+        self.executor.fail_create_stop = True
+        self.clock.advance(robot_partial_fill.PARTIAL_COMPLETION_WAIT_MS + 1000)
+        self.feed.push(SYMBOL, _candle_at(105, high=82, low=80.5, close=81))
+        advanced = self.monitor.tick()  # finalize attempt -> create_stop raises -> fail closed
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.executor.market_calls, [])
+        self.assertEqual([name for name, _ in self.executor.protection_calls], ["full_close"])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(
+            record.robot_state["execution"]["emergency_close_outcome"],
+            robot_protection.RECOVERY_CLOSED,
+        )
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
+
+    # -- Partial-fill protection must never depend on a new closed candle --
+    #
+    # AUTOPILOT_ROBOT_V0_1_RECOVERY_STATE_BATCH_DECISION.md Section 6's
+    # 5-second STOP-not-proven window is a maximum recovery deadline, not a
+    # retry interval -- it must never collapse into "wait for
+    # RobotBreakoutMonitor's next tick_interval_s (60s in production)
+    # opportunity, which itself may further depend on a new 1m candle
+    # closing." structural_extreme/frozen_prices/structural_stop and
+    # average_entry (the authoritative position projection) are all already
+    # frozen/durable and need no live market data at all -- these tests
+    # drive the finalize tick with NO candle queued (get_closed_candle()
+    # returns None) to prove the immediate-protect path never reaches that
+    # call at all.
+
+    def test_paused_partial_fill_protects_immediately_with_no_closed_candle_available(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
+        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
+        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT (still READY here)
+
+        self._set_admission_state("ROBOT_RUNNING", "PAUSED")
+        calls_before = list(self.feed.calls)
+        # No candle queued for this tick -- get_closed_candle(SYMBOL) would
+        # return None if the immediate-protect path ever called it.
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.executor.market_calls, [])  # never waits for/tops up via Market
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "OPEN")  # protected immediately, not left pending
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.actual_wv, Decimal("0.6"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+        # The exact proof this test targets: no NEW get_closed_candle() call
+        # was made on the finalize tick (the queue was already empty, so a
+        # call would have been recorded here same as any other).
+        self.assertEqual(self.feed.calls, calls_before)
+
+    def test_robot_stopped_partial_fill_protects_immediately_with_no_closed_candle_available(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
+        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
+        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
+
+        self._set_admission_state("ROBOT_STOPPED", "ROBOT_STOPPED")
+        calls_before = list(self.feed.calls)
+        advanced = self.monitor.tick()  # no candle queued
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.executor.market_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "OPEN")  # never INVALIDATED -- real exposure exists
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.actual_wv, Decimal("0.6"))
+        self.assertEqual(self.feed.calls, calls_before)
+
+    def test_paused_partial_fill_no_candle_and_protection_failure_emergency_closes_immediately(self):
+        """The combined worst case: no market data (no closed candle) AND
+        protection submission itself fails. Must still emergency-close on
+        THIS tick -- zero elapsed wait, let alone the 5-second maximum --
+        never left for a later candle or a later monitor tick."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
+        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
+        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
+
+        self._set_admission_state("ROBOT_RUNNING", "PAUSED")
+        self.executor.fail_create_stop = True
+        advanced = self.monitor.tick()  # no candle queued; create_stop raises -> fail closed, same tick
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.executor.market_calls, [])
+        self.assertEqual([name for name, _ in self.executor.protection_calls], ["full_close"])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(
+            record.robot_state["execution"]["emergency_close_outcome"],
+            robot_protection.RECOVERY_CLOSED,
+        )
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
+
+    def test_fail_closed_emergency_close_still_operates_when_robot_stopped(self):
+        """CR-PAPER-PROTECTION-LIFECYCLE-001 (PR #89) fail-closed behavior
+        must survive this gate unchanged: a fill whose protection plan
+        raises still triggers submit_emergency_close()'s sanctioned full
+        close, exactly as before, regardless of durable admission state."""
+        self._create_candidate(lower_touch_prices=())  # no counted touches -> _structural_extreme raises
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT while still READY
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+
+        self._set_admission_state("ROBOT_STOPPED", "ROBOT_STOPPED")
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls], ["full_close"],
+        )
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(
+            record.robot_state["execution"]["emergency_close_outcome"],
+            robot_protection.RECOVERY_CLOSED,
+        )
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
 
     def test_structural_extreme_and_frozen_prices_for_short(self):
         from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor as M

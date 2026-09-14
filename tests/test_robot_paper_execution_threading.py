@@ -167,6 +167,18 @@ def _publish_live_snapshot(database_path: Path) -> None:
     store.close()
 
 
+def _fixed_geometry_index_provider(symbol: str, signal_snapshot) -> int:
+    # RobotRecoveryCoordinator.recover() otherwise defaults to
+    # default_scanner_geometry_cursor_provider(), which calls the REAL Bybit
+    # kline API -- unreachable/invalid for the synthetic "TESTUSDT" symbol
+    # these tests seed, and would land recovery in RECONCILIATION_REQUIRED
+    # (a real network failure) rather than READY. Fixed well below every
+    # _snapshot() apex_index=300 default, matching _retest_detected_state()'s
+    # own retest_index=103, so recovery never spuriously expires a seeded
+    # RETEST_DETECTED candidate during these tests.
+    return 103
+
+
 def _build_runtime(
     database_path: Path, *, book_provider, candle_provider, live_adapter_factory,
 ) -> SerializedPaperRuntime:
@@ -180,6 +192,7 @@ def _build_runtime(
         live_adapter_factory=live_adapter_factory,
         live_mutation_adapter_factory=live_adapter_factory,
         robot_closed_candle_provider=candle_provider,
+        robot_latest_geometry_index_provider=_fixed_geometry_index_provider,
         robot_tick_interval_s=ROBOT_TICK_INTERVAL_S,
     ))
 
@@ -197,6 +210,21 @@ def _activate_live_account(runtime: SerializedPaperRuntime) -> None:
 
 def _seed_retest_detected_candidate(runtime: SerializedPaperRuntime, candidate_id: str, symbol: str) -> None:
     def seed(owner: PaperRuntime) -> None:
+        # This directly injects an already-admitted APPROVED/RETEST_DETECTED
+        # candidate, bypassing the normal robot_admission.admit_robot_candidate()
+        # gate for test convenience -- so it must also durably establish the
+        # (ROBOT_RUNNING, READY) admission state that gate would already have
+        # required in reality, matching RobotBreakoutMonitor's own admission
+        # gate (see _read_admission_gate() in robot_breakout_monitor.py).
+        # PaperRuntime.__init__ -> RobotRecoveryCoordinator.recover() already
+        # initialized the row at (ROBOT_STOPPED, ROBOT_STOPPED); elevate it
+        # here the same way start_robot() would.
+        current = owner.store.get_robot_runtime_state(ACCOUNT_ID)
+        owner.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode="ROBOT_RUNNING", recovery_status="READY",
+            reason=None, expected_version=current.version,
+            updated_at_ms=current.updated_at_ms + 1,
+        )
         owner.store.create_robot_candidate(
             candidate_id=candidate_id, trading_account_id=ACCOUNT_ID, symbol=Symbol(symbol),
             status="APPROVED", signal_snapshot=_snapshot(symbol), approved_at_ms=1, updated_at_ms=1,
