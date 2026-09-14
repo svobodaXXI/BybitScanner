@@ -1,9 +1,11 @@
 # BybitScanner — Robot v0.1 Robot Control Decision
 
-Version: 1.5
+Version: 1.6
 Date: 2026-09-14
 Status: ACCEPTED DESIGN
-Implementation authorization: Section 7 only (RobotBreakoutMonitor's own admission-gate reaction to already-admitted pre-entry candidates, pause_robot()/stop_robot()'s synchronous bridge into it, AND the v1.5 fix removing partial-fill protection's closed-candle dependency), per explicit user authorization in chat ("PAUSE semantics = variant B", "AUTHORITATIVE USER DECISIONS" closing the first three safety-review blockers, and a fourth follow-on safety review closing this one). Sections 1-6 remain design-only as before.
+Implementation authorization: Section 7 only (RobotBreakoutMonitor's own admission-gate reaction to already-admitted pre-entry candidates, pause_robot()/stop_robot()'s synchronous bridge into it, AND the v1.5 fix removing partial-fill protection's closed-candle dependency), per explicit user authorization in chat ("PAUSE semantics = variant B", "AUTHORITATIVE USER DECISIONS" closing the first three safety-review blockers, and a fourth follow-on safety review closing this one). Sections 1-6 remain design-only as before. Sections 8-10 (v1.6) are accepted semantics with implementation governed by `DOCUMENTS/CHANGE_REQUESTS/CR-ROBOT-SAFETY-P0-001.md`; this document authorizes no code by itself.
+
+**Amendment (v1.5 → v1.6):** live PAPER runtime reproduced four further defects that v1.5's semantics did not cover, and the owner froze the corrected semantics for all four. (i) **Partial-fill policy is now Option A** (Section 7, "First authoritative fill is final"): the first authoritative non-zero fill becomes the final trade size and the Market top-up path is removed entirely — v1.4/v1.5 still permitted `robot_partial_fill.evaluate_partial_completion()` to decide a Market completion of the missing wave volume whenever admission was open, which is now superseded. (ii) **Robot safety authority is separated from operator command legality** (Section 9), after `pause_robot()` was observed failing with `live_mutations_disabled` purely because the Workspace UI had a LIVE account selected — a Workspace presentation choice must never be able to block Robot safety reconciliation. (iii) **At most one active Robot exposure owner per net symbol** (Section 10), after two candidates on one netted `position_idx=0` symbol produced a protection conflict, an emergency close of the *net* position, and a stale open `robot_trades` row for the other, still-legitimate lifecycle. (iv) **`reconcile_robot()` defines the single explicit exit from `RECONCILIATION_REQUIRED`** (Section 8), which every prior revision listed as an unresolved non-goal. Sections 1-6 are unchanged.
 
 **Amendment (v1.4 → v1.5):** a fourth safety review found that v1.4's "finalize a blocked partial fill immediately" fix was, in the actual code, still gated behind the same `get_closed_candle()` check the surrounding partial-fill-decision logic already used -- not because protection itself needed a candle, but purely because of where the new code was placed in `_advance_retest_detected()`. If no closed candle happened to be available at the exact moment `pause_robot()`/`stop_robot()`'s synchronous bridge ran, the candidate fell through to `still_pending_protection` and wai­ted for `RobotBreakoutMonitor`'s own periodic tick (`tick_interval_s`, 60s in production) -- reintroducing exactly the dependency `AUTOPILOT_ROBOT_V0_1_RECOVERY_STATE_BATCH_DECISION.md` Section 6's 5-second maximum forbids (a *maximum recovery deadline*, not a retry interval). v1.5 moves the blocked-admission check ahead of the candle fetch: `structural_extreme`/`frozen_prices`/`structural_stop`/`tighten_stop` all derive from `record.signal_snapshot` (frozen) and `average_entry` (the authoritative position projection, itself never candle-derived), so a blocked partial fill is now finalized/protected on the very same tick that observes the block, with no `get_closed_candle()` call anywhere on that path. If the protection attempt itself fails, `_finalize_trade()`'s existing fail-closed path (`_fail_closed_unprotected_fill`) emergency-closes immediately on that same tick -- tighter than the 5-second maximum, not a new timer, and no second protection engine.
 
@@ -146,7 +148,75 @@ Scope: this section governs a durable `robot_candidates` row that is already `AP
 
 **Synchronous PAUSE/STOP reconciliation (v1.4 — new, IMPLEMENTED):** a safety review of the v1.3 implementation confirmed that durable admission closed immediately, but this section's cancellation/terminalization of a pending candidate happened only on `RobotBreakoutMonitor`'s own periodic tick (`tick_interval_s`, 60s by default) — during that window a resting entry LIMIT could still fill via the market-data-driven matching path (independent of the monitor's own cadence), creating new exposure after PAUSE/STOP were already asserted. `pause_robot()`/`stop_robot()` now bridge into this section's reconciliation synchronously, after committing their durable transition and before reporting success, reusing the exact same HTTP-bridge architecture already accepted for `close_all_now()` (Section 4): a new `PaperRuntime.robot_synchronize_pending_entries()` method runs one immediate pass of the identical `RobotBreakoutMonitor.tick()` logic described above (via a same-thread `ActionExecutor` binding, to avoid deadlocking the single-consumer PAPER runtime request queue — an implementation detail, not a new decision surface), and a new `POST /api/robot/synchronize-pending-entries` route exposes it with the same localhost-only trust model as the routes above. If that bridge call fails, or reports a candidate whose working entry LIMIT could not be confirmed cancelled, durable state is escalated to `RECONCILIATION_REQUIRED` and the command raises rather than reporting clean success — `pause_robot()`/`stop_robot()` never silently assert PAUSE/STOP succeeded while a cancellation remains unconfirmed. `RobotBreakoutMonitor`'s own periodic tick remains a defense-in-depth backstop (e.g. covering a `RECONCILIATION_REQUIRED` transition that did not originate from `pause_robot()`/`stop_robot()`), not the primary mechanism for these two commands anymore.
 
+**First authoritative fill is final — Option A (v1.6 — new; supersedes the Market-completion model for Robot v0.1):** the owner has frozen the partial-fill policy as Option A. The first authoritative non-zero `filled_quantity` observed for a Robot entry LIMIT becomes the **final** size of that trade. On that observation, and in the same processing pass:
+
+1. the remaining entry LIMIT is cancelled through the existing sanctioned idempotent `cancel_limit` path;
+2. the actually filled quantity/fraction is treated as the final entry size — never the originally intended wave volume, never a synthesized quantity;
+3. Robot ownership is finalized for that actual exposure (`_finalize_trade`, `entry_path="LIMIT"`, `actual_wv` = the authoritatively observed filled fraction);
+4. STOP/TAKE are established for the actual exposure through the existing `build_protection_plan()`/`submit_initial_protection()` machinery;
+5. if protection for that exposure cannot be established, the existing fail-closed path applies — subject to the ownership precondition in Section 10.
+
+**No Market top-up is ever submitted to complete a partial fill.** `robot_partial_fill.evaluate_partial_completion()`'s `MARKET_COMPLETE` decision and `robot_market_confirmation.build_confirmation_market()`/`submit_confirmation_market()` are therefore unreachable from the Robot v0.1 entry lifecycle. This supersedes the v1.3/v1.4/v1.5 model in which a top-up was withheld only while admission was blocked and otherwise still permitted: under Option A the "blocked" behavior those revisions defined becomes the **only** behavior, unconditional on admission state. `entry_path="MIXED"` consequently stops being written by this lifecycle; it remains a valid schema value for decision history and requires no schema change.
+
+Rationale for the owner's choice: a top-up re-enters the market at a price the frozen setup never justified, after the setup's own entry moment has passed, and it widens the window in which real exposure exists without proven protection. Option A removes both, at the cost of trades that are sometimes materially smaller than one wave volume — an accepted trade-off for the PAPER prototype.
+
+**Observation point and timing wording (v1.6 — new):** the safety transition above must not wait for a closed candle or for `RobotBreakoutMonitor`'s own periodic tick when authoritative fill evidence is already available. The accepted invariant is stated deliberately in terms of processing, not physical time:
+
+> Once authoritative `filled_quantity > 0` is observed by the serialized Robot owner-thread path, there is no intentional wait for another candle or periodic Robot tick. In the same processing pass the system begins remainder cancellation and ownership/protection finalization, or enters fail-closed handling.
+
+This document does not claim a physically zero-time protection interval; scheduling, queueing and execution still take real time. `RobotBreakoutMonitor`'s periodic tick (`tick_interval_s`, 60s in production) remains a **watchdog/backstop** for evidence that the event-driven path did not observe, and is no longer the primary first-fill safety trigger.
+
 Reuse / ownership boundary for this section: this is implemented as one additional read of the existing authoritative `robot_runtime_state` (the same `(mode, recovery_status)` fields `robot_admission.admit_robot_candidate()` already gates new admission on) at the two risk-increasing pre-entry submission call sites inside `RobotBreakoutMonitor`, not a second state machine, not a duplicate execution engine, and not a duplicate reconciliation path. `resume_robot()`/`close_all_now()` (Sections 4, 6) remain unchanged pure/bridging commands exactly as designed. `pause_robot()`/`stop_robot()` (Sections 2, 5) are, as of v1.4, no longer *pure* `robot_runtime_state` transitions — they additionally bridge into this same section's reconciliation, reusing `close_all_now()`'s own HTTP-bridge pattern rather than inventing a second one.
+
+## 8. reconcile_robot() (v1.6 — new; the single explicit exit from RECONCILIATION_REQUIRED)
+
+Every prior revision listed "any path out of `RECONCILIATION_REQUIRED`" as an explicit non-goal, leaving the state terminal in practice. v1.6 closes that: `reconcile_robot()` is the one operator command that may leave it.
+
+Legal **only** from `(ROBOT_RUNNING, RECONCILIATION_REQUIRED)`. From every other durable state — including `(ROBOT_STOPPED, RECONCILIATION_REQUIRED)`, `(ROBOT_RUNNING, READY)` and the paused state — it is rejected with an explicit error and no durable side effect, following the single-legal-source-state rule already accepted for `start_robot()` (Section 1) and `resume_robot()` (Section 6).
+
+During reconciliation:
+
+- **admission remains closed** throughout; no new candidate may be admitted and no new entry risk may be submitted at any point of the pass;
+- authoritative position, order and protection truth is reconciled against Robot ownership, reusing the existing shared capabilities only (no Robot-specific position store, protection engine or reconciliation path);
+- exposure that is **uniquely attributable** to exactly one Robot lifecycle is finalized and protected through the existing `_finalize_trade()`/`submit_initial_protection()` machinery;
+- an emergency close is permitted **only where ownership of the exposure being closed is proven**;
+- **duplicate-owner ambiguity must never trigger a blind net-position close** (Section 10);
+- a stale open `robot_trades` row may be closed **only from complete authoritative exit evidence** (see below);
+- exit price, exit reason, realized PnL, fees, and historical execution are **never fabricated**, consistent with `AUTOPILOT_ROBOT_V0_1_RECOVERY_STATE_BATCH_DECISION.md` §8 and `CR-PAPER-PROTECTION-LIFECYCLE-001`'s "no invented historical replay or fill prices".
+
+**Stale-ledger repair.** A `robot_trades` row with no exit while the authoritative position for its symbol is FLAT is a ledger inconsistency, not by itself unsafe exposure. It may be closed automatically **only** when authoritative execution evidence proves every required exit field *and* proves attribution to that specific trade. No exit reason is preselected by this decision; the reason recorded must be the one the proven evidence supports, drawn from the existing `ROBOT_EXIT_REASONS` set. If the evidence is incomplete or attribution cannot be proven, the row is left as-is, nothing is synthesized, and reconciliation does not report success.
+
+**Terminal outcomes.** On complete success — every exposure either protected or proven flat, every ledger row consistent, no unresolved ambiguity — reconciliation lands on `(ROBOT_RUNNING, PAUSED)`. It **never** lands on `READY` automatically: the operator must explicitly `resume_robot()` (Section 6) after reviewing what reconciliation did. Any unresolved safety or evidence ambiguity leaves the runtime in `(ROBOT_RUNNING, RECONCILIATION_REQUIRED)` with a durable reason recorded, and the command reports failure rather than partial success.
+
+This mirrors the posture already accepted for restart recovery (`RobotRecoveryCoordinator` lands a reconciliation that started paused back on `PAUSED`, never silently resuming admission) and introduces no new `(mode, recovery_status)` pair.
+
+## 9. Robot safety authority versus operator command legality (v1.6 — new)
+
+Live runtime showed `pause_robot()` failing with `live_mutations_disabled` purely because the Workspace UI had a LIVE Bybit account selected. These are two different concepts and must never again be conflated.
+
+**A. Robot safety authority.** Robot's authority to perform safety work on the PAPER account is independent of which account the Workspace UI currently has selected. Safety reconciliation, protection establishment, protection dispatch and ownership finalization must continue to function under `PAUSED` and `RECONCILIATION_REQUIRED` wherever they apply, and must never be blocked by the generic Workspace-facing PAPER mutation gate (`require_paper_mutations()`) or by a LIVE Workspace selection. This restates a boundary the codebase already documents for `RobotPaperActionExecutor` ("Robot's authority … is the durable `robot_runtime_state` admission gate … never whichever account the Workspace UI currently has selected") and extends it to every Robot safety path, including the `robot_synchronize_pending_entries()` bridge, Robot-owned close paths, and Robot-owned fill matching.
+
+**B. Operator command legality.** Separately and unchanged, every operator control command keeps its explicit durable-state legality matrix: `start_robot()` only from `(ROBOT_STOPPED, ROBOT_STOPPED)`; `pause_robot()` only from `(ROBOT_RUNNING, READY)`; `resume_robot()` only from the paused state; `stop_robot()` only from `ROBOT_RUNNING`/paused with no open Robot position; `close_all_now()` only from `ROBOT_RUNNING`/paused; `reconcile_robot()` only from `(ROBOT_RUNNING, RECONCILIATION_REQUIRED)`.
+
+**Explicit prohibition.** No blanket rule of the form "a `robot_runtime_state` row exists ⇒ any Robot mutation is allowed" may be introduced at the HTTP layer or anywhere else. Removing Workspace gating from Robot safety paths must not make an otherwise-illegal Robot control command callable from an illegal durable state. Safety authority answers "may Robot act on the PAPER account at all"; command legality answers "is this specific operator command legal from this specific durable state". Both must hold; neither substitutes for the other.
+
+## 10. Single active Robot exposure owner per net symbol (v1.6 — new)
+
+For PAPER one-way positions (`position_idx=0`), at most **one** active Robot exposure owner may exist per `(account, symbol, position_idx)`. A second Robot lifecycle must not open or own exposure on a net symbol that another pending-partial or open Robot lifecycle already owns. Pyramiding, scaling in, and multiple concurrent Robot lifecycles on one netted symbol are out of scope for Robot v0.1.
+
+Enforcement is fail-closed and layered, reusing the existing call-site pattern rather than introducing a new state machine:
+
+- **before entry submission** — a candidate whose net symbol already has an active Robot owner does not submit its first entry LIMIT. It stays `APPROVED` and recoverable, exactly as under `PAUSE`; it is never invalidated merely for losing the race;
+- **re-checked before final ownership commit** — immediately before a `robot_trades` row is created, ownership is re-verified; a second owner is never created.
+
+**CRITICAL — no blind net close on duplicate ownership.** If, despite the above, a race produces real non-zero exposure attributable to candidate B while candidate A already owns the same net symbol, the system must **not** automatically emergency-full-close that symbol. The position is netted: closing it would destroy candidate A's legitimate, correctly protected exposure. This is an explicit exception to the otherwise-unconditional fail-closed emergency-close path of `CR-PAPER-PROTECTION-LIFECYCLE-001`, and it is narrow: it applies only when ownership of the exposure to be closed cannot be proven to belong solely to the lifecycle requesting the close.
+
+Required behavior in that case:
+
+- stop further risk-increasing mutations for the affected symbol;
+- preserve all evidence — no candidate is invalidated, no trade row is closed, no order economics are rewritten to make the ambiguity disappear;
+- escalate to (or remain in) `(ROBOT_RUNNING, RECONCILIATION_REQUIRED)` with a durable reason naming the duplicate-ownership condition;
+- require `reconcile_robot()` (Section 8) to determine the safe disposition; that command may close exposure only once ownership is proven.
 
 ## Durable state consistency
 
@@ -155,6 +225,8 @@ Reuse / ownership boundary for this section: this is implemented as one addition
 `stop_robot()` v1.1 requires no new `(mode, recovery_status)` pair. Its precondition — no open Robot-owned position — is evaluated by reading existing authoritative position state before the call is accepted, not by encoding a new combination in `robot_runtime_state`. A successful call is a plain transition to `(*, ROBOT_STOPPED)`, the same durable target `stop_robot()` already reached in v1.0 Section 3.1.
 
 The v1.0 mapping is preserved in Section 3 for decision history: `(ROBOT_STOPPED, ROBOT_STOPPED)` for the no-open-position case, and `(ROBOT_STOPPED, RECONCILIATION_REQUIRED)` for a failed forced close inside `stop_robot()` itself. That second combination no longer arises from `stop_robot()` under v1.1 — it now arises only from `close_all_now()` (this section, paragraph 1) — but the combination itself remains valid and unchanged in the schema.
+
+`reconcile_robot()` (v1.6) likewise requires no new `(mode, recovery_status)` pair, and no schema migration. It reads `(ROBOT_RUNNING, RECONCILIATION_REQUIRED)` and writes either `(ROBOT_RUNNING, PAUSED)` on complete success or `(ROBOT_RUNNING, RECONCILIATION_REQUIRED)` with an updated durable reason otherwise — both already valid pairs. Section 10's ownership invariant is likewise enforced by queries over existing `robot_candidates`/`robot_trades`/`position_projections` state; a database-level uniqueness constraint is deliberately not adopted for P0, because it could not express the pre-entry half of the invariant (a partially filled candidate that has no trade row yet) and would add migration risk to a live trading schema without removing the need for the application-level checks.
 
 `resume_robot()` (v1.2) likewise requires no new `(mode, recovery_status)` pair. It is a plain transition from whatever durable value backs the Section 2 paused state back to `(READY/ROBOT_RUNNING, *)` — the same durable target `pause_robot()` departed from — and it is legal only when that source value is not `RECONCILIATION_REQUIRED`, consistent with every other command in this decision.
 
@@ -176,8 +248,9 @@ The following remain authoritative shared capabilities, reused as-is:
 
 - the Telegram command/button surface that invokes these operations, including the concrete implementation of the pause/resume toggle button described in Rationale (separate implementation task);
 - the exact durable schema representation of the paused state;
-- any path out of `RECONCILIATION_REQUIRED` (remains a separate, unresolved problem);
-- any change to STOP/TAKE calculation, priority, or the existing emergency-close contract;
+- ~~any path out of `RECONCILIATION_REQUIRED` (remains a separate, unresolved problem)~~ — **resolved in v1.6: see Section 8 (`reconcile_robot()`)**;
+- any change to STOP/TAKE calculation or priority. The emergency-close contract itself is unchanged except for Section 10's one narrow, explicitly stated exception: an emergency close is withheld when ownership of the exposure to be closed cannot be proven to belong solely to the requesting lifecycle;
+- pyramiding, scaling in, or any second concurrent Robot lifecycle on one netted symbol (Section 10);
 - ownership-transfer/manual-takeover behavior (already deferred outside Robot v0.1 by `AUTOPILOT_ROBOT_V0_1_TELEGRAM_ONLY_DECISION.md`);
 - automatically chaining `stop_robot()` into `close_all_now()` when a position is open — rejected in favor of two explicit operator actions; see Rationale;
 - ownership/close-scope for manual positions on the same PAPER account — out of scope for this decision; `close_all_now()` does not touch them (see Section 4, Scope).
