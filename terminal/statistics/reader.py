@@ -152,6 +152,32 @@ class RobotStatisticsReader:
         try:
             self._validate_schema(connection)
 
+            orphan_row = connection.execute(
+                """
+                SELECT t.trade_id
+                FROM robot_trades AS t
+                LEFT JOIN robot_candidates AS c
+                    ON c.candidate_id = t.candidate_id
+                   AND c.trading_account_id = t.trading_account_id
+                WHERE t.trading_account_id = ?
+                  AND t.exit_time_ms IS NOT NULL
+                  AND t.exit_price IS NOT NULL
+                  AND t.exit_reason IS NOT NULL
+                  AND t.realized_pnl_usdt IS NOT NULL
+                  AND t.realized_pnl_pct IS NOT NULL
+                  AND c.candidate_id IS NULL
+                ORDER BY t.exit_time_ms, t.trade_id
+                LIMIT 1
+                """,
+                (trading_account_id,),
+            ).fetchone()
+
+            if orphan_row is not None:
+                raise RobotStatisticsReadError(
+                    "completed trade has missing or account-mismatched candidate linkage: "
+                    f"{orphan_row['trade_id']}"
+                )
+
             rows = connection.execute(
                 """
                 SELECT

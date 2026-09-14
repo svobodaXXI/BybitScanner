@@ -337,6 +337,35 @@ class RobotStatisticsReaderTests(unittest.TestCase):
             "canonical Decimal text",
         ):
             _load_decimal(1.25, field="realized_pnl_usdt")
+    def test_orphan_completed_trade_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "robot.sqlite3"
+            _create_fixture_database(database_path)
+
+            connection = sqlite3.connect(database_path)
+            try:
+                _insert_trade(
+                    connection,
+                    trade_id="orphan-trade",
+                    candidate_id="missing-candidate",
+                    account_id="account-a",
+                    symbol="BTCUSDT",
+                    exit_time_ms=5000,
+                    pnl="1",
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            with self.assertRaisesRegex(
+                RobotStatisticsReadError,
+                "missing or account-mismatched candidate linkage",
+            ):
+                RobotStatisticsReader(
+                    database_path
+                ).load_completed_trades(
+                    trading_account_id="account-a"
+                )
     def test_empty_account_id_is_rejected_before_database_access(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "does-not-exist.sqlite3"
