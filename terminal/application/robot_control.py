@@ -29,6 +29,22 @@ required parameter rather than importing ``requests`` itself:
 ``terminal/application/`` imports a network client, so the actual
 ``requests.post`` call is supplied by the caller (``telegram_review.py``,
 which already depends on ``requests``) instead of living in this module.
+
+``pause_robot()`` and ``stop_robot()`` (v1.3) also take ``http_post`` for the
+same reason: live PAPER acceptance testing found that neither command
+actually stopped a still-working Robot entry LIMIT from filling -- durable
+admission closed immediately, but cancellation only happened on
+``RobotBreakoutMonitor``'s own periodic tick (up to ``tick_interval_s``
+later), during which a resting order could still fill and create new
+exposure after PAUSE/STOP were asserted
+(AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.3 Section 7). Both
+commands now bridge, synchronously and after committing their durable
+transition, to ``PaperRuntime.robot_synchronize_pending_entries()`` (same
+localhost REST trust model as ``close_all_now()``) before reporting success.
+If that bridge call fails or reports a candidate whose working entry LIMIT
+could not be confirmed cancelled, durable state is escalated to
+``RECONCILIATION_REQUIRED`` and ``RobotControlRejected`` is raised --
+neither command silently reports clean success in that case.
 """
 
 from __future__ import annotations
@@ -41,6 +57,7 @@ from typing import Callable
 from terminal.application.robot_recovery import (
     PAUSED,
     READY,
+    RECONCILIATION_REQUIRED,
     ROBOT_RUNNING,
     ROBOT_STOPPED,
     RobotRecoveryCoordinator,
@@ -129,13 +146,97 @@ def start_robot(
         store.close()
 
 
+def _escalate_to_reconciliation_required(
+    *,
+    database_path: Path | str | None,
+    clock_ms: Callable[[], int] | None,
+    reason: str,
+) -> None:
+    # Best-effort: the caller always raises RobotControlRejected regardless
+    # of whether this escalation itself lands, so a failure here (e.g. a
+    # concurrent writer already changed the row) never masks that primary
+    # fail-closed signal. mode is preserved exactly as read -- this fires
+    # from both pause_robot() (ROBOT_RUNNING) and stop_robot()
+    # (ROBOT_STOPPED), and (ROBOT_STOPPED, RECONCILIATION_REQUIRED) is a
+    # valid existing pair, same as (ROBOT_RUNNING, RECONCILIATION_REQUIRED).
+    store = _open_store(database_path)
+    try:
+        runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+        if runtime is None or runtime.recovery_status == RECONCILIATION_REQUIRED:
+            return
+        try:
+            store.update_robot_runtime_state(
+                PAPER_ACCOUNT_ID, mode=runtime.mode, recovery_status=RECONCILIATION_REQUIRED,
+                reason=reason, expected_version=runtime.version, updated_at_ms=_now_ms(clock_ms),
+            )
+        except Exception:
+            pass
+    finally:
+        store.close()
+
+
+def _synchronize_pending_entries_or_escalate(
+    *,
+    command: str,
+    http_post: Callable[[str, dict], dict],
+    database_path: Path | str | None,
+    clock_ms: Callable[[], int] | None,
+    backend_url: str | None,
+) -> dict:
+    """Shared synchronous bridge for pause_robot()/stop_robot() (Section 7):
+    called AFTER the durable transition already committed, to cancel every
+    Robot-owned pending candidate's still-working entry LIMIT and finalize/
+    protect any partial fill before the command reports success. Escalates
+    to RECONCILIATION_REQUIRED and raises RobotControlRejected on any
+    failure or unresolved candidate -- never lets ``command`` silently
+    report clean success in that case.
+    """
+    url = f"{backend_url or DEFAULT_PAPER_BACKEND_URL}/api/robot/synchronize-pending-entries"
+    try:
+        result = http_post(url, {})
+    except RobotControlRejected:
+        raise
+    except Exception as exc:
+        _escalate_to_reconciliation_required(
+            database_path=database_path, clock_ms=clock_ms,
+            reason=f"{command} could not reach the PAPER backend at {url}: {exc}",
+        )
+        raise RobotControlRejected(
+            f"{command} committed its durable transition, but could not confirm pending "
+            f"Robot entries were reconciled (backend unreachable at {url}): {exc}"
+        ) from exc
+
+    unresolved = result.get("unresolved_candidate_ids") or []
+    if unresolved:
+        _escalate_to_reconciliation_required(
+            database_path=database_path, clock_ms=clock_ms,
+            reason=f"{command} could not confirm cancellation for candidates: {unresolved}",
+        )
+        raise RobotControlRejected(
+            f"{command} committed its durable transition, but cancellation could not be "
+            f"confirmed for pending Robot candidate(s) {unresolved} -- escalated to "
+            "RECONCILIATION_REQUIRED"
+        )
+    return result
+
+
 def pause_robot(
-    *, database_path: Path | str | None = None, clock_ms: Callable[[], int] | None = None,
+    *,
+    http_post: Callable[[str, dict], dict],
+    database_path: Path | str | None = None,
+    clock_ms: Callable[[], int] | None = None,
+    backend_url: str | None = None,
 ) -> RobotRuntimeStateRecord:
     """Legal only from ``(ROBOT_RUNNING, READY)`` (Section 2).
 
-    Stops admission of new candidates immediately. Never touches an
+    Stops admission of new candidates immediately, then synchronously
+    reconciles every pending Robot candidate's working entry LIMIT (Section
+    7) before reporting success -- see module docstring. Never touches an
     already-open Robot position or its STOP/TAKE lifecycle.
+
+    ``http_post(url, payload) -> dict`` performs the actual network call and
+    is supplied by the caller -- see the module docstring for why this
+    function never imports a network client itself.
     """
     store = _open_store(database_path)
     try:
@@ -145,12 +246,18 @@ def pause_robot(
             raise RobotControlRejected("Robot runtime state is unavailable")
         if runtime.mode != ROBOT_RUNNING or runtime.recovery_status != READY:
             raise RobotControlRejected("pause_robot is legal only from (ROBOT_RUNNING, READY)")
-        return store.update_robot_runtime_state(
+        result = store.update_robot_runtime_state(
             PAPER_ACCOUNT_ID, mode=ROBOT_RUNNING, recovery_status=PAUSED, reason=None,
             expected_version=runtime.version, updated_at_ms=now,
         )
     finally:
         store.close()
+
+    _synchronize_pending_entries_or_escalate(
+        command="pause_robot", http_post=http_post, database_path=database_path,
+        clock_ms=clock_ms, backend_url=backend_url,
+    )
+    return result
 
 
 def resume_robot(
@@ -225,7 +332,11 @@ def close_all_now(
 
 
 def stop_robot(
-    *, database_path: Path | str | None = None, clock_ms: Callable[[], int] | None = None,
+    *,
+    http_post: Callable[[str, dict], dict],
+    database_path: Path | str | None = None,
+    clock_ms: Callable[[], int] | None = None,
+    backend_url: str | None = None,
 ) -> RobotRuntimeStateRecord:
     """Legal only from ``(ROBOT_RUNNING, READY)`` or ``(ROBOT_RUNNING, PAUSED)`` (Section 5, v1.1).
 
@@ -233,6 +344,20 @@ def stop_robot(
     (never itself initiates a close — call ``pause_robot()`` then
     ``close_all_now()`` first) or when durable state is
     ``RECONCILIATION_REQUIRED``.
+
+    After committing durable ``ROBOT_STOPPED``, synchronously reconciles
+    every pending Robot candidate (Section 7, module docstring): a
+    still-working entry LIMIT is cancelled and a zero-exposure candidate is
+    given its terminal ``INVALIDATED`` disposition immediately, before this
+    call reports success -- never left for ``RobotBreakoutMonitor``'s own
+    periodic tick to discover minutes later. A candidate that already has a
+    partial fill is never invalidated (that would orphan real exposure with
+    no ``robot_trade``/protection ownership record); it is finalized and
+    protected for its actual filled quantity instead.
+
+    ``http_post(url, payload) -> dict`` performs the actual network call and
+    is supplied by the caller -- see the module docstring for why this
+    function never imports a network client itself.
     """
     store = _open_store(database_path)
     try:
@@ -250,9 +375,15 @@ def stop_robot(
                 "stop_robot is rejected while a Robot-owned position is open; "
                 "call pause_robot() and then close_all_now() first"
             )
-        return store.update_robot_runtime_state(
+        result = store.update_robot_runtime_state(
             PAPER_ACCOUNT_ID, mode=ROBOT_STOPPED, recovery_status=ROBOT_STOPPED, reason=None,
             expected_version=runtime.version, updated_at_ms=now,
         )
     finally:
         store.close()
+
+    _synchronize_pending_entries_or_escalate(
+        command="stop_robot", http_post=http_post, database_path=database_path,
+        clock_ms=clock_ms, backend_url=backend_url,
+    )
+    return result

@@ -1632,6 +1632,171 @@ def test_robot_close_all_marks_reconciliation_required_on_unconfirmed_close():
             runtime.close()
 
 
+def _seed_pending_candidate_with_resting_limit(
+    runtime, *, candidate_id, order_id, symbol="BTCUSDT",
+):
+    """Directly seed an APPROVED/RETEST_DETECTED candidate with a real
+    resting paper_limit order already submitted -- bypasses the full
+    breakout/retest state machine (unrelated to what these tests cover),
+    mirroring _open_robot_position's existing direct-seed pattern above."""
+    account_id = TradingAccountId("paper")
+    runtime.store.create_paper_limit(
+        client_action_id=f"seed-{order_id}",
+        request_fingerprint=f"seed-fp-{order_id}",
+        order_id=OrderId(order_id),
+        order_link_id=f"seed-link-{order_id}",
+        trading_account_id=account_id,
+        symbol=Symbol(symbol),
+        side=OrderSide.BUY,
+        price=Decimal("64000"),
+        quantity=Decimal("1"),
+        created_at_ms=1000,
+    )
+    runtime.store.create_robot_candidate(
+        candidate_id=candidate_id,
+        trading_account_id=account_id,
+        symbol=Symbol(symbol),
+        status="APPROVED",
+        signal_snapshot={"symbol": symbol, "pattern": "Falling Wedge"},
+        approved_at_ms=1000,
+        updated_at_ms=1000,
+    )
+    runtime.store.save_robot_candidate_state(
+        candidate_id, status="APPROVED",
+        robot_state={"phase": "RETEST_DETECTED", "execution": {"limit_order_id": order_id}},
+        expected_revision=0, updated_at_ms=1000,
+    )
+
+
+def _set_admission(runtime, *, mode, recovery_status):
+    account_id = TradingAccountId("paper")
+    running = runtime.store.get_robot_runtime_state(account_id)
+    now_ms = int(__import__("time").time() * 1000)
+    return runtime.store.update_robot_runtime_state(
+        account_id, mode=mode, recovery_status=recovery_status, reason=None,
+        expected_version=running.version, updated_at_ms=now_ms,
+    )
+
+
+def test_robot_synchronize_pending_entries_cancels_zero_fill_resting_limit_when_paused():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _seed_pending_candidate_with_resting_limit(
+                runtime, candidate_id="candidate-btc", order_id="test-limit-1",
+            )
+            _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="PAUSED")
+
+            response = runtime.robot_synchronize_pending_entries()
+
+            assert response.unresolved_candidate_ids == ()
+            assert "test-limit-1" in response.cancelled_order_ids
+            order = runtime.store.get_paper_limit("test-limit-1", TradingAccountId("paper"))
+            assert order.status == "cancelled"
+            candidate = runtime.store.get_robot_candidate("candidate-btc")
+            assert candidate.status == "APPROVED"  # recoverable, never invalidated by PAUSE
+        finally:
+            runtime.close()
+
+
+def test_pause_race_book_update_after_cancellation_cannot_fill_the_cancelled_order():
+    """Part E race scenario 1: a resting Robot entry LIMIT priced to cross
+    the book immediately (BUY well above the static ask) must not fill via
+    a book update that arrives AFTER robot_synchronize_pending_entries()
+    has already cancelled it -- proving the synchronous cancel closes the
+    PAUSE race rather than merely reporting success optimistically."""
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            account_id = TradingAccountId("paper")
+            symbol = "BTCUSDT"
+            runtime.store.create_paper_limit(
+                client_action_id="seed-race-1",
+                request_fingerprint="seed-race-fp-1",
+                order_id=OrderId("test-limit-race-1"),
+                order_link_id="seed-race-link-1",
+                trading_account_id=account_id,
+                symbol=Symbol(symbol),
+                side=OrderSide.BUY,
+                price=Decimal("70000"),  # comfortably above the static ask (64250.5)
+                quantity=Decimal("1"),
+                created_at_ms=1000,
+            )
+            runtime.store.create_robot_candidate(
+                candidate_id="candidate-race",
+                trading_account_id=account_id,
+                symbol=Symbol(symbol),
+                status="APPROVED",
+                signal_snapshot={"symbol": symbol, "pattern": "Falling Wedge"},
+                approved_at_ms=1000,
+                updated_at_ms=1000,
+            )
+            runtime.store.save_robot_candidate_state(
+                "candidate-race", status="APPROVED",
+                robot_state={
+                    "phase": "RETEST_DETECTED",
+                    "execution": {"limit_order_id": "test-limit-race-1"},
+                },
+                expected_revision=0, updated_at_ms=1000,
+            )
+            _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="PAUSED")
+
+            response = runtime.robot_synchronize_pending_entries()
+            assert "test-limit-race-1" in response.cancelled_order_ids
+
+            # A book update arriving right after PAUSE's synchronous cancel
+            # must not be able to fill the now-cancelled order.
+            runtime.robot_match_symbol(symbol)
+
+            order = runtime.store.get_paper_limit("test-limit-race-1", account_id)
+            assert order.status == "cancelled"
+            position_key = PositionKey(account_id, Category.LINEAR, Symbol(symbol), 0)
+            projection = runtime.store.get_position_projection(position_key)
+            assert projection is None or projection.quantity.value == 0
+        finally:
+            runtime.close()
+
+
+def test_robot_synchronize_pending_entries_terminalizes_zero_exposure_candidate_when_stopped():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _seed_pending_candidate_with_resting_limit(
+                runtime, candidate_id="candidate-btc", order_id="test-limit-2",
+            )
+            _set_admission(runtime, mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+
+            response = runtime.robot_synchronize_pending_entries()
+
+            assert response.unresolved_candidate_ids == ()
+            assert "candidate-btc" in response.terminalized_candidate_ids
+            candidate = runtime.store.get_robot_candidate("candidate-btc")
+            assert candidate.status == "INVALIDATED"
+        finally:
+            runtime.close()
+
+
+def test_robot_synchronize_pending_entries_reports_unresolved_on_cancel_failure():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _seed_pending_candidate_with_resting_limit(
+                runtime, candidate_id="candidate-btc", order_id="test-limit-3",
+            )
+            _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="PAUSED")
+
+            with patch.object(
+                runtime.store, "cancel_paper_limit", side_effect=RuntimeError("boom"),
+            ):
+                response = runtime.robot_synchronize_pending_entries()
+
+            assert "candidate-btc" in response.unresolved_candidate_ids
+            order = runtime.store.get_paper_limit("test-limit-3", TradingAccountId("paper"))
+            assert order.status != "cancelled"
+        finally:
+            runtime.close()
+
+
 import unittest
 
 

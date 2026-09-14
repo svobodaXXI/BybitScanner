@@ -48,7 +48,7 @@ DEFAULT_TICK_INTERVAL_S = 60.0
 MARKET_SLIPPAGE_TYPE = "Percent"
 MARKET_SLIPPAGE_VALUE = Decimal("0.5")
 
-_INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
+INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
 
 
 class ActionExecutor(Protocol):
@@ -80,6 +80,19 @@ def _cancel_partial_remainder_action_id(candidate_id: str) -> ClientActionId:
         f"{candidate_id}\0cancel-partial-remainder".encode("utf-8")
     ).hexdigest()[:32]
     return ClientActionId(f"robot-cancel-partial-{digest}")
+
+
+def _cancel_blocked_entry_action_id(candidate_id: str) -> ClientActionId:
+    # Distinct action id from _cancel_partial_remainder_action_id above: this
+    # one cancels a still-fully-resting (zero-fill) entry LIMIT because the
+    # durable admission gate (robot_runtime_state) no longer permits new
+    # entry risk for this candidate, not because a partial fill is being
+    # topped up via Market. Same PaperLimitCancelRequest/cancel_limit
+    # sanctioned path either way -- no new execution primitive.
+    digest = hashlib.sha256(
+        f"{candidate_id}\0cancel-blocked-entry".encode("utf-8")
+    ).hexdigest()[:32]
+    return ClientActionId(f"robot-cancel-blocked-{digest}")
 
 
 class RobotBreakoutMonitor:
@@ -283,6 +296,24 @@ class RobotBreakoutMonitor:
                 self._persist_state(record, expired_state)
                 return True
 
+            new_entry_admitted, terminal_stop = self._read_admission_gate()
+            if not new_entry_admitted:
+                # No exposure exists yet for this candidate (no entry order
+                # has ever been submitted) -- PAUSE/RECONCILIATION_REQUIRED
+                # simply withhold the submission and leave the candidate
+                # APPROVED (recoverable once admission is restored). Only a
+                # durable ROBOT_STOPPED gives this pending pre-entry intent
+                # its terminal disposition, per
+                # AUTOPILOT_ROBOT_V0_1_RESTART_FROM_STOPPED_DECISION.md
+                # ("previously stopped candidates remain terminal and must
+                # not re-enter the active candidate set").
+                if terminal_stop:
+                    self._invalidate_pre_entry_candidate(
+                        record, reason="ROBOT_STOPPED before entry order submission",
+                    )
+                    return True
+                return False
+
             result = self._submit_initial_retest_limit(record, record.robot_state)
             order_id = getattr(result, "order_id", None)
             if not order_id:
@@ -299,7 +330,7 @@ class RobotBreakoutMonitor:
             return False
 
         filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
-        inactive = order.status in _INACTIVE_LIMIT_STATUSES
+        inactive = order.status in INACTIVE_LIMIT_STATUSES
 
         try:
             remainder = robot_partial_fill.missing_wv(filled_fraction)
@@ -316,8 +347,74 @@ class RobotBreakoutMonitor:
             )
             return True
 
+        new_entry_admitted, terminal_stop = self._read_admission_gate()
+
         if filled_fraction <= 0:
-            return False
+            if new_entry_admitted:
+                return False
+            # A working, still-fully-unfilled entry LIMIT exists but the
+            # admission gate no longer permits new entry risk -- cancel it
+            # through the same sanctioned execution path used everywhere
+            # else in this module (idempotent by deterministic action id,
+            # safe to repeat every tick until confirmed cancelled or it
+            # fills first). No exposure exists yet, so ROBOT_STOPPED can
+            # safely give this candidate its terminal disposition now;
+            # PAUSED/RECONCILIATION_REQUIRED instead leave it APPROVED and
+            # recoverable.
+            if not inactive:
+                self._action_executor.cancel_limit(PaperLimitCancelRequest(
+                    _cancel_blocked_entry_action_id(record.candidate_id),
+                    record.symbol.value, execution["limit_order_id"],
+                ))
+            if terminal_stop:
+                self._invalidate_pre_entry_candidate(
+                    record, reason="ROBOT_STOPPED with unfilled resting entry LIMIT",
+                )
+            return True
+
+        if not new_entry_admitted:
+            # Real partial exposure exists here, with the admission gate
+            # blocking further completion. This must never depend on
+            # get_closed_candle()/RobotBreakoutMonitor's own periodic
+            # tick_interval_s cadence for STOP safety --
+            # AUTOPILOT_ROBOT_V0_1_RECOVERY_STATE_BATCH_DECISION.md Section
+            # 6's 5-second STOP-not-proven window is a maximum recovery
+            # deadline, not a retry interval, and every input
+            # structural_extreme/frozen_prices/structural_stop/tighten_stop
+            # needs -- record.signal_snapshot, average_entry from the
+            # authoritative position projection, tick_size -- is already
+            # frozen/durable and requires no new closed candle at all.
+            # Cancel any still-live resting remainder first (same sanctioned
+            # path used everywhere else in this module), then attempt
+            # protection immediately. If that attempt itself fails,
+            # _finalize_trade()'s own existing fail-closed path
+            # (_fail_closed_unprotected_fill) emergency-closes right away --
+            # tighter than the 5-second maximum, not a new timer, and no
+            # second protection engine.
+            if not inactive:
+                self._action_executor.cancel_limit(PaperLimitCancelRequest(
+                    _cancel_partial_remainder_action_id(record.candidate_id),
+                    record.symbol.value, execution["limit_order_id"],
+                ))
+                refreshed = self._store().get_paper_limit(execution["limit_order_id"], self._account_id)
+                if refreshed is not None:
+                    order = refreshed
+                    filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
+                    inactive = order.status in INACTIVE_LIMIT_STATUSES
+            average_entry = self._average_entry(record.symbol)
+            if average_entry is None:
+                return True
+            # Reload first: an earlier _persist_execution() elsewhere this
+            # tick (or a prior tick) may have already advanced this
+            # candidate's durable state_revision past what the in-hand
+            # `record` carries -- see the identical hazard/fix on the
+            # MARKET_COMPLETE-blocked path below.
+            fresh_record = self._store().get_robot_candidate(record.candidate_id) or record
+            self._finalize_trade(
+                fresh_record, execution, entry_path="LIMIT",
+                actual_wv=filled_fraction, average_entry=average_entry,
+            )
+            return True
 
         candle = self._get_closed_candle(record.symbol.value)
         if candle is None:
@@ -353,7 +450,7 @@ class RobotBreakoutMonitor:
             if refreshed is not None:
                 order = refreshed
                 filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
-                inactive = order.status in _INACTIVE_LIMIT_STATUSES
+                inactive = order.status in INACTIVE_LIMIT_STATUSES
 
         structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
         tick_size = self._tick_size_provider(record.symbol.value)
@@ -397,6 +494,12 @@ class RobotBreakoutMonitor:
         if decision.action != robot_partial_fill.DECISION_MARKET_COMPLETE:
             return True
 
+        # new_entry_admitted is guaranteed True here: the blocked case
+        # (PAUSE/STOP/RECONCILIATION_REQUIRED) already returned above,
+        # before ever reaching get_closed_candle() -- see that branch for
+        # why a blocked partial fill is finalized immediately from frozen
+        # data instead of being decided here.
+
         # Bridge robot_partial_fill's MARKET_COMPLETE decision into
         # robot_market_confirmation's Market-order builder: only their public
         # build/submit functions are called, using a ConfirmationDecision
@@ -428,8 +531,15 @@ class RobotBreakoutMonitor:
         if final_average_entry is None:
             return True
         final_actual_wv = min(filled_fraction + decision.missing_wv, Decimal("1"))
+        # Same stale-state_revision hazard as the blocked-admission finalize
+        # call above: _persist_execution() earlier in this tick already
+        # advanced the durable revision past what this in-hand `record`
+        # carries. Reload before finalizing so a genuine fail-closed
+        # emergency-close/invalidate here can't silently lose its terminal
+        # status write to a spurious ConcurrentUpdate.
+        fresh_record = self._store().get_robot_candidate(record.candidate_id) or record
         self._finalize_trade(
-            record, execution, entry_path="MIXED",
+            fresh_record, execution, entry_path="MIXED",
             actual_wv=final_actual_wv, average_entry=final_average_entry,
         )
         return True
@@ -580,6 +690,74 @@ class RobotBreakoutMonitor:
             payload, state, tick_size=tick_size,
         )
         return robot_entry_limit.submit_initial_retest_limit(self._action_executor, plan)
+
+    def _read_admission_gate(self) -> tuple[bool, bool]:
+        """Read the authoritative durable robot_runtime_state and derive the
+        two admission facts this coordinator's risk-increasing pre-entry
+        submission call sites need: whether a NEW entry order may be
+        submitted right now, and whether durable mode has reached the
+        terminal ROBOT_STOPPED state.
+
+        This is the exact same admission condition
+        ``robot_admission.admit_robot_candidate()`` already gates brand-new
+        candidate admission on (``mode == ROBOT_RUNNING and recovery_status
+        == READY``) -- reused here, not reintroduced as a second state
+        machine, because RobotBreakoutMonitor is the sole owner of
+        already-admitted APPROVED candidates and must apply the identical
+        admission boundary to any further order it submits on their behalf.
+        Every other phase-transition/bookkeeping path in this class (state
+        machine advancement, apex-expiry detection, already-filled
+        protection/finalize, emergency close) is deliberately left
+        unconditional on this gate: it governs only NEW entry risk.
+        """
+        state = self._store().get_robot_runtime_state(self._account_id)
+        if state is None:
+            # Durable runtime state not yet initialized: fail closed on new
+            # entry risk, but do not treat this as a terminal ROBOT_STOPPED
+            # disposition -- that would risk prematurely invalidating a
+            # candidate during a startup race rather than simply waiting.
+            return False, False
+        new_entry_admitted = (
+            state.mode == "ROBOT_RUNNING" and state.recovery_status == "READY"
+        )
+        terminal_stop = state.mode == "ROBOT_STOPPED"
+        return new_entry_admitted, terminal_stop
+
+    def _invalidate_pre_entry_candidate(
+        self, record: RobotCandidateRecord, *, reason: str,
+    ) -> None:
+        """Give a pending pre-entry Robot candidate its explicit durable
+        terminal disposition once durable mode has reached ROBOT_STOPPED,
+        per AUTOPILOT_ROBOT_V0_1_RESTART_FROM_STOPPED_DECISION.md
+        ("previously stopped candidates remain terminal and must not
+        re-enter the active candidate set"). Reuses the existing terminal
+        INVALIDATED status and save_robot_candidate_state() path already
+        established by _fail_closed_unprotected_fill() -- no new candidate
+        status or transition is introduced.
+
+        Only ever called when no fill/exposure exists yet for this
+        candidate (a zero-fill resting entry LIMIT, or none submitted at
+        all): a candidate that already has a partial fill is deliberately
+        never invalidated here, since that would orphan a live position
+        with no robot_trade/protection ownership record.
+        """
+        execution = dict(record.robot_state.get("execution") or {})
+        execution["stopped_without_entry_at_ms"] = self._now_ms()
+        execution["stopped_without_entry_reason"] = reason
+        new_state = dict(record.robot_state)
+        new_state["execution"] = execution
+        try:
+            self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status="INVALIDATED",
+                robot_state=new_state,
+                expected_revision=record.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except ConcurrentUpdate:
+            # Another writer already advanced this candidate first; no
+            # exposure exists in this path, so nothing further to reconcile.
+            pass
 
     def _fail_closed_unprotected_fill(
         self, record: RobotCandidateRecord, error: Exception,

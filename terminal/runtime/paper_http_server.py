@@ -112,6 +112,7 @@ LIVE_AUTHORITY_FIELDS = {"account_id", "session_generation"}
 VOLUME_FIELDS = {"unit", "amount"}
 FULL_CLOSE_FIELDS = {"client_action_id", "symbol"}
 CLOSE_ALL_FIELDS = {"client_action_id"}
+ROBOT_SYNCHRONIZE_PENDING_ENTRIES_FIELDS: set[str] = set()
 LIMIT_FIELDS = {
     "client_action_id", "symbol", "side", "volume", "sizing_reference_price",
     "limit_price", "time_in_force",
@@ -2496,6 +2497,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             "/api/stop", "/api/stop/amend", "/api/stop/delete",
             "/api/take", "/api/take/amend", "/api/take/delete",
             "/api/full-close", "/api/close-all", "/api/robot/close-all-now",
+            "/api/robot/synchronize-pending-entries",
         }
         if urlparse(self.path).path in mutation_paths:
             try:
@@ -2579,6 +2581,25 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 payload = self._payload(CLOSE_ALL_FIELDS)
                 request = CloseAllCommandRequest(ClientActionId(payload["client_action_id"]))
                 result = self.server.runtime.call(lambda runtime: runtime.robot_close_all(request))
+            except Exception:
+                self._json_response(400, to_primitive(_validation_error()))
+                return
+            self._json_response(200, {"ok": True, **to_primitive(result)})
+            return
+
+        if self.path == "/api/robot/synchronize-pending-entries":
+            # Robot v0.1 pause_robot()/stop_robot() synchronous bridge
+            # (AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.3 Section 7):
+            # called by robot_control.py AFTER durably committing PAUSED/
+            # ROBOT_STOPPED, so their cancellation/terminalization/
+            # partial-fill-protection effects are confirmed before the
+            # command reports success to the operator. Same localhost-only,
+            # no-extra-token trust model as the routes above.
+            try:
+                self._payload(ROBOT_SYNCHRONIZE_PENDING_ENTRIES_FIELDS)
+                result = self.server.runtime.call(
+                    lambda runtime: runtime.robot_synchronize_pending_entries(),
+                )
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return

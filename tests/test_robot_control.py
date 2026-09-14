@@ -124,16 +124,37 @@ class RobotControlCommandTests(unittest.TestCase):
 
     # -- pause_robot --------------------------------------------------
 
+    @staticmethod
+    def _clean_synchronize_post(url, payload):
+        return {
+            "ok": True, "cancelled_order_ids": [], "finalized_candidate_ids": [],
+            "terminalized_candidate_ids": [], "still_pending_protection": [],
+            "unresolved_candidate_ids": [],
+        }
+
+    def _unresolved_synchronize_post(self, url, payload):
+        return {
+            "ok": True, "cancelled_order_ids": [], "finalized_candidate_ids": [],
+            "terminalized_candidate_ids": [], "still_pending_protection": [],
+            "unresolved_candidate_ids": ["candidate-1"],
+        }
+
     def test_pause_robot_from_running_ready_reaches_paused(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
-        result = pause_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+        result = pause_robot(
+            database_path=self.db_path, clock_ms=lambda: 2000,
+            http_post=self._clean_synchronize_post,
+        )
         self.assertEqual(result.mode, "ROBOT_RUNNING")
         self.assertEqual(result.recovery_status, "PAUSED")
 
     def test_pause_robot_does_not_affect_open_position(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
         self._open_candidate()
-        pause_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+        pause_robot(
+            database_path=self.db_path, clock_ms=lambda: 2000,
+            http_post=self._clean_synchronize_post,
+        )
         store = SQLiteStore.open(self.db_path)
         try:
             candidate = store.get_robot_candidate("candidate-open")
@@ -141,20 +162,69 @@ class RobotControlCommandTests(unittest.TestCase):
             store.close()
         self.assertEqual(candidate.status, "OPEN")
 
+    def test_pause_robot_synchronously_cancels_pending_entries_before_reporting_success(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        calls = []
+
+        def fake_post(url, payload):
+            calls.append((url, payload))
+            return self._clean_synchronize_post(url, payload)
+
+        result = pause_robot(database_path=self.db_path, clock_ms=lambda: 2000, http_post=fake_post)
+        self.assertEqual(result.recovery_status, "PAUSED")
+        self.assertEqual(len(calls), 1)
+        url, payload = calls[0]
+        self.assertEqual(url, "http://127.0.0.1:8765/api/robot/synchronize-pending-entries")
+        self.assertEqual(payload, {})
+
+    def test_pause_robot_escalates_and_rejects_when_cancellation_unresolved(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        with self.assertRaises(RobotControlRejected):
+            pause_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=self._unresolved_synchronize_post,
+            )
+        # Fail-closed: escalated to RECONCILIATION_REQUIRED, never silently
+        # left reporting a clean PAUSED success.
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_RUNNING")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
+
+    def test_pause_robot_escalates_and_rejects_when_backend_unreachable(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+
+        def unreachable(url, payload):
+            raise ConnectionError("backend not running")
+
+        with self.assertRaises(RobotControlRejected):
+            pause_robot(database_path=self.db_path, clock_ms=lambda: 2000, http_post=unreachable)
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_RUNNING")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
+
     def test_pause_robot_rejected_from_running_paused(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="PAUSED")
         with self.assertRaises(RobotControlRejected):
-            pause_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+            pause_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: self.fail("must not reach the backend"),
+            )
 
     def test_pause_robot_rejected_from_running_reconciliation_required(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
         with self.assertRaises(RobotControlRejected):
-            pause_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+            pause_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: self.fail("must not reach the backend"),
+            )
 
     def test_pause_robot_rejected_from_stopped(self):
         self._set_state(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
         with self.assertRaises(RobotControlRejected):
-            pause_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+            pause_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: self.fail("must not reach the backend"),
+            )
 
     # -- resume_robot ---------------------------------------------------
 
@@ -199,21 +269,70 @@ class RobotControlCommandTests(unittest.TestCase):
 
     def test_stop_robot_from_running_ready_reaches_stopped(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
-        result = stop_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+        result = stop_robot(
+            database_path=self.db_path, clock_ms=lambda: 2000,
+            http_post=self._clean_synchronize_post,
+        )
         self.assertEqual(result.mode, "ROBOT_STOPPED")
         self.assertEqual(result.recovery_status, "ROBOT_STOPPED")
 
     def test_stop_robot_from_running_paused_reaches_stopped(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="PAUSED")
-        result = stop_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+        result = stop_robot(
+            database_path=self.db_path, clock_ms=lambda: 2000,
+            http_post=self._clean_synchronize_post,
+        )
         self.assertEqual(result.mode, "ROBOT_STOPPED")
         self.assertEqual(result.recovery_status, "ROBOT_STOPPED")
+
+    def test_stop_robot_synchronously_terminalizes_pending_entries_before_reporting_success(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        calls = []
+
+        def fake_post(url, payload):
+            calls.append((url, payload))
+            return self._clean_synchronize_post(url, payload)
+
+        result = stop_robot(database_path=self.db_path, clock_ms=lambda: 2000, http_post=fake_post)
+        self.assertEqual(result.mode, "ROBOT_STOPPED")
+        self.assertEqual(len(calls), 1)
+        url, payload = calls[0]
+        self.assertEqual(url, "http://127.0.0.1:8765/api/robot/synchronize-pending-entries")
+
+    def test_stop_robot_escalates_and_rejects_when_cancellation_unresolved(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        with self.assertRaises(RobotControlRejected):
+            stop_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=self._unresolved_synchronize_post,
+            )
+        # Fail-closed: escalated to (ROBOT_STOPPED, RECONCILIATION_REQUIRED)
+        # -- durable mode already committed to ROBOT_STOPPED stays that way,
+        # never silently asserting pending intent is fully gone.
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_STOPPED")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
+
+    def test_stop_robot_escalates_and_rejects_when_backend_unreachable(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+
+        def unreachable(url, payload):
+            raise ConnectionError("backend not running")
+
+        with self.assertRaises(RobotControlRejected):
+            stop_robot(database_path=self.db_path, clock_ms=lambda: 2000, http_post=unreachable)
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_STOPPED")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
 
     def test_stop_robot_rejected_when_position_open_from_ready(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
         self._open_candidate()
         with self.assertRaises(RobotControlRejected):
-            stop_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+            stop_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: self.fail("must not reach the backend"),
+            )
         state = self._read_state()
         self.assertEqual(state.mode, "ROBOT_RUNNING")
         self.assertEqual(state.recovery_status, "READY")
@@ -222,7 +341,10 @@ class RobotControlCommandTests(unittest.TestCase):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="PAUSED")
         self._open_candidate()
         with self.assertRaises(RobotControlRejected):
-            stop_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+            stop_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: self.fail("must not reach the backend"),
+            )
         state = self._read_state()
         self.assertEqual(state.mode, "ROBOT_RUNNING")
         self.assertEqual(state.recovery_status, "PAUSED")
@@ -230,12 +352,18 @@ class RobotControlCommandTests(unittest.TestCase):
     def test_stop_robot_rejected_from_reconciliation_required(self):
         self._set_state(mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
         with self.assertRaises(RobotControlRejected):
-            stop_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+            stop_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: self.fail("must not reach the backend"),
+            )
 
     def test_stop_robot_rejected_from_stopped(self):
         self._set_state(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
         with self.assertRaises(RobotControlRejected):
-            stop_robot(database_path=self.db_path, clock_ms=lambda: 2000)
+            stop_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: self.fail("must not reach the backend"),
+            )
 
     # -- close_all_now ---------------------------------------------------
 

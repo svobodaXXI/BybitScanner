@@ -21,10 +21,12 @@ from terminal.api.models import (
     FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
     PaperLimitMutationResult, PaperLimitOrderProjection, PaperOpenPositionProjection,
     PaperOpenPositionsResponse, PaperStopDeleteRequest, PaperStopMutationRequest,
-    PaperStopMutationResult, TimeInForce, to_primitive,
+    PaperStopMutationResult, RobotSynchronizePendingEntriesResponse, TimeInForce, to_primitive,
     LiveMarketCommandRequest,
 )
-from terminal.application.robot_breakout_monitor import DEFAULT_TICK_INTERVAL_S, RobotBreakoutMonitor
+from terminal.application.robot_breakout_monitor import (
+    DEFAULT_TICK_INTERVAL_S, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
+)
 from terminal.application.live_market_execution import LiveMarketMutationCoordinator, LiveMarketMutationGates
 from terminal.application.live_execution import LiveExecutionCoordinator, LiveParityMutationGates
 from terminal.application.live_limit_acceptance import (
@@ -207,6 +209,51 @@ class RobotPaperActionExecutor:
 
     def full_close(self, request):
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_full_close(request))
+
+
+class _DirectRobotActionExecutor:
+    """Same-thread ActionExecutor binding for RobotBreakoutMonitor, used only
+    by PaperRuntime.robot_synchronize_pending_entries() (pause_robot()/
+    stop_robot()'s synchronous bridge -- AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md
+    v1.3 Section 7).
+
+    Unlike RobotPaperActionExecutor above (used by RobotBreakoutMonitor's own
+    background thread), this calls PaperRuntime's ``_robot_*`` methods
+    directly, with no ``_dispatch_robot_command``/``SerializedPaperRuntime.call``
+    hop. robot_synchronize_pending_entries() itself already runs ON the
+    single owning writer ("paper-runtime-owner") thread -- dispatching again
+    from there would enqueue onto the same single-consumer request queue this
+    very call is already occupying and wait for a response only that same
+    (currently busy) thread could ever produce: a guaranteed deadlock, not
+    merely a race.
+    """
+
+    def __init__(self, runtime: "PaperRuntime") -> None:
+        self._runtime = runtime
+
+    def create_limit(self, request):
+        return self._runtime._robot_create_limit(request)
+
+    def cancel_limit(self, request):
+        return self._runtime._robot_cancel_limit(request)
+
+    def market(self, request):
+        return self._runtime._robot_market(request)
+
+    def create_stop(self, request):
+        return self._runtime._robot_create_stop(request)
+
+    def amend_stop(self, request):
+        return self._runtime._robot_amend_stop(request)
+
+    def create_take(self, request):
+        return self._runtime._robot_create_take(request)
+
+    def amend_take(self, request):
+        return self._runtime._robot_amend_take(request)
+
+    def full_close(self, request):
+        return self._runtime._robot_full_close(request)
 
 
 SCANNER_STOPPED = "SCANNER_STOPPED"
@@ -624,10 +671,15 @@ class PaperRuntime:
         # the constructor argument, or later via start_robot_monitor(). Only
         # start the monitor once a dispatcher exists: without one, there is
         # no safe way to route its mutations back onto the owning thread.
+        # Kept as an attribute (not just a local passed into the constructor
+        # call below) so robot_synchronize_pending_entries() can build an
+        # equivalent one-shot RobotBreakoutMonitor with the exact same
+        # market-data source.
+        self._robot_closed_candle_provider = robot_closed_candle_provider or latest_scanner_closed_candle
         self._robot_breakout_monitor = RobotBreakoutMonitor(
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
-            get_closed_candle=robot_closed_candle_provider or latest_scanner_closed_candle,
+            get_closed_candle=self._robot_closed_candle_provider,
             action_executor=RobotPaperActionExecutor(self),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
@@ -1601,6 +1653,99 @@ class PaperRuntime:
         refreshed = self.open_positions()
         return CloseAllCommandResponse(
             request.client_action_id.value, tuple(results), refreshed.positions,
+        )
+
+    def robot_synchronize_pending_entries(self) -> RobotSynchronizePendingEntriesResponse:
+        """Synchronously reconcile pending (``APPROVED``, not yet ``OPEN``)
+        Robot candidates against the durable admission state, for
+        ``pause_robot()``/``stop_robot()`` to call as part of their own
+        command (AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.3 Section
+        7): cancels a still-working/unfilled entry LIMIT, finalizes and
+        protects any partially-filled quantity immediately (never left
+        waiting on a Market top-up while blocked), and -- when durable mode
+        is already ``ROBOT_STOPPED`` at the time this runs -- terminalizes a
+        zero-exposure candidate.
+
+        Reuses ``RobotBreakoutMonitor.tick()`` verbatim (the exact same
+        admission-gate decision and ``_finalize_trade()``/
+        ``_fail_closed_unprotected_fill()`` machinery the periodic background
+        monitor already uses) via a throwaway, never-started monitor
+        instance bound to this runtime's own store connection and
+        ``_DirectRobotActionExecutor`` -- calling the real, background-thread
+        monitor's ``tick()`` here would deadlock the single-consumer
+        owner-thread request queue this method itself already runs on (see
+        ``_DirectRobotActionExecutor``'s docstring).
+
+        Does not itself change durable admission mode: the caller
+        (``pause_robot()``/``stop_robot()``) already committed that
+        transition before calling this, and is responsible for escalating to
+        ``RECONCILIATION_REQUIRED`` if ``unresolved_candidate_ids`` is
+        non-empty -- this method only reports what it observed.
+        """
+        self.require_paper_mutations()
+        before = {
+            item.candidate_id: item
+            for item in self.store.load_robot_candidates(self._account_id)
+            if item.status == "APPROVED"
+        }
+
+        monitor = RobotBreakoutMonitor(
+            lambda: self.store,
+            self._account_id,
+            get_closed_candle=self._robot_closed_candle_provider,
+            action_executor=_DirectRobotActionExecutor(self),
+            tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
+            clock_ms=lambda: int(time.time() * 1000),
+        )
+        monitor.tick()
+
+        cancelled_order_ids: list[str] = []
+        finalized_candidate_ids: list[str] = []
+        terminalized_candidate_ids: list[str] = []
+        still_pending_protection: list[str] = []
+        unresolved_candidate_ids: list[str] = []
+
+        for record in self.store.load_robot_candidates(self._account_id):
+            prior = before.get(record.candidate_id)
+            if prior is None:
+                continue
+
+            if record.status == "OPEN":
+                finalized_candidate_ids.append(record.candidate_id)
+                continue
+            if record.status == "INVALIDATED":
+                terminalized_candidate_ids.append(record.candidate_id)
+                continue
+            if record.status != "APPROVED":
+                continue
+
+            execution = (record.robot_state or {}).get("execution") or {}
+            order_id = execution.get("limit_order_id")
+            prior_order_id = ((prior.robot_state or {}).get("execution") or {}).get("limit_order_id")
+            if order_id:
+                order = self.store.get_paper_limit(order_id, self._account_id)
+                if order is not None and order.status not in INACTIVE_LIMIT_STATUSES:
+                    unresolved_candidate_ids.append(record.candidate_id)
+                    continue
+                if prior_order_id and order is not None and order.status == "cancelled":
+                    cancelled_order_ids.append(order_id)
+
+            # Still APPROVED with no active working order: either genuinely
+            # resolved-and-safe (zero fill, nothing left to protect) or a
+            # partial fill whose immediate finalize could not complete this
+            # pass (e.g. no closed candle available yet). Never a failure by
+            # itself -- no new-entry risk was left uncancelled either way --
+            # but real, non-flat exposure is surfaced so the caller can make
+            # it visible rather than silently asserting everything is clean.
+            position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+            projection = self.store.get_position_projection(position_key)
+            if projection is not None and projection.quantity.value > 0:
+                still_pending_protection.append(record.candidate_id)
+
+        return RobotSynchronizePendingEntriesResponse(
+            tuple(cancelled_order_ids), tuple(finalized_candidate_ids),
+            tuple(terminalized_candidate_ids), tuple(still_pending_protection),
+            tuple(unresolved_candidate_ids),
         )
 
     def create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:

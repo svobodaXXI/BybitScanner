@@ -179,6 +179,29 @@ class CloseAllCommandResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class RobotSynchronizePendingEntriesResponse:
+    """Result of one synchronous pending-pre-entry-candidate reconciliation
+    pass, triggered by pause_robot()/stop_robot() (AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md
+    v1.3 Section 7) so their cancellation/terminalization/partial-fill-protection
+    effects are guaranteed applied before the command reports success.
+
+    ``unresolved_candidate_ids`` is the only field that represents a genuine
+    failure: a candidate whose working entry LIMIT could not be confirmed
+    cancelled. ``still_pending_protection`` is informational, not a failure --
+    a partial fill whose immediate finalize/protect attempt could not
+    complete this pass (e.g. no closed candle available yet) remains
+    APPROVED with real exposure, still safely blocked from further top-up,
+    and is retried by the periodic background monitor.
+    """
+
+    cancelled_order_ids: tuple[str, ...]
+    finalized_candidate_ids: tuple[str, ...]
+    terminalized_candidate_ids: tuple[str, ...]
+    still_pending_protection: tuple[str, ...]
+    unresolved_candidate_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class LimitCommandRequest:
     client_action_id: ClientActionId
     symbol: str
