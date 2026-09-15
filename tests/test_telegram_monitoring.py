@@ -199,6 +199,19 @@ class TelegramMonitoringTests(unittest.TestCase):
         monitoring._send_robot_status(123)
         self.assertIn("Запущен / Готов", send.call_args.args[1])
         self.assertIn("Открытых позиций: 1", send.call_args.args[1])
+        keyboard = send.call_args.kwargs["reply_markup"]
+        self.assertEqual(
+            keyboard["inline_keyboard"][0][0]["callback_data"],
+            "robot:cmd:pause",
+        )
+        self.assertEqual(
+            keyboard["inline_keyboard"][1][0]["callback_data"],
+            "robot:cmd:close_all",
+        )
+        self.assertEqual(
+            keyboard["inline_keyboard"][1][1]["callback_data"],
+            "robot:cmd:stop",
+        )
 
     @patch("telegram_monitoring.requests.get")
     def test_invalid_api_state_fails_closed(self, get):
