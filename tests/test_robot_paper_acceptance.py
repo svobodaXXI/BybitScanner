@@ -230,7 +230,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 order_id = _wait_until(limit_submitted)
                 order = runtime.call(lambda owner: owner.store.get_paper_limit(order_id, ACCOUNT_ID))
                 self.assertIsNotNone(order)
-                self.assertEqual(order.status, "active")
+                self.assertEqual(order.status, "open")
 
                 # Cross the deterministic book through the real PAPER matcher.
                 book.set(
