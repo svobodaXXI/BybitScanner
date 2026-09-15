@@ -7,7 +7,9 @@ from robot_state_machine import initialize_state
 from terminal.application.robot_recovery import (
     PAUSED,
     READY,
+    RECONCILING,
     RobotRecoveryCoordinator,
+    RobotRecoveryError,
 )
 from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import SQLiteStore
@@ -242,6 +244,54 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(result.runtime_state.recovery_status, PAUSED)
         self.assertFalse(result.admission_ready)
         self.assertEqual(result.decisions[0].status, "RESUME_OPEN_POSITION")
+
+    def test_reconcile_required_holds_reconciling_until_runtime_finishes(self):
+        running = self._initialize_running()
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode="ROBOT_RUNNING",
+            recovery_status="RECONCILIATION_REQUIRED", reason="needs repair",
+            expected_version=running.version, updated_at_ms=self.clock(),
+        )
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+        result = coordinator.reconcile_required()
+        self.assertEqual(result.runtime_state.mode, "ROBOT_RUNNING")
+        self.assertEqual(result.runtime_state.recovery_status, RECONCILING)
+        self.assertFalse(result.admission_ready)
+        self.assertFalse(coordinator.admission_ready())
+
+    def test_reconcile_required_rejects_every_other_durable_state_without_side_effect(self):
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+        running = self._initialize_running()
+        with self.assertRaises(RobotRecoveryError):
+            coordinator.reconcile_required()
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).version, running.version,
+        )
+
+        paused = self.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode="ROBOT_RUNNING", recovery_status=PAUSED, reason=None,
+            expected_version=running.version, updated_at_ms=self.clock(),
+        )
+        with self.assertRaises(RobotRecoveryError):
+            coordinator.reconcile_required()
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).version, paused.version,
+        )
+
+        stopped_required = self.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode="ROBOT_STOPPED",
+            recovery_status="RECONCILIATION_REQUIRED", reason="stopped ambiguity",
+            expected_version=paused.version, updated_at_ms=self.clock(),
+        )
+        with self.assertRaises(RobotRecoveryError):
+            coordinator.reconcile_required()
+        self.assertEqual(
+            self.store.get_robot_runtime_state(ACCOUNT_ID).version, stopped_required.version,
+        )
 
     def test_start_from_never_initialized_reaches_running_ready(self):
         coordinator = RobotRecoveryCoordinator(
