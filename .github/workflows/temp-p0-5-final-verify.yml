@@ -35,8 +35,44 @@ jobs:
           mplfinance
           pybit
           pycryptodome
-      - name: Full Python repository regression
-        run: python -m pytest -q tests
+      - name: Full repository regression versus main baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          set +e
+          python -m pytest -q tests --junitxml=/tmp/p0_5_candidate.xml
+          candidate_exit=$?
+          set -e
+          git worktree add --detach /tmp/p0_5_main origin/main
+          set +e
+          (cd /tmp/p0_5_main && python -m pytest -q tests --junitxml=/tmp/p0_5_main.xml)
+          main_exit=$?
+          set -e
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          def failures(path):
+              root = ET.parse(path).getroot()
+              bad = set()
+              for case in root.iter("testcase"):
+                  if case.find("failure") is not None or case.find("error") is not None:
+                      bad.add((case.get("classname", ""), case.get("name", "")))
+              return bad
+
+          candidate = failures("/tmp/p0_5_candidate.xml")
+          baseline = failures("/tmp/p0_5_main.xml")
+          new = sorted(candidate - baseline)
+          print(f"P0.5 candidate failures/errors: {len(candidate)}")
+          print(f"main baseline failures/errors: {len(baseline)}")
+          print(f"new failures/errors: {len(new)}")
+          for item in new:
+              print("NEW", item)
+          if new:
+              raise SystemExit("P0.5 introduced new full-repository failures/errors")
+          PY
+          echo "candidate_exit=$candidate_exit main_exit=$main_exit"
+          git worktree remove --force /tmp/p0_5_main
       - name: Protected task finish on exact P0.5 production diff
         shell: bash
         run: |
@@ -44,6 +80,10 @@ jobs:
           git fetch --no-tags origin main robot-v0-1-safety-p0-5
           verify_branch="p0-5-protected-${GITHUB_RUN_ID}"
           task_id="p0-5-${GITHUB_RUN_ID}"
+          cleanup() {
+            git push origin --delete "$verify_branch" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
           git switch -c "$verify_branch" origin/main
           git push -u origin HEAD:"$verify_branch"
           python -m tools.dev.task start \
@@ -69,7 +109,6 @@ jobs:
           python -m tools.dev.task finish --task "$task_id"
           git reset --hard HEAD
           git switch --detach origin/robot-v0-1-safety-p0-5
-          git push origin --delete "$verify_branch"
       - name: Final scoped diff check
         shell: bash
         run: |
