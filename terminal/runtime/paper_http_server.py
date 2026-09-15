@@ -1,4 +1,4 @@
-﻿"""Minimal local HTTP runtime for PAPER Trading Workspace development."""
+"""Minimal local HTTP runtime for PAPER Trading Workspace development."""
 
 from __future__ import annotations
 
@@ -1619,10 +1619,13 @@ def _normalized_book_from_snapshot(
 
 
 class RobotProtectionCoverageManager:
-    """Keep independent MarketDataHub coverage for every symbol with a
-    non-flat Robot-owned PAPER trade, regardless of Workspace selection or
-    Robot entry-admission state, and forward each ordered book update to the
-    serialized PAPER owner for durable crossing evaluation.
+    """Keep independent MarketDataHub coverage for Robot entry/protection.
+
+    Coverage includes durable pre-entry LIMIT lifecycles that may receive a
+    first fill plus non-flat Robot-owned PAPER trades / unresolved protection
+    obligations. It is independent of Workspace selection and forwards every
+    ordered book update to the serialized PAPER owner for first-fill handling
+    and durable crossing evaluation in one pass.
 
     Every individual update is admitted through SerializedPaperRuntime.enqueue
     (never the coalescing enqueue_book_update path), so a retreat between two
@@ -1697,6 +1700,7 @@ class RobotProtectionCoverageManager:
             try:
                 context = self._hub.subscribe(symbol)
             except Exception:
+                self._mark_unhealthy(symbol, "subscribe_failed")
                 LOGGER.exception("Robot protection coverage subscribe failed; symbol=%s", symbol)
                 continue
             context.add_update_listener(self._LISTENER, self._listener_for(symbol))
@@ -1764,7 +1768,7 @@ class RobotProtectionCoverageManager:
                     symbol, generation_at_enqueue, context.reconnect_count, book_update_id,
                 )
                 return None
-            return runtime.evaluate_robot_protection_crossing(
+            return runtime.process_robot_market_event(
                 symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
             )
 

@@ -191,6 +191,48 @@ class RobotBreakoutMonitor:
                 continue
         return tuple(advanced)
 
+    def process_authoritative_fill(self, symbol: str) -> tuple[str, ...]:
+        """Finalize/protect already-authoritative entry fills for one symbol.
+
+        P0.4 event-driven entry point: callers must first apply the exact
+        market event to PAPER LIMIT matching on the serialized owner thread.
+        This method then advances only APPROVED/RETEST_DETECTED candidates
+        whose durable entry LIMIT already proves ``filled_quantity > 0``.
+        It never reads a closed candle, submits a new entry LIMIT, or matches
+        market data again; the ordinary periodic ``tick()`` remains only the
+        watchdog/backstop.
+        """
+        normalized = symbol.strip().upper()
+        if not normalized:
+            raise ValueError("symbol must be non-empty")
+
+        advanced: list[str] = []
+        for record in self._store().load_robot_candidates(self._account_id):
+            if (
+                record.status != "APPROVED"
+                or record.symbol.value != normalized
+                or record.robot_state is None
+                or record.robot_state.get("phase") != robot_state_machine.PHASE_RETEST_DETECTED
+            ):
+                continue
+            execution = record.robot_state.get("execution") or {}
+            order_id = execution.get("limit_order_id")
+            if not order_id:
+                continue
+            order = self._store().get_paper_limit(order_id, self._account_id)
+            if order is None or order.quantity <= 0 or order.filled_quantity <= 0:
+                continue
+            try:
+                if self._advance_retest_detected(record, match_resting_orders=False):
+                    advanced.append(record.candidate_id)
+            except Exception as error:
+                print(
+                    "[ROBOT CANDIDATE ERROR] "
+                    f"candidate_id={record.candidate_id} error={error}"
+                )
+                self._record_execution_error(record, error)
+        return tuple(advanced)
+
     def _record_execution_error(self, record: RobotCandidateRecord, error: Exception) -> None:
         # Best-effort diagnostics only: never let a failure to record the
         # failure itself mask the original error or block other candidates.
@@ -255,7 +297,9 @@ class RobotBreakoutMonitor:
         self._persist_state(record, new_state)
         return True
 
-    def _advance_retest_detected(self, record: RobotCandidateRecord) -> bool:
+    def _advance_retest_detected(
+        self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
+    ) -> bool:
         execution = dict(record.robot_state.get("execution") or {})
 
         if "limit_order_id" not in execution:
@@ -320,7 +364,7 @@ class RobotBreakoutMonitor:
             self._persist_execution(record, execution)
             return True
 
-        if self._match_resting_orders is not None:
+        if match_resting_orders and self._match_resting_orders is not None:
             self._match_resting_orders(record.symbol.value)
 
         order = self._store().get_paper_limit(execution["limit_order_id"], self._account_id)

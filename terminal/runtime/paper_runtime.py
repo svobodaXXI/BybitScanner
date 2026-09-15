@@ -1109,6 +1109,56 @@ class PaperRuntime:
         match_event_id = f"robot:{normalized.value}:{int(book.received_at_ms)}"
         return self._match_symbol(normalized, book, match_event_id, self._robot_context)
 
+    def _match_limits_only(
+        self,
+        symbol: Symbol,
+        book: NormalizedOrderBook,
+        match_event_id: str,
+    ) -> int:
+        """Apply one immutable book event to resting PAPER LIMITs only.
+
+        P0.4 uses this narrow helper before Robot ownership/protection
+        finalization so the event-driven path never invokes the older generic
+        PAPER protection close in ``_match_symbol``.
+        """
+        applied = 0
+        for order in self.store.load_active_paper_limits(self._account_id, symbol):
+            result = self._limit_executor.execute(
+                order=order, book=book, match_event_id=match_event_id,
+            )
+            if result is not None and result.apply_result is ExecutionApplyResult.APPLIED:
+                applied += 1
+        return applied
+
+    def process_robot_market_event(
+        self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,
+    ) -> tuple[tuple[str, ...], PaperProtectionObligationRecord | None]:
+        """Process one exact Robot market event on the serialized owner thread.
+
+        P0.4 sequence is intentionally single-pass and reuse-only: match the
+        immutable event against resting entry LIMITs, immediately run P0.3's
+        fill-only cancel/finalize/protect path, then evaluate the same event
+        against the durable Robot protection engine. No periodic monitor tick
+        or closed candle is required after authoritative fill observation.
+        """
+        normalized = Symbol(symbol.strip().upper())
+        if book.symbol != normalized:
+            raise ValueError("Robot market event symbol does not match book")
+        self._match_limits_only(normalized, book, event_id)
+        monitor = RobotBreakoutMonitor(
+            lambda: self.store,
+            self._paper_account_id,
+            get_closed_candle=self._robot_closed_candle_provider,
+            action_executor=_DirectRobotActionExecutor(self),
+            tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
+            clock_ms=lambda: int(time.time() * 1000),
+        )
+        finalized = monitor.process_authoritative_fill(normalized.value)
+        obligation = self.evaluate_robot_protection_crossing(
+            normalized.value, book, event_id=event_id, received_at_ms=received_at_ms,
+        )
+        return finalized, obligation
+
     def _match_symbol(
         self,
         symbol: Symbol,
@@ -1116,15 +1166,7 @@ class PaperRuntime:
         match_event_id: str,
         context_provider: "PaperCommandContextProvider",
     ) -> int:
-        applied = 0
-        for order in self.store.load_active_paper_limits(self._account_id, symbol):
-            result = self._limit_executor.execute(
-                order=order,
-                book=book,
-                match_event_id=match_event_id,
-            )
-            if result is not None and result.apply_result is ExecutionApplyResult.APPLIED:
-                applied += 1
+        applied = self._match_limits_only(symbol, book, match_event_id)
         context = context_provider.context_for(symbol.value)
         protection = self.store.get_protection_projection(
             context.pretrade.position_key
@@ -1203,7 +1245,30 @@ class PaperRuntime:
             self._paper_account_id,
         )
         unresolved_symbols = {obligation.symbol.value for obligation in unresolved}
-        return tuple(sorted(open_symbols | unresolved_symbols))
+
+        # P0.4: an APPROVED lifecycle with a durable entry LIMIT also needs
+        # the ordered MarketDataHub feed. A live LIMIT may receive its first
+        # fill on any book event; a cancelled/filled LIMIT with non-zero fill
+        # stays covered until ownership/protection finalization has consumed
+        # that durable evidence (restart/cancel race backstop). Zero-fill
+        # inactive orders do not retain coverage.
+        entry_symbols: set[str] = set()
+        for candidate in candidates:
+            if candidate.status != "APPROVED" or candidate.robot_state is None:
+                continue
+            if candidate.robot_state.get("phase") != "RETEST_DETECTED":
+                continue
+            execution = candidate.robot_state.get("execution") or {}
+            order_id = execution.get("limit_order_id")
+            if not order_id:
+                continue
+            order = self.store.get_paper_limit(order_id, self._paper_account_id)
+            if order is None:
+                continue
+            if order.status not in INACTIVE_LIMIT_STATUSES or order.filled_quantity > 0:
+                entry_symbols.add(candidate.symbol.value)
+
+        return tuple(sorted(open_symbols | unresolved_symbols | entry_symbols))
 
     def evaluate_robot_protection_crossing(
         self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,

@@ -1722,6 +1722,7 @@ class _FakeCoverageRuntime:
     def __init__(self, symbols: list[str] = ()) -> None:
         self.symbols = list(symbols)
         self.crossing_calls: list[tuple[str, str, int]] = []
+        self.market_event_calls: list[tuple[str, str, int]] = []
         self.fail_next_enqueue: BaseException | None = None
 
     def call(self, operation):
@@ -1736,6 +1737,12 @@ class _FakeCoverageRuntime:
 
     def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
         return tuple(self.symbols)
+
+    def process_robot_market_event(self, symbol, book, *, event_id, received_at_ms):
+        self.market_event_calls.append((symbol, event_id, received_at_ms))
+        return self.evaluate_robot_protection_crossing(
+            symbol, book, event_id=event_id, received_at_ms=received_at_ms,
+        )
 
     def evaluate_robot_protection_crossing(self, symbol, book, *, event_id, received_at_ms):
         self.crossing_calls.append((symbol, event_id, received_at_ms))
@@ -1756,6 +1763,7 @@ def test_robot_protection_coverage_manager_subscribes_and_forwards_updates():
 
     _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=1)
 
+    assert len(runtime.market_event_calls) == 1
     assert len(runtime.crossing_calls) == 1
     symbol, event_id, received_at_ms = runtime.crossing_calls[0]
     assert symbol == "BTCUSDT"

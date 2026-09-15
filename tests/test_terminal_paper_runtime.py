@@ -1,4 +1,4 @@
-﻿import itertools
+import itertools
 import tempfile
 from dataclasses import replace
 from decimal import Decimal
@@ -520,6 +520,25 @@ def test_evaluate_robot_protection_crossing_fails_closed_on_ambiguous_open_trade
                 event_id="evt-1", received_at_ms=2000,
             )
             assert result is None
+        finally:
+            runtime.close()
+
+
+def test_robot_entry_limit_is_covered_before_first_fill_and_released_after_zero_fill_cancel():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _seed_pending_candidate_with_resting_limit(
+                runtime, candidate_id="candidate-entry-coverage",
+                order_id="entry-coverage-limit", symbol="BTCUSDT",
+            )
+            assert runtime.robot_protection_coverage_symbols() == ("BTCUSDT",)
+
+            runtime._robot_cancel_limit(PaperLimitCancelRequest(
+                ClientActionId("entry-coverage-cancel"),
+                "BTCUSDT", "entry-coverage-limit",
+            ))
+            assert runtime.robot_protection_coverage_symbols() == ()
         finally:
             runtime.close()
 
