@@ -996,6 +996,60 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
         self.assertEqual(self.executor.protection_calls, [])
 
+    def test_restart_after_partial_fill_finalizes_once_without_market_top_up(self):
+        """A restart after authoritative partial fill but before ownership
+        commit must recover through the same P0.3 subtractive path: cancel
+        remainder, protect the proven fill, and create exactly one owner.
+        No fresh candle or Market completion is required."""
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
+
+        # Simulate process restart after the fill is durable but before the
+        # old monitor has observed/finalized it. The restarted coordinator
+        # gets a fresh SQLite connection and no closed candle is queued.
+        self.monitor.close()
+        self.monitor = RobotBreakoutMonitor(
+            lambda: SQLiteStore.open(self.db_path),
+            ACCOUNT_ID,
+            get_closed_candle=self.feed,
+            action_executor=self.executor,
+            tick_size_provider=lambda symbol: Decimal("0.1"),
+            clock_ms=self.clock,
+        )
+        feed_calls_before = len(self.feed.calls)
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.feed.calls), feed_calls_before)
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertEqual(self.executor.market_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "OPEN")
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.entry_path, "LIMIT")
+        self.assertEqual(trade.actual_wv, Decimal("0.6"))
+        self.assertEqual(trade.entry_quantity, Decimal("0.6"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+
+        # Once the candidate is OPEN, a further tick cannot create a second
+        # trade, protection set, cancel, or entry mutation.
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertEqual(self.executor.market_calls, [])
+        self.assertEqual(len(self.executor.protection_calls), 2)
+        same_trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertEqual(same_trade, trade)
+
     def test_first_partial_fill_is_final_limit_trade_without_market_top_up(self):
         self._create_candidate()
         self._drive_to_retest_detected()
@@ -1395,7 +1449,6 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
 
-    # -- Partial-fill protection must never depend on a new closed candle --
     # -- Partial-fill protection must never depend on a new closed candle --
     #
     # AUTOPILOT_ROBOT_V0_1_RECOVERY_STATE_BATCH_DECISION.md Section 6's
