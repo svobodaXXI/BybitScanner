@@ -1,0 +1,78 @@
+name: Temporary task sync authority correction
+
+on:
+  push:
+    branches:
+      - workflow/align-task-sync-preflight
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: workflow/align-task-sync-preflight
+      - name: Align assistant protocol with GitHub-first branch workflow
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("DOCUMENTS/ASSISTANT_PROTOCOL.md")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = [
+              (
+                  "Version:\n\n4.39",
+                  "Version:\n\n4.40",
+              ),
+              (
+                  "Date:\n\n2026-09-14",
+                  "Date:\n\n2026-09-15",
+              ),
+              (
+                  "For edit tasks, `task start` performs this preflight and additionally requires branch `main`; consume its\n"
+                  "result instead of repeating a successful fetch/comparison.",
+                  "For edit tasks, `task start` performs this preflight against the intended branch's remote tracking ref; consume its\n"
+                  "result instead of repeating a successful fetch/comparison.",
+              ),
+              (
+                  "2. compare local `HEAD` with `origin/main`;\n"
+                  "3. start new work only when local `HEAD` matches `origin/main`;",
+                  "2. compare local `HEAD` with the intended branch's remote tracking ref (`origin/main` on `main`, otherwise `origin/<task-branch>`);\n"
+                  "3. start new work only when local `HEAD` matches that intended remote tracking ref;",
+              ),
+              (
+                  "`4.39` adds workflow proportionality and review-fix continuity (§7.3): preserve usable PR/branch/worktree state,\n"
+                  "certify new delta without artificial fragmentation, and justify additional process by concrete risk and cost.\n"
+                  "Required verification, approval and user-owned-work protections remain binding. Detailed history remains in Git.",
+                  "`4.40` removes the stale main-only local sync requirement and aligns task preflight wording with the GitHub-first\n"
+                  "feature-branch workflow and the actual `task start` remote-tracking check. Freshness remains fail-closed: the local\n"
+                  "HEAD must match the intended branch's remote tracking ref before editing. Detailed history remains in Git.",
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected exactly one match, got {count}: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+      - name: Validate documentation patch
+        run: |
+          git diff --check
+          grep -F 'Version:' DOCUMENTS/ASSISTANT_PROTOCOL.md >/dev/null
+          grep -F '4.40' DOCUMENTS/ASSISTANT_PROTOCOL.md >/dev/null
+          grep -F "origin/<task-branch>" DOCUMENTS/ASSISTANT_PROTOCOL.md >/dev/null
+      - name: Commit scoped correction and remove temporary workflow
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/_tmp-align-task-sync-preflight.yml
+          git add DOCUMENTS/ASSISTANT_PROTOCOL.md
+          git commit -m "docs: align task sync preflight with GitHub-first branches"
+          git push origin HEAD:workflow/align-task-sync-preflight
