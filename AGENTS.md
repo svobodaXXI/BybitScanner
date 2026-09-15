@@ -27,7 +27,7 @@ python -m tools.dev.task finish --task TASK_ID
 
 Repeat `--path` only for paths genuinely in scope. Read-only work needs no transaction. New paths mid-task require a revised protected transaction; do not widen scope silently.
 
-`task start` owns sync preflight and compact task-context generation. Do not repeat successful fetch/status/context checks without new cause. `task finish` owns final exact-scope verification and the PASS receipt; do not duplicate it with a standalone final verifier unless evidence changed or an independent check is required.
+`task start` owns sync preflight, compact task-context generation, the routine scoped LegacyWarning gate, and protected transaction setup. Do not run a second `codex_workflow lightweight` command after a successful `task start`, and do not repeat successful fetch/status/context checks without new cause. `task finish` owns final exact-scope verification and the PASS receipt; do not duplicate it with a standalone final verifier unless evidence changed or an independent check is required.
 
 For development feedback only:
 
@@ -41,9 +41,10 @@ Use additional tests/builds only when the changed behavior or applicable contrac
 
 Full Project Sync is an escalation mechanism, not a routine task step.
 
-Use `tools.project_sync.governance.codex_workflow` only when its distinct governance value is needed:
+The standalone `tools.project_sync.governance.codex_workflow lightweight` command remains available for read-only diagnosis or compatibility, but routine edit tasks receive the same scoped LegacyWarning enforcement from `task start` and must not run both gates.
 
-- `lightweight` when scoped LegacyWarning enforcement has not already been established by the active workflow;
+Use the durable governance path only when its distinct value is needed:
+
 - `durable CHANGE_REQUEST` for an approved durable/multi-session change;
 - ContextDump generation only for multi-session, context-heavy, recovery-package, or explicit requests.
 
