@@ -8,11 +8,9 @@ access or fake action executor is used.
 
 from __future__ import annotations
 
-import sys
 import tempfile
 import threading
 import time
-import types
 import unittest
 from dataclasses import replace
 from decimal import Decimal
@@ -28,13 +26,7 @@ from terminal.domain.models import Category, Price, PositionKey, Quantity, Symbo
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 
-# PaperRuntime imports ``main`` only to bind ScannerControlRuntime.run_scan_pass.
-# This acceptance never starts Scanner, and a clean CI checkout intentionally
-# has no gitignored config.py. Stub only that inert scanner entrypoint so the
-# Robot PAPER topology remains importable without machine-local credentials.
-_scanner_entrypoint = types.ModuleType("main")
-_scanner_entrypoint.run_scan_pass = lambda: None
-sys.modules.setdefault("main", _scanner_entrypoint)
+# Importing the PAPER/Robot topology must not require Scanner config.py.
 
 from terminal.runtime.paper_http_server import SerializedPaperRuntime, create_configured_paper_runtime
 
