@@ -40,7 +40,8 @@ def _sync_preflight(git: Git) -> None:
     if fetch.returncode:
         detail = (fetch.stderr or fetch.stdout).strip()
         raise RuntimeError(
-            f"origin branch fetch failed for {branch}" + (f": {detail}" if detail else "")
+            f"current branch has no origin mirror or could not refresh it; publish/sync {branch} before starting a task"
+            + (f": {detail}" if detail else "")
         )
     head = require_ok(git.run("rev-parse", "HEAD"), "HEAD discovery")
     remote_result = git.run("rev-parse", "--verify", "--quiet", remote_ref)
