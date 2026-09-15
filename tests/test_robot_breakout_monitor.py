@@ -617,6 +617,91 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.monitor.tick()
         self.assertEqual(len(self.executor.protection_calls), 2)
 
+    def test_existing_open_owner_blocks_first_limit_without_invalidating_candidate(self):
+        self._create_candidate(candidate_id="owner")
+        self._drive_to_retest_detected("owner")
+        self.monitor.tick()
+        owner_order_id = self.store.get_robot_candidate("owner").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            owner_order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+        self.monitor.tick()
+        self.assertEqual(self.store.get_robot_candidate("owner").status, "OPEN")
+
+        self._create_candidate(candidate_id="candidate-2", reference_price=101.0)
+        self._drive_to_retest_detected("candidate-2")
+        prior_limit_count = len(self.executor.limit_calls)
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())
+        self.assertEqual(len(self.executor.limit_calls), prior_limit_count)
+        blocked = self.store.get_robot_candidate("candidate-2")
+        self.assertEqual(blocked.status, "APPROVED")
+        self.assertNotIn("limit_order_id", blocked.robot_state.get("execution") or {})
+
+    def test_late_second_fill_escalates_duplicate_owner_without_net_close(self):
+        self._create_candidate(candidate_id="candidate-a")
+        self._drive_to_retest_detected("candidate-a")
+        self.monitor.tick()
+        order_a = self.store.get_robot_candidate("candidate-a").robot_state["execution"]["limit_order_id"]
+
+        self._create_candidate(candidate_id="candidate-b", reference_price=101.0)
+        self._drive_to_retest_detected("candidate-b")
+        self.monitor.tick()
+        order_b = self.store.get_robot_candidate("candidate-b").robot_state["execution"]["limit_order_id"]
+
+        self.executor.fill_resting_limit(order_a, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        self.monitor.tick()
+        self.assertEqual(self.store.get_robot_candidate("candidate-a").status, "OPEN")
+        protection_count = len(self.executor.protection_calls)
+
+        self.executor.fill_resting_limit(order_b, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("82"))
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-b",))
+        self.assertEqual(self.store.get_robot_candidate("candidate-b").status, "APPROVED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-b"))
+        self.assertEqual(len(self.executor.protection_calls), protection_count)
+        self.assertNotIn("full_close", [name for name, _ in self.executor.protection_calls])
+        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(
+            (runtime.mode, runtime.recovery_status),
+            ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+        )
+        self.assertIn("DUPLICATE_ROBOT_OWNER", runtime.reason)
+        self.assertIn("candidate-a", runtime.reason)
+        projection = self.store.get_position_projection(
+            PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        )
+        self.assertEqual(projection.quantity.value, Decimal("2"))
+
+    def test_duplicate_owner_race_during_protection_failure_never_blind_closes(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        self.executor.fail_create_stop = True
+
+        with patch.object(
+            RobotBreakoutMonitor,
+            "_active_other_owner_candidate_ids",
+            side_effect=[(), ("candidate-owner",)],
+        ):
+            advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertNotIn("full_close", [name for name, _ in self.executor.protection_calls])
+        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(
+            (runtime.mode, runtime.recovery_status),
+            ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+        )
+        self.assertIn("candidate-owner", runtime.reason)
+
     def test_batusdt_like_wrong_side_structural_extreme_falls_back_and_protects(self):
         """Regression for the real BATUSDT PAPER acceptance defect: the frozen
         structural extreme (lower_touch_points) can end up on the wrong side
