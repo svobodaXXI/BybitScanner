@@ -30,11 +30,19 @@ def _sync_preflight(git: Git) -> None:
 
     Tasks are intentionally allowed on feature branches. The safety property is not
     "must be main"; it is "start from a reviewable, remotely mirrored baseline".
+    Only the active branch is fetched because task freshness depends on that one
+    tracking ref; unrelated remote refs do not need to be refreshed on every task.
     """
-    require_ok(git.run("fetch", "origin", "--prune"), "origin fetch")
     branch = require_ok(git.run("symbolic-ref", "--quiet", "--short", "HEAD"), "branch discovery")
-    head = require_ok(git.run("rev-parse", "HEAD"), "HEAD discovery")
     remote_ref = f"refs/remotes/origin/{branch}"
+    fetch_refspec = f"refs/heads/{branch}:{remote_ref}"
+    fetch = git.run("fetch", "--no-tags", "origin", fetch_refspec)
+    if fetch.returncode:
+        detail = (fetch.stderr or fetch.stdout).strip()
+        raise RuntimeError(
+            f"origin branch fetch failed for {branch}" + (f": {detail}" if detail else "")
+        )
+    head = require_ok(git.run("rev-parse", "HEAD"), "HEAD discovery")
     remote_result = git.run("rev-parse", "--verify", "--quiet", remote_ref)
     if remote_result.returncode:
         raise RuntimeError(
