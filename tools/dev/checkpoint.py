@@ -16,6 +16,7 @@ from typing import Sequence
 
 from .checkpoint_legacy import checkpoint as _legacy_checkpoint
 from .task_transaction import candidate_root, candidate_tree, inspect, load_transaction
+from .verify import tree_fast_path_eligible
 from .workflow import Git, compact, fingerprints, index_tree, read_receipt, repository_root, require_ok
 
 
@@ -84,12 +85,11 @@ def _validate_github_first(message: str, *, git: Git) -> tuple[bool, str]:
             )
             tree_valid = (
                 tree.get("status") == "PASS"
-                and tree.get("mode") == "markdown-tree"
+                and tree.get("mode") == "candidate-tree"
                 and tree.get("base_head") == receipt["head"]
                 and tree.get("candidate_tree") == transaction.get("candidate_tree")
                 and tree.get("commands") == []
-                and bool(candidate_files)
-                and all(Path(path).suffix.lower() == ".md" for path in candidate_files)
+                and tree_fast_path_eligible(scope, files, candidate_files, (), git)
             )
             if not isolated_valid and not tree_valid:
                 raise RuntimeError("verification receipt lacks current candidate PASS evidence")
