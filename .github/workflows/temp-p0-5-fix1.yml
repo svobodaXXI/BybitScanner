@@ -1,0 +1,81 @@
+name: TEMP P0.5 implementation verify after fix
+
+on:
+  push:
+    branches:
+      - robot-v0-1-safety-p0-5
+    paths:
+      - ".github/workflows/temp-p0-5-fix1.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: robot-v0-1-safety-p0-5
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python .github/temp_p0_5_patch.py
+      - run: python .github/temp_p0_5_fix1.py
+      - run: python -m pip install pytest requests==2.34.2 PySocks==1.7.1 websocket-client==1.9.0
+      - name: Compile P0.5 surface
+        run: >-
+          python -m py_compile
+          terminal/api/models.py
+          terminal/application/robot_control.py
+          terminal/application/robot_recovery.py
+          terminal/runtime/paper_runtime.py
+          terminal/runtime/paper_http_server.py
+          tests/test_robot_control.py
+          tests/test_robot_recovery_coordinator.py
+          tests/test_terminal_paper_runtime.py
+      - name: Run control and recovery regressions
+        run: python -m unittest -v tests.test_robot_control tests.test_robot_recovery_coordinator
+      - name: Run P0.5 runtime regressions
+        run: python -m pytest -q tests/test_terminal_paper_runtime.py -k "robot_reconcile or reconcile_robot"
+      - name: Run deterministic Robot PAPER acceptance
+        run: python -m unittest -v tests.test_robot_paper_acceptance
+      - name: Check scoped diff
+        shell: bash
+        run: |
+          python - <<'PY'
+          import subprocess
+          out = subprocess.check_output(["git", "status", "--porcelain"], text=True)
+          changed = {line[3:] for line in out.splitlines() if line.strip()}
+          expected = {
+              "terminal/api/models.py",
+              "terminal/application/robot_control.py",
+              "terminal/application/robot_recovery.py",
+              "terminal/runtime/paper_runtime.py",
+              "terminal/runtime/paper_http_server.py",
+              "tests/test_robot_control.py",
+              "tests/test_robot_recovery_coordinator.py",
+              "tests/test_terminal_paper_runtime.py",
+          }
+          if changed != expected:
+              raise SystemExit(f"unexpected P0.5 implementation scope: {sorted(changed)}")
+          PY
+          git diff --check
+      - name: Commit and push P0.5 implementation
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            terminal/api/models.py \
+            terminal/application/robot_control.py \
+            terminal/application/robot_recovery.py \
+            terminal/runtime/paper_runtime.py \
+            terminal/runtime/paper_http_server.py \
+            tests/test_robot_control.py \
+            tests/test_robot_recovery_coordinator.py \
+            tests/test_terminal_paper_runtime.py
+          git commit -m "fix: add evidence-based Robot reconciliation"
+          git push origin HEAD:robot-v0-1-safety-p0-5
