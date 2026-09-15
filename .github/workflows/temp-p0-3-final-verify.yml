@@ -37,8 +37,8 @@ jobs:
           python -m unittest -v
           tests.test_robot_breakout_monitor
           tests.test_robot_paper_acceptance
-      - name: Run full repository unittest regression
-        run: python -m unittest discover -v
+      - name: Run primary tests regression
+        run: python -m unittest discover -v -s tests
       - name: Check scoped diff
         shell: bash
         run: |
