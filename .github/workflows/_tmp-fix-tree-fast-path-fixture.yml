@@ -19,12 +19,18 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+
           path = Path('.github/workflows/_tmp-tree-verification-fast-path.yml')
           text = path.read_text(encoding='utf-8')
-          old = '''          new_setup = ''' + "'''" + '''        (root / \"README.md\").write_text(\"# Base\\\\n\", encoding=\"utf-8\")\n                  (root / \"worker.py\").write_text(\"VALUE = 1\\\\n\", encoding=\"utf-8\")\n                  subprocess.run(\n                      (\"git\", \"add\", \".gitattributes\", \"task.txt\", \"docs.txt\", \"README.md\", \"worker.py\"),\n          ''' + "'''" + '''
-          new = '''          new_setup = ''' + "'''" + '''        (root / \"README.md\").write_text(\"# Base\\\\n\", encoding=\"utf-8\")\n                  (root / \"worker.py\").write_text(\"VALUE = 1\\\\n\", encoding=\"utf-8\")\n                  (root / \".gitignore\").write_text(\"__pycache__/\\\\n\", encoding=\"utf-8\")\n                  subprocess.run(\n                      (\"git\", \"add\", \".gitattributes\", \".gitignore\", \"task.txt\", \"docs.txt\", \"README.md\", \"worker.py\"),\n          ''' + "'''" + '''
-          assert old in text
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          worker_line = '                  (root / "worker.py").write_text("VALUE = 1\\\\n", encoding="utf-8")\n'
+          ignore_line = '                  (root / ".gitignore").write_text("__pycache__/\\\\n", encoding="utf-8")\n'
+          add_line = '                      ("git", "add", ".gitattributes", "task.txt", "docs.txt", "README.md", "worker.py"),\n'
+          add_with_ignore = '                      ("git", "add", ".gitattributes", ".gitignore", "task.txt", "docs.txt", "README.md", "worker.py"),\n'
+          assert worker_line in text
+          assert add_line in text
+          text = text.replace(worker_line, worker_line + ignore_line, 1)
+          text = text.replace(add_line, add_with_ignore, 1)
+          path.write_text(text, encoding='utf-8')
       - name: Commit fixture correction and remove fixer
         run: |
           rm .github/workflows/_tmp-fix-tree-fast-path-fixture.yml
