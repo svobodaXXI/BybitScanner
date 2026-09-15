@@ -73,18 +73,29 @@ def _validate_github_first(message: str, *, git: Git) -> tuple[bool, str]:
                 raise RuntimeError("verification receipt transaction baseline does not match")
             if metadata["scope"] != receipt["task_paths"]:
                 raise RuntimeError("verification receipt transaction scope does not match")
+            candidate_files = list(transaction["candidate_files"])
             isolated = transaction.get("isolated_verification", {})
-            if (
-                isolated.get("status") != "PASS"
-                or isolated.get("cleanup") != "PASS"
-                or isolated.get("base_head") != receipt["head"]
-                or isolated.get("candidate_tree") != transaction.get("candidate_tree")
-            ):
-                raise RuntimeError("verification receipt lacks current isolated candidate PASS evidence")
+            tree = transaction.get("tree_verification", {})
+            isolated_valid = (
+                isolated.get("status") == "PASS"
+                and isolated.get("cleanup") == "PASS"
+                and isolated.get("base_head") == receipt["head"]
+                and isolated.get("candidate_tree") == transaction.get("candidate_tree")
+            )
+            tree_valid = (
+                tree.get("status") == "PASS"
+                and tree.get("mode") == "markdown-tree"
+                and tree.get("base_head") == receipt["head"]
+                and tree.get("candidate_tree") == transaction.get("candidate_tree")
+                and tree.get("commands") == []
+                and bool(candidate_files)
+                and all(Path(path).suffix.lower() == ".md" for path in candidate_files)
+            )
+            if not isolated_valid and not tree_valid:
+                raise RuntimeError("verification receipt lacks current candidate PASS evidence")
             state = inspect(task_id, git=git)
             if state["status"] != "OK":
                 raise RuntimeError("transaction is stale: " + ", ".join(state["blockers"]))
-            candidate_files = list(transaction["candidate_files"])
             candidates = candidate_root(task_id, git=git)
             if fingerprints(candidates, candidate_files) != transaction["candidate_fingerprints"]:
                 raise RuntimeError("verification receipt is stale: verified candidate changed")
@@ -95,7 +106,11 @@ def _validate_github_first(message: str, *, git: Git) -> tuple[bool, str]:
                 value.get("status") != "PASS" for value in proofs.values()
             ):
                 raise RuntimeError("verification receipt candidate proof state is invalid")
-            checks.extend(("transaction-current", "candidate-current", "isolated-candidate-pass"))
+            checks.extend((
+                "transaction-current",
+                "candidate-current",
+                "isolated-candidate-pass" if isolated_valid else "candidate-tree-pass",
+            ))
 
         checks.extend(("github-first", "no-local-commit", "no-local-push"))
         return True, compact("PASS", scope, checks, (), ())
