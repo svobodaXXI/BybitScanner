@@ -1,141 +1,108 @@
 # BybitScanner Agent Guide
 
-Canonical compact entry point for coding agents. It routes to, but does not replace, project authority.
+Compact mandatory entry point for coding agents. It routes to project authority; it does not duplicate it.
 
-This root `AGENTS.md` applies to the entire repository tree and is Codex's mandatory project-level instruction file.
+## Fast task entry
 
-## Short-intent task entry
+For routine work, start from the intended outcome. Do not require the user to provide recovery boilerplate, file lists, skills, Git commands, safety checklists, or test lists that the repository can infer.
 
-Routine Codex prompts carry only the intended outcome plus genuinely task-specific facts the repository cannot
-infer — no recovery instructions, file lists, skills, safety checklists, or Git boilerplate; their omission never
-waives a requirement (protocol §7.1). Codex owns scope discovery from repository authority; the CLI still requires
-agent-supplied `--path` arguments, so short intent is the user interface, not a claim of automatic authorization.
-Ask only for missing facts that materially block safe progress; preserve explicit constraints and approval gates.
+Recovery is staged and stops as soon as the task is safe to execute:
 
-## Staged recovery
+1. **Local reality** — branch/HEAD/status, requested outcome, relevant dirty scope.
+2. **Task authority** — active mission pointer in `DOCUMENTS/PROJECT_STATE.md` or the applicable Task/Spec/ChangeRequest.
+3. **Scoped authority** — only owning sections required by the affected paths and risk.
+4. **Deep recovery** — `PROJECT_STATE.md`, `PROJECT_TREE.md`, `PROJECT_RULES.md`, `ARCHITECTURE.md`, and `ASSISTANT_PROTOCOL.md` only for unknown scope, authority conflict, severe interruption, or architecture-wide work.
 
-0. **Local reality:** read this file; inspect branch, HEAD, index/working-tree status, the user task, and relevant dirty scope.
-1. **Task authority:** read the active mission pointer in `DOCUMENTS/PROJECT_STATE.md` or the applicable Task/Spec or durable ChangeRequest. Follow only its owning references.
-2. **Scoped authority:** load only relevant sections of contracts, rules, architecture, tree, roadmap, and assistant protocol required by the affected scope.
-3. **Deep recovery:** broaden review to `PROJECT_STATE.md`, `PROJECT_TREE.md`, `PROJECT_RULES.md`, `ARCHITECTURE.md`, and `ASSISTANT_PROTOCOL.md` only when scope is unknown, authorities conflict, severe interruption requires reconstruction, or work is architecture-wide.
+Routine scoped work must not run full Project Sync, generate a ContextDump, or load the deep-recovery set merely to restore context. Reuse fresh authority already loaded.
 
-Routine scoped work must not require the complete deep-recovery set. Do not run Project Sync merely to restore context.
-Stop recovery once scope, authority, constraints, affected state and the next safe action are established.
+## Repository edits
 
-Generate a compact disposable bootstrap when useful with `python -m tools.dev.task_context --path EXACT_PATH`
-(repeat as needed; optional `--hint`); its JSON output is derived, non-authoritative context that never replaces
-repository authority or governance gates.
+For a local/Codex edit, use the protected task facade:
 
-For any repository edit (including docs/skills), run `python -m tools.dev.task start --intent "SHORT INTENT"
---path EXACT_PATH` (repeat `--path`) before editing and `python -m tools.dev.task finish --task TASK_ID` after —
-this facade composes sync preflight, scoped authority routing, transactions, exact-scope verification and the
-user-owned-work guard; it does not replace their owning rules. Read-only work needs no transaction. On a gate
-failure, stop and resolve the cause — never bypass the harness. New paths mid-task require stopping and opening a
-revised protected transaction; material changes still need normal approval.
+```text
+python -m tools.dev.task start --intent "SHORT INTENT" --path EXACT_PATH
+...minimal implementation...
+python -m tools.dev.task finish --task TASK_ID
+```
 
-## Communication bootstrap — hard rule
+Repeat `--path` only for paths genuinely in scope. Read-only work needs no transaction. New paths mid-task require a revised protected transaction; do not widen scope silently.
 
-Before the first project-specific user action in any session, load the scoped communication/user-action authority
-from `DOCUMENTS/ASSISTANT_PROTOCOL.md` — mandatory in addition to Trading Workspace roadmap/ChangeRequest routing.
-Reload changed sections if the protocol changes mid-session. This bootstrap stays compact and scoped; it does
-not require full/deep recovery or duplication of the protocol.
+`task start` owns sync preflight, compact task-context generation, the routine scoped LegacyWarning gate, and protected transaction setup. Do not run a second `codex_workflow lightweight` command after a successful `task start`, and do not repeat successful fetch/status/context checks without new cause. `task finish` owns final exact-scope verification and the PASS receipt; do not duplicate it with a standalone final verifier unless evidence changed or an independent check is required.
 
-## Enforcement bootstrap — hard rule
+For development feedback only:
 
-Repository authority beats assistant memory; a remembered rule never substitutes for loading current
-`AGENTS.md` / `ASSISTANT_PROTOCOL.md` text before project-specific user actions (protocol §8.5). Read committed
-authority through the repository connector directly; do not ask the user to paste files/diffs or run read-only
-commands the connector can already answer, except for genuinely local-only facts — dirty/untracked state, running
-processes, ports, runtime/API state, local configuration (protocol §8.7). Treat violating an explicit rule as an
-enforcement failure to fix at its source, not a reason to duplicate the rule elsewhere; prefer a cheap deterministic
-guard over a repeated reminder (protocol §8.6). For substantial multiline Windows file changes, prefer Codex/local
-automation or an anchor/version-checked patch helper, fail closed on mismatched anchors, over PowerShell here-strings
-or manual fragment editing (protocol §8.8).
+```text
+python -m tools.dev.verify --focused --path EXACT_PATH
+```
 
-## Project skills
+Use additional tests/builds only when the changed behavior or applicable contract requires them.
 
-No procedural skill is needed for ordinary tasks — recovery, safety, evidence, verification, reporting and Git
-remain mandatory through central authority regardless. Load a skill only for its distinct procedure:
+## Project Sync / governance escalation
 
-- **Diagnose an unknown cause:** `.agents/skills/systematic-debugging/SKILL.md` for non-trivial defects; skip proven local fixes.
-- **Review a change:** `.agents/skills/change-review/SKILL.md` when requested or before material/high-risk behavioral acceptance; not every completion or cosmetic edit.
-- **Capture strategy research:** `.agents/skills/strategy-hypothesis-capture/SKILL.md` for trading observations, cases or mechanics hypotheses; not chart/UI bug reports without strategy meaning.
+Full Project Sync is an escalation mechanism, not a routine task step.
 
-Select by meaning/phase; don't load both eagerly — reviewing a diff isn't authority to implement a fix, nor does
-research capture authorize trading changes. DEPRECATED/REFERENCE-ONLY `SKILL.md` stubs are inactive and must not
-auto-load. Handoff/workflow-improvement checklists are references, consulted only under protocol §§2.4/8.
+The standalone `tools.project_sync.governance.codex_workflow lightweight` command remains available for read-only diagnosis or compatibility, but routine edit tasks receive the same scoped LegacyWarning enforcement from `task start` and must not run both gates.
+
+Use the durable governance path only when its distinct value is needed:
+
+- `durable CHANGE_REQUEST` for an approved durable/multi-session change;
+- ContextDump generation only for multi-session, context-heavy, recovery-package, or explicit requests.
+
+`PASS`/`ADVISORY` may continue; `STALE`/`FAIL`/`BLOCKING` stop. Never add recovery, worktrees, branches, full regression, ContextDump, or Project Sync “just in case”.
+
+## Communication bootstrap
+
+Before the first project-specific user action in a session, load the relevant communication/user-action rules from `DOCUMENTS/ASSISTANT_PROTOCOL.md`. Reload only changed/uncertain sections.
+
+If user action is objectively required, follow the protocol’s exact `Сейчас сделай:` and copy-ready rules. Do not ask the user to run read-only repository inspection that an available repository connector can perform.
 
 ## Authority routing
 
-- Current local filesystem: what actually exists now.
-- Local Git state: branch/HEAD/index/working-tree relationship and detailed change history.
-- `DOCUMENTS/PROJECT_STATE.md`: current mission, phase, priority, and next action.
-- `DOCUMENTS/PROJECT_CONTRACTS.md`: normative subsystem and workflow contracts.
-- `DOCUMENTS/PROJECT_RULES.md`: mandatory project and engineering rules.
-- `DOCUMENTS/ARCHITECTURE.md`: architecture and responsibility boundaries.
-- `DOCUMENTS/PROJECT_TREE.md`: important canonical path roles during staged modernization.
-- `DOCUMENTS/ASSISTANT_PROTOCOL.md`: assistant-specific behavior and communication.
-- `DOCUMENTS/CHATGPT_CODEX_GITHUB_WORKFLOW.md`: planned GitHub-driven ChatGPT/Codex collaboration (user shorthand
-  `х`); load when that workflow is enabled, used, reviewed, or resumed.
-- `DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md`: rule for retaining strong external design/metric/workflow
-  references as implementation accelerators only — never authority over BybitScanner contracts, safety, approval
-  gates or licensing; load when external examples materially inform a feature, recording the adapted pattern.
+Use the narrowest owner that answers the current question:
 
-The local checkout may be newer than GitHub, which is for remote sync/collaboration/review/history — remote
-changes become local truth only after explicit sync. Dirty implementation never silently overrides a normative
-contract; record the mismatch via Task/Spec.
+- current local filesystem/Git — actual checkout/runtime state;
+- `DOCUMENTS/PROJECT_STATE.md` — current mission, phase, priority, next action;
+- active Task/Spec/ChangeRequest — authorized scope;
+- `DOCUMENTS/PROJECT_CONTRACTS.md` / `PROJECT_RULES.md` — normative contracts/rules;
+- `DOCUMENTS/ARCHITECTURE.md` / `PROJECT_TREE.md` — architecture and canonical path roles;
+- `DOCUMENTS/ASSISTANT_PROTOCOL.md` — assistant communication/execution behavior;
+- `DOCUMENTS/GITHUB_FIRST_WORKFLOW.md` — GitHub publication behavior;
+- `DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md` — external-reference reuse when external examples materially inform a feature.
 
-Generated ContextDumps, reports, snapshots, caches, backups, chat and memory are non-authoritative; treat
-LEGACY/DEPRECATED artifacts per warnings and never revive/delete them without authority.
+Generated ContextDumps, reports, snapshots, caches, chat history, and memory are derived context, not authority.
 
-## Task and change routing
+## Skills
 
-Use lightweight Task/Spec for small routine work; substantial, risky, architectural or multi-session work needs an
-approved durable ChangeRequest under `DOCUMENTS/CHANGE_REQUESTS/` per `CONTRACT-CHANGE-REQUEST-001` — material
-scope/contract changes require an approved amendment, and applicable BLOCKING LegacyWarnings must not be bypassed.
+No procedural skill is required for ordinary work. Load a skill only for its distinct procedure:
 
-For Trading Workspace, PAPER trading, or terminal work, read `DOCUMENTS/TRADING_WORKSPACE_MASTER_ROADMAP.md`
-with the active ChangeRequest and `DOCUMENTS/ASSISTANT_PROTOCOL.md` — it defines architectural sequencing and
-acceptance gates across sessions. Any handoff/checkpoint records current roadmap stage, last accepted stage,
-blocker and next action by reference, not by duplicating the roadmap into handoff text.
+- unknown/non-trivial defect → `.agents/skills/systematic-debugging/SKILL.md`;
+- requested/material high-risk change review → `.agents/skills/change-review/SKILL.md`;
+- trading strategy observation/hypothesis capture → `.agents/skills/strategy-hypothesis-capture/SKILL.md`.
 
-Use `tools.project_sync.governance.codex_workflow` as the narrow pre-implementation gate: `lightweight --path PATH`
-(or `--symbol`) for lightweight work, `durable CHANGE_REQUEST` for durable work (add `--context PATH` to validate
-an existing dump; generate one only for multi-session/context-heavy/recovery-package/explicit requests).
-`PASS`/`ADVISORY` continue; `STALE`/`FAIL`/`BLOCKING` stop. A missing ContextDump permits direct recovery but never
-bypasses scoped LegacyWarnings; ContextDump stays derived and non-authoritative.
+Do not eagerly load multiple skills. Handoff/workflow-improvement references are consulted only when their specific trigger applies.
 
-## Workflow proportionality
+## Trading / durable scope
 
-For small review fixes within an authorized scope, preserve the same PR, branch and usable worktree by default.
-Apply `ASSISTANT_PROTOCOL.md` §7.3 before adding isolation, recovery or verification layers; an expired PASS
-receipt requires fresh delta evidence, not automatic branch/worktree/consolidation churn. Keep required harness
-gates and user-owned-work protection. GitHub publication continuity is owned by `DOCUMENTS/GITHUB_FIRST_WORKFLOW.md`.
+Small routine changes use the lightweight task path. Substantial, risky, architectural, or multi-session work requires the applicable approved durable ChangeRequest under `DOCUMENTS/CHANGE_REQUESTS/`.
+
+For Trading Workspace, PAPER trading, or terminal behavior, route through the active ChangeRequest and `DOCUMENTS/TRADING_WORKSPACE_MASTER_ROADMAP.md` when those records own the affected behavior. Financial/LIVE/risk decisions never become authorized merely because a task or verification gate passes.
 
 ## Change safety
 
-Before editing, inspect actual targets and `git status --short`. Treat unrelated pre-existing changes and untracked
-files as user-owned. Never overwrite, reformat, stage, clean, restore, reset, delete, move, discard, commit, or push
-user work unless explicitly authorized. Keep changes minimal, scoped, reversible, and contract-compatible (protocol §4, §6).
+Treat unrelated pre-existing dirty/untracked work as user-owned. Never overwrite, stage, restore, reset, clean, move, delete, discard, commit, or push it without explicit authority. Keep changes minimal, scoped, reversible, and contract-compatible.
 
-## Verify and record
+Do not create speculative infrastructure or refactor adjacent code “while here”. At equal safety, prefer fewer files, commands, worktrees, branches, PRs, tests, and user turns.
 
-No synthetic/fake UI tests for behavior verifiable by hand; test only critical logic, material regressions, or
-hard-to-verify behavior (protocol §6.1).
+## Verification and publication
 
-Development feedback: `python -m tools.dev.verify --focused --path EXACT_PATH` (repeat paths; `--check-command` as
-needed). No production build, no PASS receipt, incompatible with `--transaction`.
+Use the minimum evidence that proves the claim. Critical deterministic trading behavior requires focused regression evidence; frontend source changes require the production build before browser/phone acceptance; real UI/touch/live claims require real-environment acceptance.
 
-Finish the protected task once via `python -m tools.dev.task finish --task TASK_ID`; it runs the final exact-scope
-verifier (including the required frontend build), checks the task delta and unrelated work, and records a PASS
-receipt under `.git/bybitscanner/`. Do not duplicate it with a standalone `tools.dev.verify` run without new cause.
-Full evidence requirements: protocol §7.2.
+For GitHub origins, `python -m tools.dev.checkpoint --message "..."` is **user-run validation only**. It validates the current PASS receipt and must not stage, commit, or push. Publication belongs to the GitHub branch/PR flow in `DOCUMENTS/GITHUB_FIRST_WORKFLOW.md`; after merge, local checkouts synchronize from GitHub.
 
-`python -m tools.dev.checkpoint --message "..."` is a user-run Git-write command. Codex must never invoke it
-automatically. It consumes the latest PASS receipt, stages only its exact paths, commits, pushes to `origin`, and
-verifies the remote SHA; any mismatch stops the workflow without touching unrelated work.
+For non-GitHub/local test repositories, legacy checkpoint publication semantics may apply.
 
-Git owns detailed implementation history; update authoritative documentation only when its owned state, contract,
-decision, or plan actually changed. Report checks, failures, unresolved risks, and unrelated dirty work. Follow
-`DOCUMENTS/ASSISTANT_PROTOCOL.md` for role, communication style and checkpoint behavior. Codex Desktop is default;
-don't tell the user to launch it from PowerShell unless asked.
+## Workflow proportionality
+
+One logical change should normally remain one branch/PR and one usable worktree. Continue small review fixes in the same integration surface. Add isolation, a new task/branch/worktree/PR, broad recovery, or full regression only for a concrete dependency, risk, conflict, approval boundary, or demonstrated inability of the current workflow to prove the delta safely.
+
+Git owns detailed implementation history. Update authoritative documentation only when the state/contract/decision it owns actually changes.

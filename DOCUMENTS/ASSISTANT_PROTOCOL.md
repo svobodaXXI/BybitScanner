@@ -2,11 +2,11 @@
 
 Version:
 
-4.39
+4.40
 
 Date:
 
-2026-09-14
+2026-09-15
 
 Document Type:
 
@@ -228,13 +228,13 @@ unrelated work.
 ## 4.1 PC/VPS GIT SYNC PREFLIGHT — HARD GATE
 
 Before starting a new repository task on any development host, including the Windows PC or VPS, apply the checks
-below. For edit tasks, `task start` performs this preflight and additionally requires branch `main`; consume its
+below. For edit tasks, `task start` performs this preflight against the intended branch's remote tracking ref; consume its
 result instead of repeating a successful fetch/comparison. These checks concern the current host only and do not
 prove that another host or its running services are synchronized.
 
 1. fetch current remote state from `origin`;
-2. compare local `HEAD` with `origin/main`;
-3. start new work only when local `HEAD` matches `origin/main`;
+2. compare local `HEAD` with the intended branch's remote tracking ref (`origin/main` on `main`, otherwise `origin/<task-branch>`);
+3. start new work only when local `HEAD` matches that intended remote tracking ref;
 4. if local state is `ahead`, `behind`, or `diverged`, stop before editing and resolve synchronization explicitly;
 5. preserve all dirty and untracked user-owned work while diagnosing synchronization;
 6. never use `reset --hard`, `clean`, force-push, discard, or equivalent destructive actions merely to make states match;
@@ -735,8 +735,8 @@ fix with a proven local cause, and it must not become broad browsing that delays
 
 # 9. CURRENT REVISION RECORD
 
-`4.39` adds workflow proportionality and review-fix continuity (§7.3): preserve usable PR/branch/worktree state,
-certify new delta without artificial fragmentation, and justify additional process by concrete risk and cost.
-Required verification, approval and user-owned-work protections remain binding. Detailed history remains in Git.
+`4.40` removes the stale main-only local sync requirement and aligns task preflight wording with the GitHub-first
+feature-branch workflow and the actual `task start` remote-tracking check. Freshness remains fail-closed: the local
+HEAD must match the intended branch's remote tracking ref before editing. Detailed history remains in Git.
 
 # END_OF_DOCUMENT

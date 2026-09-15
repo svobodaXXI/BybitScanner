@@ -6,7 +6,6 @@ import os
 import threading
 import time
 
-import main as scanner_entrypoint
 import hashlib
 import hmac
 import logging
@@ -262,6 +261,13 @@ SCANNER_PAUSED = "SCANNER_PAUSED"
 
 DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0
 
+
+def _run_scanner_scan_pass() -> None:
+    """Load Scanner/config only when an actual scan pass is due."""
+    from main import run_scan_pass
+
+    run_scan_pass()
+
 # DOCUMENTS/SCANNER_CONTROL_RUNTIME_DECISION.md section 3: exactly these
 # three commands are authoritative; there is no separate "stop" command.
 _SCANNER_VALID_TRANSITIONS = {
@@ -280,9 +286,9 @@ class ScannerControlRuntime:
 
     Structurally mirrors terminal.application.robot_recovery.RobotRecoveryCoordinator
     and terminal.application.robot_breakout_monitor.RobotBreakoutMonitor, but lives
-    directly inside this module rather than under terminal/application/, because it
-    must import main.py's scan-pass entry point and terminal/application/*.py is
-    forbidden from importing scanner/main/config (see
+    directly inside this module rather than under terminal/application/, because the
+    Scanner scan-pass adapter belongs at the runtime composition boundary and
+    terminal/application/*.py is forbidden from importing scanner/main/config (see
     tests/test_terminal_execution_engine.py:test_no_mutation_or_network_api_is_exposed).
 
     Lesson applied from CR-ROBOT-BREAKOUT-MONITOR-001's post-closure fix (see
@@ -691,7 +697,7 @@ class PaperRuntime:
         self._scanner_control = ScannerControlRuntime(
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
-            scan_pass=scanner_entrypoint.run_scan_pass,
+            scan_pass=_run_scanner_scan_pass,
             clock_ms=lambda: int(time.time() * 1000),
         )
         self._scanner_control.start()

@@ -1,0 +1,53 @@
+name: Robot PAPER acceptance
+
+on:
+  pull_request:
+    paths:
+      - "robot_candidate_store.py"
+      - "robot_state_machine.py"
+      - "robot_entry_limit.py"
+      - "robot_partial_fill.py"
+      - "robot_market_confirmation.py"
+      - "robot_protection.py"
+      - "scanner_geometry_cursor.py"
+      - "terminal/application/robot_*.py"
+      - "terminal/runtime/paper_runtime.py"
+      - "terminal/runtime/paper_http_server.py"
+      - "terminal/persistence/**"
+      - "terminal/api/**"
+      - "tests/test_robot_paper_acceptance.py"
+      - ".github/workflows/robot-paper-acceptance-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: robot-paper-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deterministic-paper-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install acceptance import dependencies
+        run: >-
+          python -m pip install
+          requests==2.34.2
+          PySocks==1.7.1
+          websocket-client==1.9.0
+      - name: Compile acceptance surface
+        run: >-
+          python -m py_compile
+          tests/test_robot_paper_acceptance.py
+          terminal/application/robot_breakout_monitor.py
+          terminal/application/robot_admission.py
+          terminal/application/robot_control.py
+      - name: Run deterministic Robot PAPER acceptance
+        run: python -m unittest -v tests.test_robot_paper_acceptance

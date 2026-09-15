@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Sequence
 
+from tools.project_sync.governance.codex_workflow import WorkflowDecision, prepare_lightweight
+
 from .task_context import build_task_context
 from .task_transaction import begin, load_transaction
 from .verify import verify
@@ -28,11 +30,20 @@ def _sync_preflight(git: Git) -> None:
 
     Tasks are intentionally allowed on feature branches. The safety property is not
     "must be main"; it is "start from a reviewable, remotely mirrored baseline".
+    Only the active branch is fetched because task freshness depends on that one
+    tracking ref; unrelated remote refs do not need to be refreshed on every task.
     """
-    require_ok(git.run("fetch", "origin", "--prune"), "origin fetch")
     branch = require_ok(git.run("symbolic-ref", "--quiet", "--short", "HEAD"), "branch discovery")
-    head = require_ok(git.run("rev-parse", "HEAD"), "HEAD discovery")
     remote_ref = f"refs/remotes/origin/{branch}"
+    fetch_refspec = f"refs/heads/{branch}:{remote_ref}"
+    fetch = git.run("fetch", "--no-tags", "origin", fetch_refspec)
+    if fetch.returncode:
+        detail = (fetch.stderr or fetch.stdout).strip()
+        raise RuntimeError(
+            f"current branch has no origin mirror or could not refresh it; publish/sync {branch} before starting a task"
+            + (f": {detail}" if detail else "")
+        )
+    head = require_ok(git.run("rev-parse", "HEAD"), "HEAD discovery")
     remote_result = git.run("rev-parse", "--verify", "--quiet", remote_ref)
     if remote_result.returncode:
         raise RuntimeError(
@@ -47,6 +58,18 @@ def _sync_preflight(git: Git) -> None:
         raise RuntimeError(f"HEAD does not match origin/{branch} ({counts})")
 
 
+def _require_lightweight_governance(root: Path, paths: Sequence[str]) -> WorkflowDecision:
+    """Apply the routine scoped LegacyWarning gate as part of task start."""
+    decision = prepare_lightweight(root, paths=paths)
+    if decision.continuation_allowed:
+        return decision
+    details = list(decision.reasons)
+    if decision.warning_ids:
+        details.append("LegacyWarnings: " + ", ".join(decision.warning_ids))
+    suffix = ": " + "; ".join(details) if details else ""
+    raise RuntimeError(f"lightweight governance gate {decision.status}{suffix}")
+
+
 def start(
     intent: str, paths: Sequence[str], *, git: Git | None = None, task_id: str | None = None
 ) -> tuple[bool, str]:
@@ -57,10 +80,19 @@ def start(
         _sync_preflight(active)
         receipt_path(root, active).unlink(missing_ok=True)
         context = build_task_context(root, paths, hint=intent, git=active)
+        task_context = context.get("task")
+        if not isinstance(task_context, dict):
+            raise RuntimeError("task context is missing normalized task scope")
+        normalized_paths = task_context.get("paths")
+        if not isinstance(normalized_paths, list) or not all(
+            isinstance(path, str) and path for path in normalized_paths
+        ):
+            raise RuntimeError("task context normalized task scope is invalid")
+        governance = _require_lightweight_governance(root, normalized_paths)
         dirty_paths = worktree_change_paths(active)
         dirty_fingerprints = fingerprints(root, dirty_paths)
         baseline_index_tree = index_tree(active)
-        metadata = begin(paths, git=active, task_id=task_id)
+        metadata = begin(normalized_paths, git=active, task_id=task_id)
         directory, _ = load_transaction(metadata["task_id"], git=active)
         manifest = {
             "schema": HARNESS_SCHEMA,
@@ -71,19 +103,26 @@ def start(
             "baseline_change_fingerprints": dirty_fingerprints,
             "baseline_index_tree": baseline_index_tree,
             "context": context,
+            "governance": {
+                "status": governance.status,
+                "recovery": governance.recovery,
+                "warning_ids": list(governance.warning_ids),
+            },
         }
         _manifest_path(directory).write_text(
             json.dumps(manifest, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
         refs = ", ".join(context["authority_refs"])
+        warning_text = ", ".join(governance.warning_ids) if governance.warning_ids else "NONE"
         return True, "\n".join((
             "STATUS PASS", f"TASK {metadata['task_id']}",
             f"BRANCH {metadata['branch']}",
             f"SCOPE {', '.join(metadata['scope'])}", f"AUTHORITY {refs}",
+            f"GOVERNANCE {governance.status} warnings={warning_text}",
             "VERIFICATION AUTO_FROM_SCOPE", "BLOCKERS NONE",
         ))
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         return False, f"STATUS FAIL\nBLOCKERS {exc}"
 
 

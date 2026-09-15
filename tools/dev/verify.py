@@ -21,6 +21,15 @@ from .workflow import (
 )
 
 
+CONTRACT_PREFIXES = (
+    "terminal/api/", "terminal/application/pretrade_guard.py",
+    "terminal/domain/models.py",
+    "terminal/runtime/paper_http_server.py", "terminal/runtime/paper_runtime.py",
+    "terminal/frontend/src/contracts/", "terminal/frontend/src/components/ModePanel",
+    "tools/dev/contract_consistency.py", "tests/test_contract_consistency.py",
+)
+
+
 def _run_check(root: Path, label: str, command: Sequence[str]) -> tuple[str, bool, str]:
     result = subprocess.run(command, cwd=root, text=True, capture_output=True, check=False)
     detail = (result.stderr or result.stdout).strip().replace("\n", " ")
@@ -86,6 +95,39 @@ def _tree_changed_files(git: Git, base: str, tree: str) -> set[str]:
     }
 
 
+def _origin_url(git: Git) -> str:
+    result = git.run("remote", "get-url", "origin")
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _is_github_origin(url: str) -> bool:
+    normalized = url.strip().lower()
+    return (
+        normalized.startswith("https://github.com/")
+        or normalized.startswith("http://github.com/")
+        or normalized.startswith("git@github.com:")
+        or normalized.startswith("ssh://git@github.com/")
+    )
+
+
+def tree_fast_path_eligible(
+    paths: Sequence[str],
+    files: Sequence[str],
+    candidate_files: Sequence[str],
+    additional_commands: Sequence[dict[str, object]],
+    git: Git,
+) -> bool:
+    """Skip worktree materialization only when no check needs candidate files on disk."""
+    return (
+        bool(candidate_files)
+        and not additional_commands
+        and not any(path.endswith(".py") for path in files)
+        and not any(path.startswith(CONTRACT_PREFIXES) for path in paths)
+        and not any(path.startswith("terminal/frontend/src/") for path in paths)
+        and _is_github_origin(_origin_url(git))
+    )
+
+
 def _failed_check_details(checks: Sequence[dict[str, object]]) -> list[str]:
     details: list[str] = []
     for item in checks:
@@ -124,10 +166,15 @@ def verify(
         transaction_index_tree = None
         verification_root = root
         isolated_tree = None
+        transaction_base_head = None
+        candidate_directory = None
+        all_candidate_fingerprints = None
+        tree_only_verification = False
         if transaction_id:
             transaction_index_tree = index_tree(active_git)
             transaction_post_fingerprints = fingerprints(root, files)
             _, metadata = load_transaction(transaction_id, git=active_git)
+            transaction_base_head = metadata["head"]
             if metadata["scope"] != paths:
                 raise RuntimeError("transaction scope does not exactly match verification paths")
             state = inspect(transaction_id, git=active_git)
@@ -136,8 +183,8 @@ def verify(
             proofs = derive_candidate(transaction_id, git=active_git)
             if set(proofs) != set(files) or any(proof.status != "PASS" for proof in proofs.values()):
                 raise RuntimeError("task-delta or inverse proof did not PASS for every transaction file")
-            candidates = candidate_root(transaction_id, git=active_git)
-            all_candidate_fingerprints = fingerprints(candidates, files)
+            candidate_directory = candidate_root(transaction_id, git=active_git)
+            all_candidate_fingerprints = fingerprints(candidate_directory, files)
             if any(value["state"] != "file" for value in all_candidate_fingerprints.values()):
                 raise RuntimeError("transaction candidate is incomplete")
             isolated_tree = candidate_tree(transaction_id, git=active_git)
@@ -167,13 +214,19 @@ def verify(
             }
             checks.append({"name": "task-delta-proof", "status": "PASS", "detail": ""})
             checks.append({"name": "inverse-proof", "status": "PASS", "detail": ""})
-            isolated_path, created_tree = create_isolated_worktree(transaction_id, git=active_git)
-            if created_tree != isolated_tree:
-                raise RuntimeError("candidate tree changed while creating isolated worktree")
-            verification_root = isolated_path
-            if fingerprints(verification_root, files) != all_candidate_fingerprints:
-                raise RuntimeError("isolated candidate overlay does not match derived candidate")
-            checks.append({"name": "isolated-candidate-overlay", "status": "PASS", "detail": ""})
+            tree_only_verification = tree_fast_path_eligible(
+                paths, files, candidate_files, additional_commands, active_git
+            )
+            if tree_only_verification:
+                checks.append({"name": "candidate-tree-scope", "status": "PASS", "detail": ""})
+            else:
+                isolated_path, created_tree = create_isolated_worktree(transaction_id, git=active_git)
+                if created_tree != isolated_tree:
+                    raise RuntimeError("candidate tree changed while creating isolated worktree")
+                verification_root = isolated_path
+                if fingerprints(verification_root, files) != all_candidate_fingerprints:
+                    raise RuntimeError("isolated candidate overlay does not match derived candidate")
+                checks.append({"name": "isolated-candidate-overlay", "status": "PASS", "detail": ""})
         python_files = [str(verification_root / p) for p in files if p.endswith(".py")]
         test_files = [p for p in files if p.startswith("tests/") and p.endswith(".py")]
         if python_files:
@@ -184,14 +237,7 @@ def verify(
             module = test_file[:-3].replace("/", ".")
             name, passed, detail = _run_check(verification_root, label, (sys.executable, "-m", "unittest", module))
             checks.append({"name": name, "status": "PASS" if passed else "FAIL", "detail": detail})
-        contract_prefixes = (
-            "terminal/api/", "terminal/application/pretrade_guard.py",
-            "terminal/domain/models.py",
-            "terminal/runtime/paper_http_server.py", "terminal/runtime/paper_runtime.py",
-            "terminal/frontend/src/contracts/", "terminal/frontend/src/components/ModePanel",
-            "tools/dev/contract_consistency.py", "tests/test_contract_consistency.py",
-        )
-        if any(path.startswith(contract_prefixes) for path in paths):
+        if any(path.startswith(CONTRACT_PREFIXES) for path in paths):
             label, passed, detail = _run_check(
                 verification_root, "trading-contract-consistency",
                 (sys.executable, "-m", "tools.dev.contract_consistency"),
@@ -226,7 +272,7 @@ def verify(
             name, passed, detail = _run_check(command_cwd, label_value, tuple(argv))
             checks.append({"name": name, "status": "PASS" if passed else "FAIL", "detail": detail})
             executed_commands.append({"label": label_value, "cwd": cwd_value, "argv": argv})
-        if transaction_receipt:
+        if transaction_receipt and not tree_only_verification:
             changed_files = _isolated_changed_files(verification_root)
             expected_changes = set(transaction_receipt["candidate_files"])
             if changed_files == expected_changes:
@@ -245,7 +291,13 @@ def verify(
                 "status": "PASS" if changed_files == expected_changes else "FAIL",
                 "detail": scope_detail,
             })
-        diff = Git(verification_root).run("diff", "--check", "--", *paths)
+        if tree_only_verification:
+            diff = active_git.run(
+                "diff", "--check", transaction_base_head or head, isolated_tree or head,
+                "--", *paths,
+            )
+        else:
+            diff = Git(verification_root).run("diff", "--check", "--", *paths)
         checks.append({"name": "diff-check", "status": "PASS" if diff.returncode == 0 else "FAIL", "detail": (diff.stderr or diff.stdout).strip()})
         failed = [str(item["name"]) for item in checks if item["status"] != "PASS"]
         if failed:
@@ -267,23 +319,38 @@ def verify(
                 raise RuntimeError("transaction task-file content changed during verification")
             if index_tree(active_git) != transaction_index_tree:
                 raise RuntimeError("real Git index content changed during transaction verification")
-            if fingerprints(verification_root, files) != all_candidate_fingerprints:
-                raise RuntimeError("isolated candidate changed during verification")
+            if candidate_directory is None or all_candidate_fingerprints is None:
+                raise RuntimeError("transaction candidate state is unavailable")
+            if fingerprints(candidate_directory, files) != all_candidate_fingerprints:
+                raise RuntimeError("transaction candidate changed during verification")
             if candidate_tree(transaction_id or "", git=active_git) != isolated_tree:
-                raise RuntimeError("candidate tree changed during isolated verification")
-            if frontend_dependencies_linked:
-                _unlink_frontend_dependencies(isolated_path or Path())
-                frontend_dependencies_linked = False
-            remove_isolated_worktree(isolated_path or Path(), git=active_git)
-            isolated_path = None
+                raise RuntimeError("candidate tree changed during verification")
             checks.append({"name": "real-index-unchanged", "status": "PASS", "detail": ""})
-            checks.append({"name": "isolated-worktree-cleanup", "status": "PASS", "detail": ""})
             transaction_receipt["candidate_tree"] = isolated_tree
-            transaction_receipt["isolated_verification"] = {
-                "status": "PASS", "base_head": head, "candidate_tree": isolated_tree,
-                "commands": executed_commands, "cleanup": "PASS",
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-            }
+            if tree_only_verification:
+                checks.append({"name": "candidate-tree-current", "status": "PASS", "detail": ""})
+                transaction_receipt["tree_verification"] = {
+                    "status": "PASS",
+                    "mode": "candidate-tree",
+                    "base_head": head,
+                    "candidate_tree": isolated_tree,
+                    "commands": [],
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                }
+            else:
+                if fingerprints(verification_root, files) != all_candidate_fingerprints:
+                    raise RuntimeError("isolated candidate changed during verification")
+                if frontend_dependencies_linked:
+                    _unlink_frontend_dependencies(isolated_path or Path())
+                    frontend_dependencies_linked = False
+                remove_isolated_worktree(isolated_path or Path(), git=active_git)
+                isolated_path = None
+                checks.append({"name": "isolated-worktree-cleanup", "status": "PASS", "detail": ""})
+                transaction_receipt["isolated_verification"] = {
+                    "status": "PASS", "base_head": head, "candidate_tree": isolated_tree,
+                    "commands": executed_commands, "cleanup": "PASS",
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                }
         if focused:
             return True, compact("FOCUSED_PASS", paths, [str(x["name"]) for x in checks], (), ())
         receipt = {

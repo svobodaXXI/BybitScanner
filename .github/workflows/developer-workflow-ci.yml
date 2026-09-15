@@ -1,0 +1,47 @@
+name: Developer workflow checks
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "CLAUDE.md"
+      - "DOCUMENTS/ASSISTANT_PROTOCOL.md"
+      - "DOCUMENTS/GITHUB_FIRST_WORKFLOW.md"
+      - "tools/dev/**"
+      - "tools/project_sync/governance/**"
+      - "tests/test_dev_workflow.py"
+      - "tests/test_github_first_checkpoint.py"
+      - "tests/test_harness_lean_workflow.py"
+      - "tests/test_codex_workflow_governance.py"
+      - "tests/test_context_budget_governance.py"
+      - "tests/test_task_context_routing.py"
+      - ".github/workflows/developer-workflow-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: developer-workflow-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  affected-workflow-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile changed workflow tooling
+        run: python -m py_compile tools/dev/task_context.py tools/dev/checkpoint.py tools/dev/task.py tools/dev/verify.py
+      - name: Run affected workflow tests
+        run: >-
+          python -m unittest -v
+          tests.test_dev_workflow
+          tests.test_github_first_checkpoint
+          tests.test_harness_lean_workflow
+          tests.test_codex_workflow_governance
+          tests.test_context_budget_governance
+          tests.test_task_context_routing
