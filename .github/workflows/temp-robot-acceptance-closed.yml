@@ -1,0 +1,59 @@
+name: TEMP Robot PAPER CLOSED acceptance extension
+
+on:
+  push:
+    branches:
+      - robot-v0-1-paper-acceptance-closed
+    paths:
+      - ".github/workflows/temp-robot-acceptance-closed.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-verify-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: robot-v0-1-paper-acceptance-closed
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply acceptance extension
+        run: python .github/temp_extend_robot_acceptance.py
+      - name: Install acceptance dependencies
+        run: >-
+          python -m pip install
+          requests==2.34.2
+          PySocks==1.7.1
+          websocket-client==1.9.0
+      - name: Compile acceptance surface
+        run: >-
+          python -m py_compile
+          tests/test_robot_paper_acceptance.py
+          terminal/runtime/paper_runtime.py
+          terminal/application/robot_breakout_monitor.py
+      - name: Run deterministic Robot PAPER acceptance
+        run: python -m unittest -v tests.test_robot_paper_acceptance
+      - name: Scope and diff check
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=$(git status --porcelain | awk '{print $2}' | sort)
+          expected='tests/test_robot_paper_acceptance.py'
+          if [[ "$changed" != "$expected" ]]; then
+            printf 'unexpected changed paths:\n%s\n' "$changed"
+            exit 1
+          fi
+          git diff --check
+      - name: Commit acceptance extension
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_robot_paper_acceptance.py
+          git commit -m "test: extend Robot PAPER acceptance through TAKE close"
+          git push origin HEAD:robot-v0-1-paper-acceptance-closed
