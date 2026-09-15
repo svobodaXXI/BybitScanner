@@ -15,6 +15,7 @@ on:
       - "tests/test_codex_workflow_governance.py"
       - "tests/test_context_budget_governance.py"
       - "tests/test_task_context_routing.py"
+      - ".github/workflows/developer-workflow-ci.yml"
   workflow_dispatch:
 
 concurrency:
@@ -27,16 +28,12 @@ permissions:
 jobs:
   affected-workflow-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements.txt
-      - name: Install project dependencies
-        run: python -m pip install -r requirements.txt
       - name: Compile changed workflow tooling
         run: python -m py_compile tools/dev/task_context.py tools/dev/checkpoint.py tools/dev/task.py tools/dev/verify.py
       - name: Run affected workflow tests
