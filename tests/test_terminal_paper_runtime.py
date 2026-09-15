@@ -524,6 +524,46 @@ def test_evaluate_robot_protection_crossing_fails_closed_on_ambiguous_open_trade
             runtime.close()
 
 
+def test_retest_detected_candidate_is_covered_before_entry_limit_submission():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            account = TradingAccountId("paper")
+            runtime.store.create_robot_candidate(
+                candidate_id="candidate-prelimit-coverage", trading_account_id=account,
+                symbol=Symbol("BTCUSDT"), status="APPROVED",
+                signal_snapshot={"symbol": "BTCUSDT", "pattern": "Falling Wedge"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            runtime.store.save_robot_candidate_state(
+                "candidate-prelimit-coverage", status="APPROVED",
+                robot_state={"phase": "RETEST_DETECTED", "execution": {}},
+                expected_revision=0, updated_at_ms=1001,
+            )
+            assert runtime.robot_protection_coverage_symbols() == ("BTCUSDT",)
+        finally:
+            runtime.close()
+
+
+def test_robot_entry_limit_is_covered_before_first_fill_and_released_after_zero_fill_cancel():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _seed_pending_candidate_with_resting_limit(
+                runtime, candidate_id="candidate-entry-coverage",
+                order_id="entry-coverage-limit", symbol="BTCUSDT",
+            )
+            assert runtime.robot_protection_coverage_symbols() == ("BTCUSDT",)
+
+            runtime._robot_cancel_limit(PaperLimitCancelRequest(
+                ClientActionId("entry-coverage-cancel"),
+                "BTCUSDT", "entry-coverage-limit",
+            ))
+            assert runtime.robot_protection_coverage_symbols() == ()
+        finally:
+            runtime.close()
+
+
 def test_robot_protection_coverage_symbols_reflects_open_robot_candidates_only():
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime(Path(temp) / "paper.sqlite3")

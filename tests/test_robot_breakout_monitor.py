@@ -1050,6 +1050,34 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         same_trade = self.store.get_robot_trade("robot-trade-candidate-1")
         self.assertEqual(same_trade, trade)
 
+    def test_event_driven_authoritative_fill_finalizes_without_periodic_tick_or_candle(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # submits the initial LIMIT
+        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
+        feed_calls_before = len(self.feed.calls)
+
+        advanced = self.monitor.process_authoritative_fill(SYMBOL)
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.feed.calls), feed_calls_before)
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertEqual(self.executor.market_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "OPEN")
+        trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.entry_path, "LIMIT")
+        self.assertEqual(trade.actual_wv, Decimal("0.6"))
+        self.assertEqual(trade.entry_quantity, Decimal("0.6"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+
     def test_first_partial_fill_is_final_limit_trade_without_market_top_up(self):
         self._create_candidate()
         self._drive_to_retest_detected()
