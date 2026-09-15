@@ -1,0 +1,131 @@
+name: Temporary scanner import decoupling
+
+on:
+  push:
+    branches:
+      - workflow/decouple-paper-runtime-scanner-import
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: workflow/decouple-paper-runtime-scanner-import
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install minimal runtime import dependencies
+        run: >-
+          python -m pip install
+          requests==2.34.2
+          PySocks==1.7.1
+          websocket-client==1.9.0
+      - name: Apply exact scoped patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          runtime = Path("terminal/runtime/paper_runtime.py")
+          text = runtime.read_text(encoding="utf-8")
+
+          eager_import = "import main as scanner_entrypoint\n"
+          if eager_import in text:
+              if text.count(eager_import) != 1:
+                  raise SystemExit("unexpected scanner_entrypoint import count")
+              text = text.replace(eager_import, "", 1)
+
+              marker = 'DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0\n\n'
+              if text.count(marker) != 1:
+                  raise SystemExit("unexpected scanner interval marker count")
+              lazy_adapter = (
+                  'DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0\n\n\n'
+                  'def _run_scanner_scan_pass() -> None:\n'
+                  '    """Load Scanner/config only when an actual scan pass is due."""\n'
+                  '    from main import run_scan_pass\n\n'
+                  '    run_scan_pass()\n\n'
+              )
+              text = text.replace(marker, lazy_adapter, 1)
+
+              old_doc = (
+                  '    directly inside this module rather than under terminal/application/, because it\n'
+                  '    must import main.py\'s scan-pass entry point and terminal/application/*.py is\n'
+                  '    forbidden from importing scanner/main/config (see\n'
+              )
+              new_doc = (
+                  '    directly inside this module rather than under terminal/application/, because the\n'
+                  '    Scanner scan-pass adapter belongs at the runtime composition boundary and\n'
+                  '    terminal/application/*.py is forbidden from importing scanner/main/config (see\n'
+              )
+              if text.count(old_doc) != 1:
+                  raise SystemExit("unexpected ScannerControlRuntime docstring shape")
+              text = text.replace(old_doc, new_doc, 1)
+
+              binding = '            scan_pass=scanner_entrypoint.run_scan_pass,\n'
+              if text.count(binding) != 1:
+                  raise SystemExit("unexpected scanner scan-pass binding count")
+              text = text.replace(binding, '            scan_pass=_run_scanner_scan_pass,\n', 1)
+              runtime.write_text(text, encoding="utf-8")
+
+          acceptance = Path("tests/test_robot_paper_acceptance.py")
+          test_text = acceptance.read_text(encoding="utf-8")
+          stub = (
+              'import sys\n'
+              'import tempfile\n'
+              'import threading\n'
+              'import time\n'
+              'import types\n'
+          )
+          lean_imports = (
+              'import tempfile\n'
+              'import threading\n'
+              'import time\n'
+          )
+          if stub in test_text:
+              test_text = test_text.replace(stub, lean_imports, 1)
+
+          stub_block = (
+              '# PaperRuntime imports ``main`` only to bind ScannerControlRuntime.run_scan_pass.\n'
+              '# This acceptance never starts Scanner, and a clean CI checkout intentionally\n'
+              '# has no gitignored config.py. Stub only that inert scanner entrypoint so the\n'
+              '# Robot PAPER topology remains importable without machine-local credentials.\n'
+              '_scanner_entrypoint = types.ModuleType("main")\n'
+              '_scanner_entrypoint.run_scan_pass = lambda: None\n'
+              'sys.modules.setdefault("main", _scanner_entrypoint)\n\n'
+          )
+          if stub_block in test_text:
+              test_text = test_text.replace(
+                  stub_block,
+                  '# Importing the PAPER/Robot topology must not require Scanner config.py.\n\n',
+                  1,
+              )
+          acceptance.write_text(test_text, encoding="utf-8")
+      - name: Compile scoped surface
+        run: >-
+          python -m py_compile
+          terminal/runtime/paper_runtime.py
+          tests/test_robot_paper_acceptance.py
+          tests/test_scanner_control_runtime.py
+      - name: Run focused regressions
+        run: >-
+          python -m unittest -v
+          tests.test_scanner_control_runtime
+          tests.test_robot_paper_acceptance
+      - name: Validate patch hygiene
+        run: git diff --check
+      - name: Commit scoped change when needed
+        run: |
+          if git diff --quiet; then
+            echo "No patch needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add terminal/runtime/paper_runtime.py tests/test_robot_paper_acceptance.py
+          git commit -m "refactor: decouple PAPER runtime from Scanner import"
+          git push origin HEAD:workflow/decouple-paper-runtime-scanner-import
