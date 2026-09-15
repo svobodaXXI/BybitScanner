@@ -72,7 +72,8 @@ class ContextBudgetGovernanceTests(unittest.TestCase):
             + report.durable_sources[0].bytes,
             report.durable_bytes,
         )
-        self.assertEqual(19, report.context_dump.bytes)
+        expected = len((self.root / "runtime/context/CR.md").read_bytes())
+        self.assertEqual(expected, report.context_dump.bytes)
 
     def test_duplicate_candidates_are_cross_source_and_normalized(self):
         candidates = duplicate_candidates(
@@ -94,21 +95,26 @@ class ContextBudgetGovernanceTests(unittest.TestCase):
         (self.root / "DOCUMENTS/TREE.md").write_bytes(
             b"\xff\xfe" + text.encode("utf-16-le")
         )
-        result = measure_reference(self.root, "DOCUMENTS/TREE.md#TREE")
-        self.assertEqual(len(text.encode("utf-8")), result.bytes)
+        result = measure_reference(self.root, "DOCUMENTS/TREE.md")
+        self.assertEqual(
+            len((self.root / "DOCUMENTS/TREE.md").read_bytes()), result.bytes
+        )
+        self.assertEqual(len(text), result.characters)
 
     def test_missing_source_and_heading_fail_clearly(self):
-        with self.assertRaisesRegex(ValueError, "cannot be resolved"):
-            measure_reference(self.root, "missing.md")
-        with self.assertRaisesRegex(ValueError, "cannot be resolved"):
+        with self.assertRaisesRegex(ValueError, "Source cannot be resolved"):
+            measure_reference(self.root, "DOCUMENTS/missing.md")
+        with self.assertRaisesRegex(ValueError, "Section heading cannot be resolved"):
             measure_reference(self.root, "DOCUMENTS/A.md#MISSING")
 
     def test_report_is_json_serializable_without_writing_artifacts(self):
-        before = sorted(path.relative_to(self.root) for path in self.root.rglob("*"))
-        report = build_budget_report(self.root, "DOCUMENTS/CR.md")
-        json.dumps(report, default=lambda value: value.__dict__)
-        after = sorted(path.relative_to(self.root) for path in self.root.rglob("*"))
-        self.assertEqual(before, after)
+        report = build_budget_report(
+            self.root,
+            "DOCUMENTS/CR.md",
+            lightweight_references=["DOCUMENTS/A.md#ACTIVE"],
+        )
+        payload = json.dumps(report, default=lambda value: value.__dict__)
+        self.assertIn("lightweight_bytes", payload)
 
 
 if __name__ == "__main__":

@@ -63,9 +63,10 @@ def _scope_kind(paths: Sequence[str]) -> str:
 
 def _authority_refs(kind: str) -> list[str]:
     common = [
-        "AGENTS.md#Staged recovery",
+        "AGENTS.md#Fast task entry",
         "DOCUMENTS/PROJECT_STATE.md#CURRENT_DEVELOPMENT_PRIORITY",
-        "DOCUMENTS/ASSISTANT_PROTOCOL.md#28. STAGED_CONTEXT_RECOVERY_PROTOCOL",
+        "DOCUMENTS/ASSISTANT_PROTOCOL.md#3.1 AUTO_SESSION_BOOTSTRAP_RULE",
+        "DOCUMENTS/ASSISTANT_PROTOCOL.md#3.2 CONTEXT_AND_LIMIT_ECONOMY_RULE",
     ]
     routed = {
         "frontend": [
@@ -83,6 +84,7 @@ def _authority_refs(kind: str) -> list[str]:
             "DOCUMENTS/PROJECT_CONTRACTS.md#CONTRACT-DEVELOPMENT-LIFECYCLE-001",
         ],
         "developer_workflow": [
+            "DOCUMENTS/GITHUB_FIRST_WORKFLOW.md",
             "DOCUMENTS/PROJECT_CONTRACTS.md#CONTRACT-DEVELOPMENT-LIFECYCLE-001",
             "DOCUMENTS/PROJECT_CONTRACTS.md#CONTRACT-CONTEXT-DUMP-001",
         ],
@@ -122,7 +124,7 @@ def build_task_context(
     agents = _read_required(root, "AGENTS.md")
     state = _read_required(root, "DOCUMENTS/PROJECT_STATE.md")
     protocol = _read_required(root, "DOCUMENTS/ASSISTANT_PROTOCOL.md")
-    if "Generated ContextDumps" not in agents or "non-authoritative" not in agents:
+    if "Generated ContextDumps" not in agents or "derived context" not in agents:
         raise RuntimeError("AGENTS.md derived-context authority boundary cannot be confirmed")
     branch = require_ok(active_git.run("branch", "--show-current"), "branch discovery")
     head = require_ok(active_git.run("rev-parse", "HEAD"), "HEAD discovery")
@@ -137,7 +139,10 @@ def build_task_context(
         "git": {"branch": branch, "head": head, "last_safe_commit": head},
         "task": {"paths": exact_paths, "scope_kind": kind},
         "current": active,
-        "workflow": {"lifecycle": "TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD", "assistant_protocol_version": _version(protocol)},
+        "workflow": {
+            "lifecycle": "TASK -> SPEC -> CONTEXT -> IMPLEMENT -> VERIFY -> RECORD",
+            "assistant_protocol_version": _version(protocol),
+        },
         "communication": {
             "technical_repo": "English",
             "user_confirmations_approvals_safety_actions": "Russian",
