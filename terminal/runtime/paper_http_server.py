@@ -1,4 +1,4 @@
-"""Minimal local HTTP runtime for PAPER Trading Workspace development."""
+﻿"""Minimal local HTTP runtime for PAPER Trading Workspace development."""
 
 from __future__ import annotations
 

@@ -1944,6 +1944,27 @@ class PaperRuntime:
                     + ",".join(sorted(unresolved_candidate_ids))
                 )
 
+            # Duplicate-owner ambiguity is a pre-dispatch hard gate. An
+            # already-latched protection obligation is still capable of a net
+            # close, so checking ownership only after resuming obligations
+            # would be too late. Never dispatch any close until every active
+            # symbol proves at most one Robot owner.
+            candidates = self.store.load_robot_candidates(self._paper_account_id)
+            symbols = sorted({
+                item.symbol for item in candidates if item.status in {"APPROVED", "OPEN"}
+            }, key=lambda item: item.value)
+            for symbol in symbols:
+                owners = active_robot_owner_candidate_ids(
+                    self.store, self._paper_account_id, symbol,
+                )
+                if len(owners) > 1:
+                    unresolved_candidate_ids.update(owners)
+            if unresolved_candidate_ids:
+                return fail(
+                    "DUPLICATE_ROBOT_OWNER during reconcile_robot: "
+                    + ",".join(sorted(unresolved_candidate_ids))
+                )
+
             now_ms = int(time.time() * 1000)
             for obligation in self.store.load_unresolved_paper_protection_obligations(
                 self._paper_account_id
@@ -1967,22 +1988,6 @@ class PaperRuntime:
                 return fail(
                     "reconcile_robot has unresolved protection obligation(s): "
                     + ",".join(sorted(unresolved_obligation_ids))
-                )
-
-            candidates = self.store.load_robot_candidates(self._paper_account_id)
-            symbols = sorted({
-                item.symbol for item in candidates if item.status in {"APPROVED", "OPEN"}
-            }, key=lambda item: item.value)
-            for symbol in symbols:
-                owners = active_robot_owner_candidate_ids(
-                    self.store, self._paper_account_id, symbol,
-                )
-                if len(owners) > 1:
-                    unresolved_candidate_ids.update(owners)
-            if unresolved_candidate_ids:
-                return fail(
-                    "DUPLICATE_ROBOT_OWNER during reconcile_robot: "
-                    + ",".join(sorted(unresolved_candidate_ids))
                 )
 
             candidates = self.store.load_robot_candidates(self._paper_account_id)

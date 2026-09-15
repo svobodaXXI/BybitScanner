@@ -1,4 +1,4 @@
-import itertools
+﻿import itertools
 import tempfile
 from dataclasses import replace
 from decimal import Decimal
@@ -502,6 +502,16 @@ def test_robot_reconcile_duplicate_owner_ambiguity_never_blind_closes_net_positi
                 stop_price=Decimal("64000"), take_price=Decimal("64600"),
                 entry_quantity=Decimal("0.004"), entry_position_version=1, created_at_ms=1500,
             )
+            runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-reconcile-owner-a", protection_version=1,
+                winning_leg="STOP", trigger_price=Decimal("64000"),
+                observed_exit_price=Decimal("63990"), observed_quantity=Decimal("0.004"),
+                market_event_id="evt-duplicate-owner", source_received_at_ms=4000,
+                source_generation=0, source_sequence=4000, source_update_id=4000,
+                source_event_at_ms=4000, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("63990"), observed_ask_price=Decimal("63995"),
+                latched_at_ms=4000,
+            )
             _set_admission(
                 runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
             )
@@ -522,6 +532,52 @@ def test_robot_reconcile_duplicate_owner_ambiguity_never_blind_closes_net_positi
             assert len(runtime.store.load_executions()) == executions_before
             assert runtime.store.get_robot_trade("trade-reconcile-owner-a").exit_time_ms is None
             assert runtime.store.get_robot_trade("trade-reconcile-owner-b").exit_time_ms is None
+            obligation = runtime.store.get_paper_protection_obligation_for_trade(
+                "trade-reconcile-owner-a"
+            )
+            assert obligation.status == "TRIGGERED"
+        finally:
+            runtime.close()
+
+
+def test_robot_reconcile_is_independent_of_workspace_live_account_selection():
+    paper_account = TradingAccount(
+        TradingAccountId("paper"), "Paper / Virtual", TradingAccountProvider.PAPER,
+        TradingAccountEnvironment.PAPER, TradingAccountStatus.READY,
+    )
+    live_account = TradingAccount(
+        TradingAccountId("bybit-1"), "Live Mainnet", TradingAccountProvider.BYBIT,
+        TradingAccountEnvironment.MAINNET, TradingAccountStatus.READY,
+    )
+    manager = TradingAccountManager(
+        (paper_account, live_account), active_account_id=paper_account.id,
+    )
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        primary = _instrument()
+        runtime = PaperRuntime(
+            Path(temp) / "paper.sqlite3", book_provider=provider,
+            instrument_snapshot=primary,
+            instrument_provider=lambda symbol: replace(primary, symbol=symbol),
+            account_manager=manager,
+        )
+        runtime._robot_command_dispatcher = lambda operation: operation(runtime)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-reconcile-live-ui", candidate_id="candidate-reconcile-live-ui",
+            )
+            _set_admission(
+                runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            )
+            manager.activate(live_account.id)
+
+            result = runtime.robot_reconcile()
+
+            assert result.success is True
+            assert result.recovery_status == "PAUSED"
+            assert manager.active_account.id == live_account.id
         finally:
             runtime.close()
 
