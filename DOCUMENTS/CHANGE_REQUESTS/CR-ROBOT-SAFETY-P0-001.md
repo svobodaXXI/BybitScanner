@@ -8,7 +8,7 @@
   "title": "Robot v0.1 P0 Safety Architecture: Robot safety authority separation, single owner per net symbol, Option A first-fill finality, and explicit reconcile_robot() exit from RECONCILIATION_REQUIRED",
   "governance_type": "DESIGN_TO_IMPLEMENTATION_CHANGE_REQUEST",
   "status": "APPROVED_NOT_IMPLEMENTED",
-  "revision": "1.0",
+  "revision": "1.1",
   "lifecycle_stage": "CONTEXT",
   "objective": "Freeze and then implement the four P0 Robot v0.1 safety corrections reproduced in live PAPER runtime on 2026-09-14: (1) Robot safety authority must be independent of Workspace active-account selection without weakening operator command legality; (2) at most one active Robot exposure owner per (account, symbol, position_idx=0), with duplicate-owner ambiguity escalating to RECONCILIATION_REQUIRED instead of blind net-position closure; (3) Option A partial-fill finality with no Market top-up and event-driven first-fill protection; (4) an explicit reconcile_robot() command as the single evidence-based exit from RECONCILIATION_REQUIRED, landing PAUSED and never READY. This revision completes TASK/SPEC/CONTEXT documentation only; IMPLEMENT is not authorized.",
   "non_goals": [
@@ -27,8 +27,8 @@
     "P0.1 (documented, not yet authorized): separate Robot safety authority from the Workspace-facing require_paper_mutations() gate at every Robot safety path, without introducing any blanket HTTP-level allow rule",
     "P0.2 (documented, not yet authorized): enforce at most one active Robot exposure owner per (account, symbol, position_idx=0) before entry submission and again immediately before final ownership commit",
     "P0.3 (documented, not yet authorized): Option A subtractive change in RobotBreakoutMonitor's tick path -- first authoritative non-zero fill is final, remainder cancelled, no Market top-up",
-    "P0.4 (documented, not yet authorized): event-driven first-fill hook reusing the existing RobotProtectionCoverageManager feed and serialized owner-thread path",
-    "P0.5 (documented, not yet authorized): reconcile_robot() command, runtime method and localhost route, legal only from (ROBOT_RUNNING, RECONCILIATION_REQUIRED), landing (ROBOT_RUNNING, PAUSED) on complete success",
+    "P0.4 (DEFERRED, NOT CANCELLED; not yet authorized): event-driven first-fill hook reusing the existing RobotProtectionCoverageManager feed and serialized owner-thread path; resume on unacceptable authoritative-fill-to-protection/finalization delay during PAPER acceptance, or before LIVE Robot authorization if the periodic tick is still the primary mechanism",
+    "P0.5 (DEFERRED, NOT CANCELLED; not yet authorized): reconcile_robot() command, runtime method and localhost route, legal only from (ROBOT_RUNNING, RECONCILIATION_REQUIRED), landing (ROBOT_RUNNING, PAUSED) on complete success; resume when supported recovery from RECONCILIATION_REQUIRED is needed, PAPER acceptance/runtime reaches that state again, or before unattended operational completeness",
     "P0.6 (documented, optional/deferrable): Telegram exposure of reconcile_robot() only while durable state is RECONCILIATION_REQUIRED"
   ],
   "prohibited_scope": [
@@ -82,7 +82,7 @@
   "approved_decisions": [
     "OPTION A (owner-frozen): the first authoritative non-zero filled_quantity becomes the final trade size; the remaining entry LIMIT is cancelled; no Market top-up is ever submitted; STOP/TAKE are established immediately for the actual filled exposure; if protection for a uniquely owned exposure cannot be established, the existing fail-closed path applies",
     "Robot safety authority and operator command legality are two separate concepts. Safety authority is independent of Workspace active-account selection, must continue to function under PAUSED and RECONCILIATION_REQUIRED where applicable, and must never be blocked by require_paper_mutations() or a LIVE Workspace selection. Command legality keeps the explicit durable-state matrix for start/pause/resume/stop/close-all/reconcile, unchanged",
-    "No blanket rule of the form 'robot_runtime_state row exists implies Robot mutation allowed' may be introduced; removing Workspace gating must not make an otherwise-illegal Robot control command callable from an illegal state",
+    "No blanket rule of the form 'a robot_runtime_state row exists implies a Robot mutation allowed' may be introduced; removing Workspace gating must not make an otherwise-illegal Robot control command callable from an illegal state",
     "At most one active Robot exposure owner per (account, symbol, position_idx=0) for PAPER one-way positions; the second lifecycle is prevented before entry submission and re-checked before final ownership commit; a blocked candidate stays APPROVED and recoverable and is never invalidated for losing the race",
     "CRITICAL: if a race produces real non-zero exposure for candidate B while candidate A already owns the same net symbol, the symbol must NOT be automatically emergency-full-closed, because the netted position would destroy candidate A's legitimate exposure. Required behavior: stop further risk-increasing mutations, preserve all evidence, escalate to or remain in RECONCILIATION_REQUIRED with a durable reason, and require reconciliation to determine safe disposition",
     "reconcile_robot() is legal only from (ROBOT_RUNNING, RECONCILIATION_REQUIRED); admission stays closed throughout; it reconciles authoritative position/order/protection truth against Robot ownership; finalizes/protects uniquely attributable exposure; emergency-closes only where ownership of the exposure being closed is proven; never triggers a blind net-position close on duplicate-owner ambiguity; closes a stale open robot_trades row only from complete authoritative exit evidence; never fabricates exit price, exit reason, realized PnL, fees or historical execution",
@@ -90,7 +90,7 @@
     "Event-driven first-fill acceptance wording claims no physically zero-time protection interval. Frozen invariant: once authoritative filled_quantity > 0 is observed by the serialized Robot owner-thread path, there is no intentional wait for another candle or periodic Robot tick; in the same processing pass the system begins remainder cancellation and ownership/protection finalization, or enters fail-closed handling. The 60s RobotBreakoutMonitor tick remains a watchdog/backstop, not the primary first-fill safety trigger",
     "0GUSDT-class historical repair does not preselect EMERGENCY_CLOSE or any other exit reason; the reason recorded must be the one proven evidence supports from the existing ROBOT_EXIT_REASONS set. If evidence is insufficient, nothing is synthesized, the row is left unresolved, and RECONCILIATION_REQUIRED is retained",
     "No schema migration in P0. All checks and repairs are expressed over existing robot_candidates/robot_trades/position_projections/paper_limit_orders state and existing valid (mode, recovery_status) pairs and ROBOT_EXIT_REASONS values. A database-level partial uniqueness constraint is explicitly rejected for P0 because it cannot express the pre-entry half of the single-owner invariant and would add migration risk to a live trading schema",
-    "Implementation slice order is dependency-driven: P0.1 authority separation, P0.2 single-owner invariant, P0.3 Option A subtractive tick-path change, P0.4 event-driven first-fill hook, P0.5 explicit reconcile_robot(), P0.6 optional/deferrable Telegram exposure. P0.2 must precede P0.3 because Option A finalizes ownership far more eagerly and would otherwise create second owners faster"
+    "Immediate delivery-critical path is P0.1 authority separation, then P0.2 single-owner invariant, then P0.3 Option A subtractive tick-path change, then short PAPER acceptance. P0.4 event-driven first-fill handling and P0.5 explicit reconcile_robot() remain accepted architecture but are DEFERRED, NOT CANCELLED; this is a delivery-priority decision, not an architectural reversal. P0.2 must precede P0.3 because Option A finalizes ownership far more eagerly and would otherwise create second owners faster"
   ],
   "unresolved_decisions": [
     "Whether authoritative execution evidence sufficient to close the existing production 0GUSDT stale robot_trades row actually exists; to be determined read-only during P0.5 CONTEXT, with 'leave unresolved and remain RECONCILIATION_REQUIRED' as the accepted outcome if it does not",
@@ -146,8 +146,8 @@
     {"id": "RECORD", "status": "PENDING"}
   ],
   "current_phase": "CONTEXT",
-  "current_checkpoint": "P0_0_GOVERNANCE_FROZEN_IMPLEMENT_NOT_AUTHORIZED",
-  "implementation_status": "DOCUMENTED_NOT_IMPLEMENTED",
+  "current_checkpoint": "P0_0_GOVERNANCE_FROZEN_P0_4_P0_5_DEFERRED_NOT_CANCELLED",
+  "implementation_status": "P0_1_TO_P0_3_IMMEDIATE_P0_4_P0_5_DEFERRED_NOT_CANCELLED",
   "next_phase": "IMPLEMENT",
   "next_phase_authorization": "EXPLICIT_USER_AUTHORIZATION_REQUIRED_PER_SLICE_STARTING_WITH_P0_1",
   "related_commits": [
@@ -159,6 +159,7 @@
     "status": "DOCS_ONLY_UNCOMMITTED_AT_TIME_OF_WRITING"
   },
   "amendment_history": [
+    {"revision": "1.1", "reason": "Delivery-priority amendment only: narrow the immediate Robot v0.1 critical path to P0.1 -> P0.2 -> P0.3 -> short PAPER acceptance. P0.4 event-driven first-fill handling and P0.5 explicit reconcile_robot() remain accepted architecture and are DEFERRED, NOT CANCELLED, with explicit resume triggers. No P0.1-P0.3 semantic change and no implementation authorization.", "date": "2026-09-14"},
     {"revision": "1.0", "reason": "P0.0 governance: TASK/SPEC/CONTEXT formalization of the four P0 Robot v0.1 safety corrections reproduced in live PAPER runtime on 2026-09-14, following an architecture review the owner approved with mandatory corrections (Option A partial-fill finality; separation of Robot safety authority from operator command legality with no blanket allow rule; single owner per net symbol with an explicit prohibition on blind net-position closure under duplicate-owner ambiguity; reconcile_robot() as the single evidence-based exit from RECONCILIATION_REQUIRED landing PAUSED; event-driven first-fill wording that claims no physically zero-time interval; evidence-only stale-trade repair with no preselected exit reason; no schema migration in P0). Semantics frozen in AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.6 Sections 7-10. IMPLEMENT not authorized.", "date": "2026-09-14"}
   ],
   "related_work": [
@@ -197,15 +198,32 @@ This CR does not restate the semantics; it points at their owning document and r
 
 ## Implementation slices (dependency ordered)
 
+### Delivery priority (revision 1.1)
+
+**IMMEDIATE CRITICAL PATH:** P0.1 Robot authority separation -> P0.2 single-owner invariant -> P0.3 Option A partial-fill finality -> short PAPER acceptance.
+
+P0.4 and P0.5 are **DEFERRED, NOT CANCELLED**. This deferral is a delivery-priority decision, not a reversal of the accepted architecture. It does not change any P0.1-P0.3 semantics and does not authorize implementation of either deferred slice.
+
 **P0.1 — Robot authority separation.** Introduce a Robot-specific authority check for Robot safety paths and stop routing them through the Workspace-facing `require_paper_mutations()` gate: `robot_synchronize_pending_entries()`, `robot_close_all()`, the two `/api/robot/*` routes currently in `mutation_paths`, and Robot-owned fill matching which today returns zero whenever the Workspace active account is not PAPER. Operator command legality is untouched. No blanket allow rule is introduced. Unblocks every later slice, since none of them can run while a LIVE Workspace selection can veto Robot safety work.
 
 **P0.2 — Single-owner invariant.** Add an ownership probe and fail-closed checks before first entry-LIMIT submission and immediately before `create_robot_trade()`, plus an advisory rejection at candidate admission. Must precede P0.3: Option A commits ownership far more eagerly, so shipping it first would manufacture second owners faster.
 
 **P0.3 — Option A in the tick path.** Subtractive change: make the existing "cancel remainder, finalize for the actual filled fraction" branch unconditional on admission state, and delete the Market-completion block. Net deletion; no new policy is written.
 
-**P0.4 — Event-driven first fill.** Extend the existing `robot_protection_coverage_symbols()` set with pre-entry symbols that have a live Robot entry LIMIT, and evaluate first fill in the same serialized owner-thread callback that already performs protection-crossing evaluation. Reuses the existing independent per-symbol feed; adds no thread, no price source and no subsystem.
+**P0.4 — DEFERRED, NOT CANCELLED: event-driven first-fill handling.** The accepted architecture removes reliance on the periodic 60s Robot monitor as the primary first-fill safety trigger. Protection/finalization should eventually begin from the authoritative fill-processing path in the same serialized owner-thread pass; the periodic tick remains a watchdog/backstop. The planned mechanism remains to extend `robot_protection_coverage_symbols()` with pre-entry symbols that have a live Robot entry LIMIT and reuse the existing independent per-symbol feed and serialized owner-thread processing, without adding a thread, price source or subsystem. Do not implement P0.4 now.
 
-**P0.5 — `reconcile_robot()`.** Command, runtime method and localhost route, reusing `RobotRecoveryCoordinator`, the pure restart-recovery policy, one `robot_synchronize_pending_entries()` pass under corrected Option A semantics, and the existing evidence-based trade-closure path. Last, because it must reconcile against corrected rules.
+Resume P0.4 when either:
+
+- short PAPER acceptance shows an unacceptable delay between authoritative fill and protection/finalization; or
+- before LIVE Robot authorization, if the periodic-tick fallback is still the primary mechanism.
+
+**P0.5 — DEFERRED, NOT CANCELLED: explicit `reconcile_robot()`.** The accepted architecture provides the legal exit from `RECONCILIATION_REQUIRED`: reconciliation is evidence-based; complete success lands `PAUSED`, never `READY`; and it fabricates no trade economics or history. The planned command, runtime method and localhost route still reuse `RobotRecoveryCoordinator`, the pure restart-recovery policy, one `robot_synchronize_pending_entries()` pass under corrected Option A semantics, and the existing evidence-based trade-closure path. Do not implement P0.5 now.
+
+Resume P0.5 when any of the following becomes true:
+
+- supported recovery from `RECONCILIATION_REQUIRED` is needed;
+- short PAPER acceptance or runtime reaches `RECONCILIATION_REQUIRED` again; or
+- before Robot is considered operationally complete for unattended use.
 
 **P0.6 — Telegram exposure (optional, deferrable).** Surface `reconcile_robot()` only while durable state is `RECONCILIATION_REQUIRED`. Not required for safety.
 
