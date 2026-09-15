@@ -6,11 +6,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from tools.dev.task import _sync_preflight
+from tools.dev.task import _require_lightweight_governance, _sync_preflight
 from tools.dev.task_transaction import begin
 from tools.dev.verify import verify
 from tools.dev.workflow import Git
+from tools.project_sync.governance.codex_workflow import WorkflowDecision
 
 
 class HarnessLeanWorkflowTests(unittest.TestCase):
@@ -48,6 +50,26 @@ class HarnessLeanWorkflowTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "no origin mirror"):
             _sync_preflight(Git(root))
+
+    def test_integrated_lightweight_governance_allows_pass(self):
+        decision = WorkflowDecision("LIGHTWEIGHT", "PASS", "DIRECT_SCOPED_RECOVERY")
+        with patch("tools.dev.task.prepare_lightweight", return_value=decision) as prepare:
+            result = _require_lightweight_governance(Path("."), ["task.txt"])
+
+        self.assertEqual(decision, result)
+        prepare.assert_called_once_with(Path("."), paths=["task.txt"])
+
+    def test_integrated_lightweight_governance_blocks_warning(self):
+        decision = WorkflowDecision(
+            "LIGHTWEIGHT",
+            "BLOCKING",
+            "DIRECT_SCOPED_RECOVERY",
+            ("Applicable BLOCKING LegacyWarning",),
+            ("LW-TEST",),
+        )
+        with patch("tools.dev.task.prepare_lightweight", return_value=decision):
+            with self.assertRaisesRegex(RuntimeError, "BLOCKING.*LW-TEST"):
+                _require_lightweight_governance(Path("."), ["task.txt"])
 
     def test_crlf_only_declared_scope_is_not_a_candidate_change(self):
         temporary, root, _ = self.make_repo()
