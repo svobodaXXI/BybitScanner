@@ -1,0 +1,133 @@
+name: TEMP P0.2 implementation
+
+on:
+  push:
+    branches:
+      - robot-v0-1-safety-p0-2
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event.head_commit.message == 'chore: stage P0.2 implementation patcher'
+        with:
+          ref: robot-v0-1-safety-p0-2
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        if: github.event.head_commit.message == 'chore: stage P0.2 implementation patcher'
+        with:
+          python-version: '3.12'
+      - name: Apply scoped P0.2 patch
+        if: github.event.head_commit.message == 'chore: stage P0.2 implementation patcher'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one replacement target, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          admission = 'terminal/application/robot_admission.py'
+          replace_once(
+              admission,
+              '''class RobotAdmissionRejected(PersistenceError):\n    """Raised when a candidate cannot cross the durable Robot admission gate."""\n\n\ndef admit_robot_candidate(\n''',
+              '''class RobotAdmissionRejected(PersistenceError):\n    """Raised when a candidate cannot cross the durable Robot admission gate."""\n\n\ndef active_robot_owner_candidate_ids(\n    store: SQLiteStore,\n    trading_account_id: TradingAccountId,\n    symbol: Symbol,\n    *,\n    excluding_candidate_id: str | None = None,\n) -> tuple[str, ...]:\n    """Return durable candidate ids that already own exposure on ``symbol``.\n\n    Robot v0.1 PAPER uses one-way ``position_idx=0`` net positions. Ownership\n    therefore belongs to an OPEN lifecycle, or to an APPROVED lifecycle whose\n    own resting entry LIMIT has an authoritative non-zero fill. Unfilled\n    APPROVED candidates are not owners and may remain concurrently recoverable.\n    """\n    owners: list[str] = []\n    for record in store.load_robot_candidates(trading_account_id):\n        if record.symbol != symbol or record.candidate_id == excluding_candidate_id:\n            continue\n        if record.status == "OPEN":\n            owners.append(record.candidate_id)\n            continue\n        if record.status != "APPROVED" or not isinstance(record.robot_state, Mapping):\n            continue\n        execution = record.robot_state.get("execution")\n        if not isinstance(execution, Mapping):\n            continue\n        order_id = execution.get("limit_order_id")\n        if not isinstance(order_id, str) or not order_id.strip():\n            continue\n        order = store.get_paper_limit(order_id, trading_account_id)\n        if order is not None and order.filled_quantity > 0:\n            owners.append(record.candidate_id)\n    return tuple(sorted(set(owners)))\n\n\ndef admit_robot_candidate(\n''',
+          )
+          replace_once(
+              admission,
+              '''        if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":\n            raise RobotAdmissionRejected("Robot admission is not ready")\n\n        record, created = store.create_robot_candidate(\n''',
+              '''        if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":\n            raise RobotAdmissionRejected("Robot admission is not ready")\n\n        owners = active_robot_owner_candidate_ids(\n            store, PAPER_ACCOUNT_ID, symbol, excluding_candidate_id=candidate_id,\n        )\n        if owners:\n            raise RobotAdmissionRejected(\n                "Robot symbol already has an active exposure owner: " + ",".join(owners)\n            )\n\n        record, created = store.create_robot_candidate(\n''',
+          )
+
+          monitor = 'terminal/application/robot_breakout_monitor.py'
+          replace_once(
+              monitor,
+              '''from scanner_geometry_cursor import ScannerGeometryCursorError, project_latest_geometry_index\nfrom terminal.api.models import ClientActionId, CommandResultStatus, PaperLimitCancelRequest\n''',
+              '''from scanner_geometry_cursor import ScannerGeometryCursorError, project_latest_geometry_index\nfrom terminal.api.models import ClientActionId, CommandResultStatus, PaperLimitCancelRequest\nfrom terminal.application.robot_admission import active_robot_owner_candidate_ids\n''',
+          )
+          replace_once(
+              monitor,
+              '''                if terminal_stop:\n                    self._invalidate_pre_entry_candidate(\n                        record, reason="ROBOT_STOPPED before entry order submission",\n                    )\n                    return True\n                return False\n\n            result = self._submit_initial_retest_limit(record, record.robot_state)\n''',
+              '''                if terminal_stop:\n                    self._invalidate_pre_entry_candidate(\n                        record, reason="ROBOT_STOPPED before entry order submission",\n                    )\n                    return True\n                return False\n\n            # P0.2 advisory enforcement at the last pre-submission boundary:\n            # another pending-partial or OPEN lifecycle already owns this\n            # net symbol, so this candidate remains APPROVED/recoverable and\n            # submits no new entry risk.\n            if self._active_other_owner_candidate_ids(record):\n                return False\n\n            result = self._submit_initial_retest_limit(record, record.robot_state)\n''',
+          )
+          replace_once(
+              monitor,
+              '''        entry_quantity = entry_projection.quantity.value\n        entry_position_version = entry_projection.version\n\n        try:\n            stop_result, take_result = robot_protection.submit_initial_protection(\n''',
+              '''        entry_quantity = entry_projection.quantity.value\n        entry_position_version = entry_projection.version\n\n        # A fill now exists. If another lifecycle already owns this net\n        # symbol, ownership is ambiguous and the narrow Section 10 exception\n        # applies: do not submit conflicting protection and never blind-close\n        # the net position. Preserve evidence and require reconciliation.\n        duplicate_owners = self._active_other_owner_candidate_ids(record)\n        if duplicate_owners:\n            self._escalate_duplicate_ownership(record, duplicate_owners)\n            return\n\n        try:\n            stop_result, take_result = robot_protection.submit_initial_protection(\n''',
+          )
+          replace_once(
+              monitor,
+              '''        except Exception as error:\n            self._fail_closed_unprotected_fill(record, error)\n            return\n\n        now_ms = self._now_ms()\n        self._store().create_robot_trade(\n''',
+              '''        except Exception as error:\n            self._fail_closed_unprotected_fill(record, error)\n            return\n\n        # Re-check immediately before the final ownership commit. This closes\n        # the race between the pre-protection probe above and create_robot_trade().\n        duplicate_owners = self._active_other_owner_candidate_ids(record)\n        if duplicate_owners:\n            self._escalate_duplicate_ownership(record, duplicate_owners)\n            return\n\n        now_ms = self._now_ms()\n        self._store().create_robot_trade(\n''',
+          )
+          replace_once(
+              monitor,
+              '''    def _average_entry(self, symbol: Symbol) -> Decimal | None:\n''',
+              '''    def _active_other_owner_candidate_ids(\n        self, record: RobotCandidateRecord,\n    ) -> tuple[str, ...]:\n        return active_robot_owner_candidate_ids(\n            self._store(), self._account_id, record.symbol,\n            excluding_candidate_id=record.candidate_id,\n        )\n\n    def _escalate_duplicate_ownership(\n        self, record: RobotCandidateRecord, owner_candidate_ids: tuple[str, ...],\n    ) -> None:\n        reason = (\n            "DUPLICATE_ROBOT_OWNER "\n            f"symbol={record.symbol.value} candidate_id={record.candidate_id} "\n            f"owner_candidate_ids={','.join(owner_candidate_ids)}"\n        )\n        # Optimistic retry only around the existing durable runtime row. No\n        # second state machine is introduced; the terminal target is the\n        # already-valid (ROBOT_RUNNING, RECONCILIATION_REQUIRED) pair.\n        for _attempt in range(2):\n            runtime = self._store().get_robot_runtime_state(self._account_id)\n            if runtime is None:\n                raise RobotBreakoutMonitorError(\n                    "Robot runtime state is unavailable during duplicate ownership escalation"\n                )\n            if (\n                runtime.mode == "ROBOT_RUNNING"\n                and runtime.recovery_status == "RECONCILIATION_REQUIRED"\n                and runtime.reason == reason\n            ):\n                return\n            try:\n                self._store().update_robot_runtime_state(\n                    self._account_id,\n                    mode="ROBOT_RUNNING",\n                    recovery_status="RECONCILIATION_REQUIRED",\n                    reason=reason,\n                    expected_version=runtime.version,\n                    updated_at_ms=self._now_ms(),\n                )\n                return\n            except ConcurrentUpdate:\n                continue\n        raise RobotBreakoutMonitorError(\n            "Robot runtime state changed during duplicate ownership escalation"\n        )\n\n    def _average_entry(self, symbol: Symbol) -> Decimal | None:\n''',
+          )
+          replace_once(
+              monitor,
+              '''        request = robot_protection.emergency_close_request(record.candidate_id, record.symbol.value)\n        execution = dict(record.robot_state.get("execution") or {})\n        execution["protection_failure"] = str(error)\n        execution["emergency_close_attempted_at_ms"] = self._now_ms()\n''',
+              '''        duplicate_owners = self._active_other_owner_candidate_ids(record)\n        if duplicate_owners:\n            # Section 10 narrow exception: if this candidate's exposure is\n            # mixed into a net position already owned by another lifecycle,\n            # a full-close would destroy that legitimate owner. Record the\n            # failure evidence, escalate, and deliberately do not close.\n            execution = dict(record.robot_state.get("execution") or {})\n            execution["protection_failure"] = str(error)\n            execution["duplicate_owner_candidate_ids"] = list(duplicate_owners)\n            execution["duplicate_ownership_detected_at_ms"] = self._now_ms()\n            self._persist_execution(record, execution)\n            self._escalate_duplicate_ownership(record, duplicate_owners)\n            return\n\n        request = robot_protection.emergency_close_request(record.candidate_id, record.symbol.value)\n        execution = dict(record.robot_state.get("execution") or {})\n        execution["protection_failure"] = str(error)\n        execution["emergency_close_attempted_at_ms"] = self._now_ms()\n''',
+          )
+
+          admission_test = 'tests/test_robot_admission.py'
+          replace_once(
+              admission_test,
+              '''import tempfile\nimport unittest\nfrom pathlib import Path\n''',
+              '''import tempfile\nimport unittest\nfrom decimal import Decimal\nfrom pathlib import Path\n''',
+          )
+          replace_once(
+              admission_test,
+              '''from terminal.domain.models import TradingAccountId\n''',
+              '''from terminal.domain.models import Symbol, TradingAccountId\n''',
+          )
+          replace_once(
+              admission_test,
+              '''\n\nif __name__ == "__main__":\n    unittest.main()\n''',
+              '''\n    def test_active_owner_on_symbol_advisory_rejects_new_candidate(self):\n        with tempfile.TemporaryDirectory() as tmp:\n            root = Path(tmp)\n            candidate_dir = root / "candidates"\n            db_path = root / "paper.sqlite3"\n            self._make_candidate(candidate_dir, "owner")\n            self._make_candidate(candidate_dir, "candidate-2")\n            self._ready_database(db_path)\n\n            store = SQLiteStore.open(db_path)\n            try:\n                owner_snapshot = load_candidate("owner", store_dir=candidate_dir)["signal_snapshot"]\n                store.create_robot_candidate(\n                    candidate_id="owner",\n                    trading_account_id=TradingAccountId("paper"),\n                    symbol=Symbol("ONGUSDT"),\n                    status="APPROVED",\n                    signal_snapshot=owner_snapshot,\n                    approved_at_ms=1500,\n                    updated_at_ms=1500,\n                )\n                store.create_robot_trade(\n                    trade_id="robot-trade-owner",\n                    trading_account_id=TradingAccountId("paper"),\n                    candidate_id="owner",\n                    symbol=Symbol("ONGUSDT"),\n                    direction="LONG",\n                    pattern="Falling Wedge",\n                    source_timeframe="1",\n                    signal_time_ms=1500,\n                    entry_time_ms=1600,\n                    entry_path="LIMIT",\n                    actual_wv=Decimal("1"),\n                    average_entry=Decimal("1"),\n                    stop_price=Decimal("0.9"),\n                    take_price=Decimal("1.2"),\n                    entry_quantity=Decimal("1"),\n                    entry_position_version=1,\n                    created_at_ms=1600,\n                )\n            finally:\n                store.close()\n\n            with self.assertRaisesRegex(\n                RobotAdmissionRejected, "active exposure owner: owner",\n            ):\n                admit_robot_candidate(\n                    "candidate-2",\n                    database_path=db_path,\n                    store_dir=candidate_dir,\n                    clock_ms=lambda: 2000,\n                )\n\n            self.assertEqual(\n                load_candidate("candidate-2", store_dir=candidate_dir)["status"],\n                "AVAILABLE",\n            )\n            store = SQLiteStore.open(db_path)\n            try:\n                self.assertIsNone(store.get_robot_candidate("candidate-2"))\n            finally:\n                store.close()\n\n\nif __name__ == "__main__":\n    unittest.main()\n''',
+          )
+
+          monitor_test = 'tests/test_robot_breakout_monitor.py'
+          replace_once(
+              monitor_test,
+              '''    def test_batusdt_like_wrong_side_structural_extreme_falls_back_and_protects(self):\n''',
+              '''    def test_existing_open_owner_blocks_first_limit_without_invalidating_candidate(self):\n        self._create_candidate(candidate_id="owner")\n        self._drive_to_retest_detected("owner")\n        self.monitor.tick()\n        owner_order_id = self.store.get_robot_candidate("owner").robot_state["execution"]["limit_order_id"]\n        self.executor.fill_resting_limit(\n            owner_order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),\n        )\n        self.monitor.tick()\n        self.assertEqual(self.store.get_robot_candidate("owner").status, "OPEN")\n\n        self._create_candidate(candidate_id="candidate-2")\n        self._drive_to_retest_detected("candidate-2")\n        prior_limit_count = len(self.executor.limit_calls)\n\n        advanced = self.monitor.tick()\n\n        self.assertEqual(advanced, ())\n        self.assertEqual(len(self.executor.limit_calls), prior_limit_count)\n        blocked = self.store.get_robot_candidate("candidate-2")\n        self.assertEqual(blocked.status, "APPROVED")\n        self.assertNotIn("limit_order_id", blocked.robot_state.get("execution") or {})\n\n    def test_late_second_fill_escalates_duplicate_owner_without_net_close(self):\n        self._create_candidate(candidate_id="candidate-a")\n        self._drive_to_retest_detected("candidate-a")\n        self.monitor.tick()\n        order_a = self.store.get_robot_candidate("candidate-a").robot_state["execution"]["limit_order_id"]\n\n        self._create_candidate(candidate_id="candidate-b")\n        self._drive_to_retest_detected("candidate-b")\n        self.monitor.tick()\n        order_b = self.store.get_robot_candidate("candidate-b").robot_state["execution"]["limit_order_id"]\n\n        self.executor.fill_resting_limit(order_a, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))\n        self.monitor.tick()\n        self.assertEqual(self.store.get_robot_candidate("candidate-a").status, "OPEN")\n        protection_count = len(self.executor.protection_calls)\n\n        self.executor.fill_resting_limit(order_b, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("82"))\n        advanced = self.monitor.tick()\n\n        self.assertEqual(advanced, ("candidate-b",))\n        self.assertEqual(self.store.get_robot_candidate("candidate-b").status, "APPROVED")\n        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-b"))\n        self.assertEqual(len(self.executor.protection_calls), protection_count)\n        self.assertNotIn("full_close", [name for name, _ in self.executor.protection_calls])\n        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)\n        self.assertEqual((runtime.mode, runtime.recovery_status), ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"))\n        self.assertIn("DUPLICATE_ROBOT_OWNER", runtime.reason)\n        self.assertIn("candidate-a", runtime.reason)\n        projection = self.store.get_position_projection(\n            PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)\n        )\n        self.assertEqual(projection.quantity.value, Decimal("2"))\n\n    def test_duplicate_owner_race_during_protection_failure_never_blind_closes(self):\n        self._create_candidate()\n        self._drive_to_retest_detected()\n        self.monitor.tick()\n        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]\n        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))\n        self.executor.fail_create_stop = True\n\n        with patch.object(\n            RobotBreakoutMonitor, "_active_other_owner_candidate_ids",\n            side_effect=[(), ("candidate-owner",)],\n        ):\n            advanced = self.monitor.tick()\n\n        self.assertEqual(advanced, ("candidate-1",))\n        self.assertEqual(self.store.get_robot_candidate("candidate-1").status, "APPROVED")\n        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))\n        self.assertNotIn("full_close", [name for name, _ in self.executor.protection_calls])\n        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)\n        self.assertEqual((runtime.mode, runtime.recovery_status), ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"))\n        self.assertIn("candidate-owner", runtime.reason)\n\n    def test_batusdt_like_wrong_side_structural_extreme_falls_back_and_protects(self):\n''',
+          )
+          PY
+      - name: Install focused dependencies
+        if: github.event.head_commit.message == 'chore: stage P0.2 implementation patcher'
+        run: python -m pip install requests==2.34.2 PySocks==1.7.1 websocket-client==1.9.0
+      - name: Compile scoped surface
+        if: github.event.head_commit.message == 'chore: stage P0.2 implementation patcher'
+        run: python -m py_compile terminal/application/robot_admission.py terminal/application/robot_breakout_monitor.py tests/test_robot_admission.py tests/test_robot_breakout_monitor.py
+      - name: Run P0.2 focused tests
+        if: github.event.head_commit.message == 'chore: stage P0.2 implementation patcher'
+        run: python -m unittest -v tests.test_robot_admission tests.test_robot_breakout_monitor
+      - name: Check exact scope and whitespace
+        if: github.event.head_commit.message == 'chore: stage P0.2 implementation patcher'
+        shell: bash
+        run: |
+          git diff --check
+          changed="$(git diff --name-only | sort)"
+          expected="$(printf '%s\n' terminal/application/robot_admission.py terminal/application/robot_breakout_monitor.py tests/test_robot_admission.py tests/test_robot_breakout_monitor.py | sort)"
+          test "$changed" = "$expected"
+      - name: Commit and push P0.2
+        if: github.event.head_commit.message == 'chore: stage P0.2 implementation patcher'
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add terminal/application/robot_admission.py terminal/application/robot_breakout_monitor.py tests/test_robot_admission.py tests/test_robot_breakout_monitor.py
+          git commit -m 'fix: enforce single Robot exposure owner per symbol'
+          git push origin HEAD:robot-v0-1-safety-p0-2
