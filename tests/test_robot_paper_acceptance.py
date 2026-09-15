@@ -37,6 +37,26 @@ CANDIDATE_ID = "deterministic-paper-acceptance"
 T0_MS = 1_800_000
 TICK_INTERVAL_S = 0.02
 POLL_TIMEOUT_S = 4.0
+_event_sequence = 0
+
+
+def _event_book(symbol: str, *, bid: Decimal, ask: Decimal) -> NormalizedOrderBook:
+    global _event_sequence
+    _event_sequence += 1
+    now_ms = int(time.time() * 1000)
+    return NormalizedOrderBook(
+        symbol=Symbol(symbol),
+        bids=(PriceLevel(Price(bid), Quantity(Decimal("1000"))),),
+        asks=(PriceLevel(Price(ask), Quantity(Decimal("1000"))),),
+        health=BookHealth.READY,
+        received_at_ms=now_ms,
+        available_depth=1,
+        source_generation=0,
+        source_sequence=_event_sequence,
+        source_update_id=_event_sequence,
+        source_event_at_ms=now_ms,
+        source_matching_engine_cts_ms=None,
+    )
 
 
 def _instrument(symbol: str = SYMBOL) -> InstrumentSnapshot:
@@ -264,6 +284,37 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                     )
                 )
                 self.assertEqual(final_candidate.status, "OPEN")
+
+                # Complete the real Robot PAPER lifecycle: cross TAKE through
+                # the same ordered market-event path used by production coverage.
+                take_price = protection.take_profit
+                self.assertIsNotNone(take_price)
+                tick = instrument.tick_size
+                exit_bid = take_price + tick
+                exit_ask = exit_bid + tick
+                book.set(SYMBOL, bid=exit_bid, ask=exit_ask)
+                crossing = _event_book(SYMBOL, bid=exit_bid, ask=exit_ask)
+                runtime.call(
+                    lambda owner: owner.process_robot_market_event(
+                        SYMBOL, crossing, event_id="acceptance-take",
+                        received_at_ms=crossing.received_at_ms,
+                    )
+                )
+
+                def closed_trade():
+                    current = runtime.call(
+                        lambda owner: owner.store.get_robot_trade(trade.trade_id)
+                    )
+                    return current if current is not None and current.exit_time_ms is not None else None
+
+                closed = _wait_until(closed_trade)
+                self.assertEqual(closed.exit_reason, "TAKE")
+                self.assertGreater(closed.realized_pnl_usdt, 0)
+                final_position = runtime.call(
+                    lambda owner: owner.store.get_position_projection(position_key)
+                )
+                self.assertEqual(final_position.side.value, "Flat")
+                self.assertEqual(final_position.quantity.value, Decimal("0"))
             finally:
                 runtime.close()
 
