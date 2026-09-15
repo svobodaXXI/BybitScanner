@@ -1114,6 +1114,8 @@ class PaperRuntime:
         symbol: Symbol,
         book: NormalizedOrderBook,
         match_event_id: str,
+        *,
+        allowed_order_ids: set[str] | None = None,
     ) -> int:
         """Apply one immutable book event to resting PAPER LIMITs only.
 
@@ -1123,6 +1125,8 @@ class PaperRuntime:
         """
         applied = 0
         for order in self.store.load_active_paper_limits(self._account_id, symbol):
+            if allowed_order_ids is not None and order.order_id.value not in allowed_order_ids:
+                continue
             result = self._limit_executor.execute(
                 order=order, book=book, match_event_id=match_event_id,
             )
@@ -1144,7 +1148,21 @@ class PaperRuntime:
         normalized = Symbol(symbol.strip().upper())
         if book.symbol != normalized:
             raise ValueError("Robot market event symbol does not match book")
-        self._match_limits_only(normalized, book, event_id)
+        entry_order_ids: set[str] = set()
+        for candidate in self.store.load_robot_candidates(self._paper_account_id):
+            if (
+                candidate.status != "APPROVED"
+                or candidate.symbol != normalized
+                or candidate.robot_state is None
+                or candidate.robot_state.get("phase") != "RETEST_DETECTED"
+            ):
+                continue
+            order_id = (candidate.robot_state.get("execution") or {}).get("limit_order_id")
+            if order_id:
+                entry_order_ids.add(order_id)
+        self._match_limits_only(
+            normalized, book, event_id, allowed_order_ids=entry_order_ids,
+        )
         monitor = RobotBreakoutMonitor(
             lambda: self.store,
             self._paper_account_id,
@@ -1261,6 +1279,12 @@ class PaperRuntime:
             execution = candidate.robot_state.get("execution") or {}
             order_id = execution.get("limit_order_id")
             if not order_id:
+                # Subscribe one monitor cycle early: RETEST_DETECTED is
+                # persisted before the following periodic tick submits the
+                # entry LIMIT. This eliminates the resync window in which an
+                # immediately marketable new LIMIT could fill before the
+                # independent Robot event feed was attached.
+                entry_symbols.add(candidate.symbol.value)
                 continue
             order = self.store.get_paper_limit(order_id, self._paper_account_id)
             if order is None:
