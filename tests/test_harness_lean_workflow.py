@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tools.dev.checkpoint import checkpoint
 from tools.dev.task import _require_lightweight_governance, _sync_preflight
 from tools.dev.task_transaction import begin
 from tools.dev.verify import verify
@@ -29,11 +30,23 @@ class HarnessLeanWorkflowTests(unittest.TestCase):
         (root / ".gitattributes").write_text("*.txt text eol=lf\n", encoding="utf-8")
         (root / "task.txt").write_text("base\n", encoding="utf-8")
         (root / "docs.txt").write_text("docs\n", encoding="utf-8")
-        subprocess.run(("git", "add", ".gitattributes", "task.txt", "docs.txt"), cwd=root, check=True)
+        (root / "README.md").write_text("# Base\n", encoding="utf-8")
+        subprocess.run(
+            ("git", "add", ".gitattributes", "task.txt", "docs.txt", "README.md"),
+            cwd=root,
+            check=True,
+        )
         subprocess.run(("git", "commit", "-qm", "initial"), cwd=root, check=True)
         subprocess.run(("git", "remote", "add", "origin", str(origin)), cwd=root, check=True)
         subprocess.run(("git", "push", "-u", "origin", "main"), cwd=root, check=True, capture_output=True)
         return temporary, root, origin
+
+    def use_github_origin(self, root: Path) -> None:
+        subprocess.run(
+            ("git", "remote", "set-url", "origin", "https://github.com/example/project.git"),
+            cwd=root,
+            check=True,
+        )
 
     def test_sync_preflight_accepts_synced_feature_branch(self):
         temporary, root, _ = self.make_repo()
@@ -84,6 +97,45 @@ class HarnessLeanWorkflowTests(unittest.TestCase):
         self.assertTrue(passed, output)
         receipt = json.loads((root / ".git/bybitscanner/latest-pass.json").read_text(encoding="utf-8"))
         self.assertEqual(receipt["transaction"]["candidate_files"], ["task.txt"])
+
+    def test_github_markdown_transaction_uses_tree_fast_path(self):
+        temporary, root, _ = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        self.use_github_origin(root)
+        git = Git(root)
+        begin(["README.md"], git=git, task_id="markdown-fast")
+        (root / "README.md").write_text("# Updated\n\nDocs only.\n", encoding="utf-8")
+
+        with patch("tools.dev.verify.create_isolated_worktree") as isolate:
+            passed, output = verify(["README.md"], git=git, transaction_id="markdown-fast")
+
+        self.assertTrue(passed, output)
+        isolate.assert_not_called()
+        receipt = json.loads((root / ".git/bybitscanner/latest-pass.json").read_text(encoding="utf-8"))
+        transaction = receipt["transaction"]
+        self.assertEqual(transaction["tree_verification"]["mode"], "markdown-tree")
+        self.assertNotIn("isolated_verification", transaction)
+        self.assertFalse((root / ".git/bybitscanner/tasks/markdown-fast/verification-worktree").exists())
+
+        passed, output = checkpoint("validation only", git=git)
+        self.assertTrue(passed, output)
+        self.assertIn("candidate-tree-pass", output)
+
+    def test_github_non_markdown_transaction_keeps_isolated_verification(self):
+        temporary, root, _ = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        self.use_github_origin(root)
+        git = Git(root)
+        begin(["task.txt"], git=git, task_id="non-markdown")
+        (root / "task.txt").write_text("changed\n", encoding="utf-8")
+
+        passed, output = verify(["task.txt"], git=git, transaction_id="non-markdown")
+
+        self.assertTrue(passed, output)
+        receipt = json.loads((root / ".git/bybitscanner/latest-pass.json").read_text(encoding="utf-8"))
+        transaction = receipt["transaction"]
+        self.assertIn("isolated_verification", transaction)
+        self.assertNotIn("tree_verification", transaction)
 
     def test_failed_check_reports_its_detail_immediately(self):
         temporary, root, _ = self.make_repo()
