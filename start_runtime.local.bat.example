@@ -1,0 +1,17 @@
+@echo off
+rem Copy this file to start_runtime.local.bat for machine-local runtime values.
+rem The local file is ignored by Git and may contain secrets or host-specific paths.
+
+rem Example PAPER database override:
+rem set "BYBITSCANNER_PAPER_DB=C:\BybitScanner\runtime\robot_v0_1.sqlite3"
+
+rem Example local Bybit proxy:
+rem set "BYBITSCANNER_BYBIT_PROXY=socks5h://127.0.0.1:10808"
+
+rem Example Telegram workspace URL:
+rem set "BYBITSCANNER_WORKSPACE_URL=https://example-tunnel.invalid"
+
+rem Optional backend URL override used by Telegram controls:
+rem set "BYBITSCANNER_PAPER_BACKEND_URL=http://127.0.0.1:8765"
+
+exit /b 0
