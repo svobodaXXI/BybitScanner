@@ -1,4 +1,4 @@
-﻿"""Minimal local HTTP runtime for PAPER Trading Workspace development."""
+"""Minimal local HTTP runtime for PAPER Trading Workspace development."""
 
 from __future__ import annotations
 
@@ -113,6 +113,7 @@ VOLUME_FIELDS = {"unit", "amount"}
 FULL_CLOSE_FIELDS = {"client_action_id", "symbol"}
 CLOSE_ALL_FIELDS = {"client_action_id"}
 ROBOT_SYNCHRONIZE_PENDING_ENTRIES_FIELDS: set[str] = set()
+ROBOT_RECONCILE_FIELDS: set[str] = set()
 LIMIT_FIELDS = {
     "client_action_id", "symbol", "side", "volume", "sizing_reference_price",
     "limit_price", "time_in_force",
@@ -237,6 +238,9 @@ def _require_robot_route_legality(runtime: PaperRuntime, command: str) -> None:
             ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
             ("ROBOT_STOPPED", "ROBOT_STOPPED"),
             ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"),
+        },
+        "reconcile_robot": {
+            ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
         },
     }.get(command)
     if allowed is None or pair not in allowed:
@@ -2650,6 +2654,27 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(400, to_primitive(_validation_error()))
                 return
             self._json_response(200, {"ok": True, **to_primitive(result)})
+            return
+
+        if self.path == "/api/robot/reconcile":
+            try:
+                self._payload(ROBOT_RECONCILE_FIELDS)
+                result = self.server.runtime.call(
+                    lambda runtime: _execute_robot_route(
+                        runtime, "reconcile_robot", runtime.robot_reconcile,
+                    )
+                )
+            except RobotRouteLegalityError as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "robot_reconcile_unavailable"})
+                return
+            payload = to_primitive(result)
+            if not result.success:
+                self._json_response(409, {"ok": False, **payload})
+                return
+            self._json_response(200, {"ok": True, **payload})
             return
 
         if self.path in {"/api/scanner/start", "/api/scanner/pause", "/api/scanner/resume"}:

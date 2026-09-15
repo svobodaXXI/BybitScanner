@@ -1,4 +1,4 @@
-﻿import itertools
+import itertools
 import tempfile
 from dataclasses import replace
 from decimal import Decimal
@@ -23,7 +23,8 @@ from terminal.api.models import (
     TimeInForce,
 )
 from terminal.domain.models import (
-    Category, ExecutionId, OrderId, OrderSide, PositionKey, PositionSide, Price, Quantity, Symbol,
+    Category, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey, PositionSide,
+    Price, Quantity, Symbol,
 )
 from terminal.domain.models import TradingAccountId
 from terminal.application.trading_accounts import (
@@ -354,6 +355,175 @@ def _open_robot_position_with_confirmed_protection(
         entry_position_version=entry_projection.version,
         created_at_ms=1500,
     )
+
+
+def test_robot_reconcile_success_lands_paused_and_never_ready():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-reconcile-safe", candidate_id="candidate-reconcile-safe",
+            )
+            _set_admission(
+                runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            )
+
+            result = runtime.robot_reconcile()
+
+            assert result.success is True
+            assert result.mode == "ROBOT_RUNNING"
+            assert result.recovery_status == "PAUSED"
+            assert runtime.robot_admission_ready() is False
+            state = runtime.store.get_robot_runtime_state(TradingAccountId("paper"))
+            assert state.recovery_status == "PAUSED"
+        finally:
+            runtime.close()
+
+
+def test_robot_reconcile_closes_stale_trade_only_from_existing_execution_evidence():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-reconcile-evidence",
+                candidate_id="candidate-reconcile-evidence",
+            )
+            position_key = PositionKey(
+                TradingAccountId("paper"), Category.LINEAR, Symbol("BTCUSDT"), 0,
+            )
+            quantity = runtime.store.get_position_projection(position_key).quantity.value
+            latched, _ = runtime.store.latch_paper_protection_obligation(
+                trade_id="trade-reconcile-evidence", protection_version=1,
+                winning_leg="STOP", trigger_price=Decimal("64000"),
+                observed_exit_price=Decimal("63990"), observed_quantity=quantity,
+                market_event_id="evt-reconcile-evidence", source_received_at_ms=4000,
+                source_generation=0, source_sequence=4000, source_update_id=4000,
+                source_event_at_ms=4000, source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("63990"),
+                observed_ask_price=Decimal("63995"), latched_at_ms=4000,
+            )
+            claimed = runtime.store.transition_paper_protection_obligation(
+                latched.obligation_id, expected_status="TRIGGERED",
+                next_status="DISPATCHING", expected_version=latched.version,
+                updated_at_ms=4001,
+            )
+            close_book = _crossing_book("BTCUSDT", bid="63990", ask="63995")
+            provider.set_book("BTCUSDT", close_book)
+            runtime._market_executor.execute(
+                trading_account_id=TradingAccountId("paper"), symbol=Symbol("BTCUSDT"),
+                side=OrderSide.SELL, quantity=Quantity(quantity),
+                order_link_id=claimed.obligation_id, order_id=claimed.order_id,
+                exec_id=claimed.exec_id,
+            )
+            assert runtime.store.get_robot_trade("trade-reconcile-evidence").exit_time_ms is None
+            assert runtime.store.get_position_projection(position_key).side is PositionSide.FLAT
+            _set_admission(
+                runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            )
+
+            result = runtime.robot_reconcile()
+
+            assert result.success is True
+            assert result.recovery_status == "PAUSED"
+            assert result.closed_trade_ids == ("trade-reconcile-evidence",)
+            closed = runtime.store.get_robot_trade("trade-reconcile-evidence")
+            execution = runtime.store.get_execution(
+                ExecutionDedupKey(TradingAccountId("paper"), Category.LINEAR, claimed.exec_id)
+            )
+            assert closed.exit_reason == "STOP"
+            assert closed.exit_price == execution.price.value
+            assert closed.exit_time_ms == execution.exchange_timestamp_ms
+        finally:
+            runtime.close()
+
+
+def test_robot_reconcile_flat_stale_trade_without_attributable_evidence_stays_required():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-reconcile-missing-evidence",
+                candidate_id="candidate-reconcile-missing-evidence",
+            )
+            manual = runtime.api.full_close(
+                FullCloseCommandRequest(ClientActionId("manual-before-reconcile"), "BTCUSDT")
+            )
+            assert manual.status is CommandResultStatus.COMPLETED
+            _set_admission(
+                runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            )
+            executions_before = len(runtime.store.load_executions())
+
+            result = runtime.robot_reconcile()
+
+            assert result.success is False
+            assert result.recovery_status == "RECONCILIATION_REQUIRED"
+            assert result.unresolved_trade_ids == ("trade-reconcile-missing-evidence",)
+            trade = runtime.store.get_robot_trade("trade-reconcile-missing-evidence")
+            assert trade.exit_time_ms is None
+            assert trade.exit_price is None
+            assert trade.exit_reason is None
+            assert len(runtime.store.load_executions()) == executions_before
+        finally:
+            runtime.close()
+
+
+def test_robot_reconcile_duplicate_owner_ambiguity_never_blind_closes_net_position():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-reconcile-owner-a", candidate_id="candidate-reconcile-owner-a",
+            )
+            runtime.store.create_robot_candidate(
+                candidate_id="candidate-reconcile-owner-b",
+                trading_account_id=TradingAccountId("paper"), symbol=Symbol("BTCUSDT"),
+                status="APPROVED", signal_snapshot={"symbol": "BTCUSDT", "pattern": "second"},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            runtime.store.create_robot_trade(
+                trade_id="trade-reconcile-owner-b", trading_account_id=TradingAccountId("paper"),
+                candidate_id="candidate-reconcile-owner-b", symbol=Symbol("BTCUSDT"),
+                direction="LONG", pattern="second", source_timeframe="1",
+                signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
+                actual_wv=Decimal("0.2"), average_entry=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                entry_quantity=Decimal("0.004"), entry_position_version=1, created_at_ms=1500,
+            )
+            _set_admission(
+                runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            )
+            executions_before = len(runtime.store.load_executions())
+            position_before = runtime.store.get_position_projection(PositionKey(
+                TradingAccountId("paper"), Category.LINEAR, Symbol("BTCUSDT"), 0,
+            ))
+
+            result = runtime.robot_reconcile()
+
+            assert result.success is False
+            assert result.recovery_status == "RECONCILIATION_REQUIRED"
+            assert set(result.unresolved_candidate_ids) == {
+                "candidate-reconcile-owner-a", "candidate-reconcile-owner-b",
+            }
+            position_after = runtime.store.get_position_projection(position_before.position_key)
+            assert position_after == position_before
+            assert len(runtime.store.load_executions()) == executions_before
+            assert runtime.store.get_robot_trade("trade-reconcile-owner-a").exit_time_ms is None
+            assert runtime.store.get_robot_trade("trade-reconcile-owner-b").exit_time_ms is None
+        finally:
+            runtime.close()
 
 
 def test_robot_protection_crossing_leg_preserves_long_short_and_stop_precedence():

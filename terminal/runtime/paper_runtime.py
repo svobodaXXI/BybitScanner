@@ -20,7 +20,8 @@ from terminal.api.models import (
     FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
     PaperLimitMutationResult, PaperLimitOrderProjection, PaperOpenPositionProjection,
     PaperOpenPositionsResponse, PaperStopDeleteRequest, PaperStopMutationRequest,
-    PaperStopMutationResult, RobotSynchronizePendingEntriesResponse, TimeInForce, to_primitive,
+    PaperStopMutationResult, RobotReconcileResponse, RobotSynchronizePendingEntriesResponse,
+    TimeInForce, to_primitive,
     LiveMarketCommandRequest,
 )
 from terminal.application.robot_breakout_monitor import (
@@ -52,7 +53,11 @@ from terminal.application.live_account_reconciliation import (
     LiveAccountReconciler,
     LiveAccountReconciliationError,
 )
-from terminal.application.robot_recovery import RobotRecoveryCoordinator
+from terminal.application.robot_admission import active_robot_owner_candidate_ids
+from terminal.application.robot_recovery import (
+    PAUSED, RECONCILING, RECONCILIATION_REQUIRED, ROBOT_RUNNING,
+    RobotRecoveryCoordinator,
+)
 from scanner_geometry_cursor import latest_scanner_closed_candle
 from terminal.domain.models import (
     Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
@@ -1862,6 +1867,195 @@ class PaperRuntime:
             tuple(terminalized_candidate_ids), tuple(still_pending_protection),
             tuple(unresolved_candidate_ids),
         )
+
+    def _robot_reconciliation_required_state(self, reason: str):
+        state = self.store.get_robot_runtime_state(self._paper_account_id)
+        if state is None or state.mode != ROBOT_RUNNING:
+            raise RuntimeError("Robot runtime state is unavailable during reconciliation")
+        if state.recovery_status == RECONCILIATION_REQUIRED:
+            return state
+        if state.recovery_status != RECONCILING:
+            raise RuntimeError(
+                f"Robot reconciliation lost admission-closed state: {state.recovery_status}"
+            )
+        return self.store.update_robot_runtime_state(
+            self._paper_account_id, mode=ROBOT_RUNNING,
+            recovery_status=RECONCILIATION_REQUIRED, reason=reason,
+            expected_version=state.version, updated_at_ms=int(time.time() * 1000),
+        )
+
+    def robot_reconcile(self) -> RobotReconcileResponse:
+        """Evidence-based exit from ``RECONCILIATION_REQUIRED`` (P0.5).
+
+        Admission stays closed for the entire pass: RobotRecoveryCoordinator
+        first moves REQUIRED -> RECONCILING and deliberately holds it there.
+        We then reuse the existing pending-entry Option A pass, resume durable
+        protection obligations from their stable execution identities, and
+        prove every surviving OPEN Robot trade still owns exactly the
+        authoritative position/protection it attested at entry. Nothing in
+        this method invents an exit, PnL, fee, fill, or ownership fact.
+        """
+        source = self.store.get_robot_runtime_state(self._paper_account_id)
+        if (
+            source is None
+            or source.mode != ROBOT_RUNNING
+            or source.recovery_status != RECONCILIATION_REQUIRED
+        ):
+            raise RuntimeError(
+                "reconcile_robot is legal only from "
+                "(ROBOT_RUNNING, RECONCILIATION_REQUIRED)"
+            )
+
+        empty_sync = RobotSynchronizePendingEntriesResponse((), (), (), (), ())
+        sync = empty_sync
+        closed_trade_ids: list[str] = []
+        unresolved_candidate_ids: set[str] = set()
+        unresolved_trade_ids: set[str] = set()
+        unresolved_obligation_ids: set[str] = set()
+
+        def response(success: bool, state, reason: str | None) -> RobotReconcileResponse:
+            return RobotReconcileResponse(
+                success, state.mode, state.recovery_status,
+                sync.cancelled_order_ids, sync.finalized_candidate_ids,
+                sync.terminalized_candidate_ids, tuple(sorted(set(closed_trade_ids))),
+                tuple(sorted(unresolved_candidate_ids)),
+                tuple(sorted(unresolved_trade_ids)),
+                tuple(sorted(unresolved_obligation_ids)), reason,
+            )
+
+        def fail(reason: str) -> RobotReconcileResponse:
+            state = self._robot_reconciliation_required_state(reason)
+            return response(False, state, state.reason or reason)
+
+        prepared = self._robot_recovery.reconcile_required()
+        if prepared.runtime_state.recovery_status != RECONCILING:
+            return response(
+                False, prepared.runtime_state,
+                prepared.runtime_state.reason or "Robot recovery policy could not reconcile safely",
+            )
+
+        try:
+            sync = self.robot_synchronize_pending_entries()
+            unresolved_candidate_ids.update(sync.unresolved_candidate_ids)
+            unresolved_candidate_ids.update(sync.still_pending_protection)
+            if unresolved_candidate_ids:
+                return fail(
+                    "reconcile_robot could not prove pending Robot entry safety: "
+                    + ",".join(sorted(unresolved_candidate_ids))
+                )
+
+            now_ms = int(time.time() * 1000)
+            for obligation in self.store.load_unresolved_paper_protection_obligations(
+                self._paper_account_id
+            ):
+                before = self.store.get_robot_trade(obligation.trade_id)
+                self._dispatch_paper_protection_obligation(obligation, now_ms=now_ms)
+                after = self.store.get_robot_trade(obligation.trade_id)
+                if (
+                    before is not None and before.exit_time_ms is None
+                    and after is not None and after.exit_time_ms is not None
+                ):
+                    closed_trade_ids.append(after.trade_id)
+
+            remaining_obligations = self.store.load_unresolved_paper_protection_obligations(
+                self._paper_account_id
+            )
+            unresolved_obligation_ids.update(
+                item.obligation_id for item in remaining_obligations
+            )
+            if unresolved_obligation_ids:
+                return fail(
+                    "reconcile_robot has unresolved protection obligation(s): "
+                    + ",".join(sorted(unresolved_obligation_ids))
+                )
+
+            candidates = self.store.load_robot_candidates(self._paper_account_id)
+            symbols = sorted({
+                item.symbol for item in candidates if item.status in {"APPROVED", "OPEN"}
+            }, key=lambda item: item.value)
+            for symbol in symbols:
+                owners = active_robot_owner_candidate_ids(
+                    self.store, self._paper_account_id, symbol,
+                )
+                if len(owners) > 1:
+                    unresolved_candidate_ids.update(owners)
+            if unresolved_candidate_ids:
+                return fail(
+                    "DUPLICATE_ROBOT_OWNER during reconcile_robot: "
+                    + ",".join(sorted(unresolved_candidate_ids))
+                )
+
+            candidates = self.store.load_robot_candidates(self._paper_account_id)
+            for candidate in candidates:
+                if candidate.status != "OPEN":
+                    continue
+                trade = self.store.get_open_robot_trade_for_symbol(
+                    self._paper_account_id, candidate.symbol,
+                )
+                if trade is None or trade.candidate_id != candidate.candidate_id:
+                    unresolved_candidate_ids.add(candidate.candidate_id)
+                    continue
+                position_key = PositionKey(
+                    self._paper_account_id, Category.LINEAR, candidate.symbol, 0,
+                )
+                position = self.store.get_position_projection(position_key)
+                expected_side = (
+                    PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
+                )
+                if (
+                    position is None
+                    or position.side is PositionSide.FLAT
+                    or position.quantity.value <= 0
+                    or trade.entry_quantity is None
+                    or trade.entry_position_version is None
+                    or position.side is not expected_side
+                    or position.quantity.value != trade.entry_quantity
+                    or position.version != trade.entry_position_version
+                ):
+                    unresolved_trade_ids.add(trade.trade_id)
+                    continue
+                protection = self.store.get_protection_projection(position_key)
+                if (
+                    protection is None
+                    or protection.stop_loss != trade.stop_price
+                    or protection.take_profit != trade.take_price
+                ):
+                    unresolved_trade_ids.add(trade.trade_id)
+
+            if unresolved_candidate_ids or unresolved_trade_ids:
+                identities = sorted(unresolved_candidate_ids | unresolved_trade_ids)
+                return fail(
+                    "reconcile_robot cannot prove Robot ownership/protection for: "
+                    + ",".join(identities)
+                )
+
+            current = self.store.get_robot_runtime_state(self._paper_account_id)
+            if current is None or current.mode != ROBOT_RUNNING:
+                raise RuntimeError("Robot runtime state disappeared during reconciliation")
+            if current.recovery_status == RECONCILIATION_REQUIRED:
+                return response(
+                    False, current,
+                    current.reason or "Robot reconciliation re-entered RECONCILIATION_REQUIRED",
+                )
+            if current.recovery_status != RECONCILING:
+                raise RuntimeError(
+                    f"Robot reconciliation cannot complete from {current.recovery_status}"
+                )
+            paused = self.store.update_robot_runtime_state(
+                self._paper_account_id, mode=ROBOT_RUNNING, recovery_status=PAUSED,
+                reason=None, expected_version=current.version,
+                updated_at_ms=int(time.time() * 1000),
+            )
+            return response(True, paused, None)
+        except Exception as exc:
+            reason = str(exc).strip() or type(exc).__name__
+            try:
+                return fail(f"reconcile_robot failed closed: {reason}")
+            except Exception:
+                raise RuntimeError(
+                    "reconcile_robot failed and durable RECONCILIATION_REQUIRED "
+                    "could not be preserved"
+                ) from exc
 
     def create_limit(self, request: LimitCommandRequest) -> PaperLimitMutationResult:
         self.require_paper_mutations()

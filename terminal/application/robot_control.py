@@ -353,6 +353,52 @@ def close_all_now(
         ) from exc
 
 
+def reconcile_robot(
+    *,
+    http_post: Callable[[str, dict], dict],
+    database_path: Path | str | None = None,
+    clock_ms: Callable[[], int] | None = None,
+    backend_url: str | None = None,
+) -> dict:
+    """Explicit evidence-based exit from RECONCILIATION_REQUIRED.
+
+    Legal only from ``(ROBOT_RUNNING, RECONCILIATION_REQUIRED)``. The PAPER
+    backend owns the reconciliation pass and may land only PAUSED on complete
+    success; every unresolved ambiguity remains RECONCILIATION_REQUIRED.
+    Workspace active-account selection is deliberately irrelevant.
+    """
+    store = _open_store(database_path)
+    try:
+        _now_ms(clock_ms)
+        runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+        if (
+            runtime is None
+            or runtime.mode != ROBOT_RUNNING
+            or runtime.recovery_status != RECONCILIATION_REQUIRED
+        ):
+            raise RobotControlRejected(
+                "reconcile_robot is legal only from "
+                "(ROBOT_RUNNING, RECONCILIATION_REQUIRED)"
+            )
+    finally:
+        store.close()
+
+    url = f"{backend_url or DEFAULT_PAPER_BACKEND_URL}/api/robot/reconcile"
+    try:
+        result = http_post(url, {})
+    except RobotControlRejected:
+        raise
+    except Exception as exc:
+        raise RobotControlRejected(
+            f"reconcile_robot could not reach the PAPER backend at {url}: {exc}"
+        ) from exc
+    if result.get("success") is not True:
+        raise RobotControlRejected(
+            str(result.get("reason") or "reconcile_robot did not complete safely")
+        )
+    return result
+
+
 def stop_robot(
     *,
     http_post: Callable[[str, dict], dict],

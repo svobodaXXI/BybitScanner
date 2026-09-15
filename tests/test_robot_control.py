@@ -8,6 +8,7 @@ from terminal.application.robot_control import (
     close_all_now,
     get_robot_runtime_status,
     pause_robot,
+    reconcile_robot,
     resume_robot,
     start_robot,
     stop_robot,
@@ -500,6 +501,60 @@ class RobotControlCommandTests(unittest.TestCase):
 
         with self.assertRaises(RobotControlRejected):
             close_all_now(database_path=self.db_path, clock_ms=lambda: 2000, http_post=rejecting)
+
+    # -- reconcile_robot ------------------------------------------------
+
+    def test_reconcile_robot_only_from_running_required_posts_to_backend(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
+        calls = []
+
+        def fake_post(url, payload):
+            calls.append((url, payload))
+            return {
+                "ok": True, "success": True, "mode": "ROBOT_RUNNING",
+                "recovery_status": "PAUSED", "reason": None,
+            }
+
+        result = reconcile_robot(
+            database_path=self.db_path, clock_ms=lambda: 2000, http_post=fake_post,
+        )
+        self.assertTrue(result["success"])
+        self.assertEqual(calls, [("http://127.0.0.1:8765/api/robot/reconcile", {})])
+
+    def test_reconcile_robot_rejected_from_every_other_control_state(self):
+        for mode, status in (
+            ("ROBOT_RUNNING", "READY"),
+            ("ROBOT_RUNNING", "PAUSED"),
+            ("ROBOT_STOPPED", "ROBOT_STOPPED"),
+            ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"),
+        ):
+            self._set_state(mode=mode, recovery_status=status)
+            with self.assertRaises(RobotControlRejected):
+                reconcile_robot(
+                    database_path=self.db_path, clock_ms=lambda: 2000,
+                    http_post=lambda url, payload: self.fail("must not reach backend"),
+                )
+
+    def test_reconcile_robot_wraps_backend_unreachable(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
+
+        def unreachable(url, payload):
+            raise ConnectionError("backend down")
+
+        with self.assertRaisesRegex(RobotControlRejected, "could not reach the PAPER backend"):
+            reconcile_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000, http_post=unreachable,
+            )
+
+    def test_reconcile_robot_rejects_incomplete_backend_result(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
+        with self.assertRaisesRegex(RobotControlRejected, "evidence incomplete"):
+            reconcile_robot(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: {
+                    "ok": False, "success": False, "reason": "evidence incomplete",
+                },
+            )
 
     # -- get_robot_runtime_status ---------------------------------------
 

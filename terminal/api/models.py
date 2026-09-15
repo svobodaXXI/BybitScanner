@@ -179,6 +179,29 @@ class CloseAllCommandResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class RobotReconcileResponse:
+    """Evidence-based result of the explicit Robot reconciliation command.
+
+    ``success`` is true only when all Robot ownership/protection/ledger
+    evidence is consistent and durable state has landed in PAUSED. Failure
+    leaves RECONCILIATION_REQUIRED and reports the unresolved identities; no
+    exit economics or historical execution are synthesized by this contract.
+    """
+
+    success: bool
+    mode: str
+    recovery_status: str
+    cancelled_order_ids: tuple[str, ...]
+    finalized_candidate_ids: tuple[str, ...]
+    terminalized_candidate_ids: tuple[str, ...]
+    closed_trade_ids: tuple[str, ...]
+    unresolved_candidate_ids: tuple[str, ...]
+    unresolved_trade_ids: tuple[str, ...]
+    unresolved_obligation_ids: tuple[str, ...]
+    reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class RobotSynchronizePendingEntriesResponse:
     """Result of one synchronous pending-pre-entry-candidate reconciliation
     pass, triggered by pause_robot()/stop_robot() (AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md

@@ -94,6 +94,32 @@ class RobotRecoveryCoordinator:
         was_paused = runtime.recovery_status == PAUSED
         return self._reconcile_running(runtime, open_positions, approved, was_paused=was_paused)
 
+    def reconcile_required(self) -> RobotRecoveryResult:
+        """Begin the explicit operator exit from RECONCILIATION_REQUIRED.
+
+        Legal only from ``(ROBOT_RUNNING, RECONCILIATION_REQUIRED)``. Reuses
+        the same pure restart policy/candidate recovery as ``recover()`` but
+        intentionally leaves durable state at RECONCILING on policy success;
+        the runtime reconciliation pass must still prove pending-entry,
+        protection, ownership and stale-ledger evidence before it may publish
+        PAUSED. Admission therefore never opens during the command.
+        """
+        runtime = self._store.get_robot_runtime_state(self._account_id)
+        if (
+            runtime is None
+            or runtime.mode != ROBOT_RUNNING
+            or runtime.recovery_status != RECONCILIATION_REQUIRED
+        ):
+            raise RobotRecoveryError(
+                "reconcile_robot is legal only from "
+                "(ROBOT_RUNNING, RECONCILIATION_REQUIRED)"
+            )
+        _candidates, open_positions, approved = self._load_candidate_sets()
+        return self._reconcile_running(
+            runtime, open_positions, approved, was_paused=True,
+            hold_reconciling=True,
+        )
+
     def start(self) -> RobotRecoveryResult:
         """Explicit operator start from durable ``ROBOT_STOPPED``.
 
@@ -133,12 +159,16 @@ class RobotRecoveryCoordinator:
         approved: tuple,
         *,
         was_paused: bool,
+        hold_reconciling: bool = False,
     ) -> RobotRecoveryResult:
         runtime = self._set_runtime(
             runtime,
             mode=ROBOT_RUNNING,
             recovery_status=RECONCILING,
-            reason="restart recovery in progress",
+            reason=(
+                "operator reconciliation in progress"
+                if hold_reconciling else "restart recovery in progress"
+            ),
         )
         try:
             geometry_indices = self._latest_geometry_indices(approved)
@@ -171,8 +201,14 @@ class RobotRecoveryCoordinator:
             runtime = self._set_runtime(
                 runtime,
                 mode=ROBOT_RUNNING,
-                recovery_status=PAUSED if was_paused else READY,
-                reason=None,
+                recovery_status=(
+                    RECONCILING if hold_reconciling
+                    else PAUSED if was_paused else READY
+                ),
+                reason=(
+                    "operator reconciliation awaiting runtime evidence"
+                    if hold_reconciling else None
+                ),
             )
             return RobotRecoveryResult(runtime, decisions)
         except Exception as exc:
