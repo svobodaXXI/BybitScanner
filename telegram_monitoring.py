@@ -23,7 +23,7 @@ import requests
 
 import config
 import telegram_bot
-from robot_telegram_feed import format_robot_status_text
+from robot_telegram_feed import build_robot_control_keyboard, format_robot_status_text
 from terminal.application.robot_control import get_robot_runtime_status
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
@@ -106,11 +106,14 @@ def _send_robot_status(chat_id):
             candidates = store.load_robot_candidates(PAPER_ACCOUNT_ID)
         opened = sum(item.status == "OPEN" for item in candidates)
         watching = sum(item.status == "APPROVED" for item in candidates)
+        mode = runtime.mode if runtime is not None else "ROBOT_STOPPED"
+        recovery_status = runtime.recovery_status if runtime is not None else "ROBOT_STOPPED"
         _send_text(
             chat_id,
             f"Робот: {_robot_status_text(runtime)}\n"
             f"Статус робота: Наблюдение: {watching} кандидатов\n"
             f"Открытых позиций: {opened}",
+            reply_markup=build_robot_control_keyboard(mode, recovery_status),
         )
     except Exception:
         _send_text(chat_id, "Состояние робота и число открытых позиций недоступны.")
