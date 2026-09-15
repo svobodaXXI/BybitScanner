@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 from robot_candidate_store import create_signal_snapshot, load_candidate
@@ -7,7 +8,7 @@ from terminal.application.robot_admission import (
     RobotAdmissionRejected,
     admit_robot_candidate,
 )
-from terminal.domain.models import TradingAccountId
+from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import SQLiteStore
 
 
@@ -166,6 +167,69 @@ class RobotAdmissionGateTests(unittest.TestCase):
 
             self.assertFalse(created)
             self.assertEqual(first, second)
+
+    def test_active_owner_on_symbol_advisory_rejects_new_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate_dir = root / "candidates"
+            db_path = root / "paper.sqlite3"
+            self._make_candidate(candidate_dir, "owner")
+            self._make_candidate(candidate_dir, "candidate-2")
+            self._ready_database(db_path)
+
+            store = SQLiteStore.open(db_path)
+            try:
+                owner_snapshot = load_candidate("owner", store_dir=candidate_dir)["signal_snapshot"]
+                store.create_robot_candidate(
+                    candidate_id="owner",
+                    trading_account_id=TradingAccountId("paper"),
+                    symbol=Symbol("ONGUSDT"),
+                    status="APPROVED",
+                    signal_snapshot=owner_snapshot,
+                    approved_at_ms=1500,
+                    updated_at_ms=1500,
+                )
+                store.create_robot_trade(
+                    trade_id="robot-trade-owner",
+                    trading_account_id=TradingAccountId("paper"),
+                    candidate_id="owner",
+                    symbol=Symbol("ONGUSDT"),
+                    direction="LONG",
+                    pattern="Falling Wedge",
+                    source_timeframe="1",
+                    signal_time_ms=1500,
+                    entry_time_ms=1600,
+                    entry_path="LIMIT",
+                    actual_wv=Decimal("1"),
+                    average_entry=Decimal("1"),
+                    stop_price=Decimal("0.9"),
+                    take_price=Decimal("1.2"),
+                    entry_quantity=Decimal("1"),
+                    entry_position_version=1,
+                    created_at_ms=1600,
+                )
+            finally:
+                store.close()
+
+            with self.assertRaisesRegex(
+                RobotAdmissionRejected, "active exposure owner: owner",
+            ):
+                admit_robot_candidate(
+                    "candidate-2",
+                    database_path=db_path,
+                    store_dir=candidate_dir,
+                    clock_ms=lambda: 2000,
+                )
+
+            self.assertEqual(
+                load_candidate("candidate-2", store_dir=candidate_dir)["status"],
+                "AVAILABLE",
+            )
+            store = SQLiteStore.open(db_path)
+            try:
+                self.assertIsNone(store.get_robot_candidate("candidate-2"))
+            finally:
+                store.close()
 
 
 if __name__ == "__main__":

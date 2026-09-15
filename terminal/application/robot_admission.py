@@ -32,6 +32,41 @@ class RobotAdmissionRejected(PersistenceError):
     """Raised when a candidate cannot cross the durable Robot admission gate."""
 
 
+def active_robot_owner_candidate_ids(
+    store: SQLiteStore,
+    trading_account_id: TradingAccountId,
+    symbol: Symbol,
+    *,
+    excluding_candidate_id: str | None = None,
+) -> tuple[str, ...]:
+    """Return candidate ids that already own exposure on ``symbol``.
+
+    Robot v0.1 PAPER uses one-way ``position_idx=0`` net positions. Ownership
+    belongs to an OPEN lifecycle, or to an APPROVED lifecycle whose own entry
+    LIMIT has authoritative non-zero fill evidence. Unfilled APPROVED
+    candidates are not owners and remain recoverable.
+    """
+    owners: list[str] = []
+    for record in store.load_robot_candidates(trading_account_id):
+        if record.symbol != symbol or record.candidate_id == excluding_candidate_id:
+            continue
+        if record.status == "OPEN":
+            owners.append(record.candidate_id)
+            continue
+        if record.status != "APPROVED" or not isinstance(record.robot_state, Mapping):
+            continue
+        execution = record.robot_state.get("execution")
+        if not isinstance(execution, Mapping):
+            continue
+        order_id = execution.get("limit_order_id")
+        if not isinstance(order_id, str) or not order_id.strip():
+            continue
+        order = store.get_paper_limit(order_id, trading_account_id)
+        if order is not None and order.filled_quantity > 0:
+            owners.append(record.candidate_id)
+    return tuple(sorted(set(owners)))
+
+
 def admit_robot_candidate(
     candidate_id: str,
     *,
@@ -78,6 +113,14 @@ def admit_robot_candidate(
             raise RobotAdmissionRejected("Robot runtime state is unavailable")
         if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
             raise RobotAdmissionRejected("Robot admission is not ready")
+
+        owners = active_robot_owner_candidate_ids(
+            store, PAPER_ACCOUNT_ID, symbol, excluding_candidate_id=candidate_id,
+        )
+        if owners:
+            raise RobotAdmissionRejected(
+                "Robot symbol already has an active exposure owner: " + ",".join(owners)
+            )
 
         record, created = store.create_robot_candidate(
             candidate_id=candidate_id,

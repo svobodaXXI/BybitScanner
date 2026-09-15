@@ -34,6 +34,7 @@ import robot_protection
 import robot_state_machine
 from scanner_geometry_cursor import ScannerGeometryCursorError, project_latest_geometry_index
 from terminal.api.models import ClientActionId, CommandResultStatus, PaperLimitCancelRequest
+from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.domain.models import Category, PositionKey, Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
     ConcurrentUpdate,
@@ -312,6 +313,12 @@ class RobotBreakoutMonitor:
                         record, reason="ROBOT_STOPPED before entry order submission",
                     )
                     return True
+                return False
+
+            # P0.2 final pre-submission ownership check. A different
+            # pending-partial or OPEN lifecycle already owns this net symbol,
+            # so keep this candidate APPROVED/recoverable and submit no risk.
+            if self._active_other_owner_candidate_ids(record):
                 return False
 
             result = self._submit_initial_retest_limit(record, record.robot_state)
@@ -596,6 +603,15 @@ class RobotBreakoutMonitor:
         entry_quantity = entry_projection.quantity.value
         entry_position_version = entry_projection.version
 
+        # A fill now exists. If another lifecycle already owns this net
+        # symbol, ownership is ambiguous: do not submit conflicting protection
+        # and never blind-close the net position. Preserve evidence and
+        # require reconciliation.
+        duplicate_owners = self._active_other_owner_candidate_ids(record)
+        if duplicate_owners:
+            self._escalate_duplicate_ownership(record, duplicate_owners)
+            return
+
         try:
             stop_result, take_result = robot_protection.submit_initial_protection(
                 self._action_executor, plan,
@@ -607,6 +623,13 @@ class RobotBreakoutMonitor:
                 raise RobotBreakoutMonitorError("initial protection submission did not complete")
         except Exception as error:
             self._fail_closed_unprotected_fill(record, error)
+            return
+
+        # Re-check immediately before final ownership commit. This closes the
+        # race between the pre-protection probe and create_robot_trade().
+        duplicate_owners = self._active_other_owner_candidate_ids(record)
+        if duplicate_owners:
+            self._escalate_duplicate_ownership(record, duplicate_owners)
             return
 
         now_ms = self._now_ms()
@@ -628,6 +651,50 @@ class RobotBreakoutMonitor:
             entry_quantity=entry_quantity,
             entry_position_version=entry_position_version,
             created_at_ms=now_ms,
+        )
+
+    def _active_other_owner_candidate_ids(
+        self, record: RobotCandidateRecord,
+    ) -> tuple[str, ...]:
+        return active_robot_owner_candidate_ids(
+            self._store(), self._account_id, record.symbol,
+            excluding_candidate_id=record.candidate_id,
+        )
+
+    def _escalate_duplicate_ownership(
+        self, record: RobotCandidateRecord, owner_candidate_ids: tuple[str, ...],
+    ) -> None:
+        reason = (
+            "DUPLICATE_ROBOT_OWNER "
+            f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+            f"owner_candidate_ids={','.join(owner_candidate_ids)}"
+        )
+        for _attempt in range(2):
+            runtime = self._store().get_robot_runtime_state(self._account_id)
+            if runtime is None:
+                raise RobotBreakoutMonitorError(
+                    "Robot runtime state is unavailable during duplicate ownership escalation"
+                )
+            if (
+                runtime.mode == "ROBOT_RUNNING"
+                and runtime.recovery_status == "RECONCILIATION_REQUIRED"
+                and runtime.reason == reason
+            ):
+                return
+            try:
+                self._store().update_robot_runtime_state(
+                    self._account_id,
+                    mode="ROBOT_RUNNING",
+                    recovery_status="RECONCILIATION_REQUIRED",
+                    reason=reason,
+                    expected_version=runtime.version,
+                    updated_at_ms=self._now_ms(),
+                )
+                return
+            except ConcurrentUpdate:
+                continue
+        raise RobotBreakoutMonitorError(
+            "Robot runtime state changed during duplicate ownership escalation"
         )
 
     def _average_entry(self, symbol: Symbol) -> Decimal | None:
@@ -783,6 +850,19 @@ class RobotBreakoutMonitor:
         terminalizing a position that may still be open. No robot_trade is
         ever created here; this candidate never proved out a protected entry.
         """
+        duplicate_owners = self._active_other_owner_candidate_ids(record)
+        if duplicate_owners:
+            # Section 10 narrow exception: a full-close would destroy another
+            # legitimate owner of the same net position. Preserve evidence,
+            # escalate, and deliberately do not close.
+            execution = dict(record.robot_state.get("execution") or {})
+            execution["protection_failure"] = str(error)
+            execution["duplicate_owner_candidate_ids"] = list(duplicate_owners)
+            execution["duplicate_ownership_detected_at_ms"] = self._now_ms()
+            self._persist_execution(record, execution)
+            self._escalate_duplicate_ownership(record, duplicate_owners)
+            return
+
         request = robot_protection.emergency_close_request(record.candidate_id, record.symbol.value)
         execution = dict(record.robot_state.get("execution") or {})
         execution["protection_failure"] = str(error)
