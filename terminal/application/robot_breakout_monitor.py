@@ -7,7 +7,7 @@ concrete PaperRuntime, so a future live implementation can reuse it with
 live-bound dependencies instead of a duplicated cycle. It never refits
 geometry and never invents entry/pattern/protection strategy: it only calls
 the existing public functions of robot_state_machine.py, robot_entry_limit.py,
-robot_partial_fill.py, robot_market_confirmation.py and robot_protection.py,
+robot_protection.py,
 in the order CR-ROBOT-BREAKOUT-MONITOR-001 approved, driving each APPROVED
 candidate all the way to ``create_robot_trade``.
 
@@ -28,8 +28,6 @@ from decimal import Decimal
 from typing import Callable, Mapping, Protocol
 
 import robot_entry_limit
-import robot_market_confirmation
-import robot_partial_fill
 import robot_protection
 import robot_state_machine
 from scanner_geometry_cursor import ScannerGeometryCursorError, project_latest_geometry_index
@@ -44,11 +42,6 @@ from terminal.persistence.sqlite_store import (
 
 DEFAULT_TICK_INTERVAL_S = 60.0
 
-# Matches the existing PaperRuntime.full_close() emergency-close tolerance
-# (terminal/api/rest.py) -- reused rather than inventing a new number.
-MARKET_SLIPPAGE_TYPE = "Percent"
-MARKET_SLIPPAGE_VALUE = Decimal("0.5")
-
 INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
 
 
@@ -59,7 +52,6 @@ class ActionExecutor(Protocol):
 
     def create_limit(self, request): ...
     def cancel_limit(self, request): ...
-    def market(self, request): ...
     def create_stop(self, request): ...
     def amend_stop(self, request): ...
     def create_take(self, request): ...
@@ -72,11 +64,10 @@ class RobotBreakoutMonitorError(RuntimeError):
 
 
 def _cancel_partial_remainder_action_id(candidate_id: str) -> ClientActionId:
-    # No existing robot_*.py module owns "cancel the resting LIMIT before a
-    # partial-fill Market completion" -- it is orchestration this coordinator
-    # owns directly, mirroring the digest-based ClientActionId construction
-    # PaperRuntime.robot_close_all() already uses for a similar Robot-owned
-    # action outside the five pure modules.
+    # P0.3 Option A: the first authoritative non-zero fill ends entry sizing.
+    # Cancel the still-resting remainder through the same sanctioned LIMIT
+    # cancellation path. The deterministic action id makes retries idempotent;
+    # no Market top-up is ever submitted from this lifecycle.
     digest = hashlib.sha256(
         f"{candidate_id}\0cancel-partial-remainder".encode("utf-8")
     ).hexdigest()[:32]
@@ -339,35 +330,16 @@ class RobotBreakoutMonitor:
         filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
         inactive = order.status in INACTIVE_LIMIT_STATUSES
 
-        try:
-            remainder = robot_partial_fill.missing_wv(filled_fraction)
-        except robot_partial_fill.RobotPartialFillError:
-            return False
-
-        if remainder <= 0:
-            average_entry = self._average_entry(record.symbol)
-            if average_entry is None:
-                return False
-            self._finalize_trade(
-                record, execution, entry_path="LIMIT",
-                actual_wv=filled_fraction, average_entry=average_entry,
-            )
-            return True
-
-        new_entry_admitted, terminal_stop = self._read_admission_gate()
-
         if filled_fraction <= 0:
+            new_entry_admitted, terminal_stop = self._read_admission_gate()
             if new_entry_admitted:
                 return False
             # A working, still-fully-unfilled entry LIMIT exists but the
             # admission gate no longer permits new entry risk -- cancel it
             # through the same sanctioned execution path used everywhere
-            # else in this module (idempotent by deterministic action id,
-            # safe to repeat every tick until confirmed cancelled or it
-            # fills first). No exposure exists yet, so ROBOT_STOPPED can
-            # safely give this candidate its terminal disposition now;
-            # PAUSED/RECONCILIATION_REQUIRED instead leave it APPROVED and
-            # recoverable.
+            # else in this module. No exposure exists yet, so ROBOT_STOPPED
+            # can terminalize the candidate; PAUSED/RECONCILIATION_REQUIRED
+            # leave it APPROVED and recoverable.
             if not inactive:
                 self._action_executor.cancel_limit(PaperLimitCancelRequest(
                     _cancel_blocked_entry_action_id(record.candidate_id),
@@ -379,175 +351,39 @@ class RobotBreakoutMonitor:
                 )
             return True
 
-        if not new_entry_admitted:
-            # Real partial exposure exists here, with the admission gate
-            # blocking further completion. This must never depend on
-            # get_closed_candle()/RobotBreakoutMonitor's own periodic
-            # tick_interval_s cadence for STOP safety --
-            # AUTOPILOT_ROBOT_V0_1_RECOVERY_STATE_BATCH_DECISION.md Section
-            # 6's 5-second STOP-not-proven window is a maximum recovery
-            # deadline, not a retry interval, and every input
-            # structural_extreme/frozen_prices/structural_stop/tighten_stop
-            # needs -- record.signal_snapshot, average_entry from the
-            # authoritative position projection, tick_size -- is already
-            # frozen/durable and requires no new closed candle at all.
-            # Cancel any still-live resting remainder first (same sanctioned
-            # path used everywhere else in this module), then attempt
-            # protection immediately. If that attempt itself fails,
-            # _finalize_trade()'s own existing fail-closed path
-            # (_fail_closed_unprotected_fill) emergency-closes right away --
-            # tighter than the 5-second maximum, not a new timer, and no
-            # second protection engine.
-            if not inactive:
-                self._action_executor.cancel_limit(PaperLimitCancelRequest(
-                    _cancel_partial_remainder_action_id(record.candidate_id),
-                    record.symbol.value, execution["limit_order_id"],
-                ))
-                refreshed = self._store().get_paper_limit(execution["limit_order_id"], self._account_id)
-                if refreshed is not None:
-                    order = refreshed
-                    filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
-                    inactive = order.status in INACTIVE_LIMIT_STATUSES
-            average_entry = self._average_entry(record.symbol)
-            if average_entry is None:
-                return True
-            # Reload first: an earlier _persist_execution() elsewhere this
-            # tick (or a prior tick) may have already advanced this
-            # candidate's durable state_revision past what the in-hand
-            # `record` carries -- see the identical hazard/fix on the
-            # MARKET_COMPLETE-blocked path below.
-            fresh_record = self._store().get_robot_candidate(record.candidate_id) or record
-            self._finalize_trade(
-                fresh_record, execution, entry_path="LIMIT",
-                actual_wv=filled_fraction, average_entry=average_entry,
-            )
-            return True
-
-        candle = self._get_closed_candle(record.symbol.value)
-        if candle is None:
-            return False
-        try:
-            geometry_index = project_latest_geometry_index(
-                record.signal_snapshot,
-                latest_closed_candle_time_ms=int(candle["time_ms"]),
-            )
-        except ScannerGeometryCursorError:
-            return False
-
-        average_entry = self._average_entry(record.symbol)
-        if average_entry is None:
-            return False
-
-        direction = record.robot_state["direction"]
-        if execution.get("first_partial_at_ms") is None:
-            execution["first_partial_at_ms"] = self._now_ms()
-            execution["first_partial_price"] = str(average_entry)
-
+        # P0.3 Option A: the first authoritative non-zero fill is the trigger
+        # to end entry sizing. In this SAME processing pass, cancel any live
+        # remainder and immediately finalize/protect the actual LIMIT-filled
+        # exposure. There is deliberately no closed-candle read, wait timer,
+        # RR/adverse-move gate, or Market completion path here.
         if not inactive:
-            # evaluate_partial_completion() only ever considers Market
-            # completion once the resting remainder is authoritatively no
-            # longer live (order_authoritatively_inactive) -- cancel it here;
-            # idempotent by client_action_id, safe to re-attempt every tick
-            # until confirmed cancelled or it fills first.
             self._action_executor.cancel_limit(PaperLimitCancelRequest(
                 _cancel_partial_remainder_action_id(record.candidate_id),
                 record.symbol.value, execution["limit_order_id"],
             ))
-            refreshed = self._store().get_paper_limit(execution["limit_order_id"], self._account_id)
+            # Cancellation can race a final resting fill. Protect and record
+            # the latest authoritative quantity after cancellation rather than
+            # inventing a target size or submitting a Market top-up.
+            refreshed = self._store().get_paper_limit(
+                execution["limit_order_id"], self._account_id,
+            )
             if refreshed is not None:
                 order = refreshed
                 filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
-                inactive = order.status in INACTIVE_LIMIT_STATUSES
 
-        structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
-        tick_size = self._tick_size_provider(record.symbol.value)
-        proposed_stop = robot_protection.structural_stop(
-            direction, average_entry=average_entry,
-            structural_extreme=structural_extreme, tick_size=tick_size,
-        )
-        existing_stop = (
-            Decimal(execution["stop_price"]) if execution.get("stop_price") else None
-        )
-        stop_price = robot_protection.tighten_stop(
-            direction, existing_stop=existing_stop, proposed_stop=proposed_stop,
-        )
-        execution["stop_price"] = str(stop_price)
-
-        reference_price, target_price = self._frozen_prices(record.signal_snapshot, direction)
-        take_price = robot_protection.frozen_take_90(
-            direction, frozen_signal_reference_price=reference_price,
-            frozen_scanner_target_price=target_price,
-        )
-        rr = robot_market_confirmation.risk_reward_ratio(
-            direction, entry_price=average_entry, stop_price=stop_price, take_price=take_price,
-        )
-
-        apex_index = int(record.signal_snapshot["geometry"]["apex"]["index"])
-        snapshot_pf = robot_partial_fill.PartialFillSnapshot(
-            direction=direction,
-            filled_wv=filled_fraction,
-            first_partial_at_ms=execution["first_partial_at_ms"],
-            first_partial_price=Decimal(execution["first_partial_price"]),
-            order_authoritatively_inactive=inactive,
-        )
-        decision = robot_partial_fill.evaluate_partial_completion(
-            snapshot_pf, now_ms=self._now_ms(),
-            current_price=Decimal(str(candle["close"])), rr=rr,
-            before_apex=geometry_index < apex_index,
-        )
-
-        self._persist_execution(record, execution)
-
-        if decision.action != robot_partial_fill.DECISION_MARKET_COMPLETE:
+        if filled_fraction <= 0:
+            # Filled quantity must never decrease, but fail closed if durable
+            # evidence becomes contradictory instead of inventing exposure.
             return True
 
-        # new_entry_admitted is guaranteed True here: the blocked case
-        # (PAUSE/STOP/RECONCILIATION_REQUIRED) already returned above,
-        # before ever reaching get_closed_candle() -- see that branch for
-        # why a blocked partial fill is finalized immediately from frozen
-        # data instead of being decided here.
-
-        # Bridge robot_partial_fill's MARKET_COMPLETE decision into
-        # robot_market_confirmation's Market-order builder: only their public
-        # build/submit functions are called, using a ConfirmationDecision
-        # value this coordinator constructs (orchestration, not new policy).
-        reward = robot_market_confirmation.expected_reward_ratio(
-            direction, entry_price=average_entry, take_price=take_price,
-        )
-        boundary_side = "upper" if direction == robot_state_machine.DIRECTION_LONG else "lower"
-        boundary = robot_state_machine.boundary_price(
-            record.signal_snapshot, side=boundary_side, geometry_index=geometry_index,
-        )
-        bridge_decision = robot_market_confirmation.ConfirmationDecision(
-            robot_market_confirmation.DECISION_MARKET_ENTRY,
-            decision.missing_wv, boundary, reward, rr,
-        )
-        payload = self._candidate_payload(record)
-        plan = robot_market_confirmation.build_confirmation_market(
-            payload, record.robot_state, bridge_decision,
-            geometry_index=geometry_index, sizing_reference_price=average_entry,
-            slippage_type=MARKET_SLIPPAGE_TYPE, slippage_value=MARKET_SLIPPAGE_VALUE,
-        )
-        result = robot_market_confirmation.submit_confirmation_market(
-            self._action_executor, plan,
-        )
-        if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+        average_entry = self._average_entry(record.symbol)
+        if average_entry is None:
             return True
 
-        final_average_entry = self._average_entry(record.symbol)
-        if final_average_entry is None:
-            return True
-        final_actual_wv = min(filled_fraction + decision.missing_wv, Decimal("1"))
-        # Same stale-state_revision hazard as the blocked-admission finalize
-        # call above: _persist_execution() earlier in this tick already
-        # advanced the durable revision past what this in-hand `record`
-        # carries. Reload before finalizing so a genuine fail-closed
-        # emergency-close/invalidate here can't silently lose its terminal
-        # status write to a spurious ConcurrentUpdate.
         fresh_record = self._store().get_robot_candidate(record.candidate_id) or record
         self._finalize_trade(
-            fresh_record, execution, entry_path="MIXED",
-            actual_wv=final_actual_wv, average_entry=final_average_entry,
+            fresh_record, execution, entry_path="LIMIT",
+            actual_wv=filled_fraction, average_entry=average_entry,
         )
         return True
 

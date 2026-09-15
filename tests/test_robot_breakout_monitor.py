@@ -5,7 +5,6 @@ import time
 import unittest
 from unittest.mock import patch
 
-import robot_partial_fill
 import robot_protection
 import robot_state_machine
 from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
@@ -997,68 +996,62 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
         self.assertEqual(self.executor.protection_calls, [])
 
-    def test_partial_fill_waits_then_completes_via_market_and_creates_mixed_trade(self):
+    def test_first_partial_fill_is_final_limit_trade_without_market_top_up(self):
         self._create_candidate()
         self._drive_to_retest_detected()
         self.monitor.tick()  # submits the initial LIMIT
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
 
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
-        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
-        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT (timer not elapsed)
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
+        feed_calls_before = len(self.feed.calls)
 
-        self.assertEqual(len(self.executor.cancel_calls), 1)
-        order = self.store.get_paper_limit(order_id, ACCOUNT_ID)
-        self.assertEqual(order.status, "cancelled")
-        self.assertEqual(self.executor.market_calls, [])
-        record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.robot_state["execution"]["stop_price"], "79.9")
-
-        self.clock.advance(robot_partial_fill.PARTIAL_COMPLETION_WAIT_MS + 1000)
-        self.feed.push(SYMBOL, _candle_at(105, high=82, low=80.5, close=81))
-        advanced = self.monitor.tick()  # elapsed, adverse move tiny, rr fine -> MARKET_COMPLETE
+        advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
-        self.assertEqual(len(self.executor.market_calls), 1)
-        market_request = self.executor.market_calls[0]
-        self.assertAlmostEqual(market_request.volume.amount, Decimal("0.4"))
+        self.assertEqual(len(self.feed.calls), feed_calls_before)
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertEqual(self.executor.cancel_calls[0].order_id, order_id)
+        order = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(order.status, "cancelled")
+        self.assertEqual(order.filled_quantity, Decimal("0.6"))
+        self.assertEqual(self.executor.market_calls, [])
 
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.status, "OPEN")
         trade = self.store.get_robot_trade("robot-trade-candidate-1")
         self.assertIsNotNone(trade)
-        self.assertEqual(trade.entry_path, "MIXED")
-        self.assertEqual(trade.actual_wv, Decimal("1"))
+        self.assertEqual(trade.entry_path, "LIMIT")
+        self.assertEqual(trade.actual_wv, Decimal("0.6"))
+        self.assertEqual(trade.average_entry, Decimal("81"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        projection = self.store.get_position_projection(position_key)
+        self.assertEqual(projection.quantity.value, Decimal("0.6"))
+        self.assertEqual(trade.entry_quantity, Decimal("0.6"))
 
-    def test_mixed_completion_protection_failure_terminalizes_in_a_single_tick(self):
-        """Regression for a stale-state_revision hazard this session's
-        testing surfaced (pre-existing, independent of the PAUSE/STOP admission
-        gate): _persist_execution() earlier in the SAME tick already advances
-        this candidate's durable state_revision past what the in-hand
-        `record` carries, so a downstream _finalize_trade() call using that
-        stale record could have its OWN fail-closed terminal status write
-        silently lost to a spurious ConcurrentUpdate -- even though the
-        emergency close itself already ran and flattened the position,
-        leaving the candidate stuck APPROVED forever (average_entry reads
-        None once flat, so no later tick would ever revisit it). Fixed by
-        reloading the record immediately before every _finalize_trade() call
-        that follows a same-tick _persist_execution()."""
+    def test_first_partial_fill_protection_failure_fails_closed_without_market_top_up(self):
         self._create_candidate()
         self._drive_to_retest_detected()
         self.monitor.tick()  # submits the initial LIMIT
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
 
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
-        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
-        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
-
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
         self.executor.fail_create_stop = True
-        self.clock.advance(robot_partial_fill.PARTIAL_COMPLETION_WAIT_MS + 1000)
-        self.feed.push(SYMBOL, _candle_at(105, high=82, low=80.5, close=81))
-        advanced = self.monitor.tick()  # MARKET_COMPLETE -> finalize -> create_stop raises -> fail closed
+        feed_calls_before = len(self.feed.calls)
+
+        advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
-        self.assertEqual(len(self.executor.market_calls), 1)  # top-up still submitted (READY, unblocked)
+        self.assertEqual(len(self.feed.calls), feed_calls_before)
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertEqual(self.executor.market_calls, [])
         self.assertEqual([name for name, _ in self.executor.protection_calls], ["full_close"])
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.status, "INVALIDATED")
@@ -1318,71 +1311,56 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         )
 
     def test_paused_partial_fill_finalizes_actual_quantity_instead_of_waiting_for_market_top_up(self):
-        """AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.3 Section 7 /
-        Recovery State Batch's 5-second STOP-not-proven contract: a partial
-        fill is already exposure and must not be left waiting indefinitely
-        on a Market top-up while PAUSED -- the actual filled_fraction must
-        be protected now, reusing the same finalize/protection path."""
+        """A fill that exists before PAUSE is observed still finalizes the
+        actual LIMIT-filled quantity immediately; PAUSE blocks only new risk.
+        P0.3 removes the old wait/top-up phase entirely."""
         self._create_candidate()
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT while still READY
+        self.monitor.tick()
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
-        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
-        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT (timer not elapsed)
-        self.assertEqual(self.executor.market_calls, [])
-
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
         self._set_admission_state("ROBOT_RUNNING", "PAUSED")
-        self.clock.advance(robot_partial_fill.PARTIAL_COMPLETION_WAIT_MS + 1000)
-        self.feed.push(SYMBOL, _candle_at(105, high=82, low=80.5, close=81))
-        advanced = self.monitor.tick()  # elapsed, would normally MARKET_COMPLETE -- blocked instead
+        calls_before = list(self.feed.calls)
+
+        advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
-        # Never tops up via Market while blocked -- that would be new entry risk.
+        self.assertEqual(self.feed.calls, calls_before)
         self.assertEqual(self.executor.market_calls, [])
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.status, "OPEN")
         trade = self.store.get_robot_trade("robot-trade-candidate-1")
-        self.assertIsNotNone(trade)
-        # Sized to the ACTUAL filled fraction (0.6), never the originally
-        # intended full wave-volume (1) and never synthesized.
         self.assertEqual(trade.entry_path, "LIMIT")
         self.assertEqual(trade.actual_wv, Decimal("0.6"))
-        self.assertEqual(trade.average_entry, Decimal("81"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
             ["create_stop", "create_take"],
         )
-        # PAUSED never affected: still paused, not silently resumed.
         self.assertEqual(self.store.get_robot_runtime_state(ACCOUNT_ID).recovery_status, "PAUSED")
 
     def test_robot_stopped_partial_fill_finalizes_actual_quantity_never_orphaning_exposure(self):
-        """Symmetric to the PAUSED case: ROBOT_STOPPED must never invalidate
-        a candidate that already has real exposure (that would orphan a live
-        position with no robot_trade/protection ownership) -- it finalizes
-        the actual filled quantity instead, exactly like PAUSE/
-        RECONCILIATION_REQUIRED."""
+        """ROBOT_STOPPED cannot invalidate a candidate that already has real
+        exposure; P0.3 finalizes and protects that actual LIMIT fill instead."""
         self._create_candidate()
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT while still READY
+        self.monitor.tick()
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
-        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
-        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
-
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
         self._set_admission_state("ROBOT_STOPPED", "ROBOT_STOPPED")
-        self.clock.advance(robot_partial_fill.PARTIAL_COMPLETION_WAIT_MS + 1000)
-        self.feed.push(SYMBOL, _candle_at(105, high=82, low=80.5, close=81))
+        calls_before = list(self.feed.calls)
+
         advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.feed.calls, calls_before)
         self.assertEqual(self.executor.market_calls, [])
         record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "OPEN")  # never INVALIDATED -- real exposure exists
+        self.assertEqual(record.status, "OPEN")
         trade = self.store.get_robot_trade("robot-trade-candidate-1")
-        self.assertIsNotNone(trade)
         self.assertEqual(trade.actual_wv, Decimal("0.6"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
@@ -1390,26 +1368,19 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         )
 
     def test_paused_partial_fill_protection_failure_uses_fail_closed_emergency_close(self):
-        """Part E race scenario 5: a partial fill finalized while PAUSED (per
-        the two tests above) must still go through PR #89's exact
-        fail-closed emergency-close path if protection itself cannot be
-        established -- no robot_trade with fabricated ownership is ever
-        created, and the candidate is only terminalized once FLAT is
-        authoritatively confirmed."""
+        """Protection failure after a partial fill still uses the existing
+        fail-closed emergency close while PAUSED, with no Market top-up."""
         self._create_candidate()
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT while still READY
+        self.monitor.tick()
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
-        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
-        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
-
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
         self._set_admission_state("ROBOT_RUNNING", "PAUSED")
         self.executor.fail_create_stop = True
-        self.clock.advance(robot_partial_fill.PARTIAL_COMPLETION_WAIT_MS + 1000)
-        self.feed.push(SYMBOL, _candle_at(105, high=82, low=80.5, close=81))
-        advanced = self.monitor.tick()  # finalize attempt -> create_stop raises -> fail closed
+
+        advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
         self.assertEqual(self.executor.market_calls, [])
@@ -1424,6 +1395,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
 
+    # -- Partial-fill protection must never depend on a new closed candle --
     # -- Partial-fill protection must never depend on a new closed candle --
     #
     # AUTOPILOT_ROBOT_V0_1_RECOVERY_STATE_BATCH_DECISION.md Section 6's
@@ -1441,77 +1413,67 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
     def test_paused_partial_fill_protects_immediately_with_no_closed_candle_available(self):
         self._create_candidate()
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT while still READY
+        self.monitor.tick()
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
-        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
-        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT (still READY here)
-
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
         self._set_admission_state("ROBOT_RUNNING", "PAUSED")
         calls_before = list(self.feed.calls)
-        # No candle queued for this tick -- get_closed_candle(SYMBOL) would
-        # return None if the immediate-protect path ever called it.
+
         advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
-        self.assertEqual(self.executor.market_calls, [])  # never waits for/tops up via Market
+        self.assertEqual(self.executor.market_calls, [])
         record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "OPEN")  # protected immediately, not left pending
+        self.assertEqual(record.status, "OPEN")
         trade = self.store.get_robot_trade("robot-trade-candidate-1")
-        self.assertIsNotNone(trade)
         self.assertEqual(trade.actual_wv, Decimal("0.6"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
             ["create_stop", "create_take"],
         )
-        # The exact proof this test targets: no NEW get_closed_candle() call
-        # was made on the finalize tick (the queue was already empty, so a
-        # call would have been recorded here same as any other).
         self.assertEqual(self.feed.calls, calls_before)
 
     def test_robot_stopped_partial_fill_protects_immediately_with_no_closed_candle_available(self):
         self._create_candidate()
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT while still READY
+        self.monitor.tick()
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
-        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
-        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
-
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
         self._set_admission_state("ROBOT_STOPPED", "ROBOT_STOPPED")
         calls_before = list(self.feed.calls)
-        advanced = self.monitor.tick()  # no candle queued
+
+        advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
         self.assertEqual(self.executor.market_calls, [])
         record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "OPEN")  # never INVALIDATED -- real exposure exists
+        self.assertEqual(record.status, "OPEN")
         trade = self.store.get_robot_trade("robot-trade-candidate-1")
-        self.assertIsNotNone(trade)
         self.assertEqual(trade.actual_wv, Decimal("0.6"))
         self.assertEqual(self.feed.calls, calls_before)
 
     def test_paused_partial_fill_no_candle_and_protection_failure_emergency_closes_immediately(self):
-        """The combined worst case: no market data (no closed candle) AND
-        protection submission itself fails. Must still emergency-close on
-        THIS tick -- zero elapsed wait, let alone the 5-second maximum --
-        never left for a later candle or a later monitor tick."""
+        """No candle plus protection failure must emergency-close in the same
+        observation pass after first fill; no wait and no Market completion."""
         self._create_candidate()
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT while still READY
+        self.monitor.tick()
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"))
-        self.feed.push(SYMBOL, _candle_at(104, high=82, low=80, close=81))
-        self.monitor.tick()  # observes the partial fill -> cancels remainder, WAIT
-
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("81"),
+        )
         self._set_admission_state("ROBOT_RUNNING", "PAUSED")
         self.executor.fail_create_stop = True
-        advanced = self.monitor.tick()  # no candle queued; create_stop raises -> fail closed, same tick
+        calls_before = list(self.feed.calls)
+
+        advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(self.feed.calls, calls_before)
         self.assertEqual(self.executor.market_calls, [])
         self.assertEqual([name for name, _ in self.executor.protection_calls], ["full_close"])
         record = self.store.get_robot_candidate("candidate-1")
