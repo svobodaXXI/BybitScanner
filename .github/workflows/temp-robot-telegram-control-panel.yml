@@ -1,0 +1,62 @@
+name: TEMP Robot Telegram control panel
+
+on:
+  push:
+    branches:
+      - robot-v0-1-telegram-control-panel
+    paths:
+      - ".github/workflows/temp-robot-telegram-control-panel.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-verify-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: robot-v0-1-telegram-control-panel
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply control-panel wiring
+        run: python .github/temp_patch_robot_control_panel.py
+      - name: Install focused dependencies
+        run: python -m pip install requests==2.34.2
+      - name: Provide test-only local config
+        shell: bash
+        run: |
+          cat > config.py <<'PY'
+          TELEGRAM_TOKEN = "test-token"
+          TELEGRAM_CHAT_ID = "42"
+          TELEGRAM_CHAT_IDS = ("42",)
+          TELEGRAM_ENABLED = True
+          TELEGRAM_TEST_MODE = False
+          TIMEFRAME = "1"
+          PY
+      - name: Compile focused surface
+        run: python -m py_compile telegram_monitoring.py tests/test_telegram_monitoring.py
+      - name: Run focused Telegram Robot tests
+        run: python -m unittest -v tests.test_telegram_monitoring tests.test_telegram_robot_control
+      - name: Scope and diff check
+        shell: bash
+        run: |
+          set -euo pipefail
+          changed=$(git status --porcelain --untracked-files=no | awk '{print $2}' | sort)
+          expected=$'telegram_monitoring.py\ntests/test_telegram_monitoring.py'
+          if [[ "$changed" != "$expected" ]]; then
+            printf 'unexpected changed paths:\n%s\n' "$changed"
+            exit 1
+          fi
+          git diff --check
+      - name: Commit control-panel wiring
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add telegram_monitoring.py tests/test_telegram_monitoring.py
+          git commit -m "feat: show Robot controls from Telegram status"
+          git push origin HEAD:robot-v0-1-telegram-control-panel
