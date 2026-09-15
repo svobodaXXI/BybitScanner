@@ -11,7 +11,7 @@ from unittest.mock import patch
 from tools.dev.checkpoint import checkpoint
 from tools.dev.task import _require_lightweight_governance, _sync_preflight
 from tools.dev.task_transaction import begin
-from tools.dev.verify import verify
+from tools.dev.verify import tree_fast_path_eligible, verify
 from tools.dev.workflow import Git
 from tools.project_sync.governance.codex_workflow import WorkflowDecision
 
@@ -31,8 +31,10 @@ class HarnessLeanWorkflowTests(unittest.TestCase):
         (root / "task.txt").write_text("base\n", encoding="utf-8")
         (root / "docs.txt").write_text("docs\n", encoding="utf-8")
         (root / "README.md").write_text("# Base\n", encoding="utf-8")
+        (root / "worker.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (root / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
         subprocess.run(
-            ("git", "add", ".gitattributes", "task.txt", "docs.txt", "README.md"),
+            ("git", "add", ".gitattributes", ".gitignore", "task.txt", "docs.txt", "README.md", "worker.py"),
             cwd=root,
             check=True,
         )
@@ -113,7 +115,7 @@ class HarnessLeanWorkflowTests(unittest.TestCase):
         isolate.assert_not_called()
         receipt = json.loads((root / ".git/bybitscanner/latest-pass.json").read_text(encoding="utf-8"))
         transaction = receipt["transaction"]
-        self.assertEqual(transaction["tree_verification"]["mode"], "markdown-tree")
+        self.assertEqual(transaction["tree_verification"]["mode"], "candidate-tree")
         self.assertNotIn("isolated_verification", transaction)
         self.assertFalse((root / ".git/bybitscanner/tasks/markdown-fast/verification-worktree").exists())
 
@@ -121,21 +123,62 @@ class HarnessLeanWorkflowTests(unittest.TestCase):
         self.assertTrue(passed, output)
         self.assertIn("candidate-tree-pass", output)
 
-    def test_github_non_markdown_transaction_keeps_isolated_verification(self):
+    def test_github_passive_non_markdown_transaction_uses_tree_fast_path(self):
         temporary, root, _ = self.make_repo()
         self.addCleanup(temporary.cleanup)
         self.use_github_origin(root)
         git = Git(root)
-        begin(["task.txt"], git=git, task_id="non-markdown")
+        begin(["task.txt"], git=git, task_id="non-markdown-fast")
         (root / "task.txt").write_text("changed\n", encoding="utf-8")
 
-        passed, output = verify(["task.txt"], git=git, transaction_id="non-markdown")
+        with patch("tools.dev.verify.create_isolated_worktree") as isolate:
+            passed, output = verify(["task.txt"], git=git, transaction_id="non-markdown-fast")
+
+        self.assertTrue(passed, output)
+        isolate.assert_not_called()
+        receipt = json.loads((root / ".git/bybitscanner/latest-pass.json").read_text(encoding="utf-8"))
+        transaction = receipt["transaction"]
+        self.assertEqual(transaction["tree_verification"]["mode"], "candidate-tree")
+        self.assertNotIn("isolated_verification", transaction)
+
+        passed, output = checkpoint("validation only", git=git)
+        self.assertTrue(passed, output)
+        self.assertIn("candidate-tree-pass", output)
+
+    def test_github_python_transaction_keeps_isolated_verification(self):
+        temporary, root, _ = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        self.use_github_origin(root)
+        git = Git(root)
+        begin(["worker.py"], git=git, task_id="python-isolated")
+        (root / "worker.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+        passed, output = verify(["worker.py"], git=git, transaction_id="python-isolated")
 
         self.assertTrue(passed, output)
         receipt = json.loads((root / ".git/bybitscanner/latest-pass.json").read_text(encoding="utf-8"))
         transaction = receipt["transaction"]
         self.assertIn("isolated_verification", transaction)
         self.assertNotIn("tree_verification", transaction)
+
+    def test_tree_fast_path_rejects_materialized_check_surfaces(self):
+        temporary, root, _ = self.make_repo()
+        self.addCleanup(temporary.cleanup)
+        self.use_github_origin(root)
+        git = Git(root)
+
+        self.assertFalse(tree_fast_path_eligible(
+            ["terminal/api/schema.json"], ["terminal/api/schema.json"],
+            ["terminal/api/schema.json"], (), git,
+        ))
+        self.assertFalse(tree_fast_path_eligible(
+            ["terminal/frontend/src/view.ts"], ["terminal/frontend/src/view.ts"],
+            ["terminal/frontend/src/view.ts"], (), git,
+        ))
+        self.assertFalse(tree_fast_path_eligible(
+            ["task.txt"], ["task.txt"], ["task.txt"],
+            ({"label": "check", "cwd": ".", "argv": ["true"]},), git,
+        ))
 
     def test_failed_check_reports_its_detail_immediately(self):
         temporary, root, _ = self.make_repo()
