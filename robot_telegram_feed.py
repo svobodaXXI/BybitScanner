@@ -275,6 +275,76 @@ def build_closed_card(record: Mapping[str, Any]) -> RobotFeedCard:
     return RobotFeedCard(EVENT_CLOSED, "Сделка закрыта", text, build_static_chart_projection(record), build_robot_tab_keyboard())
 
 
+
+def _paper_projection_decimal(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    raw = getattr(value, "value", value)
+    try:
+        number = raw if isinstance(raw, Decimal) else Decimal(str(raw))
+    except Exception as exc:
+        raise RobotTelegramProjectionError(
+            "PAPER position value must be decimal-compatible"
+        ) from exc
+    if not number.is_finite():
+        raise RobotTelegramProjectionError("PAPER position value must be finite")
+    return number
+
+
+def format_paper_positions_view(
+    records: Sequence[Any],
+    *,
+    max_message_length: int = 3500,
+) -> tuple[str, ...]:
+    """Format persisted PAPER position projections without inventing live data."""
+
+    if max_message_length < 500:
+        raise ValueError("max_message_length is too small")
+
+    header = "\U0001F4CC PAPER \u00b7 \u041e\u0442\u043a\u0440\u044b\u0442\u044b\u0435 \u043f\u043e\u0437\u0438\u0446\u0438\u0438"
+    if not records:
+        return (
+            header
+            + "\n\n\u0412 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u043e\u043c PAPER-\u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0438 \u043e\u0442\u043a\u0440\u044b\u0442\u044b\u0445 \u043f\u043e\u0437\u0438\u0446\u0438\u0439 \u043d\u0435\u0442.",
+        )
+
+    blocks: list[str] = []
+    for index, record in enumerate(records, start=1):
+        position_key = record.position_key
+        symbol = position_key.symbol.value
+        side = record.side.value
+        quantity = _paper_projection_decimal(record.quantity)
+        average_entry = _paper_projection_decimal(record.average_entry)
+        engaged_notional = _paper_projection_decimal(record.engaged_notional)
+        sync_state = str(record.sync_state).strip() or "UNKNOWN"
+
+        sync_line = f"\u0421\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435: {sync_state}"
+        if sync_state.lower() != "synced":
+            sync_line = "\u26a0 " + sync_line
+
+        blocks.append(
+            f"{index}. {symbol} \u00b7 {side}\n"
+            f"\u041a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e: {_format_decimal(quantity)}\n"
+            f"\u0421\u0440\u0435\u0434\u043d\u0438\u0439 \u0432\u0445\u043e\u0434: {_format_decimal(average_entry)}\n"
+            f"\u0417\u0430\u0434\u0435\u0439\u0441\u0442\u0432\u043e\u0432\u0430\u043d\u043e: {_format_decimal(engaged_notional)} USDT\n"
+            f"{sync_line}"
+        )
+
+    messages: list[str] = []
+    current = header
+
+    for block in blocks:
+        candidate = current + "\n\n" + block
+        if len(candidate) > max_message_length and current != header:
+            messages.append(current)
+            current = header + "\n\n" + block
+        else:
+            current = candidate
+
+    messages.append(current)
+    return tuple(messages)
+
+
 def format_positions_view(records: Sequence[Mapping[str, Any]]) -> str:
     if not records:
         return "🤖 Робот\n\nОткрытых позиций нет."
