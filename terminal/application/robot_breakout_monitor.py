@@ -30,9 +30,18 @@ from typing import Callable, Mapping, Protocol
 import robot_entry_limit
 import robot_protection
 import robot_state_machine
-from scanner_geometry_cursor import ScannerGeometryCursorError, project_latest_geometry_index
+from scanner_geometry_cursor import (
+    ScannerGeometryCursorError,
+    latest_scanner_closed_candle,
+    load_scanner_catchup_closed_candles,
+    project_latest_geometry_index,
+)
 from terminal.api.models import ClientActionId, CommandResultStatus, PaperLimitCancelRequest
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
+from terminal.application.robot_admission_catchup import (
+    LATE_ADMISSION_MARKET,
+    replay_admission_catchup,
+)
 from terminal.domain.models import Category, PositionKey, Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
     ConcurrentUpdate,
@@ -101,11 +110,20 @@ class RobotBreakoutMonitor:
         clock_ms: Callable[[], int],
         tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
         match_resting_orders: Callable[[str], object] | None = None,
+        get_admission_catchup_candles: Callable[
+            [str, Mapping[str, object]], tuple[Mapping[str, object], ...]
+        ] | None = None,
     ) -> None:
         self._store_factory = store_factory
         self._local = threading.local()
         self._account_id = trading_account_id
         self._get_closed_candle = get_closed_candle
+        if (
+            get_admission_catchup_candles is None
+            and get_closed_candle is latest_scanner_closed_candle
+        ):
+            get_admission_catchup_candles = load_scanner_catchup_closed_candles
+        self._get_admission_catchup_candles = get_admission_catchup_candles
         self._action_executor = action_executor
         self._tick_size_provider = tick_size_provider
         self._clock_ms = clock_ms
@@ -252,6 +270,19 @@ class RobotBreakoutMonitor:
             state, _event = robot_state_machine.initialize_state(
                 self._candidate_payload(record),
             )
+            if (
+                state.get("phase") != robot_state_machine.PHASE_EXPIRED_AT_APEX
+                and self._get_admission_catchup_candles is not None
+            ):
+                candles = self._get_admission_catchup_candles(
+                    record.symbol.value,
+                    record.signal_snapshot,
+                )
+                state, _events = replay_admission_catchup(
+                    record.signal_snapshot,
+                    state,
+                    candles,
+                )
             self._persist_state(record, state)
             return True
 
@@ -301,6 +332,16 @@ class RobotBreakoutMonitor:
         self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
     ) -> bool:
         execution = dict(record.robot_state.get("execution") or {})
+
+        # Late-admission execution is intentionally a separate future slice.
+        # Keep the replay-restored state durable, but submit neither the
+        # ordinary realtime-retest LIMIT nor a MARKET order until that path's
+        # economics/admission gates are implemented.
+        if (
+            execution.get("entry_mode") == LATE_ADMISSION_MARKET
+            and "limit_order_id" not in execution
+        ):
+            return False
 
         if "limit_order_id" not in execution:
             # RETEST_DETECTED is deliberately terminal for
