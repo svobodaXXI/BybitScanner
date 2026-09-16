@@ -10,6 +10,8 @@ from terminal.application.robot_late_admission_market import (
     LATE_ADMISSION_SLIPPAGE_TYPE,
     RobotLateAdmissionMarketError,
     build_late_admission_market_plan,
+    durable_late_admission_market_intent,
+    restore_late_admission_market_plan,
 )
 from terminal.domain.models import OrderSide, Price, Quantity, Symbol
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
@@ -52,6 +54,21 @@ def _book(*, health=BookHealth.READY, symbol=SYMBOL):
         health=health,
         received_at_ms=1000,
         available_depth=2,
+    )
+
+
+def _durable_intent(plan):
+    return durable_late_admission_market_intent(
+        plan,
+        normalized_quantity=Decimal("2.4"),
+        current_geometry_index=105,
+        projected_vwap=Decimal("101.25"),
+        stop_price=Decimal("99"),
+        take_price=Decimal("106"),
+        expected_reward=Decimal("0.0469"),
+        rr=Decimal("2.1"),
+        adverse_slippage=Decimal("0.0025"),
+        persisted_at_ms=1234,
     )
 
 
@@ -107,6 +124,25 @@ class RobotLateAdmissionMarketPlanTests(unittest.TestCase):
         self.assertNotEqual(first.request.sizing_reference_price, second.request.sizing_reference_price)
         self.assertEqual(first.request.client_action_id, second.request.client_action_id)
         self.assertEqual(first.identity, second.identity)
+
+    def test_durable_intent_restores_exact_request_and_identity(self):
+        plan = build_late_admission_market_plan(_candidate(), _state(), _book())
+        intent = _durable_intent(plan)
+        restored = restore_late_admission_market_plan(intent)
+
+        self.assertEqual(restored, plan)
+        self.assertEqual(intent["normalized_quantity"], "2.4")
+        self.assertEqual(intent["geometry_index"], 105)
+        self.assertEqual(intent["projected_vwap"], "101.25")
+        self.assertEqual(intent["persisted_at_ms"], 1234)
+
+    def test_durable_intent_rejects_changed_stable_identity(self):
+        plan = build_late_admission_market_plan(_candidate(), _state(), _book())
+        intent = _durable_intent(plan)
+        intent["order_link_id"] = "tw_changed"
+
+        with self.assertRaisesRegex(RobotLateAdmissionMarketError, "order_link_id changed"):
+            restore_late_admission_market_plan(intent)
 
     def test_rejects_non_late_state_and_non_ready_or_mismatched_book(self):
         ordinary = _state()
