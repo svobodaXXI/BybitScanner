@@ -15,8 +15,10 @@ from terminal.application.robot_late_admission import (
     DECISION_SKIPPED_LOW_REWARD,
     DECISION_SKIPPED_POOR_RR,
     RobotLateAdmissionError,
+    build_late_admission_market,
     evaluate_late_admission,
 )
+from terminal.api.models import VolumeUnit
 from terminal.domain.models import OrderSide, Price, Quantity, Symbol
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.paper.matching import match_market_order
@@ -35,6 +37,15 @@ def _snapshot(*, pattern="Falling Wedge", apex_index=130):
             "apex": {"index": apex_index, "price": 90.0, "valid_intersection": True},
             "current_index": 100,
         },
+    }
+
+
+def _candidate(*, pattern="Falling Wedge"):
+    return {
+        "candidate_id": "candidate-1",
+        "status": "APPROVED",
+        "timeframe": "1",
+        "signal_snapshot": _snapshot(pattern=pattern),
     }
 
 
@@ -104,6 +115,21 @@ def _evaluate(
 
 
 class RobotLateAdmissionTests(unittest.TestCase):
+    def test_market_plan_is_one_wv_and_identity_is_stable(self):
+        first = build_late_admission_market(
+            _candidate(), _state(), sizing_reference_price=Decimal("100")
+        )
+        second = build_late_admission_market(
+            _candidate(), _state(), sizing_reference_price=Decimal("100")
+        )
+
+        self.assertEqual(first.request.side, OrderSide.BUY)
+        self.assertEqual(first.request.volume.unit, VolumeUnit.WORKING_VOLUME)
+        self.assertEqual(first.request.volume.amount, Decimal("1"))
+        self.assertEqual(first.request.client_action_id, second.request.client_action_id)
+        self.assertEqual(first.identity, second.identity)
+        self.assertEqual(len(first.identity.order_link_id), 36)
+
     def test_rr_exactly_one_point_five_is_viable(self):
         decision = _evaluate()
 
@@ -211,7 +237,6 @@ class RobotLateAdmissionTests(unittest.TestCase):
             _evaluate(book=_book(health=BookHealth.DEGRADED)).action,
             DECISION_BLOCKED_BOOK_UNAVAILABLE,
         )
-        # Same boundary as PaperMarketExecutor: age == max is accepted.
         accepted = _evaluate(book=_book(received_at_ms=1_000), now_ms=2_000, max_book_age_ms=1_000)
         self.assertEqual(accepted.action, DECISION_MARKET_ENTRY)
         self.assertEqual(
