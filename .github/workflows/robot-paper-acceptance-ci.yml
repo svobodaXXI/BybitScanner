@@ -17,6 +17,7 @@ on:
       - "terminal/api/**"
       - "tests/test_robot_paper_acceptance.py"
       - "tests/test_robot_breakout_monitor_admission_catchup.py"
+      - "tests/test_robot_late_admission.py"
       - ".github/workflows/robot-paper-acceptance-ci.yml"
   workflow_dispatch:
 
@@ -48,7 +49,9 @@ jobs:
           python -m py_compile
           tests/test_robot_paper_acceptance.py
           tests/test_robot_breakout_monitor_admission_catchup.py
+          tests/test_robot_late_admission.py
           terminal/application/robot_breakout_monitor.py
+          terminal/application/robot_late_admission.py
           terminal/application/robot_admission.py
           terminal/application/robot_control.py
       - name: Run deterministic Robot PAPER acceptance
@@ -56,3 +59,4 @@ jobs:
           python -m unittest -v
           tests.test_robot_paper_acceptance
           tests.test_robot_breakout_monitor_admission_catchup
+          tests.test_robot_late_admission
