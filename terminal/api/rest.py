@@ -11,6 +11,7 @@ from terminal.api.models import (
     FullCloseCommandRequest, LimitCommandRequest, MarketCommandRequest,
     ProtectionCommandRequest, VolumeUnit,
 )
+from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.pretrade_guard import (
     ExactQuantityIntent, NotionalIntent, OrderKind, PreTradeContext, PreTradeIntent, SlippageMetadata,
     SlippageToleranceType, WorkingVolumeIntent,
@@ -48,8 +49,13 @@ class TerminalCommandApi:
         self._application = application
         self._context = context
 
-    def market(self, request: MarketCommandRequest) -> CommandResult:
-        return self._submit(request, OrderKind.MARKET)
+    def market(
+        self,
+        request: MarketCommandRequest,
+        *,
+        identity: CommandIdentityCandidate | None = None,
+    ) -> CommandResult:
+        return self._submit(request, OrderKind.MARKET, identity=identity)
 
     def full_close(self, request: FullCloseCommandRequest) -> CommandResult:
         action_id = request.client_action_id.value
@@ -120,7 +126,13 @@ class TerminalCommandApi:
         except Exception as exc:
             return _safe_error(action_id, exc)
 
-    def _submit(self, request: MarketCommandRequest | LimitCommandRequest, kind: OrderKind) -> CommandResult:
+    def _submit(
+        self,
+        request: MarketCommandRequest | LimitCommandRequest,
+        kind: OrderKind,
+        *,
+        identity: CommandIdentityCandidate | None = None,
+    ) -> CommandResult:
         def action():
             symbol = _symbol(request.symbol)
             context = self._context.context_for(symbol)
@@ -141,7 +153,9 @@ class TerminalCommandApi:
                 symbol, request.side, kind, volume, request.sizing_reference_price,
                 limit_price, slippage,
             )
-            return self._application.submit(intent, context.pretrade)
+            return self._application.submit(
+                intent, context.pretrade, identity=identity,
+            )
         return self._execute(request.client_action_id.value, action)
 
     def _execute(self, action_id: str, action) -> CommandResult:
@@ -221,4 +235,3 @@ def _close_reference_price(context: ServerCommandContext) -> Decimal:
         # PAPER development book is authoritative for execution; this reference is sizing-only.
         return Decimal("64250")
     return value
-
