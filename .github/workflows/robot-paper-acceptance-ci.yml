@@ -18,6 +18,7 @@ on:
       - "terminal/api/**"
       - "tests/test_robot_paper_acceptance.py"
       - "tests/test_robot_breakout_monitor_admission_catchup.py"
+      - "tests/test_robot_breakout_monitor_late_admission.py"
       - "tests/test_robot_late_admission.py"
       - "tests/test_robot_late_admission_market.py"
       - "tests/test_terminal_paper_trading_application.py"
@@ -52,6 +53,7 @@ jobs:
           python -m py_compile
           tests/test_robot_paper_acceptance.py
           tests/test_robot_breakout_monitor_admission_catchup.py
+          tests/test_robot_breakout_monitor_late_admission.py
           tests/test_robot_late_admission.py
           tests/test_robot_late_admission_market.py
           tests/test_terminal_paper_trading_application.py
@@ -67,6 +69,7 @@ jobs:
           python -m unittest -v
           tests.test_robot_paper_acceptance
           tests.test_robot_breakout_monitor_admission_catchup
+          tests.test_robot_breakout_monitor_late_admission
           tests.test_robot_late_admission
           tests.test_robot_late_admission_market
           tests.test_terminal_paper_trading_application
