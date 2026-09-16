@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 import unittest
 
 from robot_telegram_feed import (
@@ -15,6 +16,7 @@ from robot_telegram_feed import (
     build_robot_close_all_confirmation_keyboard,
     build_robot_control_keyboard,
     build_robot_tab_keyboard,
+    format_paper_positions_view,
     format_positions_view,
     format_robot_status_text,
     format_watching_view,
@@ -164,6 +166,96 @@ class RobotTelegramFeedTests(unittest.TestCase):
         buttons = [button for row in keyboard for button in row]
         callbacks = [button["callback_data"] for button in buttons]
         self.assertEqual(callbacks, ["robot:cmd:close_all_confirm", "robot:cmd:close_all_cancel"])
+
+
+class PaperPositionsViewTests(unittest.TestCase):
+    @staticmethod
+    def _projection(
+        symbol,
+        side,
+        *,
+        quantity="2.5",
+        average_entry="100",
+        engaged_notional="250",
+        sync_state="SYNCED",
+    ):
+        return SimpleNamespace(
+            position_key=SimpleNamespace(
+                symbol=SimpleNamespace(value=symbol),
+            ),
+            side=SimpleNamespace(value=side),
+            quantity=SimpleNamespace(value=Decimal(quantity)),
+            average_entry=(
+                None
+                if average_entry is None
+                else SimpleNamespace(value=Decimal(average_entry))
+            ),
+            engaged_notional=SimpleNamespace(value=Decimal(engaged_notional)),
+            sync_state=sync_state,
+        )
+
+    def test_empty_paper_inventory_is_explicit(self):
+        messages = format_paper_positions_view([])
+        self.assertEqual(len(messages), 1)
+        self.assertIn("PAPER", messages[0])
+        self.assertIn("\u043e\u0442\u043a\u0440\u044b\u0442\u044b\u0445 \u043f\u043e\u0437\u0438\u0446\u0438\u0439 \u043d\u0435\u0442", messages[0])
+
+    def test_formats_long_short_and_persisted_fields_without_pnl(self):
+        messages = format_paper_positions_view([
+            self._projection("BTCUSDT", "LONG"),
+            self._projection(
+                "ETHUSDT",
+                "SHORT",
+                quantity="3",
+                average_entry="2000",
+                engaged_notional="6000",
+            ),
+        ])
+        text = "\n".join(messages)
+
+        self.assertIn("BTCUSDT", text)
+        self.assertIn("LONG", text)
+        self.assertIn("ETHUSDT", text)
+        self.assertIn("SHORT", text)
+        self.assertIn("2.5", text)
+        self.assertIn("250 USDT", text)
+        self.assertIn("2000", text)
+        self.assertIn("6000 USDT", text)
+        self.assertNotIn("PnL", text)
+
+    def test_uncertain_sync_state_is_visible_and_warned(self):
+        messages = format_paper_positions_view([
+            self._projection("XRPUSDT", "LONG", sync_state="RECONCILING"),
+            self._projection("SOLUSDT", "SHORT", sync_state="UNKNOWN"),
+        ])
+        text = "\n".join(messages)
+
+        self.assertIn("RECONCILING", text)
+        self.assertIn("UNKNOWN", text)
+        self.assertGreaterEqual(text.count("\u26a0"), 2)
+
+    def test_missing_average_entry_renders_unknown_not_zero(self):
+        text = "\n".join(format_paper_positions_view([
+            self._projection("DOGEUSDT", "LONG", average_entry=None),
+        ]))
+        self.assertIn("\u0421\u0440\u0435\u0434\u043d\u0438\u0439 \u0432\u0445\u043e\u0434: \u2014", text)
+        self.assertNotIn("\u0421\u0440\u0435\u0434\u043d\u0438\u0439 \u0432\u0445\u043e\u0434: 0", text)
+
+    def test_large_inventory_is_split_without_losing_positions(self):
+        records = [
+            self._projection(f"TEST{index}USDT", "LONG")
+            for index in range(1, 13)
+        ]
+        messages = format_paper_positions_view(
+            records,
+            max_message_length=500,
+        )
+
+        self.assertGreater(len(messages), 1)
+        combined = "\n".join(messages)
+        for index in range(1, 13):
+            self.assertEqual(combined.count(f"TEST{index}USDT"), 1)
+        self.assertTrue(all(len(message) <= 500 for message in messages))
 
 
 class RobotStatusTextTests(unittest.TestCase):

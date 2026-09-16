@@ -1,12 +1,23 @@
 import json
 import os
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import call, patch
 
 from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord
-import telegram_monitoring as monitoring
+# Runtime config.py is local and may contain secrets; unit tests own this
+# import dependency and restore the module registry immediately afterward.
+_previous_config = sys.modules.get("config")
+sys.modules["config"] = ModuleType("config")
+try:
+    import telegram_monitoring as monitoring
+finally:
+    if _previous_config is None:
+        sys.modules.pop("config", None)
+    else:
+        sys.modules["config"] = _previous_config
 
 
 class TelegramMonitoringTests(unittest.TestCase):
@@ -185,6 +196,161 @@ class TelegramMonitoringTests(unittest.TestCase):
             {"symbol": ["BTCUSDT"], "view": ["positions"]},
         )
         self.assertEqual(urlsplit(url).fragment, "chart")
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring._robot_store")
+    def test_paper_positions_empty_is_explicit(self, store, send):
+        value = store.return_value.__enter__.return_value
+        value.get_paper_account.return_value = SimpleNamespace()
+        value.load_open_position_projections.return_value = ()
+        value.load_unfinished_commands.return_value = ()
+        value.load_reconciliation_checkpoints.return_value = ()
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("BYBITSCANNER_WORKSPACE_URL", None)
+            monitoring._send_paper_positions(123)
+
+        self.assertEqual(send.call_count, 1)
+        self.assertIn(
+            "\u043e\u0442\u043a\u0440\u044b\u0442\u044b\u0445 \u043f\u043e\u0437\u0438\u0446\u0438\u0439 \u043d\u0435\u0442",
+            send.call_args.args[1],
+        )
+        self.assertIsNone(send.call_args.kwargs["reply_markup"])
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring._robot_store")
+    def test_paper_positions_empty_with_unfinished_work_is_uncertain(self, store, send):
+        value = store.return_value.__enter__.return_value
+        value.get_paper_account.return_value = SimpleNamespace()
+        value.load_open_position_projections.return_value = ()
+        value.load_unfinished_commands.return_value = (
+            SimpleNamespace(trading_account_id=monitoring.PAPER_ACCOUNT_ID),
+        )
+        value.load_reconciliation_checkpoints.return_value = ()
+
+        monitoring._send_paper_positions(123)
+
+        self.assertEqual(send.call_count, 1)
+        message = send.call_args.args[1]
+        self.assertIn(
+            "\u0421\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043e",
+            message,
+        )
+        self.assertIn(
+            "\u041e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0438\u0435 \u044d\u043a\u0441\u043f\u043e\u0437\u0438\u0446\u0438\u0438 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043e",
+            message,
+        )
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring._robot_store")
+    def test_paper_positions_reconciliation_in_progress_is_uncertain(self, store, send):
+        value = store.return_value.__enter__.return_value
+        value.get_paper_account.return_value = SimpleNamespace()
+        value.load_open_position_projections.return_value = ()
+        value.load_unfinished_commands.return_value = ()
+        value.load_reconciliation_checkpoints.return_value = (
+            SimpleNamespace(
+                position_key=SimpleNamespace(
+                    trading_account_id=monitoring.PAPER_ACCOUNT_ID,
+                ),
+                completed_at_ms=None,
+            ),
+        )
+
+        monitoring._send_paper_positions(123)
+
+        self.assertIn(
+            "\u0421\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043e",
+            send.call_args.args[1],
+        )
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring._robot_store")
+    def test_paper_positions_database_failure_never_claims_zero(self, store, send):
+        store.side_effect = RuntimeError("database unavailable")
+
+        monitoring._send_paper_positions(123)
+
+        self.assertEqual(send.call_count, 1)
+        self.assertEqual(
+            send.call_args.args[1],
+            "\u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u0437\u0438\u0446\u0438\u0439 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b.",
+        )
+
+    @patch("telegram_monitoring.format_paper_positions_view")
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring._robot_store")
+    def test_paper_positions_valid_workspace_url_adds_terminal_button(
+        self, store, send, formatter
+    ):
+        value = store.return_value.__enter__.return_value
+        value.get_paper_account.return_value = SimpleNamespace()
+        value.load_open_position_projections.return_value = (SimpleNamespace(),)
+        value.load_unfinished_commands.return_value = ()
+        value.load_reconciliation_checkpoints.return_value = ()
+        formatter.return_value = ("positions",)
+
+        with patch.dict(
+            os.environ,
+            {
+                "BYBITSCANNER_WORKSPACE_URL":
+                "https://example.test/workspace?symbol=BTCUSDT&view=old#chart"
+            },
+        ):
+            monitoring._send_paper_positions(123)
+
+        markup = send.call_args.kwargs["reply_markup"]
+        url = markup["inline_keyboard"][0][0]["web_app"]["url"]
+
+        from urllib.parse import parse_qs, urlsplit
+        self.assertEqual(
+            parse_qs(urlsplit(url).query),
+            {"symbol": ["BTCUSDT"], "view": ["positions"]},
+        )
+        self.assertEqual(urlsplit(url).fragment, "chart")
+
+    @patch("telegram_monitoring._send_paper_positions")
+    def test_positions_command_uses_paper_positions_handler(self, positions):
+        message = {
+            "from": {"id": 123},
+            "chat": {"id": 123},
+            "text": "/positions",
+        }
+
+        self.assertTrue(monitoring._process_message(message))
+        positions.assert_called_once_with(123)
+
+    @patch("telegram_monitoring._send_paper_positions")
+    @patch("telegram_monitoring._answer_callback")
+    def test_positions_callback_uses_same_handler(self, answer, positions):
+        callback = {
+            "id": "callback-1",
+            "from": {"id": 123},
+            "message": {"chat": {"id": 123}},
+            "data": "robot:view:positions",
+        }
+
+        self.assertTrue(monitoring._process_positions_callback(callback))
+        answer.assert_called_once_with("callback-1")
+        positions.assert_called_once_with(123)
+
+    @patch("telegram_monitoring._send_paper_positions")
+    @patch("telegram_monitoring._answer_callback")
+    def test_positions_callback_rejects_non_owner(self, answer, positions):
+        callback = {
+            "id": "callback-2",
+            "from": {"id": 456},
+            "message": {"chat": {"id": 123}},
+            "data": "robot:view:positions",
+        }
+
+        self.assertTrue(monitoring._process_positions_callback(callback))
+        positions.assert_not_called()
+        answer.assert_called_once_with(
+            "callback-2",
+            "\u041d\u0435\u0434\u043e\u0441\u0442\u0430\u0442\u043e\u0447\u043d\u043e \u043f\u0440\u0430\u0432",
+        )
+
 
     @patch("telegram_monitoring._send_text")
     @patch("telegram_monitoring._robot_store")

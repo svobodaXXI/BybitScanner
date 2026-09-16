@@ -23,7 +23,10 @@ import requests
 
 import config
 import telegram_bot
-from robot_telegram_feed import build_robot_control_keyboard, format_robot_status_text
+from robot_telegram_feed import (
+    VIEW_POSITIONS, build_robot_control_keyboard, format_paper_positions_view,
+    format_robot_status_text, parse_robot_view_callback,
+)
 from terminal.application.robot_control import get_robot_runtime_status
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
@@ -119,12 +122,17 @@ def _send_robot_status(chat_id):
         _send_text(chat_id, "Состояние робота и число открытых позиций недоступны.")
 
 
-def _send_workspace(chat_id, *, positions=False):
+def _workspace_url(*, positions=False):
     url = os.environ.get("BYBITSCANNER_WORKSPACE_URL", "").strip()
-    parts = urlsplit(url)
-    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
-        _send_text(chat_id, "HTTPS-адрес терминала не настроен (BYBITSCANNER_WORKSPACE_URL).")
-        return
+    try:
+        parts = urlsplit(url)
+        if (parts.scheme != "https" or not parts.hostname or parts.username
+                or parts.password or any(char.isspace() for char in url)):
+            return None
+        # Accessing port rejects malformed/out-of-range URL ports.
+        parts.port
+    except ValueError:
+        return None
     if positions:
         query = [
             (key, value)
@@ -133,6 +141,63 @@ def _send_workspace(chat_id, *, positions=False):
         ]
         query.append(("view", "positions"))
         url = urlunsplit(parts._replace(query=urlencode(query)))
+    return url
+
+
+def _send_paper_positions(chat_id):
+    try:
+        with _robot_store() as store:
+            if store.get_paper_account(PAPER_ACCOUNT_ID) is None:
+                raise ValueError("PAPER account is not initialized")
+
+            positions = store.load_open_position_projections(PAPER_ACCOUNT_ID)
+
+            unfinished_commands = tuple(
+                record
+                for record in store.load_unfinished_commands()
+                if record.trading_account_id == PAPER_ACCOUNT_ID
+            )
+            unfinished_reconciliation = tuple(
+                checkpoint
+                for checkpoint in store.load_reconciliation_checkpoints()
+                if (
+                    checkpoint.position_key.trading_account_id == PAPER_ACCOUNT_ID
+                    and checkpoint.completed_at_ms is None
+                )
+            )
+
+        uncertain = bool(unfinished_commands or unfinished_reconciliation)
+
+        if not positions and uncertain:
+            messages = (
+                "\u26a0 PAPER \u00b7 \u0421\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043e"
+                "\n\n\u041e\u0442\u043a\u0440\u044b\u0442\u044b\u0445 \u043f\u043e\u0437\u0438\u0446\u0438\u0439 \u0432 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d\u043d\u043e\u0439 \u043f\u0440\u043e\u0435\u043a\u0446\u0438\u0438 \u043d\u0435\u0442, "
+                "\u043d\u043e \u0435\u0441\u0442\u044c \u043d\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u0430\u044f PAPER-\u043e\u043f\u0435\u0440\u0430\u0446\u0438\u044f \u0438\u043b\u0438 \u0441\u0432\u0435\u0440\u043a\u0430. "
+                "\u041e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0438\u0435 \u044d\u043a\u0441\u043f\u043e\u0437\u0438\u0446\u0438\u0438 \u043d\u0435 \u043f\u043e\u0434\u0442\u0432\u0435\u0440\u0436\u0434\u0435\u043d\u043e.",
+            )
+        else:
+            messages = format_paper_positions_view(positions)
+            if uncertain:
+                messages = tuple(messages) + (
+                    "\u26a0 \u0415\u0441\u0442\u044c \u043d\u0435\u0437\u0430\u0432\u0435\u0440\u0448\u0451\u043d\u043d\u0430\u044f PAPER-\u043e\u043f\u0435\u0440\u0430\u0446\u0438\u044f \u0438\u043b\u0438 \u0441\u0432\u0435\u0440\u043a\u0430. "
+                    "\u0421\u043f\u0438\u0441\u043e\u043a \u0432\u044b\u0448\u0435 \u043f\u043e\u043a\u0430\u0437\u044b\u0432\u0430\u0435\u0442 \u0438\u0437\u0432\u0435\u0441\u0442\u043d\u0443\u044e \u044d\u043a\u0441\u043f\u043e\u0437\u0438\u0446\u0438\u044e, \u043d\u043e \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435 \u043c\u043e\u0436\u0435\u0442 \u0431\u044b\u0442\u044c \u043d\u0435\u043f\u043e\u043b\u043d\u044b\u043c.",
+                )
+    except Exception:
+        _send_text(chat_id, "Данные позиций недоступны.")
+        return
+    url = _workspace_url(positions=True)
+    markup = {
+        "inline_keyboard": [[{"text": "Открыть в терминале", "web_app": {"url": url}}]],
+    } if url else None
+    for index, text in enumerate(messages):
+        _send_text(chat_id, text, reply_markup=markup if index == len(messages) - 1 else None)
+
+
+def _send_workspace(chat_id, *, positions=False):
+    url = _workspace_url(positions=positions)
+    if url is None:
+        _send_text(chat_id, "HTTPS-адрес терминала не настроен (BYBITSCANNER_WORKSPACE_URL).")
+        return
     label = "Все открытые позиции" if positions else "Терминал"
     _send_text(
         chat_id,
@@ -359,7 +424,7 @@ def _process_message(message) -> bool:
         "/terminal": _send_workspace,
         "/scanner": _send_scanner_control,
         "/robot": _send_robot_status,
-        "/positions": lambda chat_id: _send_workspace(chat_id, positions=True),
+        "/positions": _send_paper_positions,
         "/monitoring": _send_candidate_list,
         "Мониторинг": _send_candidate_list,
     }
@@ -371,6 +436,19 @@ def _process_message(message) -> bool:
     # Web App navigation and runtime controls belong to the owner's private chat.
     if chat_id is not None and str(chat_id) == _owner_id():
         handler(chat_id)
+    return True
+
+
+def _process_positions_callback(callback_query) -> bool:
+    if parse_robot_view_callback(callback_query.get("data", "")) != VIEW_POSITIONS:
+        return False
+    user_id = (callback_query.get("from") or {}).get("id")
+    chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+    if not _is_owner(user_id) or str(chat_id) != _owner_id():
+        _answer_callback(callback_query.get("id"), "Недостаточно прав")
+        return True
+    _answer_callback(callback_query.get("id"))
+    _send_paper_positions(chat_id)
     return True
 
 
@@ -447,7 +525,8 @@ def run() -> None:
 
                 callback_query = update.get("callback_query")
                 if callback_query:
-                    if not _process_monitor_callback(callback_query):
+                    if not (_process_positions_callback(callback_query)
+                            or _process_monitor_callback(callback_query)):
                         import telegram_review
 
                         telegram_review._process_callback(callback_query)
