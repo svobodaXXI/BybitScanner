@@ -10,6 +10,7 @@ No geometry is refit here and no trading action is performed.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Mapping
 
 
@@ -67,6 +68,21 @@ def _anchor_values(signal_snapshot: Mapping[str, Any]) -> tuple[int, int]:
     if isinstance(source_time, bool) or not isinstance(source_time, int) or source_time <= 0:
         raise ScannerGeometryCursorError("Scanner geometry cursor source time is invalid")
     return geometry_index, source_time
+
+
+def _frozen_apex_index(signal_snapshot: Mapping[str, Any]) -> float:
+    geometry = signal_snapshot.get("geometry") if isinstance(signal_snapshot, Mapping) else None
+    apex = geometry.get("apex") if isinstance(geometry, Mapping) else None
+    value = apex.get("index") if isinstance(apex, Mapping) else None
+    if isinstance(value, bool):
+        raise ScannerGeometryCursorError("frozen apex index is invalid")
+    try:
+        apex_index = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ScannerGeometryCursorError("frozen apex index is invalid") from exc
+    if not math.isfinite(apex_index):
+        raise ScannerGeometryCursorError("frozen apex index is invalid")
+    return apex_index
 
 
 def project_latest_geometry_index(
@@ -143,6 +159,108 @@ def latest_scanner_closed_candle(symbol: str) -> dict[str, object] | None:
     if time_ms <= 0:
         return None
     return {"time_ms": time_ms, "high": high, "low": low, "close": close}
+
+
+def _state_candle_from_row(
+    signal_snapshot: Mapping[str, Any],
+    row,
+) -> dict[str, object]:
+    try:
+        time_ms = int(row["time"])
+        high = float(row["high"])
+        low = float(row["low"])
+        close = float(row["close"])
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise ScannerGeometryCursorError("catch-up candle evidence is invalid") from exc
+    if time_ms <= 0 or not all(math.isfinite(value) for value in (high, low, close)):
+        raise ScannerGeometryCursorError("catch-up candle evidence is invalid")
+    if low > high:
+        raise ScannerGeometryCursorError("catch-up candle low exceeds high")
+    geometry_index = project_latest_geometry_index(
+        signal_snapshot,
+        latest_closed_candle_time_ms=time_ms,
+    )
+    return {
+        "closed": True,
+        "timeframe": "1",
+        "time_ms": time_ms,
+        "geometry_index": geometry_index,
+        "high": high,
+        "low": low,
+        "close": close,
+    }
+
+
+def load_scanner_catchup_closed_candles(
+    symbol: str,
+    signal_snapshot: Mapping[str, Any],
+    *,
+    candle_loader=None,
+) -> tuple[dict[str, object], ...]:
+    """Return the authoritative closed 1m range needed for admission catch-up.
+
+    The immutable Scanner cursor anchor is validated before any market-data read.
+    One bounded Scanner candle request is made, sized only far enough to cover the
+    frozen apex plus the currently-forming bar.  The newest returned kline is
+    conservatively treated as forming, matching the existing Scanner recovery
+    convention.
+
+    If the latest proven closed candle already reaches/passes the frozen apex,
+    only that candle is returned: replaying older lifecycle events cannot change
+    the terminal EXPIRED_AT_APEX outcome.  Otherwise every minute strictly after
+    the Scanner anchor through the latest proven closed candle must be present in
+    exact chronological order; any gap, duplicate, misalignment, or malformed OHLC
+    evidence fails closed.
+    """
+
+    symbol_value = str(symbol).strip()
+    if not symbol_value:
+        raise ScannerGeometryCursorError("symbol is required")
+
+    anchor_index, source_time = _anchor_values(signal_snapshot)
+    apex_index = _frozen_apex_index(signal_snapshot)
+
+    if candle_loader is None:
+        from analyzer.candles import load_candles
+
+        candle_loader = load_candles
+
+    steps_to_apex = max(0, math.ceil(apex_index - anchor_index))
+    limit = max(3, steps_to_apex + 1)
+    frame = candle_loader(symbol_value, "1", limit, minimum=2)
+    required_columns = {"time", "high", "low", "close"}
+    if frame is None or len(frame) < 2 or not required_columns.issubset(frame.columns):
+        raise ScannerGeometryCursorError("Scanner catch-up candle evidence is unavailable")
+
+    latest_row = frame.iloc[-2]
+    latest_candle = _state_candle_from_row(signal_snapshot, latest_row)
+    latest_time = int(latest_candle["time_ms"])
+    latest_geometry_index = int(latest_candle["geometry_index"])
+
+    if latest_geometry_index >= apex_index:
+        return (latest_candle,)
+    if latest_time == source_time:
+        return ()
+
+    rows = []
+    times = []
+    for position in range(len(frame) - 1):
+        row = frame.iloc[position]
+        try:
+            time_ms = int(row["time"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ScannerGeometryCursorError("catch-up candle time is invalid") from exc
+        if source_time < time_ms <= latest_time:
+            rows.append(row)
+            times.append(time_ms)
+
+    expected_times = list(range(source_time + ONE_MINUTE_MS, latest_time + 1, ONE_MINUTE_MS))
+    if times != expected_times:
+        raise ScannerGeometryCursorError(
+            "catch-up closed candle range is incomplete or non-contiguous"
+        )
+
+    return tuple(_state_candle_from_row(signal_snapshot, row) for row in rows)
 
 
 class ScannerGeometryCursorProvider:
