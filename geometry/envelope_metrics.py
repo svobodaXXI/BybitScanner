@@ -711,6 +711,12 @@ def evaluate_candle_containment(
     if end < start:
         return None
 
+    try:
+        high_values = candles["high"].to_numpy(copy=False)
+        low_values = candles["low"].to_numpy(copy=False)
+    except Exception:
+        return None
+
     evaluated_indices = []
 
     upper_outside_indices = []
@@ -728,16 +734,8 @@ def evaluate_candle_containment(
     ):
 
         try:
-            row = candles.iloc[index]
-
-            high = float(
-                row["high"]
-            )
-
-            low = float(
-                row["low"]
-            )
-
+            high = float(high_values[index])
+            low = float(low_values[index])
         except Exception:
             continue
 
@@ -799,7 +797,6 @@ def evaluate_candle_containment(
                 lower_outside
             )
 
-        # ??? ????? ????????? ???? ?????? ???????.
         high_below_lower = outside_percent(
             high,
             lower_value,
@@ -815,7 +812,6 @@ def evaluate_candle_containment(
                 index
             )
 
-        # ??? ????? ????????? ???? ??????? ???????.
         low_above_upper = outside_percent(
             low,
             upper_value,
@@ -1053,10 +1049,32 @@ def evaluate_body_zone_breaches(
     if end < start:
         return None
 
+    atr_series = None
+    atr_cache_key = f"_scanner_atr_period_{int(atr_period)}"
+
     try:
-        atr_series = calculate_atr(candles, period=atr_period)
+        atr_cache = candles.__dict__.setdefault(
+            "_scanner_atr_cache",
+            {}
+        )
+        atr_series = atr_cache.get(atr_cache_key)
+
+        if atr_series is None:
+            atr_series = calculate_atr(candles, period=atr_period)
+            atr_cache[atr_cache_key] = atr_series
     except Exception:
         atr_series = None
+
+    try:
+        open_values = candles["open"].to_numpy(copy=False)
+        close_values = candles["close"].to_numpy(copy=False)
+        atr_values = (
+            atr_series.to_numpy(copy=False)
+            if atr_series is not None
+            else None
+        )
+    except Exception:
+        return None
 
     midpoint = start + round((end - start) * strict_zone_ratio)
 
@@ -1067,9 +1085,8 @@ def evaluate_body_zone_breaches(
     for index in range(start, end + 1):
 
         try:
-            row = candles.iloc[index]
-            open_price = float(row["open"])
-            close_price = float(row["close"])
+            open_price = float(open_values[index])
+            close_price = float(close_values[index])
         except Exception:
             continue
 
@@ -1084,19 +1101,15 @@ def evaluate_body_zone_breaches(
 
         atr_value = None
 
-        if atr_series is not None:
+        if atr_values is not None:
             try:
-                candidate = atr_series.iloc[index]
+                candidate = atr_values[index]
                 if candidate == candidate:  # NaN check without importing math/numpy
                     atr_value = float(candidate)
             except Exception:
                 atr_value = None
 
         if atr_value is None:
-            # Insufficient warm-up data for ATR at this index (e.g. the
-            # first atr_period candles of the whole dataset). Fail open:
-            # this soft mechanism skips candles it cannot evaluate rather
-            # than guessing a tolerance.
             continue
 
         tolerance = atr_multiplier * atr_value
