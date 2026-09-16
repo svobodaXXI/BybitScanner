@@ -11,9 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-import hashlib
 from typing import Any, Mapping
-import uuid
 
 import robot_protection
 import robot_state_machine
@@ -22,9 +20,7 @@ from robot_market_confirmation import (
     expected_reward_ratio,
     risk_reward_ratio,
 )
-from robot_partial_fill import MAX_ADVERSE_MOVE, TARGET_WV
-from terminal.api.models import ClientActionId, MarketCommandRequest, VolumeRequest, VolumeUnit
-from terminal.application.command_identity import CommandIdentityCandidate, CommandIdentityFactory
+from robot_partial_fill import MAX_ADVERSE_MOVE
 from terminal.application.robot_admission_catchup import LATE_ADMISSION_MARKET
 from terminal.domain.models import OrderSide, Quantity, Symbol
 from terminal.market_data.models import BookHealth, NormalizedOrderBook
@@ -65,13 +61,6 @@ class LateAdmissionDecision:
     take_price: Decimal | None = None
     expected_reward: Decimal | None = None
     rr: Decimal | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class LateAdmissionMarketPlan:
-    candidate_id: str
-    request: MarketCommandRequest
-    identity: CommandIdentityCandidate
 
 
 def _positive_decimal(value: Any, field: str) -> Decimal:
@@ -146,55 +135,6 @@ def _metrics_decision(
         expected_reward=expected_reward,
         rr=rr,
     )
-
-
-def _market_digest(candidate_id: str) -> str:
-    return hashlib.sha256(
-        f"{candidate_id}\0late-admission-market".encode("utf-8")
-    ).hexdigest()
-
-
-def build_late_admission_market(
-    candidate: Mapping[str, Any],
-    state: Mapping[str, Any],
-    *,
-    sizing_reference_price: Decimal,
-    slippage_type: str = "Percent",
-    slippage_value: Decimal = Decimal("0.1"),
-) -> LateAdmissionMarketPlan:
-    """Build the one deterministic 1-WV Market intent for a late candidate."""
-
-    if candidate.get("status") != "APPROVED":
-        raise RobotLateAdmissionError("candidate must be APPROVED")
-    snapshot = candidate.get("signal_snapshot")
-    if not isinstance(snapshot, Mapping):
-        raise RobotLateAdmissionError("signal snapshot is missing")
-    _require_late_retest_state(state)
-    _direction, side = _direction_and_side(state)
-
-    candidate_id = str(candidate.get("candidate_id", "")).strip()
-    symbol = str(snapshot.get("symbol", "")).strip().upper()
-    if not candidate_id or not symbol:
-        raise RobotLateAdmissionError("candidate identity and symbol are required")
-
-    reference = _positive_decimal(sizing_reference_price, "sizing_reference_price")
-    slippage = slippage_value if isinstance(slippage_value, Decimal) else Decimal(str(slippage_value))
-    if not slippage.is_finite() or slippage < 0:
-        raise RobotLateAdmissionError("slippage_value must be finite and non-negative")
-
-    digest = _market_digest(candidate_id)
-    deterministic_uuid = uuid.UUID(hex=digest[:32])
-    identity = CommandIdentityFactory(lambda: deterministic_uuid).create()
-    request = MarketCommandRequest(
-        client_action_id=ClientActionId(f"robot-late-market-{digest[:32]}"),
-        symbol=symbol,
-        side=side,
-        volume=VolumeRequest(VolumeUnit.WORKING_VOLUME, TARGET_WV),
-        sizing_reference_price=reference,
-        slippage_type=str(slippage_type),
-        slippage_value=slippage,
-    )
-    return LateAdmissionMarketPlan(candidate_id, request, identity)
 
 
 def evaluate_late_admission(
