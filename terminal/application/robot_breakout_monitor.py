@@ -46,8 +46,12 @@ from terminal.application.robot_admission_catchup import (
 from terminal.application.robot_late_admission import (
     DECISION_APEX_REACHED as LATE_DECISION_APEX_REACHED,
     DECISION_MARKET_ENTRY as LATE_DECISION_MARKET_ENTRY,
-    build_late_admission_market,
     evaluate_late_admission,
+)
+from terminal.application.robot_late_admission_market import (
+    build_late_admission_market_plan,
+    durable_late_admission_market_intent,
+    restore_late_admission_market_plan,
 )
 from terminal.domain.models import Category, PositionKey, Quantity, Symbol, TradingAccountId
 from terminal.market_data.models import NormalizedOrderBook
@@ -408,8 +412,6 @@ class RobotBreakoutMonitor:
     ) -> bool:
         intent = execution.get("late_market_intent")
 
-        # A previously filled deterministic Market must be finalized/protected
-        # even if new-entry admission has since been paused or stopped.
         average_entry = self._average_entry(record.symbol)
         if isinstance(intent, Mapping) and average_entry is not None:
             self._finalize_trade(
@@ -418,9 +420,6 @@ class RobotBreakoutMonitor:
             )
             return True
 
-        # Runtime binding is a separate microslice. Until all three callbacks
-        # exist, late admission remains fail-closed and ordinary LIMIT behavior
-        # is unchanged.
         if (
             self._get_market_book is None
             or self._market_preflight is None
@@ -440,7 +439,7 @@ class RobotBreakoutMonitor:
             return False
 
         if isinstance(intent, Mapping):
-            plan = self._late_market_plan_from_intent(record, intent)
+            plan = restore_late_admission_market_plan(intent)
             result = self._submit_market(plan.request, plan.identity)
             if getattr(result, "status", None) == CommandResultStatus.COMPLETED:
                 average_entry = self._average_entry(record.symbol)
@@ -467,19 +466,8 @@ class RobotBreakoutMonitor:
         book = self._get_market_book(record.symbol.value)
         if book is None:
             return False
-        direction = str(record.robot_state.get("direction", "")).strip().upper()
-        levels = (
-            book.asks
-            if direction == robot_state_machine.DIRECTION_LONG
-            else book.bids
-        )
-        if not levels:
-            return False
-        sizing_reference_price = levels[0].price.value
-        plan = build_late_admission_market(
-            self._candidate_payload(record),
-            record.robot_state,
-            sizing_reference_price=sizing_reference_price,
+        plan = build_late_admission_market_plan(
+            self._candidate_payload(record), record.robot_state, book,
         )
         preflight = self._market_preflight(plan.request, plan.identity)
         if not getattr(preflight, "admitted", False):
@@ -488,6 +476,7 @@ class RobotBreakoutMonitor:
         if not isinstance(normalized_quantity, Decimal) or normalized_quantity <= 0:
             return False
 
+        direction = str(record.robot_state.get("direction", "")).strip().upper()
         structural_extreme = self._structural_extreme(
             record.signal_snapshot, direction,
         )
@@ -520,22 +509,18 @@ class RobotBreakoutMonitor:
         if decision.action != LATE_DECISION_MARKET_ENTRY:
             return False
 
-        intent = {
-            "client_action_id": plan.request.client_action_id.value,
-            "command_id": plan.identity.command_id.value,
-            "order_link_id": plan.identity.order_link_id,
-            "sizing_reference_price": str(plan.request.sizing_reference_price),
-            "slippage_type": plan.request.slippage_type,
-            "slippage_value": str(plan.request.slippage_value),
-            "normalized_quantity": str(normalized_quantity),
-            "geometry_index": geometry_index,
-            "projected_vwap": str(decision.projected_vwap),
-            "stop_price": str(decision.stop_price),
-            "take_price": str(decision.take_price),
-            "expected_reward": str(decision.expected_reward),
-            "rr": str(decision.rr),
-            "adverse_slippage": str(decision.adverse_slippage),
-        }
+        intent = durable_late_admission_market_intent(
+            plan,
+            normalized_quantity=normalized_quantity,
+            current_geometry_index=geometry_index,
+            projected_vwap=decision.projected_vwap,
+            stop_price=decision.stop_price,
+            take_price=decision.take_price,
+            expected_reward=decision.expected_reward,
+            rr=decision.rr,
+            adverse_slippage=decision.adverse_slippage,
+            persisted_at_ms=self._now_ms(),
+        )
         durable_execution = dict(execution)
         durable_execution["late_market_intent"] = intent
         durable_state = dict(record.robot_state)
@@ -549,13 +534,8 @@ class RobotBreakoutMonitor:
                 updated_at_ms=self._now_ms(),
             )
         except ConcurrentUpdate:
-            # Strict boundary: if the intent did not durably commit exactly at
-            # the expected revision, no Market side effect is permitted.
             return False
 
-        # Re-read both risk gates after the durable intent commit and before
-        # the first side effect. A pause/ownership race therefore withholds the
-        # submit while preserving the already-authorized deterministic intent.
         fresh = self._store().get_robot_candidate(record.candidate_id)
         if fresh is None:
             return True
@@ -574,30 +554,6 @@ class RobotBreakoutMonitor:
                     actual_wv=Decimal("1"), average_entry=average_entry,
                 )
         return True
-
-    def _late_market_plan_from_intent(
-        self, record: RobotCandidateRecord, intent: Mapping[str, object],
-    ):
-        try:
-            reference = Decimal(str(intent["sizing_reference_price"]))
-            slippage_value = Decimal(str(intent["slippage_value"]))
-            slippage_type = str(intent["slippage_type"])
-        except Exception as exc:
-            raise RobotBreakoutMonitorError("durable late Market intent is invalid") from exc
-        plan = build_late_admission_market(
-            self._candidate_payload(record),
-            record.robot_state,
-            sizing_reference_price=reference,
-            slippage_type=slippage_type,
-            slippage_value=slippage_value,
-        )
-        if (
-            plan.request.client_action_id.value != intent.get("client_action_id")
-            or plan.identity.command_id.value != intent.get("command_id")
-            or plan.identity.order_link_id != intent.get("order_link_id")
-        ):
-            raise RobotBreakoutMonitorError("durable late Market identity mismatch")
-        return plan
 
     def _finalize_trade(
         self,
