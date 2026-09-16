@@ -19,6 +19,7 @@ on:
       - "tests/test_robot_paper_acceptance.py"
       - "tests/test_robot_breakout_monitor_admission_catchup.py"
       - "tests/test_robot_late_admission.py"
+      - "tests/test_robot_late_admission_market.py"
       - "tests/test_terminal_paper_trading_application.py"
       - ".github/workflows/robot-paper-acceptance-ci.yml"
   workflow_dispatch:
@@ -52,9 +53,11 @@ jobs:
           tests/test_robot_paper_acceptance.py
           tests/test_robot_breakout_monitor_admission_catchup.py
           tests/test_robot_late_admission.py
+          tests/test_robot_late_admission_market.py
           tests/test_terminal_paper_trading_application.py
           terminal/application/robot_breakout_monitor.py
           terminal/application/robot_late_admission.py
+          terminal/application/robot_late_admission_market.py
           terminal/application/robot_admission.py
           terminal/application/robot_control.py
           terminal/application/trading_application.py
@@ -65,4 +68,5 @@ jobs:
           tests.test_robot_paper_acceptance
           tests.test_robot_breakout_monitor_admission_catchup
           tests.test_robot_late_admission
+          tests.test_robot_late_admission_market
           tests.test_terminal_paper_trading_application
