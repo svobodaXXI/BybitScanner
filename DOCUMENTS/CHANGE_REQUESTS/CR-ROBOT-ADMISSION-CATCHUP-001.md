@@ -8,7 +8,7 @@
   "title": "Robot v0.1 Late-Admission Catch-up and Market Entry Viability",
   "governance_type": "DESIGN_TO_IMPLEMENTATION_CHANGE_REQUEST",
   "status": "OPEN",
-  "revision": "1.3",
+  "revision": "1.4",
   "lifecycle_stage": "IMPLEMENT",
   "objective": "Make Robot admission reconstruct the truthful breakout/retest lifecycle from frozen Scanner geometry and missed closed 1m candles, then permit a late-admission Market entry only when the current executable trade still satisfies the accepted risk/reward, expected-reward, slippage, freshness, and ownership gates.",
   "non_goals": [
@@ -28,6 +28,7 @@
     "robot_protection.py",
     "robot_partial_fill.py",
     "terminal/application/robot_breakout_monitor.py",
+    "terminal/application/robot_late_admission.py",
     "terminal/market_data/book_provider.py",
     "terminal/market_data/models.py",
     "terminal/paper/matching.py",
@@ -65,7 +66,9 @@
     "The late-admission entry_mode marker lives inside the existing robot_state JSON/execution envelope, survives restart/CAS persistence, and requires no SQLite schema migration and no Robot state-machine version bump; robot_state_machine remains unaware of execution-policy provenance.",
     "Admission catch-up is initial-admission-only: RobotBreakoutMonitor invokes it only while robot_state is absent. Any durable non-null state, including state found after process restart, remains on the existing ordinary runtime/recovery path and does not replay restart downtime.",
     "Catch-up provider or replay failure before the first durable state write leaves robot_state absent and persists no inferred phase or execution marker; the next monitor tick may retry from the same immutable candidate snapshot.",
-    "The initial-admission integration persists the successfully reconstructed state exactly once and returns before any execution side effect. A catch-up-created LATE_ADMISSION_MARKET marker is deliberately execution-no-op until the separately implemented Market viability slice, so this integration slice submits neither LIMIT nor MARKET."
+    "The initial-admission integration persists the successfully reconstructed state exactly once and returns before any execution side effect. A catch-up-created LATE_ADMISSION_MARKET marker is deliberately execution-no-op until the separately implemented Market viability slice, so this integration slice submits neither LIMIT nor MARKET.",
+    "The late-admission viability calculation is pure and side-effect free. It consumes an already-normalized intended quantity plus authoritative admission/ownership facts, current frozen geometry index, current normalized L2 book and existing strategy inputs; it never persists or submits an order.",
+    "The viability calculation reuses robot_protection.structural_stop()/frozen_take_90(), robot_market_confirmation.expected_reward_ratio()/risk_reward_ratio(), terminal.paper.matching.match_market_order(), robot_market_confirmation.MIN_EXPECTED_REWARD and robot_partial_fill.MAX_ADVERSE_MOVE instead of duplicating those policies or thresholds."
   ],
   "external_reference_inspiration": [
     "Freqtrade strategy callbacks: confirm_trade_entry() is the final pre-order veto and may abort when the current price is no longer acceptable; custom_entry_price() is evaluated immediately before order placement — https://www.freqtrade.io/en/stable/strategy-callbacks/",
@@ -82,7 +85,8 @@
     "Resolved in revision 1.1: terminal.paper.matching.match_market_order() is the existing authoritative PAPER depth-walk/VWAP primitive. It accepts a NormalizedOrderBook, consumes asks for BUY or bids for SELL until quantity is filled, fails if book health is not READY or depth is insufficient, and returns exact fills plus VWAP. PaperMarketExecutor uses this same primitive immediately before durable PAPER execution, while MarketBookProvider is already the read-only dependency boundary for the latest normalized book. Therefore late-admission preview must reuse this exact matching function against the same book model rather than build a second Workspace/Robot estimator.",
     "Resolved in revision 1.2: scanner_geometry_cursor.py is already the authoritative bridge between Scanner candle timestamps and frozen Robot geometry indices, and already loads conservative closed 1m evidence through analyzer.candles.load_candles(). The catch-up range belongs there as a sibling read-only helper, not in RobotBreakoutMonitor and not in a new market-data subsystem.",
     "Resolved in revision 1.2: breakout_index/retest_index/geometry_cursor/last_event fully describe the lifecycle result, but they do not encode provenance. A live-observed retest and a catch-up-reconstructed retest can produce the same RETEST_DETECTED state while requiring different entry paths. A single durable execution.entry_mode='LATE_ADMISSION_MARKET' marker is therefore the minimum additional state needed to preserve the approved behavior across ticks and restarts.",
-    "Implemented and verified in revision 1.3: RobotBreakoutMonitor now runs validated historical catch-up only on first admission, persists the reconstructed state once, retries without persistence on provider/replay failure, and holds LATE_ADMISSION_MARKET in a no-entry state until the Market viability slice. Ordinary live-observed retests retain the existing LIMIT path."
+    "Implemented and verified in revision 1.3: RobotBreakoutMonitor now runs validated historical catch-up only on first admission, persists the reconstructed state once, retries without persistence on provider/replay failure, and holds LATE_ADMISSION_MARKET in a no-entry state until the Market viability slice. Ordinary live-observed retests retain the existing LIMIT path.",
+    "Implemented and verified in revision 1.4: terminal.application.robot_late_admission now provides a pure late-admission viability decision over the shared PAPER matcher and existing Robot protection/economics primitives. It enforces admission/ownership/apex, normalized-book readiness/freshness/depth, RR >= 1.5, reward >= 1.0% and adverse slippage <= 0.5% without any persistence or execution side effect."
   ],
   "unresolved_implementation_details": [],
   "acceptance_criteria": [
@@ -172,7 +176,7 @@ The design follows a common separation used by mature trading engines: signal/se
 
 1. Add the read-only validated closed-1m catch-up range helper in `scanner_geometry_cursor.py` using the existing `load_candles()` transport.
 2. **DONE (2026-09-16):** Add deterministic admission catch-up replay in `RobotBreakoutMonitor`; persist `execution.entry_mode='LATE_ADMISSION_MARKET'` only when that replay itself reaches `RETEST_DETECTED`. The integration is initial-admission-only, fail-closed before persistence, and emits no entry order in this slice.
-3. Add a pure late-admission viability decision that reuses existing STOP/TAKE and RR/reward math and consumes `match_market_order()` projected VWAP/slippage from the current authoritative normalized book.
+3. **DONE (2026-09-16):** Add a pure late-admission viability decision that reuses existing STOP/TAKE and RR/reward math and consumes `match_market_order()` projected VWAP/slippage from the current authoritative normalized book. The decision has no persistence or execution capability.
 4. Integrate the approved Market decision through the existing shared PAPER Market command path; do not create a second Market executor or fill estimator.
 5. Add focused regression and PAPER runtime acceptance before any LIVE discussion.
 
@@ -180,8 +184,12 @@ The design follows a common separation used by mature trading engines: signal/se
 
 - Monitor integration commit: `5baf6a30d3413c3b6f00734b421dc0c40e4600b7`.
 - Focused admission-catch-up monitor regression commit: `4464c2599bc9e708cafec8109fe89964d6fc1e0e`.
-- CI coverage commit: `12cadc8f77f68d30ce08b7416d76e0870cbb96ed`.
-- GitHub Actions `Robot PAPER acceptance` run #42: **PASS**. The compile step passed and the deterministic test step passed with both `tests.test_robot_paper_acceptance` and `tests.test_robot_breakout_monitor_admission_catchup` enabled.
-- Verified scope: initial admission catch-up only; WAITING_BREAKOUT / WAITING_RETEST / RETEST_DETECTED+late marker / EXPIRED outcomes; frozen geometry preservation; provider/replay failure leaves `robot_state=None`; retry is possible; no restart-downtime replay; exactly one successful initial persistence; no LIMIT or MARKET side effect for the late marker in this slice.
+- Catch-up CI coverage commit: `12cadc8f77f68d30ce08b7416d76e0870cbb96ed`.
+- Pure late-admission viability commit: `2b504502162e3617c3a8a4cb53f6b4e6ec0c1270`.
+- Focused viability-gate regression commit: `120579dddaf0369579bbc87e5f299c77e747f192`.
+- Viability CI coverage commit: `3f02b9395d31efc93f8160fc3dda09489ed5f4a0`.
+- GitHub Actions `Robot PAPER acceptance` run #46: **PASS**. Compile passed and the deterministic suite passed with `tests.test_robot_paper_acceptance`, `tests.test_robot_breakout_monitor_admission_catchup`, and `tests.test_robot_late_admission` enabled.
+- Verified viability scope: RR 1.5 boundary passes; reward 1.0% boundary passes; adverse slippage 0.5% boundary passes; below/above thresholds block as specified; admission, ownership and frozen-apex gates fail closed; non-READY/stale/future-timestamp books and insufficient depth fail closed; LONG/SHORT use the correct side; projected VWAP is exactly the shared `match_market_order()` VWAP for the same book and quantity; no order submitter or persistence dependency exists in the pure decision.
+- Remaining implementation boundary: `LATE_ADMISSION_MARKET` is still execution-no-op in `RobotBreakoutMonitor`; the next slice may integrate only a passing decision through the existing shared PAPER Market command path.
 
 # END_OF_DOCUMENT
