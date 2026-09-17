@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -723,6 +723,77 @@ SCHEMA_V20_MIGRATION_STATEMENTS = (
     """,
 )
 
+SCHEMA_V21_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE paper_protection_obligations_v21 (
+        obligation_id TEXT PRIMARY KEY,
+        trade_id TEXT NOT NULL UNIQUE,
+        trading_account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        protection_version INTEGER NOT NULL,
+        winning_leg TEXT NOT NULL,
+        trigger_price TEXT NOT NULL,
+        observed_exit_price TEXT NOT NULL,
+        observed_quantity TEXT NOT NULL,
+        market_event_id TEXT NOT NULL,
+        source_received_at_ms INTEGER NOT NULL,
+        latched_at_ms INTEGER NOT NULL,
+        order_id TEXT NOT NULL UNIQUE,
+        exec_id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        updated_at_ms INTEGER NOT NULL,
+        source_generation INTEGER
+            CHECK (source_generation IS NULL OR source_generation >= 0),
+        source_sequence INTEGER
+            CHECK (source_sequence IS NULL OR source_sequence >= 0),
+        source_update_id INTEGER
+            CHECK (source_update_id IS NULL OR source_update_id >= 0),
+        source_event_at_ms INTEGER
+            CHECK (source_event_at_ms IS NULL OR source_event_at_ms >= 0),
+        source_matching_engine_cts_ms INTEGER
+            CHECK (
+                source_matching_engine_cts_ms IS NULL
+                OR source_matching_engine_cts_ms >= 0
+            ),
+        observed_bid_price TEXT,
+        observed_ask_price TEXT,
+        FOREIGN KEY (trade_id) REFERENCES robot_trades(trade_id),
+        CHECK (protection_version >= 1),
+        CHECK (winning_leg IN ('STOP', 'TAKE', 'EMERGENCY_CLOSE')),
+        CHECK (status IN ('TRIGGERED', 'DISPATCHING', 'RESOLVED')),
+        CHECK (version >= 1),
+        CHECK (source_received_at_ms >= 0),
+        CHECK (latched_at_ms >= source_received_at_ms),
+        CHECK (updated_at_ms >= latched_at_ms)
+    ) WITHOUT ROWID
+    """,
+    """
+    INSERT INTO paper_protection_obligations_v21 (
+        obligation_id, trade_id, trading_account_id, symbol,
+        protection_version, winning_leg, trigger_price,
+        observed_exit_price, observed_quantity, market_event_id,
+        source_received_at_ms, latched_at_ms, order_id, exec_id,
+        status, version, updated_at_ms,
+        source_generation, source_sequence, source_update_id,
+        source_event_at_ms, source_matching_engine_cts_ms,
+        observed_bid_price, observed_ask_price
+    )
+    SELECT
+        obligation_id, trade_id, trading_account_id, symbol,
+        protection_version, winning_leg, trigger_price,
+        observed_exit_price, observed_quantity, market_event_id,
+        source_received_at_ms, latched_at_ms, order_id, exec_id,
+        status, version, updated_at_ms,
+        source_generation, source_sequence, source_update_id,
+        source_event_at_ms, source_matching_engine_cts_ms,
+        observed_bid_price, observed_ask_price
+    FROM paper_protection_obligations
+    """,
+    "DROP TABLE paper_protection_obligations",
+    "ALTER TABLE paper_protection_obligations_v21 RENAME TO paper_protection_obligations",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -744,4 +815,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V18_MIGRATION_STATEMENTS
     + SCHEMA_V19_MIGRATION_STATEMENTS
     + SCHEMA_V20_MIGRATION_STATEMENTS
+    + SCHEMA_V21_MIGRATION_STATEMENTS
 )
