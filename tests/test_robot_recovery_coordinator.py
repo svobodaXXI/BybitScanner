@@ -11,8 +11,12 @@ from terminal.application.robot_recovery import (
     RobotRecoveryCoordinator,
     RobotRecoveryError,
 )
-from terminal.domain.models import Symbol, TradingAccountId
-from terminal.persistence.sqlite_store import SQLiteStore
+from terminal.domain.models import (
+    Category, Execution, ExecutionDedupKey, ExecutionId, Notional, OrderId,
+    OrderSide, PositionKey, PositionSide, Price, Quantity, Symbol,
+    TradingAccountId,
+)
+from terminal.persistence.sqlite_store import PositionProjectionUpdate, SQLiteStore
 
 
 ACCOUNT_ID = TradingAccountId("paper")
@@ -95,36 +99,87 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         )
 
     def _create_open_candidate(self):
+        symbol = Symbol("TESTUSDT")
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, symbol, 0)
         candidate, created = self.store.create_robot_candidate(
             candidate_id="candidate-open",
             trading_account_id=ACCOUNT_ID,
-            symbol=Symbol("TESTUSDT"),
+            symbol=symbol,
             status="APPROVED",
             signal_snapshot=_snapshot(),
             approved_at_ms=self.clock(),
             updated_at_ms=self.clock(),
         )
         self.assertTrue(created)
+
+        entry_at = self.clock()
+        self.store.apply_execution_once(
+            Execution(
+                dedup_key=ExecutionDedupKey(
+                    ACCOUNT_ID, Category.LINEAR, ExecutionId("entry-open-exec"),
+                ),
+                order_id=OrderId("entry-open-order"),
+                symbol=symbol,
+                side=OrderSide.BUY,
+                price=Price(Decimal("100")),
+                quantity=Quantity(Decimal("1")),
+                fee=Decimal("0"),
+                exchange_timestamp_ms=entry_at,
+            ),
+            PositionProjectionUpdate(
+                position_key=position_key,
+                side=PositionSide.LONG,
+                quantity=Quantity(Decimal("1")),
+                average_entry=Price(Decimal("100")),
+                realized_pnl=Decimal("0"),
+                accumulated_fee=Decimal("0"),
+                engaged_notional=Notional(Decimal("100")),
+                sync_state="synced",
+                expected_version=None,
+                updated_at_ms=entry_at,
+            ),
+        )
+        position = self.store.get_position_projection(position_key)
+        self.assertIsNotNone(position)
+
         _, trade_created = self.store.create_robot_trade(
             trade_id="trade-open",
             trading_account_id=ACCOUNT_ID,
             candidate_id=candidate.candidate_id,
-            symbol=Symbol("TESTUSDT"),
+            symbol=symbol,
             direction="LONG",
             pattern="Falling Wedge",
             source_timeframe="1",
             signal_time_ms=10,
-            entry_time_ms=20,
+            entry_time_ms=entry_at,
             entry_path="MARKET",
             actual_wv=Decimal("1"),
             average_entry=Decimal("100"),
             stop_price=Decimal("98"),
             take_price=Decimal("103"),
             entry_quantity=Decimal("1"),
-            entry_position_version=1,
+            entry_position_version=position.version,
             created_at_ms=self.clock(),
         )
         self.assertTrue(trade_created)
+        self.store.mutate_paper_protection_leg(
+            client_action_id="open-stop",
+            request_fingerprint="open-stop",
+            operation="create",
+            position_key=position_key,
+            leg="stop",
+            trigger=Decimal("98"),
+            updated_at_ms=self.clock(),
+        )
+        self.store.mutate_paper_protection_leg(
+            client_action_id="open-take",
+            request_fingerprint="open-take",
+            operation="create",
+            position_key=position_key,
+            leg="take",
+            trigger=Decimal("103"),
+            updated_at_ms=self.clock(),
+        )
 
     def test_first_run_stays_stopped_and_admission_closed(self):
         coordinator = RobotRecoveryCoordinator(
@@ -207,6 +262,34 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(result.runtime_state.recovery_status, READY)
         self.assertTrue(result.admission_ready)
         self.assertEqual(result.decisions[0].status, "RESUME_OPEN_POSITION")
+
+    def test_running_open_trade_with_missing_take_fails_closed_before_ready(self):
+        self._create_open_candidate()
+        self._initialize_running()
+        position_key = PositionKey(
+            ACCOUNT_ID, Category.LINEAR, Symbol("TESTUSDT"), 0,
+        )
+        self.store.mutate_paper_protection_leg(
+            client_action_id="delete-open-take",
+            request_fingerprint="delete-open-take",
+            operation="delete",
+            position_key=position_key,
+            leg="take",
+            trigger=None,
+            updated_at_ms=self.clock(),
+        )
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+
+        result = coordinator.recover()
+
+        self.assertEqual(
+            result.runtime_state.recovery_status,
+            "RECONCILIATION_REQUIRED",
+        )
+        self.assertFalse(result.admission_ready)
+        self.assertIn("protection is incomplete", result.runtime_state.reason)
 
     def test_restart_while_paused_lands_back_on_paused_not_ready(self):
         running = self._initialize_running()
