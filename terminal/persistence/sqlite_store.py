@@ -3414,6 +3414,22 @@ class SQLiteStore:
         )
         return tuple(_execution_from_row(row) for row in rows)
 
+    def load_executions_for_order(
+        self, trading_account_id: TradingAccountId, order_id: OrderId,
+    ) -> tuple[Execution, ...]:
+        """Immutable execution evidence for one exact durable order identity."""
+
+        self._assert_owner()
+        rows = self._connection.execute(
+            """
+            SELECT * FROM executions
+            WHERE trading_account_id = ? AND order_id = ?
+            ORDER BY exchange_timestamp_ms, exec_id
+            """,
+            (trading_account_id.value, order_id.value),
+        )
+        return tuple(_execution_from_row(row) for row in rows)
+
     def get_position_projection(
         self, key: PositionKey
     ) -> PositionProjectionRecord | None:
@@ -3912,6 +3928,20 @@ class SQLiteStore:
             if cursor.rowcount != 1:
                 raise ConcurrentUpdate("Robot candidate changed before trade close")
         return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
+
+    def load_open_robot_trades(
+        self, trading_account_id: TradingAccountId,
+    ) -> tuple[RobotTradeRecord, ...]:
+        """Return every durable non-terminal Robot trade for one account."""
+
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM robot_trades
+               WHERE trading_account_id=? AND exit_time_ms IS NULL
+               ORDER BY created_at_ms, trade_id""",
+            (trading_account_id.value,),
+        ).fetchall()
+        return tuple(_robot_trade_from_row(row) for row in rows)
 
     def get_open_robot_trade_for_symbol(
         self, trading_account_id: TradingAccountId, symbol: Symbol,
