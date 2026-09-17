@@ -1700,6 +1700,10 @@ class RobotProtectionCoverageManager:
             current = set(self._covered)
             to_add = wanted - current
             to_drop = current - wanted
+            unhealthy = dict(self._unhealthy)
+        for symbol, reason in unhealthy.items():
+            if symbol in wanted:
+                self._enqueue_runtime_fence(symbol, reason)
         for symbol in sorted(to_add):
             try:
                 context = self._hub.subscribe(symbol)
@@ -1749,8 +1753,8 @@ class RobotProtectionCoverageManager:
         received_at_ms = book.received_at_ms
         message_type = payload.get("messageType")
         with self._lock:
-            continuity_lost = symbol in self._unhealthy
-        if continuity_lost and message_type != "snapshot":
+            continuity_reason = self._unhealthy.get(symbol)
+        if continuity_reason is not None and message_type != "snapshot":
             return
         generation_at_enqueue = book.source_generation
 
@@ -1772,6 +1776,17 @@ class RobotProtectionCoverageManager:
                     symbol, generation_at_enqueue, context.reconnect_count, book_update_id,
                 )
                 return None
+            if continuity_reason is not None:
+                recovered = runtime.recover_robot_protection_continuity_loss(
+                    symbol,
+                    book,
+                    event_id=book_update_id,
+                    received_at_ms=received_at_ms,
+                    reason=continuity_reason,
+                )
+                if recovered:
+                    self._mark_healthy(symbol)
+                return recovered
             return runtime.process_robot_market_event(
                 symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
             )
@@ -1793,12 +1808,24 @@ class RobotProtectionCoverageManager:
                 symbol, book_update_id,
             )
             return
-        if message_type == "snapshot":
-            self._mark_healthy(symbol)
+    def _enqueue_runtime_fence(self, symbol: str, reason: str) -> None:
+        try:
+            self._runtime.enqueue(
+                lambda runtime: runtime.fence_robot_protection_continuity_loss(
+                    symbol, reason,
+                )
+            )
+        except Exception:
+            LOGGER.exception(
+                "Robot protection coverage could not durably fence admission; "
+                "will retry; symbol=%s reason=%s",
+                symbol, reason,
+            )
 
     def _mark_unhealthy(self, symbol: str, reason: str) -> None:
         with self._lock:
             self._unhealthy[symbol] = reason
+        self._enqueue_runtime_fence(symbol, reason)
 
     def _mark_healthy(self, symbol: str) -> None:
         with self._lock:
