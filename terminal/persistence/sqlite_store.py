@@ -3391,6 +3391,29 @@ class SQLiteStore:
         )
         return tuple(_execution_from_row(row) for row in rows)
 
+    def load_executions_for_symbol(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> tuple[Execution, ...]:
+        """Symbol-scoped fill history, oldest first, for lot reconstruction.
+
+        ``ORDER BY exchange_timestamp_ms, exec_id`` gives a deterministic read
+        order -- loading every account's executions to find one symbol's lot
+        would not. ``exec_id`` is only that tie-breaker, not proof of actual
+        execution order: ``robot_flat_closure.prove_flat_closure`` requires
+        ``exchange_timestamp_ms`` itself to be strictly increasing and fails
+        closed on any tied timestamp rather than trusting this lexical order.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """
+            SELECT * FROM executions
+            WHERE trading_account_id = ? AND symbol = ?
+            ORDER BY exchange_timestamp_ms, exec_id
+            """,
+            (trading_account_id.value, symbol.value),
+        )
+        return tuple(_execution_from_row(row) for row in rows)
+
     def get_position_projection(
         self, key: PositionKey
     ) -> PositionProjectionRecord | None:

@@ -519,6 +519,186 @@ def test_robot_reconcile_flat_stale_trade_without_attributable_evidence_stays_re
             runtime.close()
 
 
+def _last_entry_order_id(runtime, symbol: str) -> str:
+    executions = runtime.store.load_executions_for_symbol(
+        TradingAccountId("paper"), Symbol(symbol),
+    )
+    return [item.order_id.value for item in executions if item.side is OrderSide.BUY][-1]
+
+
+def _attach_robot_entry_state(
+    runtime, *, candidate_id: str, status: str, order_id: str, updated_at_ms: int,
+    emergency: dict | None = None,
+):
+    """Persist the candidate's own entry/emergency execution state.
+
+    This is exactly the durable shape RobotBreakoutMonitor writes and the only
+    place flat-closure attribution is allowed to read ownership from.
+    """
+    execution = {"limit_order_id": order_id}
+    if emergency is not None:
+        execution.update(emergency)
+    candidate = runtime.store.get_robot_candidate(candidate_id)
+    return runtime.store.save_robot_candidate_state(
+        candidate_id, status=status, robot_state={"execution": execution},
+        expected_revision=candidate.state_revision, updated_at_ms=updated_at_ms,
+    )
+
+
+def _flatten_symbol_with_colliding_robot_entry(
+    runtime, *, symbol: str, entry_price: Decimal, trade_id: str,
+    stale_candidate_id: str, colliding_candidate_id: str,
+):
+    """Reproduce the 0GUSDT shape: two Robot LIMIT lots, one aggregate close.
+
+    Returns ``(trade, closing_execution, colliding_order_id)`` with the stale
+    trade still OPEN against an authoritative FLAT position. The emergency
+    marker is deliberately left to the caller.
+    """
+    _open_robot_position_with_confirmed_protection(
+        runtime, symbol=symbol, entry_price=entry_price,
+        stop_price=Decimal("64000"), take_price=Decimal("64600"),
+        trade_id=trade_id, candidate_id=stale_candidate_id,
+    )
+    _attach_robot_entry_state(
+        runtime, candidate_id=stale_candidate_id, status="OPEN",
+        order_id=_last_entry_order_id(runtime, symbol), updated_at_ms=2000,
+    )
+
+    executor = RobotPaperActionExecutor(runtime)
+    submitted = executor.create_limit(LimitCommandRequest(
+        ClientActionId(f"{colliding_candidate_id}-limit"), symbol, OrderSide.BUY,
+        VolumeRequest(VolumeUnit.USDT, Decimal("321")),
+        entry_price, entry_price, TimeInForce.GTC,
+    ))
+    assert submitted.status is CommandResultStatus.COMPLETED
+    assert runtime.robot_match_symbol(symbol) == 1
+    colliding_order_id = _last_entry_order_id(runtime, symbol)
+    runtime.store.create_robot_candidate(
+        candidate_id=colliding_candidate_id, trading_account_id=TradingAccountId("paper"),
+        symbol=Symbol(symbol), status="APPROVED",
+        signal_snapshot={"symbol": symbol, "pattern": "Falling Wedge", "leg": "colliding"},
+        approved_at_ms=1600, updated_at_ms=1600,
+    )
+
+    position_key = PositionKey(TradingAccountId("paper"), Category.LINEAR, Symbol(symbol), 0)
+    aggregate = runtime.store.get_position_projection(position_key).quantity.value
+    trade = runtime.store.get_robot_trade(trade_id)
+    assert aggregate > trade.entry_quantity
+
+    closed = runtime.api.full_close(FullCloseCommandRequest(
+        ClientActionId(f"{trade_id}-aggregate-close"), symbol,
+    ))
+    assert closed.status is CommandResultStatus.COMPLETED
+    assert runtime.store.get_position_projection(position_key).side is PositionSide.FLAT
+
+    closing = runtime.store.load_executions_for_symbol(
+        TradingAccountId("paper"), Symbol(symbol),
+    )[-1]
+    assert closing.side is OrderSide.SELL
+    assert closing.quantity.value == aggregate
+    assert runtime.store.get_robot_trade(trade_id).exit_time_ms is None
+    return trade, closing, colliding_order_id
+
+
+def test_robot_reconcile_terminalizes_stale_trade_flattened_by_aggregate_emergency_close():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            trade, closing, colliding_order_id = _flatten_symbol_with_colliding_robot_entry(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                trade_id="trade-flat-aggregate",
+                stale_candidate_id="candidate-flat-aggregate",
+                colliding_candidate_id="candidate-flat-colliding",
+            )
+            _attach_robot_entry_state(
+                runtime, candidate_id="candidate-flat-colliding", status="INVALIDATED",
+                order_id=colliding_order_id,
+                updated_at_ms=closing.exchange_timestamp_ms,
+                emergency={
+                    "emergency_close_attempted_at_ms": closing.exchange_timestamp_ms - 1000,
+                    "emergency_close_outcome": "CLOSED_EMERGENCY_PROTECTION_FAILURE",
+                    "emergency_closed_at_ms": closing.exchange_timestamp_ms + 1000,
+                },
+            )
+            _set_admission(
+                runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            )
+            executions_before = len(runtime.store.load_executions())
+
+            result = runtime.robot_reconcile()
+
+            assert result.success is True
+            assert result.recovery_status == "PAUSED"
+            assert result.closed_trade_ids == ("trade-flat-aggregate",)
+            assert result.unresolved_trade_ids == ()
+            assert result.unresolved_candidate_ids == ()
+
+            stale = runtime.store.get_robot_trade("trade-flat-aggregate")
+            assert stale.exit_reason == "EMERGENCY_CLOSE"
+            assert stale.exit_price == closing.price.value
+            assert stale.exit_time_ms == closing.exchange_timestamp_ms
+            assert stale.fees_costs_usdt == (
+                closing.fee * trade.entry_quantity / closing.quantity.value
+            )
+            assert stale.realized_pnl_usdt == (
+                trade.entry_quantity * (closing.price.value - trade.average_entry)
+            )
+            assert stale.realized_pnl_pct == (
+                (stale.realized_pnl_usdt - stale.fees_costs_usdt)
+                / (trade.entry_quantity * trade.average_entry) * 100
+            )
+            candidate = runtime.store.get_robot_candidate("candidate-flat-aggregate")
+            assert candidate.status == "CLOSED"
+            # Recovery reads durable rows only; it never mutates the ledger.
+            assert len(runtime.store.load_executions()) == executions_before
+        finally:
+            runtime.close()
+
+
+def test_robot_reconcile_flat_aggregate_close_without_emergency_marker_stays_required():
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _, closing, colliding_order_id = _flatten_symbol_with_colliding_robot_entry(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                trade_id="trade-flat-no-marker",
+                stale_candidate_id="candidate-flat-no-marker",
+                colliding_candidate_id="candidate-flat-no-marker-colliding",
+            )
+            # Same aggregate close, same Robot-attributable lot -- but the
+            # colliding candidate carries no durable emergency evidence, so the
+            # closure has no proven cause.
+            _attach_robot_entry_state(
+                runtime, candidate_id="candidate-flat-no-marker-colliding",
+                status="INVALIDATED", order_id=colliding_order_id,
+                updated_at_ms=closing.exchange_timestamp_ms,
+            )
+            _set_admission(
+                runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            )
+            executions_before = len(runtime.store.load_executions())
+
+            result = runtime.robot_reconcile()
+
+            assert result.success is False
+            assert result.recovery_status == "RECONCILIATION_REQUIRED"
+            assert result.unresolved_trade_ids == ("trade-flat-no-marker",)
+            assert result.closed_trade_ids == ()
+            trade = runtime.store.get_robot_trade("trade-flat-no-marker")
+            assert trade.exit_time_ms is None
+            assert trade.exit_price is None
+            assert trade.exit_reason is None
+            assert runtime.store.get_robot_candidate(
+                "candidate-flat-no-marker"
+            ).status == "OPEN"
+            assert len(runtime.store.load_executions()) == executions_before
+        finally:
+            runtime.close()
+
+
 def test_robot_reconcile_duplicate_owner_ambiguity_never_blind_closes_net_position():
     with tempfile.TemporaryDirectory() as temp:
         provider = MutableBookProvider("BTCUSDT", _entry_book())
