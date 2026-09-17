@@ -512,6 +512,153 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 runtime.close()
 
 
+    def test_protection_feed_gap_emergency_closes_owned_trade_on_fresh_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            database_path = root / "paper.sqlite3"
+            candidate_dir = root / "candidates"
+            instrument = _instrument()
+            candles = _DeterministicCandleProvider()
+            book = _MutableBookProvider()
+            book.set(SYMBOL, bid=Decimal("80"), ask=Decimal("120"))
+
+            runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
+                database_path,
+                book_provider=book,
+                instrument_snapshot=instrument,
+                instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
+                account_manager=paper_account_manager(),
+                robot_closed_candle_provider=candles,
+                robot_latest_geometry_index_provider=_fixed_geometry_index_provider,
+                robot_tick_interval_s=TICK_INTERVAL_S,
+            ))
+            try:
+                start_robot(database_path=database_path)
+                create_signal_snapshot(
+                    _snapshot(),
+                    timeframe="1",
+                    store_dir=candidate_dir,
+                    candidate_id=CANDIDATE_ID,
+                    created_at="2026-09-15T00:00:00+00:00",
+                )
+                admit_robot_candidate(
+                    CANDIDATE_ID,
+                    approval={"source": "coverage-loss-acceptance"},
+                    database_path=database_path,
+                    store_dir=candidate_dir,
+                )
+                runtime.start_robot_monitor()
+
+                def candidate_record():
+                    return runtime.call(
+                        lambda owner: owner.store.get_robot_candidate(CANDIDATE_ID)
+                    )
+
+                _wait_until(lambda: (
+                    record if (record := candidate_record()) is not None
+                    and (record.robot_state or {}).get("phase")
+                    == robot_state_machine.PHASE_WAITING_BREAKOUT
+                    else None
+                ))
+                candles.set(_candle(102, high=106, low=97, close=105))
+                _wait_until(lambda: (
+                    record if (record := candidate_record()) is not None
+                    and (record.robot_state or {}).get("phase")
+                    == robot_state_machine.PHASE_WAITING_RETEST
+                    else None
+                ))
+                candles.set(_candle(103, high=101, low=95, close=98))
+                _wait_until(lambda: (
+                    record if (record := candidate_record()) is not None
+                    and (record.robot_state or {}).get("phase")
+                    == robot_state_machine.PHASE_RETEST_DETECTED
+                    else None
+                ))
+
+                def limit_submitted():
+                    record = candidate_record()
+                    return ((record.robot_state or {}).get("execution") or {}).get(
+                        "limit_order_id"
+                    )
+
+                order_id = _wait_until(limit_submitted)
+                order = runtime.call(
+                    lambda owner: owner.store.get_paper_limit(order_id, ACCOUNT_ID)
+                )
+                book.set(
+                    SYMBOL,
+                    bid=order.price - Decimal("1"),
+                    ask=order.price - Decimal("0.1"),
+                )
+
+                def open_trade():
+                    return runtime.call(
+                        lambda owner: owner.store.get_open_robot_trade_for_symbol(
+                            ACCOUNT_ID, Symbol(SYMBOL),
+                        )
+                    )
+
+                trade = _wait_until(open_trade)
+                position_key = PositionKey(
+                    ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0,
+                )
+                _wait_until(lambda: runtime.call(
+                    lambda owner: owner.store.get_protection_projection(position_key)
+                ))
+
+                runtime.call(
+                    lambda owner: owner.fence_robot_protection_continuity_loss(
+                        SYMBOL, "acceptance_gap",
+                    )
+                )
+                state = runtime.call(
+                    lambda owner: owner.store.get_robot_runtime_state(ACCOUNT_ID)
+                )
+                self.assertEqual(
+                    (state.mode, state.recovery_status),
+                    ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+                )
+                self.assertFalse(
+                    runtime.call(lambda owner: owner.robot_admission_ready())
+                )
+
+                book.set(SYMBOL, bid=Decimal("82"), ask=Decimal("82.1"))
+                fresh = _event_book(
+                    SYMBOL, bid=Decimal("82"), ask=Decimal("82.1"),
+                )
+                recovered = runtime.call(
+                    lambda owner: owner.recover_robot_protection_continuity_loss(
+                        SYMBOL,
+                        fresh,
+                        event_id="coverage-recovery-snapshot",
+                        received_at_ms=fresh.received_at_ms,
+                        reason="acceptance_gap",
+                    )
+                )
+                self.assertTrue(recovered)
+
+                closed = runtime.call(
+                    lambda owner: owner.store.get_robot_trade(trade.trade_id)
+                )
+                self.assertIsNotNone(closed.exit_time_ms)
+                self.assertEqual(closed.exit_reason, "EMERGENCY_CLOSE")
+                self.assertEqual(candidate_record().status, "CLOSED")
+                position = runtime.call(
+                    lambda owner: owner.store.get_position_projection(position_key)
+                )
+                self.assertEqual(position.side.value, "Flat")
+                self.assertEqual(position.quantity.value, Decimal("0"))
+                obligation = runtime.call(
+                    lambda owner: owner.store.get_paper_protection_obligation_for_trade(
+                        trade.trade_id
+                    )
+                )
+                self.assertEqual(obligation.winning_leg, "EMERGENCY_CLOSE")
+                self.assertEqual(obligation.status, "RESOLVED")
+            finally:
+                runtime.close()
+
+
     def test_manual_position_is_never_adopted_as_robot_entry(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
