@@ -399,6 +399,61 @@ def reconcile_robot(
     return result
 
 
+def request_maintenance_reconciliation(
+    *,
+    http_post: Callable[[str, dict], dict],
+    database_path: Path | str | None = None,
+    clock_ms: Callable[[], int] | None = None,
+    backend_url: str | None = None,
+) -> dict:
+    """Operator-requested maintenance reconciliation while durably PAUSED.
+
+    Legal from ``(ROBOT_RUNNING, PAUSED)``: performs exactly one explicit,
+    validated durable transition into ``RECONCILIATION_REQUIRED`` (never
+    ``READY`` -- admission must never open as a side effect of requesting
+    maintenance), then delegates entirely to the existing ``reconcile_robot()``
+    for the actual reconciliation pass. No new recovery, protection-dispatch,
+    or evidence-matching logic is introduced here.
+
+    Also idempotently legal from an already-in-progress
+    ``(ROBOT_RUNNING, RECONCILIATION_REQUIRED)`` -- e.g. a retry after a prior
+    call's ``reconcile_robot()`` step failed or could not be confirmed -- which
+    skips straight to ``reconcile_robot()`` without a redundant transition or
+    version conflict.
+
+    Rejected from every other state, most importantly
+    ``(ROBOT_RUNNING, READY)``: this command must never be usable, even by
+    mistake, while admission is open.
+    """
+    store = _open_store(database_path)
+    try:
+        now = _now_ms(clock_ms)
+        runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+        if runtime is None or runtime.mode != ROBOT_RUNNING:
+            raise RobotControlRejected(
+                "request_maintenance_reconciliation is legal only from "
+                "(ROBOT_RUNNING, PAUSED) or (ROBOT_RUNNING, RECONCILIATION_REQUIRED)"
+            )
+        if runtime.recovery_status == PAUSED:
+            store.update_robot_runtime_state(
+                PAPER_ACCOUNT_ID, mode=ROBOT_RUNNING, recovery_status=RECONCILIATION_REQUIRED,
+                reason="operator-requested maintenance reconciliation",
+                expected_version=runtime.version, updated_at_ms=now,
+            )
+        elif runtime.recovery_status != RECONCILIATION_REQUIRED:
+            raise RobotControlRejected(
+                "request_maintenance_reconciliation is legal only from "
+                "(ROBOT_RUNNING, PAUSED) or (ROBOT_RUNNING, RECONCILIATION_REQUIRED)"
+            )
+    finally:
+        store.close()
+
+    return reconcile_robot(
+        http_post=http_post, database_path=database_path, clock_ms=clock_ms,
+        backend_url=backend_url,
+    )
+
+
 def stop_robot(
     *,
     http_post: Callable[[str, dict], dict],

@@ -1,5 +1,6 @@
 from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 import tempfile
 import unittest
 
@@ -9,12 +10,13 @@ from terminal.application.robot_control import (
     get_robot_runtime_status,
     pause_robot,
     reconcile_robot,
+    request_maintenance_reconciliation,
     resume_robot,
     start_robot,
     stop_robot,
 )
 from terminal.domain.models import Symbol, TradingAccountId
-from terminal.persistence.sqlite_store import SQLiteStore
+from terminal.persistence.sqlite_store import ConcurrentUpdate, SQLiteStore
 
 ACCOUNT_ID = TradingAccountId("paper")
 
@@ -555,6 +557,135 @@ class RobotControlCommandTests(unittest.TestCase):
                     "ok": False, "success": False, "reason": "evidence incomplete",
                 },
             )
+
+    # -- request_maintenance_reconciliation ------------------------------
+
+    def test_request_maintenance_reconciliation_from_paused_transitions_then_delegates(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="PAUSED")
+        calls = []
+
+        def fake_post(url, payload):
+            # By the time reconcile_robot() posts, our own PAUSED ->
+            # RECONCILIATION_REQUIRED transition must already be durably
+            # committed -- this is the delegation contract, not just a
+            # same-process illusion.
+            mid_flight = self._read_state()
+            calls.append((url, payload, mid_flight.mode, mid_flight.recovery_status))
+            return {
+                "ok": True, "success": True, "mode": "ROBOT_RUNNING",
+                "recovery_status": "PAUSED", "reason": None,
+            }
+
+        result = request_maintenance_reconciliation(
+            database_path=self.db_path, clock_ms=lambda: 2000, http_post=fake_post,
+        )
+        self.assertTrue(result["success"])
+        self.assertEqual(len(calls), 1)
+        url, payload, mid_mode, mid_recovery = calls[0]
+        self.assertEqual(url, "http://127.0.0.1:8765/api/robot/reconcile")
+        self.assertEqual(payload, {})
+        self.assertEqual(mid_mode, "ROBOT_RUNNING")
+        self.assertEqual(mid_recovery, "RECONCILIATION_REQUIRED")
+
+    def test_request_maintenance_reconciliation_rejected_from_ready(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="READY")
+        with self.assertRaises(RobotControlRejected):
+            request_maintenance_reconciliation(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: self.fail("must not reach the backend"),
+            )
+        # Never opens admission by transitioning away from READY as a
+        # side effect of a rejected maintenance request.
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_RUNNING")
+        self.assertEqual(state.recovery_status, "READY")
+
+    def test_request_maintenance_reconciliation_rejected_from_stopped(self):
+        self._set_state(mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        with self.assertRaises(RobotControlRejected):
+            request_maintenance_reconciliation(
+                database_path=self.db_path, clock_ms=lambda: 2000,
+                http_post=lambda url, payload: self.fail("must not reach the backend"),
+            )
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_STOPPED")
+        self.assertEqual(state.recovery_status, "ROBOT_STOPPED")
+
+    def test_request_maintenance_reconciliation_retries_from_reconciliation_required(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
+        before = self._read_state()
+        calls = []
+
+        def fake_post(url, payload):
+            calls.append((url, payload))
+            return {
+                "ok": True, "success": True, "mode": "ROBOT_RUNNING",
+                "recovery_status": "PAUSED", "reason": None,
+            }
+
+        result = request_maintenance_reconciliation(
+            database_path=self.db_path, clock_ms=lambda: 2000, http_post=fake_post,
+        )
+        self.assertTrue(result["success"])
+        self.assertEqual(len(calls), 1)
+        # A retry from an already-in-progress RECONCILIATION_REQUIRED must
+        # delegate directly -- no redundant transition, no version bump.
+        state = self._read_state()
+        self.assertEqual(state.version, before.version)
+        self.assertEqual(state.mode, "ROBOT_RUNNING")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
+
+    def test_request_maintenance_reconciliation_fails_closed_on_concurrent_update(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="PAUSED")
+        calls = []
+
+        def fake_post(url, payload):
+            calls.append((url, payload))
+            self.fail("must not reach reconcile_robot after a failed transition")
+
+        with patch.object(
+            SQLiteStore, "update_robot_runtime_state",
+            side_effect=ConcurrentUpdate("Robot runtime state changed or timestamp regressed"),
+        ):
+            with self.assertRaises(ConcurrentUpdate):
+                request_maintenance_reconciliation(
+                    database_path=self.db_path, clock_ms=lambda: 2000, http_post=fake_post,
+                )
+        self.assertEqual(calls, [])
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_RUNNING")
+        self.assertEqual(state.recovery_status, "PAUSED")
+
+    def test_request_maintenance_reconciliation_flat_stale_trade_stays_unresolved(self):
+        self._set_state(mode="ROBOT_RUNNING", recovery_status="PAUSED")
+        calls = []
+
+        def fake_post(url, payload):
+            calls.append((url, payload))
+            # Mirrors the real backend's response for a flat position whose
+            # robot_trade ledger row is still open with no attributable
+            # protection-obligation evidence to close it from (the 0GUSDT
+            # shape) -- reconcile_robot() must never invent an exit fact.
+            return {
+                "ok": False, "success": False, "mode": "ROBOT_RUNNING",
+                "recovery_status": "RECONCILIATION_REQUIRED",
+                "reason": "reconcile_robot cannot prove Robot ownership/protection for: "
+                "trade-flat-stale-orphan",
+                "unresolved_trade_ids": ["trade-flat-stale-orphan"],
+                "unresolved_candidate_ids": [], "closed_trade_ids": [],
+            }
+
+        with self.assertRaises(RobotControlRejected):
+            request_maintenance_reconciliation(
+                database_path=self.db_path, clock_ms=lambda: 2000, http_post=fake_post,
+            )
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], "http://127.0.0.1:8765/api/robot/reconcile")
+        # Fail closed: durable state stays RECONCILIATION_REQUIRED, and
+        # nothing in this application layer touches the ledger row itself.
+        state = self._read_state()
+        self.assertEqual(state.mode, "ROBOT_RUNNING")
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
 
     # -- get_robot_runtime_status ---------------------------------------
 
