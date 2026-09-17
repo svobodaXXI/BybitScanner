@@ -37,7 +37,13 @@ CANDIDATE_ID = "legacy-candidate-1"
 ACTION_ID = "legacy-attest-action-1"
 
 
-class LegacyProtectionRecoveryTests(unittest.TestCase):
+class LegacyProtectionRecoveryFixture(unittest.TestCase):
+    """Shared eligible-legacy-scenario fixture; carries no tests of its own.
+
+    Reused by the application-boundary suite so the exact eligible legacy
+    scenario is constructed in exactly one place.
+    """
+
     def setUp(self):
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.database_path = Path(self.temporary_directory.name) / "paper.sqlite3"
@@ -185,6 +191,7 @@ class LegacyProtectionRecoveryTests(unittest.TestCase):
             store.load_executions(),
         )
 
+class LegacyProtectionRecoveryTests(LegacyProtectionRecoveryFixture):
     def test_pure_proof_reconstructs_exact_limit_entry(self):
         with self.open_store() as store:
             runtime, trade, candidate, obligation, position, executions = self.seed_legacy_trade(store)
