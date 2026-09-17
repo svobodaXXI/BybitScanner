@@ -20,7 +20,7 @@ from robot_restart_recovery import (
     reconcile_restart,
 )
 from scanner_geometry_cursor import default_scanner_geometry_cursor_provider
-from terminal.domain.models import TradingAccountId
+from terminal.domain.models import Category, PositionKey, PositionSide, TradingAccountId
 from terminal.persistence.sqlite_store import (
     ConcurrentUpdate,
     PersistenceError,
@@ -183,6 +183,8 @@ class RobotRecoveryCoordinator:
             ),
         )
         try:
+            if not hold_reconciling:
+                self._validate_open_trade_integrity()
             geometry_indices = self._latest_geometry_indices(approved)
             status, decisions = reconcile_restart(
                 durable_mode=ROBOT_RUNNING,
@@ -234,6 +236,85 @@ class RobotRecoveryCoordinator:
             and runtime.mode == ROBOT_RUNNING
             and runtime.recovery_status == READY
         )
+
+    def _validate_open_trade_integrity(self) -> None:
+        """Prove durable OPEN Robot lifecycle state before reopening admission.
+
+        Candidate labels are not position authority. A normal restart may
+        publish READY only when every OPEN candidate has exactly one matching
+        open Robot trade, the current net position still equals that trade's
+        durable entry attestation, both protection legs exist, and no
+        protection-close obligation is unresolved. Explicit maintenance
+        reconciliation is intentionally exempt so it can repair stale state.
+        """
+
+        candidates = self._store.load_robot_candidates(self._account_id)
+        open_candidates = tuple(item for item in candidates if item.status == "OPEN")
+        open_trades = self._store.load_open_robot_trades(self._account_id)
+
+        candidate_ids = {item.candidate_id for item in open_candidates}
+        trade_candidate_ids = {item.candidate_id for item in open_trades}
+        if candidate_ids != trade_candidate_ids or len(open_trades) != len(trade_candidate_ids):
+            raise RobotRecoveryError(
+                "Robot OPEN candidate/trade ownership is incomplete or ambiguous"
+            )
+
+        obligations = self._store.load_unresolved_paper_protection_obligations(
+            self._account_id,
+        )
+        if obligations:
+            raise RobotRecoveryError(
+                "Robot restart has unresolved protection-close obligation(s)"
+            )
+
+        for candidate in open_candidates:
+            trade = self._store.get_open_robot_trade_for_symbol(
+                self._account_id, candidate.symbol,
+            )
+            if trade is None or trade.candidate_id != candidate.candidate_id:
+                raise RobotRecoveryError(
+                    f"Robot trade ownership is ambiguous for {candidate.symbol.value}"
+                )
+            if (
+                trade.entry_quantity is None
+                or trade.entry_quantity <= 0
+                or trade.entry_position_version is None
+            ):
+                raise RobotRecoveryError(
+                    f"Robot entry ownership attestation is missing for {candidate.symbol.value}"
+                )
+
+            position_key = PositionKey(
+                self._account_id, Category.LINEAR, candidate.symbol, 0,
+            )
+            position = self._store.get_position_projection(position_key)
+            expected_side = (
+                PositionSide.LONG if trade.direction == "LONG"
+                else PositionSide.SHORT if trade.direction == "SHORT"
+                else None
+            )
+            if (
+                expected_side is None
+                or position is None
+                or position.side is not expected_side
+                or position.quantity.value != trade.entry_quantity
+                or position.version != trade.entry_position_version
+                or position.average_entry is None
+                or position.average_entry.value != trade.average_entry
+            ):
+                raise RobotRecoveryError(
+                    f"Robot position attestation no longer matches {candidate.symbol.value}"
+                )
+
+            protection = self._store.get_protection_projection(position_key)
+            if (
+                protection is None
+                or protection.stop_loss is None
+                or protection.take_profit is None
+            ):
+                raise RobotRecoveryError(
+                    f"Robot protection is incomplete for {candidate.symbol.value}"
+                )
 
     def _latest_geometry_indices(self, approved) -> dict[str, int]:
         if not approved:
