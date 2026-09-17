@@ -91,6 +91,18 @@ class RobotRecoveryCoordinator:
                 )
             return RobotRecoveryResult(runtime, decisions)
 
+        if runtime.recovery_status == RECONCILIATION_REQUIRED:
+            # A restart must never lift the reconciliation fence. Durable
+            # RECONCILIATION_REQUIRED records evidence the runtime could not
+            # prove -- stale Robot trades, ownership or protection ambiguity --
+            # and reconcile_restart() does not re-examine any of it, so falling
+            # through here would land on READY and reopen admission over the
+            # very ambiguity that raised the fence. Only the explicit operator
+            # path (reconcile_required() -> reconcile_robot) may clear it.
+            # Persist nothing and advance no candidate state: the durable
+            # reason must survive the restart exactly as written.
+            return RobotRecoveryResult(runtime, ())
+
         was_paused = runtime.recovery_status == PAUSED
         return self._reconcile_running(runtime, open_positions, approved, was_paused=was_paused)
 

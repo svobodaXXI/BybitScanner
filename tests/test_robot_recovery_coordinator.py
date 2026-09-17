@@ -226,6 +226,51 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(result.runtime_state.recovery_status, PAUSED)
         self.assertFalse(result.admission_ready)
 
+    def test_restart_while_reconciliation_required_stays_fenced_not_ready(self):
+        """A backend restart must not reopen admission over unproven evidence.
+
+        RECONCILIATION_REQUIRED is not PAUSED, so the was_paused branch used to
+        fall through to READY and silently clear the fence while stale Robot
+        trades were still open.
+        """
+        self._create_open_candidate()
+        running = self._initialize_running()
+        fenced = self.store.update_robot_runtime_state(
+            ACCOUNT_ID,
+            mode="ROBOT_RUNNING",
+            recovery_status="RECONCILIATION_REQUIRED",
+            reason="reconcile_robot cannot prove Robot ownership/protection for: trade-open",
+            expected_version=running.version,
+            updated_at_ms=self.clock(),
+        )
+        candidate_before = self.store.get_robot_candidate("candidate-open")
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+
+        result = coordinator.recover()
+
+        self.assertEqual(result.runtime_state.mode, "ROBOT_RUNNING")
+        self.assertEqual(result.runtime_state.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertEqual(
+            result.runtime_state.reason,
+            "reconcile_robot cannot prove Robot ownership/protection for: trade-open",
+        )
+        self.assertFalse(result.admission_ready)
+        self.assertEqual(result.decisions, ())
+        # Nothing was persisted: neither the runtime row nor candidate state.
+        self.assertEqual(result.runtime_state.version, fenced.version)
+        durable = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(durable.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertEqual(durable.version, fenced.version)
+        candidate_after = self.store.get_robot_candidate("candidate-open")
+        self.assertEqual(candidate_after.state_revision, candidate_before.state_revision)
+        self.assertEqual(candidate_after.updated_at_ms, candidate_before.updated_at_ms)
+        # The explicit operator path remains the only way out.
+        self.assertEqual(
+            coordinator.reconcile_required().runtime_state.recovery_status, RECONCILING,
+        )
+
     def test_restart_while_paused_with_open_trade_still_reconciles_it(self):
         self._create_open_candidate()
         running = self._initialize_running()
