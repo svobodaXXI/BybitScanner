@@ -126,8 +126,8 @@ def _prove_composite_topup(
     locked by durable Robot-authored evidence instead: ``entry_path == "MIXED"``
     (written only by Robot's own trade finalizer), a ledger closed at exactly
     these two executions, ``entry_time_ms`` ordering, and the caller's exact
-    VWAP equality against ``trade.average_entry``.  Because the ledger is
-    closed, no other candidate/trade can own these executions.
+    VWAP equality against ``trade.average_entry``. The caller independently
+    excludes competing durable candidate/trade ownership.
     """
 
     if len(entry_executions) != 1:
@@ -187,6 +187,8 @@ def prove_legacy_entry_attestation(
     obligation: PaperProtectionObligationRecord,
     position: PositionProjectionRecord,
     executions: Sequence[Execution],
+    candidates: Sequence[RobotCandidateRecord] | None = None,
+    trades: Sequence[RobotTradeRecord] | None = None,
 ) -> LegacyEntryAttestationProof:
     """Pure/read-only proof of one pre-D2.3 Robot entry attestation.
 
@@ -279,6 +281,24 @@ def prove_legacy_entry_attestation(
                 _reject("unidentified/manual execution exists after Robot entry began")
         proven_entry = entry_executions
     else:
+        # Closed execution history alone cannot exclude another durable owner.
+        # Require the complete account snapshot; do not infer missing evidence.
+        if candidates is None or trades is None:
+            _reject("composite legacy recovery requires durable ownership records")
+        if any(
+            other.trading_account_id == trade.trading_account_id
+            and other.symbol == trade.symbol
+            and other.candidate_id != candidate.candidate_id
+            for other in candidates
+        ):
+            _reject("composite legacy recovery has competing candidate ownership")
+        if any(
+            other.trading_account_id == trade.trading_account_id
+            and other.symbol == trade.symbol
+            and other.trade_id != trade.trade_id
+            for other in trades
+        ):
+            _reject("composite legacy recovery has competing trade ownership")
         proven_entry = _prove_composite_topup(
             trade=trade,
             candidate=candidate,
@@ -425,6 +445,15 @@ def attest_legacy_robot_entry(
             obligation=obligation,
             position=position,
             executions=store.load_executions(),
+            candidates=(store.load_robot_candidates(trade.trading_account_id)
+                        if trade.entry_path == "MIXED" else None),
+            trades=(tuple(
+                store.get_robot_trade(row["trade_id"])
+                for row in store._connection.execute(
+                    "SELECT trade_id FROM robot_trades WHERE trading_account_id=? AND symbol=?",
+                    (trade.trading_account_id.value, trade.symbol.value),
+                ).fetchall()
+            ) if trade.entry_path == "MIXED" else None),
         )
 
         state = dict(candidate.robot_state or {})

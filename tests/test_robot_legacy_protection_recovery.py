@@ -629,7 +629,112 @@ class LegacyCompositeProtectionRecoveryTests(LegacyProtectionRecoveryFixture):
             obligation=obligation,
             position=position or store.get_position_projection(POSITION_KEY),
             executions=store.load_executions(),
+            candidates=store.load_robot_candidates(ACCOUNT),
+            trades=tuple(store.get_robot_trade(row["trade_id"]) for row in
+                         store._connection.execute("SELECT trade_id FROM robot_trades")),
         )
+
+    def test_competing_candidate_rejects_without_persisting(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store)
+            store.create_robot_candidate(
+                candidate_id="competing-candidate", trading_account_id=ACCOUNT,
+                symbol=SYMBOL, status="APPROVED", signal_snapshot={"other": True},
+                approved_at_ms=1000, updated_at_ms=1000,
+            )
+            before = (store.get_robot_trade(TRADE_ID), store.get_robot_candidate(CANDIDATE_ID))
+            with self.assertRaisesRegex(LegacyProtectionRecoveryRejected, "competing candidate"):
+                self.call_proof(store, runtime, candidate, obligation, position)
+            with self.assertRaisesRegex(LegacyProtectionRecoveryRejected, "competing candidate"):
+                attest_legacy_robot_entry(store, trade_id=TRADE_ID,
+                    obligation_id=obligation.obligation_id, client_action_id=ACTION_ID,
+                    authorized_at_ms=1500)
+            self.assertEqual(before, (store.get_robot_trade(TRADE_ID),
+                                      store.get_robot_candidate(CANDIDATE_ID)))
+
+    def test_competing_trade_rejects_independently_of_candidate_guard(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store)
+            trade = store.get_robot_trade(TRADE_ID)
+            store.create_robot_candidate(candidate_id="other-candidate",
+                trading_account_id=ACCOUNT, symbol=SYMBOL, status="APPROVED",
+                signal_snapshot={"other": True}, approved_at_ms=1000, updated_at_ms=1000)
+            other, _ = store.create_robot_trade(trade_id="competing-trade",
+                trading_account_id=ACCOUNT, candidate_id="other-candidate", symbol=SYMBOL,
+                direction="LONG", pattern=trade.pattern, source_timeframe="1",
+                signal_time_ms=1000, entry_time_ms=1300, entry_path="MIXED",
+                actual_wv=Decimal("1"), average_entry=Decimal("100.5"),
+                stop_price=Decimal("98"), take_price=Decimal("106"),
+                entry_quantity=Decimal("372"), entry_position_version=2, created_at_ms=1300)
+            before = store.get_robot_trade(TRADE_ID)
+            with self.assertRaisesRegex(LegacyProtectionRecoveryRejected, "competing"):
+                attest_legacy_robot_entry(store, trade_id=TRADE_ID,
+                    obligation_id=obligation.obligation_id, client_action_id=ACTION_ID,
+                    authorized_at_ms=1500)
+            self.assertEqual(store.get_robot_trade(TRADE_ID), before)
+            # Pass the durable second trade independently of the candidate guard.
+            with self.assertRaisesRegex(LegacyProtectionRecoveryRejected, "competing trade"):
+                prove_legacy_entry_attestation(runtime=runtime, trade=trade,
+                    candidate=candidate, obligation=obligation, position=position,
+                    executions=store.load_executions(), candidates=(candidate,),
+                    trades=(trade, other))
+
+    def test_missing_ownership_snapshot_rejects(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store)
+            with self.assertRaisesRegex(LegacyProtectionRecoveryRejected, "ownership records"):
+                prove_legacy_entry_attestation(runtime=runtime,
+                    trade=store.get_robot_trade(TRADE_ID), candidate=candidate,
+                    obligation=obligation, position=position, executions=store.load_executions())
+
+    def test_composite_attestation_still_succeeds(self):
+        with self.open_store() as store:
+            _runtime, _candidate, obligation, _position = self.prove(store)
+            result = attest_legacy_robot_entry(store, trade_id=TRADE_ID,
+                obligation_id=obligation.obligation_id, client_action_id=ACTION_ID,
+                authorized_at_ms=1500)
+            self.assertTrue(result.created)
+            self.assertEqual(result.trade.entry_quantity, Decimal("372"))
+            self.assertEqual(result.trade.entry_position_version, 2)
+
+    def test_multiple_limit_fills_reject(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store)
+            with store._transaction():
+                store._connection.execute("UPDATE executions SET order_id=? WHERE exec_id=?",
+                    (ENTRY_ORDER_ID, "legacy-topup-exec"))
+            with self.assertRaisesRegex(LegacyProtectionRecoveryRejected, "exactly one LIMIT"):
+                self.call_proof(store, runtime, candidate, obligation, position)
+
+    def test_topup_must_strictly_follow_limit(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store)
+            for timestamp in (1200, 1199):
+                with self.subTest(timestamp=timestamp):
+                    with store._transaction():
+                        store._connection.execute(
+                            "UPDATE executions SET exchange_timestamp_ms=? WHERE exec_id=?",
+                            (timestamp, "legacy-topup-exec"))
+                    with self.assertRaises(LegacyProtectionRecoveryRejected):
+                        self.call_proof(store, runtime, candidate, obligation, position)
+
+    def test_missing_or_invalid_partial_anchors_reject(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store)
+            for key, value in (("first_partial_at_ms", None), ("first_partial_at_ms", True),
+                               ("first_partial_at_ms", -1), ("first_partial_at_ms", 1199),
+                               ("first_partial_at_ms", 1301), ("first_partial_price", None),
+                               ("first_partial_price", ""), ("first_partial_price", "invalid"),
+                               ("first_partial_price", "0")):
+                with self.subTest(key=key, value=value):
+                    execution = dict(candidate.robot_state["execution"])
+                    if value is None:
+                        execution.pop(key)
+                    else:
+                        execution[key] = value
+                    changed = replace(candidate, robot_state={"execution": execution})
+                    with self.assertRaises(LegacyProtectionRecoveryRejected):
+                        self.call_proof(store, runtime, changed, obligation, position)
 
     def test_composite_proof_reconstructs_limit_partial_plus_single_topup(self):
         with self.open_store() as store:
