@@ -58,6 +58,7 @@ from terminal.application.robot_recovery import (
     PAUSED, RECONCILING, RECONCILIATION_REQUIRED, ROBOT_RUNNING,
     RobotRecoveryCoordinator,
 )
+from robot_flat_closure import CandidateOwnership, prove_flat_closure
 from scanner_geometry_cursor import latest_scanner_closed_candle
 from terminal.domain.models import (
     Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
@@ -1904,6 +1905,71 @@ class PaperRuntime:
             expected_version=state.version, updated_at_ms=int(time.time() * 1000),
         )
 
+    @staticmethod
+    def _robot_candidate_ownership(candidate, open_trade_candidate_ids: frozenset[str]):
+        """Project a durable candidate row onto the pure predicate's input.
+
+        Read only from the candidate's own persisted execution state. Emergency
+        identity is never reconstructed from a PAPER market order_link_id: that
+        id is random per dispatch and proves nothing about ownership. A field
+        that is present but malformed becomes None, which leaves a partial
+        marker that the predicate rejects.
+        """
+        execution: Mapping[str, object] = {}
+        state = candidate.robot_state
+        if isinstance(state, Mapping):
+            value = state.get("execution")
+            if isinstance(value, Mapping):
+                execution = value
+
+        def _text(key: str) -> str | None:
+            value = execution.get(key)
+            return value if isinstance(value, str) and value.strip() else None
+
+        def _timestamp(key: str) -> int | None:
+            value = execution.get(key)
+            return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+        return CandidateOwnership(
+            candidate_id=candidate.candidate_id,
+            status=candidate.status,
+            limit_order_id=_text("limit_order_id"),
+            emergency_attempted_at_ms=_timestamp("emergency_close_attempted_at_ms"),
+            emergency_closed_at_ms=_timestamp("emergency_closed_at_ms"),
+            emergency_outcome=_text("emergency_close_outcome"),
+            has_open_trade=candidate.candidate_id in open_trade_candidate_ids,
+        )
+
+    def _prove_robot_flat_closure(self, trade, position):
+        """Gather this symbol's durable rows and ask the pure predicate."""
+        open_trade = self.store.get_open_robot_trade_for_symbol(
+            self._paper_account_id, trade.symbol,
+        )
+        open_trade_candidate_ids = (
+            frozenset({open_trade.candidate_id}) if open_trade is not None else frozenset()
+        )
+        candidates = tuple(
+            self._robot_candidate_ownership(candidate, open_trade_candidate_ids)
+            for candidate in self.store.load_robot_candidates(self._paper_account_id)
+            if candidate.symbol == trade.symbol
+        )
+        has_unresolved_obligation = any(
+            obligation.trade_id == trade.trade_id
+            for obligation in self.store.load_unresolved_paper_protection_obligations(
+                self._paper_account_id
+            )
+        )
+        return prove_flat_closure(
+            trade=trade,
+            position=position,
+            executions=self.store.load_executions_for_symbol(
+                self._paper_account_id, trade.symbol,
+            ),
+            candidates=candidates,
+            open_trade_candidate_ids=open_trade_candidate_ids,
+            has_unresolved_obligation=has_unresolved_obligation,
+        )
+
     def robot_reconcile(self) -> RobotReconcileResponse:
         """Evidence-based exit from ``RECONCILIATION_REQUIRED`` (P0.5).
 
@@ -2027,9 +2093,30 @@ class PaperRuntime:
                 expected_side = (
                     PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
                 )
+                if position is not None and position.side is PositionSide.FLAT:
+                    # An aggregate emergency close dispatched for a *different*
+                    # colliding candidate also flattens this trade's lot, so a
+                    # FLAT symbol is not automatically unresolved. Terminalize
+                    # only on durable evidence; the predicate fails closed.
+                    evidence = self._prove_robot_flat_closure(trade, position)
+                    if evidence is not None:
+                        _, newly_closed = self.store.close_robot_trade(
+                            trade.trade_id,
+                            exit_time_ms=evidence.exit_time_ms,
+                            exit_price=evidence.exit_price,
+                            exit_reason=evidence.exit_reason,
+                            realized_pnl_usdt=evidence.realized_pnl_usdt,
+                            realized_pnl_pct=evidence.realized_pnl_pct,
+                            fees_costs_usdt=evidence.fees_costs_usdt,
+                            updated_at_ms=evidence.exit_time_ms,
+                        )
+                        if newly_closed:
+                            closed_trade_ids.append(trade.trade_id)
+                        continue
+                    unresolved_trade_ids.add(trade.trade_id)
+                    continue
                 if (
                     position is None
-                    or position.side is PositionSide.FLAT
                     or position.quantity.value <= 0
                     or trade.entry_quantity is None
                     or trade.entry_position_version is None

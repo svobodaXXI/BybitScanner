@@ -171,10 +171,14 @@ def prove_flat_closure(
 ) -> FlatClosureEvidence | None:
     """Prove that ``trade`` was closed by the symbol's last, aggregate execution.
 
-    ``executions`` must be every execution of this account/symbol, ordered by
-    ``exchange_timestamp_ms`` then ``exec_id``. ``candidates`` must cover every
-    candidate of the symbol, any status. Returns ``None`` unless every guard is
-    proven from those rows.
+    ``executions`` must be every execution of this account/symbol. The store's
+    SQL orders them by ``exchange_timestamp_ms`` then ``exec_id`` for a
+    deterministic read, but ``exec_id`` is only that tie-breaker, never causal
+    evidence of execution order. This proof requires the timestamps themselves
+    to be strictly increasing; any tie between two ``exchange_timestamp_ms``
+    values is ambiguous and rejected rather than resolved lexically.
+    ``candidates`` must cover every candidate of the symbol, any status.
+    Returns ``None`` unless every guard is proven from those rows.
     """
 
     # --- trade ownership attestation ------------------------------------
@@ -211,14 +215,19 @@ def prove_flat_closure(
 
     if not executions:
         return None
-    previous_key: tuple[int, str] | None = None
+    # exec_id is a deterministic tie-breaker for the SQL ORDER BY only -- it is
+    # never causal proof of execution order. Two executions sharing the same
+    # exchange_timestamp_ms are ambiguous for lot reconstruction (and for
+    # binding PositionProjection.updated_at_ms to a single execution), so any
+    # duplicate timestamp in this history fails closed rather than trusting
+    # lexical exec_id ordering.
+    previous_timestamp: int | None = None
     for execution in executions:
         if execution.symbol != trade.symbol:
             return None
-        key = (execution.exchange_timestamp_ms, execution.dedup_key.exec_id.value)
-        if previous_key is not None and key <= previous_key:
+        if previous_timestamp is not None and execution.exchange_timestamp_ms <= previous_timestamp:
             return None
-        previous_key = key
+        previous_timestamp = execution.exchange_timestamp_ms
 
     closing = executions[-1]
     if closing.side is not exit_side:

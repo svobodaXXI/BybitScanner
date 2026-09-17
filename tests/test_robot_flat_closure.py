@@ -386,6 +386,19 @@ class ProveFlatClosureFailClosedTests(unittest.TestCase):
 
         self.assertIsNone(_prove(executions=executions))
 
+    def test_tied_execution_timestamps_fail_closed(self):
+        """exec_id breaks ties for the SQL read only, never for this proof:
+        two executions sharing exchange_timestamp_ms are ambiguous even when
+        every other guard would otherwise be satisfied."""
+        tied_entries = [
+            _robot_entries()[0],
+            _execution("paper-limit-80619678", EMERGENCY_ORDER, OrderSide.BUY,
+                       "0.1971", "1267.7", 1789400971937),  # same ms as the first entry
+        ]
+        executions = [*_settled_manual_round_trip(), *tied_entries, _closing()]
+
+        self.assertIsNone(_prove(executions=executions))
+
     def test_ambiguous_lot_shape_fails_closed(self):
         intermediate_exit = [
             *_settled_manual_round_trip(),
