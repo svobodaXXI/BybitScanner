@@ -119,11 +119,23 @@ Focused regression: `tests/test_robot_legacy_protection_recovery.py` covers exac
 
 Verified code/test head: `2053daf08048a948165b995b7e9f5f2e5986a0dc`. GitHub Actions `Robot PAPER acceptance` run #74: **PASS** (compile + deterministic acceptance suite).
 
-### Slice B — existing reconciliation acceptance — NEXT
+### Slice B — existing reconciliation acceptance — DONE 2026-09-17
 
-Do not add new execution semantics. Prove that the already-existing `reconcile_robot()` consumes the canonical attestation and completes the normal obligation path exactly once. Patch production code only if the existing path exposes a concrete defect.
+Proven in `tests/test_robot_legacy_protection_reconciliation.py`: a `TRIGGERED` obligation flows through its stable `exec_id`, the existing `PaperMarketExecutor`, a correlated execution, authoritative FLAT, and the existing Robot trade finalizer to `RESOLVED`. Repeated reconciliation and process restart create no duplicate close execution and no duplicate finalization.
 
-### Slice C — runtime incident recovery
+No production reconciliation code required modification: the existing path consumes the canonical attestation unchanged. GitHub Actions `Robot PAPER acceptance` run #77: **PASS**.
+
+### Slice B.1 — operator boundary — DONE 2026-09-17
+
+`terminal/application/robot_legacy_protection_recovery.py` exposes `attest_legacy_protection_recovery(...)` as the PAPER-only operator entry point. It accepts identities only (`trade_id`, `obligation_id`, `client_action_id`), opens one short-lived `SQLiteStore` following the existing Robot operator-command pattern, and delegates every ownership proof plus the atomic canonical persistence to `terminal.persistence.legacy_protection_recovery.attest_legacy_robot_entry`.
+
+Boundary review found no defect, so no production code was extended in this slice. Verified properties: quantity/version can never be operator-supplied (keyword-only identity signature), `(ROBOT_RUNNING, RECONCILIATION_REQUIRED)` legality and identifier/clock validation stay enforced in the proof helper, no reconcile is invoked, no execution/order/Market port is reachable, and the connection is released exactly once on both success and rejection.
+
+Focused regression: `tests/test_robot_legacy_protection_recovery_command.py` covers canonical persistence, same-action idempotent replay, failed-proof no-write, absence of execution/position/obligation/order side effects, deterministic connection lifetime, fail-closed invalid identifiers/clock/database path, and the identity-only/no-reconcile boundary shape. The existing Slice A scenario fixture is reused rather than duplicated (`LegacyProtectionRecoveryFixture`).
+
+This module and the new test module are now part of the `Robot PAPER acceptance` workflow compile and run surface. Verified code/test head: `eea52e77a4b66a2b23b525a210a3549153945148`. GitHub Actions `Robot PAPER acceptance` run #79: **PASS**.
+
+### Slice C — runtime incident recovery — NEXT
 
 Only after A+B are merged and verified: take a fresh read-only production/PAPER snapshot, present the exact eligible legacy trades and reconstructed evidence, obtain explicit operator authorization for the real state-changing recovery, then execute attestation followed by maintenance reconciliation. Telegram manual trading acceptance starts only after reconciliation is clean.
 
