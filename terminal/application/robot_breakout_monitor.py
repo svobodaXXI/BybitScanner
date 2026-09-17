@@ -624,7 +624,7 @@ class RobotBreakoutMonitor:
             )
         except Exception as error:
             self._fail_closed_unprotected_fill(record, error)
-            return
+            return False
 
         entry_quantity = entry_evidence.quantity
         entry_position_version = entry_evidence.position_version
@@ -877,7 +877,6 @@ class RobotBreakoutMonitor:
             )
         )
         first_at = ordered[0].exchange_timestamp_ms
-        last_at = ordered[-1].exchange_timestamp_ms
         symbol_executions = self._store().load_executions_for_symbol(
             self._account_id, record.symbol,
         )
@@ -891,22 +890,14 @@ class RobotBreakoutMonitor:
             if item.exchange_timestamp_ms < first_at:
                 pre_entry_net += signed
                 continue
-            if (
-                item.exchange_timestamp_ms <= position.updated_at_ms
-                and item.order_id != order_id
-            ):
+            if item.order_id != order_id:
                 raise RobotBreakoutMonitorError(
-                    "foreign execution overlaps Robot entry ownership window"
+                    "foreign execution exists after Robot entry began"
                 )
         if pre_entry_net != 0:
             raise RobotBreakoutMonitorError(
                 "symbol was not FLAT immediately before Robot entry"
             )
-        if position.updated_at_ms != last_at:
-            raise RobotBreakoutMonitorError(
-                "position changed after the last Robot-owned entry fill"
-            )
-
         foreign_orders = tuple(
             item.order_id.value
             for item in self._store().load_active_paper_limits(
