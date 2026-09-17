@@ -32,6 +32,7 @@ ACCOUNT = TradingAccountId("paper")
 SYMBOL = Symbol("BTCUSDT")
 POSITION_KEY = PositionKey(ACCOUNT, Category.LINEAR, SYMBOL, 0)
 ENTRY_ORDER_ID = "legacy-entry-order"
+TOPUP_ORDER_ID = "legacy-topup-order"
 TRADE_ID = "legacy-trade-1"
 CANDIDATE_ID = "legacy-candidate-1"
 ACTION_ID = "legacy-attest-action-1"
@@ -76,7 +77,13 @@ class LegacyProtectionRecoveryFixture(unittest.TestCase):
         )
 
     @staticmethod
-    def projection(*, quantity: str = "2", average_entry: str = "100") -> PositionProjectionUpdate:
+    def projection(
+        *,
+        quantity: str = "2",
+        average_entry: str = "100",
+        expected_version: int | None = None,
+        updated_at_ms: int = 1200,
+    ) -> PositionProjectionUpdate:
         qty = Decimal(quantity)
         return PositionProjectionUpdate(
             position_key=POSITION_KEY,
@@ -87,8 +94,8 @@ class LegacyProtectionRecoveryFixture(unittest.TestCase):
             accumulated_fee=Decimal("0"),
             engaged_notional=Notional(qty * Decimal(average_entry) if qty > 0 else Decimal("0")),
             sync_state="ready",
-            expected_version=None,
-            updated_at_ms=1200,
+            expected_version=expected_version,
+            updated_at_ms=updated_at_ms,
         )
 
     def seed_legacy_trade(self, store: SQLiteStore):
@@ -190,6 +197,127 @@ class LegacyProtectionRecoveryFixture(unittest.TestCase):
             store.get_position_projection(POSITION_KEY),
             store.load_executions(),
         )
+
+    def seed_composite_legacy_trade(self, store: SQLiteStore, *, entry_path: str = "MIXED"):
+        """Seed the exact Slice A2 shape: LIMIT partial 357 + same-side top-up 15.
+
+        357 @ 100 plus 15 @ 112.4 gives an exact VWAP of 100.5 over 372, so the
+        LIMIT-only price (100) deliberately differs from the stored average
+        entry -- that inequality is the attribution lock the proof relies on.
+        """
+        runtime = store.initialize_robot_runtime_state(ACCOUNT, updated_at_ms=900)
+        runtime = store.update_robot_runtime_state(
+            ACCOUNT, mode="ROBOT_RUNNING", recovery_status="READY", reason=None,
+            expected_version=runtime.version, updated_at_ms=910,
+        )
+        runtime = store.update_robot_runtime_state(
+            ACCOUNT, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            reason="composite legacy protection recovery test",
+            expected_version=runtime.version, updated_at_ms=920,
+        )
+
+        candidate, _ = store.create_robot_candidate(
+            candidate_id=CANDIDATE_ID,
+            trading_account_id=ACCOUNT,
+            symbol=SYMBOL,
+            status="APPROVED",
+            signal_snapshot={"symbol": SYMBOL.value, "pattern": "Falling Wedge"},
+            approved_at_ms=1000,
+            updated_at_ms=1000,
+        )
+        candidate = store.save_robot_candidate_state(
+            CANDIDATE_ID,
+            status="APPROVED",
+            robot_state={
+                "direction": "LONG",
+                "execution": {
+                    "limit_order_id": ENTRY_ORDER_ID,
+                    "first_partial_at_ms": 1210,
+                    "first_partial_price": "100",
+                },
+            },
+            expected_revision=candidate.state_revision,
+            updated_at_ms=1100,
+        )
+
+        limit_fill = self.entry_execution(
+            exec_id="legacy-limit-partial-exec", quantity="357", price="100", timestamp_ms=1200,
+        )
+        store.apply_execution_once(limit_fill, self.projection(quantity="357", average_entry="100"))
+        top_up = self.entry_execution(
+            exec_id="legacy-topup-exec",
+            order_id=TOPUP_ORDER_ID,
+            quantity="15",
+            price="112.4",
+            timestamp_ms=1250,
+        )
+        store.apply_execution_once(
+            top_up,
+            self.projection(
+                quantity="372", average_entry="100.5", expected_version=1, updated_at_ms=1250,
+            ),
+        )
+        position = store.get_position_projection(POSITION_KEY)
+        self.assertEqual(position.version, 2)
+
+        trade, _ = store.create_robot_trade(
+            trade_id=TRADE_ID,
+            trading_account_id=ACCOUNT,
+            candidate_id=CANDIDATE_ID,
+            symbol=SYMBOL,
+            direction="LONG",
+            pattern="Falling Wedge",
+            source_timeframe="1",
+            signal_time_ms=1000,
+            entry_time_ms=1300,
+            entry_path=entry_path,
+            actual_wv=Decimal("1"),
+            average_entry=Decimal("100.5"),
+            stop_price=Decimal("98"),
+            take_price=Decimal("106"),
+            entry_quantity=Decimal("372"),
+            entry_position_version=position.version,
+            created_at_ms=1300,
+        )
+
+        obligation, _ = store.latch_paper_protection_obligation(
+            trade_id=TRADE_ID,
+            protection_version=1,
+            winning_leg="TAKE",
+            trigger_price=Decimal("106"),
+            observed_exit_price=Decimal("106.5"),
+            observed_quantity=Decimal("372"),
+            market_event_id="book-event-composite",
+            source_received_at_ms=1350,
+            source_generation=1,
+            source_sequence=10,
+            source_update_id=11,
+            source_event_at_ms=1340,
+            source_matching_engine_cts_ms=1330,
+            observed_bid_price=Decimal("106.5"),
+            observed_ask_price=Decimal("106.6"),
+            latched_at_ms=1400,
+        )
+
+        return (
+            runtime,
+            store.get_robot_trade(TRADE_ID),
+            store.get_robot_candidate(CANDIDATE_ID),
+            obligation,
+            store.get_position_projection(POSITION_KEY),
+            store.load_executions(),
+        )
+
+    @staticmethod
+    def clear_canonical_attestation(store: SQLiteStore):
+        """Reproduce an authentic legacy row whose D2.3 columns are NULL."""
+        with store._transaction():
+            store._connection.execute(
+                "UPDATE robot_trades SET entry_quantity=NULL, entry_position_version=NULL "
+                "WHERE trade_id=?",
+                (TRADE_ID,),
+            )
+
 
 class LegacyProtectionRecoveryTests(LegacyProtectionRecoveryFixture):
     def test_pure_proof_reconstructs_exact_limit_entry(self):
@@ -482,6 +610,206 @@ class LegacyProtectionRecoveryTests(LegacyProtectionRecoveryFixture):
                     position=position,
                     executions=(*executions, stable_close),
                 )
+
+
+class LegacyCompositeProtectionRecoveryTests(LegacyProtectionRecoveryFixture):
+    """Slice A2: one LIMIT partial + exactly one same-side top-up, closed ledger."""
+
+    def prove(self, store: SQLiteStore, *, entry_path: str = "MIXED"):
+        seeded = self.seed_composite_legacy_trade(store, entry_path=entry_path)
+        self.clear_canonical_attestation(store)
+        runtime, _trade, candidate, obligation, position, _executions = seeded
+        return runtime, candidate, obligation, position
+
+    def call_proof(self, store: SQLiteStore, runtime, candidate, obligation, position=None):
+        return prove_legacy_entry_attestation(
+            runtime=runtime,
+            trade=store.get_robot_trade(TRADE_ID),
+            candidate=candidate,
+            obligation=obligation,
+            position=position or store.get_position_projection(POSITION_KEY),
+            executions=store.load_executions(),
+        )
+
+    def test_composite_proof_reconstructs_limit_partial_plus_single_topup(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store)
+
+            proof = self.call_proof(store, runtime, candidate, obligation, position)
+
+            self.assertEqual(proof.entry_quantity, Decimal("372"))
+            self.assertEqual(proof.entry_position_version, 2)
+            self.assertEqual(proof.average_entry, Decimal("100.5"))
+            self.assertEqual(proof.entry_order_id, ENTRY_ORDER_ID)
+            # Ordered by execution time: proven LIMIT partial, then the top-up.
+            self.assertEqual(
+                proof.execution_ids, ("legacy-limit-partial-exec", "legacy-topup-exec")
+            )
+            self.assertEqual(proof.trade_id, TRADE_ID)
+            self.assertEqual(proof.obligation_id, obligation.obligation_id)
+
+    def test_composite_rejects_second_subsequent_same_side_execution(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, _position = self.prove(store)
+            extra = self.entry_execution(
+                exec_id="legacy-second-topup-exec",
+                order_id="legacy-another-topup-order",
+                quantity="5",
+                price="113",
+                timestamp_ms=1260,
+            )
+            store.apply_execution_once(
+                extra,
+                self.projection(
+                    quantity="377", average_entry="100.5", expected_version=2, updated_at_ms=1260,
+                ),
+            )
+            with self.assertRaisesRegex(
+                LegacyProtectionRecoveryRejected, r"exactly two executions in symbol history"
+            ):
+                self.call_proof(store, runtime, candidate, obligation)
+
+    def test_composite_rejects_any_extra_execution_in_symbol_history(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, _position = self.prove(store)
+            # Pre-entry history destroys the closed-ledger/FLAT guarantee.
+            with store._transaction():
+                store._connection.execute(
+                    "INSERT INTO executions (trading_account_id, category, exec_id, order_id, "
+                    "symbol, side, price, quantity, fee, exchange_timestamp_ms) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        ACCOUNT.value, "linear", "legacy-foreign-exec", "legacy-foreign-order",
+                        SYMBOL.value, "Buy", "99", "4", "0", 1100,
+                    ),
+                )
+            with self.assertRaisesRegex(
+                LegacyProtectionRecoveryRejected, r"does not prove FLAT"
+            ):
+                self.call_proof(store, runtime, candidate, obligation)
+
+    def test_composite_rejects_opposite_side_topup(self):
+        with self.open_store() as store:
+            seeded = self.seed_composite_legacy_trade(store)
+            self.clear_canonical_attestation(store)
+            runtime, _trade, candidate, obligation, position, _executions = seeded
+            with store._transaction():
+                store._connection.execute(
+                    "UPDATE executions SET side='Sell' WHERE exec_id=?",
+                    ("legacy-topup-exec",),
+                )
+            with self.assertRaisesRegex(
+                LegacyProtectionRecoveryRejected, r"side does not match Robot direction"
+            ):
+                self.call_proof(store, runtime, candidate, obligation, position)
+
+    def test_composite_rejects_when_limit_only_vwap_equals_stored_average_entry(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store)
+            # A same-price top-up leaves the durable average entry identical to
+            # the LIMIT-only price, so Robot ownership of it is unprovable.
+            with store._transaction():
+                store._connection.execute(
+                    "UPDATE executions SET price='100' WHERE exec_id=?", ("legacy-topup-exec",),
+                )
+                store._connection.execute(
+                    "UPDATE robot_trades SET average_entry='100' WHERE trade_id=?", (TRADE_ID,),
+                )
+                store._connection.execute(
+                    "UPDATE position_projections SET average_entry='100' WHERE symbol=?",
+                    (SYMBOL.value,),
+                )
+            with self.assertRaisesRegex(
+                LegacyProtectionRecoveryRejected, r"top-up is not Robot-owned"
+            ):
+                self.call_proof(store, runtime, candidate, obligation)
+
+    def test_composite_rejects_position_version_other_than_two(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, _position = self.prove(store)
+            with store._transaction():
+                store._connection.execute(
+                    "UPDATE position_projections SET version=3 WHERE symbol=?", (SYMBOL.value,),
+                )
+            with self.assertRaisesRegex(
+                LegacyProtectionRecoveryRejected, r"exactly two position mutations"
+            ):
+                self.call_proof(store, runtime, candidate, obligation)
+
+    def test_composite_rejects_topup_after_durable_entry_time(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store)
+            # Finalization before the top-up means later averaging, not a top-up.
+            with store._transaction():
+                store._connection.execute(
+                    "UPDATE robot_trades SET entry_time_ms=1240 WHERE trade_id=?", (TRADE_ID,),
+                )
+            with self.assertRaisesRegex(
+                LegacyProtectionRecoveryRejected, r"after durable Robot entry finalization"
+            ):
+                self.call_proof(store, runtime, candidate, obligation, position)
+
+    def test_composite_data_is_rejected_when_entry_path_is_not_mixed(self):
+        with self.open_store() as store:
+            runtime, candidate, obligation, position = self.prove(store, entry_path="LIMIT")
+            with self.assertRaisesRegex(
+                LegacyProtectionRecoveryRejected, r"unidentified/manual execution exists after Robot entry began"
+            ):
+                self.call_proof(store, runtime, candidate, obligation, position)
+
+    def test_composite_rejects_inconsistent_first_partial_anchors(self):
+        with self.open_store() as store:
+            seeded = self.seed_composite_legacy_trade(store)
+            self.clear_canonical_attestation(store)
+            runtime, _trade, _candidate, obligation, position, _executions = seeded
+            candidate = store.save_robot_candidate_state(
+                CANDIDATE_ID,
+                status="OPEN",
+                robot_state={
+                    "direction": "LONG",
+                    "execution": {
+                        "limit_order_id": ENTRY_ORDER_ID,
+                        "first_partial_at_ms": 1210,
+                        "first_partial_price": "99",
+                    },
+                },
+                expected_revision=store.get_robot_candidate(CANDIDATE_ID).state_revision,
+                updated_at_ms=1450,
+            )
+            with self.assertRaisesRegex(
+                LegacyProtectionRecoveryRejected, r"first partial price does not match"
+            ):
+                self.call_proof(store, runtime, candidate, obligation, position)
+
+    def test_modern_attributed_mixed_trade_is_not_legacy_eligible(self):
+        with self.open_store() as store:
+            seeded = self.seed_composite_legacy_trade(store)
+            runtime, trade, candidate, obligation, position, _executions = seeded
+            # Canonical attestation intentionally left populated.
+            self.assertEqual(trade.entry_quantity, Decimal("372"))
+            self.assertEqual(trade.entry_position_version, 2)
+            with self.assertRaisesRegex(
+                LegacyProtectionRecoveryRejected, r"both canonical entry attestations to be NULL"
+            ):
+                self.call_proof(store, runtime, candidate, obligation, position)
+
+    def test_existing_limit_proof_behavior_is_unchanged(self):
+        with self.open_store() as store:
+            runtime, trade, candidate, obligation, position, executions = (
+                self.seed_legacy_trade(store)
+            )
+            proof = prove_legacy_entry_attestation(
+                runtime=runtime,
+                trade=trade,
+                candidate=candidate,
+                obligation=obligation,
+                position=position,
+                executions=executions,
+            )
+            self.assertEqual(proof.entry_quantity, Decimal("2"))
+            self.assertEqual(proof.entry_position_version, position.version)
+            self.assertEqual(proof.entry_order_id, ENTRY_ORDER_ID)
+            self.assertEqual(proof.execution_ids, ("legacy-entry-exec-1",))
 
 
 if __name__ == "__main__":

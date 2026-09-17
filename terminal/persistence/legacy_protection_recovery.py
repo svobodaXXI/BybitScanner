@@ -87,6 +87,87 @@ def _candidate_entry_order_id(candidate: RobotCandidateRecord) -> str:
     return order_id.strip()
 
 
+def _candidate_first_partial(candidate: RobotCandidateRecord) -> tuple[int, Decimal]:
+    """Durable first-partial anchors, required only by the composite shape."""
+
+    state = candidate.robot_state
+    execution = state.get("execution") if isinstance(state, Mapping) else None
+    if not isinstance(execution, Mapping):
+        _reject("composite legacy candidate lacks durable execution state")
+    at_ms = execution.get("first_partial_at_ms")
+    price = execution.get("first_partial_price")
+    if not isinstance(at_ms, int) or isinstance(at_ms, bool) or at_ms < 0:
+        _reject("composite legacy recovery requires a durable first partial timestamp")
+    if not isinstance(price, str) or not price.strip():
+        _reject("composite legacy recovery requires a durable first partial price")
+    try:
+        parsed = Decimal(price)
+    except Exception:
+        _reject("durable first partial price is not a valid decimal")
+    if parsed <= 0:
+        _reject("durable first partial price is not positive")
+    return at_ms, parsed
+
+
+def _prove_composite_topup(
+    *,
+    trade: RobotTradeRecord,
+    candidate: RobotCandidateRecord,
+    scoped: Sequence[Execution],
+    entry_executions: Sequence[Execution],
+    entry_order_id: str,
+    expected_side: OrderSide,
+    position: PositionProjectionRecord,
+) -> tuple[Execution, ...]:
+    """Prove the exact Slice A2 shape: one LIMIT partial + one same-side top-up.
+
+    Deliberately not a multi-leg abstraction.  The top-up carries Workspace
+    order identity that a manual action would also carry, so ownership is
+    locked by durable Robot-authored evidence instead: ``entry_path == "MIXED"``
+    (written only by Robot's own trade finalizer), a ledger closed at exactly
+    these two executions, ``entry_time_ms`` ordering, and the caller's exact
+    VWAP equality against ``trade.average_entry``.  Because the ledger is
+    closed, no other candidate/trade can own these executions.
+    """
+
+    if len(entry_executions) != 1:
+        _reject("composite legacy recovery requires exactly one LIMIT partial execution")
+    if len(scoped) != 2:
+        _reject("composite legacy recovery requires exactly two executions in symbol history")
+
+    limit_execution = entry_executions[0]
+    top_ups = tuple(item for item in scoped if item.order_id.value != entry_order_id)
+    if len(top_ups) != 1:
+        _reject("composite legacy recovery requires exactly one subsequent top-up execution")
+    top_up = top_ups[0]
+
+    if top_up.side is not expected_side:
+        _reject("composite top-up execution side does not match Robot direction")
+    if top_up.quantity.value <= 0 or top_up.price.value <= 0:
+        _reject("composite top-up contains non-positive execution evidence")
+    if top_up.exchange_timestamp_ms <= limit_execution.exchange_timestamp_ms:
+        _reject("composite top-up does not follow the proven LIMIT partial")
+    if top_up.exchange_timestamp_ms > trade.entry_time_ms:
+        _reject("composite top-up occurred after durable Robot entry finalization")
+    if position.version != 2:
+        _reject("composite legacy recovery requires exactly two position mutations")
+
+    first_partial_at_ms, first_partial_price = _candidate_first_partial(candidate)
+    if first_partial_price != limit_execution.price.value:
+        _reject("durable first partial price does not match the proven LIMIT execution")
+    if not (
+        limit_execution.exchange_timestamp_ms <= first_partial_at_ms <= trade.entry_time_ms
+    ):
+        _reject("durable first partial timestamp is inconsistent with the proven entry")
+
+    # Attribution lock: a LIMIT-only entry would have produced a LIMIT-only
+    # durable average entry, so an equal value proves the top-up is not owned.
+    if limit_execution.price.value == trade.average_entry:
+        _reject("LIMIT-only VWAP already equals durable average entry; top-up is not Robot-owned")
+
+    return (limit_execution, top_up)
+
+
 def _legacy_audit(candidate: RobotCandidateRecord) -> Mapping[str, object] | None:
     state = candidate.robot_state
     if not isinstance(state, Mapping):
@@ -107,7 +188,12 @@ def prove_legacy_entry_attestation(
     position: PositionProjectionRecord,
     executions: Sequence[Execution],
 ) -> LegacyEntryAttestationProof:
-    """Pure/read-only proof of one pre-D2.3 LIMIT entry attestation.
+    """Pure/read-only proof of one pre-D2.3 Robot entry attestation.
+
+    Two historical shapes are supported and no other may be generalized to:
+    a single durable ``LIMIT`` entry, and the composite ``MIXED`` shape of one
+    LIMIT partial plus exactly one same-side top-up over a ledger closed at
+    exactly those two executions (see ``_prove_composite_topup``).
 
     No state is mutated here.  Ambiguity rejects recovery rather than trying
     to infer ownership from Working Volume, candles, or the current aggregate
@@ -120,8 +206,8 @@ def prove_legacy_entry_attestation(
         _reject("legacy Robot trade is already closed")
     if trade.entry_quantity is not None or trade.entry_position_version is not None:
         _reject("legacy recovery requires both canonical entry attestations to be NULL")
-    if trade.entry_path != "LIMIT":
-        _reject("legacy recovery currently supports only durable LIMIT entry identity")
+    if trade.entry_path not in {"LIMIT", "MIXED"}:
+        _reject("legacy recovery supports only durable LIMIT or composite MIXED entry identity")
 
     if (
         candidate.candidate_id != trade.candidate_id
@@ -184,13 +270,28 @@ def prove_legacy_entry_attestation(
     if pre_entry_net != 0:
         _reject("execution ledger does not prove FLAT immediately before Robot entry")
 
-    for item in scoped:
-        if item.exchange_timestamp_ms >= first_entry_at and item.order_id.value != entry_order_id:
-            _reject("unidentified/manual execution exists after Robot entry began")
+    if trade.entry_path == "LIMIT":
+        for item in scoped:
+            if (
+                item.exchange_timestamp_ms >= first_entry_at
+                and item.order_id.value != entry_order_id
+            ):
+                _reject("unidentified/manual execution exists after Robot entry began")
+        proven_entry = entry_executions
+    else:
+        proven_entry = _prove_composite_topup(
+            trade=trade,
+            candidate=candidate,
+            scoped=scoped,
+            entry_executions=entry_executions,
+            entry_order_id=entry_order_id,
+            expected_side=expected_side,
+            position=position,
+        )
 
     ordered_entry = tuple(
         sorted(
-            entry_executions,
+            proven_entry,
             key=lambda item: (item.exchange_timestamp_ms, item.dedup_key.exec_id.value),
         )
     )
