@@ -695,6 +695,15 @@ class PaperRuntime:
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
             match_resting_orders=self._dispatch_robot_match_symbol,
+            get_market_book=lambda symbol: self._dispatch_robot_command(
+                lambda runtime: runtime._book_provider.get_book(Symbol(symbol)),
+            ),
+            market_preflight=lambda request, identity: self._dispatch_robot_command(
+                lambda runtime: runtime._robot_api.market_preflight(request, identity=identity),
+            ),
+            submit_market=lambda request, identity: self._dispatch_robot_command(
+                lambda runtime: runtime._robot_market(request, identity=identity),
+            ),
             tick_interval_s=robot_tick_interval_s,
         )
         if self._robot_command_dispatcher is not None:
@@ -964,8 +973,8 @@ class PaperRuntime:
         self.require_paper_mutations()
         return self.api.market(request)
 
-    def _robot_market(self, request):
-        return self._robot_api.market(request)
+    def _robot_market(self, request, *, identity=None):
+        return self._robot_api.market(request, identity=identity)
 
     def live_market(self, request: LiveMarketCommandRequest):
         return self._live_market.submit(request)

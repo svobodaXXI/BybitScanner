@@ -19,10 +19,15 @@ from pathlib import Path
 import robot_state_machine
 from robot_candidate_store import create_signal_snapshot
 from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
+from terminal.application.normalization import normalize_limit_price
 from terminal.application.robot_admission import admit_robot_candidate
+from terminal.application.robot_admission_catchup import replay_admission_catchup
 from terminal.application.robot_control import start_robot
 from terminal.application.trading_accounts import paper_account_manager
-from terminal.domain.models import Category, Price, PositionKey, Quantity, Symbol, TradingAccountId
+from terminal.domain.models import (
+    Category, CommandId, OrderSide, Price, PositionKey, Quantity, Symbol, TradingAccountId,
+)
+from terminal.domain.states import CommandState
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 
@@ -168,6 +173,169 @@ def _wait_until(predicate, *, timeout: float = POLL_TIMEOUT_S, interval: float =
 
 
 class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
+    def test_late_admission_market_entry_protection_and_restart_exactly_once(self):
+        with tempfile.TemporaryDirectory() as temp:
+            database_path = Path(temp) / "paper.sqlite3"
+            candidate_dir = Path(temp) / "candidates"
+            instrument = _instrument()
+            candles = _DeterministicCandleProvider()
+            candles.set(_candle(103, high=101, low=95, close=98))
+            position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+            protection_observations = []
+            ticks = []
+
+            class DepthBook(_MutableBookProvider):
+                def get_book(self, symbol):
+                    # Fresh deterministic depth; actual VWAP differs from the
+                    # Scanner reference and top ask, exercising post-fill math.
+                    return replace(
+                        _event_book(symbol.value, bid=Decimal("99.9"), ask=Decimal("100")),
+                        asks=(
+                            PriceLevel(Price(Decimal("100")), Quantity(Decimal("1"))),
+                            PriceLevel(Price(Decimal("100.2")), Quantity(Decimal("1000"))),
+                        ),
+                        available_depth=2,
+                    )
+
+            def factory():
+                owner = create_configured_paper_runtime(
+                    database_path,
+                    book_provider=DepthBook(),
+                    instrument_snapshot=instrument,
+                    instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
+                    account_manager=paper_account_manager(),
+                    robot_closed_candle_provider=candles,
+                    robot_latest_geometry_index_provider=_fixed_geometry_index_provider,
+                    robot_tick_interval_s=TICK_INTERVAL_S,
+                )
+                # Observe ordering, but delegate every protection mutation to
+                # the real runtime. No market submitter/executor is replaced.
+                for name in ("_robot_create_stop", "_robot_create_take"):
+                    original = getattr(owner, name)
+
+                    def observed(request, original=original, name=name):
+                        executions = owner.store.load_executions()
+                        position = owner.store.get_position_projection(position_key)
+                        self.assertEqual(len(executions), 1)
+                        self.assertIsNotNone(position.average_entry)
+                        protection_observations.append((name, position.average_entry.value))
+                        return original(request)
+
+                    setattr(owner, name, observed)
+                original_tick = owner._robot_breakout_monitor.tick
+
+                def counted_tick():
+                    result = original_tick()
+                    ticks.append(threading.get_ident())
+                    return result
+
+                owner._robot_breakout_monitor.tick = counted_tick
+                return owner
+
+            runtime = SerializedPaperRuntime(factory)
+            try:
+                start_robot(database_path=database_path)
+                snapshot = _snapshot()
+                create_signal_snapshot(
+                    snapshot, timeframe="1", store_dir=candidate_dir,
+                    candidate_id=CANDIDATE_ID, created_at="2026-09-15T00:00:00+00:00",
+                )
+                admitted, created = admit_robot_candidate(
+                    CANDIDATE_ID, approval={"source": "late-paper-acceptance"},
+                    database_path=database_path, store_dir=candidate_dir,
+                )
+                self.assertTrue(created)
+                initial, _ = robot_state_machine.initialize_state({
+                    "status": "APPROVED", "timeframe": "1", "signal_snapshot": snapshot,
+                })
+                late_state, _ = replay_admission_catchup(snapshot, initial, (
+                    {"closed": True, "timeframe": "1", "geometry_index": 102,
+                     "high": 106, "low": 97, "close": 105},
+                    {"closed": True, "timeframe": "1", "geometry_index": 103,
+                     "high": 101, "low": 95, "close": 98},
+                ))
+                self.assertEqual(late_state["execution"]["entry_mode"], "LATE_ADMISSION_MARKET")
+                runtime.call(lambda owner: owner.store.save_robot_candidate_state(
+                    CANDIDATE_ID, status="APPROVED", robot_state=late_state,
+                    expected_revision=admitted.state_revision, updated_at_ms=int(time.time() * 1000),
+                ))
+                self.assertEqual(runtime.call(lambda owner: owner.store.load_executions()), ())
+                runtime.start_robot_monitor()
+
+                def open_trade():
+                    return runtime.call(lambda owner: owner.store.get_open_robot_trade_for_symbol(
+                        ACCOUNT_ID, Symbol(SYMBOL),
+                    ))
+
+                trade = _wait_until(open_trade)
+                self.assertEqual(trade.entry_path, "MARKET")
+                self.assertGreater(trade.entry_quantity, Decimal("1"))
+                expected_vwap = (
+                    Decimal("100") + (trade.entry_quantity - 1) * Decimal("100.2")
+                ) / trade.entry_quantity
+                self.assertEqual(trade.average_entry, expected_vwap)
+                self.assertGreater(expected_vwap, Decimal("100"))
+                # The structural STOP is >2% away, so the existing fallback
+                # proves protection was rebuilt from actual entry, not top ask.
+                self.assertEqual(trade.stop_price, expected_vwap * Decimal("0.98"))
+                self.assertEqual(trade.take_price, Decimal("118"))
+                self.assertEqual(protection_observations, [
+                    ("_robot_create_stop", expected_vwap),
+                    ("_robot_create_take", expected_vwap),
+                ])
+
+                def durable_evidence(owner):
+                    candidate = owner.store.get_robot_candidate(CANDIDATE_ID)
+                    intent = candidate.robot_state["execution"]["late_market_intent"]
+                    command = owner.store.get_command(CommandId(intent["command_id"]))
+                    count = owner.store._connection.execute(
+                        "SELECT COUNT(*) FROM trading_commands WHERE command_kind = 'create_market'"
+                    ).fetchone()[0]
+                    return (
+                        command, count, owner.store.load_executions(),
+                        owner.store.get_position_projection(position_key),
+                        owner.store.get_protection_projection(position_key),
+                    )
+
+                before = runtime.call(durable_evidence)
+                command, count, executions, position, protection = before
+                self.assertEqual(count, 1)
+                self.assertEqual(command.current_state, CommandState.FILLED)
+                self.assertEqual(len(executions), 1)
+                self.assertEqual(position.average_entry.value, expected_vwap)
+                # protection.stop_loss/take_profit are the executable PAPER
+                # order prices: trade.stop_price/take_price (the raw
+                # strategy-plan values) tick-normalized on the position's
+                # closing side, same as production protection submission.
+                closing_side = (
+                    OrderSide.SELL
+                    if trade.direction == robot_state_machine.DIRECTION_LONG
+                    else OrderSide.BUY
+                )
+                self.assertEqual(
+                    protection.stop_loss,
+                    normalize_limit_price(trade.stop_price, instrument.tick_size, closing_side),
+                )
+                self.assertEqual(
+                    protection.take_profit,
+                    normalize_limit_price(trade.take_price, instrument.tick_size, closing_side),
+                )
+                prior_ticks = len(ticks)
+                _wait_until(lambda: len(ticks) >= prior_ticks + 3)
+                self.assertEqual(runtime.call(durable_evidence), before)
+
+                runtime.close()
+                runtime = SerializedPaperRuntime(factory)
+                self.assertTrue(runtime.call(lambda owner: owner.robot_admission_ready()))
+                runtime.start_robot_monitor()
+                prior_ticks = len(ticks)
+                _wait_until(lambda: len(ticks) >= prior_ticks + 3)
+                self.assertEqual(runtime.call(durable_evidence), before)
+                self.assertEqual(open_trade(), trade)
+                self.assertEqual(len(protection_observations), 2)
+            finally:
+                runtime.close()
+
     def test_admission_breakout_retest_limit_fill_trade_and_protection(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
