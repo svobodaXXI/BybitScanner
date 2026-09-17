@@ -110,7 +110,7 @@ ROBOT_EXIT_REASONS = {
     "STOP", "TAKE", "MANUAL", "TAKEOVER",
     "EMERGENCY_CLOSE", "EMERGENCY_PROTECTION_FAILURE",
 }
-PAPER_PROTECTION_WINNING_LEGS = {"STOP", "TAKE"}
+PAPER_PROTECTION_WINNING_LEGS = {"STOP", "TAKE", "EMERGENCY_CLOSE"}
 PAPER_PROTECTION_OBLIGATION_TRANSITIONS = {
     "TRIGGERED": {"DISPATCHING"},
     "DISPATCHING": {"RESOLVED"},
@@ -3990,7 +3990,7 @@ class SQLiteStore:
         if protection_version < 1:
             raise ValueError("protection_version must be positive")
         if winning_leg not in PAPER_PROTECTION_WINNING_LEGS:
-            raise ValueError("winning_leg must be STOP or TAKE")
+            raise ValueError("winning_leg must be STOP, TAKE, or EMERGENCY_CLOSE")
         for value in (
             trigger_price, observed_exit_price, observed_quantity,
             observed_bid_price, observed_ask_price,
