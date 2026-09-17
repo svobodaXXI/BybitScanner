@@ -357,6 +357,48 @@ def _open_robot_position_with_confirmed_protection(
     )
 
 
+def test_robot_reconcile_accepts_tick_normalized_protection_prices():
+    """Reconciliation compares the durable normalized protection, not raw strategy prices."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime,
+                symbol="BTCUSDT",
+                entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000.1"),
+                take_price=Decimal("64600.1"),
+                trade_id="trade-reconcile-normalized-protection",
+                candidate_id="candidate-reconcile-normalized-protection",
+            )
+
+            position_key = PositionKey(
+                TradingAccountId("paper"),
+                Category.LINEAR,
+                Symbol("BTCUSDT"),
+                0,
+            )
+            protection = runtime.store.get_protection_projection(position_key)
+            assert protection is not None
+            assert protection.stop_loss == Decimal("64000.5")
+            assert protection.take_profit == Decimal("64600.5")
+
+            _set_admission(
+                runtime,
+                mode="ROBOT_RUNNING",
+                recovery_status="RECONCILIATION_REQUIRED",
+            )
+
+            result = runtime.robot_reconcile()
+
+            assert result.success is True
+            assert result.unresolved_trade_ids == ()
+            assert result.recovery_status == "PAUSED"
+        finally:
+            runtime.close()
+
+
 def test_robot_reconcile_success_lands_paused_and_never_ready():
     with tempfile.TemporaryDirectory() as temp:
         provider = MutableBookProvider("BTCUSDT", _entry_book())
