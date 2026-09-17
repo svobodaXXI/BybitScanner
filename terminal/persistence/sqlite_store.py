@@ -54,6 +54,7 @@ from .schema import (
     SCHEMA_V18_MIGRATION_STATEMENTS,
     SCHEMA_V19_MIGRATION_STATEMENTS,
     SCHEMA_V20_MIGRATION_STATEMENTS,
+    SCHEMA_V21_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -856,6 +857,11 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 20:
+            SQLiteStore._validate_required_tables(connection, version=20)
+            SQLiteStore._migrate_v20_to_v21(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
         if version == 19:
             SQLiteStore._validate_required_tables(connection, version=19)
             SQLiteStore._migrate_v19_to_v20(connection)
@@ -1224,6 +1230,19 @@ class SQLiteStore:
             for statement in SCHEMA_V20_MIGRATION_STATEMENTS:
                 connection.execute(statement)
             connection.execute("PRAGMA user_version = 20")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        SQLiteStore._migrate_v20_to_v21(connection)
+
+    @staticmethod
+    def _migrate_v20_to_v21(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V21_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 21")
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")
