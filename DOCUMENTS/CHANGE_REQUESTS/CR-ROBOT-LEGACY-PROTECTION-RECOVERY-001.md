@@ -1,6 +1,6 @@
 # CR-ROBOT-LEGACY-PROTECTION-RECOVERY-001 — Evidence-backed legacy PAPER protection recovery
 
-Status: SPEC_READY_FOR_IMPLEMENTATION  
+Status: IMPLEMENT_IN_PROGRESS  
 Baseline: `main` @ `1d9f86ecd525873a0720ec29a15e85753aaec642`  
 Scope: PAPER Robot v0.1 only. LIVE is out of scope.
 
@@ -111,11 +111,15 @@ After successful attestation, the operator may run the existing maintenance reco
 
 ## Implementation slicing
 
-### Slice A — proof + canonical attestation only
+### Slice A — proof + canonical attestation only — DONE 2026-09-17
 
-Add the smallest pure/read-only proof helper and one atomic persistence operation. Add a localhost/operator application boundary only if required to exercise the proof safely. **No Market side effect in Slice A.**
+Implemented in `terminal/persistence/legacy_protection_recovery.py` as a pure/read-only proof plus one package-internal single-writer transaction. No schema migration and no Market/execution port were added. The transaction fills the existing canonical trade fields and writes `execution.legacy_entry_attestation` into the existing candidate state atomically; same-action replay is idempotent and conflicting action reuse fails closed.
 
-### Slice B — existing reconciliation acceptance
+Focused regression: `tests/test_robot_legacy_protection_recovery.py` covers exact proof, atomic/idempotent persistence, no execution/obligation/position side effect, failed-proof no-write behavior, modern/partial attestation rejection, client-action conflict, pre-entry non-flat evidence, post-entry foreign execution, lifecycle/economics mismatches, and existing stable close execution.
+
+Verified code/test head: `2053daf08048a948165b995b7e9f5f2e5986a0dc`. GitHub Actions `Robot PAPER acceptance` run #74: **PASS** (compile + deterministic acceptance suite).
+
+### Slice B — existing reconciliation acceptance — NEXT
 
 Do not add new execution semantics. Prove that the already-existing `reconcile_robot()` consumes the canonical attestation and completes the normal obligation path exactly once. Patch production code only if the existing path exposes a concrete defect.
 
