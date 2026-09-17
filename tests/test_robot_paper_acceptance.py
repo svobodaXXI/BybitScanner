@@ -19,6 +19,10 @@ from pathlib import Path
 import robot_state_machine
 from robot_candidate_store import create_signal_snapshot
 from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
+from terminal.api.models import (
+    ClientActionId, CommandResultStatus, MarketCommandRequest, PaperStopDeleteRequest,
+    VolumeRequest, VolumeUnit,
+)
 from terminal.application.normalization import normalize_limit_price
 from terminal.application.robot_admission import admit_robot_candidate
 from terminal.application.robot_admission_catchup import replay_admission_catchup
@@ -333,6 +337,27 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 self.assertEqual(runtime.call(durable_evidence), before)
                 self.assertEqual(open_trade(), trade)
                 self.assertEqual(len(protection_observations), 2)
+
+                # Break one protection leg through the supported PAPER path.
+                # A subsequent normal restart must fence admission instead of
+                # trusting candidate.status == OPEN as proof of a healthy trade.
+                deleted = runtime.call(lambda owner: owner.delete_take(
+                    PaperStopDeleteRequest(
+                        ClientActionId("acceptance-delete-take"), SYMBOL,
+                    )
+                ))
+                self.assertEqual(deleted.status, CommandResultStatus.COMPLETED)
+                runtime.close()
+                runtime = SerializedPaperRuntime(factory)
+                recovered = runtime.call(
+                    lambda owner: owner.store.get_robot_runtime_state(ACCOUNT_ID)
+                )
+                self.assertFalse(runtime.call(lambda owner: owner.robot_admission_ready()))
+                self.assertEqual(
+                    (recovered.mode, recovered.recovery_status),
+                    ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+                )
+                self.assertIn("protection is incomplete", recovered.reason)
             finally:
                 runtime.close()
 
@@ -483,6 +508,116 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 )
                 self.assertEqual(final_position.side.value, "Flat")
                 self.assertEqual(final_position.quantity.value, Decimal("0"))
+            finally:
+                runtime.close()
+
+
+    def test_manual_position_is_never_adopted_as_robot_entry(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            database_path = root / "paper.sqlite3"
+            candidate_dir = root / "candidates"
+            instrument = _instrument()
+            candles = _DeterministicCandleProvider()
+            book = _MutableBookProvider()
+            book.set(SYMBOL, bid=Decimal("99.9"), ask=Decimal("100"))
+
+            runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
+                database_path,
+                book_provider=book,
+                instrument_snapshot=instrument,
+                instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
+                account_manager=paper_account_manager(),
+                robot_closed_candle_provider=candles,
+                robot_latest_geometry_index_provider=_fixed_geometry_index_provider,
+                robot_tick_interval_s=TICK_INTERVAL_S,
+            ))
+            try:
+                manual = runtime.call(lambda owner: owner.market(MarketCommandRequest(
+                    ClientActionId("manual-position-before-robot"),
+                    SYMBOL,
+                    OrderSide.BUY,
+                    VolumeRequest(VolumeUnit.USDT, Decimal("20")),
+                    Decimal("100"),
+                    "Percent",
+                    Decimal("1"),
+                )))
+                self.assertEqual(manual.status, CommandResultStatus.COMPLETED)
+                baseline_executions = runtime.call(
+                    lambda owner: owner.store.load_executions()
+                )
+                self.assertEqual(len(baseline_executions), 1)
+
+                started = start_robot(database_path=database_path)
+                self.assertEqual(
+                    (started.mode, started.recovery_status),
+                    ("ROBOT_RUNNING", "READY"),
+                )
+                create_signal_snapshot(
+                    _snapshot(),
+                    timeframe="1",
+                    store_dir=candidate_dir,
+                    candidate_id=CANDIDATE_ID,
+                    created_at="2026-09-15T00:00:00+00:00",
+                )
+                admitted, created = admit_robot_candidate(
+                    CANDIDATE_ID,
+                    approval={"source": "foreign-position-acceptance"},
+                    database_path=database_path,
+                    store_dir=candidate_dir,
+                )
+                self.assertTrue(created)
+                self.assertEqual(admitted.status, "APPROVED")
+                runtime.start_robot_monitor()
+
+                def candidate_record():
+                    return runtime.call(
+                        lambda owner: owner.store.get_robot_candidate(CANDIDATE_ID)
+                    )
+
+                _wait_until(lambda: (
+                    candidate_record()
+                    if (candidate_record().robot_state or {}).get("phase")
+                    == robot_state_machine.PHASE_WAITING_BREAKOUT
+                    else None
+                ))
+                candles.set(_candle(102, high=106, low=97, close=105))
+                _wait_until(lambda: (
+                    candidate_record()
+                    if (candidate_record().robot_state or {}).get("phase")
+                    == robot_state_machine.PHASE_WAITING_RETEST
+                    else None
+                ))
+                candles.set(_candle(103, high=101, low=95, close=98))
+                _wait_until(lambda: (
+                    candidate_record()
+                    if (candidate_record().robot_state or {}).get("phase")
+                    == robot_state_machine.PHASE_RETEST_DETECTED
+                    else None
+                ))
+                candles.set(_candle(104, high=99, low=97, close=98))
+
+                invalidated = _wait_until(lambda: (
+                    record if (record := candidate_record()).status == "INVALIDATED"
+                    else None
+                ))
+                reason = invalidated.robot_state["execution"]["stopped_without_entry_reason"]
+                self.assertIn("FOREIGN_POSITION_PRESENT_BEFORE_ROBOT_ENTRY", reason)
+                self.assertIsNone(runtime.call(
+                    lambda owner: owner.store.get_open_robot_trade_for_symbol(
+                        ACCOUNT_ID, Symbol(SYMBOL),
+                    )
+                ))
+                self.assertEqual(
+                    runtime.call(lambda owner: owner.store.load_executions()),
+                    baseline_executions,
+                )
+                self.assertEqual(
+                    runtime.call(lambda owner: owner.store.load_active_paper_limits(
+                        ACCOUNT_ID, Symbol(SYMBOL),
+                    )),
+                    (),
+                )
             finally:
                 runtime.close()
 
