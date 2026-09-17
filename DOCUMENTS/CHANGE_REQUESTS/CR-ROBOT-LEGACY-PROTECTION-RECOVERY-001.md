@@ -139,9 +139,17 @@ Focused regression: `tests/test_robot_legacy_protection_recovery_command.py` cov
 
 This module and the new test module are now part of the `Robot PAPER acceptance` workflow compile and run surface. Verified code/test head: `eea52e77a4b66a2b23b525a210a3549153945148`. GitHub Actions `Robot PAPER acceptance` run #79: **PASS**.
 
-### Slice A2 — composite MIXED legacy entry proof — SPEC APPROVED 2026-09-17, NOT IMPLEMENTED
+### Slice A2 — composite MIXED legacy entry proof — DONE 2026-09-17
 
 Read-only analysis of the live PAPER database established that the remaining legacy incident (`1000TAGUSDT`) is a composite entry that the Slice A proof correctly refuses with `legacy recovery currently supports only durable LIMIT entry identity`. This slice narrowly extends the **pure proof only**. No new persistence path, no schema change, no second execution/protection/reconciliation lifecycle, and no change to the operator boundary (input stays identity-only).
+
+#### Implementation and blocker fix — verified 2026-09-17
+
+Slice A2 was implemented at `8440295fb908b9d3c97d499b3f1508533e43679a` (Robot PAPER acceptance #81 PASS). Review identified a missing competing-ownership guard; fixed at `1f40d9c78d3890387ce1a49589d416318efa3656` (Robot PAPER acceptance [#82](https://github.com/svobodaXXI/BybitScanner/actions/runs/35266412792) PASS).
+
+The MIXED pure proof now requires durable candidate/trade snapshots and rejects any other candidate or trade for the same account/symbol, regardless of lifecycle status. This deliberately conservative closed-history check does not infer ownership from the two executions alone. The existing attestation transaction reads those records before proof and persists nothing on rejection. LIMIT proof behavior and the application boundary, reconciliation, execution/protection lifecycle, schema, HTTP/CLI/Telegram and LIVE behavior are unchanged.
+
+Focused coverage includes competing durable candidates/trades, missing ownership evidence, rejection without canonical writes, successful MIXED attestation, multiple LIMIT fills, non-strict top-up ordering, missing/invalid partial anchors, and existing LIMIT regression. Verification: A2 class 18 tests; full legacy recovery 25 tests; command/reconciliation/robot-control regression 61 tests; local Robot PAPER acceptance compile surface and 67 tests PASS; protected task finish PASS. No live PAPER database, real attestation/reconciliation or Robot start/resume was used.
 
 #### Supported shape — exhaustive
 
