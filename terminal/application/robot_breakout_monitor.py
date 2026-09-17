@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Callable, Mapping, Protocol
 
@@ -53,7 +54,10 @@ from terminal.application.robot_late_admission_market import (
     durable_late_admission_market_intent,
     restore_late_admission_market_plan,
 )
-from terminal.domain.models import Category, PositionKey, Quantity, Symbol, TradingAccountId
+from terminal.domain.models import (
+    Category, CommandId, OrderId, OrderSide, PositionKey, PositionSide, Quantity,
+    Symbol, TradingAccountId,
+)
 from terminal.market_data.models import NormalizedOrderBook
 from terminal.persistence.sqlite_store import (
     ConcurrentUpdate,
@@ -83,6 +87,14 @@ class ActionExecutor(Protocol):
 
 class RobotBreakoutMonitorError(RuntimeError):
     """Raised when the breakout/retest monitor cannot safely advance a candidate."""
+
+
+@dataclass(frozen=True, slots=True)
+class _EntryEvidence:
+    order_id: OrderId
+    quantity: Decimal
+    average_entry: Decimal
+    position_version: int
 
 
 def _cancel_partial_remainder_action_id(candidate_id: str) -> ClientActionId:
@@ -348,6 +360,11 @@ class RobotBreakoutMonitor:
             if self._active_other_owner_candidate_ids(record):
                 return False
 
+            block_reason = self._pre_entry_block_reason(record)
+            if block_reason is not None:
+                self._invalidate_pre_entry_candidate(record, reason=block_reason)
+                return True
+
             result = self._submit_initial_retest_limit(record, record.robot_state)
             order_id = getattr(result, "order_id", None)
             if not order_id:
@@ -367,6 +384,18 @@ class RobotBreakoutMonitor:
         inactive = order.status in INACTIVE_LIMIT_STATUSES
 
         if filled_fraction <= 0:
+            block_reason = self._pre_entry_block_reason(
+                record, allowed_limit_order_id=execution["limit_order_id"],
+            )
+            if block_reason is not None:
+                if not inactive:
+                    self._action_executor.cancel_limit(PaperLimitCancelRequest(
+                        _cancel_blocked_entry_action_id(record.candidate_id),
+                        record.symbol.value, execution["limit_order_id"],
+                    ))
+                self._invalidate_pre_entry_candidate(record, reason=block_reason)
+                return True
+
             new_entry_admitted, terminal_stop = self._read_admission_gate()
             if new_entry_admitted:
                 return False
@@ -396,14 +425,10 @@ class RobotBreakoutMonitor:
         if filled_fraction <= 0:
             return True
 
-        average_entry = self._average_entry(record.symbol)
-        if average_entry is None:
-            return True
-
         fresh_record = self._store().get_robot_candidate(record.candidate_id) or record
         self._finalize_trade(
             fresh_record, execution, entry_path="LIMIT",
-            actual_wv=filled_fraction, average_entry=average_entry,
+            actual_wv=filled_fraction,
         )
         return True
 
@@ -412,13 +437,12 @@ class RobotBreakoutMonitor:
     ) -> bool:
         intent = execution.get("late_market_intent")
 
-        average_entry = self._average_entry(record.symbol)
-        if isinstance(intent, Mapping) and average_entry is not None:
-            self._finalize_trade(
+        if isinstance(intent, Mapping):
+            if self._finalize_trade(
                 record, execution, entry_path="MARKET",
-                actual_wv=Decimal("1"), average_entry=average_entry,
-            )
-            return True
+                actual_wv=Decimal("1"),
+            ):
+                return True
 
         if (
             self._get_market_book is None
@@ -438,18 +462,21 @@ class RobotBreakoutMonitor:
         if self._active_other_owner_candidate_ids(record):
             return False
 
+        block_reason = self._pre_entry_block_reason(record)
+        if block_reason is not None:
+            self._invalidate_pre_entry_candidate(record, reason=block_reason)
+            return True
+
         if isinstance(intent, Mapping):
             plan = restore_late_admission_market_plan(intent)
             result = self._submit_market(plan.request, plan.identity)
             if getattr(result, "status", None) == CommandResultStatus.COMPLETED:
-                average_entry = self._average_entry(record.symbol)
-                if average_entry is not None:
-                    fresh = self._store().get_robot_candidate(record.candidate_id) or record
-                    fresh_execution = dict(fresh.robot_state.get("execution") or execution)
-                    self._finalize_trade(
-                        fresh, fresh_execution, entry_path="MARKET",
-                        actual_wv=Decimal("1"), average_entry=average_entry,
-                    )
+                fresh = self._store().get_robot_candidate(record.candidate_id) or record
+                fresh_execution = dict(fresh.robot_state.get("execution") or execution)
+                self._finalize_trade(
+                    fresh, fresh_execution, entry_path="MARKET",
+                    actual_wv=Decimal("1"),
+                )
             return True
 
         candle = self._get_closed_candle(record.symbol.value)
@@ -542,17 +569,19 @@ class RobotBreakoutMonitor:
         new_entry_admitted, _terminal_stop = self._read_admission_gate()
         if not new_entry_admitted or self._active_other_owner_candidate_ids(fresh):
             return True
+        block_reason = self._pre_entry_block_reason(fresh)
+        if block_reason is not None:
+            self._invalidate_pre_entry_candidate(fresh, reason=block_reason)
+            return True
 
         result = self._submit_market(plan.request, plan.identity)
         if getattr(result, "status", None) == CommandResultStatus.COMPLETED:
-            average_entry = self._average_entry(record.symbol)
-            if average_entry is not None:
-                fresh = self._store().get_robot_candidate(record.candidate_id) or fresh
-                fresh_execution = dict(fresh.robot_state.get("execution") or durable_execution)
-                self._finalize_trade(
-                    fresh, fresh_execution, entry_path="MARKET",
-                    actual_wv=Decimal("1"), average_entry=average_entry,
-                )
+            fresh = self._store().get_robot_candidate(record.candidate_id) or fresh
+            fresh_execution = dict(fresh.robot_state.get("execution") or durable_execution)
+            self._finalize_trade(
+                fresh, fresh_execution, entry_path="MARKET",
+                actual_wv=Decimal("1"),
+            )
         return True
 
     def _finalize_trade(
@@ -562,9 +591,23 @@ class RobotBreakoutMonitor:
         *,
         entry_path: str,
         actual_wv: Decimal,
-        average_entry: Decimal,
-    ) -> None:
+    ) -> bool:
         direction = record.robot_state["direction"]
+        try:
+            entry_evidence = self._prove_entry_evidence(
+                record, execution, entry_path=entry_path,
+            )
+        except RobotBreakoutMonitorError as error:
+            self._escalate_reconciliation(
+                "ROBOT_ENTRY_OWNERSHIP_MISMATCH "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                f"reason={error}"
+            )
+            return False
+        if entry_evidence is None:
+            return False
+
+        average_entry = entry_evidence.average_entry
         try:
             structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
             tick_size = self._tick_size_provider(record.symbol.value)
@@ -583,17 +626,13 @@ class RobotBreakoutMonitor:
             self._fail_closed_unprotected_fill(record, error)
             return
 
-        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
-        entry_projection = self._store().get_position_projection(position_key)
-        if entry_projection is None or entry_projection.quantity.value <= 0:
-            return
-        entry_quantity = entry_projection.quantity.value
-        entry_position_version = entry_projection.version
+        entry_quantity = entry_evidence.quantity
+        entry_position_version = entry_evidence.position_version
 
         duplicate_owners = self._active_other_owner_candidate_ids(record)
         if duplicate_owners:
             self._escalate_duplicate_ownership(record, duplicate_owners)
-            return
+            return False
 
         try:
             stop_result, take_result = robot_protection.submit_initial_protection(
@@ -606,12 +645,30 @@ class RobotBreakoutMonitor:
                 raise RobotBreakoutMonitorError("initial protection submission did not complete")
         except Exception as error:
             self._fail_closed_unprotected_fill(record, error)
-            return
+            return False
 
         duplicate_owners = self._active_other_owner_candidate_ids(record)
         if duplicate_owners:
             self._escalate_duplicate_ownership(record, duplicate_owners)
-            return
+            return False
+
+        try:
+            confirmed_evidence = self._prove_entry_evidence(
+                record, execution, entry_path=entry_path,
+            )
+        except RobotBreakoutMonitorError as error:
+            self._escalate_reconciliation(
+                "ROBOT_ENTRY_OWNERSHIP_MISMATCH "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                f"reason={error}"
+            )
+            return False
+        if confirmed_evidence != entry_evidence:
+            self._escalate_reconciliation(
+                "ROBOT_ENTRY_OWNERSHIP_CHANGED "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return False
 
         now_ms = self._now_ms()
         self._store().create_robot_trade(
@@ -633,6 +690,7 @@ class RobotBreakoutMonitor:
             entry_position_version=entry_position_version,
             created_at_ms=now_ms,
         )
+        return True
 
     def _active_other_owner_candidate_ids(
         self, record: RobotCandidateRecord,
@@ -645,21 +703,22 @@ class RobotBreakoutMonitor:
     def _escalate_duplicate_ownership(
         self, record: RobotCandidateRecord, owner_candidate_ids: tuple[str, ...],
     ) -> None:
-        reason = (
+        self._escalate_reconciliation(
             "DUPLICATE_ROBOT_OWNER "
             f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
             f"owner_candidate_ids={','.join(owner_candidate_ids)}"
         )
+
+    def _escalate_reconciliation(self, reason: str) -> None:
         for _attempt in range(2):
             runtime = self._store().get_robot_runtime_state(self._account_id)
             if runtime is None:
                 raise RobotBreakoutMonitorError(
-                    "Robot runtime state is unavailable during duplicate ownership escalation"
+                    "Robot runtime state is unavailable during safety escalation"
                 )
             if (
                 runtime.mode == "ROBOT_RUNNING"
                 and runtime.recovery_status == "RECONCILIATION_REQUIRED"
-                and runtime.reason == reason
             ):
                 return
             try:
@@ -675,15 +734,197 @@ class RobotBreakoutMonitor:
             except ConcurrentUpdate:
                 continue
         raise RobotBreakoutMonitorError(
-            "Robot runtime state changed during duplicate ownership escalation"
+            "Robot runtime state changed during safety escalation"
         )
 
-    def _average_entry(self, symbol: Symbol) -> Decimal | None:
-        key = PositionKey(self._account_id, Category.LINEAR, symbol, 0)
-        projection = self._store().get_position_projection(key)
-        if projection is None or projection.average_entry is None:
+    def _pre_entry_block_reason(
+        self,
+        record: RobotCandidateRecord,
+        *,
+        allowed_limit_order_id: str | None = None,
+    ) -> str | None:
+        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        position = self._store().get_position_projection(position_key)
+        if (
+            position is not None
+            and (
+                position.side is not PositionSide.FLAT
+                or position.quantity.value != 0
+            )
+        ):
+            return (
+                "FOREIGN_POSITION_PRESENT_BEFORE_ROBOT_ENTRY "
+                f"symbol={record.symbol.value}"
+            )
+
+        foreign_orders = tuple(
+            order.order_id.value
+            for order in self._store().load_active_paper_limits(
+                self._account_id, record.symbol,
+            )
+            if order.order_id.value != allowed_limit_order_id
+        )
+        if foreign_orders:
+            return (
+                "FOREIGN_WORKING_ORDER_PRESENT_BEFORE_ROBOT_ENTRY "
+                f"symbol={record.symbol.value} order_ids={','.join(foreign_orders)}"
+            )
+        return None
+
+    def _entry_order_id(
+        self,
+        record: RobotCandidateRecord,
+        execution: Mapping[str, object],
+        *,
+        entry_path: str,
+    ) -> OrderId | None:
+        if entry_path == "LIMIT":
+            raw_order_id = execution.get("limit_order_id")
+            if not isinstance(raw_order_id, str) or not raw_order_id.strip():
+                return None
+            return OrderId(raw_order_id.strip())
+
+        if entry_path != "MARKET":
+            raise RobotBreakoutMonitorError(f"unsupported Robot entry path: {entry_path}")
+        intent = execution.get("late_market_intent")
+        if not isinstance(intent, Mapping):
             return None
-        return projection.average_entry.value
+        raw_command_id = intent.get("command_id")
+        if not isinstance(raw_command_id, str) or not raw_command_id.strip():
+            raise RobotBreakoutMonitorError("late Market intent lacks command identity")
+        command = self._store().get_command(CommandId(raw_command_id.strip()))
+        if command is None or command.exchange_order_id is None:
+            return None
+        if (
+            command.trading_account_id != self._account_id
+            or command.symbol != record.symbol
+        ):
+            raise RobotBreakoutMonitorError(
+                "late Market command identity does not match Robot candidate scope"
+            )
+        return command.exchange_order_id
+
+    def _prove_entry_evidence(
+        self,
+        record: RobotCandidateRecord,
+        execution: Mapping[str, object],
+        *,
+        entry_path: str,
+    ) -> _EntryEvidence | None:
+        order_id = self._entry_order_id(record, execution, entry_path=entry_path)
+        if order_id is None:
+            return None
+
+        fills = self._store().load_executions_for_order(self._account_id, order_id)
+        if not fills:
+            return None
+
+        direction = str(record.robot_state.get("direction", "")).strip().upper()
+        expected_side = (
+            OrderSide.BUY
+            if direction == robot_state_machine.DIRECTION_LONG
+            else OrderSide.SELL
+            if direction == robot_state_machine.DIRECTION_SHORT
+            else None
+        )
+        if expected_side is None:
+            raise RobotBreakoutMonitorError("Robot entry direction is invalid")
+        if any(
+            fill.symbol != record.symbol
+            or fill.side is not expected_side
+            or fill.quantity.value <= 0
+            or fill.price.value <= 0
+            for fill in fills
+        ):
+            raise RobotBreakoutMonitorError(
+                "durable Robot entry executions do not match candidate scope/direction"
+            )
+
+        quantity = sum((fill.quantity.value for fill in fills), Decimal("0"))
+        notional = sum(
+            (fill.price.value * fill.quantity.value for fill in fills),
+            Decimal("0"),
+        )
+        if quantity <= 0 or notional <= 0:
+            raise RobotBreakoutMonitorError("durable Robot entry evidence is empty")
+        average_entry = notional / quantity
+
+        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        position = self._store().get_position_projection(position_key)
+        expected_position_side = (
+            PositionSide.LONG
+            if expected_side is OrderSide.BUY
+            else PositionSide.SHORT
+        )
+        if (
+            position is None
+            or position.side is not expected_position_side
+            or position.quantity.value != quantity
+            or position.average_entry is None
+            or position.average_entry.value != average_entry
+        ):
+            raise RobotBreakoutMonitorError(
+                "aggregate position does not equal the Robot-owned entry fills"
+            )
+
+        ordered = tuple(
+            sorted(
+                fills,
+                key=lambda fill: (
+                    fill.exchange_timestamp_ms,
+                    fill.dedup_key.exec_id.value,
+                ),
+            )
+        )
+        first_at = ordered[0].exchange_timestamp_ms
+        last_at = ordered[-1].exchange_timestamp_ms
+        symbol_executions = self._store().load_executions_for_symbol(
+            self._account_id, record.symbol,
+        )
+        pre_entry_net = Decimal("0")
+        for item in symbol_executions:
+            signed = (
+                item.quantity.value
+                if item.side is OrderSide.BUY
+                else -item.quantity.value
+            )
+            if item.exchange_timestamp_ms < first_at:
+                pre_entry_net += signed
+                continue
+            if (
+                item.exchange_timestamp_ms <= position.updated_at_ms
+                and item.order_id != order_id
+            ):
+                raise RobotBreakoutMonitorError(
+                    "foreign execution overlaps Robot entry ownership window"
+                )
+        if pre_entry_net != 0:
+            raise RobotBreakoutMonitorError(
+                "symbol was not FLAT immediately before Robot entry"
+            )
+        if position.updated_at_ms != last_at:
+            raise RobotBreakoutMonitorError(
+                "position changed after the last Robot-owned entry fill"
+            )
+
+        foreign_orders = tuple(
+            item.order_id.value
+            for item in self._store().load_active_paper_limits(
+                self._account_id, record.symbol,
+            )
+            if item.order_id != order_id
+        )
+        if foreign_orders:
+            raise RobotBreakoutMonitorError(
+                "foreign working order exists on Robot-owned symbol"
+            )
+
+        return _EntryEvidence(
+            order_id=order_id,
+            quantity=quantity,
+            average_entry=average_entry,
+            position_version=position.version,
+        )
 
     @staticmethod
     def _structural_extreme(signal_snapshot: Mapping[str, object], direction: str) -> Decimal:
