@@ -1,7 +1,9 @@
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import time
 import unittest
 
 import robot_state_machine
@@ -9,9 +11,12 @@ from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
 from terminal.api.models import CommandResultStatus
 from terminal.application.robot_admission_catchup import LATE_ADMISSION_MARKET
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
-from terminal.domain.models import Price, Quantity, Symbol, TradingAccountId
+from terminal.domain.models import Category, Price, Quantity, Symbol, TradingAccountId
+from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.persistence.sqlite_store import SQLiteStore
+from terminal.runtime.paper_http_server import SerializedPaperRuntime
+from terminal.runtime.paper_runtime import PaperRuntime
 
 
 ACCOUNT = TradingAccountId("paper")
@@ -215,6 +220,146 @@ class RobotBreakoutMonitorLateAdmissionTests(unittest.TestCase):
         self.assertEqual(record.state_revision, 1)
         self.assertNotIn("late_market_intent", record.robot_state["execution"])
         self.assertEqual(self.submissions, [])
+
+
+class _FreshBookProvider:
+    def get_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
+        if symbol != Symbol(SYMBOL):
+            return None
+        return NormalizedOrderBook(
+            symbol=symbol,
+            bids=(PriceLevel(Price(Decimal("99")), Quantity(Decimal("1000"))),),
+            asks=(PriceLevel(Price(Decimal("100")), Quantity(Decimal("1000"))),),
+            health=BookHealth.READY,
+            received_at_ms=int(time.time() * 1000),
+            available_depth=1,
+        )
+
+    def get_current_book_update(self, symbol: Symbol):
+        return None
+
+
+def _runtime_instrument(symbol: str = SYMBOL) -> InstrumentSnapshot:
+    return InstrumentSnapshot(
+        Category.LINEAR,
+        symbol,
+        "LinearPerpetual",
+        "Trading",
+        "TEST",
+        "USDT",
+        "USDT",
+        Decimal("0.1"),
+        Decimal("1000000"),
+        Decimal("0.1"),
+        Decimal("0.001"),
+        Decimal("1000000"),
+        Decimal("1"),
+        Decimal("0.001"),
+        Decimal("5"),
+    )
+
+
+def _runtime_closed_candle(_symbol: str):
+    return {
+        "time_ms": T0_MS + 4 * 60_000,
+        "high": Decimal("101"),
+        "low": Decimal("98"),
+        "close": Decimal("100"),
+    }
+
+
+def _runtime_geometry_index(_symbol: str, _snapshot: dict[str, object]) -> int:
+    return 103
+
+
+class RobotLateAdmissionSerializedRuntimeAcceptanceTests(unittest.TestCase):
+    def test_real_serialized_runtime_routes_late_market_through_shared_paper_path(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db_path = Path(temp) / "terminal.db"
+            instrument = _runtime_instrument()
+            book_provider = _FreshBookProvider()
+            runtime = SerializedPaperRuntime(lambda: PaperRuntime(
+                db_path,
+                book_provider=book_provider,
+                instrument_snapshot=instrument,
+                instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
+                robot_latest_geometry_index_provider=_runtime_geometry_index,
+                robot_closed_candle_provider=_runtime_closed_candle,
+                robot_tick_interval_s=0.02,
+            ))
+            try:
+                def seed(owner: PaperRuntime):
+                    state = owner.store.get_robot_runtime_state(ACCOUNT)
+                    self.assertIsNotNone(state)
+                    owner.store.update_robot_runtime_state(
+                        ACCOUNT,
+                        mode="ROBOT_RUNNING",
+                        recovery_status="READY",
+                        reason=None,
+                        expected_version=state.version,
+                        updated_at_ms=state.updated_at_ms + 1,
+                    )
+                    candidate, created = owner.store.create_robot_candidate(
+                        candidate_id="candidate-runtime-late-market",
+                        trading_account_id=ACCOUNT,
+                        symbol=Symbol(SYMBOL),
+                        status="APPROVED",
+                        signal_snapshot=_snapshot(),
+                        approved_at_ms=10,
+                        updated_at_ms=10,
+                    )
+                    self.assertTrue(created)
+                    owner.store.save_robot_candidate_state(
+                        candidate.candidate_id,
+                        status="APPROVED",
+                        robot_state=_late_state(),
+                        expected_revision=candidate.state_revision,
+                        updated_at_ms=11,
+                    )
+
+                runtime.call(seed)
+                runtime.start_robot_monitor()
+
+                deadline = time.monotonic() + 5.0
+                observed = None
+                while time.monotonic() < deadline:
+                    observed = runtime.call(
+                        lambda owner: owner.store.get_robot_candidate(
+                            "candidate-runtime-late-market"
+                        )
+                    )
+                    if observed is not None and observed.status == "OPEN":
+                        break
+                    execution = (observed.robot_state or {}).get("execution") if observed else {}
+                    if execution and execution.get("last_execution_error"):
+                        self.fail(f"late Market runtime wiring failed: {execution}")
+                    time.sleep(0.02)
+                else:
+                    self.fail("late Market candidate did not reach OPEN through SerializedPaperRuntime")
+
+                intent = observed.robot_state["execution"]["late_market_intent"]
+                self.assertEqual(intent["sizing_reference_price"], "100")
+                self.assertEqual(intent["volume_amount"], "1")
+
+                trade = runtime.call(
+                    lambda owner: owner.store.get_open_robot_trade_for_symbol(
+                        ACCOUNT, Symbol(SYMBOL)
+                    )
+                )
+                self.assertIsNotNone(trade)
+                self.assertEqual(trade.candidate_id, "candidate-runtime-late-market")
+                self.assertEqual(trade.entry_path, "MARKET")
+                self.assertEqual(trade.actual_wv, Decimal("1"))
+                self.assertEqual(trade.average_entry, Decimal("100"))
+
+                active_limits = runtime.call(
+                    lambda owner: owner.store.load_active_paper_limits(
+                        ACCOUNT, Symbol(SYMBOL)
+                    )
+                )
+                self.assertEqual(active_limits, ())
+            finally:
+                runtime.close()
 
 
 if __name__ == "__main__":

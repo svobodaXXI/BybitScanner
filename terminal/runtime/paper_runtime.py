@@ -695,6 +695,9 @@ class PaperRuntime:
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
             match_resting_orders=self._dispatch_robot_match_symbol,
+            get_market_book=self._dispatch_robot_market_book,
+            market_preflight=self._dispatch_robot_market_preflight,
+            submit_market=self._dispatch_robot_market_submit,
             tick_interval_s=robot_tick_interval_s,
         )
         if self._robot_command_dispatcher is not None:
@@ -730,6 +733,22 @@ class PaperRuntime:
 
     def _dispatch_robot_match_symbol(self, symbol: str) -> int:
         return self._dispatch_robot_command(lambda runtime: runtime.robot_match_symbol(symbol))
+
+    def _dispatch_robot_market_book(self, symbol: str):
+        normalized = Symbol(symbol.strip().upper())
+        return self._dispatch_robot_command(
+            lambda runtime: runtime._book_provider.get_book(normalized)
+        )
+
+    def _dispatch_robot_market_preflight(self, request, identity):
+        return self._dispatch_robot_command(
+            lambda runtime: runtime._robot_api.market_preflight(request, identity=identity)
+        )
+
+    def _dispatch_robot_market_submit(self, request, identity):
+        return self._dispatch_robot_command(
+            lambda runtime: runtime._robot_api.market(request, identity=identity)
+        )
 
     @property
     def _account_id(self) -> TradingAccountId:
@@ -923,7 +942,8 @@ class PaperRuntime:
                     and self._live_protection_mutations_enabled and self._live_mainnet_authorized
                 ),
                 "full_close": bool(
-                    not snapshot.read_only and account.environment is TradingAccountEnvironment.MAINNET
+                    not snapshot.read_only
+                    and account.environment is TradingAccountEnvironment.MAINNET
                     and account.status is TradingAccountStatus.READY
                     and self._live_full_close_mutations_enabled and self._live_mainnet_authorized
                 ),
