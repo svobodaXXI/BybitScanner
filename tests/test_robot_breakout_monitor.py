@@ -639,42 +639,69 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(blocked.status, "APPROVED")
         self.assertNotIn("limit_order_id", blocked.robot_state.get("execution") or {})
 
-    def test_late_second_fill_escalates_duplicate_owner_without_net_close(self):
+
+    def test_second_same_symbol_candidate_never_gets_a_competing_working_entry(self):
         self._create_candidate(candidate_id="candidate-a")
         self._drive_to_retest_detected("candidate-a")
         self.monitor.tick()
-        order_a = self.store.get_robot_candidate("candidate-a").robot_state["execution"]["limit_order_id"]
+        first = self.store.get_robot_candidate("candidate-a")
+        self.assertEqual(first.robot_state["execution"]["limit_order_id"], "test-limit-1")
 
         self._create_candidate(candidate_id="candidate-b", reference_price=101.0)
         self._drive_to_retest_detected("candidate-b")
-        self.monitor.tick()
-        order_b = self.store.get_robot_candidate("candidate-b").robot_state["execution"]["limit_order_id"]
+        prior_limit_count = len(self.executor.limit_calls)
 
-        self.executor.fill_resting_limit(order_a, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
-        self.monitor.tick()
-        self.assertEqual(self.store.get_robot_candidate("candidate-a").status, "OPEN")
-        protection_count = len(self.executor.protection_calls)
-
-        self.executor.fill_resting_limit(order_b, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("82"))
         advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-b",))
-        self.assertEqual(self.store.get_robot_candidate("candidate-b").status, "APPROVED")
-        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-b"))
-        self.assertEqual(len(self.executor.protection_calls), protection_count)
-        self.assertNotIn("full_close", [name for name, _ in self.executor.protection_calls])
+        self.assertEqual(len(self.executor.limit_calls), prior_limit_count)
+        blocked = self.store.get_robot_candidate("candidate-b")
+        self.assertEqual(blocked.status, "INVALIDATED")
+        self.assertIn(
+            "FOREIGN_WORKING_ORDER_PRESENT_BEFORE_ROBOT_ENTRY",
+            blocked.robot_state["execution"]["stopped_without_entry_reason"],
+        )
+        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(
+            (runtime.mode, runtime.recovery_status),
+            ("ROBOT_RUNNING", "READY"),
+        )
+
+    def test_foreign_fill_race_is_never_adopted_or_blind_closed(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        order_id = self.store.get_robot_candidate(
+            "candidate-1"
+        ).robot_state["execution"]["limit_order_id"]
+
+        # Simulate a manual fill landing after Robot submitted its LIMIT but
+        # before Robot's own LIMIT fill is finalized. No monitor tick occurs
+        # between the two fills: this is the narrow race the pre-entry gate
+        # alone cannot prevent.
+        self.executor._apply_fill(
+            SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("80"),
+            order_id=OrderId("manual-race-order"),
+        )
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
+        self.assertEqual(self.executor.protection_calls, [])
         runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
         self.assertEqual(
             (runtime.mode, runtime.recovery_status),
             ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
         )
-        self.assertIn("DUPLICATE_ROBOT_OWNER", runtime.reason)
-        self.assertIn("candidate-a", runtime.reason)
+        self.assertIn("ROBOT_ENTRY_OWNERSHIP_MISMATCH", runtime.reason)
         projection = self.store.get_position_projection(
             PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         )
         self.assertEqual(projection.quantity.value, Decimal("2"))
-
     def test_duplicate_owner_race_during_protection_failure_never_blind_closes(self):
         self._create_candidate()
         self._drive_to_retest_detected()
@@ -912,34 +939,20 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(third_advance, ())
         self.assertEqual(len(self.executor.protection_calls), 2)
 
-    def test_finalize_trade_fails_closed_without_protection_when_entry_projection_is_missing(self):
-        """D2.3 ownership-attestation ordering: no protection side effect may
-        be submitted before Robot-entry ownership is proven from the
-        authoritative position projection. Simulate that projection becoming
-        unprovable at the exact moment _finalize_trade() re-reads it for
-        attestation -- a test-only fault injection (the real fill already
-        happened and average_entry's own earlier read already saw it), not a
-        reachable production code path."""
+
+    def test_finalize_trade_fences_without_protection_when_entry_projection_is_missing(self):
         self._create_candidate()
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
-        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        self.monitor.tick()
+        order_id = self.store.get_robot_candidate(
+            "candidate-1"
+        ).robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
 
         store = self.monitor._store()
-        real_get_projection = store.get_position_projection
-        calls = {"count": 0}
-
-        def flaky_get_projection(key):
-            calls["count"] += 1
-            # 1st call is _average_entry()'s own pre-check (must still see
-            # the real fill so _finalize_trade() is reached at all); the 2nd
-            # call is the ownership-attestation gate itself.
-            if calls["count"] >= 2:
-                return None
-            return real_get_projection(key)
-
-        with patch.object(store, "get_position_projection", side_effect=flaky_get_projection):
+        with patch.object(store, "get_position_projection", return_value=None):
             advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
@@ -947,55 +960,37 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(record.status, "APPROVED")
         self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
         self.assertEqual(self.executor.protection_calls, [])
+        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(runtime.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertIn("ROBOT_ENTRY_OWNERSHIP_MISMATCH", runtime.reason)
 
-    def test_finalize_trade_fails_closed_without_protection_when_entry_projection_is_flat(self):
-        """Same invariant, non-positive-quantity variant: the position
-        somehow reads back FLAT (quantity 0) at the exact moment
-        _finalize_trade() checks it. Reached through the real store API
-        (a genuine closing execution+projection), not a fabricated value."""
+    def test_finalize_trade_fences_without_protection_when_position_was_flattened(self):
         self._create_candidate()
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
-        order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
-        self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
+        self.monitor.tick()
+        order_id = self.store.get_robot_candidate(
+            "candidate-1"
+        ).robot_state["execution"]["limit_order_id"]
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"),
+        )
 
-        store = self.monitor._store()
-        real_get_projection = store.get_position_projection
-        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
-        calls = {"count": 0}
-
-        def flaky_get_projection(key):
-            calls["count"] += 1
-            if calls["count"] < 2:
-                return real_get_projection(key)
-            # Genuinely flatten the position via the real store API right
-            # before the attestation gate's own read observes it.
-            current = real_get_projection(position_key)
-            store.apply_execution_once(
-                Execution(
-                    dedup_key=ExecutionDedupKey(ACCOUNT_ID, Category.LINEAR, ExecutionId("flatten-exec-1")),
-                    order_id=OrderId("flatten-order-1"), symbol=Symbol(SYMBOL),
-                    side=OrderSide.SELL, price=current.average_entry, quantity=current.quantity,
-                    fee=Decimal("0"), exchange_timestamp_ms=self.clock(),
-                ),
-                PositionProjectionUpdate(
-                    position_key=position_key, side=PositionSide.FLAT, quantity=Quantity(Decimal("0")),
-                    average_entry=None, realized_pnl=current.realized_pnl,
-                    accumulated_fee=current.accumulated_fee, engaged_notional=Notional(Decimal("0")),
-                    sync_state="synced", expected_version=current.version, updated_at_ms=self.clock(),
-                ),
-            )
-            return real_get_projection(key)
-
-        with patch.object(store, "get_position_projection", side_effect=flaky_get_projection):
-            advanced = self.monitor.tick()
+        # A foreign/manual close lands before Robot can adopt the fill.
+        # Entry ownership is now ambiguous and must fence, not place
+        # protection or issue another aggregate close.
+        self.executor._flatten(SYMBOL)
+        advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
-        record = self.store.get_robot_candidate("candidate-1")
-        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(
+            self.store.get_robot_candidate("candidate-1").status,
+            "APPROVED",
+        )
         self.assertIsNone(self.store.get_robot_trade("robot-trade-candidate-1"))
         self.assertEqual(self.executor.protection_calls, [])
-
+        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(runtime.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertIn("ROBOT_ENTRY_OWNERSHIP_MISMATCH", runtime.reason)
     def test_restart_after_partial_fill_finalizes_once_without_market_top_up(self):
         """A restart after authoritative partial fill but before ownership
         commit must recover through the same P0.3 subtractive path: cancel
