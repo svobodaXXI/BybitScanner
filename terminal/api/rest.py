@@ -11,6 +11,7 @@ from terminal.api.models import (
     FullCloseCommandRequest, LimitCommandRequest, MarketCommandRequest,
     ProtectionCommandRequest, VolumeUnit,
 )
+from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.pretrade_guard import (
     ExactQuantityIntent, NotionalIntent, OrderKind, PreTradeContext, PreTradeIntent, SlippageMetadata,
     SlippageToleranceType, WorkingVolumeIntent,
@@ -35,6 +36,15 @@ class ServerCommandContext:
     protection_command_side: OrderSide | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class MarketCommandPreflight:
+    """Read-only canonical PAPER Market normalization result."""
+
+    admitted: bool
+    normalized_quantity: Decimal | None
+    reason_code: str | None
+
+
 class CommandContextProvider(Protocol):
     def context_for(self, symbol: str) -> ServerCommandContext: ...
 
@@ -48,8 +58,34 @@ class TerminalCommandApi:
         self._application = application
         self._context = context
 
-    def market(self, request: MarketCommandRequest) -> CommandResult:
-        return self._submit(request, OrderKind.MARKET)
+    def market(
+        self,
+        request: MarketCommandRequest,
+        *,
+        identity: CommandIdentityCandidate | None = None,
+    ) -> CommandResult:
+        return self._submit(request, OrderKind.MARKET, identity=identity)
+
+    def market_preflight(
+        self,
+        request: MarketCommandRequest,
+        *,
+        identity: CommandIdentityCandidate | None = None,
+    ) -> MarketCommandPreflight:
+        """Run the same guard/normalization as market() without persistence or mutation."""
+
+        intent, pretrade = self._submission_inputs(request, OrderKind.MARKET)
+        decision, _prepared = self._application.prepare(
+            intent, pretrade, identity=identity,
+        )
+        if not decision.admitted or decision.request is None:
+            reason_code = decision.reason_code.value if decision.reason_code else "blocked"
+            return MarketCommandPreflight(False, None, reason_code)
+        return MarketCommandPreflight(
+            True,
+            decision.request.final_quantity,
+            None,
+        )
 
     def full_close(self, request: FullCloseCommandRequest) -> CommandResult:
         action_id = request.client_action_id.value
@@ -120,28 +156,44 @@ class TerminalCommandApi:
         except Exception as exc:
             return _safe_error(action_id, exc)
 
-    def _submit(self, request: MarketCommandRequest | LimitCommandRequest, kind: OrderKind) -> CommandResult:
+    def _submission_inputs(
+        self,
+        request: MarketCommandRequest | LimitCommandRequest,
+        kind: OrderKind,
+    ) -> tuple[PreTradeIntent, PreTradeContext]:
+        symbol = _symbol(request.symbol)
+        context = self._context.context_for(symbol)
+        volume = (
+            WorkingVolumeIntent(request.volume.amount, _required_wv(context))
+            if request.volume.unit is VolumeUnit.WORKING_VOLUME
+            else NotionalIntent(request.volume.amount)
+        )
+        slippage = None
+        limit_price = None
+        if isinstance(request, MarketCommandRequest):
+            slippage = SlippageMetadata(
+                SlippageToleranceType(request.slippage_type), request.slippage_value,
+            )
+        else:
+            limit_price = request.limit_price
+        intent = PreTradeIntent(
+            symbol, request.side, kind, volume, request.sizing_reference_price,
+            limit_price, slippage,
+        )
+        return intent, context.pretrade
+
+    def _submit(
+        self,
+        request: MarketCommandRequest | LimitCommandRequest,
+        kind: OrderKind,
+        *,
+        identity: CommandIdentityCandidate | None = None,
+    ) -> CommandResult:
         def action():
-            symbol = _symbol(request.symbol)
-            context = self._context.context_for(symbol)
-            volume = (
-                WorkingVolumeIntent(request.volume.amount, _required_wv(context))
-                if request.volume.unit is VolumeUnit.WORKING_VOLUME
-                else NotionalIntent(request.volume.amount)
+            intent, pretrade = self._submission_inputs(request, kind)
+            return self._application.submit(
+                intent, pretrade, identity=identity,
             )
-            slippage = None
-            limit_price = None
-            if isinstance(request, MarketCommandRequest):
-                slippage = SlippageMetadata(
-                    SlippageToleranceType(request.slippage_type), request.slippage_value,
-                )
-            else:
-                limit_price = request.limit_price
-            intent = PreTradeIntent(
-                symbol, request.side, kind, volume, request.sizing_reference_price,
-                limit_price, slippage,
-            )
-            return self._application.submit(intent, context.pretrade)
         return self._execute(request.client_action_id.value, action)
 
     def _execute(self, action_id: str, action) -> CommandResult:
@@ -221,4 +273,3 @@ def _close_reference_price(context: ServerCommandContext) -> Decimal:
         # PAPER development book is authoritative for execution; this reference is sizing-only.
         return Decimal("64250")
     return value
-

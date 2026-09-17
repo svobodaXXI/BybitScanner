@@ -30,10 +30,31 @@ from typing import Callable, Mapping, Protocol
 import robot_entry_limit
 import robot_protection
 import robot_state_machine
-from scanner_geometry_cursor import ScannerGeometryCursorError, project_latest_geometry_index
-from terminal.api.models import ClientActionId, CommandResultStatus, PaperLimitCancelRequest
+from scanner_geometry_cursor import (
+    ScannerGeometryCursorError,
+    latest_scanner_closed_candle,
+    load_scanner_catchup_closed_candles,
+    project_latest_geometry_index,
+)
+from terminal.api.models import ClientActionId, CommandResultStatus, MarketCommandRequest, PaperLimitCancelRequest
+from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
-from terminal.domain.models import Category, PositionKey, Symbol, TradingAccountId
+from terminal.application.robot_admission_catchup import (
+    LATE_ADMISSION_MARKET,
+    replay_admission_catchup,
+)
+from terminal.application.robot_late_admission import (
+    DECISION_APEX_REACHED as LATE_DECISION_APEX_REACHED,
+    DECISION_MARKET_ENTRY as LATE_DECISION_MARKET_ENTRY,
+    evaluate_late_admission,
+)
+from terminal.application.robot_late_admission_market import (
+    build_late_admission_market_plan,
+    durable_late_admission_market_intent,
+    restore_late_admission_market_plan,
+)
+from terminal.domain.models import Category, PositionKey, Quantity, Symbol, TradingAccountId
+from terminal.market_data.models import NormalizedOrderBook
 from terminal.persistence.sqlite_store import (
     ConcurrentUpdate,
     RobotCandidateRecord,
@@ -41,6 +62,7 @@ from terminal.persistence.sqlite_store import (
 )
 
 DEFAULT_TICK_INTERVAL_S = 60.0
+DEFAULT_LATE_MARKET_MAX_BOOK_AGE_MS = 1000
 
 INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
 
@@ -64,10 +86,6 @@ class RobotBreakoutMonitorError(RuntimeError):
 
 
 def _cancel_partial_remainder_action_id(candidate_id: str) -> ClientActionId:
-    # P0.3 Option A: the first authoritative non-zero fill ends entry sizing.
-    # Cancel the still-resting remainder through the same sanctioned LIMIT
-    # cancellation path. The deterministic action id makes retries idempotent;
-    # no Market top-up is ever submitted from this lifecycle.
     digest = hashlib.sha256(
         f"{candidate_id}\0cancel-partial-remainder".encode("utf-8")
     ).hexdigest()[:32]
@@ -75,12 +93,6 @@ def _cancel_partial_remainder_action_id(candidate_id: str) -> ClientActionId:
 
 
 def _cancel_blocked_entry_action_id(candidate_id: str) -> ClientActionId:
-    # Distinct action id from _cancel_partial_remainder_action_id above: this
-    # one cancels a still-fully-resting (zero-fill) entry LIMIT because the
-    # durable admission gate (robot_runtime_state) no longer permits new
-    # entry risk for this candidate, not because a partial fill is being
-    # topped up via Market. Same PaperLimitCancelRequest/cancel_limit
-    # sanctioned path either way -- no new execution primitive.
     digest = hashlib.sha256(
         f"{candidate_id}\0cancel-blocked-entry".encode("utf-8")
     ).hexdigest()[:32]
@@ -101,21 +113,33 @@ class RobotBreakoutMonitor:
         clock_ms: Callable[[], int],
         tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
         match_resting_orders: Callable[[str], object] | None = None,
+        get_admission_catchup_candles: Callable[
+            [str, Mapping[str, object]], tuple[Mapping[str, object], ...]
+        ] | None = None,
+        get_market_book: Callable[[str], NormalizedOrderBook | None] | None = None,
+        market_preflight: Callable[[MarketCommandRequest, CommandIdentityCandidate], object] | None = None,
+        submit_market: Callable[[MarketCommandRequest, CommandIdentityCandidate], object] | None = None,
+        late_market_max_book_age_ms: int = DEFAULT_LATE_MARKET_MAX_BOOK_AGE_MS,
     ) -> None:
         self._store_factory = store_factory
         self._local = threading.local()
         self._account_id = trading_account_id
         self._get_closed_candle = get_closed_candle
+        if (
+            get_admission_catchup_candles is None
+            and get_closed_candle is latest_scanner_closed_candle
+        ):
+            get_admission_catchup_candles = load_scanner_catchup_closed_candles
+        self._get_admission_catchup_candles = get_admission_catchup_candles
         self._action_executor = action_executor
         self._tick_size_provider = tick_size_provider
         self._clock_ms = clock_ms
         self._tick_interval_s = tick_interval_s
-        # Optional: attempt PAPER fill/protection matching for this candidate's
-        # own symbol before re-reading order state below. Independent of which
-        # symbol the Workspace UI currently displays -- see
-        # PaperRuntime.robot_match_symbol(). None in tests that fake fills
-        # directly through the store.
         self._match_resting_orders = match_resting_orders
+        self._get_market_book = get_market_book
+        self._market_preflight = market_preflight
+        self._submit_market = submit_market
+        self._late_market_max_book_age_ms = late_market_max_book_age_ms
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, name="robot-breakout-monitor", daemon=True,
@@ -139,9 +163,6 @@ class RobotBreakoutMonitor:
         self._stop.set()
         if self._started and self._thread is not threading.current_thread():
             self._thread.join(timeout=5)
-        # Close whatever store THIS (calling) thread opened for itself -- the
-        # background thread closes its own in _run()'s finally block, since
-        # only the owning thread may touch a SQLiteStore connection.
         self._close_local_store()
 
     def _close_local_store(self) -> None:
@@ -152,11 +173,6 @@ class RobotBreakoutMonitor:
 
     def _run(self) -> None:
         try:
-            # Wait a full interval BEFORE the first tick (never tick immediately
-            # on start): a short-lived caller that starts and closes this
-            # monitor well within one interval -- as every existing
-            # PaperRuntime-constructing test does -- never reaches a real
-            # get_closed_candle call.
             while not self._stop.wait(self._tick_interval_s):
                 try:
                     self.tick()
@@ -169,12 +185,7 @@ class RobotBreakoutMonitor:
             self._close_local_store()
 
     def tick(self) -> tuple[str, ...]:
-        """Advance every durable APPROVED candidate by at most one step.
-
-        Returns the ids of candidates whose durable state actually changed.
-        One candidate's failure never blocks the others.
-        """
-
+        """Advance every durable APPROVED candidate by at most one step."""
         advanced: list[str] = []
         for record in self._store().load_robot_candidates(self._account_id):
             if record.status != "APPROVED":
@@ -192,16 +203,6 @@ class RobotBreakoutMonitor:
         return tuple(advanced)
 
     def process_authoritative_fill(self, symbol: str) -> tuple[str, ...]:
-        """Finalize/protect already-authoritative entry fills for one symbol.
-
-        P0.4 event-driven entry point: callers must first apply the exact
-        market event to PAPER LIMIT matching on the serialized owner thread.
-        This method then advances only APPROVED/RETEST_DETECTED candidates
-        whose durable entry LIMIT already proves ``filled_quantity > 0``.
-        It never reads a closed candle, submits a new entry LIMIT, or matches
-        market data again; the ordinary periodic ``tick()`` remains only the
-        watchdog/backstop.
-        """
         normalized = symbol.strip().upper()
         if not normalized:
             raise ValueError("symbol must be non-empty")
@@ -234,8 +235,6 @@ class RobotBreakoutMonitor:
         return tuple(advanced)
 
     def _record_execution_error(self, record: RobotCandidateRecord, error: Exception) -> None:
-        # Best-effort diagnostics only: never let a failure to record the
-        # failure itself mask the original error or block other candidates.
         if record.robot_state is None:
             return
         try:
@@ -252,6 +251,19 @@ class RobotBreakoutMonitor:
             state, _event = robot_state_machine.initialize_state(
                 self._candidate_payload(record),
             )
+            if (
+                state.get("phase") != robot_state_machine.PHASE_EXPIRED_AT_APEX
+                and self._get_admission_catchup_candles is not None
+            ):
+                candles = self._get_admission_catchup_candles(
+                    record.symbol.value,
+                    record.signal_snapshot,
+                )
+                state, _events = replay_admission_catchup(
+                    record.signal_snapshot,
+                    state,
+                    candles,
+                )
             self._persist_state(record, state)
             return True
 
@@ -290,10 +302,6 @@ class RobotBreakoutMonitor:
         ):
             return False
 
-        # A freshly detected RETEST is persisted here and picked up by
-        # _advance_retest_detected() on the NEXT tick (via a freshly loaded,
-        # correctly revisioned record) rather than being chased in the same
-        # call -- this keeps state_revision bookkeeping in one place.
         self._persist_state(record, new_state)
         return True
 
@@ -302,17 +310,13 @@ class RobotBreakoutMonitor:
     ) -> bool:
         execution = dict(record.robot_state.get("execution") or {})
 
+        if (
+            execution.get("entry_mode") == LATE_ADMISSION_MARKET
+            and "limit_order_id" not in execution
+        ):
+            return self._advance_late_admission(record, execution)
+
         if "limit_order_id" not in execution:
-            # RETEST_DETECTED is deliberately terminal for
-            # robot_state_machine.process_closed_candle()/resume_without_replay()
-            # (see _TERMINAL_PHASES there) -- once retest is detected, nothing
-            # else re-validates the frozen apex on later ticks. A candidate can
-            # sit in this phase for an arbitrarily long time (the
-            # live_mutations_disabled bug, a process restart, any other
-            # downtime) before its first entry order is ever submitted, so
-            # re-check freshness against the SAME frozen apex here, once,
-            # immediately before that first submission -- fail closed rather
-            # than submit into an already-expired setup.
             candle = self._get_closed_candle(record.symbol.value)
             if candle is None:
                 return False
@@ -334,15 +338,6 @@ class RobotBreakoutMonitor:
 
             new_entry_admitted, terminal_stop = self._read_admission_gate()
             if not new_entry_admitted:
-                # No exposure exists yet for this candidate (no entry order
-                # has ever been submitted) -- PAUSE/RECONCILIATION_REQUIRED
-                # simply withhold the submission and leave the candidate
-                # APPROVED (recoverable once admission is restored). Only a
-                # durable ROBOT_STOPPED gives this pending pre-entry intent
-                # its terminal disposition, per
-                # AUTOPILOT_ROBOT_V0_1_RESTART_FROM_STOPPED_DECISION.md
-                # ("previously stopped candidates remain terminal and must
-                # not re-enter the active candidate set").
                 if terminal_stop:
                     self._invalidate_pre_entry_candidate(
                         record, reason="ROBOT_STOPPED before entry order submission",
@@ -350,9 +345,6 @@ class RobotBreakoutMonitor:
                     return True
                 return False
 
-            # P0.2 final pre-submission ownership check. A different
-            # pending-partial or OPEN lifecycle already owns this net symbol,
-            # so keep this candidate APPROVED/recoverable and submit no risk.
             if self._active_other_owner_candidate_ids(record):
                 return False
 
@@ -378,12 +370,6 @@ class RobotBreakoutMonitor:
             new_entry_admitted, terminal_stop = self._read_admission_gate()
             if new_entry_admitted:
                 return False
-            # A working, still-fully-unfilled entry LIMIT exists but the
-            # admission gate no longer permits new entry risk -- cancel it
-            # through the same sanctioned execution path used everywhere
-            # else in this module. No exposure exists yet, so ROBOT_STOPPED
-            # can terminalize the candidate; PAUSED/RECONCILIATION_REQUIRED
-            # leave it APPROVED and recoverable.
             if not inactive:
                 self._action_executor.cancel_limit(PaperLimitCancelRequest(
                     _cancel_blocked_entry_action_id(record.candidate_id),
@@ -395,19 +381,11 @@ class RobotBreakoutMonitor:
                 )
             return True
 
-        # P0.3 Option A: the first authoritative non-zero fill is the trigger
-        # to end entry sizing. In this SAME processing pass, cancel any live
-        # remainder and immediately finalize/protect the actual LIMIT-filled
-        # exposure. There is deliberately no closed-candle read, wait timer,
-        # RR/adverse-move gate, or Market completion path here.
         if not inactive:
             self._action_executor.cancel_limit(PaperLimitCancelRequest(
                 _cancel_partial_remainder_action_id(record.candidate_id),
                 record.symbol.value, execution["limit_order_id"],
             ))
-            # Cancellation can race a final resting fill. Protect and record
-            # the latest authoritative quantity after cancellation rather than
-            # inventing a target size or submitting a Market top-up.
             refreshed = self._store().get_paper_limit(
                 execution["limit_order_id"], self._account_id,
             )
@@ -416,8 +394,6 @@ class RobotBreakoutMonitor:
                 filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
 
         if filled_fraction <= 0:
-            # Filled quantity must never decrease, but fail closed if durable
-            # evidence becomes contradictory instead of inventing exposure.
             return True
 
         average_entry = self._average_entry(record.symbol)
@@ -431,6 +407,154 @@ class RobotBreakoutMonitor:
         )
         return True
 
+    def _advance_late_admission(
+        self, record: RobotCandidateRecord, execution: dict[str, object],
+    ) -> bool:
+        intent = execution.get("late_market_intent")
+
+        average_entry = self._average_entry(record.symbol)
+        if isinstance(intent, Mapping) and average_entry is not None:
+            self._finalize_trade(
+                record, execution, entry_path="MARKET",
+                actual_wv=Decimal("1"), average_entry=average_entry,
+            )
+            return True
+
+        if (
+            self._get_market_book is None
+            or self._market_preflight is None
+            or self._submit_market is None
+        ):
+            return False
+
+        new_entry_admitted, terminal_stop = self._read_admission_gate()
+        if not new_entry_admitted:
+            if terminal_stop and not isinstance(intent, Mapping):
+                self._invalidate_pre_entry_candidate(
+                    record, reason="ROBOT_STOPPED before late Market submission",
+                )
+                return True
+            return False
+        if self._active_other_owner_candidate_ids(record):
+            return False
+
+        if isinstance(intent, Mapping):
+            plan = restore_late_admission_market_plan(intent)
+            result = self._submit_market(plan.request, plan.identity)
+            if getattr(result, "status", None) == CommandResultStatus.COMPLETED:
+                average_entry = self._average_entry(record.symbol)
+                if average_entry is not None:
+                    fresh = self._store().get_robot_candidate(record.candidate_id) or record
+                    fresh_execution = dict(fresh.robot_state.get("execution") or execution)
+                    self._finalize_trade(
+                        fresh, fresh_execution, entry_path="MARKET",
+                        actual_wv=Decimal("1"), average_entry=average_entry,
+                    )
+            return True
+
+        candle = self._get_closed_candle(record.symbol.value)
+        if candle is None:
+            return False
+        try:
+            geometry_index = project_latest_geometry_index(
+                record.signal_snapshot,
+                latest_closed_candle_time_ms=int(candle["time_ms"]),
+            )
+        except ScannerGeometryCursorError:
+            return False
+
+        book = self._get_market_book(record.symbol.value)
+        if book is None:
+            return False
+        plan = build_late_admission_market_plan(
+            self._candidate_payload(record), record.robot_state, book,
+        )
+        preflight = self._market_preflight(plan.request, plan.identity)
+        if not getattr(preflight, "admitted", False):
+            return False
+        normalized_quantity = getattr(preflight, "normalized_quantity", None)
+        if not isinstance(normalized_quantity, Decimal) or normalized_quantity <= 0:
+            return False
+
+        direction = str(record.robot_state.get("direction", "")).strip().upper()
+        structural_extreme = self._structural_extreme(
+            record.signal_snapshot, direction,
+        )
+        tick_size = self._tick_size_provider(record.symbol.value)
+        reference_price, target_price = self._frozen_prices(
+            record.signal_snapshot, direction,
+        )
+        decision = evaluate_late_admission(
+            record.signal_snapshot,
+            record.robot_state,
+            book,
+            quantity=Quantity(normalized_quantity),
+            current_geometry_index=geometry_index,
+            now_ms=self._now_ms(),
+            max_book_age_ms=self._late_market_max_book_age_ms,
+            structural_extreme=structural_extreme,
+            tick_size=tick_size,
+            frozen_signal_reference_price=reference_price,
+            frozen_scanner_target_price=target_price,
+            admission_ready=True,
+            ownership_clear=True,
+        )
+        if decision.action == LATE_DECISION_APEX_REACHED:
+            expired_state = dict(record.robot_state)
+            expired_state["phase"] = robot_state_machine.PHASE_EXPIRED_AT_APEX
+            expired_state["last_event"] = robot_state_machine.EVENT_EXPIRED_AT_APEX
+            expired_state["geometry_cursor"] = geometry_index
+            self._persist_state(record, expired_state)
+            return True
+        if decision.action != LATE_DECISION_MARKET_ENTRY:
+            return False
+
+        intent = durable_late_admission_market_intent(
+            plan,
+            normalized_quantity=normalized_quantity,
+            current_geometry_index=geometry_index,
+            projected_vwap=decision.projected_vwap,
+            stop_price=decision.stop_price,
+            take_price=decision.take_price,
+            expected_reward=decision.expected_reward,
+            rr=decision.rr,
+            adverse_slippage=decision.adverse_slippage,
+            persisted_at_ms=self._now_ms(),
+        )
+        durable_execution = dict(execution)
+        durable_execution["late_market_intent"] = intent
+        durable_state = dict(record.robot_state)
+        durable_state["execution"] = durable_execution
+        try:
+            self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status="APPROVED",
+                robot_state=durable_state,
+                expected_revision=record.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except ConcurrentUpdate:
+            return False
+
+        fresh = self._store().get_robot_candidate(record.candidate_id)
+        if fresh is None:
+            return True
+        new_entry_admitted, _terminal_stop = self._read_admission_gate()
+        if not new_entry_admitted or self._active_other_owner_candidate_ids(fresh):
+            return True
+
+        result = self._submit_market(plan.request, plan.identity)
+        if getattr(result, "status", None) == CommandResultStatus.COMPLETED:
+            average_entry = self._average_entry(record.symbol)
+            if average_entry is not None:
+                fresh = self._store().get_robot_candidate(record.candidate_id) or fresh
+                fresh_execution = dict(fresh.robot_state.get("execution") or durable_execution)
+                self._finalize_trade(
+                    fresh, fresh_execution, entry_path="MARKET",
+                    actual_wv=Decimal("1"), average_entry=average_entry,
+                )
+        return True
+
     def _finalize_trade(
         self,
         record: RobotCandidateRecord,
@@ -441,13 +565,6 @@ class RobotBreakoutMonitor:
         average_entry: Decimal,
     ) -> None:
         direction = record.robot_state["direction"]
-        # Everything from here through submit_initial_protection() runs after
-        # a real fill already exists: any ordinary operational failure in
-        # this whole region (geometry/tick-size/frozen-price derivation,
-        # plan validation, or submission) must fail closed rather than
-        # silently leave the fill unprotected for a bare retry next tick.
-        # Deliberately Exception, not BaseException: SystemExit/
-        # KeyboardInterrupt must still propagate.
         try:
             structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
             tick_size = self._tick_size_provider(record.symbol.value)
@@ -466,16 +583,6 @@ class RobotBreakoutMonitor:
             self._fail_closed_unprotected_fill(record, error)
             return
 
-        # Owner-frozen D2.3 ownership attestation (CR-PAPER-PROTECTION-LIFECYCLE-001):
-        # prove the Robot's own entry quantity and the position's version
-        # watermark from the authoritative confirmed position projection --
-        # the same durable evidence average_entry above was already read
-        # from -- BEFORE any protection side effect. No protection may be
-        # submitted before ownership can be proven. create_robot_trade()
-        # stays last: candidate remains APPROVED and RobotBreakoutMonitor.tick()
-        # keeps retrying this same _finalize_trade() call (via the persisted
-        # entry execution state) until it durably commits, which is what
-        # makes protection's own idempotent resubmission safe to retry here.
         position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
         entry_projection = self._store().get_position_projection(position_key)
         if entry_projection is None or entry_projection.quantity.value <= 0:
@@ -483,10 +590,6 @@ class RobotBreakoutMonitor:
         entry_quantity = entry_projection.quantity.value
         entry_position_version = entry_projection.version
 
-        # A fill now exists. If another lifecycle already owns this net
-        # symbol, ownership is ambiguous: do not submit conflicting protection
-        # and never blind-close the net position. Preserve evidence and
-        # require reconciliation.
         duplicate_owners = self._active_other_owner_candidate_ids(record)
         if duplicate_owners:
             self._escalate_duplicate_ownership(record, duplicate_owners)
@@ -505,8 +608,6 @@ class RobotBreakoutMonitor:
             self._fail_closed_unprotected_fill(record, error)
             return
 
-        # Re-check immediately before final ownership commit. This closes the
-        # race between the pre-protection probe and create_robot_trade().
         duplicate_owners = self._active_other_owner_candidate_ids(record)
         if duplicate_owners:
             self._escalate_duplicate_ownership(record, duplicate_owners)
@@ -639,30 +740,8 @@ class RobotBreakoutMonitor:
         return robot_entry_limit.submit_initial_retest_limit(self._action_executor, plan)
 
     def _read_admission_gate(self) -> tuple[bool, bool]:
-        """Read the authoritative durable robot_runtime_state and derive the
-        two admission facts this coordinator's risk-increasing pre-entry
-        submission call sites need: whether a NEW entry order may be
-        submitted right now, and whether durable mode has reached the
-        terminal ROBOT_STOPPED state.
-
-        This is the exact same admission condition
-        ``robot_admission.admit_robot_candidate()`` already gates brand-new
-        candidate admission on (``mode == ROBOT_RUNNING and recovery_status
-        == READY``) -- reused here, not reintroduced as a second state
-        machine, because RobotBreakoutMonitor is the sole owner of
-        already-admitted APPROVED candidates and must apply the identical
-        admission boundary to any further order it submits on their behalf.
-        Every other phase-transition/bookkeeping path in this class (state
-        machine advancement, apex-expiry detection, already-filled
-        protection/finalize, emergency close) is deliberately left
-        unconditional on this gate: it governs only NEW entry risk.
-        """
         state = self._store().get_robot_runtime_state(self._account_id)
         if state is None:
-            # Durable runtime state not yet initialized: fail closed on new
-            # entry risk, but do not treat this as a terminal ROBOT_STOPPED
-            # disposition -- that would risk prematurely invalidating a
-            # candidate during a startup race rather than simply waiting.
             return False, False
         new_entry_admitted = (
             state.mode == "ROBOT_RUNNING" and state.recovery_status == "READY"
@@ -673,21 +752,6 @@ class RobotBreakoutMonitor:
     def _invalidate_pre_entry_candidate(
         self, record: RobotCandidateRecord, *, reason: str,
     ) -> None:
-        """Give a pending pre-entry Robot candidate its explicit durable
-        terminal disposition once durable mode has reached ROBOT_STOPPED,
-        per AUTOPILOT_ROBOT_V0_1_RESTART_FROM_STOPPED_DECISION.md
-        ("previously stopped candidates remain terminal and must not
-        re-enter the active candidate set"). Reuses the existing terminal
-        INVALIDATED status and save_robot_candidate_state() path already
-        established by _fail_closed_unprotected_fill() -- no new candidate
-        status or transition is introduced.
-
-        Only ever called when no fill/exposure exists yet for this
-        candidate (a zero-fill resting entry LIMIT, or none submitted at
-        all): a candidate that already has a partial fill is deliberately
-        never invalidated here, since that would orphan a live position
-        with no robot_trade/protection ownership record.
-        """
         execution = dict(record.robot_state.get("execution") or {})
         execution["stopped_without_entry_at_ms"] = self._now_ms()
         execution["stopped_without_entry_reason"] = reason
@@ -702,39 +766,13 @@ class RobotBreakoutMonitor:
                 updated_at_ms=self._now_ms(),
             )
         except ConcurrentUpdate:
-            # Another writer already advanced this candidate first; no
-            # exposure exists in this path, so nothing further to reconcile.
             pass
 
     def _fail_closed_unprotected_fill(
         self, record: RobotCandidateRecord, error: Exception,
     ) -> None:
-        """A Robot entry already filled into a real authoritative position, but
-        initial STOP/TAKE protection could not be derived, built, validated,
-        or submitted for it (CR-PAPER-PROTECTION-LIFECYCLE-001
-        post-BATUSDT-defect fix). Never leave a filled position open and
-        unprotected waiting for the next tick without at least attempting a
-        close: submit the same sanctioned PAPER full-close path
-        ``submit_emergency_close()`` already uses elsewhere, using
-        ``emergency_close_request()``'s deterministic action id so a close
-        retried across ticks is idempotent, exactly like
-        ``protection_recovery()``'s own emergency close.
-
-        The candidate is invalidated -- and only then -- once FLAT is itself
-        authoritatively confirmed: an ambiguous, rejected, unavailable, or
-        otherwise incomplete close (or one that completes but the position
-        somehow reads back still non-flat) leaves the candidate APPROVED, so
-        RobotBreakoutMonitor's existing per-tick retry (already relied on
-        elsewhere in _finalize_trade for the ownership-attestation gate)
-        keeps attempting/reconciling the close instead of prematurely
-        terminalizing a position that may still be open. No robot_trade is
-        ever created here; this candidate never proved out a protected entry.
-        """
         duplicate_owners = self._active_other_owner_candidate_ids(record)
         if duplicate_owners:
-            # Section 10 narrow exception: a full-close would destroy another
-            # legitimate owner of the same net position. Preserve evidence,
-            # escalate, and deliberately do not close.
             execution = dict(record.robot_state.get("execution") or {})
             execution["protection_failure"] = str(error)
             execution["duplicate_owner_candidate_ids"] = list(duplicate_owners)
@@ -783,9 +821,6 @@ class RobotBreakoutMonitor:
                 updated_at_ms=self._now_ms(),
             )
         except ConcurrentUpdate:
-            # Another writer already advanced this candidate first; the
-            # emergency close above already ran and is idempotent by
-            # deterministic action id if retried on a later tick.
             pass
 
     def _persist_execution(
@@ -812,8 +847,6 @@ class RobotBreakoutMonitor:
                 updated_at_ms=self._now_ms(),
             )
         except ConcurrentUpdate:
-            # Another writer already advanced this candidate first; skip it
-            # for this tick rather than overwrite a newer durable state.
             pass
 
     @staticmethod

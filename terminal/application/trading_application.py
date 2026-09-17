@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Callable
 
@@ -85,23 +85,59 @@ class TradingApplication:
 
     def prepare(
         self, intent: PreTradeIntent, context: PreTradeContext,
+        *, identity: CommandIdentityCandidate | None = None,
     ) -> tuple[PreTradeDecision, CommandRecord | None]:
         """Run canonical admission/normalization and create identity without persistence."""
         self._require_enabled()
         decision = self.guard.evaluate(intent, context)
         if not decision.admitted:
             return decision, None
-        assert decision.request is not None
-        return decision, self._create_record(decision.request)
+        request = decision.request
+        assert request is not None
+        if identity is not None:
+            request = replace(request, identity=identity)
+            decision = replace(decision, request=request)
+        return decision, self._create_record(request)
 
-    def submit(self, intent: PreTradeIntent, context: PreTradeContext) -> ApplicationResult:
-        decision, prepared = self.prepare(intent, context)
+    def submit(
+        self, intent: PreTradeIntent, context: PreTradeContext,
+        *, identity: CommandIdentityCandidate | None = None,
+    ) -> ApplicationResult:
+        decision, prepared = self.prepare(intent, context, identity=identity)
         if not decision.admitted:
             return ApplicationResult(decision, None, None)
         request = decision.request
         assert request is not None
         assert prepared is not None
-        command = self._persist_submitting(prepared)
+
+        if identity is not None and (
+            self.paper_market_executor is None or request.order_kind is not OrderKind.MARKET
+        ):
+            raise ValueError("stable command identity is supported only for PAPER Market submission")
+
+        existing = self.store.get_command(prepared.command_id) if identity is not None else None
+        if existing is not None:
+            self._validate_stable_market_replay(existing, prepared)
+            if existing.current_state is CommandState.ADMITTED:
+                command = self.store.transition_command_state(
+                    existing.command_id,
+                    CommandState.ADMITTED,
+                    CommandState.SUBMITTING,
+                    expected_version=existing.version,
+                    reason="stable PAPER Market mutation attempt durably resumed",
+                    occurred_at_ms=self.clock_ms(),
+                )
+            elif existing.current_state is CommandState.SUBMITTING:
+                command = existing
+            else:
+                # FILLED is an idempotent completed replay. Any other state is
+                # intentionally not re-dispatched: ACKNOWLEDGED/UNKNOWN/etc.
+                # already represent durable post-dispatch or ambiguous evidence
+                # and must be reconciled rather than guessed into a second fill.
+                return ApplicationResult(decision, existing, None)
+        else:
+            command = self._persist_submitting(prepared)
+
         if self.paper_market_executor is not None and request.order_kind is OrderKind.MARKET:
             paper = self.paper_market_executor.execute(
                 trading_account_id=request.trading_account_id,
@@ -135,6 +171,44 @@ class TradingApplication:
             command, outcome, occurred_at_ms=self.clock_ms()
         )
         return ApplicationResult(decision, resolved, outcome)
+
+    @staticmethod
+    def _validate_stable_market_replay(
+        existing: CommandRecord, prepared: CommandRecord,
+    ) -> None:
+        """Fail closed if one stable identity is replayed with different intent."""
+        comparable_existing = (
+            existing.command_id,
+            existing.order_link_id,
+            existing.trading_account_id,
+            existing.category,
+            existing.symbol,
+            existing.position_idx,
+            existing.command_kind,
+            existing.side,
+            existing.requested_notional,
+            existing.normalized_price,
+            existing.normalized_quantity,
+            existing.origin,
+            existing.controller,
+        )
+        comparable_prepared = (
+            prepared.command_id,
+            prepared.order_link_id,
+            prepared.trading_account_id,
+            prepared.category,
+            prepared.symbol,
+            prepared.position_idx,
+            prepared.command_kind,
+            prepared.side,
+            prepared.requested_notional,
+            prepared.normalized_price,
+            prepared.normalized_quantity,
+            prepared.origin,
+            prepared.controller,
+        )
+        if comparable_existing != comparable_prepared:
+            raise ValueError("stable PAPER Market identity conflicts with durable command evidence")
 
     def amend(self, intent: AmendIntent) -> ApplicationResult:
         self._require_enabled()

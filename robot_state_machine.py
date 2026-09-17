@@ -7,6 +7,7 @@ and performs no order execution, sizing, STOP/TAKE, or market-data transport.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
 import math
 from typing import Any, Mapping
@@ -264,6 +265,30 @@ def process_closed_candle(
         return new_state, EVENT_NO_TRANSITION
 
     raise RobotStateMachineError("unreachable Robot lifecycle phase")
+
+
+def replay_closed_candles(
+    signal_snapshot: Mapping[str, Any],
+    state: Mapping[str, Any],
+    candles: Iterable[Mapping[str, Any]],
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """Replay authoritative closed candles through the existing transition function.
+
+    This is deliberately only an orchestration helper: all lifecycle semantics,
+    validation, stale-candle idempotency, frozen-boundary checks, and apex expiry
+    remain owned by ``process_closed_candle``. Replay stops as soon as the state
+    reaches a terminal lifecycle phase so later evidence cannot mutate a completed
+    retest or an expired setup.
+    """
+
+    new_state = deepcopy(dict(state))
+    events: list[str] = []
+    for candle in candles:
+        new_state, event = process_closed_candle(signal_snapshot, new_state, candle)
+        events.append(event)
+        if new_state.get("phase") in _TERMINAL_PHASES:
+            break
+    return new_state, tuple(events)
 
 
 def resume_without_replay(
