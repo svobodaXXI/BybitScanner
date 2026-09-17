@@ -2040,10 +2040,25 @@ class PaperRuntime:
                     unresolved_trade_ids.add(trade.trade_id)
                     continue
                 protection = self.store.get_protection_projection(position_key)
+                if protection is None:
+                    unresolved_trade_ids.add(trade.trade_id)
+                    continue
+
+                instrument = self._instrument_provider(trade.symbol.value)
+                closing_side = (
+                    OrderSide.SELL
+                    if expected_side is PositionSide.LONG
+                    else OrderSide.BUY
+                )
+                expected_stop = normalize_limit_price(
+                    trade.stop_price, instrument.tick_size, closing_side,
+                )
+                expected_take = normalize_limit_price(
+                    trade.take_price, instrument.tick_size, closing_side,
+                )
                 if (
-                    protection is None
-                    or protection.stop_loss != trade.stop_price
-                    or protection.take_profit != trade.take_price
+                    protection.stop_loss != expected_stop
+                    or protection.take_profit != expected_take
                 ):
                     unresolved_trade_ids.add(trade.trade_id)
 
