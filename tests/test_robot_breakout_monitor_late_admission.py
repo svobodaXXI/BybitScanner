@@ -3,6 +3,7 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import threading
 import time
 import unittest
 
@@ -11,7 +12,10 @@ from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
 from terminal.api.models import CommandResultStatus
 from terminal.application.robot_admission_catchup import LATE_ADMISSION_MARKET
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
-from terminal.domain.models import Category, Price, Quantity, Symbol, TradingAccountId
+from terminal.application.robot_late_admission_market import build_late_admission_market_plan
+from terminal.domain.models import (
+    Category, PositionKey, Price, Quantity, Symbol, TradingAccountId,
+)
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.persistence.sqlite_store import SQLiteStore
@@ -223,7 +227,11 @@ class RobotBreakoutMonitorLateAdmissionTests(unittest.TestCase):
 
 
 class _FreshBookProvider:
+    def __init__(self):
+        self.thread_ids: list[int] = []
+
     def get_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
+        self.thread_ids.append(threading.get_ident())
         if symbol != Symbol(SYMBOL):
             return None
         return NormalizedOrderBook(
@@ -237,6 +245,17 @@ class _FreshBookProvider:
 
     def get_current_book_update(self, symbol: Symbol):
         return None
+
+
+def _runtime_book() -> NormalizedOrderBook:
+    return NormalizedOrderBook(
+        symbol=Symbol(SYMBOL),
+        bids=(PriceLevel(Price(Decimal("99")), Quantity(Decimal("1000"))),),
+        asks=(PriceLevel(Price(Decimal("100")), Quantity(Decimal("1000"))),),
+        health=BookHealth.READY,
+        received_at_ms=int(time.time() * 1000),
+        available_depth=1,
+    )
 
 
 def _runtime_instrument(symbol: str = SYMBOL) -> InstrumentSnapshot:
@@ -260,12 +279,7 @@ def _runtime_instrument(symbol: str = SYMBOL) -> InstrumentSnapshot:
 
 
 def _runtime_closed_candle(_symbol: str):
-    return {
-        "time_ms": T0_MS + 4 * 60_000,
-        "high": Decimal("101"),
-        "low": Decimal("98"),
-        "close": Decimal("100"),
-    }
+    return {"time_ms": T0_MS + 4 * 60_000}
 
 
 def _runtime_geometry_index(_symbol: str, _snapshot: dict[str, object]) -> int:
@@ -273,91 +287,85 @@ def _runtime_geometry_index(_symbol: str, _snapshot: dict[str, object]) -> int:
 
 
 class RobotLateAdmissionSerializedRuntimeAcceptanceTests(unittest.TestCase):
-    def test_real_serialized_runtime_routes_late_market_through_shared_paper_path(self):
+    def test_callbacks_route_to_owner_and_submit_shared_paper_market_with_stable_identity(self):
         with tempfile.TemporaryDirectory() as temp:
             db_path = Path(temp) / "terminal.db"
             instrument = _runtime_instrument()
             book_provider = _FreshBookProvider()
-            runtime = SerializedPaperRuntime(lambda: PaperRuntime(
-                db_path,
-                book_provider=book_provider,
-                instrument_snapshot=instrument,
-                instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
-                robot_latest_geometry_index_provider=_runtime_geometry_index,
-                robot_closed_candle_provider=_runtime_closed_candle,
-                robot_tick_interval_s=0.02,
-            ))
+            holder: dict[str, PaperRuntime] = {}
+
+            def factory() -> PaperRuntime:
+                owner = PaperRuntime(
+                    db_path,
+                    book_provider=book_provider,
+                    instrument_snapshot=instrument,
+                    instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
+                    robot_latest_geometry_index_provider=_runtime_geometry_index,
+                    robot_closed_candle_provider=_runtime_closed_candle,
+                    robot_tick_interval_s=60.0,
+                )
+                holder["owner"] = owner
+                return owner
+
+            runtime = SerializedPaperRuntime(factory)
             try:
-                def seed(owner: PaperRuntime):
-                    state = owner.store.get_robot_runtime_state(ACCOUNT)
-                    self.assertIsNotNone(state)
-                    owner.store.update_robot_runtime_state(
-                        ACCOUNT,
-                        mode="ROBOT_RUNNING",
-                        recovery_status="READY",
-                        reason=None,
-                        expected_version=state.version,
-                        updated_at_ms=state.updated_at_ms + 1,
-                    )
-                    candidate, created = owner.store.create_robot_candidate(
-                        candidate_id="candidate-runtime-late-market",
-                        trading_account_id=ACCOUNT,
-                        symbol=Symbol(SYMBOL),
-                        status="APPROVED",
-                        signal_snapshot=_snapshot(),
-                        approved_at_ms=10,
-                        updated_at_ms=10,
-                    )
-                    self.assertTrue(created)
-                    owner.store.save_robot_candidate_state(
-                        candidate.candidate_id,
-                        status="APPROVED",
-                        robot_state=_late_state(),
-                        expected_revision=candidate.state_revision,
-                        updated_at_ms=11,
-                    )
-
-                runtime.call(seed)
                 runtime.start_robot_monitor()
+                owner_ident = runtime.call(lambda _owner: threading.get_ident())
+                owner = holder["owner"]
+                plan = build_late_admission_market_plan(
+                    {
+                        "candidate_id": "candidate-runtime-late-market",
+                        "status": "APPROVED",
+                        "timeframe": "1",
+                        "signal_snapshot": _snapshot(),
+                    },
+                    _late_state(),
+                    _runtime_book(),
+                )
+                result: dict[str, object] = {}
 
-                deadline = time.monotonic() + 5.0
-                observed = None
-                while time.monotonic() < deadline:
-                    observed = runtime.call(
-                        lambda owner: owner.store.get_robot_candidate(
-                            "candidate-runtime-late-market"
-                        )
+                def invoke_from_background_thread() -> None:
+                    result["worker_ident"] = threading.get_ident()
+                    result["book"] = owner._dispatch_robot_market_book(SYMBOL)
+                    result["preflight"] = owner._dispatch_robot_market_preflight(
+                        plan.request, plan.identity,
                     )
-                    if observed is not None and observed.status == "OPEN":
-                        break
-                    execution = (observed.robot_state or {}).get("execution") if observed else {}
-                    if execution and execution.get("last_execution_error"):
-                        self.fail(f"late Market runtime wiring failed: {execution}")
-                    time.sleep(0.02)
-                else:
-                    self.fail("late Market candidate did not reach OPEN through SerializedPaperRuntime")
+                    result["submit"] = owner._dispatch_robot_market_submit(
+                        plan.request, plan.identity,
+                    )
 
-                intent = observed.robot_state["execution"]["late_market_intent"]
-                self.assertEqual(intent["sizing_reference_price"], "100")
-                self.assertEqual(intent["volume_amount"], "1")
+                worker = threading.Thread(target=invoke_from_background_thread)
+                worker.start()
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive(), "late Market wiring deadlocked")
+                self.assertNotEqual(result["worker_ident"], owner_ident)
+                self.assertEqual(result["book"].symbol, Symbol(SYMBOL))
+                self.assertTrue(result["preflight"].admitted)
+                self.assertGreater(result["preflight"].normalized_quantity, Decimal("0"))
+                self.assertEqual(result["submit"].status, CommandResultStatus.COMPLETED)
+                self.assertTrue(book_provider.thread_ids)
+                self.assertTrue(
+                    all(ident == owner_ident for ident in book_provider.thread_ids),
+                    "late Market book/execution escaped the serialized owner thread",
+                )
 
-                trade = runtime.call(
-                    lambda owner: owner.store.get_open_robot_trade_for_symbol(
-                        ACCOUNT, Symbol(SYMBOL)
+                command = runtime.call(
+                    lambda runtime_owner: runtime_owner.store.get_command(
+                        plan.identity.command_id
                     )
                 )
-                self.assertIsNotNone(trade)
-                self.assertEqual(trade.candidate_id, "candidate-runtime-late-market")
-                self.assertEqual(trade.entry_path, "MARKET")
-                self.assertEqual(trade.actual_wv, Decimal("1"))
-                self.assertEqual(trade.average_entry, Decimal("100"))
+                self.assertIsNotNone(command)
+                self.assertEqual(command.current_state.value, "filled")
+                self.assertEqual(command.order_link_id, plan.identity.order_link_id)
 
-                active_limits = runtime.call(
-                    lambda owner: owner.store.load_active_paper_limits(
-                        ACCOUNT, Symbol(SYMBOL)
+                position = runtime.call(
+                    lambda runtime_owner: runtime_owner.store.get_position_projection(
+                        PositionKey(ACCOUNT, Category.LINEAR, Symbol(SYMBOL), 0)
                     )
                 )
-                self.assertEqual(active_limits, ())
+                self.assertIsNotNone(position)
+                self.assertEqual(position.average_entry.value, Decimal("100"))
+                self.assertGreater(position.quantity.value, Decimal("0"))
             finally:
                 runtime.close()
 
