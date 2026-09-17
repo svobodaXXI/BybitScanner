@@ -869,6 +869,142 @@ class TerminalPersistenceTests(unittest.TestCase):
         connection.close()
         self.assertIn("scanner_runtime_state", tables)
 
+    def test_v20_to_v21_migration_preserves_obligations_and_allows_emergency_close(self):
+        account = TradingAccountId("paper")
+        with self.open_store() as store:
+            store.create_robot_candidate(
+                candidate_id="candidate-v20",
+                trading_account_id=account,
+                symbol=Symbol("BTCUSDT"),
+                status="APPROVED",
+                signal_snapshot={"pattern": "Falling Wedge", "revision": 20},
+                approved_at_ms=1000,
+                updated_at_ms=1000,
+            )
+            store.create_robot_trade(
+                trade_id="trade-v20",
+                trading_account_id=account,
+                candidate_id="candidate-v20",
+                symbol=Symbol("BTCUSDT"),
+                direction="LONG",
+                pattern="Falling Wedge",
+                source_timeframe="1",
+                signal_time_ms=900,
+                entry_time_ms=1000,
+                entry_path="LIMIT",
+                actual_wv=Decimal("1"),
+                average_entry=Decimal("100"),
+                stop_price=Decimal("98"),
+                take_price=Decimal("104"),
+                entry_quantity=Decimal("1"),
+                entry_position_version=1,
+                created_at_ms=1000,
+            )
+            preserved, created = store.latch_paper_protection_obligation(
+                trade_id="trade-v20",
+                protection_version=1,
+                winning_leg="STOP",
+                trigger_price=Decimal("98"),
+                observed_exit_price=Decimal("97.9"),
+                observed_quantity=Decimal("1"),
+                market_event_id="BTCUSDT:v20",
+                source_received_at_ms=1100,
+                source_generation=1,
+                source_sequence=10,
+                source_update_id=10,
+                source_event_at_ms=1099,
+                source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("97.9"),
+                observed_ask_price=Decimal("98"),
+                latched_at_ms=1100,
+            )
+            self.assertTrue(created)
+
+        # Rebuild only this table with the exact v20 winning-leg CHECK, then
+        # pin user_version=20. This exercises the real v20->v21 table rebuild
+        # instead of merely opening a fresh v21 schema.
+        connection = sqlite3.connect(self.database_path)
+        current_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='table' AND name='paper_protection_obligations'"
+        ).fetchone()[0]
+        legacy_sql = current_sql.replace(
+            "paper_protection_obligations",
+            "paper_protection_obligations_v20",
+            1,
+        ).replace(
+            "CHECK (winning_leg IN ('STOP', 'TAKE', 'EMERGENCY_CLOSE'))",
+            "CHECK (winning_leg IN ('STOP', 'TAKE'))",
+        )
+        self.assertNotEqual(current_sql, legacy_sql)
+        connection.execute(legacy_sql)
+        connection.execute(
+            "INSERT INTO paper_protection_obligations_v20 "
+            "SELECT * FROM paper_protection_obligations"
+        )
+        connection.execute("DROP TABLE paper_protection_obligations")
+        connection.execute(
+            "ALTER TABLE paper_protection_obligations_v20 "
+            "RENAME TO paper_protection_obligations"
+        )
+        connection.execute("PRAGMA user_version = 20")
+        connection.commit()
+        connection.close()
+
+        with self.open_store() as store:
+            self.assertEqual(store.settings().schema_version, SCHEMA_VERSION)
+            migrated = store.get_paper_protection_obligation(preserved.obligation_id)
+            self.assertEqual(migrated, preserved)
+
+            store.create_robot_candidate(
+                candidate_id="candidate-v21-emergency",
+                trading_account_id=account,
+                symbol=Symbol("ETHUSDT"),
+                status="APPROVED",
+                signal_snapshot={"pattern": "Rising Wedge", "revision": 21},
+                approved_at_ms=2000,
+                updated_at_ms=2000,
+            )
+            store.create_robot_trade(
+                trade_id="trade-v21-emergency",
+                trading_account_id=account,
+                candidate_id="candidate-v21-emergency",
+                symbol=Symbol("ETHUSDT"),
+                direction="SHORT",
+                pattern="Rising Wedge",
+                source_timeframe="1",
+                signal_time_ms=1900,
+                entry_time_ms=2000,
+                entry_path="MARKET",
+                actual_wv=Decimal("1"),
+                average_entry=Decimal("200"),
+                stop_price=Decimal("204"),
+                take_price=Decimal("194"),
+                entry_quantity=Decimal("1"),
+                entry_position_version=1,
+                created_at_ms=2000,
+            )
+            emergency, created = store.latch_paper_protection_obligation(
+                trade_id="trade-v21-emergency",
+                protection_version=1,
+                winning_leg="EMERGENCY_CLOSE",
+                trigger_price=Decimal("201"),
+                observed_exit_price=Decimal("201"),
+                observed_quantity=Decimal("1"),
+                market_event_id="ETHUSDT:v21-emergency",
+                source_received_at_ms=2100,
+                source_generation=2,
+                source_sequence=20,
+                source_update_id=20,
+                source_event_at_ms=2099,
+                source_matching_engine_cts_ms=None,
+                observed_bid_price=Decimal("200.9"),
+                observed_ask_price=Decimal("201"),
+                latched_at_ms=2100,
+            )
+            self.assertTrue(created)
+            self.assertEqual(emergency.winning_leg, "EMERGENCY_CLOSE")
+
     def test_scanner_runtime_defaults_stopped_and_uses_cas_updates(self):
         account_id = TradingAccountId("paper")
         with self.open_store() as store:
