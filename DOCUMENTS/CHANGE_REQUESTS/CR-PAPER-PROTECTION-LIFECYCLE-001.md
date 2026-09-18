@@ -7,7 +7,7 @@
   "id": "CR-PAPER-PROTECTION-LIFECYCLE-001",
   "title": "Autonomous PAPER Protection Execution Lifecycle",
   "status": "IMPLEMENTED_VERIFYING",
-  "revision": "1.3",
+  "revision": "1.4",
   "lifecycle_stage": "VERIFY",
   "objective": "Specify D2 correction: autonomous event-driven PAPER protection, durable crossing obligations, restart-safe serialized closing and evidence-based Robot trade finalization, independent of UI and entry admission.",
   "non_goals": [
@@ -53,8 +53,8 @@
   ],
   "unresolved_decisions": [
     "Fix closed-trade fee attribution so fees_costs_usdt includes all attributable Robot entry and exit fees without symbol-wide/manual contamination",
-    "Implement bounded-ingress recovery so continuity loss cannot remain stuck waiting indefinitely for a future WebSocket snapshot",
-    "Confirm the deployed PAPER sync_state correction on the next post-deploy real PAPER fill"
+    "Eliminate the recurring normal-runtime protection ingress saturation that can fence Robot admission even when the affected covered symbol has no open Robot exposure",
+    "Fix closed-trade fee attribution so fees_costs_usdt includes all attributable Robot entry and exit fees without symbol-wide/manual contamination"
   ],
   "acceptance_criteria": [
     "All section 14 invariants hold",
@@ -107,7 +107,7 @@
     }
   ],
   "current_phase": "VERIFY",
-  "current_checkpoint": "RUNTIME_STOP_CLOSE_PROVEN_FEE_ACCOUNTING_DEFECT_OPEN",
+  "current_checkpoint": "KSM_RECOVERY_PROVEN_EDGE_INGRESS_SATURATION_RECURRED",
   "implementation_status": "PAPER_DEPLOYED_VERIFYING",
   "next_phase": "VERIFY",
   "next_phase_authorization": "Continue runtime verification and fix only observed concrete blockers",
@@ -143,6 +143,11 @@
       "revision": "1.3",
       "date": "2026-09-18",
       "reason": "Recorded KSMUSDT ingress_overflow root cause and approved recovery design: force a fresh authoritative snapshot after continuity loss instead of waiting indefinitely for a future WebSocket snapshot"
+    },
+    {
+      "revision": "1.4",
+      "date": "2026-09-18",
+      "reason": "Recorded deployed KSMUSDT restart-safe REST snapshot recovery, successful evidence-based reconciliation to PAUSED, confirmed synced PAPER projection after recovery close, and a second EDGEUSDT ingress_overflow with no position/trade/execution proving the remaining blocker is recurring ingress saturation rather than emergency-close recovery"
     }
   ]
 }
@@ -691,9 +696,10 @@ CI passed and the code is deployed at `e5319da29029d7c463a5cc7dc428a35a01cceb8b`
 | --- | --- | --- |
 | GIGGLEUSDT STOP lifecycle | PROVEN WORKING | Core autonomous STOP close and durable terminalization succeeded |
 | Closed-trade fee aggregation | OPEN DEFECT | Entry fee omitted; fee-inclusive PnL/PnL% is inaccurate |
-| New PAPER fill sync state | FIX DEPLOYED | Must confirm next post-deploy fill reports `synced` |
-| Pre-fix AEONUSDT/KSMUSDT sync labels | LEGACY STATE | Old rows still display `reconciliation_required`; no blind rewrite |
-| KSMUSDT protection ingress overflow | ROOT CAUSE PROVEN / FIX PENDING | Safety fence worked, but recovery can wait indefinitely for a WebSocket snapshot while exposure remains open |
+| New PAPER fill sync state | RUNTIME CONFIRMED | KSMUSDT recovery close advanced the position to FLAT with `sync_state="synced"` |
+| Pre-fix AEONUSDT sync label | LEGACY STATE | Old row may still display `reconciliation_required`; no blind rewrite |
+| KSMUSDT protection ingress overflow recovery | RUNTIME PROVEN WORKING | Restart rehydrated durable loss, fresh REST snapshot recovery closed unambiguous Robot exposure through `EMERGENCY_CLOSE`, then explicit reconcile completed with no unresolved objects and landed PAUSED |
+| Recurring protection ingress saturation | CURRENT BLOCKER | A second `ingress_overflow` occurred on EDGEUSDT even though EDGE had no position, Robot trade or execution; this proves the remaining failure is producer/queue pressure in coverage processing, not close recovery |
 | Rising Wedge SHORT runtime behavior | IMPLEMENTED, NOT YET LIVE-PROVEN | Deterministic acceptance passed; await ordinary PAPER runtime observation |
 
 Verification policy remains operator-driven: normal PAPER usage -> concrete observed blocker -> systematic inspection
@@ -758,4 +764,91 @@ Required focused acceptance for this defect:
 This correction addresses the observed KSMUSDT failure mode only. It does not change STOP/TAKE strategy,
 structural geometry, sizing, LIVE behavior, normal STOP/TAKE crossing semantics or the separate closed-trade fee
 accounting defect.
+
+### 21.8 Deployed KSMUSDT recovery evidence and second EDGEUSDT overflow
+
+After PR #138 and PR #139 were merged and deployed at
+`d4d550ecf4899bee59a01dff21a11b58ee6c701d`, the backend was restarted against the existing incident database.
+
+The restart-safe recovery path successfully consumed the durable runtime reason
+`ROBOT_PROTECTION_COVERAGE_LOST symbol=KSMUSDT reason=ingress_overflow`, obtained a fresh authoritative Bybit
+REST order-book snapshot, and routed the incident through the existing serialized
+`recover_robot_protection_continuity_loss()` / durable `EMERGENCY_CLOSE` path.
+
+Read-only runtime evidence after restart:
+
+- KSMUSDT position: `FLAT`, quantity `0.00`;
+- position projection: `sync_state="synced"`, version `2`;
+- realized PnL projection: `1.773709999999999999999999994 USDT`;
+- accumulated fee projection: `0.3000783300000000000000000000 USDT`;
+- no open KSMUSDT Robot trade remained.
+
+The durable Robot runtime correctly remained `RECONCILIATION_REQUIRED` after exposure recovery instead of silently
+reopening admission. An explicit call to the existing evidence-based Robot reconciliation endpoint then returned:
+
+- `success=true`;
+- mode `ROBOT_RUNNING`;
+- recovery status `PAUSED`;
+- zero unresolved candidate IDs;
+- zero unresolved trade IDs;
+- zero unresolved protection obligation IDs;
+- `reason=null`.
+
+This proves the intended safety sequence in real PAPER runtime:
+
+`durable continuity-loss fence -> restart -> fresh authoritative REST snapshot -> EMERGENCY_CLOSE -> FLAT ->
+explicit reconciliation -> PAUSED`.
+
+**KSMUSDT recovery status: RUNTIME PROVEN.**
+
+Immediately afterward, ordinary runtime produced a second durable fence:
+
+`ROBOT_PROTECTION_COVERAGE_LOST symbol=EDGEUSDT reason=ingress_overflow`.
+
+Read-only EDGEUSDT inspection at that time proved:
+
+- position projection: none;
+- open Robot trade: none;
+- Robot trade rows: none;
+- executions: none.
+
+Therefore EDGEUSDT had no Robot exposure requiring emergency close. The repeated overflow cannot be explained by the
+previous KSM close-recovery defect. It demonstrates a remaining upstream runtime problem: the bounded Robot
+protection ingress can saturate under normal coverage traffic itself, including symbols covered before entry.
+
+Current implementation facts relevant to that blocker:
+
+- `SerializedPaperRuntime` uses one global Robot-protection pending counter with default capacity `64`;
+- every admitted Robot coverage book update is a distinct serialized owner task and is intentionally not coalesced;
+- the same capacity is shared across all covered Robot symbols;
+- coverage includes OPEN Robot trades, unresolved protection obligations, and APPROVED `RETEST_DETECTED`
+  pre-entry lifecycles with a working or imminent Robot LIMIT;
+- once the global pending count reaches capacity, the next event fails closed with
+  `ProtectionIngressOverflow` and the symbol is fenced.
+
+The current evidence does **not** yet prove whether saturation is primarily caused by aggregate WebSocket event
+rate, slow owner-thread work, unfair cross-symbol scheduling, avoidable pre-entry traffic, or a combination.
+Do not treat queue-size increase alone as a root-cause correction.
+
+**Current blocker: recurring protection ingress saturation in ordinary Robot coverage flow.**
+
+### 21.9 Consolidated remaining defects / blockers after KSM recovery
+
+1. **Recurring protection ingress saturation — CURRENT RUNTIME BLOCKER.**
+   The safety fence and recovery now work, but normal operation can still repeatedly trip the bounded ingress queue.
+   EDGEUSDT proves this can happen before any position exists and can unnecessarily fence all new Robot admission.
+
+2. **Closed-trade fee aggregation — OPEN ACCOUNTING DEFECT.**
+   GIGGLEUSDT still proves `robot_trades.fees_costs_usdt` omits the attributable entry fee, so fee-inclusive
+   realized PnL/PnL% is understated.
+
+3. **Legacy pre-fix projection labels — LEGACY DATA ONLY.**
+   Old rows may retain `reconciliation_required`; do not rewrite history merely for presentation. The post-fix
+   KSMUSDT close proves current local PAPER execution now produces a clean `synced` projection.
+
+4. **Rising Wedge SHORT — IMPLEMENTED, REAL RUNTIME TRADE STILL UNOBSERVED.**
+   Deterministic PAPER acceptance exists, but ordinary runtime SHORT evidence remains pending.
+
+The next architecture/debugging task is specifically to localize and remove unnecessary ingress pressure while
+preserving the critical invariant that a transient STOP/TAKE crossing cannot be silently coalesced away.
 
