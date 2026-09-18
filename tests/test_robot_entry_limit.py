@@ -4,7 +4,10 @@ import unittest
 from robot_entry_limit import (
     RobotEntryLimitError,
     build_initial_retest_limit,
+    build_retest_limit_reprice,
+    reprice_due,
     submit_initial_retest_limit,
+    submit_retest_limit_reprice,
 )
 from robot_state_machine import (
     DIRECTION_LONG,
@@ -56,6 +59,10 @@ class _RecordingSubmitter:
         self.calls = []
 
     def create_limit(self, request):
+        self.calls.append(request)
+        return self.result
+
+    def amend_limit(self, request):
         self.calls.append(request)
         return self.result
 
@@ -143,6 +150,85 @@ class RobotInitialRetestLimitTests(unittest.TestCase):
         submitter = _RecordingSubmitter(expected)
 
         result = submit_initial_retest_limit(submitter, plan)
+
+        self.assertIs(result, expected)
+        self.assertEqual(submitter.calls, [plan.request])
+
+    def test_reprice_due_every_five_closed_candles(self):
+        self.assertFalse(reprice_due(last_limit_index=104, current_index=108))
+        self.assertTrue(reprice_due(last_limit_index=104, current_index=109))
+        with self.assertRaisesRegex(RobotEntryLimitError, "precedes"):
+            reprice_due(last_limit_index=104, current_index=103)
+
+    def test_long_reprice_amends_same_order_at_current_boundary(self):
+        plan = build_retest_limit_reprice(
+            _candidate(),
+            _state(),
+            geometry_index=109,
+            tick_size=Decimal("0.01"),
+            order_id="paper-order-1",
+        )
+
+        self.assertEqual(plan.geometry_index, 109)
+        self.assertEqual(plan.boundary_price, Decimal("91.0"))
+        self.assertEqual(plan.request.order_id, "paper-order-1")
+        self.assertEqual(plan.request.limit_price, Decimal("91.02"))
+
+    def test_short_reprice_uses_lower_boundary_minus_two_ticks(self):
+        plan = build_retest_limit_reprice(
+            _candidate("Rising Wedge"),
+            _state(DIRECTION_SHORT, retest_index=103),
+            geometry_index=109,
+            tick_size=Decimal("0.01"),
+            order_id="paper-order-short",
+        )
+
+        self.assertEqual(plan.boundary_price, Decimal("90.5"))
+        self.assertEqual(plan.request.order_id, "paper-order-short")
+        self.assertEqual(plan.request.limit_price, Decimal("90.48"))
+
+    def test_reprice_action_identity_is_stable_and_bound_to_order_and_index(self):
+        first = build_retest_limit_reprice(
+            _candidate(), _state(), geometry_index=109,
+            tick_size=Decimal("0.01"), order_id="paper-order-1",
+        )
+        repeated = build_retest_limit_reprice(
+            _candidate(), _state(), geometry_index=109,
+            tick_size=Decimal("0.01"), order_id="paper-order-1",
+        )
+        later = build_retest_limit_reprice(
+            _candidate(), _state(), geometry_index=108,
+            tick_size=Decimal("0.01"), order_id="paper-order-2",
+        )
+
+        self.assertEqual(
+            first.request.client_action_id,
+            repeated.request.client_action_id,
+        )
+        self.assertNotEqual(
+            first.request.client_action_id,
+            later.request.client_action_id,
+        )
+
+    def test_reprice_rejects_apex_and_submit_uses_amend_once(self):
+        with self.assertRaisesRegex(RobotEntryLimitError, "at or after apex"):
+            build_retest_limit_reprice(
+                _candidate(), _state(), geometry_index=110,
+                tick_size=Decimal("0.01"), order_id="paper-order-1",
+            )
+
+        plan = build_retest_limit_reprice(
+            _candidate(), _state(), geometry_index=109,
+            tick_size=Decimal("0.01"), order_id="paper-order-1",
+        )
+        expected = PaperLimitMutationResult(
+            plan.request.client_action_id.value,
+            CommandResultStatus.COMPLETED,
+            "amended",
+            "paper-order-1",
+        )
+        submitter = _RecordingSubmitter(expected)
+        result = submit_retest_limit_reprice(submitter, plan)
 
         self.assertIs(result, expected)
         self.assertEqual(submitter.calls, [plan.request])
