@@ -2,11 +2,11 @@
 
 Version:
 
-7.87
+7.88
 
 Date:
 
-2026-09-10
+2026-09-18
 
 Document Type:
 
@@ -790,19 +790,19 @@ DEFERRED
 
 Current decision:
 
-CURRENT PRIORITY = ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY
+CURRENT PRIORITY = ROBOT_V0_1_PAPER_RUNTIME_RELIABILITY
 
 Important:
 
-The current priority selects Robot v0.1 pattern-detection / Scanner Geometry task definition. It does not
-by itself authorize implementation. Trading Terminal / Trading Workspace (`CR-TRADING-WORKSPACE-001`) has
-reached a state usable for trading and is deprioritized as an active development direction, without being
-formally closed. The GRVTUSDT wick-aware boundary-fitting observation is promoted from deferred research to
-the active target: `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` (ACCEPTED DESIGN, 2026-09-10),
-which also supersedes `DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md` (now `Status: SUPERSEDED`).
+Robot v0.1 is now running in real PAPER runtime. Geometry work is no longer the active project priority.
+The immediate engineering objective is to make the already-running Robot lifecycle reliable under ordinary
+market-data load without broad architectural rebuilding.
 
-Documentation Automation временно
-не является блокирующим направлением.
+Current runtime evidence and the active correction design are owned by
+`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md` revisions 1.4-1.6.
+
+Documentation Automation and broad Architecture Hygiene remain non-blocking except where a concrete runtime defect
+requires a scoped correction.
 
 ---
 
@@ -810,7 +810,7 @@ Documentation Automation временно
 
 Priority:
 
-ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY
+ROBOT_V0_1_PAPER_RUNTIME_RELIABILITY
 
 Priority level:
 
@@ -818,73 +818,87 @@ HIGHEST
 
 Primary subsystem:
 
-SCANNER_GEOMETRY / WEDGE_BOUNDARY_FITTING
+ROBOT_V0_1 / PAPER_PROTECTION_COVERAGE / SERIALIZED_RUNTIME
 
 Secondary subsystem:
 
-ROBOT_V0_1_PROTOTYPE
+ROBOT_TRADE_ACCOUNTING
 
-Related subsystems:
+Owning current record:
 
-* Geometry Validation Gate (`slopes`/`apex`/`apex_quality`/`compression`/`touches`);
-* `wedge/detector.py` containment/freshness gating, targeted for replacement per the ATR Containment decision;
-* `signal/quality.py` quality-tier decision (planned containment-violation penalty input);
-* Robot v0.1 candidate admission and execution (already implemented: 8 slices, durable admission gate).
+`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`
+
+Current deployed PAPER runtime checkpoint:
+
+`d4d550ecf4899bee59a01dff21a11b58ee6c701d`
+
+Current documentation/architecture checkpoint:
+
+`65cab47c7cb440eed67d02e697334c0b82a1b2ff`
 
 Primary objective:
 
-As of 2026-09-10, Trading Terminal / Trading Workspace has reached a state usable for trading and is no
-longer the active development priority; `CR-TRADING-WORKSPACE-001` remains its own unchanged governance
-record. The new priority is the Robot v0.1 prototype, whose first dependency is finishing pattern
-detection / Geometry. The active implementation target is wedge boundary fitting per
-`DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` (ACCEPTED DESIGN, Implementation authorization:
-NONE): ATR-normalized containment tolerance, a 60/40 strict/flexible zone split, reversal-pattern exceptions
-in the flexible zone, and replacing `wedge/detector.py`'s hard binary containment/freshness reject with a
-graduated `signal/quality.py` tier penalty. This decision supersedes
-`DOCUMENTS/SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md` (now `Status: SUPERSEDED`). Implementation is
-not started or authorized by this checkpoint; only the priority is recorded here.
+Eliminate recurring Robot protection ingress saturation with the smallest safe changes while preserving exact
+STOP/TAKE event continuity, single-owner PAPER mutation semantics, durable ownership evidence and fail-closed
+recovery.
 
-Previous geometry objective:
+Runtime evidence:
 
-Повысить точность,
-стабильность
-и практическую полезность
-геометрического анализа Wedge.
+- GIGGLEUSDT proved autonomous STOP -> durable obligation -> shared PAPER close -> CLOSED lifecycle;
+- GIGGLEUSDT also exposed incomplete Robot fee attribution: entry fee is omitted from `fees_costs_usdt`;
+- KSMUSDT hit `ROBOT_PROTECTION_COVERAGE_LOST ... ingress_overflow`;
+- PR #138/#139 recovery was deployed and KSMUSDT subsequently proved
+  `durable fence -> restart -> authoritative REST snapshot -> EMERGENCY_CLOSE -> FLAT`;
+- explicit evidence-based reconciliation then completed with zero unresolved objects and landed `PAUSED`;
+- KSMUSDT also runtime-confirmed the corrected local PAPER `sync_state="synced"` behavior;
+- after resuming operation, EDGEUSDT hit a second `ingress_overflow` despite having no position, Robot trade or
+  execution, proving the remaining blocker is ordinary ingress pressure rather than emergency-close recovery.
 
-Current development direction:
+Current blocker:
 
-Separate durable terminal ChangeRequest
+RECURRING_PROTECTION_INGRESS_SATURATION
 
-↓
+Last observed durable fence:
 
-Approved contracts and safety foundation
+`ROBOT_RUNNING / RECONCILIATION_REQUIRED`
+with reason
+`ROBOT_PROTECTION_COVERAGE_LOST symbol=EDGEUSDT reason=ingress_overflow`.
 
-↓
+Current correction design:
 
-Paper Trader and journal
+1. add lightweight pending/high-watermark/queue-latency/owner-duration diagnostics;
+2. remove unnecessary no-fill hot-path work and account-wide candidate scans;
+3. distinguish coverage roles `ENTRY_PENDING`, `EXPOSURE`, `OBLIGATION`;
+4. keep exposure/obligation continuity loss globally fail-closed;
+5. for proven zero-fill entry-only overflow, conservatively cancel/terminalize the affected entry lifecycle instead
+   of fencing the entire Robot;
+6. only if measured backlog remains, add small role-aware reserved capacity/per-symbol fairness behind the same
+   serialized owner.
 
-↓
+Explicitly rejected as primary fixes:
 
-Trading Workspace MVP
+- simply increasing queue capacity;
+- silent event coalescing/drop;
+- second trading engine or second market-data stack;
+- general message bus / Redis / Kafka / Disruptor rewrite;
+- automatic clearing of reconciliation state after emergency close.
 
-Previous geometry development principle:
+Next implementation priority after ingress reliability:
 
-Сначала сканер должен начать
-приемлемо работать на реальных
-рыночных данных.
+Fix Robot closed-trade fee attribution so all and only lifecycle-owned entry+exit fees contribute to
+`fees_costs_usdt` and the frozen fee-inclusive PnL percentage.
 
-Только после достижения
-приемлемого качества базового
-геометрического анализа
-целесообразно расширять
-интеллектуальный и функциональный
-контур.
+Scanner geometry, Trading Workspace refinements, advanced statistics and broader architecture cleanup remain
+secondary to restoring stable Robot PAPER operation.
 
 ---
-
 # TRADING_WORKSPACE_MANUAL_LIVE_TRADING_STATE
 
-Active mission:
+State role:
+
+HISTORICAL_SUBSYSTEM_SNAPSHOT / NOT_CURRENT_PROJECT_PRIORITY
+
+Recorded mission:
 
 CR-TRADING-WORKSPACE-001 — Trading Workspace v1 / Manual Live Trading
 
@@ -924,7 +938,7 @@ Implementation status:
 
 WORKSPACE_SYMBOL_SWITCHING_LAYOUT_AND_DOM_DOTS_TARGETED_PASS / MANUAL_ACCEPTANCE_PENDING
 
-Current authorized action:
+Recorded checkpoint action:
 
 REAL_PHONE_WORKSPACE_SYMBOL_SWITCHING_ACCEPTANCE
 
@@ -3990,261 +4004,55 @@ Critical Errors:
 
 Current development focus:
 
-Scanner Geometry Development
+Robot v0.1 PAPER runtime reliability
 
 Current priority:
 
-Scanner Geometry
-
-Active direction:
-
-Trading Intelligence / Geometry Engine
+Protection ingress/backpressure correctness
 
 Development status:
 
-SCANNER_GEOMETRY_ACTIVE
+ROBOT_V0_1_RUNTIME_VERIFYING
 
 Primary development objective:
 
-Довести геометрию сканера
-и Wedge Detection
-до приемлемого практического качества.
+Make the minimal working PAPER Robot remain operational under real market-data load while preserving fail-closed
+safety and exact protection evidence.
 
 Current priority order:
 
-1. Scanner Geometry;
-2. Wedge Detection Quality;
-3. Scanner Reliability;
-4. Trading Intelligence;
-5. Scanner Feature Development;
-6. Documentation Automation;
-7. Architecture Hygiene.
-
-Current scanner development targets:
-
-* geometry accuracy;
-* trendline quality;
-* pivot quality;
-* apex calculation;
-* convergence;
-* compression;
-* touch validation;
-* candidate pair validation;
-* geometry ranking;
-* Wedge classification;
-* false-positive reduction;
-* scanner reliability.
-
-Current verified Geometry Engine targets:
-
-* trendline calculation — VALIDATED;
-* apex calculation — VALIDATED;
-* convergence/slope difference — VALIDATED;
-* compression calculation — VALIDATED;
-* touch validation — VALIDATED;
-* candidate pair construction — VALIDATED;
-* candidate pair rejection — VALIDATED;
-* GeometryModel construction — VALIDATED;
-* GeometryModel boundary — VALIDATED;
-* geometry validation — VALIDATED;
-* geometry ranking — VALIDATED;
-* dictionary serialization — VALIDATED.
-
-Geometry ranking separation:
-
-VALIDATED
-
-Valid geometry ranking result:
-
-180
-
-None ranking result:
-
--999
-
-GeometryModel forbidden fields:
-
-score — ABSENT
-
-signal — ABSENT
-
-confidence — ABSENT
-
-confirmation — ABSENT
-
-Completed Project Sync foundation:
-
-* Architecture Intelligence;
-* Documentation Intelligence;
-* Change Detection;
-* Dependency Analysis;
-* Impact Analysis;
-* Synchronization Planning;
-* State Intelligence;
-* State Synchronization Planning;
-* State Synchronization;
-* Pipeline Engine;
-* Pipeline Registry;
-* Pipeline Executor;
-* Pipeline Context;
-* Pipeline Result;
-* Pipeline Stage Adapter;
-* Pipeline Report;
-* Migration Planning;
-* Migration Decision;
-* Approval Control;
-* Document Update;
-* Migration Execution;
-* Post Migration Validation;
-* Snapshot Creation.
-
-Current operational pipeline:
-
-12 stages
-
-Current pipeline result:
-
-HEALTHY
-
-Current registered documents:
-
-41
-
-Current validated documents:
-
-41
-
-Current migration state:
-
-Migration plan READY.
-
-Migration decision WAITING_APPROVAL.
-
-Migration decision value PENDING.
-
-Approval artifact APPROVED.
-
-Migration execution NO_UPDATES.
-
-Post-migration validation NO_UPDATES.
-
-Document updates 0.
-
-Updated documents 0.
-
-Backups 0.
-
-Execution errors 0.
-
-Latest migration execution checkpoint:
-
-2026-08-07
-
-Current architectural integration state:
-
-Project Sync Framework has an operational
-12-stage canonical Pipeline Runner architecture.
-
-PipelineReport is integrated as the
-canonical final report model.
-
-Migration execution remains controlled by
-the explicit Approval Gate.
-
-Automatic approval remains disabled.
-
-Post Migration Validator has a single
-canonical implementation in the migration layer.
-
-Current geometry validation state:
-
-Geometry Engine end-to-end pipeline
-successfully executed on 2026-08-08.
-
-The test produced:
-
-GEOMETRY RESULT: OK
-
-Returned model:
-
-geometry.model.GeometryModel
-
-Validation:
-
-valid: true
-
-Failed checks:
-
-[]
-
-The current synthetic geometry scenario
-successfully validates:
-
-* upper trendline;
-* lower trendline;
-* apex;
-* slope difference;
-* compression;
-* touches;
-* geometric validation;
-* model serialization.
-
-Additional candidate pair validation
-successfully demonstrates that an invalid
-non-compressing pair is rejected through
-apex and compression checks.
-
-Current geometry ranking validation
-successfully demonstrates:
-
-VALID_SCORE = 180
-
-NONE_SCORE = -999
-
-GeometryModel does not contain:
-
-* score;
-* signal;
-* confidence;
-* confirmation.
-
-Current environment requirement:
-
-Project root must be available to Python
-through PYTHONPATH when executing the
-test module in the current environment.
-
-Validated environment:
-
-$env:PYTHONPATH="C:\BybitScanner"
-
-Validated module execution:
-
-python -m tests.test_geometry_pipeline
-
-Current documentation automation direction:
-
-DEFERRED
-
-Current geometry direction:
-
-ACTIVE
-
-Current scanner direction:
-
-ACTIVE
-
-Important:
-
-Documentation Automation временно
-не является главным направлением.
-
-Основной инженерный приоритет —
-геометрия сканера и качество
-Wedge Detection.
+1. recurring protection ingress saturation;
+2. Robot closed-trade fee attribution;
+3. ordinary runtime verification of remaining Robot paths, including Rising Wedge SHORT;
+4. Scanner/geometry improvements;
+5. Trading Workspace refinements;
+6. analytics/statistics expansion;
+7. documentation automation and broad architecture hygiene.
+
+Current architectural direction:
+
+- retain one MarketDataHub;
+- retain one serialized PAPER mutation owner;
+- retain shared PAPER execution/accounting;
+- optimize the existing hot path before queue redesign;
+- scope overload consequence by lifecycle risk;
+- use authoritative snapshot recovery for proven continuity loss;
+- no broad infrastructure rebuild without new evidence.
+
+Current verification model:
+
+normal PAPER use -> concrete blocker -> read-only durable diagnosis -> smallest root-cause correction -> focused
+critical regression -> deploy -> repeat the same real scenario.
+
+Owning runtime/change authority:
+
+`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`
+
+The previous Scanner Geometry / Wedge Detection material formerly stored here as the current priority was stale and
+has been removed from this current-state section. Geometry remains an active subsystem, but not the present project
+priority.
 
 ---
-
 # AUTOMATION_STATE
 
 Project Sync analysis:
@@ -6500,9 +6308,18 @@ are live in the scanner's output today with zero containment protection, by expl
 
 ## Robot Run Evidence
 
-- `DOCUMENTS/ROBOT_RUN_INDEX.md` — индекс фактических запусков Robot v0.1.
-- `DOCUMENTS/ROBOT_V0_1_LOCAL_PAPER_RUN_2026-09-12.md` — результат локального Paper-запуска 12.09.2026.
-- Контрольная точка: `ROBOT_RUNNING + READY`; AAVEUSDT и BLURUSDT > `APPROVED`; `robot_trades = 0`.
-- Причина отсутствия Robot-сделок в этом запуске не исследовалась. При дальнейшем расследовании сначала читать `ROBOT_RUN_INDEX.md` и полный отчёт.
+Canonical run index: `DOCUMENTS/ROBOT_RUN_INDEX.md`.
+
+Current evidence includes:
+
+- 2026-09-12 local PAPER baseline: AAVEUSDT/BLURUSDT approved, no Robot trades;
+- 2026-09-18 GIGGLEUSDT real Robot STOP close and fee-attribution defect;
+- 2026-09-18 KSMUSDT protection ingress overflow followed by runtime-proven restart-safe
+  `EMERGENCY_CLOSE` recovery and clean reconciliation to `PAUSED`;
+- 2026-09-18 EDGEUSDT second `ingress_overflow` with no position/trade/execution, establishing recurring
+  pre-entry/coverage ingress saturation as the active runtime blocker.
+
+For current incident semantics and design, use
+`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`, not the 2026-09-12 run report alone.
 
 ---
