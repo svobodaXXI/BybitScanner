@@ -3,6 +3,71 @@
 Этот файл является указателем на результаты фактических запусков Robot v0.1.
 При расследовании истории запусков Robot сначала искать записи здесь.
 
+## 2026-09-18 — Real PAPER protection lifecycle / GIGGLEUSDT
+
+**Результат:** первая доказанная закрытая Robot-сделка в текущем runtime.
+
+- GIGGLEUSDT LONG / Falling Wedge;
+- LIMIT entry;
+- STOP сработал автономно через durable protection obligation;
+- позиция стала FLAT, Robot trade terminalized;
+- обнаружен отдельный accounting defect: `fees_costs_usdt` включил exit fee, но пропустил entry fee.
+
+Owning evidence/design:
+`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`, sections 21.1-21.2.
+
+---
+
+## 2026-09-18 — KSMUSDT protection continuity loss and runtime recovery
+
+**Инцидент:** durable state:
+`ROBOT_PROTECTION_COVERAGE_LOST symbol=KSMUSDT reason=ingress_overflow`.
+
+До исправления KSMUSDT оставался OPEN. После deployment PR #138/#139 и restart:
+
+- durable continuity-loss reason rehydrated;
+- fresh authoritative Bybit REST snapshot obtained;
+- existing serialized recovery path created/resumed `EMERGENCY_CLOSE`;
+- KSMUSDT became FLAT with `sync_state="synced"`;
+- no open KSM Robot trade remained;
+- explicit `/api/robot/reconcile` completed with no unresolved candidates/trades/obligations and landed
+  `ROBOT_RUNNING / PAUSED`.
+
+**Статус:** recovery path runtime-proven.
+
+Owning evidence/design:
+`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`, sections 21.4, 21.7-21.8.
+
+---
+
+## 2026-09-18 — EDGEUSDT recurring ingress saturation
+
+После clean KSM reconciliation Robot снова получил:
+
+`ROBOT_PROTECTION_COVERAGE_LOST symbol=EDGEUSDT reason=ingress_overflow`.
+
+Read-only inspection proved for EDGEUSDT at diagnosis:
+
+- no position projection;
+- no open Robot trade;
+- no Robot trade row;
+- no execution.
+
+**Вывод:** текущий blocker — не emergency-close recovery. Бounded Robot protection ingress может насыщаться в
+обычном coverage/pre-entry потоке и глобально ставить Robot в `RECONCILIATION_REQUIRED` ещё до появления
+экспозиции.
+
+**Статус:** CURRENT RUNTIME BLOCKER.
+
+Current correction design:
+measure queue pressure -> remove no-op hot-path work -> lifecycle-scope overflow consequence -> only if still
+needed add small role-aware capacity/fairness behind the same serialized owner.
+
+Owning design:
+`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`, sections 21.8-22.
+
+---
+
 ## 2026-09-12 — Local Paper Run
 
 **Результат:** Robot был `ROBOT_RUNNING + READY`; приняты 2 кандидата, оба `APPROVED`; Robot trades = 0.

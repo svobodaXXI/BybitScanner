@@ -2,11 +2,11 @@
 
 Version:
 
-5.1
+5.2
 
 Date:
 
-2026-08-08
+2026-09-18
 
 Document Type:
 
@@ -318,8 +318,20 @@ role:
 BybitScanner
 
 ├── Trading Intelligence
-
+│   └── Scanner / Geometry / Pattern / Signal
+│
+├── Trading Execution
+│   ├── Trading Workspace / Terminal
+│   ├── PAPER execution core
+│   ├── LIVE execution boundary
+│   └── Robot v0.1 orchestration / protection / recovery
+│
 └── Project Intelligence
+
+Trading Intelligence produces analysis/signals. Trading Execution owns orders, positions, protection, reconciliation
+and operator/Robot execution lifecycles. Project Intelligence owns development/project automation. Trading
+Intelligence results do not directly mutate exchange/PAPER state; execution flows through the Trading Execution
+boundary.
 
 ---
 
@@ -3453,3 +3465,142 @@ Execution Result Must Be Explicitly Reported
 Candidate Filter Boundary Must Be Explicitly Defined
 
 # END_OF_DOCUMENT
+
+---
+
+# ROBOT_V0_1_PAPER_RUNTIME_ARCHITECTURE
+
+status:
+
+ACTIVE / RUNTIME_VERIFYING
+
+owning_change_request:
+
+`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`
+
+current_runtime_checkpoint:
+
+`d4d550ecf4899bee59a01dff21a11b58ee6c701d`
+
+## Runtime ownership model
+
+```text
+Bybit public market data
+        ↓
+MarketDataHub
+        ↓
+per-symbol SymbolContext / order-book state
+        ↓
+RobotProtectionCoverageManager
+        ↓
+bounded Robot event ingress
+        ↓
+SerializedPaperRuntime
+(single mutation owner)
+        ↓
+PaperRuntime
+        ├─ Robot entry LIMIT matching / fill finalization
+        ├─ STOP / TAKE crossing evaluation
+        ├─ continuity-loss recovery
+        └─ Robot reconciliation
+        ↓
+shared PAPER executors + ExecutionEngine
+        ↓
+SQLite authoritative projections / Robot trade / protection obligations
+```
+
+## Architectural invariants
+
+1. Robot PAPER trading is independent of the Workspace's selected account and selected symbol.
+2. PAPER mutation remains serialized through one runtime owner.
+3. Robot execution reuses the shared PAPER execution/accounting core; there is no second trading engine.
+4. Protection crossing evidence must not be silently overwritten or latest-only coalesced.
+5. Continuity loss is explicit and fail-closed.
+6. A fresh authoritative snapshot is the recovery boundary after known order-book continuity loss.
+7. Durable ownership/execution evidence, not symbol identity alone, authorizes Robot close/finalization.
+8. Successful emergency exposure recovery does not silently reopen Robot admission; explicit evidence-based
+   reconciliation is required.
+9. LIVE behavior and mutation authorization remain separate and unchanged by Robot PAPER recovery.
+
+## Current backpressure boundary
+
+The existing Robot coverage path admits every covered order-book event as a distinct owner task into one global
+bounded ingress with default capacity `64`.
+
+Coverage currently includes:
+
+- OPEN Robot exposure;
+- unresolved protection obligations;
+- APPROVED `RETEST_DETECTED` entry lifecycles which need event-driven LIMIT matching.
+
+Real runtime incidents established two different classes:
+
+- **KSMUSDT:** overflow while Robot exposure existed. Global fail-closed fencing plus authoritative snapshot
+  recovery and `EMERGENCY_CLOSE` is required and runtime-proven.
+- **EDGEUSDT:** overflow with no position, Robot trade or execution. This proves that entry/pre-exposure traffic can
+  saturate the same ingress and unnecessarily fence the entire Robot.
+
+## Current correction architecture
+
+Correction is staged and intentionally reuses existing components.
+
+### Stage A — observability
+
+Add lightweight queue diagnostics only:
+
+- current/max pending Robot tasks;
+- enqueue-to-owner latency;
+- owner task processing duration;
+- symbol;
+- coverage role;
+- overflow high-watermark.
+
+No separate telemetry service is required.
+
+### Stage B — hot-path reduction
+
+Without changing trading semantics:
+
+- call authoritative-fill finalization only after an entry LIMIT execution was actually applied;
+- use symbol-scoped candidate/persistence reads in the event hot path;
+- avoid constructing/scanning lifecycle machinery on no-op book events where possible.
+
+### Stage C — lifecycle-aware coverage severity
+
+Coverage targets become role-aware:
+
+- `ENTRY_PENDING`;
+- `EXPOSURE`;
+- `OBLIGATION`.
+
+Policy:
+
+- `EXPOSURE` / `OBLIGATION` continuity loss retains global fail-closed Robot fencing and authoritative
+  snapshot recovery;
+- proven zero-fill `ENTRY_PENDING` overload cancels/terminalizes the affected entry lifecycle conservatively
+  instead of automatically escalating the whole Robot;
+- partial fill, ambiguous execution or uncertain ownership immediately escalates to exposure-grade handling.
+
+### Stage D — role-aware capacity only if still required
+
+If measured backlog remains after stages A-C:
+
+- reserve ingress capacity for exposure/protection work;
+- optionally apply small per-symbol fairness behind the same serialized owner;
+- never coalesce away a possible STOP/TAKE crossing.
+
+## Explicit non-goals for this correction
+
+Do not introduce as a primary response:
+
+- a second trading engine;
+- a second market-data stack;
+- Redis/Kafka/Aeron/Disruptor infrastructure;
+- a general-purpose message bus;
+- multi-process PAPER mutation;
+- silent event drops;
+- queue-size increase without root-cause measurement.
+
+The architecture remains a single-owner deterministic PAPER core with scoped improvements at the existing market-data
+ingress boundary.
+

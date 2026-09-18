@@ -1,13 +1,23 @@
 # BybitScanner — Robot v0.1 implementation slices
 
-Version: 1.0
-Date: 2026-09-08
-Status: IMPLEMENTATION PLAN ONLY
-Runtime implementation authorization: NONE
+Version: 1.1
+Date: 2026-09-18
+Status: HISTORICAL IMPLEMENTATION PLAN / BASELINE SUBSTANTIALLY IMPLEMENTED
+Current implementation authority: active ChangeRequests and PROJECT_STATE
 
 ## Purpose
 
-This document converts the already accepted Robot v0.1 PAPER scope into a minimal dependency-ordered implementation plan. It does not authorize runtime code changes.
+This document preserves the original dependency-ordered Robot v0.1 PAPER implementation plan. It is no longer the
+current authorization or runtime-state source.
+
+The baseline Robot described here has since been substantially implemented and exercised in real PAPER runtime.
+Current defects, deployed recovery behavior, runtime evidence and the next correction design are owned by:
+
+- `DOCUMENTS/PROJECT_STATE.md#CURRENT_DEVELOPMENT_PRIORITY`;
+- `DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`.
+
+Do not interpret old per-slice future wording below as evidence that those capabilities are still unimplemented.
+The slice descriptions remain useful as historical intent/dependency structure only.
 
 The implementation must reuse existing Scanner, Terminal/PAPER execution, authoritative market data, sizing, order lifecycle, STOP/TAKE, position state, accounting, reconciliation and Telegram capabilities wherever they already exist. Robot adds orchestration/policy, not duplicate infrastructure.
 

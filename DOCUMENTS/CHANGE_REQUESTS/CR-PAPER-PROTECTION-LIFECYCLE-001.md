@@ -7,9 +7,9 @@
   "id": "CR-PAPER-PROTECTION-LIFECYCLE-001",
   "title": "Autonomous PAPER Protection Execution Lifecycle",
   "status": "IMPLEMENTED_VERIFYING",
-  "revision": "1.5",
+  "revision": "1.6",
   "lifecycle_stage": "VERIFY",
-  "objective": "Specify D2 correction: autonomous event-driven PAPER protection, durable crossing obligations, restart-safe serialized closing and evidence-based Robot trade finalization, independent of UI and entry admission.",
+  "objective": "Own the deployed D2 PAPER protection lifecycle, runtime verification, continuity-loss recovery, ingress reliability corrections and evidence-based Robot trade finalization, independent of UI selection.",
   "non_goals": [
     "Changes to structural STOP/TAKE strategy, sizing, wedge strategy or LIVE",
     "BSBUSDT D1 invalid structural STOP / partial-fill recovery",
@@ -52,13 +52,12 @@
     "D2.3 realized_pnl_pct is frozen (owner decision, 2026-09-13) as (realized_pnl_usdt - fees_costs_usdt) / actual_entry_notional_usdt * 100, where realized_pnl_usdt is gross realized trading PnL from actual execution evidence, fees_costs_usdt is the actual accumulated fee cost attributable to this Robot trade close lifecycle, and actual_entry_notional_usdt is the actual Robot-owned entry quantity multiplied by the actual average entry price (leverage ignored); actual_wv MUST NOT be used as the denominator because it represents a WV fraction, not an absolute USDT notional, in this repository; fail closed if actual_entry_notional_usdt cannot be proven from authoritative Robot-owned execution/position evidence -- never guess or substitute aggregate/manual-owned quantity"
   ],
   "unresolved_decisions": [
-    "Fix closed-trade fee attribution so fees_costs_usdt includes all attributable Robot entry and exit fees without symbol-wide/manual contamination",
     "Eliminate the recurring normal-runtime protection ingress saturation that can fence Robot admission even when the affected covered symbol has no open Robot exposure",
     "Fix closed-trade fee attribution so fees_costs_usdt includes all attributable Robot entry and exit fees without symbol-wide/manual contamination"
   ],
   "acceptance_criteria": [
     "All section 14 invariants hold",
-    "All mandatory scenarios T01-T20 and boundary cases in section 16 pass at actual shared execution/persistence boundaries",
+    "All mandatory scenarios T01-T28 and boundary cases in section 16 pass at actual shared execution/persistence boundaries",
     "No UI, fresh-candle, admission-state or selected-account dependency in protection execution",
     "Correlated actual fill -> FLAT -> cleanup -> Robot trade CLOSED evidence"
   ],
@@ -87,11 +86,11 @@
     },
     {
       "id": "SPEC",
-      "status": "DETAILS_DRAFT_FOR_REVIEW"
+      "status": "IMPLEMENTED_BASELINE_WITH_CURRENT_AMENDMENTS"
     },
     {
       "id": "CONTEXT",
-      "status": "INVESTIGATION_RECORDED_WITH_GAPS"
+      "status": "RUNTIME_EVIDENCE_CURRENT"
     },
     {
       "id": "IMPLEMENT",
@@ -107,7 +106,7 @@
     }
   ],
   "current_phase": "VERIFY",
-  "current_checkpoint": "KSM_RECOVERY_PROVEN_EDGE_INGRESS_SATURATION_RECURRED",
+  "current_checkpoint": "EDGE_INGRESS_SATURATION_CURRENT_BLOCKER_ARCHITECTURE_PLAN_RECORDED",
   "implementation_status": "PAPER_DEPLOYED_VERIFYING",
   "next_phase": "VERIFY",
   "next_phase_authorization": "Continue runtime verification and fix only observed concrete blockers",
@@ -119,7 +118,7 @@
 ,
     {
       "phase": "PAPER_RUNTIME_VERIFYING",
-      "commit": "e5319da29029d7c463a5cc7dc428a35a01cceb8b"
+      "commit": "d4d550ecf4899bee59a01dff21a11b58ee6c701d"
     }
   ],
   "amendment_history": [
@@ -153,6 +152,11 @@
       "revision": "1.5",
       "date": "2026-09-18",
       "reason": "Recorded systemic ingress architecture review, external mature-project references, and a staged minimal-change correction plan prioritizing exposure safety, lifecycle-scoped overflow handling, and removal of unnecessary per-book-event owner work before any queue redesign"
+    },
+    {
+      "revision": "1.6",
+      "date": "2026-09-18",
+      "reason": "Removed stale pre-implementation and pre-recovery statements, refreshed current architecture/deployment authority, removed duplicate unresolved metadata, and demoted superseded incident text so current sections no longer contradict deployed runtime"
     }
   ]
 }
@@ -162,11 +166,12 @@
 Date: 2026-09-18 (Europe/Moscow).
 Historical baseline branch: `robot-v0-1-admission-gate`.
 Historical baseline HEAD: `14f9b514966fd89d0cb6ebe178a6ece0501ffb56`.
-Current deployed PAPER checkpoint recorded in section 21:
-`e5319da29029d7c463a5cc7dc428a35a01cceb8b`.
+Current deployed PAPER checkpoint recorded in sections 21-22:
+`d4d550ecf4899bee59a01dff21a11b58ee6c701d`.
 
-Sections 1-20 preserve the original D2 design/context history. Section 21 and the current metadata are authoritative
-for the observed deployed PAPER state, factual runtime evidence and current blockers.
+Sections 1-16 preserve the original D2 design baseline where still accurate. Sections 17 and 20 were refreshed after
+deployment so they no longer describe implementation as future/unauthorized. Sections 21-22 and the current metadata
+are authoritative for deployed PAPER behavior, runtime evidence, current blockers and the active correction design.
 
 ## 1. Problem statement and evidence
 
@@ -199,7 +204,7 @@ of a closing execution is not proof that every possible matcher call was absent.
 
 ## 2. Scope
 
-This document owns D2 TASK/SPEC/CONTEXT. D2 acceptance and the current required implementation scope
+This document owns the D2 lifecycle, deployed behavior, runtime evidence and current correction design. D2 acceptance and the current required implementation scope
 apply to Robot-owned protected PAPER positions. The shared PAPER protection mechanism must remain
 architecturally reusable for manual PAPER positions, but extending or changing the full manual PAPER
 trading lifecycle is not a separate objective or acceptance obligation of this CR. References elsewhere
@@ -222,28 +227,33 @@ documentation task. The closed breakout-monitor CR and existing run records rema
 - Re-entry, adding OPEN to the entry filter, a second execution/accounting engine or market feed.
 - Candle-high/low trigger substitution and retrospective simulated fills.
 - General manual takeover or allocation of mixed ownership; ambiguity fails closed.
-- Runtime, source, tests or schema edits now; commits/pushes without separate authorization.
 
 ## 4. Current architecture
 
 ```text
-Selected Workspace L2 -> update consumer -> serialized owner queue
- -> process_orderbook_update (active READY PAPER account required)
- -> _match_symbol: LIMIT matching, then protection predicates
- -> PaperMarketExecutor -> ExecutionEngine -> SQLite execution/projection
- -> FLAT + PnL/fees + protection cleanup
- -> [missing production Robot trade finalizer]
-
-APPROVED Robot retest -> match_resting_orders -> robot_match_symbol
- -> selected book or REST fallback -> same _match_symbol
+Bybit public WS
+  -> MarketDataHub
+  -> per-symbol SymbolContext / PublicOrderBookBuffer
+  -> RobotProtectionCoverageManager
+  -> SerializedPaperRuntime owner queue
+  -> PaperRuntime.process_robot_market_event()
+  -> Robot entry LIMIT matching / fill finalization / STOP-TAKE evaluation
+  -> shared PAPER executor + ExecutionEngine
+  -> SQLite projections, durable obligations and Robot trade finalization
 ```
 
-`mutate_paper_protection_leg()` stores confirmed_active prices, not worker readiness.
-`robot_match_symbol()` bypasses UI account/symbol selection, but its monitor caller selects only
-APPROVED. Trade creation promotes the candidate to OPEN and ends this coverage route. Workspace
-switching detaches the previous consumer and changes the provider's single selected buffer.
-Queued updates are coalesced and matching reads the latest book. `close_robot_trade()` has persistence
-implementation but no production caller after the protection-trigger execution.
+Robot coverage is independent of Workspace account/symbol selection. Coverage currently includes OPEN Robot exposure,
+unresolved protection obligations, and APPROVED `RETEST_DETECTED` entry lifecycles that require event-driven LIMIT
+matching. Every admitted Robot coverage update is currently a distinct non-coalesced owner task because transient
+STOP/TAKE crossing evidence must not be overwritten.
+
+Continuity loss is fail-closed. PR #138/#139 added fresh authoritative REST snapshot recovery and restart-safe
+rehydration of durable `ROBOT_PROTECTION_COVERAGE_LOST` state. Real KSMUSDT runtime evidence proved
+`fence -> restart -> snapshot recovery -> EMERGENCY_CLOSE -> FLAT -> explicit reconcile -> PAUSED`.
+
+The remaining architectural blocker is not missing recovery. It is recurring saturation of the shared bounded
+Robot-protection ingress under ordinary coverage traffic, including pre-entry symbols with no position. Section 22
+owns the current pressure-point analysis and staged minimal-change design.
 
 ## 5. Root cause
 
@@ -507,20 +517,24 @@ idempotency, account switching and Robot entry regressions. No synthetic UI test
 
 ## 17. Rollout/verification
 
-Now: CR documentation and validation only; incident-position repair is not authorized.
-Before IMPLEMENT: resolve metadata design gates, freeze exact paths/schema/transactions, record an
-approved amendment and pass applicable harness/governance gates. Prior closed monitor CR does not
-authorize this scope.
+The PAPER protection lifecycle is deployed and remains in runtime VERIFY.
 
-Future sequence: focused integration -> isolated PAPER restart/crash proof -> runtime acceptance
-(browser absent, different symbol, MAINNET UI selection) -> evidence review -> authorized rollout.
-Use isolated PAPER storage for fault injection; never reset active user trades. Upgrade discovers
-existing positions/protection without entry replay or historical fabrication. Establish compatibility
-and recovery readiness before admitting new risk.
+Current verification policy:
 
-Rollback preserves obligations, identities and executions. Do not downgrade to a reader that cannot
-recover pending obligations while exposure survives. Drain/reconcile or use an approved compatible
-rollback; do not delete economic evidence. No runtime acceptance is claimed by document checks.
+1. use normal PAPER operation;
+2. when a concrete blocker occurs, inspect durable state and the connected lifecycle read-only first;
+3. fix the proven root cause with the smallest safe scope;
+4. use focused deterministic regression for changed critical behavior;
+5. verify the same real runtime path after deployment;
+6. keep LIVE untouched unless separately authorized.
+
+The KSMUSDT continuity-loss recovery path is runtime-proven. The current runtime blocker is recurring protection
+ingress saturation demonstrated by EDGEUSDT. The next implementation work follows section 22's staged design:
+measure queue pressure, remove unnecessary hot-path work, then lifecycle-scope overflow consequences before any
+larger scheduling change.
+
+Rollback must preserve obligations, execution identities, ownership evidence and fail-closed state. Never delete
+economic evidence or downgrade to a reader that cannot recover pending obligations while exposure survives.
 
 ## 18. Dependencies
 
@@ -546,26 +560,28 @@ Liquidity may cause slippage; STOP/TAKE is not a guaranteed fill price. Do not s
 accounting denominator or fee convention, or use original planned WV as closing quantity. Historical
 cross reconstruction requires a separate decision, not an implementation shortcut.
 
-## 20. Expected future IMPLEMENT surface
+## 20. Current implementation surface
 
-Candidates for later exact scope, not present edit authorization:
-
-| Module | Responsibility |
+| Module | Current responsibility |
 | --- | --- |
-| terminal/runtime/paper_runtime.py | Coverage activation, matcher, serialized closing |
-| terminal/runtime/paper_http_server.py | Provider/queue integration and independent consumers |
-| terminal/market_data/hub.py | Autonomous interests and reconnect coverage |
-| terminal/market_data/workspace_controller.py | Only if needed to preserve protection interest |
-| terminal/persistence/sqlite_store.py | Trigger/dispatch durability, recovery queries and finalization |
-| terminal/persistence/schema.py | Only approved migration required by selected design |
-| terminal/application/execution_engine.py | Execution correlation/finalization integration |
-| terminal/paper/executor.py | Minimal shared identity/result integration; preserve economics |
-| terminal/application/robot_recovery.py | Recovery/finalization without entry replay |
-| terminal/application/robot_breakout_monitor.py | Handoff only if needed; no OPEN entry filtering |
-| Existing protection/runtime/persistence/Robot tests | Matrix and fault-injection evidence |
+| `terminal/runtime/paper_runtime.py` | Robot event processing, entry LIMIT matching/finalization, protection crossing, continuity recovery, reconciliation bridge |
+| `terminal/runtime/paper_http_server.py` | Market-data coverage manager, bounded serialized ingress, authoritative REST recovery snapshot, HTTP Robot routes |
+| `terminal/market_data/hub.py` | Shared symbol-context ownership, subscription lifetime and reconnect generation |
+| `terminal/persistence/sqlite_store.py` | Robot candidate/trade/protection obligation persistence, ownership evidence and idempotent finalization |
+| `terminal/persistence/schema.py` | Durable schema, including emergency-close lifecycle support |
+| `terminal/application/execution_engine.py` | PAPER execution application and authoritative position projection updates |
+| `terminal/paper/executor.py` | Shared PAPER LIMIT/MARKET execution semantics and fees |
+| `terminal/application/robot_recovery.py` | Durable Robot recovery-state transitions |
+| `terminal/application/robot_breakout_monitor.py` | Pre-entry lifecycle, authoritative-fill finalization and Robot entry maintenance |
+| focused Robot protection/runtime tests | Critical deterministic regression evidence |
 
-New modules/classes require responsibility-based justification. No name-driven supervisor class,
-separate OS process, second market feed or second trading engine is prescribed.
+Current design constraints:
+
+- keep one serialized PAPER mutation owner;
+- keep one shared market-data hub and one shared PAPER execution/accounting core;
+- do not add OPEN back to entry advancement;
+- do not add a second protection engine, second market feed or second trading engine;
+- optimize the existing ingress/hot path before considering broader queue architecture.
 
 ## 21. Runtime evidence — 2026-09-18
 
@@ -643,11 +659,13 @@ Correction merged/deployed in `e5319da29029d7c463a5cc7dc428a35a01cceb8b`:
 - generic/exchange evidence keeps the conservative `reconciliation_required` default;
 - command correlation remains preserved.
 
-Legacy open projections created before this deployment are not rewritten automatically, so existing AEONUSDT and
-KSMUSDT may continue to display the old label until their lifecycle changes. That legacy display is not itself
-proof that the Robot runtime is fenced.
+Legacy projections created before this deployment are not rewritten automatically. AEONUSDT may therefore retain
+the old label until its lifecycle changes; that legacy display is not itself proof that Robot runtime is fenced.
 
-**Status: CODE FIX DEPLOYED; NEW-FILL RUNTIME CONFIRMATION STILL REQUIRED.**
+KSMUSDT subsequently closed through the post-fix local PAPER path and its position projection became
+`sync_state="synced"`.
+
+**Status: CODE FIX DEPLOYED AND REAL-RUNTIME CONFIRMED.**
 
 ### 21.4 Robot runtime fence — KSMUSDT ingress overflow
 
@@ -675,14 +693,15 @@ KSMUSDT durable state at diagnosis:
 Therefore the safety fence itself worked: once ordered protection evidence could no longer be admitted, Robot
 stopped admitting new risk. However the recovery path did not complete.
 
-The deployed coverage manager keeps the symbol in `_unhealthy` after overflow. While unhealthy, ordinary delta
-book updates are ignored and recovery is attempted only when a subsequent market-data message has
-`messageType="snapshot"`. The periodic resync watchdog reasserts the fence but does not itself obtain a fresh
-authoritative snapshot or force reconnect. If the existing WebSocket session continues sending only deltas, the
-system can therefore remain indefinitely in `RECONCILIATION_REQUIRED` with the Robot-owned position still open
-and no emergency-close obligation created.
+That diagnosis exposed the then-deployed recovery gap: unhealthy coverage could wait indefinitely for a naturally
+arriving WebSocket snapshot.
 
-**Status: ROOT CAUSE PROVEN; RECOVERY DESIGN RECORDED; IMPLEMENTATION PENDING.**
+PR #138 added active fresh REST order-book snapshot recovery through the existing serialized
+`recover_robot_protection_continuity_loss()` / durable `EMERGENCY_CLOSE` path. PR #139 made that recovery
+restart-safe by rehydrating the durable continuity-loss reason after backend restart. Section 21.8 records the real
+KSMUSDT runtime proof.
+
+**Status: RECOVERY DEFECT FIXED AND RUNTIME PROVEN; RECURRING INGRESS SATURATION REMAINS SEPARATE.**
 
 ### 21.5 Rising Wedge / SHORT parity status
 
@@ -691,9 +710,10 @@ PR #135 added focused deterministic PAPER acceptance for the mirrored Rising Wed
 `Rising Wedge -> SHORT -> breakout below lower boundary -> retest -> SELL LIMIT -> SHORT position ->
 STOP/TAKE -> TAKE close`.
 
-CI passed and the code is deployed at `e5319da29029d7c463a5cc7dc428a35a01cceb8b`.
+CI passed; the SHORT parity change was introduced at `e5319da29029d7c463a5cc7dc428a35a01cceb8b`
+and remains included in the current deployed PAPER runtime `d4d550ecf4899bee59a01dff21a11b58ee6c701d`.
 
-**Status: IMPLEMENTED AND DETERMINISTICALLY VERIFIED; REAL RUNTIME SHORT TRADE STILL UNOBSERVED.**
+**Status: IMPLEMENTED AND DETERMINISTICALLY VERIFIED; REAL PAPER RUNTIME SHORT TRADE STILL UNOBSERVED.**
 
 ### 21.6 Current concrete issue list
 
@@ -705,70 +725,29 @@ CI passed and the code is deployed at `e5319da29029d7c463a5cc7dc428a35a01cceb8b`
 | Pre-fix AEONUSDT sync label | LEGACY STATE | Old row may still display `reconciliation_required`; no blind rewrite |
 | KSMUSDT protection ingress overflow recovery | RUNTIME PROVEN WORKING | Restart rehydrated durable loss, fresh REST snapshot recovery closed unambiguous Robot exposure through `EMERGENCY_CLOSE`, then explicit reconcile completed with no unresolved objects and landed PAUSED |
 | Recurring protection ingress saturation | CURRENT BLOCKER | A second `ingress_overflow` occurred on EDGEUSDT even though EDGE had no position, Robot trade or execution; this proves the remaining failure is producer/queue pressure in coverage processing, not close recovery |
-| Rising Wedge SHORT runtime behavior | IMPLEMENTED, NOT YET LIVE-PROVEN | Deterministic acceptance passed; await ordinary PAPER runtime observation |
+| Rising Wedge SHORT runtime behavior | IMPLEMENTED, NOT YET REAL-RUNTIME-PROVEN | Deterministic acceptance passed; await ordinary PAPER runtime observation |
 
 Verification policy remains operator-driven: normal PAPER usage -> concrete observed blocker -> systematic inspection
 of the connected lifecycle -> minimal root-cause fix. No broad speculative audit or mass test campaign is implied
 by this record.
 
-### 21.7 Required fix — authoritative snapshot recovery after continuity loss
+### 21.7 Implemented continuity-loss recovery contract
 
-The recovery solution is intentionally narrow. Do not weaken the bounded ingress queue, do not silently drop
-events, and do not simply increase the queue capacity as the primary correction. Overflow remains evidence that
-continuity was lost and must continue to fence Robot admission fail-closed.
+The authoritative snapshot recovery design recorded in revision 1.3 is now implemented and runtime-proven for the
+KSMUSDT incident:
 
-Required behavior after any protection continuity-loss reason that has already marked a covered Robot symbol
-unhealthy, including `ingress_overflow`:
+- continuity loss durably fences Robot admission;
+- unhealthy coverage does not rely on a random future WebSocket snapshot;
+- a fresh authoritative Bybit REST snapshot carries source identity/timestamps into the existing recovery path;
+- recovery is deduplicated per symbol while in flight;
+- unambiguous Robot exposure exits through the durable `EMERGENCY_CLOSE` obligation/dispatch path;
+- ambiguity remains fail-closed;
+- process restart rehydrates the durable continuity-loss reason;
+- successful exposure recovery does not silently reopen admission;
+- explicit evidence-based Robot reconciliation is required and lands `PAUSED` on clean success.
 
-1. preserve the existing durable `RECONCILIATION_REQUIRED` fence immediately;
-2. stop accepting ordinary delta events for recovery purposes until continuity is re-established;
-3. actively obtain a **fresh authoritative L2 snapshot** for that exact symbol through the existing market-data
-   infrastructure (preferred: existing context/provider REST snapshot capability or an explicit controlled
-   resubscribe/reconnect that guarantees a new snapshot);
-4. the recovery snapshot must carry the required source identity/timestamps used by
-   `recover_robot_protection_continuity_loss()`; never synthesize missing market evidence;
-5. enqueue exactly one serialized recovery attempt for that symbol/generation and deduplicate concurrent watchdog
-   attempts;
-6. pass the fresh snapshot through the existing `recover_robot_protection_continuity_loss()` path rather than
-   creating a second close implementation;
-7. if ownership is unambiguous and the Robot trade is still exposed, reuse the existing durable
-   `EMERGENCY_CLOSE` obligation/dispatch path;
-8. if the trade is already FLAT, finalize bookkeeping/cleanup idempotently and do not send another close;
-9. if ownership, position version, protection evidence or execution attribution is ambiguous, remain
-   `RECONCILIATION_REQUIRED`; do not manufacture a close or clear the fence;
-10. clear the symbol's unhealthy coverage state only after recovery has conclusively resolved that symbol;
-11. Robot may return to normal admission only when no unresolved protection-continuity loss remains across covered
-    Robot symbols.
-
-Implementation preference:
-
-- keep `SerializedPaperRuntime` as the single mutation owner;
-- keep `RobotProtectionCoverageManager` as the coverage/recovery coordinator;
-- reuse existing `MarketDataHub` / symbol context / REST snapshot functionality;
-- add only the minimum per-symbol recovery-in-flight guard needed to prevent duplicate concurrent snapshot
-  recovery;
-- do not add a second executor, second protection engine, separate daemon, historical candle replay or
-  last-trade/mid-price fallback;
-- do not use queue-size increase alone as the fix. Capacity tuning may be considered separately only after the
-  deterministic recovery path is correct.
-
-Required focused acceptance for this defect:
-
-- force protection ingress overflow on an OPEN Robot PAPER position;
-- prove Robot immediately enters `RECONCILIATION_REQUIRED`;
-- prove the position remains unchanged until fresh authoritative snapshot recovery;
-- prove recovery does not depend on a naturally arriving future WebSocket snapshot;
-- prove exactly one fresh snapshot recovery attempt is active per symbol/generation;
-- prove unambiguous Robot-owned exposure creates/resumes one durable `EMERGENCY_CLOSE` obligation and closes
-  through the shared PAPER executor;
-- prove duplicate watchdog/resync calls do not duplicate the close;
-- prove ambiguous ownership stays fenced and does not close;
-- prove successful recovery removes unhealthy coverage for that symbol and allows admission only when all
-  continuity-loss conditions are resolved.
-
-This correction addresses the observed KSMUSDT failure mode only. It does not change STOP/TAKE strategy,
-structural geometry, sizing, LIVE behavior, normal STOP/TAKE crossing semantics or the separate closed-trade fee
-accounting defect.
+This item is no longer an open implementation blocker. The remaining protection-runtime blocker is repeated ingress
+saturation before/around entry, described in sections 21.8-22.
 
 ### 21.8 Deployed KSMUSDT recovery evidence and second EDGEUSDT overflow
 
@@ -859,24 +838,24 @@ preserving the critical invariant that a transient STOP/TAKE crossing cannot be 
 
 ## 22. Systemic ingress architecture review — 2026-09-18
 
-This review follows two real runtime \`ingress_overflow\` incidents. It separates proven facts from pressure points and
+This review follows two real runtime `ingress_overflow` incidents. It separates proven facts from pressure points and
 proposed changes. No code behavior is authorized merely by this review.
 
 ### 22.1 Proven current architecture
 
 Current flow:
 
-\`Bybit WS -> MarketDataHub -> SymbolContext/PublicOrderBookBuffer -> RobotProtectionCoverageManager ->
-SerializedPaperRuntime -> PaperRuntime.process_robot_market_event()\`.
+`Bybit WS -> MarketDataHub -> SymbolContext/PublicOrderBookBuffer -> RobotProtectionCoverageManager ->
+SerializedPaperRuntime -> PaperRuntime.process_robot_market_event()`.
 
 Proven properties:
 
-- shared \`MarketDataHub\`, independent Robot coverage, and depth-1000 symbol contexts;
+- shared `MarketDataHub`, independent Robot coverage, and depth-1000 symbol contexts;
 - every accepted Robot book update becomes a distinct non-coalesced owner task;
-- one global Robot-protection pending counter has default capacity \`64\`;
-- OPEN positions, unresolved obligations, and APPROVED \`RETEST_DETECTED\` pre-entry lifecycles share that capacity;
-- each \`process_robot_market_event()\` loads Robot candidates, checks active PAPER LIMITs, runs
-  \`process_authoritative_fill()\`, and evaluates protection;
+- one global Robot-protection pending counter has default capacity `64`;
+- OPEN positions, unresolved obligations, and APPROVED `RETEST_DETECTED` pre-entry lifecycles share that capacity;
+- each `process_robot_market_event()` loads Robot candidates, checks active PAPER LIMITs, runs
+  `process_authoritative_fill()`, and evaluates protection;
 - EDGEUSDT overflowed with no position, Robot trade or execution, proving the queue can saturate before exposure.
 
 ### 22.2 Code-level pressure points
@@ -885,8 +864,8 @@ These are evidenced code-level pressure points, not yet individually proven as t
 
 1. **Global cross-symbol coupling.** One symbol can consume the same 64-task budget used by every other symbol.
 2. **Pre-entry and open-exposure traffic have identical queue priority and overflow consequence.**
-3. **No-fill events do unnecessary owner work.** \`process_authoritative_fill()\` runs even when
-   \`_match_limits_only()\` applied zero executions.
+3. **No-fill events do unnecessary owner work.** `process_authoritative_fill()` runs even when
+   `_match_limits_only()` applied zero executions.
 4. **Candidate lookup is account-wide on every event** and then filtered by symbol in Python.
 5. **Every Robot event materializes a full normalized L2 snapshot** even though STOP/TAKE crossing needs only the
    executable-side best quote and most resting-limit updates are non-crossing.
@@ -894,7 +873,7 @@ These are evidenced code-level pressure points, not yet individually proven as t
 
 ### 22.3 External references reviewed
 
-Per \`DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md\`, these are design references only.
+Per `DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md`, these are design references only.
 
 **Bybit V5 order book — ADOPT continuity semantics**
 
@@ -925,7 +904,7 @@ Useful pattern: data/events/commands have explicit semantics and instrument-awar
 remain single-threaded.
 
 Decision: do not add a general message bus; make existing Robot coverage targets explicit by role
-(\`ENTRY_PENDING\`, \`EXPOSURE\`, \`OBLIGATION\`).
+(`ENTRY_PENDING`, `EXPOSURE`, `OBLIGATION`).
 
 **LMAX Disruptor — ADAPT backpressure principles only**
 
@@ -945,8 +924,8 @@ processing duration, symbol/coverage role and overflow high-watermark. No new me
 
 **Slice B — remove unnecessary hot-path work without changing semantics.**
 
-1. retain the result of \`_match_limits_only()\`;
-2. call \`process_authoritative_fill()\` only when an entry LIMIT execution was actually applied;
+1. retain the result of `_match_limits_only()`;
+2. call `process_authoritative_fill()` only when an entry LIMIT execution was actually applied;
 3. replace account-wide candidate scans in this hot path with a symbol-scoped persistence query;
 4. reuse an owned fill-finalization helper/monitor instead of constructing a new monitor per event where practical.
 
@@ -956,15 +935,15 @@ This is the preferred first implementation slice after diagnostics.
 
 Expose a small typed coverage target:
 
-- \`ENTRY_PENDING\`: no proven Robot exposure;
-- \`EXPOSURE\`: Robot-owned non-flat/partial-fill exposure;
-- \`OBLIGATION\`: unresolved durable close.
+- `ENTRY_PENDING`: no proven Robot exposure;
+- `EXPOSURE`: Robot-owned non-flat/partial-fill exposure;
+- `OBLIGATION`: unresolved durable close.
 
 Policy:
 
-- \`EXPOSURE\` / \`OBLIGATION\` overflow keeps the current global fail-closed fence and snapshot recovery;
-- \`ENTRY_PENDING\` with proven zero fill cancels/terminalizes only that entry lifecycle instead of forcing the
-  entire Robot into \`RECONCILIATION_REQUIRED\`;
+- `EXPOSURE` / `OBLIGATION` overflow keeps the current global fail-closed fence and snapshot recovery;
+- `ENTRY_PENDING` with proven zero fill cancels/terminalizes only that entry lifecycle instead of forcing the
+  entire Robot into `RECONCILIATION_REQUIRED`;
 - partial fill, ambiguous execution evidence or uncertain ownership immediately escalates to exposure-grade handling.
 
 This directly addresses the EDGEUSDT failure class while preserving KSMUSDT safety.
@@ -983,9 +962,9 @@ the required rate.
 
 Do not use as the primary fix:
 
-- only raising \`protection_ingress_capacity\`;
+- only raising `protection_ingress_capacity`;
 - silent latest-only coalescing;
-- automatically clearing \`RECONCILIATION_REQUIRED\` after emergency close;
+- automatically clearing `RECONCILIATION_REQUIRED` after emergency close;
 - removing entry LIMIT event handling without a replacement correctness contract;
 - broad reconnect/restart on every overflow;
 - moving SQLite mutation off the single owner before cheaper hot-path work is measured and removed.
@@ -993,7 +972,7 @@ Do not use as the primary fix:
 ### 22.6 Separate accounting defect
 
 The GIGGLEUSDT fee issue remains independent. The focused fix is to correlate Robot-owned entry execution fee(s)
-plus the proven close execution fee, store that lifecycle total in \`fees_costs_usdt\`, and recompute the frozen
-fee-inclusive \`realized_pnl_pct\`. Never aggregate all executions for a symbol because manual/unrelated fills must
+plus the proven close execution fee, store that lifecycle total in `fees_costs_usdt`, and recompute the frozen
+fee-inclusive `realized_pnl_pct`. Never aggregate all executions for a symbol because manual/unrelated fills must
 not contaminate Robot economics.
 
