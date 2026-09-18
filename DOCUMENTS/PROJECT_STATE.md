@@ -727,9 +727,10 @@ Current deployed PAPER runtime checkpoint:
 
 `d4d550ecf4899bee59a01dff21a11b58ee6c701d`
 
-Current documentation/architecture checkpoint:
+Current architecture authority:
 
-`65cab47c7cb440eed67d02e697334c0b82a1b2ff`
+`DOCUMENTS/ARCHITECTURE.md#ROBOT_V0_1_PAPER_RUNTIME_ARCHITECTURE`
+and `DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`.
 
 Primary objective:
 
