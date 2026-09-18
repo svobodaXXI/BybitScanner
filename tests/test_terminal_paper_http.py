@@ -1148,6 +1148,54 @@ def test_health_get_returns_exact_paper_status():
             runtime.close()
 
 
+def test_robot_protection_health_get_returns_ingress_diagnostics():
+    class CoverageHealth:
+        def health(self):
+            return {
+                "healthy": True,
+                "covered_symbols": ("BTCUSDT",),
+                "coverage_roles": {"BTCUSDT": "EXPOSURE"},
+                "unhealthy_symbols": {},
+                "ingress": {
+                    "capacity": 64,
+                    "current_pending": 3,
+                    "high_watermark": 11,
+                    "max_queue_latency_ms": 4.5,
+                    "max_processing_ms": 2.25,
+                    "last_symbol": "BTCUSDT",
+                    "last_role": "EXPOSURE",
+                    "last_overflow_symbol": None,
+                    "last_overflow_role": None,
+                },
+            }
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.robot_protection_coverage = CoverageHealth()
+    response = {}
+
+    def get_health():
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{server.server_port}/api/robot/protection-health"
+        ) as result:
+            response["status"] = result.status
+            response["body"] = json.load(result)
+
+    client = threading.Thread(target=get_health)
+    client.start()
+    try:
+        server.handle_request()
+        client.join(timeout=5)
+
+        assert not client.is_alive()
+        assert response["status"] == 200
+        assert response["body"]["ok"] is True
+        assert response["body"]["coverage_roles"] == {"BTCUSDT": "EXPOSURE"}
+        assert response["body"]["ingress"]["current_pending"] == 3
+        assert response["body"]["ingress"]["high_watermark"] == 11
+    finally:
+        server.server_close()
+
+
 def test_accounts_get_returns_authoritative_credential_free_catalog():
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime_owner(Path(temp) / "paper.sqlite3")

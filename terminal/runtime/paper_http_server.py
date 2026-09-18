@@ -2053,6 +2053,18 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **diagnostics})
             return
 
+        if parsed.path == "/api/robot/protection-health":
+            try:
+                health = self.server.robot_protection_coverage.health()
+            except Exception:
+                self._json_response(
+                    503,
+                    {"ok": False, "error": "robot_protection_health_unavailable"},
+                )
+                return
+            self._json_response(200, {"ok": True, **to_primitive(health)})
+            return
+
         if parsed.path == "/api/health":
             self._json_response(
                 200,
@@ -3246,6 +3258,7 @@ def main() -> None:
     server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
     server.runtime = runtime
     server.market_data = market_data
+    server.robot_protection_coverage = robot_protection_coverage
     server.diary_setup_store_path = decision_store_path(database_path)
     server.diary_factor_store_path = server.diary_setup_store_path
 
