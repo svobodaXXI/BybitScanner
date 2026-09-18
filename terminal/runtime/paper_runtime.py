@@ -1477,26 +1477,25 @@ class PaperRuntime:
             return None
         return symbol, reason
 
-    def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
-        """Symbols needing independent Robot protection coverage right now:
-        the union of (a) symbols with a non-flat Robot-owned PAPER trade and
-        (b) symbols with a durable D2.1 obligation still unresolved.
+    def robot_protection_coverage_targets(self) -> dict[str, str]:
+        """Return covered Robot symbols with their current lifecycle risk role.
 
-        (b) matters on its own: a TRIGGERED/DISPATCHING obligation must keep
-        market-data responsibility even if candidate/trade projection state
-        alone would no longer be sufficient to prove it. Independent of
-        Robot entry-admission state and of whatever account/symbol the
-        Workspace UI currently has selected; callers use this to decide
-        which symbols need an independent MarketDataHub feed for coverage.
+        Roles are diagnostic/coordination metadata only in this slice:
+        OBLIGATION outranks EXPOSURE, which outranks ENTRY_PENDING. They do
+        not change admission, matching, protection or recovery semantics.
         """
         candidates = self.store.load_robot_candidates(self._paper_account_id)
-        open_symbols = {
-            candidate.symbol.value for candidate in candidates if candidate.status == "OPEN"
-        }
+        roles: dict[str, str] = {}
+
+        for candidate in candidates:
+            if candidate.status == "OPEN":
+                roles[candidate.symbol.value] = "EXPOSURE"
+
         unresolved = self.store.load_unresolved_paper_protection_obligations(
             self._paper_account_id,
         )
-        unresolved_symbols = {obligation.symbol.value for obligation in unresolved}
+        for obligation in unresolved:
+            roles[obligation.symbol.value] = "OBLIGATION"
 
         # P0.4: an APPROVED lifecycle with a durable entry LIMIT also needs
         # the ordered MarketDataHub feed. A live LIMIT may receive its first
@@ -1504,7 +1503,6 @@ class PaperRuntime:
         # stays covered until ownership/protection finalization has consumed
         # that durable evidence (restart/cancel race backstop). Zero-fill
         # inactive orders do not retain coverage.
-        entry_symbols: set[str] = set()
         for candidate in candidates:
             if candidate.status != "APPROVED" or candidate.robot_state is None:
                 continue
@@ -1518,15 +1516,19 @@ class PaperRuntime:
                 # entry LIMIT. This eliminates the resync window in which an
                 # immediately marketable new LIMIT could fill before the
                 # independent Robot event feed was attached.
-                entry_symbols.add(candidate.symbol.value)
+                roles.setdefault(candidate.symbol.value, "ENTRY_PENDING")
                 continue
             order = self.store.get_paper_limit(order_id, self._paper_account_id)
             if order is None:
                 continue
             if order.status not in INACTIVE_LIMIT_STATUSES or order.filled_quantity > 0:
-                entry_symbols.add(candidate.symbol.value)
+                roles.setdefault(candidate.symbol.value, "ENTRY_PENDING")
 
-        return tuple(sorted(open_symbols | unresolved_symbols | entry_symbols))
+        return dict(sorted(roles.items()))
+
+    def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
+        """Symbols needing independent Robot entry/protection coverage."""
+        return tuple(self.robot_protection_coverage_targets())
 
     def evaluate_robot_protection_crossing(
         self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,
