@@ -1664,10 +1664,26 @@ def test_enqueue_is_bounded_and_fails_closed_with_protection_ingress_overflow():
         with pytest.raises(ProtectionIngressOverflow):
             runtime.enqueue(lambda _owner: None)  # would exceed capacity
 
+        saturated = runtime.protection_ingress_diagnostics()
+        assert saturated["capacity"] == 2
+        assert saturated["pending"] == 2
+        assert saturated["high_watermark"] == 2
+        assert saturated["admitted"] == 2
+        assert saturated["completed"] == 0
+        assert saturated["overflows"] == 1
+        assert saturated["last_overflow_at_ms"] is not None
+
         release.set()
         # call() is FIFO-ordered behind both already-admitted tasks, so its
         # return proves the owner has drained them and capacity is free.
         runtime.call(lambda _: None)
+
+        drained = runtime.protection_ingress_diagnostics()
+        assert drained["pending"] == 0
+        assert drained["completed"] == 2
+        assert drained["max_queue_delay_ms"] >= 0
+        assert drained["max_owner_task_ms"] >= 0
+
         runtime.enqueue(lambda _owner: None)
     finally:
         release.set()
