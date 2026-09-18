@@ -1142,7 +1142,13 @@ def test_health_get_returns_exact_paper_status():
 
             assert not client.is_alive()
             assert response["status"] == 200
-            assert response["body"] == {"ok": True, "mode": "paper"}
+            assert response["body"]["ok"] is True
+            assert response["body"]["mode"] == "paper"
+            ingress = response["body"]["robot_protection_ingress"]
+            assert ingress["capacity"] == 64
+            assert ingress["pending"] == 0
+            assert ingress["high_watermark"] == 0
+            assert ingress["overflows"] == 0
         finally:
             server.server_close()
             runtime.close()
