@@ -238,7 +238,11 @@ def build_retest_limit_reprice(
         raise RobotEntryLimitError("candidate identity, snapshot and order_id are required")
 
     index = _required_int(geometry_index, "geometry_index")
-    apex_index = _required_int(state.get("apex_index"), "apex_index")
+    geometry = snapshot.get("geometry")
+    apex = geometry.get("apex") if isinstance(geometry, Mapping) else None
+    if not isinstance(apex, Mapping):
+        raise RobotEntryLimitError("signal snapshot has no frozen apex")
+    apex_index = _required_int(apex.get("index"), "apex_index")
     if index >= apex_index:
         raise RobotEntryLimitError("reprice is forbidden at or after apex")
 
