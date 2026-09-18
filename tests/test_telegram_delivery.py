@@ -32,6 +32,10 @@ bybit_api_stub.get_candles = lambda *args, **kwargs: None
 bybit_api_stub.get_symbols = lambda *args, **kwargs: []
 sys.modules["bybit_api"] = bybit_api_stub
 
+charts_stub = types.ModuleType("analyzer.charts")
+charts_stub.create_chart = lambda *args, **kwargs: None
+sys.modules["analyzer.charts"] = charts_stub
+
 import main
 import notification
 
