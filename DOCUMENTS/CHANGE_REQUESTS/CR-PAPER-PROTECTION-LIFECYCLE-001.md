@@ -11,20 +11,20 @@
   "lifecycle_stage": "VERIFY",
   "objective": "Specify D2 correction: autonomous event-driven PAPER protection, durable crossing obligations, restart-safe serialized closing and evidence-based Robot trade finalization, independent of UI and entry admission.",
   "non_goals": [
-    "Runtime/source/test/schema implementation in this documentation task",
     "Changes to structural STOP/TAKE strategy, sizing, wedge strategy or LIVE",
     "BSBUSDT D1 invalid structural STOP / partial-fill recovery",
-    "Invented historical replay or fill prices"
+    "Invented historical replay or fill prices",
+    "Blind mutation of legacy runtime rows merely to make status labels look clean"
   ],
   "approved_scope": [
-    "TASK/SPEC/CONTEXT documentation in this single owning CR",
-    "Record user-required invariants, investigation evidence, primary-source references, target responsibilities and acceptance"
+    "PAPER protection lifecycle implementation and verification already deployed through the related commits",
+    "Record user-required invariants, runtime evidence, concrete defects/blockers and remaining acceptance gaps in this owning CR"
   ],
   "prohibited_scope": [
-    "Runtime/source/test/schema changes before separately approved IMPLEMENT",
-    "Unrelated/user-owned file changes, commit or push",
+    "LIVE behavior or mutation-gate changes",
+    "Unrelated/user-owned file changes",
     "Adding OPEN to RobotBreakoutMonitor entry advancement",
-    "Changing D1 recovery or strategy"
+    "Changing D1 recovery, structural STOP/TAKE strategy, sizing or ownership semantics"
   ],
   "authoritative_references": [
     "AGENTS.md",
@@ -41,7 +41,7 @@
     "DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md"
   ],
   "approved_decisions": [
-    "Documentation only; IMPLEMENT not authorized",
+    "PAPER implementation is deployed; VERIFY proceeds from real operator usage and concrete observed blockers",
     "Protection ownership follows exposure independently of UI, selected account/symbol and Robot entry state",
     "Preserve LONG bid <= STOP / bid >= TAKE; SHORT ask >= STOP / ask <= TAKE",
     "Latch first confirmed crossing durably before execution; retreat cannot cancel it",
@@ -52,9 +52,9 @@
     "D2.3 realized_pnl_pct is frozen (owner decision, 2026-09-13) as (realized_pnl_usdt - fees_costs_usdt) / actual_entry_notional_usdt * 100, where realized_pnl_usdt is gross realized trading PnL from actual execution evidence, fees_costs_usdt is the actual accumulated fee cost attributable to this Robot trade close lifecycle, and actual_entry_notional_usdt is the actual Robot-owned entry quantity multiplied by the actual average entry price (leverage ignored); actual_wv MUST NOT be used as the denominator because it represents a WV fraction, not an absolute USDT notional, in this repository; fail closed if actual_entry_notional_usdt cannot be proven from authoritative Robot-owned execution/position evidence -- never guess or substitute aggregate/manual-owned quantity"
   ],
   "unresolved_decisions": [
-    "Approve proposed detailed lifecycle and choose exact durable schema plus atomic dispatch/correlation API before IMPLEMENT",
-    "Freeze event admission/backpressure, maximum healthy processing latency and ingress-to-durability crash handling",
-    "Prove position lifecycle/controller and execution-to-trade attribution against owning accounting semantics"
+    "Fix closed-trade fee attribution so fees_costs_usdt includes all attributable Robot entry and exit fees without symbol-wide/manual contamination",
+    "Inspect and resolve the current ROBOT_RUNNING / RECONCILIATION_REQUIRED durable reason observed at 2026-09-18 14:52 MSK",
+    "Confirm the deployed PAPER sync_state correction on the next post-deploy real PAPER fill"
   ],
   "acceptance_criteria": [
     "All section 14 invariants hold",
@@ -63,14 +63,14 @@
     "Correlated actual fill -> FLAT -> cleanup -> Robot trade CLOSED evidence"
   ],
   "verification_requirements": [
-    "Documentation: standalone CR validation, protected task finish and exact-scope user-owned-work guard",
-    "Future IMPLEMENT: focused scheduling/trigger/persistence/account/restart integration tests",
-    "Future acceptance: isolated PAPER runtime with browser closed, different symbol and MAINNET UI selection",
-    "No historical tests or document validation establish runtime acceptance"
+    "Use read-only durable runtime evidence for incident diagnosis before mutation",
+    "Continue normal PAPER operation and inspect only concrete blockers encountered in practice",
+    "Keep focused deterministic regressions for changed critical behavior; avoid broad speculative test campaigns",
+    "Do not claim unobserved runtime scenarios from CI alone"
   ],
   "risks": [
     "Lossy latest-book coalescing loses transient crossing evidence",
-    "Current path has no durable trigger obligation or production Robot close callback",
+    "Closed-trade fee attribution can be incomplete even when protection closure succeeds",
     "Symbol-only identity can close or attribute a later/manual position incorrectly",
     "Uncertain dispatch, unavailable liquidity and attribution gaps require reconciliation",
     "Local protection cannot observe events during process/transport downtime"
@@ -95,15 +95,15 @@
     },
     {
       "id": "IMPLEMENT",
-      "status": "NOT_AUTHORIZED_NOT_STARTED"
+      "status": "PAPER_DEPLOYED"
     },
     {
       "id": "VERIFY",
-      "status": "RUNTIME_NOT_STARTED"
+      "status": "RUNTIME_IN_PROGRESS"
     },
     {
       "id": "RECORD",
-      "status": "GIT_CHECKPOINT_NOT_AUTHORIZED"
+      "status": "RUNTIME_EVIDENCE_RECORDED"
     }
   ],
   "current_phase": "VERIFY",
@@ -144,12 +144,14 @@
 ```
 <!-- CHANGE_REQUEST_METADATA_END -->
 
-Date: 2026-09-13 (Europe/Moscow).
-Baseline branch: `robot-v0-1-admission-gate`.
-Baseline HEAD: `14f9b514966fd89d0cb6ebe178a6ece0501ffb56`.
+Date: 2026-09-18 (Europe/Moscow).
+Historical baseline branch: `robot-v0-1-admission-gate`.
+Historical baseline HEAD: `14f9b514966fd89d0cb6ebe178a6ece0501ffb56`.
+Current deployed PAPER checkpoint recorded in section 21:
+`e5319da29029d7c463a5cc7dc428a35a01cceb8b`.
 
-**DOCUMENTATION ONLY. IMPLEMENT NOT AUTHORIZED.** User requirements are binding; the detailed
-mechanisms below are proposed design for review, not claims of deployed capability.
+Sections 1-20 preserve the original D2 design/context history. Section 21 and the current metadata are authoritative
+for the observed deployed PAPER state, factual runtime evidence and current blockers.
 
 ## 1. Problem statement and evidence
 
