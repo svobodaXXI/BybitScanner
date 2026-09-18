@@ -191,6 +191,18 @@ def test_robot_paper_execution_is_independent_of_ui_selected_account():
             ))
             assert submitted.status is CommandResultStatus.COMPLETED
 
+            amended = executor.amend_limit(PaperLimitAmendRequest(
+                ClientActionId("robot-limit-amend"),
+                "BTCUSDT",
+                submitted.order_id,
+                Decimal("64251"),
+            ))
+            assert amended.status is CommandResultStatus.COMPLETED
+            assert amended.order_id == submitted.order_id
+            assert runtime.store.get_paper_limit(
+                submitted.order_id, TradingAccountId("paper")
+            ).price == Decimal("64251")
+
             applied = runtime.robot_match_symbol("BTCUSDT")
             assert applied == 1
 

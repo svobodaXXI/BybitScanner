@@ -194,6 +194,9 @@ class RobotPaperActionExecutor:
     def create_limit(self, request):
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_create_limit(request))
 
+    def amend_limit(self, request):
+        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_limit(request))
+
     def cancel_limit(self, request):
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_cancel_limit(request))
 
@@ -238,6 +241,9 @@ class _DirectRobotActionExecutor:
 
     def create_limit(self, request):
         return self._runtime._robot_create_limit(request)
+
+    def amend_limit(self, request):
+        return self._runtime._robot_amend_limit(request)
 
     def cancel_limit(self, request):
         return self._runtime._robot_cancel_limit(request)
@@ -2442,13 +2448,25 @@ class PaperRuntime:
 
     def amend_limit(self, request: PaperLimitAmendRequest) -> PaperLimitMutationResult:
         self.require_paper_mutations()
+        return self._amend_limit(request, self._context)
+
+    def _robot_amend_limit(
+        self, request: PaperLimitAmendRequest,
+    ) -> PaperLimitMutationResult:
+        return self._amend_limit(request, self._robot_context)
+
+    def _amend_limit(
+        self,
+        request: PaperLimitAmendRequest,
+        context_provider: PaperCommandContextProvider,
+    ) -> PaperLimitMutationResult:
         symbol = request.symbol.strip().upper()
         existing = self.store.get_paper_limit(request.order_id, self._account_id)
         if existing is None or existing.status != "open":
             raise ValueError("PAPER limit is missing or inactive")
         if existing.symbol.value != symbol:
             raise ValueError("order symbol does not match")
-        context = self._context.context_for(symbol)
+        context = context_provider.context_for(symbol)
         normalized_price = normalize_limit_price(
             request.limit_price, context.pretrade.instrument.tick_size, existing.side,
         )
