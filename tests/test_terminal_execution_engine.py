@@ -285,6 +285,15 @@ class ExecutionEngineTests(unittest.TestCase):
         self.assertIs(self.engine.apply_execution(event), ExecutionApplyResult.DUPLICATE)
         self.assertEqual(self.store.get_position_projection(KEY), first)
 
+    def test_paper_execution_projection_is_synchronized(self):
+        event = execution_event(exec_id="paper-exec", order_id="paper-order", link="paper-link")
+        self.assertIs(
+            self.engine.apply_paper_execution(event),
+            ExecutionApplyResult.APPLIED,
+        )
+        projection = self.store.get_position_projection(KEY)
+        self.assertEqual(projection.sync_state, "synchronized")
+
     def test_execution_before_order_event_correlates_command(self):
         self.command()
         self.engine.apply_execution(execution_event())
