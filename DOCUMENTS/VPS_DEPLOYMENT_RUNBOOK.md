@@ -230,3 +230,29 @@ Safety boundary:
 - LIVE mutation gates remain disabled
 - no real-money BUY/SELL/STOP/TAKE/close acceptance was performed
 - API Key / Secret must not be entered through the HTTP page
+
+## Future Scanner process supervision
+
+Deferred design note for a later hardening pass. This is **not implemented yet** and is not a current runtime guarantee.
+
+The preferred design is one idempotent `ScannerSupervisor` owned by the existing backend. Telegram's "Запустить сканер" action should mean: **ensure exactly one healthy Scanner instance is running**, not blindly spawn another process.
+
+Required behavior for that future supervisor:
+
+- before every Scanner start, reconcile durable `scanner_runtime_state` with the actual owned Scanner worker/process;
+- if the owned worker is already healthy, return `SCANNER_RUNNING` without spawning a duplicate;
+- if durable state says running but the owned worker is gone, clear/repair only that stale Scanner process state and start one replacement;
+- if an obsolete owned Scanner worker exists, terminate only that worker and then start the authoritative replacement;
+- track Scanner ownership with an explicit PID/process-group plus a unique owner/generation token; never use broad process-name killing such as `pkill python`;
+- run the same reconciliation when the backend starts, so VPS/backend restarts converge automatically to one unambiguous Scanner process state;
+- start must report `SCANNER_RUNNING` only after the replacement worker has actually reached a healthy running state;
+- stop/pause/resume must remain idempotent and operate only on the supervisor-owned Scanner instance.
+
+Safety boundary:
+
+- this supervisor may clean up only technical Scanner process/runtime debris that it can prove it owns;
+- it must never automatically delete or rewrite Robot candidates, trades, positions, protection obligations, execution history, or other financial state;
+- ambiguous Robot/trading ownership continues to use the existing fail-closed reconciliation path;
+- LIVE mutation behavior remains outside this design and fail-closed by default.
+
+Implementation preference: reuse the current backend and Scanner control surface; do not add a separate daemon/service unless a concrete runtime limitation later requires it.
