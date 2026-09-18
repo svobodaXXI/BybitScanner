@@ -2395,3 +2395,23 @@ def load_tests(loader, tests, pattern):
             test_paper_limit_amend_missing_or_inactive_fails_closed,
         )
     )
+
+
+def test_robot_market_event_skips_fill_finalization_when_no_limit_execution():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        book = StaticBookProvider().get_book(Symbol("BTCUSDT"))
+        try:
+            with patch("terminal.runtime.paper_runtime.RobotBreakoutMonitor") as monitor:
+                finalized, obligation = runtime.process_robot_market_event(
+                    "BTCUSDT",
+                    book,
+                    event_id="BTCUSDT:no-fill",
+                    received_at_ms=book.received_at_ms,
+                )
+
+            assert finalized == ()
+            assert obligation is None
+            monitor.assert_not_called()
+        finally:
+            runtime.close()

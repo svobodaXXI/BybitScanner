@@ -3779,6 +3779,18 @@ class SQLiteStore:
         )
         return tuple(_robot_candidate_from_row(row) for row in rows)
 
+    def load_robot_candidates_for_symbol(
+        self, trading_account_id: TradingAccountId, symbol: Symbol,
+    ) -> tuple[RobotCandidateRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM robot_candidates
+               WHERE trading_account_id=? AND symbol=?
+               ORDER BY approved_at_ms, candidate_id""",
+            (trading_account_id.value, symbol.value),
+        )
+        return tuple(_robot_candidate_from_row(row) for row in rows)
+
     def save_robot_candidate_state(
         self, candidate_id: str, *, status: str, robot_state: dict[str, object],
         expected_revision: int, updated_at_ms: int,

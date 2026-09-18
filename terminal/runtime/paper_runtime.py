@@ -1181,7 +1181,9 @@ class PaperRuntime:
         if book.symbol != normalized:
             raise ValueError("Robot market event symbol does not match book")
         entry_order_ids: set[str] = set()
-        for candidate in self.store.load_robot_candidates(self._paper_account_id):
+        for candidate in self.store.load_robot_candidates_for_symbol(
+            self._paper_account_id, normalized,
+        ):
             if (
                 candidate.status != "APPROVED"
                 or candidate.symbol != normalized
@@ -1192,18 +1194,20 @@ class PaperRuntime:
             order_id = (candidate.robot_state.get("execution") or {}).get("limit_order_id")
             if order_id:
                 entry_order_ids.add(order_id)
-        self._match_limits_only(
+        matched_fills = self._match_limits_only(
             normalized, book, event_id, allowed_order_ids=entry_order_ids,
         )
-        monitor = RobotBreakoutMonitor(
-            lambda: self.store,
-            self._paper_account_id,
-            get_closed_candle=self._robot_closed_candle_provider,
-            action_executor=_DirectRobotActionExecutor(self),
-            tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
-            clock_ms=lambda: int(time.time() * 1000),
-        )
-        finalized = monitor.process_authoritative_fill(normalized.value)
+        finalized: tuple[str, ...] = ()
+        if matched_fills:
+            monitor = RobotBreakoutMonitor(
+                lambda: self.store,
+                self._paper_account_id,
+                get_closed_candle=self._robot_closed_candle_provider,
+                action_executor=_DirectRobotActionExecutor(self),
+                tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
+                clock_ms=lambda: int(time.time() * 1000),
+            )
+            finalized = monitor.process_authoritative_fill(normalized.value)
         obligation = self.evaluate_robot_protection_crossing(
             normalized.value, book, event_id=event_id, received_at_ms=received_at_ms,
         )
@@ -1477,34 +1481,20 @@ class PaperRuntime:
             return None
         return symbol, reason
 
-    def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
-        """Symbols needing independent Robot protection coverage right now:
-        the union of (a) symbols with a non-flat Robot-owned PAPER trade and
-        (b) symbols with a durable D2.1 obligation still unresolved.
-
-        (b) matters on its own: a TRIGGERED/DISPATCHING obligation must keep
-        market-data responsibility even if candidate/trade projection state
-        alone would no longer be sufficient to prove it. Independent of
-        Robot entry-admission state and of whatever account/symbol the
-        Workspace UI currently has selected; callers use this to decide
-        which symbols need an independent MarketDataHub feed for coverage.
-        """
+    def robot_protection_coverage_roles(self) -> dict[str, str]:
+        """Return the highest-severity lifecycle role for each covered symbol."""
         candidates = self.store.load_robot_candidates(self._paper_account_id)
-        open_symbols = {
-            candidate.symbol.value for candidate in candidates if candidate.status == "OPEN"
+        roles = {
+            candidate.symbol.value: "EXPOSURE"
+            for candidate in candidates
+            if candidate.status == "OPEN"
         }
         unresolved = self.store.load_unresolved_paper_protection_obligations(
             self._paper_account_id,
         )
-        unresolved_symbols = {obligation.symbol.value for obligation in unresolved}
+        for obligation in unresolved:
+            roles[obligation.symbol.value] = "OBLIGATION"
 
-        # P0.4: an APPROVED lifecycle with a durable entry LIMIT also needs
-        # the ordered MarketDataHub feed. A live LIMIT may receive its first
-        # fill on any book event; a cancelled/filled LIMIT with non-zero fill
-        # stays covered until ownership/protection finalization has consumed
-        # that durable evidence (restart/cancel race backstop). Zero-fill
-        # inactive orders do not retain coverage.
-        entry_symbols: set[str] = set()
         for candidate in candidates:
             if candidate.status != "APPROVED" or candidate.robot_state is None:
                 continue
@@ -1512,21 +1502,23 @@ class PaperRuntime:
                 continue
             execution = candidate.robot_state.get("execution") or {}
             order_id = execution.get("limit_order_id")
-            if not order_id:
-                # Subscribe one monitor cycle early: RETEST_DETECTED is
-                # persisted before the following periodic tick submits the
-                # entry LIMIT. This eliminates the resync window in which an
-                # immediately marketable new LIMIT could fill before the
-                # independent Robot event feed was attached.
-                entry_symbols.add(candidate.symbol.value)
-                continue
-            order = self.store.get_paper_limit(order_id, self._paper_account_id)
-            if order is None:
-                continue
-            if order.status not in INACTIVE_LIMIT_STATUSES or order.filled_quantity > 0:
-                entry_symbols.add(candidate.symbol.value)
+            needs_coverage = not order_id
+            if order_id:
+                order = self.store.get_paper_limit(order_id, self._paper_account_id)
+                needs_coverage = (
+                    order is not None
+                    and (
+                        order.status not in INACTIVE_LIMIT_STATUSES
+                        or order.filled_quantity > 0
+                    )
+                )
+            if needs_coverage:
+                roles.setdefault(candidate.symbol.value, "ENTRY_PENDING")
+        return dict(sorted(roles.items()))
 
-        return tuple(sorted(open_symbols | unresolved_symbols | entry_symbols))
+    def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
+        """Symbols needing independent ordered Robot market-data coverage."""
+        return tuple(self.robot_protection_coverage_roles())
 
     def evaluate_robot_protection_crossing(
         self, symbol: str, book: NormalizedOrderBook, *, event_id: str, received_at_ms: int,

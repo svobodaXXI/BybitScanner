@@ -1045,6 +1045,9 @@ class _BookUpdateNotification:
 @dataclass(frozen=True)
 class _OwnerTask:
     operation: Callable[[object], None]
+    enqueued_at: float
+    symbol: str
+    coverage_role: str
 
 
 class ProtectionIngressOverflow(RuntimeError):
@@ -1074,6 +1077,13 @@ class SerializedPaperRuntime:
         self._protection_ingress_capacity = protection_ingress_capacity
         self._protection_ingress_lock = threading.Lock()
         self._protection_ingress_pending = 0
+        self._protection_ingress_high_watermark = 0
+        self._protection_ingress_max_queue_latency_ms = 0.0
+        self._protection_ingress_max_processing_ms = 0.0
+        self._protection_ingress_last_symbol: str | None = None
+        self._protection_ingress_last_role: str | None = None
+        self._protection_ingress_last_overflow_symbol: str | None = None
+        self._protection_ingress_last_overflow_role: str | None = None
         self._ready = threading.Event()
         self._initialization_error: BaseException | None = None
         self._thread = threading.Thread(
@@ -1123,7 +1133,13 @@ class SerializedPaperRuntime:
             self._book_update_pending = True
         self._requests.put(_BookUpdateNotification(book_update_id))
 
-    def enqueue(self, operation: Callable[[object], None]) -> None:
+    def enqueue(
+        self,
+        operation: Callable[[object], None],
+        *,
+        symbol: str = "",
+        coverage_role: str = "UNKNOWN",
+    ) -> None:
         """Submit ``operation`` to the serialized owner without waiting for it.
 
         Unlike ``enqueue_book_update``, every admitted call is a distinct
@@ -1141,14 +1157,44 @@ class SerializedPaperRuntime:
         """
         if not self._thread.is_alive():
             raise RuntimeError("PAPER runtime owner is unavailable")
+        normalized_symbol = symbol.strip().upper()
+        normalized_role = coverage_role.strip().upper() or "UNKNOWN"
         with self._protection_ingress_lock:
             if self._protection_ingress_pending >= self._protection_ingress_capacity:
+                self._protection_ingress_last_overflow_symbol = normalized_symbol or None
+                self._protection_ingress_last_overflow_role = normalized_role
                 raise ProtectionIngressOverflow(
                     "Robot protection ingress is saturated "
-                    f"(capacity={self._protection_ingress_capacity})"
+                    f"(capacity={self._protection_ingress_capacity}, "
+                    f"symbol={normalized_symbol or 'UNKNOWN'}, role={normalized_role})"
                 )
             self._protection_ingress_pending += 1
-        self._requests.put(_OwnerTask(operation))
+            self._protection_ingress_high_watermark = max(
+                self._protection_ingress_high_watermark,
+                self._protection_ingress_pending,
+            )
+            self._protection_ingress_last_symbol = normalized_symbol or None
+            self._protection_ingress_last_role = normalized_role
+        self._requests.put(_OwnerTask(
+            operation,
+            time.perf_counter(),
+            normalized_symbol,
+            normalized_role,
+        ))
+
+    def protection_ingress_metrics(self) -> dict[str, object]:
+        with self._protection_ingress_lock:
+            return {
+                "capacity": self._protection_ingress_capacity,
+                "current_pending": self._protection_ingress_pending,
+                "high_watermark": self._protection_ingress_high_watermark,
+                "max_queue_latency_ms": self._protection_ingress_max_queue_latency_ms,
+                "max_processing_ms": self._protection_ingress_max_processing_ms,
+                "last_symbol": self._protection_ingress_last_symbol,
+                "last_role": self._protection_ingress_last_role,
+                "last_overflow_symbol": self._protection_ingress_last_overflow_symbol,
+                "last_overflow_role": self._protection_ingress_last_overflow_role,
+            }
 
     def close(self) -> None:
         if not self._thread.is_alive():
@@ -1185,13 +1231,24 @@ class SerializedPaperRuntime:
                         )
                     continue
                 if isinstance(request, _OwnerTask):
+                    started_at = time.perf_counter()
+                    queue_latency_ms = (started_at - request.enqueued_at) * 1000
                     try:
                         request.operation(runtime)
                     except BaseException:
                         LOGGER.exception("PAPER owner task failed")
                     finally:
+                        processing_ms = (time.perf_counter() - started_at) * 1000
                         with self._protection_ingress_lock:
                             self._protection_ingress_pending -= 1
+                            self._protection_ingress_max_queue_latency_ms = max(
+                                self._protection_ingress_max_queue_latency_ms,
+                                queue_latency_ms,
+                            )
+                            self._protection_ingress_max_processing_ms = max(
+                                self._protection_ingress_max_processing_ms,
+                                processing_ms,
+                            )
                     continue
                 operation, completed, response = request
                 if operation is None:
@@ -1654,6 +1711,7 @@ class RobotProtectionCoverageManager:
         self._recovery_session = recovery_session or create_bybit_rest_session()
         self._lock = threading.Lock()
         self._covered: dict[str, SymbolContext] = {}
+        self._roles: dict[str, str] = {}
         # Explicit fail-closed continuity state: a symbol lands here the
         # moment its protection evidence could not be admitted (overflow or
         # any other admission failure), and only leaves once admission for
@@ -1678,11 +1736,15 @@ class RobotProtectionCoverageManager:
 
     def health(self) -> dict[str, object]:
         with self._lock:
-            return {
+            health = {
                 "healthy": not self._unhealthy,
                 "covered_symbols": tuple(sorted(self._covered)),
+                "coverage_roles": dict(self._roles),
                 "unhealthy_symbols": dict(self._unhealthy),
             }
+        if hasattr(self._runtime, "protection_ingress_metrics"):
+            health["ingress"] = self._runtime.protection_ingress_metrics()
+        return health
 
     def resync(self) -> None:
         """Reconcile subscriptions with the owner's current coverage targets.
@@ -1691,17 +1753,22 @@ class RobotProtectionCoverageManager:
         coverage for newly-admitted symbols and releases it only once the
         owner no longer reports the symbol as needing coverage.
         """
-        try:
-            symbols, durable_loss = self._runtime.call(
-                lambda runtime: (
-                    runtime.robot_protection_coverage_symbols(),
-                    (
-                        runtime.robot_protection_continuity_loss()
-                        if hasattr(runtime, "robot_protection_continuity_loss")
-                        else None
-                    ),
-                ),
+        def _coverage_state(runtime):
+            symbols = runtime.robot_protection_coverage_symbols()
+            roles = (
+                runtime.robot_protection_coverage_roles()
+                if hasattr(runtime, "robot_protection_coverage_roles")
+                else {symbol: "UNKNOWN" for symbol in symbols}
             )
+            durable_loss = (
+                runtime.robot_protection_continuity_loss()
+                if hasattr(runtime, "robot_protection_continuity_loss")
+                else None
+            )
+            return symbols, roles, durable_loss
+
+        try:
+            symbols, roles, durable_loss = self._runtime.call(_coverage_state)
         except Exception:
             LOGGER.exception("Robot protection coverage resync failed to read coverage targets")
             return
@@ -1715,6 +1782,10 @@ class RobotProtectionCoverageManager:
             current = set(self._covered)
             to_add = wanted - current
             to_drop = current - wanted
+            self._roles = {
+                symbol: str(roles.get(symbol, "UNKNOWN")).strip().upper() or "UNKNOWN"
+                for symbol in wanted
+            }
             unhealthy = dict(self._unhealthy)
         for symbol, reason in unhealthy.items():
             if symbol in wanted:
@@ -1840,6 +1911,7 @@ class RobotProtectionCoverageManager:
     def _on_update(self, symbol: str, book_update_id: str) -> None:
         with self._lock:
             context = self._covered.get(symbol)
+            coverage_role = self._roles.get(symbol, "UNKNOWN")
         if context is None:
             return
         payload = context.public_orderbook.snapshot()
@@ -1903,7 +1975,11 @@ class RobotProtectionCoverageManager:
             )
 
         try:
-            self._runtime.enqueue(_evaluate_if_current_generation)
+            self._runtime.enqueue(
+                _evaluate_if_current_generation,
+                symbol=symbol,
+                coverage_role=coverage_role,
+            )
         except ProtectionIngressOverflow:
             self._mark_unhealthy(symbol, "ingress_overflow")
             LOGGER.error(
