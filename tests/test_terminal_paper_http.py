@@ -1912,7 +1912,7 @@ def test_robot_protection_coverage_manager_rejects_stale_generation_after_reconn
     # running it inline, so a reconnect can happen before it executes.
     captured: list = []
     real_enqueue = runtime.enqueue
-    runtime.enqueue = captured.append
+    runtime.enqueue = lambda operation, **_metadata: captured.append(operation)
 
     _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=1)
     assert len(captured) == 1
