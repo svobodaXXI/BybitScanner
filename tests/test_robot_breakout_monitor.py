@@ -119,6 +119,7 @@ class _FakeActionExecutor:
         self.account_id = account_id
         self.clock = clock
         self.limit_calls: list = []
+        self.amend_calls: list = []
         self.cancel_calls: list = []
         self.market_calls: list = []
         self.protection_calls: list[tuple[str, object]] = []
@@ -155,6 +156,25 @@ class _FakeActionExecutor:
         return PaperLimitMutationResult(
             request.client_action_id.value, CommandResultStatus.COMPLETED,
             "created", order_id.value,
+        )
+
+    def amend_limit(self, request):
+        self.amend_calls.append(request)
+        order, changed = self.store.amend_paper_limit(
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=(
+                f"amend-fp-{request.order_id}-{request.limit_price}"
+            ),
+            order_id=OrderId(request.order_id),
+            trading_account_id=self.account_id,
+            price=request.limit_price,
+            updated_at_ms=self.clock(),
+        )
+        return PaperLimitMutationResult(
+            request.client_action_id.value,
+            CommandResultStatus.COMPLETED,
+            "amended" if changed else "duplicate_action",
+            order.order_id.value,
         )
 
     def cancel_limit(self, request):
@@ -374,6 +394,91 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(len(self.executor.limit_calls), 1)
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.robot_state["execution"]["limit_order_id"], "test-limit-1")
+
+    def test_unfilled_entry_limit_reprices_same_order_after_five_closed_candles(self):
+        self._create_candidate(apex_index=130)
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # initial LIMIT; freshness index=104
+        record = self.store.get_robot_candidate("candidate-1")
+        order_id = record.robot_state["execution"]["limit_order_id"]
+        initial_order = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(record.robot_state["execution"]["last_limit_index"], 104)
+
+        self.feed.push(SYMBOL, _candle_at(108, high=99, low=97, close=98))
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())
+        self.assertEqual(self.executor.amend_calls, [])
+        self.assertEqual(
+            self.store.get_paper_limit(order_id, ACCOUNT_ID).price,
+            initial_order.price,
+        )
+
+        self.feed.push(SYMBOL, _candle_at(109, high=99, low=90, close=92))
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.executor.amend_calls), 1)
+        amend = self.executor.amend_calls[0]
+        self.assertEqual(amend.order_id, order_id)
+        self.assertEqual(amend.limit_price, Decimal("91.2"))
+        amended = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(amended.order_id.value, order_id)
+        self.assertEqual(amended.price, Decimal("91.2"))
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.robot_state["execution"]["last_limit_index"], 109)
+        self.assertEqual(len(self.executor.limit_calls), 1)
+
+    def test_unfilled_entry_limit_cancels_and_expires_at_apex(self):
+        self._create_candidate(apex_index=110)
+        self._drive_to_retest_detected()
+        self.monitor.tick()  # initial LIMIT at freshness index=104
+        record = self.store.get_robot_candidate("candidate-1")
+        order_id = record.robot_state["execution"]["limit_order_id"]
+
+        self.feed.push(SYMBOL, _candle_at(110, high=95, low=89, close=91))
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        self.assertEqual(len(self.executor.cancel_calls), 1)
+        self.assertEqual(self.executor.cancel_calls[0].order_id, order_id)
+        order = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(order.status, "cancelled")
+        expired = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(expired.status, "EXPIRED")
+        self.assertEqual(
+            expired.robot_state["phase"],
+            robot_state_machine.PHASE_EXPIRED_AT_APEX,
+        )
+        self.assertEqual(
+            expired.robot_state["execution"]["cancelled_at_apex_index"],
+            110,
+        )
+
+    def test_inactive_zero_fill_entry_limit_invalidates_instead_of_hanging(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        order_id = record.robot_state["execution"]["limit_order_id"]
+        self.executor.cancel_limit(PaperLimitCancelRequest(
+            ClientActionId("external-cancel-simulation"),
+            SYMBOL,
+            order_id,
+        ))
+
+        advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ("candidate-1",))
+        invalidated = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(invalidated.status, "INVALIDATED")
+        self.assertEqual(
+            invalidated.robot_state["execution"]["stopped_without_entry_reason"],
+            "ENTRY_LIMIT_INACTIVE_BEFORE_FILL",
+        )
+        self.assertIsNone(
+            self.store.get_robot_trade("robot-trade-candidate-1")
+        )
 
     def test_advance_failure_records_execution_error_diagnostics(self):
         self._create_candidate()
