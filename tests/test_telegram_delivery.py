@@ -27,6 +27,11 @@ config_stub.MAX_SYMBOLS = None
 config_stub.BYBIT_CATEGORY = "linear"
 sys.modules["config"] = config_stub
 
+bybit_api_stub = types.ModuleType("bybit_api")
+bybit_api_stub.get_candles = lambda *args, **kwargs: None
+bybit_api_stub.get_symbols = lambda *args, **kwargs: []
+sys.modules["bybit_api"] = bybit_api_stub
+
 import main
 import notification
 
