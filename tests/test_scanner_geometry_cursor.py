@@ -7,6 +7,7 @@ from scanner_geometry_cursor import (
     ScannerGeometryCursorProvider,
     build_scanner_geometry_cursor_anchor,
     load_scanner_catchup_closed_candles,
+    project_frozen_geometry_to_robot_1m,
     project_latest_geometry_index,
 )
 
@@ -54,6 +55,46 @@ class ScannerGeometryCursorTests(unittest.TestCase):
         self.assertEqual(anchor["geometry_index"], 199)
         self.assertEqual(anchor["source_candle_time_ms"], 1_800_000)
         self.assertEqual(anchor["timeframe"], "1")
+
+    def test_5m_geometry_projects_exactly_into_robot_1m_coordinate(self):
+        source = {
+            "upper_line": {"slope": -5.0, "intercept": 1100.0},
+            "lower_line": {"slope": -2.5, "intercept": 600.0},
+            "apex": {"index": 220.5, "price": 0.0, "valid_intersection": True},
+            "current_index": 199,
+            "pair_metrics": {"reference_price": 100.0, "start_width": 20.0},
+        }
+
+        projected = project_frozen_geometry_to_robot_1m(
+            source, source_timeframe="5",
+        )
+
+        self.assertEqual(projected["current_index"], 199)
+        self.assertEqual(projected["upper_line"]["slope"], -1.0)
+        self.assertEqual(projected["lower_line"]["slope"], -0.5)
+        self.assertEqual(projected["apex"]["index"], 306.5)
+        self.assertEqual(projected["robot_coordinate_timeframe"], "1")
+        self.assertEqual(projected["scanner_source_timeframe"], "5")
+
+        # Anchor price is invariant.
+        source_upper_now = -5.0 * 199 + 1100.0
+        robot_upper_now = (
+            projected["upper_line"]["slope"] * 199
+            + projected["upper_line"]["intercept"]
+        )
+        self.assertEqual(robot_upper_now, source_upper_now)
+
+        # Five 1m Robot steps equal one 5m Scanner step.
+        source_upper_next = -5.0 * 200 + 1100.0
+        robot_upper_after_five = (
+            projected["upper_line"]["slope"] * 204
+            + projected["upper_line"]["intercept"]
+        )
+        self.assertEqual(robot_upper_after_five, source_upper_next)
+
+        # Projection never mutates the native Scanner geometry.
+        self.assertEqual(source["upper_line"]["slope"], -5.0)
+        self.assertEqual(source["apex"]["index"], 220.5)
 
     def test_projection_advances_in_frozen_index_space(self):
         snapshot = _snapshot(build_scanner_geometry_cursor_anchor(
