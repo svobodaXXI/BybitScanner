@@ -663,149 +663,44 @@ ACTIVE
 
 Current work priority:
 
-ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY
+ROBOT_V0_1_PAPER_RUNTIME_RELIABILITY
 
 Current work domain:
 
-Robot v0.1 Prototype / Scanner Geometry Pattern Detection
+Robot v0.1 / PAPER protection coverage / serialized runtime
 
 Current project phase:
 
-ROBOT_V0_1_WEDGE_BOUNDARY_FITTING_ACTIVE
+RUNTIME_VERIFY_AND_TARGETED_CORRECTION
 
 Primary objective:
 
-Trading Terminal / Trading Workspace has reached a state usable for trading and is no longer the active
-development priority as of 2026-09-10; `CR-TRADING-WORKSPACE-001` is not formally closed and its own
-ChangeRequest record is unchanged. The new primary project priority is the Robot v0.1 prototype. Robot's
-first dependency is finishing pattern detection / Geometry: the active implementation target is wedge
-boundary fitting, recorded in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` (ACCEPTED DESIGN,
-2026-09-10). The GRVTUSDT wick-aware Wedge boundary-fitting observation is no longer deferred research —
-it is the active pre-implementation target. Implementation authorization for that document remains NONE
-as of this checkpoint; only the priority is recorded here.
-
-Previous primary objective:
-
-Prepare the separately governed Trading Terminal / Trading Workspace development mission from the
-recorded domain, safety, Paper Trader and operator-surface research. Terminal reached a state usable for
-trading; see current objective above.
-
-Current development policy:
-
-Главный текущий приоритет проекта —
-разработка геометрии сканера.
-
-Documentation Automation не является
-текущим рабочим приоритетом.
-
-Documentation Automation не отменяется,
-но её дальнейшее развитие отложено
-до последующего этапа проекта.
-
-Главная текущая задача проекта:
-
-Сделать сканер достаточно рабочим,
-чтобы его результаты анализа
-стали приемлемыми для дальнейшего
-развития Trading Intelligence.
+Keep the already-running Robot v0.1 PAPER lifecycle operational under ordinary market-data load. The current
+blocker is recurring protection-ingress saturation, not Scanner Geometry.
 
 Task routing rule:
 
-Новые задачи в первую очередь
-направляются в текущий рабочий контур
-Scanner Geometry.
+New development work first follows the active runtime blocker recorded in
+`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`. Scanner Geometry remains an active subsystem
+but is not the current work-control priority.
 
-Приоритеты:
+Current priority order:
 
-1. Scanner Geometry;
-2. Wedge Detection Quality;
-3. Scanner Reliability;
-4. Trading Intelligence;
-5. Scanner Feature Development;
-6. Documentation Automation;
-7. Architecture Hygiene.
+1. Robot protection ingress/backpressure correctness;
+2. Robot closed-trade fee attribution;
+3. remaining Robot PAPER runtime acceptance;
+4. Scanner Geometry / Wedge quality;
+5. Trading Workspace refinements;
+6. analytics and new features;
+7. documentation automation / broad architecture hygiene.
 
-Начиная с 2026-09-10 пункты 1-2 выполняются
-в интересах Robot v0.1: без доведённого
-pattern detection / Geometry Робот не может
-расширяться за пределы уже реализованных
-8 слайсов admission/execution.
+Current design policy:
 
-Documentation Automation:
-
-DEFERRED
-
-Documentation Automation status:
-
-IN_PROGRESS
-
-Documentation Automation priority:
-
-DEFERRED
-
-Documentation Automation remains:
-
-PLANNED_CONTINUATION
-
-Important:
-
-Documentation Automation не считается
-отменённой или завершённой.
-
-Она временно снимается с первого
-приоритета и переносится на более поздний
-этап развития проекта.
-
-Trading Scanner Development:
-
-PRIMARY
-
-Trading Intelligence Development:
-
-ACTIVE
-
-Geometry Development:
-
-PRIMARY
-
-Wedge Detection Development:
-
-PRIMARY
-
-Scanner Feature Development:
-
-AVAILABLE
-
-New Trading Logic:
-
-AVAILABLE
-
-Documentation Automation Development:
-
-DEFERRED
-
-Architecture Hygiene Development:
-
-DEFERRED
-
-Current decision:
-
-CURRENT PRIORITY = ROBOT_V0_1_PAPER_RUNTIME_RELIABILITY
-
-Important:
-
-Robot v0.1 is now running in real PAPER runtime. Geometry work is no longer the active project priority.
-The immediate engineering objective is to make the already-running Robot lifecycle reliable under ordinary
-market-data load without broad architectural rebuilding.
-
-Current runtime evidence and the active correction design are owned by
-`DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md` revisions 1.4-1.6.
-
-Documentation Automation and broad Architecture Hygiene remain non-blocking except where a concrete runtime defect
-requires a scoped correction.
+Prefer measured, minimal changes inside the existing MarketDataHub + SerializedPaperRuntime + shared PAPER executor
+architecture. Preserve exact protection evidence and fail-closed behavior. Do not introduce broad infrastructure
+until smaller hot-path and lifecycle-scoping corrections are proven insufficient.
 
 ---
-
 # CURRENT_DEVELOPMENT_PRIORITY
 
 Priority:
