@@ -90,6 +90,25 @@ def admit_robot_candidate(
     if not isinstance(snapshot, dict):
         raise RobotAdmissionRejected("Scanner candidate snapshot is invalid")
 
+    source_timeframe = str(candidate.get("timeframe", "")).strip()
+    if source_timeframe != "1":
+        if snapshot.get("robot_handoff_ready") is not True:
+            raise RobotAdmissionRejected(
+                "Scanner candidate has no proven Robot 1m handoff"
+            )
+        if not isinstance(snapshot.get("robot_geometry"), dict):
+            raise RobotAdmissionRejected(
+                "Scanner candidate has no projected Robot geometry"
+            )
+        cursor = snapshot.get("scanner_geometry_cursor")
+        if (
+            not isinstance(cursor, dict)
+            or str(cursor.get("timeframe", "")).strip() != "1"
+        ):
+            raise RobotAdmissionRejected(
+                "Scanner candidate has no Robot 1m geometry cursor"
+            )
+
     resolved_database_path = (
         Path(database_path) if database_path is not None else DEFAULT_DATABASE_PATH
     )
