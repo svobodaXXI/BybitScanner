@@ -77,6 +77,7 @@ class ActionExecutor(Protocol):
     without duplicating this coordinator's cycle."""
 
     def create_limit(self, request): ...
+    def amend_limit(self, request): ...
     def cancel_limit(self, request): ...
     def create_stop(self, request): ...
     def amend_stop(self, request): ...
@@ -109,6 +110,13 @@ def _cancel_blocked_entry_action_id(candidate_id: str) -> ClientActionId:
         f"{candidate_id}\0cancel-blocked-entry".encode("utf-8")
     ).hexdigest()[:32]
     return ClientActionId(f"robot-cancel-blocked-{digest}")
+
+
+def _cancel_apex_entry_action_id(candidate_id: str) -> ClientActionId:
+    digest = hashlib.sha256(
+        f"{candidate_id}\0cancel-entry-at-apex".encode("utf-8")
+    ).hexdigest()[:32]
+    return ClientActionId(f"robot-cancel-apex-{digest}")
 
 
 class RobotBreakoutMonitor:
@@ -370,6 +378,7 @@ class RobotBreakoutMonitor:
             if not order_id:
                 return False
             execution["limit_order_id"] = order_id
+            execution["last_limit_index"] = geometry_index
             self._persist_execution(record, execution)
             return True
 
@@ -397,17 +406,81 @@ class RobotBreakoutMonitor:
                 return True
 
             new_entry_admitted, terminal_stop = self._read_admission_gate()
-            if new_entry_admitted:
-                return False
-            if not inactive:
-                self._action_executor.cancel_limit(PaperLimitCancelRequest(
-                    _cancel_blocked_entry_action_id(record.candidate_id),
-                    record.symbol.value, execution["limit_order_id"],
-                ))
-            if terminal_stop:
+            if not new_entry_admitted:
+                if not inactive:
+                    self._action_executor.cancel_limit(PaperLimitCancelRequest(
+                        _cancel_blocked_entry_action_id(record.candidate_id),
+                        record.symbol.value, execution["limit_order_id"],
+                    ))
+                if terminal_stop:
+                    self._invalidate_pre_entry_candidate(
+                        record, reason="ROBOT_STOPPED with unfilled resting entry LIMIT",
+                    )
+                return True
+
+            if inactive:
                 self._invalidate_pre_entry_candidate(
-                    record, reason="ROBOT_STOPPED with unfilled resting entry LIMIT",
+                    record,
+                    reason="ENTRY_LIMIT_INACTIVE_BEFORE_FILL",
                 )
+                return True
+
+            candle = self._get_closed_candle(record.symbol.value)
+            if candle is None:
+                return False
+            try:
+                geometry_index = project_latest_geometry_index(
+                    record.signal_snapshot,
+                    latest_closed_candle_time_ms=int(candle["time_ms"]),
+                )
+            except ScannerGeometryCursorError:
+                return False
+
+            apex_index = int(record.signal_snapshot["geometry"]["apex"]["index"])
+            if geometry_index >= apex_index:
+                result = self._action_executor.cancel_limit(PaperLimitCancelRequest(
+                    _cancel_apex_entry_action_id(record.candidate_id),
+                    record.symbol.value,
+                    execution["limit_order_id"],
+                ))
+                if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+                    return False
+                expired_state = dict(record.robot_state)
+                expired_state["phase"] = robot_state_machine.PHASE_EXPIRED_AT_APEX
+                expired_state["last_event"] = robot_state_machine.EVENT_EXPIRED_AT_APEX
+                expired_state["geometry_cursor"] = geometry_index
+                expired_execution = dict(execution)
+                expired_execution["cancelled_at_apex_index"] = geometry_index
+                expired_state["execution"] = expired_execution
+                self._persist_state(record, expired_state)
+                return True
+
+            last_limit_index = int(
+                execution.get(
+                    "last_limit_index",
+                    record.robot_state.get("retest_index"),
+                )
+            )
+            if not robot_entry_limit.reprice_due(
+                last_limit_index=last_limit_index,
+                current_index=geometry_index,
+            ):
+                return False
+
+            plan = robot_entry_limit.build_retest_limit_reprice(
+                self._candidate_payload(record),
+                record.robot_state,
+                geometry_index=geometry_index,
+                tick_size=self._tick_size_provider(record.symbol.value),
+                order_id=execution["limit_order_id"],
+            )
+            result = robot_entry_limit.submit_retest_limit_reprice(
+                self._action_executor, plan,
+            )
+            if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+                return False
+            execution["last_limit_index"] = geometry_index
+            self._persist_execution(record, execution)
             return True
 
         if not inactive:
