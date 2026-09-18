@@ -1181,7 +1181,9 @@ class PaperRuntime:
         if book.symbol != normalized:
             raise ValueError("Robot market event symbol does not match book")
         entry_order_ids: set[str] = set()
-        for candidate in self.store.load_robot_candidates(self._paper_account_id):
+        for candidate in self.store.load_robot_candidates_for_symbol(
+            self._paper_account_id, normalized,
+        ):
             if (
                 candidate.status != "APPROVED"
                 or candidate.symbol != normalized
@@ -1192,18 +1194,20 @@ class PaperRuntime:
             order_id = (candidate.robot_state.get("execution") or {}).get("limit_order_id")
             if order_id:
                 entry_order_ids.add(order_id)
-        self._match_limits_only(
+        matched_fills = self._match_limits_only(
             normalized, book, event_id, allowed_order_ids=entry_order_ids,
         )
-        monitor = RobotBreakoutMonitor(
-            lambda: self.store,
-            self._paper_account_id,
-            get_closed_candle=self._robot_closed_candle_provider,
-            action_executor=_DirectRobotActionExecutor(self),
-            tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
-            clock_ms=lambda: int(time.time() * 1000),
-        )
-        finalized = monitor.process_authoritative_fill(normalized.value)
+        finalized: tuple[str, ...] = ()
+        if matched_fills:
+            monitor = RobotBreakoutMonitor(
+                lambda: self.store,
+                self._paper_account_id,
+                get_closed_candle=self._robot_closed_candle_provider,
+                action_executor=_DirectRobotActionExecutor(self),
+                tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
+                clock_ms=lambda: int(time.time() * 1000),
+            )
+            finalized = monitor.process_authoritative_fill(normalized.value)
         obligation = self.evaluate_robot_protection_crossing(
             normalized.value, book, event_id=event_id, received_at_ms=received_at_ms,
         )

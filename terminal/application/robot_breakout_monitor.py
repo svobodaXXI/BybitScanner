@@ -243,10 +243,12 @@ class RobotBreakoutMonitor:
             raise ValueError("symbol must be non-empty")
 
         advanced: list[str] = []
-        for record in self._store().load_robot_candidates(self._account_id):
+        symbol_value = Symbol(normalized)
+        for record in self._store().load_robot_candidates_for_symbol(
+            self._account_id, symbol_value,
+        ):
             if (
                 record.status != "APPROVED"
-                or record.symbol.value != normalized
                 or record.robot_state is None
                 or record.robot_state.get("phase") != robot_state_machine.PHASE_RETEST_DETECTED
             ):
