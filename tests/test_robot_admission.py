@@ -81,6 +81,102 @@ class RobotAdmissionGateTests(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_5m_candidate_without_projected_robot_geometry_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate_dir = root / "candidates"
+            db_path = root / "paper.sqlite3"
+            create_signal_snapshot(
+                {
+                    "symbol": "ONGUSDT",
+                    "pattern": "Falling Wedge",
+                    "timeframe": "5",
+                    "geometry": {
+                        "current_index": 10,
+                        "apex": {"index": 30},
+                        "upper_line": {"slope": -1.0, "intercept": 20},
+                        "lower_line": {"slope": -0.5, "intercept": 15},
+                    },
+                    "robot_handoff_ready": False,
+                },
+                timeframe="5",
+                store_dir=candidate_dir,
+                candidate_id="candidate-5m",
+                created_at="2026-09-09T20:00:00+00:00",
+            )
+            self._ready_database(db_path)
+
+            with self.assertRaisesRegex(
+                RobotAdmissionRejected, "no proven Robot 1m handoff",
+            ):
+                admit_robot_candidate(
+                    "candidate-5m",
+                    database_path=db_path,
+                    store_dir=candidate_dir,
+                    clock_ms=lambda: 2000,
+                )
+
+            store = SQLiteStore.open(db_path)
+            try:
+                self.assertIsNone(store.get_robot_candidate("candidate-5m"))
+            finally:
+                store.close()
+
+    def test_5m_candidate_with_projected_robot_geometry_is_admitted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate_dir = root / "candidates"
+            db_path = root / "paper.sqlite3"
+            create_signal_snapshot(
+                {
+                    "symbol": "ONGUSDT",
+                    "pattern": "Falling Wedge",
+                    "timeframe": "5",
+                    "geometry": {
+                        "current_index": 10,
+                        "apex": {"index": 30},
+                        "upper_line": {"slope": -1.0, "intercept": 20},
+                        "lower_line": {"slope": -0.5, "intercept": 15},
+                    },
+                    "robot_geometry": {
+                        "current_index": 10,
+                        "apex": {"index": 110.0},
+                        "upper_line": {"slope": -0.2, "intercept": 12.0},
+                        "lower_line": {"slope": -0.1, "intercept": 11.0},
+                    },
+                    "scanner_geometry_cursor": {
+                        "version": "1.0",
+                        "timeframe": "1",
+                        "geometry_index": 10,
+                        "source_candle_time_ms": 1_000_000,
+                    },
+                    "robot_handoff_ready": True,
+                    "scanner_source_timeframe": "5",
+                },
+                timeframe="5",
+                store_dir=candidate_dir,
+                candidate_id="candidate-5m",
+                created_at="2026-09-09T20:00:00+00:00",
+            )
+            self._ready_database(db_path)
+
+            record, created = admit_robot_candidate(
+                "candidate-5m",
+                database_path=db_path,
+                store_dir=candidate_dir,
+                clock_ms=lambda: 2000,
+            )
+
+            self.assertTrue(created)
+            self.assertEqual(record.status, "APPROVED")
+            self.assertEqual(
+                record.signal_snapshot["scanner_source_timeframe"], "5",
+            )
+            self.assertEqual(
+                record.signal_snapshot["robot_geometry"]["apex"]["index"],
+                110.0,
+            )
+
     def test_ready_runtime_admits_and_marks_legacy_approved(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
