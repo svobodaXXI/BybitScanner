@@ -228,6 +228,51 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             ["📈 Open TradingView"],
         )
 
+    def test_5m_robot_button_requires_proven_handoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chart = Path(directory) / "BTCUSDT_analysis.png"
+            chart.write_bytes(b"test-image")
+            ready = self.signal()
+            ready["robot_handoff_ready"] = True
+
+            with patch.object(
+                notification.config,
+                "TELEGRAM_CHAT_IDS",
+                ("owner",),
+            ), patch.object(
+                notification.config,
+                "TELEGRAM_CHAT_ID",
+                "owner",
+            ), patch.object(
+                notification,
+                "CHARTS_DIR",
+                directory,
+            ), patch.object(
+                notification,
+                "send_message",
+                return_value={"ok": True},
+            ), patch.object(
+                notification,
+                "send_photo",
+                return_value={"ok": True},
+            ) as photo_mock, patch.object(
+                notification,
+                "create_signal_snapshot",
+                return_value={"candidate_id": "candidate-ready"},
+            ) as create_mock:
+                delivered = notification.send_signal(ready)
+
+        self.assertTrue(delivered)
+        create_mock.assert_called_once()
+        keyboard = photo_mock.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        buttons = [button for row in keyboard for button in row]
+        self.assertIn("🤖 Робот", [button["text"] for button in buttons])
+        robot_button = next(button for button in buttons if button["text"] == "🤖 Робот")
+        self.assertEqual(
+            robot_button["callback_data"],
+            "robot:approve:candidate-ready",
+        )
+
     def test_two_non_owner_recipients_receive_only_tradingview(self):
         with tempfile.TemporaryDirectory() as directory:
             chart = Path(directory) / "BTCUSDT_analysis.png"
