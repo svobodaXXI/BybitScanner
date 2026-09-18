@@ -461,6 +461,8 @@ class RobotBreakoutMonitor:
                     record.robot_state.get("retest_index"),
                 )
             )
+            if geometry_index < last_limit_index:
+                return False
             if not robot_entry_limit.reprice_due(
                 last_limit_index=last_limit_index,
                 current_index=geometry_index,
