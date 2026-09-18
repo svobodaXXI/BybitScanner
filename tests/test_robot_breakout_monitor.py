@@ -753,8 +753,27 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         first = self.store.get_robot_candidate("candidate-a")
         self.assertEqual(first.robot_state["execution"]["limit_order_id"], "test-limit-1")
 
-        self._create_candidate(candidate_id="candidate-b", reference_price=101.0)
-        self._drive_to_retest_detected("candidate-b")
+        candidate_b = self._create_candidate(
+            candidate_id="candidate-b", reference_price=101.0,
+        )
+        # Seed candidate-b at the same already-proven RETEST_DETECTED point
+        # without replaying the shared-symbol candle feed: candidate-a now
+        # legitimately consumes that same latest candle too while maintaining
+        # its working LIMIT, whereas production's provider is non-consuming.
+        state_b = dict(first.robot_state)
+        state_b.pop("execution", None)
+        self.store.save_robot_candidate_state(
+            candidate_b.candidate_id,
+            status="APPROVED",
+            robot_state=state_b,
+            expected_revision=candidate_b.state_revision,
+            updated_at_ms=self.clock(),
+        )
+        # Both same-symbol candidates observe the same latest closed candle in
+        # production; the FIFO test feed needs one identical copy per reader.
+        followup = _candle_at(105, high=99, low=97, close=98)
+        self.feed.push(SYMBOL, followup)
+        self.feed.push(SYMBOL, dict(followup))
         prior_limit_count = len(self.executor.limit_calls)
 
         advanced = self.monitor.tick()
