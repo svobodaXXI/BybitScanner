@@ -1192,6 +1192,8 @@ def test_robot_protection_health_get_returns_ingress_diagnostics():
         assert response["body"]["coverage_roles"] == {"BTCUSDT": "EXPOSURE"}
         assert response["body"]["ingress"]["current_pending"] == 3
         assert response["body"]["ingress"]["high_watermark"] == 11
+        assert response["body"]["ingress"]["max_queue_latency_ms"] == 4.5
+        assert response["body"]["ingress"]["max_processing_ms"] == 2.25
     finally:
         server.server_close()
 
