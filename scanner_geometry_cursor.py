@@ -156,7 +156,13 @@ def _anchor_values(signal_snapshot: Mapping[str, Any]) -> tuple[int, int]:
 
 
 def _frozen_apex_index(signal_snapshot: Mapping[str, Any]) -> float:
-    geometry = signal_snapshot.get("geometry") if isinstance(signal_snapshot, Mapping) else None
+    geometry = (
+        signal_snapshot.get("robot_geometry")
+        if isinstance(signal_snapshot, Mapping)
+        else None
+    )
+    if geometry is None and isinstance(signal_snapshot, Mapping):
+        geometry = signal_snapshot.get("geometry")
     apex = geometry.get("apex") if isinstance(geometry, Mapping) else None
     value = apex.get("index") if isinstance(apex, Mapping) else None
     if isinstance(value, bool):
