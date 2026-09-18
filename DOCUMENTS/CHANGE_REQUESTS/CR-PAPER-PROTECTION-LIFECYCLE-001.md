@@ -9,7 +9,7 @@
   "status": "IMPLEMENTED_VERIFYING",
   "revision": "1.6",
   "lifecycle_stage": "VERIFY",
-  "objective": "Specify D2 correction: autonomous event-driven PAPER protection, durable crossing obligations, restart-safe serialized closing and evidence-based Robot trade finalization, independent of UI and entry admission.",
+  "objective": "Own the deployed D2 PAPER protection lifecycle, runtime verification, continuity-loss recovery, ingress reliability corrections and evidence-based Robot trade finalization, independent of UI selection.",
   "non_goals": [
     "Changes to structural STOP/TAKE strategy, sizing, wedge strategy or LIVE",
     "BSBUSDT D1 invalid structural STOP / partial-fill recovery",
@@ -57,7 +57,7 @@
   ],
   "acceptance_criteria": [
     "All section 14 invariants hold",
-    "All mandatory scenarios T01-T20 and boundary cases in section 16 pass at actual shared execution/persistence boundaries",
+    "All mandatory scenarios T01-T28 and boundary cases in section 16 pass at actual shared execution/persistence boundaries",
     "No UI, fresh-candle, admission-state or selected-account dependency in protection execution",
     "Correlated actual fill -> FLAT -> cleanup -> Robot trade CLOSED evidence"
   ],
@@ -86,11 +86,11 @@
     },
     {
       "id": "SPEC",
-      "status": "DETAILS_DRAFT_FOR_REVIEW"
+      "status": "IMPLEMENTED_BASELINE_WITH_CURRENT_AMENDMENTS"
     },
     {
       "id": "CONTEXT",
-      "status": "INVESTIGATION_RECORDED_WITH_GAPS"
+      "status": "RUNTIME_EVIDENCE_CURRENT"
     },
     {
       "id": "IMPLEMENT",
@@ -204,7 +204,7 @@ of a closing execution is not proof that every possible matcher call was absent.
 
 ## 2. Scope
 
-This document owns D2 TASK/SPEC/CONTEXT. D2 acceptance and the current required implementation scope
+This document owns the D2 lifecycle, deployed behavior, runtime evidence and current correction design. D2 acceptance and the current required implementation scope
 apply to Robot-owned protected PAPER positions. The shared PAPER protection mechanism must remain
 architecturally reusable for manual PAPER positions, but extending or changing the full manual PAPER
 trading lifecycle is not a separate objective or acceptance obligation of this CR. References elsewhere
@@ -710,7 +710,8 @@ PR #135 added focused deterministic PAPER acceptance for the mirrored Rising Wed
 `Rising Wedge -> SHORT -> breakout below lower boundary -> retest -> SELL LIMIT -> SHORT position ->
 STOP/TAKE -> TAKE close`.
 
-CI passed and the code is deployed at `e5319da29029d7c463a5cc7dc428a35a01cceb8b`.
+CI passed; the SHORT parity change was introduced at `e5319da29029d7c463a5cc7dc428a35a01cceb8b`
+and remains included in the current deployed PAPER runtime `d4d550ecf4899bee59a01dff21a11b58ee6c701d`.
 
 **Status: IMPLEMENTED AND DETERMINISTICALLY VERIFIED; REAL PAPER RUNTIME SHORT TRADE STILL UNOBSERVED.**
 
