@@ -1045,6 +1045,9 @@ class _BookUpdateNotification:
 @dataclass(frozen=True)
 class _OwnerTask:
     operation: Callable[[object], None]
+    enqueued_at_ns: int
+    symbol: str | None = None
+    role: str | None = None
 
 
 class ProtectionIngressOverflow(RuntimeError):
@@ -1074,6 +1077,19 @@ class SerializedPaperRuntime:
         self._protection_ingress_capacity = protection_ingress_capacity
         self._protection_ingress_lock = threading.Lock()
         self._protection_ingress_pending = 0
+        self._protection_ingress_high_watermark = 0
+        self._protection_ingress_admitted = 0
+        self._protection_ingress_completed = 0
+        self._protection_ingress_overflows = 0
+        self._protection_ingress_last_queue_latency_ms = 0.0
+        self._protection_ingress_max_queue_latency_ms = 0.0
+        self._protection_ingress_last_processing_ms = 0.0
+        self._protection_ingress_max_processing_ms = 0.0
+        self._protection_ingress_last_symbol: str | None = None
+        self._protection_ingress_last_role: str | None = None
+        self._protection_ingress_last_overflow_symbol: str | None = None
+        self._protection_ingress_last_overflow_role: str | None = None
+        self._protection_ingress_last_overflow_pending = 0
         self._ready = threading.Event()
         self._initialization_error: BaseException | None = None
         self._thread = threading.Thread(
@@ -1138,17 +1154,72 @@ class SerializedPaperRuntime:
         growing ``self._requests`` without limit. Callers must treat that as
         a fail-closed continuity-loss signal, never a silent drop -- this
         method never coalesces, drops, or blocks to paper over overload.
+
+        Coverage callers may attach diagnostic-only ``_robot_ingress_symbol``
+        and ``_robot_ingress_role`` attributes to the operation. They never
+        affect admission or execution semantics; they only make queue pressure
+        observable when a real runtime overflow occurs.
         """
         if not self._thread.is_alive():
             raise RuntimeError("PAPER runtime owner is unavailable")
+        symbol = getattr(operation, "_robot_ingress_symbol", None)
+        role = getattr(operation, "_robot_ingress_role", None)
+        enqueued_at_ns = time.perf_counter_ns()
         with self._protection_ingress_lock:
             if self._protection_ingress_pending >= self._protection_ingress_capacity:
+                self._protection_ingress_overflows += 1
+                self._protection_ingress_last_overflow_symbol = symbol
+                self._protection_ingress_last_overflow_role = role
+                self._protection_ingress_last_overflow_pending = (
+                    self._protection_ingress_pending
+                )
                 raise ProtectionIngressOverflow(
                     "Robot protection ingress is saturated "
-                    f"(capacity={self._protection_ingress_capacity})"
+                    f"(capacity={self._protection_ingress_capacity}, "
+                    f"pending={self._protection_ingress_pending}, "
+                    f"symbol={symbol or 'unknown'}, role={role or 'unknown'})"
                 )
             self._protection_ingress_pending += 1
-        self._requests.put(_OwnerTask(operation))
+            self._protection_ingress_admitted += 1
+            self._protection_ingress_high_watermark = max(
+                self._protection_ingress_high_watermark,
+                self._protection_ingress_pending,
+            )
+        self._requests.put(_OwnerTask(
+            operation,
+            enqueued_at_ns,
+            symbol=symbol,
+            role=role,
+        ))
+
+    def protection_ingress_diagnostics(self) -> dict[str, object]:
+        """Thread-safe lightweight diagnostics for the bounded Robot ingress."""
+        with self._protection_ingress_lock:
+            return {
+                "capacity": self._protection_ingress_capacity,
+                "pending": self._protection_ingress_pending,
+                "high_watermark": self._protection_ingress_high_watermark,
+                "admitted": self._protection_ingress_admitted,
+                "completed": self._protection_ingress_completed,
+                "overflows": self._protection_ingress_overflows,
+                "last_queue_latency_ms": round(
+                    self._protection_ingress_last_queue_latency_ms, 3
+                ),
+                "max_queue_latency_ms": round(
+                    self._protection_ingress_max_queue_latency_ms, 3
+                ),
+                "last_processing_ms": round(
+                    self._protection_ingress_last_processing_ms, 3
+                ),
+                "max_processing_ms": round(
+                    self._protection_ingress_max_processing_ms, 3
+                ),
+                "last_symbol": self._protection_ingress_last_symbol,
+                "last_role": self._protection_ingress_last_role,
+                "last_overflow_symbol": self._protection_ingress_last_overflow_symbol,
+                "last_overflow_role": self._protection_ingress_last_overflow_role,
+                "last_overflow_pending": self._protection_ingress_last_overflow_pending,
+            }
 
     def close(self) -> None:
         if not self._thread.is_alive():
@@ -1185,13 +1256,36 @@ class SerializedPaperRuntime:
                         )
                     continue
                 if isinstance(request, _OwnerTask):
+                    started_at_ns = time.perf_counter_ns()
+                    queue_latency_ms = (
+                        started_at_ns - request.enqueued_at_ns
+                    ) / 1_000_000
                     try:
                         request.operation(runtime)
                     except BaseException:
                         LOGGER.exception("PAPER owner task failed")
                     finally:
+                        finished_at_ns = time.perf_counter_ns()
+                        processing_ms = (
+                            finished_at_ns - started_at_ns
+                        ) / 1_000_000
                         with self._protection_ingress_lock:
                             self._protection_ingress_pending -= 1
+                            self._protection_ingress_completed += 1
+                            self._protection_ingress_last_queue_latency_ms = (
+                                queue_latency_ms
+                            )
+                            self._protection_ingress_max_queue_latency_ms = max(
+                                self._protection_ingress_max_queue_latency_ms,
+                                queue_latency_ms,
+                            )
+                            self._protection_ingress_last_processing_ms = processing_ms
+                            self._protection_ingress_max_processing_ms = max(
+                                self._protection_ingress_max_processing_ms,
+                                processing_ms,
+                            )
+                            self._protection_ingress_last_symbol = request.symbol
+                            self._protection_ingress_last_role = request.role
                     continue
                 operation, completed, response = request
                 if operation is None:
@@ -1983,6 +2077,9 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 {
                     "ok": True,
                     "mode": "paper",
+                    "robot_protection_ingress": (
+                        self.server.runtime.protection_ingress_diagnostics()
+                    ),
                 },
             )
             return
