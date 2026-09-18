@@ -19,6 +19,8 @@ on:
       - "tests/test_robot_paper_acceptance.py"
       - "tests/test_robot_breakout_monitor.py"
       - "tests/test_robot_recovery_coordinator.py"
+      - "tests/test_terminal_paper_http.py"
+      - "tests/test_terminal_persistence.py"
       - "tests/test_robot_breakout_monitor_admission_catchup.py"
       - "tests/test_robot_breakout_monitor_late_admission.py"
       - "tests/test_robot_late_admission.py"
@@ -53,12 +55,15 @@ jobs:
           requests==2.34.2
           PySocks==1.7.1
           websocket-client==1.9.0
+          pytest==9.1.1
       - name: Compile acceptance surface
         run: >-
           python -m py_compile
           tests/test_robot_paper_acceptance.py
           tests/test_robot_breakout_monitor.py
           tests/test_robot_recovery_coordinator.py
+          tests/test_terminal_paper_http.py
+          tests/test_terminal_persistence.py
           tests/test_robot_breakout_monitor_admission_catchup.py
           tests/test_robot_breakout_monitor_late_admission.py
           tests/test_robot_late_admission.py
@@ -76,6 +81,8 @@ jobs:
           terminal/application/trading_application.py
           terminal/persistence/legacy_protection_recovery.py
           terminal/api/rest.py
+          terminal/runtime/paper_runtime.py
+          terminal/runtime/paper_http_server.py
       - name: Run deterministic Robot PAPER acceptance
         run: >-
           python -m unittest -v
@@ -90,3 +97,12 @@ jobs:
           tests.test_robot_legacy_protection_recovery_command
           tests.test_robot_legacy_protection_reconciliation
           tests.test_terminal_paper_trading_application
+      - name: Run Robot protection schema migration acceptance
+        run: >-
+          python -m unittest -v
+          tests.test_terminal_persistence.TerminalPersistenceTests.test_v20_to_v21_migration_preserves_obligations_and_allows_emergency_close
+      - name: Run Robot protection continuity acceptance
+        run: >-
+          python -m pytest -q
+          tests/test_terminal_paper_http.py
+          -k robot_protection_coverage_manager

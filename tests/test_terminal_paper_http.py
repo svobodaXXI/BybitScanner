@@ -1723,6 +1723,9 @@ class _FakeCoverageRuntime:
         self.symbols = list(symbols)
         self.crossing_calls: list[tuple[str, str, int]] = []
         self.market_event_calls: list[tuple[str, str, int]] = []
+        self.fence_calls: list[tuple[str, str]] = []
+        self.recovery_calls: list[tuple[str, str, int, str]] = []
+        self.recover_result = True
         self.fail_next_enqueue: BaseException | None = None
 
     def call(self, operation):
@@ -1747,6 +1750,16 @@ class _FakeCoverageRuntime:
     def evaluate_robot_protection_crossing(self, symbol, book, *, event_id, received_at_ms):
         self.crossing_calls.append((symbol, event_id, received_at_ms))
         return None
+
+    def fence_robot_protection_continuity_loss(self, symbol, reason):
+        self.fence_calls.append((symbol, reason))
+        return True
+
+    def recover_robot_protection_continuity_loss(
+        self, symbol, book, *, event_id, received_at_ms, reason,
+    ):
+        self.recovery_calls.append((symbol, event_id, received_at_ms, reason))
+        return self.recover_result
 
 
 def test_robot_protection_coverage_manager_subscribes_and_forwards_updates():
@@ -1809,6 +1822,7 @@ def test_robot_protection_coverage_manager_rejects_event_snapshot_identity_misma
     assert manager.health()["unhealthy_symbols"] == {
         "BTCUSDT": "event_identity_mismatch"
     }
+    assert runtime.fence_calls == [("BTCUSDT", "event_identity_mismatch")]
 
     manager.close()
 
@@ -1847,8 +1861,12 @@ def test_robot_protection_coverage_manager_marks_unhealthy_until_authoritative_s
     _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=3)
     assert manager.is_healthy() is True
     assert manager.health()["unhealthy_symbols"] == {}
-    assert len(runtime.crossing_calls) == 1
-    assert runtime.crossing_calls[0][1] == "BTCUSDT:3:3"
+    assert runtime.crossing_calls == []
+    assert len(runtime.recovery_calls) == 1
+    assert runtime.recovery_calls[0][0] == "BTCUSDT"
+    assert runtime.recovery_calls[0][1] == "BTCUSDT:3:3"
+    assert runtime.recovery_calls[0][3] == "ingress_overflow"
+    assert runtime.fence_calls == [("BTCUSDT", "ingress_overflow")]
 
     manager.close()
 
@@ -1900,12 +1918,16 @@ def test_robot_protection_coverage_manager_rejects_stale_generation_after_reconn
     assert manager.health()["unhealthy_symbols"] == {"BTCUSDT": "stale_generation_discarded"}
     assert runtime.crossing_calls == []
 
-    # Only a fresh authoritative snapshot of the current generation recovers it.
+    # Only a fresh authoritative snapshot of the current generation may run
+    # the fail-safe recovery. It is never treated as proof that no STOP/TAKE
+    # crossing occurred during the gap.
     _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=3)
     assert manager.is_healthy() is True
     assert manager.health()["unhealthy_symbols"] == {}
-    assert len(runtime.crossing_calls) == 1
-    assert runtime.crossing_calls[0][1] == "BTCUSDT:3:3"
+    assert runtime.crossing_calls == []
+    assert len(runtime.recovery_calls) == 1
+    assert runtime.recovery_calls[0][1] == "BTCUSDT:3:3"
+    assert runtime.recovery_calls[0][3] == "stale_generation_discarded"
 
     manager.close()
 
@@ -1925,6 +1947,34 @@ def test_robot_protection_coverage_manager_marks_unhealthy_on_any_admission_fail
 
     assert manager.is_healthy() is False
     assert manager.health()["unhealthy_symbols"] == {"BTCUSDT": "admission_failed"}
+    assert runtime.fence_calls == [("BTCUSDT", "admission_failed")]
+
+    manager.close()
+
+
+def test_robot_protection_coverage_manager_keeps_gap_unhealthy_until_recovery_succeeds():
+    hub = MarketDataHub(
+        _CoverageRegistry(["BTCUSDT"]), _coverage_context,
+        connection_factory=lambda *args, **kwargs: None,
+    )
+    runtime = _FakeCoverageRuntime(["BTCUSDT"])
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    manager.resync()
+    context = hub.get("BTCUSDT")
+
+    runtime.fail_next_enqueue = ProtectionIngressOverflow("saturated")
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=1)
+    assert manager.is_healthy() is False
+
+    runtime.recover_result = False
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=2)
+    assert manager.is_healthy() is False
+    assert manager.health()["unhealthy_symbols"] == {"BTCUSDT": "ingress_overflow"}
+
+    runtime.recover_result = True
+    _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=3)
+    assert manager.is_healthy() is True
+    assert len(runtime.recovery_calls) == 2
 
     manager.close()
 

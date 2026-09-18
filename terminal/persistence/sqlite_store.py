@@ -54,6 +54,7 @@ from .schema import (
     SCHEMA_V18_MIGRATION_STATEMENTS,
     SCHEMA_V19_MIGRATION_STATEMENTS,
     SCHEMA_V20_MIGRATION_STATEMENTS,
+    SCHEMA_V21_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -110,7 +111,7 @@ ROBOT_EXIT_REASONS = {
     "STOP", "TAKE", "MANUAL", "TAKEOVER",
     "EMERGENCY_CLOSE", "EMERGENCY_PROTECTION_FAILURE",
 }
-PAPER_PROTECTION_WINNING_LEGS = {"STOP", "TAKE"}
+PAPER_PROTECTION_WINNING_LEGS = {"STOP", "TAKE", "EMERGENCY_CLOSE"}
 PAPER_PROTECTION_OBLIGATION_TRANSITIONS = {
     "TRIGGERED": {"DISPATCHING"},
     "DISPATCHING": {"RESOLVED"},
@@ -856,6 +857,11 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 20:
+            SQLiteStore._validate_required_tables(connection, version=20)
+            SQLiteStore._migrate_v20_to_v21(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
         if version == 19:
             SQLiteStore._validate_required_tables(connection, version=19)
             SQLiteStore._migrate_v19_to_v20(connection)
@@ -1224,6 +1230,19 @@ class SQLiteStore:
             for statement in SCHEMA_V20_MIGRATION_STATEMENTS:
                 connection.execute(statement)
             connection.execute("PRAGMA user_version = 20")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+        SQLiteStore._migrate_v20_to_v21(connection)
+
+    @staticmethod
+    def _migrate_v20_to_v21(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V21_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 21")
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")
@@ -3990,7 +4009,7 @@ class SQLiteStore:
         if protection_version < 1:
             raise ValueError("protection_version must be positive")
         if winning_leg not in PAPER_PROTECTION_WINNING_LEGS:
-            raise ValueError("winning_leg must be STOP or TAKE")
+            raise ValueError("winning_leg must be STOP, TAKE, or EMERGENCY_CLOSE")
         for value in (
             trigger_price, observed_exit_price, observed_quantity,
             observed_bid_price, observed_ask_price,

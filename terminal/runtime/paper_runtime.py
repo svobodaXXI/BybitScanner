@@ -1203,6 +1203,182 @@ class PaperRuntime:
         )
         return finalized, obligation
 
+    def fence_robot_protection_continuity_loss(
+        self, symbol: str, reason: str,
+    ) -> bool:
+        """Durably close Robot admission when ordered protection evidence is lost.
+
+        Market-data coverage is part of PAPER protection authority: once even
+        one ordered event is known missing, a local STOP/TAKE can no longer be
+        assumed to have remained untriggered. The fence is idempotent and
+        intentionally independent of Workspace account selection.
+        """
+        normalized = symbol.strip().upper()
+        if not normalized:
+            raise ValueError("Robot protection coverage symbol is required")
+        state = self.store.get_robot_runtime_state(self._paper_account_id)
+        if state is None or state.mode != ROBOT_RUNNING:
+            return False
+        if state.recovery_status == RECONCILIATION_REQUIRED:
+            return True
+        self.store.update_robot_runtime_state(
+            self._paper_account_id,
+            mode=ROBOT_RUNNING,
+            recovery_status=RECONCILIATION_REQUIRED,
+            reason=(
+                "ROBOT_PROTECTION_COVERAGE_LOST "
+                f"symbol={normalized} reason={reason.strip() or 'unknown'}"
+            ),
+            expected_version=state.version,
+            updated_at_ms=int(time.time() * 1000),
+        )
+        return True
+
+    def recover_robot_protection_continuity_loss(
+        self, symbol: str, book: NormalizedOrderBook, *, event_id: str,
+        received_at_ms: int, reason: str,
+    ) -> bool:
+        """Resolve a known Robot protection feed gap on the first fresh snapshot.
+
+        A missed ordered event makes local STOP/TAKE history unknowable. PAPER
+        therefore does not infer that protection was safe from the latest price
+        alone: admission is fenced, unfilled entry orders are cancelled, any
+        already-proven Robot fill is finalized, and an unambiguously owned OPEN
+        Robot position exits through the existing durable protection obligation
+        machinery with EMERGENCY_CLOSE evidence.
+
+        Returns True only when this symbol has no remaining unprotected or
+        unknown Robot exposure. False leaves both the coverage health flag and
+        durable Robot admission fence in place for retry or reconciliation.
+        """
+        normalized = Symbol(symbol.strip().upper())
+        if book.symbol != normalized or not book.bids or not book.asks:
+            return False
+        if (
+            book.source_generation is None
+            or book.source_sequence is None
+            or book.source_update_id is None
+            or book.source_event_at_ms is None
+        ):
+            return False
+        self.fence_robot_protection_continuity_loss(normalized.value, reason)
+
+        monitor = RobotBreakoutMonitor(
+            lambda: self.store,
+            self._paper_account_id,
+            get_closed_candle=self._robot_closed_candle_provider,
+            action_executor=_DirectRobotActionExecutor(self),
+            tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
+            clock_ms=lambda: int(time.time() * 1000),
+        )
+        monitor.process_authoritative_fill(normalized.value)
+
+        for candidate in self.store.load_robot_candidates(self._paper_account_id):
+            if (
+                candidate.symbol != normalized
+                or candidate.status != "APPROVED"
+                or candidate.robot_state is None
+            ):
+                continue
+            execution = candidate.robot_state.get("execution") or {}
+            raw_order_id = execution.get("limit_order_id")
+            if not isinstance(raw_order_id, str) or not raw_order_id.strip():
+                continue
+            order = self.store.get_paper_limit(raw_order_id, self._paper_account_id)
+            if (
+                order is None
+                or order.status in INACTIVE_LIMIT_STATUSES
+                or order.filled_quantity > 0
+            ):
+                continue
+            digest = hashlib.sha256(
+                f"{candidate.candidate_id}\0coverage-loss-cancel".encode("utf-8")
+            ).hexdigest()[:32]
+            result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                ClientActionId(f"robot-coverage-loss-{digest}"),
+                normalized.value,
+                raw_order_id,
+            ))
+            if result.status != CommandResultStatus.COMPLETED:
+                return False
+
+        trade = self.store.get_open_robot_trade_for_symbol(
+            self._paper_account_id, normalized,
+        )
+        position_key = PositionKey(
+            self._paper_account_id, Category.LINEAR, normalized, 0,
+        )
+        position = self.store.get_position_projection(position_key)
+
+        if trade is None:
+            return (
+                position is None
+                or position.side is PositionSide.FLAT
+                or position.quantity.value == 0
+            )
+
+        existing = self.store.get_paper_protection_obligation_for_trade(trade.trade_id)
+        if existing is not None and existing.status != "RESOLVED":
+            resumed = self._dispatch_paper_protection_obligation(
+                existing, now_ms=received_at_ms,
+            )
+            closed = self.store.get_robot_trade(trade.trade_id)
+            return (
+                resumed.status == "RESOLVED"
+                and closed is not None
+                and closed.exit_time_ms is not None
+            )
+
+        expected_side = (
+            PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
+        )
+        protection = self.store.get_protection_projection(position_key)
+        if (
+            trade.entry_quantity is None
+            or trade.entry_quantity <= 0
+            or trade.entry_position_version is None
+            or position is None
+            or position.side is not expected_side
+            or position.quantity.value != trade.entry_quantity
+            or position.version != trade.entry_position_version
+            or protection is None
+        ):
+            return False
+
+        observed_bid = book.bids[0].price.value
+        observed_ask = book.asks[0].price.value
+        exit_market = (
+            observed_bid if expected_side is PositionSide.LONG else observed_ask
+        )
+        obligation, _created = self.store.latch_paper_protection_obligation(
+            trade_id=trade.trade_id,
+            protection_version=protection.version,
+            winning_leg="EMERGENCY_CLOSE",
+            trigger_price=exit_market,
+            observed_exit_price=exit_market,
+            observed_quantity=position.quantity.value,
+            market_event_id=event_id,
+            source_received_at_ms=received_at_ms,
+            source_generation=book.source_generation,
+            source_sequence=book.source_sequence,
+            source_update_id=book.source_update_id,
+            source_event_at_ms=book.source_event_at_ms,
+            source_matching_engine_cts_ms=book.source_matching_engine_cts_ms,
+            observed_bid_price=observed_bid,
+            observed_ask_price=observed_ask,
+            latched_at_ms=received_at_ms,
+        )
+        resolved = self._dispatch_paper_protection_obligation(
+            obligation, now_ms=received_at_ms,
+        )
+        closed = self.store.get_robot_trade(trade.trade_id)
+        return (
+            resolved.status == "RESOLVED"
+            and closed is not None
+            and closed.exit_time_ms is not None
+            and closed.exit_reason == "EMERGENCY_CLOSE"
+        )
+
     def _match_symbol(
         self,
         symbol: Symbol,
