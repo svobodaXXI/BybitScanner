@@ -1657,17 +1657,37 @@ def test_enqueue_is_bounded_and_fails_closed_with_protection_ingress_overflow():
             started.set()
             assert release.wait(timeout=2)
 
-        runtime.enqueue(blocking_task)
+        runtime.enqueue(
+            blocking_task, symbol="BTCUSDT", coverage_role="EXPOSURE",
+        )
         assert started.wait(timeout=1)
-        runtime.enqueue(lambda _owner: None)  # pending == capacity (2)
+        runtime.enqueue(
+            lambda _owner: None, symbol="ETHUSDT", coverage_role="ENTRY_PENDING",
+        )  # pending == capacity (2)
 
         with pytest.raises(ProtectionIngressOverflow):
-            runtime.enqueue(lambda _owner: None)  # would exceed capacity
+            runtime.enqueue(
+                lambda _owner: None,
+                symbol="EDGEUSDT",
+                coverage_role="ENTRY_PENDING",
+            )  # would exceed capacity
+
+        saturated = runtime.protection_ingress_metrics()
+        assert saturated["current_pending"] == 2
+        assert saturated["high_watermark"] == 2
+        assert saturated["last_symbol"] == "ETHUSDT"
+        assert saturated["last_role"] == "ENTRY_PENDING"
+        assert saturated["last_overflow_symbol"] == "EDGEUSDT"
+        assert saturated["last_overflow_role"] == "ENTRY_PENDING"
 
         release.set()
         # call() is FIFO-ordered behind both already-admitted tasks, so its
         # return proves the owner has drained them and capacity is free.
         runtime.call(lambda _: None)
+        drained = runtime.protection_ingress_metrics()
+        assert drained["current_pending"] == 0
+        assert drained["max_queue_latency_ms"] >= 0
+        assert drained["max_processing_ms"] >= 0
         runtime.enqueue(lambda _owner: None)
     finally:
         release.set()
@@ -1731,7 +1751,7 @@ class _FakeCoverageRuntime:
     def call(self, operation):
         return operation(self)
 
-    def enqueue(self, operation) -> None:
+    def enqueue(self, operation, **_metadata) -> None:
         if self.fail_next_enqueue is not None:
             failure = self.fail_next_enqueue
             self.fail_next_enqueue = None
