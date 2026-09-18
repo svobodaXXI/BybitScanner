@@ -1692,13 +1692,25 @@ class RobotProtectionCoverageManager:
         owner no longer reports the symbol as needing coverage.
         """
         try:
-            symbols = self._runtime.call(
-                lambda runtime: runtime.robot_protection_coverage_symbols(),
+            symbols, durable_loss = self._runtime.call(
+                lambda runtime: (
+                    runtime.robot_protection_coverage_symbols(),
+                    (
+                        runtime.robot_protection_continuity_loss()
+                        if hasattr(runtime, "robot_protection_continuity_loss")
+                        else None
+                    ),
+                ),
             )
         except Exception:
             LOGGER.exception("Robot protection coverage resync failed to read coverage targets")
             return
         wanted = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
+        if durable_loss is not None:
+            durable_symbol, durable_reason = durable_loss
+            if durable_symbol in wanted:
+                with self._lock:
+                    self._unhealthy.setdefault(durable_symbol, durable_reason)
         with self._lock:
             current = set(self._covered)
             to_add = wanted - current

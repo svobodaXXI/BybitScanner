@@ -1451,6 +1451,32 @@ class PaperRuntime:
             applied += 1
         return applied
 
+    def robot_protection_continuity_loss(self) -> tuple[str, str] | None:
+        """Return the durable Robot protection continuity-loss reason, if any.
+
+        Coverage-manager restart recovery must not depend on an in-memory
+        unhealthy map surviving process restart. Only the explicit
+        ROBOT_PROTECTION_COVERAGE_LOST runtime reason is exposed here; other
+        reconciliation reasons remain owned by their existing recovery paths.
+        """
+        state = self.store.get_robot_runtime_state(self._paper_account_id)
+        prefix = "ROBOT_PROTECTION_COVERAGE_LOST symbol="
+        if (
+            state is None
+            or state.mode != ROBOT_RUNNING
+            or state.recovery_status != RECONCILIATION_REQUIRED
+            or not isinstance(state.reason, str)
+            or not state.reason.startswith(prefix)
+        ):
+            return None
+        payload = state.reason[len(prefix):]
+        symbol, sep, reason = payload.partition(" reason=")
+        symbol = symbol.strip().upper()
+        reason = reason.strip()
+        if not sep or not symbol or not reason:
+            return None
+        return symbol, reason
+
     def robot_protection_coverage_symbols(self) -> tuple[str, ...]:
         """Symbols needing independent Robot protection coverage right now:
         the union of (a) symbols with a non-flat Robot-owned PAPER trade and

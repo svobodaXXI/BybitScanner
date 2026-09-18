@@ -43,12 +43,16 @@ class _Context:
 
 
 class _Owner:
-    def __init__(self) -> None:
+    def __init__(self, durable_loss=None) -> None:
         self.fences = []
         self.recoveries = []
+        self.durable_loss = durable_loss
 
     def robot_protection_coverage_symbols(self):
         return (SYMBOL,)
+
+    def robot_protection_continuity_loss(self):
+        return self.durable_loss
 
     def fence_robot_protection_continuity_loss(self, symbol, reason):
         self.fences.append((symbol, reason))
@@ -75,6 +79,25 @@ class _Runtime:
 
 
 class RobotProtectionOverflowRecoveryTests(unittest.TestCase):
+    def test_restart_rehydrates_durable_continuity_loss_and_recovers(self):
+        owner = _Owner((SYMBOL, "ingress_overflow"))
+        runtime = _Runtime(owner)
+        session = _Session()
+        manager = RobotProtectionCoverageManager(
+            object(), runtime, recovery_session=session,
+        )
+        manager._covered[SYMBOL] = _Context()
+
+        self.assertTrue(manager.is_healthy())
+        manager.resync()
+
+        self.assertEqual(owner.fences, [(SYMBOL, "ingress_overflow")])
+        self.assertEqual(len(owner.recoveries), 1)
+        self.assertEqual(owner.recoveries[0][0], SYMBOL)
+        self.assertEqual(owner.recoveries[0][4], "ingress_overflow")
+        self.assertTrue(manager.is_healthy())
+        self.assertEqual(len(session.calls), 1)
+
     def test_unhealthy_symbol_recovers_from_fresh_rest_snapshot_without_ws_snapshot(self):
         owner = _Owner()
         runtime = _Runtime(owner)
