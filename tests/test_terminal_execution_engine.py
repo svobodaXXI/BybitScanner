@@ -292,7 +292,7 @@ class ExecutionEngineTests(unittest.TestCase):
             ExecutionApplyResult.APPLIED,
         )
         projection = self.store.get_position_projection(KEY)
-        self.assertEqual(projection.sync_state, "synchronized")
+        self.assertEqual(projection.sync_state, "synced")
 
     def test_execution_before_order_event_correlates_command(self):
         self.command()
@@ -355,7 +355,7 @@ class ExecutionEngineTests(unittest.TestCase):
 
     def test_authoritative_position_translation_creates_no_execution(self):
         update = self.engine.projection_from_authoritative_position(
-            position_event(), sync_state="synchronized"
+            position_event(), sync_state="synced"
         )
         self.assertEqual(update.quantity.value, Decimal("0.002"))
         self.assertEqual(update.average_entry.value, Decimal("101.123456789012345678"))
