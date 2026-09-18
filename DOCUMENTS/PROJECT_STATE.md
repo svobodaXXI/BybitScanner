@@ -1075,9 +1075,9 @@ Wick-Aware Boundary Fitting for Wedge Layer), SPEC stage. See `CURRENT_DEVELOPME
 
 Important:
 
-This historical mission closure does not override the current authoritative priority
-`ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY` (see `CURRENT_WORK_CONTROL` / `CURRENT_DEVELOPMENT_PRIORITY` above).
-No implementation is authorized by SPEC-stage task selection alone.
+This mission closure and its 2026-09-11 geometry handoff are historical. They do not override the current
+`ROBOT_V0_1_PAPER_RUNTIME_RELIABILITY` priority in `CURRENT_WORK_CONTROL` /
+`CURRENT_DEVELOPMENT_PRIORITY`.
 
 ---
 
@@ -1129,16 +1129,15 @@ Owning record:
 
 Relationship:
 
-This is the current active task under `ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY` (see `CURRENT_WORK_CONTROL` /
-`CURRENT_DEVELOPMENT_PRIORITY` above). It targets Pivot touch/violation tolerance in `geometry/touches.py` /
+This was the selected geometry task under the 2026-09-11 `ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY` priority.
+It targets Pivot touch/violation tolerance in `geometry/touches.py` /
 `geometry/validation/touches.py`, distinct from the separately governed post-detection containment/freshness
-mechanism in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`. As of 2026-09-11 that separate
-containment mechanism is `IMPLEMENTED_VERIFIED` (see the checkpoint at the end of this document); this CR
-(Pivot touch/violation tolerance) remains untouched and is still the current active task.
+mechanism in `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`.
 
-Next action:
+Current routing:
 
-CONTEXT phase, subject to explicit human authorization. Not started.
+OPEN / DEFERRED_BY_ROBOT_RUNTIME_RELIABILITY. It is not the current project task. Resume only after the active
+Robot PAPER runtime blockers or an explicit priority change.
 
 ---
 
@@ -6157,11 +6156,10 @@ IMPLEMENTED_VERIFIED / DOCUMENTATION_UPDATE
 for full detail (files changed, verification evidence, the accepted Rising Wedge/Triangle Compression
 containment-gate scope gap, and the live ARBUSDT before/after confirmation).
 
-This does **not** change `CR-SCANNER-GEOMETRY-002` (Pivot touch/violation tolerance in
-`geometry/touches.py` / `geometry/validation/touches.py`), which remains `OPEN / SPEC_RECORDED /
-CONTEXT_NOT_STARTED_NOT_AUTHORIZED` and the current active task under `ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY`
-(see `CR-SCANNER-GEOMETRY-002_STATE` above). The two are distinct, separately governed mechanisms that both
-trace to the same GRVTUSDT wick-aware boundary-fitting research observation.
+This did **not** change `CR-SCANNER-GEOMETRY-002` (Pivot touch/violation tolerance in
+`geometry/touches.py` / `geometry/validation/touches.py`). That CR remains an open geometry backlog item,
+but its former `ROBOT_V0_1_PATTERN_DETECTION_GEOMETRY` priority is superseded by the current Robot PAPER runtime
+reliability priority. The two geometry mechanisms remain distinct and separately governed.
 
 Working numeric defaults implemented as approved without further negotiation (ATR multiplier, 60/40 zone
 split, freshness window factor, severity weights, reversal-pattern thresholds) remain explicitly
