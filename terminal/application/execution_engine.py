@@ -191,9 +191,14 @@ class ExecutionEngine:
             _position_key_for_execution(event, self._orders)
         )
         projection = _projection_after_execution(
-            event, current, sync_state="synchronized",
+            event, current, sync_state="synced",
         )
-        return self._store.apply_execution_once(execution, projection, command_id=None)
+        command = self._find_command(event.order_link_id, event.order_id.value)
+        return self._store.apply_execution_once(
+            execution,
+            projection,
+            command_id=command.command_id if command is not None else None,
+        )
 
     def apply_paper_limit_execution(
         self,
@@ -208,7 +213,7 @@ class ExecutionEngine:
             _position_key_for_execution(event, self._orders)
         )
         projection = _projection_after_execution(
-            event, current, sync_state="synchronized",
+            event, current, sync_state="synced",
         )
         return self._store.apply_paper_limit_execution_once(
             execution.order_id,
