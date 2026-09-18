@@ -7,7 +7,7 @@
   "id": "CR-PAPER-PROTECTION-LIFECYCLE-001",
   "title": "Autonomous PAPER Protection Execution Lifecycle",
   "status": "IMPLEMENTED_VERIFYING",
-  "revision": "1.4",
+  "revision": "1.5",
   "lifecycle_stage": "VERIFY",
   "objective": "Specify D2 correction: autonomous event-driven PAPER protection, durable crossing obligations, restart-safe serialized closing and evidence-based Robot trade finalization, independent of UI and entry admission.",
   "non_goals": [
@@ -148,6 +148,11 @@
       "revision": "1.4",
       "date": "2026-09-18",
       "reason": "Recorded deployed KSMUSDT restart-safe REST snapshot recovery, successful evidence-based reconciliation to PAUSED, confirmed synced PAPER projection after recovery close, and a second EDGEUSDT ingress_overflow with no position/trade/execution proving the remaining blocker is recurring ingress saturation rather than emergency-close recovery"
+    },
+    {
+      "revision": "1.5",
+      "date": "2026-09-18",
+      "reason": "Recorded systemic ingress architecture review, external mature-project references, and a staged minimal-change correction plan prioritizing exposure safety, lifecycle-scoped overflow handling, and removal of unnecessary per-book-event owner work before any queue redesign"
     }
   ]
 }
@@ -851,4 +856,144 @@ Do not treat queue-size increase alone as a root-cause correction.
 
 The next architecture/debugging task is specifically to localize and remove unnecessary ingress pressure while
 preserving the critical invariant that a transient STOP/TAKE crossing cannot be silently coalesced away.
+
+## 22. Systemic ingress architecture review — 2026-09-18
+
+This review follows two real runtime \`ingress_overflow\` incidents. It separates proven facts from pressure points and
+proposed changes. No code behavior is authorized merely by this review.
+
+### 22.1 Proven current architecture
+
+Current flow:
+
+\`Bybit WS -> MarketDataHub -> SymbolContext/PublicOrderBookBuffer -> RobotProtectionCoverageManager ->
+SerializedPaperRuntime -> PaperRuntime.process_robot_market_event()\`.
+
+Proven properties:
+
+- shared \`MarketDataHub\`, independent Robot coverage, and depth-1000 symbol contexts;
+- every accepted Robot book update becomes a distinct non-coalesced owner task;
+- one global Robot-protection pending counter has default capacity \`64\`;
+- OPEN positions, unresolved obligations, and APPROVED \`RETEST_DETECTED\` pre-entry lifecycles share that capacity;
+- each \`process_robot_market_event()\` loads Robot candidates, checks active PAPER LIMITs, runs
+  \`process_authoritative_fill()\`, and evaluates protection;
+- EDGEUSDT overflowed with no position, Robot trade or execution, proving the queue can saturate before exposure.
+
+### 22.2 Code-level pressure points
+
+These are evidenced code-level pressure points, not yet individually proven as the sole runtime cause:
+
+1. **Global cross-symbol coupling.** One symbol can consume the same 64-task budget used by every other symbol.
+2. **Pre-entry and open-exposure traffic have identical queue priority and overflow consequence.**
+3. **No-fill events do unnecessary owner work.** \`process_authoritative_fill()\` runs even when
+   \`_match_limits_only()\` applied zero executions.
+4. **Candidate lookup is account-wide on every event** and then filtered by symbol in Python.
+5. **Every Robot event materializes a full normalized L2 snapshot** even though STOP/TAKE crossing needs only the
+   executable-side best quote and most resting-limit updates are non-crossing.
+6. **Overflow severity is not lifecycle-scoped.** A zero-exposure EDGE-like symbol can fence all new Robot admission.
+
+### 22.3 External references reviewed
+
+Per \`DOCUMENTS/EXTERNAL_REFERENCE_REUSE_POLICY.md\`, these are design references only.
+
+**Bybit V5 order book — ADOPT continuity semantics**
+
+- https://bybit-exchange.github.io/docs/v5/websocket/public/orderbook
+- https://bybit-exchange.github.io/docs/v5/market/orderbook
+
+Useful pattern: snapshot establishes authoritative state; ordered deltas use source IDs; fresh snapshot is the
+re-synchronization boundary. Linear level-1000 order book is published at up to 200 ms cadence.
+
+Decision: keep the PR #138/#139 snapshot recovery; never weaken sequence evidence or fabricate missed events.
+
+**Hummingbot OrderBookTracker / ClientOrderTracker — ADAPT responsibility separation**
+
+- https://hummingbot.org/connectors/connectors/architecture/
+- https://hummingbot.org/connectors/connectors/build/
+
+Useful pattern: market-data tracking is separate from in-flight order lifecycle, per trading pair, with snapshots
+used to repair order-book continuity.
+
+Decision: keep our existing hub/executor, but distinguish market-data continuity role from Robot lifecycle risk.
+
+**NautilusTrader DataEngine / MessageBus — ADAPT typed routing, not a new bus**
+
+- https://nautilustrader.io/docs/latest/concepts/message_bus/
+- https://nautilustrader.io/docs/nightly/concepts/architecture/
+
+Useful pattern: data/events/commands have explicit semantics and instrument-aware routing while the trading core can
+remain single-threaded.
+
+Decision: do not add a general message bus; make existing Robot coverage targets explicit by role
+(\`ENTRY_PENDING\`, \`EXPOSURE\`, \`OBLIGATION\`).
+
+**LMAX Disruptor — ADAPT backpressure principles only**
+
+- https://lmax-exchange.github.io/disruptor/user-guide/
+
+Useful pattern: producer/consumer lag is first-class and bounded processing must not silently overwrite unconsumed
+critical events.
+
+Decision: add lightweight queue lag/high-watermark observability; reject a Disruptor-style rewrite for Robot v0.1.
+
+### 22.4 Recommended minimal correction sequence
+
+**Slice A — measure the real saturation boundary.**
+
+Add only lightweight diagnostics to the existing runtime: current/max pending count, enqueue-to-owner latency,
+processing duration, symbol/coverage role and overflow high-watermark. No new metrics stack or daemon.
+
+**Slice B — remove unnecessary hot-path work without changing semantics.**
+
+1. retain the result of \`_match_limits_only()\`;
+2. call \`process_authoritative_fill()\` only when an entry LIMIT execution was actually applied;
+3. replace account-wide candidate scans in this hot path with a symbol-scoped persistence query;
+4. reuse an owned fill-finalization helper/monitor instead of constructing a new monitor per event where practical.
+
+This is the preferred first implementation slice after diagnostics.
+
+**Slice C — scope continuity-loss consequence to lifecycle risk.**
+
+Expose a small typed coverage target:
+
+- \`ENTRY_PENDING\`: no proven Robot exposure;
+- \`EXPOSURE\`: Robot-owned non-flat/partial-fill exposure;
+- \`OBLIGATION\`: unresolved durable close.
+
+Policy:
+
+- \`EXPOSURE\` / \`OBLIGATION\` overflow keeps the current global fail-closed fence and snapshot recovery;
+- \`ENTRY_PENDING\` with proven zero fill cancels/terminalizes only that entry lifecycle instead of forcing the
+  entire Robot into \`RECONCILIATION_REQUIRED\`;
+- partial fill, ambiguous execution evidence or uncertain ownership immediately escalates to exposure-grade handling.
+
+This directly addresses the EDGEUSDT failure class while preserving KSMUSDT safety.
+
+**Slice D — only if metrics still show sustained backlog.**
+
+Reserve capacity for exposure/protection work so pre-entry traffic cannot starve it. If still needed, use small
+per-symbol bounded admission/fair scheduling behind the same single mutation owner. Preserve exact ordered
+protection events and never silently coalesce a possible STOP/TAKE crossing.
+
+Do not add a second trading engine, second WebSocket stack, general message bus, multi-process executor, Kafka,
+Redis, Aeron or Disruptor for this problem unless later evidence proves the current single-owner model cannot meet
+the required rate.
+
+### 22.5 Rejected shortcuts
+
+Do not use as the primary fix:
+
+- only raising \`protection_ingress_capacity\`;
+- silent latest-only coalescing;
+- automatically clearing \`RECONCILIATION_REQUIRED\` after emergency close;
+- removing entry LIMIT event handling without a replacement correctness contract;
+- broad reconnect/restart on every overflow;
+- moving SQLite mutation off the single owner before cheaper hot-path work is measured and removed.
+
+### 22.6 Separate accounting defect
+
+The GIGGLEUSDT fee issue remains independent. The focused fix is to correlate Robot-owned entry execution fee(s)
+plus the proven close execution fee, store that lifecycle total in \`fees_costs_usdt\`, and recompute the frozen
+fee-inclusive \`realized_pnl_pct\`. Never aggregate all executions for a symbol because manual/unrelated fills must
+not contaminate Robot economics.
 
