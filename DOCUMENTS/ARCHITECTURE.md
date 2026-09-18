@@ -318,8 +318,20 @@ role:
 BybitScanner
 
 ├── Trading Intelligence
-
+│   └── Scanner / Geometry / Pattern / Signal
+│
+├── Trading Execution
+│   ├── Trading Workspace / Terminal
+│   ├── PAPER execution core
+│   ├── LIVE execution boundary
+│   └── Robot v0.1 orchestration / protection / recovery
+│
 └── Project Intelligence
+
+Trading Intelligence produces analysis/signals. Trading Execution owns orders, positions, protection, reconciliation
+and operator/Robot execution lifecycles. Project Intelligence owns development/project automation. Trading
+Intelligence results do not directly mutate exchange/PAPER state; execution flows through the Trading Execution
+boundary.
 
 ---
 
