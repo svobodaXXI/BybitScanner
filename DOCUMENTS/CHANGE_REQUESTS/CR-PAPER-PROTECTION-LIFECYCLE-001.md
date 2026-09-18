@@ -7,7 +7,7 @@
   "id": "CR-PAPER-PROTECTION-LIFECYCLE-001",
   "title": "Autonomous PAPER Protection Execution Lifecycle",
   "status": "IMPLEMENTED_VERIFYING",
-  "revision": "1.2",
+  "revision": "1.3",
   "lifecycle_stage": "VERIFY",
   "objective": "Specify D2 correction: autonomous event-driven PAPER protection, durable crossing obligations, restart-safe serialized closing and evidence-based Robot trade finalization, independent of UI and entry admission.",
   "non_goals": [
@@ -53,7 +53,7 @@
   ],
   "unresolved_decisions": [
     "Fix closed-trade fee attribution so fees_costs_usdt includes all attributable Robot entry and exit fees without symbol-wide/manual contamination",
-    "Inspect and resolve the current ROBOT_RUNNING / RECONCILIATION_REQUIRED durable reason observed at 2026-09-18 14:52 MSK",
+    "Implement bounded-ingress recovery so continuity loss cannot remain stuck waiting indefinitely for a future WebSocket snapshot",
     "Confirm the deployed PAPER sync_state correction on the next post-deploy real PAPER fill"
   ],
   "acceptance_criteria": [
@@ -138,6 +138,11 @@
       "revision": "1.2",
       "date": "2026-09-18",
       "reason": "Recorded deployed PAPER runtime evidence from GIGGLEUSDT STOP closure and current concrete blockers: incomplete fee attribution, legacy sync_state labels on pre-fix positions, and unresolved Robot reconciliation-required state"
+    },
+    {
+      "revision": "1.3",
+      "date": "2026-09-18",
+      "reason": "Recorded KSMUSDT ingress_overflow root cause and approved recovery design: force a fresh authoritative snapshot after continuity loss instead of waiting indefinitely for a future WebSocket snapshot"
     }
   ]
 }
@@ -634,7 +639,7 @@ proof that the Robot runtime is fenced.
 
 **Status: CODE FIX DEPLOYED; NEW-FILL RUNTIME CONFIRMATION STILL REQUIRED.**
 
-### 21.4 Current unresolved Robot runtime fence
+### 21.4 Robot runtime fence — KSMUSDT ingress overflow
 
 At 2026-09-18 14:52 MSK, Telegram `/robot` reported:
 
@@ -642,11 +647,32 @@ At 2026-09-18 14:52 MSK, Telegram `/robot` reported:
 - watching: 9 candidates;
 - open Robot positions: 2.
 
-The exact durable `robot_runtime_state.reason` has not yet been inspected for this occurrence.
+Read-only durable inspection then proved the exact runtime reason:
 
-**Status: CURRENT BLOCKER, ROOT CAUSE UNKNOWN.** Do not infer that the legacy per-position
-`sync_state=reconciliation_required` caused this Robot fence. The next diagnostic step is a read-only inspection
-of the authoritative runtime reason and the connected lifecycle evidence.
+`ROBOT_PROTECTION_COVERAGE_LOST symbol=KSMUSDT reason=ingress_overflow`.
+
+KSMUSDT durable state at diagnosis:
+
+- position: LONG `57.97` @ `4.298402967051923408659651544`;
+- Robot trade: OPEN, Falling Wedge, LIMIT entry;
+- STOP: `4.270`;
+- TAKE: `4.38433150975609700`;
+- entry quantity: `57.97`;
+- entry position version: `1`;
+- protection obligation: none;
+- executions: one BUY entry execution only; no closing execution.
+
+Therefore the safety fence itself worked: once ordered protection evidence could no longer be admitted, Robot
+stopped admitting new risk. However the recovery path did not complete.
+
+The deployed coverage manager keeps the symbol in `_unhealthy` after overflow. While unhealthy, ordinary delta
+book updates are ignored and recovery is attempted only when a subsequent market-data message has
+`messageType="snapshot"`. The periodic resync watchdog reasserts the fence but does not itself obtain a fresh
+authoritative snapshot or force reconnect. If the existing WebSocket session continues sending only deltas, the
+system can therefore remain indefinitely in `RECONCILIATION_REQUIRED` with the Robot-owned position still open
+and no emergency-close obligation created.
+
+**Status: ROOT CAUSE PROVEN; RECOVERY DESIGN RECORDED; IMPLEMENTATION PENDING.**
 
 ### 21.5 Rising Wedge / SHORT parity status
 
@@ -667,10 +693,69 @@ CI passed and the code is deployed at `e5319da29029d7c463a5cc7dc428a35a01cceb8b`
 | Closed-trade fee aggregation | OPEN DEFECT | Entry fee omitted; fee-inclusive PnL/PnL% is inaccurate |
 | New PAPER fill sync state | FIX DEPLOYED | Must confirm next post-deploy fill reports `synced` |
 | Pre-fix AEONUSDT/KSMUSDT sync labels | LEGACY STATE | Old rows still display `reconciliation_required`; no blind rewrite |
-| Robot runtime `RECONCILIATION_REQUIRED` at 14:52 | CURRENT BLOCKER | Exact reason not yet read; new entries may be fenced |
+| KSMUSDT protection ingress overflow | ROOT CAUSE PROVEN / FIX PENDING | Safety fence worked, but recovery can wait indefinitely for a WebSocket snapshot while exposure remains open |
 | Rising Wedge SHORT runtime behavior | IMPLEMENTED, NOT YET LIVE-PROVEN | Deterministic acceptance passed; await ordinary PAPER runtime observation |
 
 Verification policy remains operator-driven: normal PAPER usage -> concrete observed blocker -> systematic inspection
 of the connected lifecycle -> minimal root-cause fix. No broad speculative audit or mass test campaign is implied
 by this record.
+
+### 21.7 Required fix — authoritative snapshot recovery after continuity loss
+
+The recovery solution is intentionally narrow. Do not weaken the bounded ingress queue, do not silently drop
+events, and do not simply increase the queue capacity as the primary correction. Overflow remains evidence that
+continuity was lost and must continue to fence Robot admission fail-closed.
+
+Required behavior after any protection continuity-loss reason that has already marked a covered Robot symbol
+unhealthy, including `ingress_overflow`:
+
+1. preserve the existing durable `RECONCILIATION_REQUIRED` fence immediately;
+2. stop accepting ordinary delta events for recovery purposes until continuity is re-established;
+3. actively obtain a **fresh authoritative L2 snapshot** for that exact symbol through the existing market-data
+   infrastructure (preferred: existing context/provider REST snapshot capability or an explicit controlled
+   resubscribe/reconnect that guarantees a new snapshot);
+4. the recovery snapshot must carry the required source identity/timestamps used by
+   `recover_robot_protection_continuity_loss()`; never synthesize missing market evidence;
+5. enqueue exactly one serialized recovery attempt for that symbol/generation and deduplicate concurrent watchdog
+   attempts;
+6. pass the fresh snapshot through the existing `recover_robot_protection_continuity_loss()` path rather than
+   creating a second close implementation;
+7. if ownership is unambiguous and the Robot trade is still exposed, reuse the existing durable
+   `EMERGENCY_CLOSE` obligation/dispatch path;
+8. if the trade is already FLAT, finalize bookkeeping/cleanup idempotently and do not send another close;
+9. if ownership, position version, protection evidence or execution attribution is ambiguous, remain
+   `RECONCILIATION_REQUIRED`; do not manufacture a close or clear the fence;
+10. clear the symbol's unhealthy coverage state only after recovery has conclusively resolved that symbol;
+11. Robot may return to normal admission only when no unresolved protection-continuity loss remains across covered
+    Robot symbols.
+
+Implementation preference:
+
+- keep `SerializedPaperRuntime` as the single mutation owner;
+- keep `RobotProtectionCoverageManager` as the coverage/recovery coordinator;
+- reuse existing `MarketDataHub` / symbol context / REST snapshot functionality;
+- add only the minimum per-symbol recovery-in-flight guard needed to prevent duplicate concurrent snapshot
+  recovery;
+- do not add a second executor, second protection engine, separate daemon, historical candle replay or
+  last-trade/mid-price fallback;
+- do not use queue-size increase alone as the fix. Capacity tuning may be considered separately only after the
+  deterministic recovery path is correct.
+
+Required focused acceptance for this defect:
+
+- force protection ingress overflow on an OPEN Robot PAPER position;
+- prove Robot immediately enters `RECONCILIATION_REQUIRED`;
+- prove the position remains unchanged until fresh authoritative snapshot recovery;
+- prove recovery does not depend on a naturally arriving future WebSocket snapshot;
+- prove exactly one fresh snapshot recovery attempt is active per symbol/generation;
+- prove unambiguous Robot-owned exposure creates/resumes one durable `EMERGENCY_CLOSE` obligation and closes
+  through the shared PAPER executor;
+- prove duplicate watchdog/resync calls do not duplicate the close;
+- prove ambiguous ownership stays fenced and does not close;
+- prove successful recovery removes unhealthy coverage for that symbol and allows admission only when all
+  continuity-loss conditions are resolved.
+
+This correction addresses the observed KSMUSDT failure mode only. It does not change STOP/TAKE strategy,
+structural geometry, sizing, LIVE behavior, normal STOP/TAKE crossing semantics or the separate closed-trade fee
+accounting defect.
 
