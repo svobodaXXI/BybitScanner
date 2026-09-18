@@ -1644,12 +1644,14 @@ class RobotProtectionCoverageManager:
     def __init__(
         self, hub: MarketDataHub, runtime: SerializedPaperRuntime, *,
         resync_interval_s: float = 5.0,
+        recovery_session: requests.Session | None = None,
     ) -> None:
         if resync_interval_s <= 0:
             raise ValueError("resync_interval_s must be positive")
         self._hub = hub
         self._runtime = runtime
         self._resync_interval_s = resync_interval_s
+        self._recovery_session = recovery_session or create_bybit_rest_session()
         self._lock = threading.Lock()
         self._covered: dict[str, SymbolContext] = {}
         # Explicit fail-closed continuity state: a symbol lands here the
@@ -1657,6 +1659,7 @@ class RobotProtectionCoverageManager:
         # any other admission failure), and only leaves once admission for
         # that symbol succeeds again. Never cleared by silently continuing.
         self._unhealthy: dict[str, str] = {}
+        self._recovery_inflight: set[str] = set()
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, name="robot-protection-coverage", daemon=True,
@@ -1704,6 +1707,7 @@ class RobotProtectionCoverageManager:
         for symbol, reason in unhealthy.items():
             if symbol in wanted:
                 self._enqueue_runtime_fence(symbol, reason)
+                self._recover_unhealthy_symbol(symbol, reason)
         for symbol in sorted(to_add):
             try:
                 context = self._hub.subscribe(symbol)
@@ -1722,6 +1726,101 @@ class RobotProtectionCoverageManager:
                 continue
             context.remove_update_listener(self._LISTENER)
             self._hub.discard(context)
+
+    def _load_authoritative_recovery_snapshot(
+        self, symbol: str, context: SymbolContext,
+    ) -> tuple[str, NormalizedOrderBook] | None:
+        """Load one fresh Bybit REST order-book snapshot for continuity recovery."""
+        try:
+            response = self._recovery_session.get(
+                "https://api.bybit.com/v5/market/orderbook",
+                params={"category": "linear", "symbol": symbol, "limit": 50},
+                timeout=10,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            result = payload.get("result") if payload.get("retCode") == 0 else None
+            if not isinstance(result, dict) or result.get("s") != symbol:
+                return None
+            bids = tuple(
+                PriceLevel(Price(Decimal(level[0])), Quantity(Decimal(level[1])))
+                for level in result.get("b", [])
+            )
+            asks = tuple(
+                PriceLevel(Price(Decimal(level[0])), Quantity(Decimal(level[1])))
+                for level in result.get("a", [])
+            )
+            sequence = int(result["seq"])
+            update_id = int(result["u"])
+            event_at_ms = int(result["ts"])
+            matching_engine_cts_ms = (
+                int(result["cts"]) if result.get("cts") is not None else None
+            )
+            if (
+                not bids or not asks or sequence < 0 or update_id < 0
+                or event_at_ms <= 0
+            ):
+                return None
+            book = NormalizedOrderBook(
+                symbol=Symbol(symbol),
+                bids=bids,
+                asks=asks,
+                health=BookHealth.READY,
+                received_at_ms=int(time.time() * 1000),
+                available_depth=min(len(bids), len(asks)),
+                source_generation=context.reconnect_count,
+                source_sequence=sequence,
+                source_update_id=update_id,
+                source_event_at_ms=event_at_ms,
+                source_matching_engine_cts_ms=matching_engine_cts_ms,
+            )
+            return f"{symbol}:rest-recovery:{sequence}:{update_id}", book
+        except (
+            IndexError, InvalidOperation, KeyError, TypeError, ValueError,
+            requests.RequestException,
+        ):
+            return None
+
+    def _recover_unhealthy_symbol(self, symbol: str, reason: str) -> bool:
+        """Actively recover continuity loss without waiting for a WS snapshot."""
+        with self._lock:
+            if symbol in self._recovery_inflight:
+                return False
+            context = self._covered.get(symbol)
+            if context is None:
+                return False
+            self._recovery_inflight.add(symbol)
+        try:
+            snapshot = self._load_authoritative_recovery_snapshot(symbol, context)
+            if snapshot is None:
+                LOGGER.error(
+                    "Robot protection authoritative recovery snapshot unavailable; "
+                    "symbol=%s reason=%s",
+                    symbol, reason,
+                )
+                return False
+            event_id, book = snapshot
+            recovered = bool(self._runtime.call(
+                lambda runtime: runtime.recover_robot_protection_continuity_loss(
+                    symbol,
+                    book,
+                    event_id=event_id,
+                    received_at_ms=book.received_at_ms,
+                    reason=reason,
+                )
+            ))
+            if recovered:
+                self._mark_healthy(symbol)
+            return recovered
+        except Exception:
+            LOGGER.exception(
+                "Robot protection continuity recovery failed; symbol=%s reason=%s",
+                symbol, reason,
+            )
+            return False
+        finally:
+            with self._lock:
+                self._recovery_inflight.discard(symbol)
 
     def _listener_for(self, symbol: str) -> Callable[[str], None]:
         return lambda book_update_id: self._on_update(symbol, book_update_id)
@@ -1842,6 +1941,7 @@ class RobotProtectionCoverageManager:
         with self._lock:
             covered = dict(self._covered)
             self._covered.clear()
+            self._recovery_inflight.clear()
         for symbol, context in covered.items():
             context.remove_update_listener(self._LISTENER)
             self._hub.discard(context)
