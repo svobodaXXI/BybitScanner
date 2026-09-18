@@ -23,6 +23,12 @@ on:
       - "tests/test_robot_recovery_coordinator.py"
       - "tests/test_terminal_paper_http.py"
       - "tests/test_terminal_persistence.py"
+      - "tests/test_scanner_geometry_cursor.py"
+      - "tests/test_robot_admission.py"
+      - "tests/test_signal_admission.py"
+      - "tests/test_telegram_delivery.py"
+      - "analyzer/core.py"
+      - "notification.py"
       - "tests/test_robot_breakout_monitor_admission_catchup.py"
       - "tests/test_robot_breakout_monitor_late_admission.py"
       - "tests/test_robot_late_admission.py"
@@ -58,6 +64,8 @@ jobs:
           PySocks==1.7.1
           websocket-client==1.9.0
           pytest==9.1.1
+          pandas==3.0.5
+          numpy==2.5.1
       - name: Compile acceptance surface
         run: >-
           python -m py_compile
@@ -76,6 +84,12 @@ jobs:
           tests/test_robot_legacy_protection_recovery_command.py
           tests/test_robot_legacy_protection_reconciliation.py
           tests/test_terminal_paper_trading_application.py
+          tests/test_scanner_geometry_cursor.py
+          tests/test_robot_admission.py
+          tests/test_signal_admission.py
+          tests/test_telegram_delivery.py
+          analyzer/core.py
+          notification.py
           terminal/application/robot_breakout_monitor.py
           terminal/application/robot_late_admission.py
           terminal/application/robot_late_admission_market.py
@@ -102,6 +116,13 @@ jobs:
           tests.test_robot_legacy_protection_recovery_command
           tests.test_robot_legacy_protection_reconciliation
           tests.test_terminal_paper_trading_application
+      - name: Run Scanner to Robot handoff acceptance
+        run: >-
+          python -m unittest -v
+          tests.test_scanner_geometry_cursor
+          tests.test_robot_admission
+          tests.test_signal_admission
+          tests.test_telegram_delivery
       - name: Run Robot scoped LIMIT amend acceptance
         run: >-
           python -m pytest -q
