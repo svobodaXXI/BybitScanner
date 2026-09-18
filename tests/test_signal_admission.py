@@ -1,7 +1,28 @@
+import sys
+import types
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import MagicMock, patch
+
+config_stub = types.ModuleType("config")
+config_stub.TELEGRAM_TOKEN = "test-token"
+config_stub.TELEGRAM_CHAT_ID = "42"
+config_stub.TELEGRAM_CHAT_IDS = ("42",)
+config_stub.TELEGRAM_ENABLED = True
+config_stub.TELEGRAM_TEST_MODE = False
+config_stub.TIMEFRAME = "5"
+config_stub.CANDLE_LIMIT = 200
+config_stub.MODE = "hunter"
+config_stub.MIN_SCORE = 30
+config_stub.MAX_SYMBOLS = None
+config_stub.BYBIT_CATEGORY = "linear"
+sys.modules["config"] = config_stub
+
+bybit_api_stub = types.ModuleType("bybit_api")
+bybit_api_stub.get_candles = lambda *args, **kwargs: None
+bybit_api_stub.get_symbols = lambda *args, **kwargs: []
+sys.modules["bybit_api"] = bybit_api_stub
 
 import analyzer.core as analyzer_core
 import main
