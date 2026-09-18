@@ -9,7 +9,8 @@ import robot_protection
 import robot_state_machine
 from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
 from terminal.api.models import (
-    CommandResult, CommandResultStatus, PaperLimitMutationResult, PaperStopMutationResult,
+    ClientActionId, CommandResult, CommandResultStatus, PaperLimitCancelRequest,
+    PaperLimitMutationResult, PaperStopMutationResult,
 )
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 from terminal.domain.models import (
