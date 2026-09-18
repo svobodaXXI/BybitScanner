@@ -1748,6 +1748,7 @@ class RobotProtectionCoverageManager:
         self._recovery_session = recovery_session or create_bybit_rest_session()
         self._lock = threading.Lock()
         self._covered: dict[str, SymbolContext] = {}
+        self._roles: dict[str, str] = {}
         # Explicit fail-closed continuity state: a symbol lands here the
         # moment its protection evidence could not be admitted (overflow or
         # any other admission failure), and only leaves once admission for
@@ -1775,6 +1776,7 @@ class RobotProtectionCoverageManager:
             return {
                 "healthy": not self._unhealthy,
                 "covered_symbols": tuple(sorted(self._covered)),
+                "coverage_roles": dict(self._roles),
                 "unhealthy_symbols": dict(self._unhealthy),
             }
 
@@ -1786,9 +1788,16 @@ class RobotProtectionCoverageManager:
         owner no longer reports the symbol as needing coverage.
         """
         try:
-            symbols, durable_loss = self._runtime.call(
+            targets, durable_loss = self._runtime.call(
                 lambda runtime: (
-                    runtime.robot_protection_coverage_symbols(),
+                    (
+                        runtime.robot_protection_coverage_targets()
+                        if hasattr(runtime, "robot_protection_coverage_targets")
+                        else {
+                            symbol: "UNKNOWN"
+                            for symbol in runtime.robot_protection_coverage_symbols()
+                        }
+                    ),
                     (
                         runtime.robot_protection_continuity_loss()
                         if hasattr(runtime, "robot_protection_continuity_loss")
@@ -1799,7 +1808,12 @@ class RobotProtectionCoverageManager:
         except Exception:
             LOGGER.exception("Robot protection coverage resync failed to read coverage targets")
             return
-        wanted = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
+        roles = {
+            str(symbol).strip().upper(): str(role).strip().upper()
+            for symbol, role in dict(targets).items()
+            if str(symbol).strip()
+        }
+        wanted = set(roles)
         if durable_loss is not None:
             durable_symbol, durable_reason = durable_loss
             if durable_symbol in wanted:
@@ -1809,6 +1823,7 @@ class RobotProtectionCoverageManager:
             current = set(self._covered)
             to_add = wanted - current
             to_drop = current - wanted
+            self._roles = {symbol: roles.get(symbol, "UNKNOWN") for symbol in wanted}
             unhealthy = dict(self._unhealthy)
         for symbol, reason in unhealthy.items():
             if symbol in wanted:
@@ -1828,6 +1843,7 @@ class RobotProtectionCoverageManager:
             with self._lock:
                 context = self._covered.pop(symbol, None)
                 self._unhealthy.pop(symbol, None)
+                self._roles.pop(symbol, None)
             if context is None:
                 continue
             context.remove_update_listener(self._LISTENER)
@@ -1934,6 +1950,7 @@ class RobotProtectionCoverageManager:
     def _on_update(self, symbol: str, book_update_id: str) -> None:
         with self._lock:
             context = self._covered.get(symbol)
+            role = self._roles.get(symbol, "UNKNOWN")
         if context is None:
             return
         payload = context.public_orderbook.snapshot()
@@ -1996,14 +2013,21 @@ class RobotProtectionCoverageManager:
                 symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
             )
 
+        setattr(_evaluate_if_current_generation, "_robot_ingress_symbol", symbol)
+        setattr(_evaluate_if_current_generation, "_robot_ingress_role", role)
         try:
             self._runtime.enqueue(_evaluate_if_current_generation)
         except ProtectionIngressOverflow:
+            diagnostics = (
+                self._runtime.protection_ingress_diagnostics()
+                if hasattr(self._runtime, "protection_ingress_diagnostics")
+                else {}
+            )
             self._mark_unhealthy(symbol, "ingress_overflow")
             LOGGER.error(
                 "Robot protection ingress overflow -- coverage is unhealthy; "
-                "symbol=%s event=%s",
-                symbol, book_update_id,
+                "symbol=%s role=%s event=%s diagnostics=%s",
+                symbol, role, book_update_id, diagnostics,
             )
             return
         except Exception:
@@ -2014,12 +2038,13 @@ class RobotProtectionCoverageManager:
             )
             return
     def _enqueue_runtime_fence(self, symbol: str, reason: str) -> None:
+        operation = lambda runtime: runtime.fence_robot_protection_continuity_loss(
+            symbol, reason,
+        )
+        setattr(operation, "_robot_ingress_symbol", symbol)
+        setattr(operation, "_robot_ingress_role", "FENCE")
         try:
-            self._runtime.enqueue(
-                lambda runtime: runtime.fence_robot_protection_continuity_loss(
-                    symbol, reason,
-                )
-            )
+            self._runtime.enqueue(operation)
         except Exception:
             LOGGER.exception(
                 "Robot protection coverage could not durably fence admission; "
@@ -2047,6 +2072,7 @@ class RobotProtectionCoverageManager:
         with self._lock:
             covered = dict(self._covered)
             self._covered.clear()
+            self._roles.clear()
             self._recovery_inflight.clear()
         for symbol, context in covered.items():
             context.remove_update_listener(self._LISTENER)
