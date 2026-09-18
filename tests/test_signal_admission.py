@@ -171,6 +171,76 @@ class AnalyzerAdmissionConfigurationTests(unittest.TestCase):
         )
 
 
+class AnalyzerRobotHandoffTests(unittest.TestCase):
+    @patch.object(analyzer_core, "create_report")
+    @patch.object(analyzer_core, "create_chart")
+    @patch.object(analyzer_core, "create_signal_payload", return_value={})
+    @patch.object(
+        analyzer_core,
+        "evaluate_signal",
+        return_value={"approved": True, "reason": "test"},
+    )
+    @patch.object(
+        analyzer_core,
+        "evaluate_quality",
+        return_value={"quality": "Elite Setup"},
+    )
+    @patch.object(analyzer_core, "calculate_final_score", return_value=80)
+    @patch.object(
+        analyzer_core,
+        "confirm_signal",
+        return_value={"confirmed": False, "breakout": False},
+    )
+    @patch.object(analyzer_core, "find_pivots", return_value=([1, 2, 3], [1, 2, 3]))
+    @patch.object(analyzer_core, "load_candles")
+    def test_5m_scanner_emits_proven_robot_1m_geometry(
+        self,
+        load_candles_mock,
+        _find_pivots_mock,
+        _confirm_signal_mock,
+        _calculate_score_mock,
+        _evaluate_quality_mock,
+        _evaluate_signal_mock,
+        _create_payload_mock,
+        _create_chart_mock,
+        _create_report_mock,
+    ):
+        candles = MagicMock()
+        candles.__len__.return_value = 200
+        candles.iloc.__getitem__.return_value = {"time": 1_800_000}
+        load_candles_mock.return_value = candles
+
+        geometry = {
+            "upper_line": {"slope": -5.0, "intercept": 1100.0},
+            "lower_line": {"slope": -2.5, "intercept": 600.0},
+            "apex": {
+                "index": 220.5,
+                "price": 0.0,
+                "valid_intersection": True,
+            },
+            "current_index": 199,
+            "pair_metrics": {
+                "reference_price": 100.0,
+                "start_width": 20.0,
+            },
+        }
+
+        with patch.object(
+            analyzer_core,
+            "analyze_wedge",
+            return_value={"pattern": "Falling Wedge", "geometry": geometry},
+        ), patch.object(analyzer_core, "TIMEFRAME", "5"):
+            result = analyzer_core.analyze_symbol("BTCUSDT")["result"]
+
+        self.assertTrue(result["robot_handoff_ready"])
+        self.assertEqual(result["scanner_source_timeframe"], "5")
+        self.assertEqual(result["scanner_geometry_cursor"]["timeframe"], "1")
+        self.assertEqual(result["scanner_geometry_cursor"]["geometry_index"], 199)
+        self.assertEqual(result["robot_geometry"]["upper_line"]["slope"], -1.0)
+        self.assertEqual(result["robot_geometry"]["apex"]["index"], 306.5)
+        self.assertEqual(result["geometry"]["upper_line"]["slope"], -5.0)
+
+
 class MainAdmissionGateTests(unittest.TestCase):
     def run_main(self, approved, *, test_mode=False):
         analysis = {
