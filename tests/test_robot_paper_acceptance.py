@@ -107,6 +107,36 @@ def _snapshot() -> dict:
     }
 
 
+def _short_snapshot() -> dict:
+    current_index = 100
+    return {
+        "symbol": SYMBOL,
+        "pattern": "Rising Wedge",
+        "geometry": {
+            "upper_line": {"slope": 0.05, "intercept": 105.0},
+            "lower_line": {"slope": 0.1, "intercept": 90.0},
+            "apex": {"index": 300, "price": 120.0, "valid_intersection": True},
+            "current_index": current_index,
+            "touches": {
+                "lower_touch_points": [
+                    {"price": 98.0, "counted": True},
+                    {"price": 99.0, "counted": True},
+                ],
+                "upper_touch_points": [
+                    {"price": 111.0, "counted": True},
+                    {"price": 113.0, "counted": True},
+                ],
+            },
+            "pair_metrics": {"reference_price": 100.0, "start_width": 20.0},
+        },
+        "scanner_geometry_cursor": build_scanner_geometry_cursor_anchor(
+            geometry_index=current_index,
+            source_candle_time_ms=T0_MS,
+            timeframe="1",
+        ),
+    }
+
+
 def _candle(index: int, *, high: float, low: float, close: float) -> dict:
     return {
         "time_ms": T0_MS + (index - 100) * 60_000,
@@ -508,6 +538,173 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 )
                 self.assertEqual(final_position.side.value, "Flat")
                 self.assertEqual(final_position.quantity.value, Decimal("0"))
+            finally:
+                runtime.close()
+
+
+    def test_rising_wedge_short_breakout_retest_limit_fill_and_take(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            database_path = root / "paper.sqlite3"
+            candidate_dir = root / "candidates"
+            instrument = _instrument()
+            candles = _DeterministicCandleProvider()
+            book = _MutableBookProvider()
+            book.set(SYMBOL, bid=Decimal("80"), ask=Decimal("120"))
+
+            runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
+                database_path,
+                book_provider=book,
+                instrument_snapshot=instrument,
+                instrument_provider=lambda symbol: replace(instrument, symbol=symbol),
+                account_manager=paper_account_manager(),
+                robot_closed_candle_provider=candles,
+                robot_latest_geometry_index_provider=_fixed_geometry_index_provider,
+                robot_tick_interval_s=TICK_INTERVAL_S,
+            ))
+            try:
+                started = start_robot(database_path=database_path)
+                self.assertEqual(
+                    (started.mode, started.recovery_status),
+                    ("ROBOT_RUNNING", "READY"),
+                )
+
+                snapshot = _short_snapshot()
+                create_signal_snapshot(
+                    snapshot,
+                    timeframe="1",
+                    store_dir=candidate_dir,
+                    candidate_id=CANDIDATE_ID,
+                    created_at="2026-09-18T00:00:00+00:00",
+                )
+                admitted, created = admit_robot_candidate(
+                    CANDIDATE_ID,
+                    approval={"source": "rising-wedge-short-acceptance"},
+                    database_path=database_path,
+                    store_dir=candidate_dir,
+                )
+                self.assertTrue(created)
+                self.assertEqual(admitted.status, "APPROVED")
+
+                runtime.start_robot_monitor()
+
+                def candidate_record():
+                    return runtime.call(
+                        lambda owner: owner.store.get_robot_candidate(CANDIDATE_ID)
+                    )
+
+                def phase(expected: str):
+                    record = candidate_record()
+                    state = (record.robot_state or {}) if record else {}
+                    error = (state.get("execution") or {}).get("last_execution_error")
+                    if error:
+                        raise AssertionError(f"Robot execution failed: {error}")
+                    return record if state.get("phase") == expected else None
+
+                _wait_until(lambda: phase(robot_state_machine.PHASE_WAITING_BREAKOUT))
+                state = candidate_record().robot_state
+                self.assertEqual(state["direction"], robot_state_machine.DIRECTION_SHORT)
+
+                # Rising Wedge mirrors the long path: close below lower boundary.
+                candles.set(_candle(102, high=100.0, low=99.0, close=99.5))
+                _wait_until(lambda: phase(robot_state_machine.PHASE_WAITING_RETEST))
+
+                # Retest from below: high touches the same lower boundary.
+                candles.set(_candle(103, high=100.5, low=99.0, close=99.8))
+                _wait_until(lambda: phase(robot_state_machine.PHASE_RETEST_DETECTED))
+
+                def limit_order():
+                    record = candidate_record()
+                    execution = (record.robot_state or {}).get("execution") or {}
+                    order_id = execution.get("limit_order_id")
+                    if not order_id:
+                        return None
+                    return runtime.call(
+                        lambda owner: owner.store.get_paper_limit(order_id, ACCOUNT_ID)
+                    )
+
+                order = _wait_until(limit_order)
+                self.assertEqual(order.side, OrderSide.SELL)
+                self.assertEqual(order.status, "open")
+
+                # Cross the SELL LIMIT through the real PAPER matcher.
+                book.set(
+                    SYMBOL,
+                    bid=order.price + Decimal("0.1"),
+                    ask=order.price + Decimal("0.2"),
+                )
+
+                def open_trade():
+                    return runtime.call(
+                        lambda owner: owner.store.get_open_robot_trade_for_symbol(
+                            ACCOUNT_ID, Symbol(SYMBOL),
+                        )
+                    )
+
+                trade = _wait_until(open_trade)
+                self.assertEqual(trade.direction, robot_state_machine.DIRECTION_SHORT)
+                self.assertEqual(trade.pattern, "Rising Wedge")
+                self.assertEqual(trade.entry_path, "LIMIT")
+
+                position_key = PositionKey(
+                    ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0,
+                )
+                position = runtime.call(
+                    lambda owner: owner.store.get_position_projection(position_key)
+                )
+                self.assertEqual(position.side.value, "Short")
+                self.assertEqual(position.sync_state, "synchronized")
+
+                def active_protection():
+                    projection = runtime.call(
+                        lambda owner: owner.store.get_protection_projection(position_key)
+                    )
+                    if (
+                        projection is None
+                        or projection.stop_loss is None
+                        or projection.take_profit is None
+                    ):
+                        return None
+                    return projection
+
+                protection = _wait_until(active_protection)
+                self.assertGreater(protection.stop_loss, trade.average_entry)
+                self.assertLess(protection.take_profit, trade.average_entry)
+
+                # SHORT TAKE uses executable ask <= TAKE and closes with BUY.
+                exit_ask = protection.take_profit - instrument.tick_size
+                exit_bid = exit_ask - instrument.tick_size
+                book.set(SYMBOL, bid=exit_bid, ask=exit_ask)
+                crossing = _event_book(SYMBOL, bid=exit_bid, ask=exit_ask)
+                runtime.call(
+                    lambda owner: owner.process_robot_market_event(
+                        SYMBOL,
+                        crossing,
+                        event_id="rising-wedge-short-take",
+                        received_at_ms=crossing.received_at_ms,
+                    )
+                )
+
+                def closed_trade():
+                    current = runtime.call(
+                        lambda owner: owner.store.get_robot_trade(trade.trade_id)
+                    )
+                    return (
+                        current
+                        if current is not None and current.exit_time_ms is not None
+                        else None
+                    )
+
+                closed = _wait_until(closed_trade)
+                self.assertEqual(closed.exit_reason, "TAKE")
+                self.assertGreater(closed.realized_pnl_usdt, 0)
+                final_position = runtime.call(
+                    lambda owner: owner.store.get_position_projection(position_key)
+                )
+                self.assertEqual(final_position.side.value, "Flat")
+                self.assertEqual(final_position.quantity.value, Decimal("0"))
+                self.assertEqual(final_position.sync_state, "synchronized")
+                self.assertEqual(candidate_record().status, "CLOSED")
             finally:
                 runtime.close()
 
