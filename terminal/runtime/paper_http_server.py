@@ -2062,7 +2062,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                     {"ok": False, "error": "robot_protection_health_unavailable"},
                 )
                 return
-            self._json_response(200, {"ok": True, **to_primitive(health)})
+            self._json_response(200, {"ok": True, **health})
             return
 
         if parsed.path == "/api/health":
