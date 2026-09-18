@@ -109,7 +109,7 @@ class PaperMarketExecutor:
             fee_rate=self.fee_rate,
         )
 
-        apply_result = self.execution_engine.apply_execution(event)
+        apply_result = self.execution_engine.apply_paper_execution(event)
 
         return PaperMarketExecutionResult(
             match=match,

@@ -183,6 +183,23 @@ class ExecutionEngine:
             command_id=command.command_id if command is not None else None,
         )
 
+    def apply_paper_execution(self, event: ExecutionEvent) -> ExecutionApplyResult:
+        """Apply one simulator-owned PAPER execution as authoritative PAPER state."""
+
+        execution = _domain_execution(event)
+        current = self._store.get_position_projection(
+            _position_key_for_execution(event, self._orders)
+        )
+        projection = _projection_after_execution(
+            event, current, sync_state="synced",
+        )
+        command = self._find_command(event.order_link_id, event.order_id.value)
+        return self._store.apply_execution_once(
+            execution,
+            projection,
+            command_id=command.command_id if command is not None else None,
+        )
+
     def apply_paper_limit_execution(
         self,
         event: ExecutionEvent,
@@ -195,7 +212,9 @@ class ExecutionEngine:
         current = self._store.get_position_projection(
             _position_key_for_execution(event, self._orders)
         )
-        projection = _projection_after_execution(event, current)
+        projection = _projection_after_execution(
+            event, current, sync_state="synced",
+        )
         return self._store.apply_paper_limit_execution_once(
             execution.order_id,
             execution,
@@ -429,6 +448,8 @@ def _position_key_from_order(order: OrderEvent):
 def _projection_after_execution(
     event: ExecutionEvent,
     current: PositionProjectionRecord | None,
+    *,
+    sync_state: str = "reconciliation_required",
 ) -> PositionProjectionUpdate:
     current_quantity = current.quantity.value if current is not None else Decimal("0")
     current_side = current.side if current is not None else PositionSide.FLAT
@@ -468,7 +489,7 @@ def _projection_after_execution(
         realized_pnl=realized,
         accumulated_fee=fees,
         engaged_notional=Notional(engaged),
-        sync_state="reconciliation_required",
+        sync_state=sync_state,
         expected_version=current.version if current is not None else None,
         updated_at_ms=event.executed_at_ms,
     )
