@@ -405,7 +405,11 @@ def send_signal(
     # Only production Scanner signals can be handed to Robot.  Persist the
     # complete signal payload first; a failed persistence simply withholds the
     # Robot button and does not break ordinary Scanner notification delivery.
-    if owner_chat_id and not test_mode:
+    robot_handoff_ready = (
+        timeframe == "1"
+        or result.get("robot_handoff_ready") is True
+    )
+    if owner_chat_id and not test_mode and robot_handoff_ready:
         try:
             candidate = create_signal_snapshot(
                 result,

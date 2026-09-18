@@ -72,9 +72,11 @@ def _snapshot_geometry(signal_snapshot: Mapping[str, Any]) -> dict[str, Any]:
     if pattern not in _PATTERN_DIRECTION:
         raise RobotStateMachineError(f"unsupported Robot v0.1 pattern: {pattern!r}")
 
-    geometry = signal_snapshot.get("geometry")
+    geometry = signal_snapshot.get("robot_geometry")
+    if geometry is None:
+        geometry = signal_snapshot.get("geometry")
     if not isinstance(geometry, Mapping):
-        raise RobotStateMachineError("signal snapshot has no frozen geometry")
+        raise RobotStateMachineError("signal snapshot has no frozen Robot geometry")
 
     upper = geometry.get("upper_line")
     lower = geometry.get("lower_line")

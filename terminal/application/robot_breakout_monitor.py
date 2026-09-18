@@ -119,6 +119,21 @@ def _cancel_apex_entry_action_id(candidate_id: str) -> ClientActionId:
     return ClientActionId(f"robot-cancel-apex-{digest}")
 
 
+def _frozen_robot_apex_index(signal_snapshot: Mapping[str, object]) -> Decimal:
+    geometry = signal_snapshot.get("robot_geometry")
+    if geometry is None:
+        geometry = signal_snapshot.get("geometry")
+    apex = geometry.get("apex") if isinstance(geometry, Mapping) else None
+    raw = apex.get("index") if isinstance(apex, Mapping) else None
+    try:
+        value = Decimal(str(raw))
+    except Exception as exc:
+        raise RobotBreakoutMonitorError("frozen Robot apex is invalid") from exc
+    if not value.is_finite() or value < 0:
+        raise RobotBreakoutMonitorError("frozen Robot apex is invalid")
+    return value
+
+
 class RobotBreakoutMonitor:
     """Advance durable APPROVED Robot candidates through breakout/retest on each closed 1m candle."""
 
@@ -347,8 +362,8 @@ class RobotBreakoutMonitor:
                 )
             except ScannerGeometryCursorError:
                 return False
-            apex_index = int(record.signal_snapshot["geometry"]["apex"]["index"])
-            if geometry_index >= apex_index:
+            apex_index = _frozen_robot_apex_index(record.signal_snapshot)
+            if Decimal(geometry_index) >= apex_index:
                 expired_state = dict(record.robot_state)
                 expired_state["phase"] = robot_state_machine.PHASE_EXPIRED_AT_APEX
                 expired_state["last_event"] = robot_state_machine.EVENT_EXPIRED_AT_APEX
@@ -436,8 +451,8 @@ class RobotBreakoutMonitor:
             except ScannerGeometryCursorError:
                 return False
 
-            apex_index = int(record.signal_snapshot["geometry"]["apex"]["index"])
-            if geometry_index >= apex_index:
+            apex_index = _frozen_robot_apex_index(record.signal_snapshot)
+            if Decimal(geometry_index) >= apex_index:
                 result = self._action_executor.cancel_limit(PaperLimitCancelRequest(
                     _cancel_apex_entry_action_id(record.candidate_id),
                     record.symbol.value,
@@ -753,7 +768,12 @@ class RobotBreakoutMonitor:
             symbol=record.symbol,
             direction=direction,
             pattern=str(record.signal_snapshot.get("pattern", "")),
-            source_timeframe="1",
+            source_timeframe=str(
+                record.signal_snapshot.get(
+                    "scanner_source_timeframe",
+                    record.signal_snapshot.get("timeframe", "1"),
+                )
+            ).strip() or "1",
             signal_time_ms=record.approved_at_ms,
             entry_time_ms=now_ms,
             entry_path=entry_path,

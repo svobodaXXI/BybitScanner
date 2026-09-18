@@ -90,7 +90,9 @@ def _non_negative_int(value: Any, field: str) -> int:
 
 
 def _frozen_apex_index(signal_snapshot: Mapping[str, Any]) -> Decimal:
-    geometry = signal_snapshot.get("geometry")
+    geometry = signal_snapshot.get("robot_geometry")
+    if geometry is None:
+        geometry = signal_snapshot.get("geometry")
     apex = geometry.get("apex") if isinstance(geometry, Mapping) else None
     if not isinstance(apex, Mapping):
         raise RobotLateAdmissionError("frozen apex is missing")

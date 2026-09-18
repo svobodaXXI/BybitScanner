@@ -11,6 +11,7 @@ No geometry is refit here and no trading action is performed.
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from typing import Any, Mapping
 
 
@@ -21,6 +22,90 @@ ONE_MINUTE_MS = 60_000
 class ScannerGeometryCursorError(RuntimeError):
     """Raised when a Scanner cursor anchor cannot be trusted."""
 
+
+def _source_interval_minutes(timeframe: str) -> int:
+    normalized = str(timeframe).strip()
+    if not normalized.isdigit():
+        raise ScannerGeometryCursorError(
+            "Robot v0.1 Scanner source timeframe must be an integer minute interval"
+        )
+    minutes = int(normalized)
+    if minutes <= 0:
+        raise ScannerGeometryCursorError(
+            "Robot v0.1 Scanner source timeframe must be positive"
+        )
+    return minutes
+
+
+def _finite_float(value: object, field: str) -> float:
+    if isinstance(value, bool):
+        raise ScannerGeometryCursorError(f"{field} is invalid")
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ScannerGeometryCursorError(f"{field} is invalid") from exc
+    if not math.isfinite(parsed):
+        raise ScannerGeometryCursorError(f"{field} is invalid")
+    return parsed
+
+
+def project_frozen_geometry_to_robot_1m(
+    geometry: Mapping[str, Any],
+    *,
+    source_timeframe: str,
+) -> dict[str, Any]:
+    """Re-express one frozen Scanner geometry in a 1m execution coordinate.
+
+    This is an affine coordinate change, not a refit. At the Scanner anchor
+    both line prices remain identical; each later Robot index advances one
+    minute while the original Scanner geometry remains untouched.
+    """
+
+    if not isinstance(geometry, Mapping):
+        raise ScannerGeometryCursorError("signal geometry must be a mapping")
+    minutes = _source_interval_minutes(source_timeframe)
+
+    current_raw = geometry.get("current_index")
+    if (
+        isinstance(current_raw, bool)
+        or not isinstance(current_raw, int)
+        or current_raw < 0
+    ):
+        raise ScannerGeometryCursorError(
+            "signal geometry.current_index must be a non-negative integer"
+        )
+    current_index = current_raw
+
+    projected = deepcopy(dict(geometry))
+    for key in ("upper_line", "lower_line"):
+        source_line = geometry.get(key)
+        if not isinstance(source_line, Mapping):
+            raise ScannerGeometryCursorError(f"signal geometry.{key} is missing")
+        source_slope = _finite_float(source_line.get("slope"), f"{key}.slope")
+        source_intercept = _finite_float(
+            source_line.get("intercept"), f"{key}.intercept"
+        )
+        anchor_price = source_slope * current_index + source_intercept
+        projected_slope = source_slope / minutes
+        projected_intercept = anchor_price - projected_slope * current_index
+        line = deepcopy(dict(source_line))
+        line["slope"] = projected_slope
+        line["intercept"] = projected_intercept
+        projected[key] = line
+
+    source_apex = geometry.get("apex")
+    if not isinstance(source_apex, Mapping):
+        raise ScannerGeometryCursorError("signal geometry.apex is missing")
+    source_apex_index = _finite_float(source_apex.get("index"), "apex.index")
+    projected_apex = deepcopy(dict(source_apex))
+    projected_apex["index"] = (
+        current_index + (source_apex_index - current_index) * minutes
+    )
+    projected["apex"] = projected_apex
+    projected["current_index"] = current_index
+    projected["robot_coordinate_timeframe"] = "1"
+    projected["scanner_source_timeframe"] = str(source_timeframe).strip()
+    return projected
 
 def build_scanner_geometry_cursor_anchor(
     *,
@@ -71,7 +156,13 @@ def _anchor_values(signal_snapshot: Mapping[str, Any]) -> tuple[int, int]:
 
 
 def _frozen_apex_index(signal_snapshot: Mapping[str, Any]) -> float:
-    geometry = signal_snapshot.get("geometry") if isinstance(signal_snapshot, Mapping) else None
+    geometry = (
+        signal_snapshot.get("robot_geometry")
+        if isinstance(signal_snapshot, Mapping)
+        else None
+    )
+    if geometry is None and isinstance(signal_snapshot, Mapping):
+        geometry = signal_snapshot.get("geometry")
     apex = geometry.get("apex") if isinstance(geometry, Mapping) else None
     value = apex.get("index") if isinstance(apex, Mapping) else None
     if isinstance(value, bool):

@@ -28,7 +28,11 @@ from signal.quality import evaluate_quality
 from signal.filter import evaluate_signal
 
 from tradingview_bridge import create_signal_payload
-from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
+from scanner_geometry_cursor import (
+    ScannerGeometryCursorError,
+    build_scanner_geometry_cursor_anchor,
+    project_frozen_geometry_to_robot_1m,
+)
 
 from config import (
     TIMEFRAME,
@@ -119,17 +123,32 @@ def analyze_symbol(symbol):
                 "lows": lows
             }
 
-        # Presentation-only: lets downstream Telegram/chart rendering read the
-        # signal's own timeframe from the result dict rather than reaching
-        # into config.TIMEFRAME independently.
+        # Scanner geometry stays in its native timeframe for charting and
+        # provenance. Robot v0.1, however, evaluates the accepted frozen wedge
+        # on closed 1m candles. Build an exact affine 1m coordinate projection
+        # at the same source-candle timestamp instead of pretending a 5m
+        # geometry index is already a 1m index.
         result["timeframe"] = str(TIMEFRAME)
-
-        if str(TIMEFRAME).strip() == "1":
+        result["scanner_source_timeframe"] = str(TIMEFRAME).strip()
+        try:
+            source_candle_time_ms = int(df.iloc[current_index]["time"])
+            result["scanner_source_candle_time_ms"] = source_candle_time_ms
+            result["robot_geometry"] = project_frozen_geometry_to_robot_1m(
+                result["geometry"],
+                source_timeframe=str(TIMEFRAME),
+            )
             result["scanner_geometry_cursor"] = build_scanner_geometry_cursor_anchor(
                 geometry_index=current_index,
-                source_candle_time_ms=int(df.iloc[current_index]["time"]),
+                source_candle_time_ms=source_candle_time_ms,
                 timeframe="1",
             )
+            result["robot_handoff_ready"] = True
+        except (ScannerGeometryCursorError, KeyError, TypeError, ValueError, OverflowError) as exc:
+            # Scanner notification remains available, but Robot handoff must
+            # fail closed when its frozen 1m execution coordinate cannot be
+            # proven from the Scanner source evidence.
+            result["robot_handoff_ready"] = False
+            result["robot_handoff_error"] = str(exc)
 
         # =========================
         # Confirmation
