@@ -1045,6 +1045,7 @@ class _BookUpdateNotification:
 @dataclass(frozen=True)
 class _OwnerTask:
     operation: Callable[[object], None]
+    enqueued_at_ns: int
 
 
 class ProtectionIngressOverflow(RuntimeError):
@@ -1074,6 +1075,13 @@ class SerializedPaperRuntime:
         self._protection_ingress_capacity = protection_ingress_capacity
         self._protection_ingress_lock = threading.Lock()
         self._protection_ingress_pending = 0
+        self._protection_ingress_high_watermark = 0
+        self._protection_ingress_admitted = 0
+        self._protection_ingress_completed = 0
+        self._protection_ingress_overflows = 0
+        self._protection_ingress_max_queue_delay_ms = 0.0
+        self._protection_ingress_max_owner_task_ms = 0.0
+        self._protection_ingress_last_overflow_at_ms: int | None = None
         self._ready = threading.Event()
         self._initialization_error: BaseException | None = None
         self._thread = threading.Thread(
@@ -1141,14 +1149,49 @@ class SerializedPaperRuntime:
         """
         if not self._thread.is_alive():
             raise RuntimeError("PAPER runtime owner is unavailable")
+        enqueued_at_ns = time.monotonic_ns()
         with self._protection_ingress_lock:
             if self._protection_ingress_pending >= self._protection_ingress_capacity:
+                self._protection_ingress_overflows += 1
+                self._protection_ingress_last_overflow_at_ms = int(time.time() * 1000)
                 raise ProtectionIngressOverflow(
                     "Robot protection ingress is saturated "
-                    f"(capacity={self._protection_ingress_capacity})"
+                    f"(capacity={self._protection_ingress_capacity} "
+                    f"pending={self._protection_ingress_pending} "
+                    f"high_watermark={self._protection_ingress_high_watermark})"
                 )
             self._protection_ingress_pending += 1
-        self._requests.put(_OwnerTask(operation))
+            self._protection_ingress_admitted += 1
+            self._protection_ingress_high_watermark = max(
+                self._protection_ingress_high_watermark,
+                self._protection_ingress_pending,
+            )
+        self._requests.put(_OwnerTask(operation, enqueued_at_ns))
+
+    def protection_ingress_diagnostics(self) -> dict[str, object]:
+        """Thread-safe in-process evidence for Robot ingress saturation.
+
+        This is intentionally lightweight: no external metrics stack and no
+        mutation. Values are process-lifetime maxima/counters used only to
+        distinguish producer burst from owner-thread lag during a real
+        overflow incident.
+        """
+        with self._protection_ingress_lock:
+            return {
+                "capacity": self._protection_ingress_capacity,
+                "pending": self._protection_ingress_pending,
+                "high_watermark": self._protection_ingress_high_watermark,
+                "admitted": self._protection_ingress_admitted,
+                "completed": self._protection_ingress_completed,
+                "overflows": self._protection_ingress_overflows,
+                "max_queue_delay_ms": round(
+                    self._protection_ingress_max_queue_delay_ms, 3
+                ),
+                "max_owner_task_ms": round(
+                    self._protection_ingress_max_owner_task_ms, 3
+                ),
+                "last_overflow_at_ms": self._protection_ingress_last_overflow_at_ms,
+            }
 
     def close(self) -> None:
         if not self._thread.is_alive():
@@ -1185,13 +1228,29 @@ class SerializedPaperRuntime:
                         )
                     continue
                 if isinstance(request, _OwnerTask):
+                    owner_started_ns = time.monotonic_ns()
+                    queue_delay_ms = (
+                        owner_started_ns - request.enqueued_at_ns
+                    ) / 1_000_000
                     try:
                         request.operation(runtime)
                     except BaseException:
                         LOGGER.exception("PAPER owner task failed")
                     finally:
+                        owner_task_ms = (
+                            time.monotonic_ns() - owner_started_ns
+                        ) / 1_000_000
                         with self._protection_ingress_lock:
                             self._protection_ingress_pending -= 1
+                            self._protection_ingress_completed += 1
+                            self._protection_ingress_max_queue_delay_ms = max(
+                                self._protection_ingress_max_queue_delay_ms,
+                                queue_delay_ms,
+                            )
+                            self._protection_ingress_max_owner_task_ms = max(
+                                self._protection_ingress_max_owner_task_ms,
+                                owner_task_ms,
+                            )
                     continue
                 operation, completed, response = request
                 if operation is None:
@@ -1906,10 +1965,15 @@ class RobotProtectionCoverageManager:
             self._runtime.enqueue(_evaluate_if_current_generation)
         except ProtectionIngressOverflow:
             self._mark_unhealthy(symbol, "ingress_overflow")
+            diagnostics = (
+                self._runtime.protection_ingress_diagnostics()
+                if hasattr(self._runtime, "protection_ingress_diagnostics")
+                else None
+            )
             LOGGER.error(
                 "Robot protection ingress overflow -- coverage is unhealthy; "
-                "symbol=%s event=%s",
-                symbol, book_update_id,
+                "symbol=%s event=%s diagnostics=%s",
+                symbol, book_update_id, diagnostics,
             )
             return
         except Exception:
