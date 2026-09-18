@@ -653,7 +653,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                     lambda owner: owner.store.get_position_projection(position_key)
                 )
                 self.assertEqual(position.side.value, "Short")
-                self.assertEqual(position.sync_state, "synchronized")
+                self.assertEqual(position.sync_state, "synced")
 
                 def active_protection():
                     projection = runtime.call(
@@ -703,7 +703,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 )
                 self.assertEqual(final_position.side.value, "Flat")
                 self.assertEqual(final_position.quantity.value, Decimal("0"))
-                self.assertEqual(final_position.sync_state, "synchronized")
+                self.assertEqual(final_position.sync_state, "synced")
                 self.assertEqual(candidate_record().status, "CLOSED")
             finally:
                 runtime.close()
