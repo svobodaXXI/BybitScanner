@@ -8,6 +8,7 @@ import requests
 
 import config
 import telegram_bot
+from telegram_labels import ROBOT_EMOJI
 from robot_candidate_store import RobotCandidateNotFound
 from robot_telegram_feed import (
     build_robot_close_all_confirmation_keyboard,
@@ -336,10 +337,10 @@ def _save_review(
 
 
 _ROBOT_CONTROL_SUCCESS_TEXT = {
-    "start": "Робот: запущен ▶",
-    "pause": "Робот: на паузе ⏸",
-    "resume": "Робот: возобновлён ▶",
-    "stop": "Робот: остановлен ⏹",
+    "start": f"{ROBOT_EMOJI} Робот: запущен ▶",
+    "pause": f"{ROBOT_EMOJI} Робот: на паузе ⏸",
+    "resume": f"{ROBOT_EMOJI} Робот: возобновлён ▶",
+    "stop": f"{ROBOT_EMOJI} Робот: остановлен ⏹",
 }
 
 
@@ -404,16 +405,16 @@ def _confirm_close_all_now(callback_query):
     except RobotControlRejected as exc:
         _answer_callback(
             callback_query.get("id"),
-            f"Робот: отклонено — {exc}",
+            f"{ROBOT_EMOJI} Робот: отклонено — {exc}",
         )
         print("[ROBOT CONTROL REJECTED]", "close_all", exc)
         return None
     except Exception as exc:
-        _answer_callback(callback_query.get("id"), "Робот: ошибка команды")
+        _answer_callback(callback_query.get("id"), f"{ROBOT_EMOJI} Робот: ошибка команды")
         print("[ROBOT CONTROL ERROR]", "close_all", exc)
         return None
 
-    prefix = "Робот: закрытие отправлено ❌"
+    prefix = f"{ROBOT_EMOJI} Робот: закрытие отправлено ❌"
     _answer_callback(callback_query.get("id"), prefix)
     _send_robot_status_panel(callback_query, prefix)
     print("[ROBOT CONTROL]", "close_all", result)
@@ -444,7 +445,7 @@ def _run_robot_control_command(
     except RobotControlRejected as exc:
         _answer_callback(
             callback_query.get("id"),
-            f"Робот: отклонено — {exc}",
+            f"{ROBOT_EMOJI} Робот: отклонено — {exc}",
         )
         print(
             "[ROBOT CONTROL REJECTED]",
@@ -455,7 +456,7 @@ def _run_robot_control_command(
     except Exception as exc:
         _answer_callback(
             callback_query.get("id"),
-            "Робот: ошибка команды"
+            f"{ROBOT_EMOJI} Робот: ошибка команды"
         )
         print(
             "[ROBOT CONTROL ERROR]",
@@ -611,7 +612,7 @@ def _process_callback(
                 record.symbol.value,
             )
         except RobotAdmissionRejected as exc:
-            prefix = f"Робот: отклонено — {_robot_admission_reason_text(exc)}"
+            prefix = f"{ROBOT_EMOJI} Робот: отклонено — {_robot_admission_reason_text(exc)}"
             print(
                 "[ROBOT CANDIDATE REJECTED]",
                 exc,
@@ -621,7 +622,7 @@ def _process_callback(
                 prefix,
             )
         except RobotCandidateNotFound as exc:
-            prefix = "Робот: сигнал устарел или больше не найден"
+            prefix = f"{ROBOT_EMOJI} Робот: сигнал устарел или больше не найден"
             print(
                 "[ROBOT CANDIDATE NOT FOUND]",
                 exc,
@@ -631,7 +632,7 @@ def _process_callback(
                 prefix,
             )
         except Exception as exc:
-            prefix = "Робот: ошибка сохранения"
+            prefix = f"{ROBOT_EMOJI} Робот: ошибка сохранения"
             print(
                 "[ROBOT CANDIDATE ERROR]",
                 exc

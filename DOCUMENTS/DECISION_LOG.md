@@ -443,3 +443,40 @@ consequences:
 * Codex may change DEV, while PROD changes only through controlled deployment/promotion;
 * live trading credentials and Robot runtime require additional capacity/security validation;
 * this decision implements no migration or production deployment.
+
+---
+
+## DECISION-009
+
+title:
+
+Telegram Emoji Labels for Scanner and Robot Posts
+
+date:
+
+2026-09-18
+
+status:
+
+ACCEPTED / IMPLEMENTED
+
+category:
+
+Telegram / Presentation
+
+context:
+
+Scanner and Robot posts share one Telegram chat and need an at-a-glance source marker. Radar and binoculars have
+no Unicode code point (including Emoji 18.0).
+
+decision:
+
+Scanner posts use 📡 (closest available to a radar); Robot posts use 🤖. Both are defined only in
+`telegram_labels.py` (`SCANNER_EMOJI`, `ROBOT_EMOJI`) and change in that single place.
+
+consequences:
+
+* messages starting with «Сканер» get the `📡 ` prefix; messages starting with «Робот:» get the `🤖 ` prefix;
+* the /positions header uses 🤖 instead of 📌;
+* texts that already start with 🤖 are unchanged;
+* only message texts change; logic and callback_data are unchanged.

@@ -36,6 +36,7 @@ from robot_candidate_store import (
 from timeframe_format import format_timeframe_ru
 
 import config
+from telegram_labels import SCANNER_EMOJI
 
 
 # Presentation-only Russian pattern labels, mirrored from chart_clean.py's
@@ -243,7 +244,7 @@ def format_signal(
     )
 
     message = f"""
-Сканер: {symbol} {circle}
+{SCANNER_EMOJI} Сканер: {symbol} {circle}
 Паттерн: {pattern_label}
 Таймфрейм: {timeframe_label}{test_marker}
 

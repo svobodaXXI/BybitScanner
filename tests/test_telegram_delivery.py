@@ -57,7 +57,7 @@ class TelegramSignalFormattingTests(unittest.TestCase):
         message = notification.format_signal(self._result())
 
         first_line = message.splitlines()[0]
-        self.assertEqual(first_line, "Сканер: 1000NEIROCTOUSDT 🟢")
+        self.assertEqual(first_line, "📡 Сканер: 1000NEIROCTOUSDT 🟢")
 
     def test_full_card_matches_the_approved_target_example(self):
         message = notification.format_signal(self._result(
@@ -67,7 +67,7 @@ class TelegramSignalFormattingTests(unittest.TestCase):
 
         self.assertEqual(
             message,
-            "Сканер: 1000NEIROCTOUSDT 🟠\n"
+            "📡 Сканер: 1000NEIROCTOUSDT 🟠\n"
             "Паттерн: Нисходящий клин\n"
             "Таймфрейм: 1м\n"
             "\n"

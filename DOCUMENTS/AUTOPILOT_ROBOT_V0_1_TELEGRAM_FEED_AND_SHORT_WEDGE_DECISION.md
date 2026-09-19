@@ -2,7 +2,7 @@
 
 Status: DESIGN DECISION
 Date: 2026-09-08
-Implementation authorization: NONE
+Implementation authorization: GRANTED 2026-09-18: /positions list, position card with chart, closed-trade post, emoji labels
 
 ## Main Robot surface
 
@@ -25,6 +25,7 @@ A current-state position post must include a fresh chart image with the currentl
 - STOP line;
 - TAKE line;
 - executed-trade markers (triangles) for actual entries/exits;
+- ещё не исполненная лимитка рисуется пустым треугольником (контур без заливки);
 - current relevant price context.
 
 The renderer must consume the stored/versioned signal/trade snapshot plus authoritative execution state. It must not create a second source of trading state or recompute scanner geometry independently.

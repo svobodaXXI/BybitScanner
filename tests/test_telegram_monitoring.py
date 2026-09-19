@@ -124,7 +124,7 @@ class TelegramMonitoringTests(unittest.TestCase):
             ]
             monitoring._send_scanner_control(123)
             self.assertEqual(request.call_args_list, [call(), call(action), call()])
-            self.assertEqual(send.call_args.args[1], "Сканер: остановлен")
+            self.assertEqual(send.call_args.args[1], "📡 Сканер: остановлен")
 
     @patch("telegram_monitoring.refresh_command_menu")
     @patch("telegram_monitoring._send_text")
@@ -137,7 +137,7 @@ class TelegramMonitoringTests(unittest.TestCase):
         ]
         monitoring._send_scanner_control(123)
         self.assertEqual(request.call_args_list, [call(), call("start"), call()])
-        self.assertEqual(send.call_args.args[1], "Сканер: запущен")
+        self.assertEqual(send.call_args.args[1], "📡 Сканер: запущен")
 
     @patch("telegram_monitoring.refresh_command_menu")
     @patch("telegram_monitoring._send_text")
@@ -285,7 +285,7 @@ class TelegramMonitoringTests(unittest.TestCase):
     ):
         value = store.return_value.__enter__.return_value
         value.get_paper_account.return_value = SimpleNamespace()
-        value.load_open_position_projections.return_value = (SimpleNamespace(),)
+        value.load_open_position_projections.return_value = (self._position(),)
         value.load_unfinished_commands.return_value = ()
         value.load_reconciliation_checkpoints.return_value = ()
         formatter.return_value = ("positions",)
@@ -300,7 +300,7 @@ class TelegramMonitoringTests(unittest.TestCase):
             monitoring._send_paper_positions(123)
 
         markup = send.call_args.kwargs["reply_markup"]
-        url = markup["inline_keyboard"][0][0]["web_app"]["url"]
+        url = markup["inline_keyboard"][-1][0]["web_app"]["url"]
 
         from urllib.parse import parse_qs, urlsplit
         self.assertEqual(
@@ -308,6 +308,157 @@ class TelegramMonitoringTests(unittest.TestCase):
             {"symbol": ["BTCUSDT"], "view": ["positions"]},
         )
         self.assertEqual(urlsplit(url).fragment, "chart")
+
+    @staticmethod
+    def _position(symbol="CELOUSDT", side="Long"):
+        return SimpleNamespace(
+            position_key=SimpleNamespace(symbol=Symbol(symbol)),
+            side=SimpleNamespace(value=side),
+        )
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring._robot_store")
+    def test_paper_positions_adds_one_card_button_per_position(self, store, send):
+        value = store.return_value.__enter__.return_value
+        value.get_paper_account.return_value = SimpleNamespace()
+        value.load_open_position_projections.return_value = (
+            self._position("CELOUSDT", "Long"), self._position("RIOTUSDT", "Short"),
+        )
+        value.load_unfinished_commands.return_value = (
+            SimpleNamespace(trading_account_id=monitoring.PAPER_ACCOUNT_ID),
+        )
+        value.load_reconciliation_checkpoints.return_value = ()
+
+        with patch("telegram_monitoring.format_paper_positions_view", return_value=("list",)), \
+                patch.dict(os.environ, {"BYBITSCANNER_WORKSPACE_URL": ""}):
+            monitoring._send_paper_positions(123)
+
+        # List text and the warning stay unchanged; the keyboard sits under the last message.
+        self.assertEqual([c.args[1] for c in send.call_args_list][0], "list")
+        self.assertIsNone(send.call_args_list[0].kwargs["reply_markup"])
+        self.assertIn("⚠", send.call_args.args[1])
+        self.assertEqual(
+            send.call_args.kwargs["reply_markup"],
+            {"inline_keyboard": [
+                [{"text": "1. CELOUSDT · Long", "callback_data": "pos:card:CELOUSDT"}],
+                [{"text": "2. RIOTUSDT · Short", "callback_data": "pos:card:RIOTUSDT"}],
+            ]},
+        )
+
+    @patch("telegram_monitoring._send_position_card")
+    @patch("telegram_monitoring._answer_callback")
+    def test_position_card_callback_routes_to_card(self, answer, card):
+        callback = {
+            "id": "callback-3",
+            "from": {"id": 123},
+            "message": {"chat": {"id": 123}},
+            "data": "pos:card:CELOUSDT",
+        }
+
+        self.assertTrue(monitoring._process_positions_callback(callback))
+        answer.assert_called_once_with("callback-3")
+        card.assert_called_once_with(123, "CELOUSDT")
+
+    @patch("telegram_monitoring._send_position_card")
+    @patch("telegram_monitoring._answer_callback")
+    def test_position_card_callback_rejects_non_owner(self, answer, card):
+        callback = {
+            "id": "callback-4",
+            "from": {"id": 456},
+            "message": {"chat": {"id": 123}},
+            "data": "pos:card:CELOUSDT",
+        }
+
+        self.assertTrue(monitoring._process_positions_callback(callback))
+        card.assert_not_called()
+
+    def test_unrelated_callback_is_not_consumed(self):
+        self.assertFalse(monitoring._process_positions_callback({"data": "monitor:list"}))
+        self.assertFalse(monitoring._process_positions_callback({"data": "pos:card:"}))
+
+    def _card_patches(self, view, *, candles=None):
+        fake_api = ModuleType("bybit_api")
+        fake_api.get_candles = lambda symbol, interval, limit: candles
+        for fixture in (
+            patch("telegram_monitoring._robot_store"),
+            patch("telegram_monitoring.load_position_view", return_value=view),
+            patch.dict(sys.modules, {"bybit_api": fake_api}),
+        ):
+            fixture.start()
+            self.addCleanup(fixture.stop)
+
+    def _robot_view(self):
+        from decimal import Decimal
+        from robot_position_view import PositionView
+
+        return PositionView(
+            symbol="SAGAUSDT", direction="LONG", is_open=True, quantity=Decimal("1"),
+            average_entry=Decimal("1"), stop_price=None, take_price=None,
+            pattern="Falling Wedge", trade=SimpleNamespace(),
+        )
+
+    @patch("telegram_monitoring.render_position_chart")
+    @patch("telegram_monitoring.telegram_bot.send_photo", return_value={"ok": True})
+    @patch("telegram_monitoring._send_text")
+    def test_manual_position_card_is_text_only(self, send, photo, render):
+        from dataclasses import replace
+
+        self._card_patches(replace(self._robot_view(), trade=None))
+
+        monitoring._send_position_card(123, "CELOUSDT")
+
+        render.assert_not_called()
+        photo.assert_not_called()
+        self.assertIn("Позиция не от робота — график недоступен", send.call_args.args[1])
+        self.assertEqual(
+            send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+            "robot:view:positions",
+        )
+
+    @patch("telegram_monitoring.render_position_chart", return_value="chart.png")
+    @patch("telegram_monitoring.telegram_bot.send_photo", return_value={"ok": True})
+    @patch("telegram_monitoring._send_text")
+    def test_robot_position_card_is_photo_with_back_button(self, send, photo, render):
+        import pandas as pd
+
+        self._card_patches(self._robot_view(), candles=pd.DataFrame({"close": [1.0, 1.1]}))
+
+        monitoring._send_position_card(123, "SAGAUSDT")
+
+        send.assert_not_called()
+        caption = photo.call_args.kwargs["caption"]
+        self.assertIn("PnL: ~+0.1 USDT (+10.00%)", caption)
+        self.assertEqual(photo.call_args.kwargs["reply_markup"], monitoring.POSITIONS_BACK_MARKUP)
+
+    @patch("telegram_monitoring.render_position_chart", side_effect=RuntimeError("no candles"))
+    @patch("telegram_monitoring.telegram_bot.send_photo")
+    @patch("telegram_monitoring._send_text")
+    def test_chart_failure_falls_back_to_text(self, send, photo, render):
+        self._card_patches(self._robot_view(), candles=None)
+
+        monitoring._send_position_card(123, "SAGAUSDT")
+
+        photo.assert_not_called()
+        self.assertTrue(send.call_args.args[1].endswith("\nГрафик недоступен"))
+
+    @patch("telegram_monitoring.render_position_chart", return_value="chart.png")
+    @patch("telegram_monitoring.telegram_bot.send_photo", return_value={"ok": False})
+    @patch("telegram_monitoring._send_text")
+    def test_send_photo_failure_falls_back_to_text(self, send, photo, render):
+        self._card_patches(self._robot_view())
+
+        monitoring._send_position_card(123, "SAGAUSDT")
+
+        self.assertIn("SAGAUSDT · LONG", send.call_args.args[1])
+        self.assertNotIn("График недоступен", send.call_args.args[1])
+
+    @patch("telegram_monitoring._send_text")
+    def test_closed_position_card_reports_no_position(self, send):
+        self._card_patches(None)
+
+        monitoring._send_position_card(123, "CELOUSDT")
+
+        self.assertIn("открытой позиции нет", send.call_args.args[1])
 
     @patch("telegram_monitoring._send_paper_positions")
     def test_positions_command_uses_paper_positions_handler(self, positions):
