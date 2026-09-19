@@ -77,6 +77,7 @@ edge of the chart, then move to adequate anchor detection. Work through Codex/Cl
 GitHub with timely synchronization. Also: check earlier groundwork and borrow proven solutions from mature projects.
 
 ### G0 — Research and groundwork (docs first)
+Status: existing-code and reference review recorded in `DOCUMENTS/GEOMETRY_RESEARCH_2026-09-20.md` (PR #156; pending integration). Newly confirmed strategy need: show the **price impulse before the pattern** to distinguish corrective wedges from same-direction deceleration. A display window is not sufficient evidence for automatic classification; G3 owns that separate task.
 Findings so far:
 - Anchor groundwork exists: `DOCUMENTS/ROADMAP.md` FUTURE_MISSION_ANCHOR_QUALITY_LEARNING (several anchor candidates kept
   with immutable detection-time geometry, ranking evidence), `FUTURE_FEATURES.md` ANCHOR_GEOMETRY_INTEGRATION, the
@@ -90,21 +91,55 @@ Findings so far:
 To do: a short survey of mature open-source pattern-detection approaches (anchor/pivot selection, scaling), written to a doc,
 with concrete ideas to borrow. Output: `DOCUMENTS/GEOMETRY_RESEARCH_<date>.md`.
 
-### G1 — Chart window from pattern start (small, do first)
-Window must cover the whole figure: from the earlier of pattern start and entry, minus a left margin, to the current candles.
-Data: frozen `robot_geometry` lines carry `anchor_index` in 1m index space; time = `scanner_geometry_cursor.source_candle_time_ms`
-minus (`geometry_index` - `anchor_index`) x 60 000 ms. Margin: max(10 candles, 8% of the span). Cap 1000 candles; if the start is
-still earlier, caption "Начало паттерна раньше окна графика". Acceptance: on real signals the START point of both boundaries is
-visible with margin on both 5m and 1m cards.
+### G1 — Chart window showing both the pattern and its preceding impulse (small, do first)
+Purpose: expose the movement immediately **before** the first pattern anchor, not merely the full wedge. That history is necessary
+for visual review and for collecting labeled examples for G3; chart history does NOT by itself change detector/Robot decisions.
+Window: request enough historical candles for the earlier of both frozen line anchors and the entry, plus a **pre-pattern context**
+target of one pattern-formation span (earliest anchor to frozen Scanner detection time), in the source chart timeframe; keep the
+current candles on the right. This is a display-only lookback target, NOT an algorithmic definition of a qualifying impulse.
+Minimum left margin: max(10 candles, 8% of the pattern-to-current span). Preserve the existing 1m/5m minimums and 1000-candle
+request cap. Convert Scanner-source `anchor_index` through existing `robot_position_chart._line_start_index` into the
+frozen 1m cursor coordinate before computing timestamp; do not treat 5m source bars as 1m bars.
+Under the 1000-candle cap, preserve pattern-start visibility before spending the available history budget on pre-pattern
+context. If the pattern start itself no longer fits, show "Начало паттерна раньше окна графика"; if the start fits but the
+desired impulse-context history is truncated, show "Предшествующий импульс показан не полностью". Keep any entry-window
+warning independent and derive warnings from the actual candles returned, not only from the requested limit.
+Acceptance: on representative 1m and 5m signal/position cards, both START anchors have left-side room, earlier price movement
+is visible when available, and capped/missing history is marked rather than invented. No DB writes, frozen-geometry revisions,
+trading-rule changes, or VPS/runtime operations in this task.
 
 ### G2 — Adequate anchor detection
 Depends on G0 and G1. Inputs from the user: 3-5 chart examples where anchors were wrong (Anchor/START feedback already exists in
 the Telegram posts). Output: spec (which pivots are candidates, ranking, tolerance), then implementation behind a flag with
 side-by-side comparison on saved signals.
 
-### G3 — Two wedge categories
-Inputs from the user (blocking): definition of the two categories with one example each. Robot already handles Falling -> LONG and
-Rising -> SHORT; new categories need their own direction and entry rules.
+### G3 — Context subtype classification for BOTH wedge orientations (before G4 Triangle)
+**User intent (2026-09-20):** classify each wedge using the preceding impulse. These are two *context subtypes per geometric
+orientation*, not four new unrelated geometry detectors, and the current Falling -> LONG / Rising -> SHORT breakout directions
+remain unchanged until a separate strategy decision.
+- Falling Wedge after UP impulse: `FALLING_CORRECTION_AFTER_UP` — downward countertrend pullback, candidate bullish
+  continuation LONG cohort.
+- Falling Wedge after DOWN impulse: `FALLING_DECELERATION_AFTER_DOWN` — downward move losing pace inside a descending
+  contraction, candidate bullish exhaustion/reversal LONG cohort.
+- Rising Wedge after DOWN impulse: `RISING_CORRECTION_AFTER_DOWN` — upward countertrend rebound, candidate bearish
+  continuation SHORT cohort.
+- Rising Wedge after UP impulse: `RISING_DECELERATION_AFTER_UP` — upward move losing pace inside an ascending
+  contraction, candidate bearish exhaustion/reversal SHORT cohort.
+- `PREPATTERN_CONTEXT_UNKNOWN` for missing/ambiguous prior history; do not force a subtype from wedge slope alone.
+**Desired trading-workflow priority:** investigate giving deceleration/exhaustion cohorts higher priority for Robot candidate
+selection than corrective cohorts. This is a user-requested strategy hypothesis, NOT a validated edge or permission to
+increase size, relax RR/STOP/TAKE, bypass ownership/admission, or activate preferential orders now.
+Prerequisites: G1 preceding-impulse chart; G2 anchor adequacy; user-labeled examples of each orientation/context (at least
+one each, ideally 3–5 uncertain examples). G3 sequence: (a) choose bounded pre-pattern horizon and reproducible impulse
+direction/strength, distinguish deceleration from a sharp continuation and from noisy/sideways context; (b) freeze a
+signal-time-only subtype and evidence version, with `UNKNOWN` fallback; (c) classify existing wedge detections without
+changing geometry or execution; (d) compare subtype cohorts using fees, drawdown, failure rate, false positives and
+1m/5m separation; (e) only after dedicated strategy/risk approval, define safe same-symbol Robot priority/admission policy
+while retaining existing gates and one-owner invariants. Do not infer a statistical edge from appearance alone.
+Existing groundwork: `TRADING_STRATEGY_SPEC.md` §3.2 already separates reversal/exhaustion from correction/continuation;
+`AUTOPILOT_STRATEGY_ACCUMULATED_DESIGN.md` §7 records post-impulse `Rising Wedge` exhaustion for management, not
+this complete four-cohort entry classifier. See the G3 research note in
+`DOCUMENTS/GEOMETRY_RESEARCH_2026-09-20.md` for the source-model distinction.
 
 ### G4 — Triangle in the robot
 Scanner detects Triangle Compression. Needs the trading rule decision: symmetric, ascending, descending or all three; direction of
@@ -124,16 +159,20 @@ Constraints found in code: (1) `TIMEFRAME` is a global constant read by `analyze
 candidate owner per symbol (a second one escalates DUPLICATE_ROBOT_OWNER to RECONCILIATION_REQUIRED), so a rule is needed for
 5m and 1m signals on one ticker; (4) scan time roughly doubles (about 20 to 40 minutes). Needs a spec and a decision on priority.
 
-Order (user 2026-09-19, confirmed): two wedge categories (G3) before any other pattern, then triangle (G4), L-shaped (G6), box (G5).
-G0 and G1 run first (research doc + chart window), then G2 (anchors); G7 (dual timeframe) after G2.
-Blocking input for G3: description of the two wedge categories with one example chart each.
+Order (user 2026-09-19, refined 2026-09-20): G0/G1 (pre-pattern impulse visible) -> G2 (anchors)
+-> G3 (two contextual types for Falling **and** Rising Wedge; study proposed deceleration priority)
+-> G4 Triangle -> G6 L-shaped -> G5 Box. G7 dual timeframe follows G2 only after its separate ownership/priority spec.
+G3 definitions are recorded above; implementation needs representative labeled charts, decision-time evidence criteria,
+and separate approval of any Robot candidate-priority or execution-policy change.
 Every pattern follows the same path: definition with examples -> spec -> detection -> signal/post -> robot rules -> tests ->
 live verification -> record.
 
 ## 4. Decisions waiting for the user
 1. Reward/risk filter: RESOLVED, yes, configurable, start 1.5, tune later.
 2. Minimum stop 0.7%: confirm after the back-test A-3.
-3. Pattern order RESOLVED: triangle, L-shaped, box (two wedge categories first). Still open: one example chart per pattern and the desired entry rule.
+3. Pattern order RESOLVED: G3 (both wedge orientations split into correction vs deceleration) before Triangle G4, then
+   L-shaped G6, Box G5. G3 context definitions recorded 2026-09-20; still open: representative example charts, precise
+   signal-time classifier thresholds and whether/when a measured deceleration-priority policy may be enabled in Robot.
 4. Dual timeframe: RESOLVED, required. Still open: how to resolve two signals (5m and 1m) on one ticker (which one the robot takes).
 
 ## 5. Facts to keep in mind when reading results
