@@ -509,6 +509,14 @@ class RobotBreakoutMonitor:
                 tick_size=self._tick_size_provider(record.symbol.value),
                 order_id=execution["limit_order_id"],
             )
+            # The reprice changes the prospective entry price. Do not amend a
+            # previously admitted resting LIMIT to a price with poor or
+            # uncomputable RR; keep monitoring the original proven order.
+            if self._entry_rr_skip(
+                record, plan, direction=str(record.robot_state["direction"]),
+                block_unavailable=True,
+            ) is not None:
+                return False
             result = robot_entry_limit.submit_retest_limit_reprice(
                 self._action_executor, plan,
             )
@@ -1084,7 +1092,9 @@ class RobotBreakoutMonitor:
         )
 
     def _entry_rr_skip(
-        self, record: RobotCandidateRecord, plan,
+        self, record: RobotCandidateRecord, plan, *,
+        direction: str | None = None,
+        block_unavailable: bool = False,
     ) -> tuple[str, dict[str, object]] | None:
         """Planned take/stop ratio for the retest LIMIT, before it is placed.
 
@@ -1101,7 +1111,7 @@ class RobotBreakoutMonitor:
             "entry_price": str(plan.request.limit_price), "min_rr": str(threshold),
         }
         try:
-            direction = plan.direction
+            direction = direction if direction is not None else plan.direction
             structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
             tick_size = self._tick_size_provider(record.symbol.value)
             reference_price, target_price = self._frozen_prices(record.signal_snapshot, direction)
@@ -1122,6 +1132,10 @@ class RobotBreakoutMonitor:
                 "[ROBOT ENTRY RR UNAVAILABLE] "
                 f"candidate_id={record.candidate_id} symbol={record.symbol.value} error={error}"
             )
+            # Initial-entry compatibility is handled separately: do not let
+            # an uncomputable reprice worsen an existing resting LIMIT.
+            if block_unavailable:
+                return "SKIPPED_RR_UNAVAILABLE", details
             return None
         details.update(stop_price=str(stop_price), take_price=str(take_price), rr=str(rr))
         if rr < threshold:
