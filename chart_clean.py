@@ -260,6 +260,54 @@ def build_chart_title(symbol, result):
 
 
 
+
+def _chart_window(df, result):
+    """Select loaded source bars only; geometry keeps its original coordinates.
+
+    Target one formation span before the earlier frozen boundary anchor, plus
+    max(10 bars, 8% of formation) as a left margin. Scanner renders immediately
+    from the same frame used for detection, unlike Robot's projected 1m charts.
+    """
+    fallback = max(0, len(df) - 120)
+    if not result:
+        return fallback, None
+    unknown = "История перед паттерном недоступна: неизвестны исходные якоря"
+    geometry = result.get("geometry") or {}
+    try:
+        anchors = [float(geometry[name]["anchor_index"])
+                   for name in ("upper_line", "lower_line")]
+        if any(not np.isfinite(x) or not x.is_integer() or x >= len(df)
+               for x in anchors):
+            return fallback, unknown
+        earliest = int(min(anchors))
+        times = df["time"].to_numpy(dtype=np.int64)
+        # Use the source interval, never the Robot's projected cursor interval.
+        timeframe = result.get("scanner_source_timeframe", result.get("timeframe"))
+        step = float(timeframe) * 60_000
+        if not np.isfinite(step) or step <= 0 or np.any(np.diff(times) <= 0):
+            return fallback, unknown
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return fallback, unknown
+
+    start_time = (times[earliest] if earliest >= 0
+                  else times[0] + earliest * step)
+    formation = times[-1] - start_time
+    margin = max(10, int(np.ceil(0.08 * formation / step))) * step
+    target_time = start_time - formation - margin
+    # Include the candle at/before the target if available; never pad missing OHLC.
+    offset = max(0, len(df) - 1000,
+                 int(np.searchsorted(times, target_time, side="right")) - 1)
+    if times[offset] > start_time:
+        warning = "Начало паттерна раньше окна графика"
+    elif times[offset] > target_time or np.any(
+        np.diff(times[offset:max(offset + 1, earliest + 1)]) > step
+    ):
+        warning = "Предшествующий импульс показан не полностью"
+    else:
+        warning = None
+    return offset, warning
+
+
 def draw_chart(
     df,
     highs,
@@ -277,55 +325,7 @@ def draw_chart(
 
     original_length = len(df)
 
-    # =====================================
-    # Dynamic chart context
-    # ?????????? ??????? ?? primary anchor,
-    # ????? ???? ????? ????????, ???????
-    # ???????????? ????????? ?????????.
-    # =====================================
-
-    geometry_for_window = (
-        result.get("geometry")
-        if result
-        else None
-    ) or {}
-
-    pair_metrics_for_window = (
-        geometry_for_window.get(
-            "pair_metrics"
-        )
-        or {}
-    )
-
-    anchor_sequence_for_window = (
-        pair_metrics_for_window.get(
-            "anchor_sequence"
-        )
-        or {}
-    )
-
-    primary_anchor = (
-        anchor_sequence_for_window.get(
-            "primary_anchor"
-        )
-    )
-
-    pre_anchor_context = 25
-
-    if primary_anchor is not None:
-
-        chart_offset = max(
-            0,
-            int(primary_anchor)
-            - pre_anchor_context
-        )
-
-    else:
-
-        chart_offset = max(
-            0,
-            original_length - 120
-        )
+    chart_offset, history_warning = _chart_window(df, result)
 
     df = df.iloc[
         chart_offset:
@@ -658,6 +658,7 @@ def draw_chart(
         wedge_x is not None
         and
         len(wedge_x)
+        and max(upper_anchor_original, lower_anchor_original) >= chart_offset
     ):
 
 
@@ -774,6 +775,8 @@ def draw_chart(
     # =====================================
 
     title = build_chart_title(symbol, result)
+    if history_warning:
+        title += f"\n{history_warning}"
 
 
     ax.set_title(
