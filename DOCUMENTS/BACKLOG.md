@@ -191,6 +191,74 @@ Existing groundwork: `TRADING_STRATEGY_SPEC.md` §3.2 already separates reversal
 this complete four-cohort entry classifier. See the G3 research note in
 `DOCUMENTS/GEOMETRY_RESEARCH_2026-09-20.md` for the source-model distinction.
 
+### G3P — Four-point early wedge: provisional boundaries and evolving candidate (BEFORE G4 Triangle)
+**User request (2026-09-20):** detect a still-forming wedge as soon as the first **four suitable confirmed structural pivot points**
+(two HIGH and two LOW, enough to fit two tentative boundaries) exist, instead of waiting for a mature pattern. Project both
+boundary lines forward **as estimates**, clearly separating the observed anchor-to-anchor segments from their dashed/projected
+future portions; display a readable `Формируется / предварительная геометрия` state and the actual number of confirmed
+pivots/touches. Do not fabricate future candles, a future fourth point or later confirmation. Distinguish source-timeframe
+pivot occurrence from its closed-candle confirmation; do not let a final historical pivot list leak lookahead into an earlier
+four-point event. Accept that four points can describe false wedges, wide channels or transitory noise: compare bounded
+confirmed alternatives, containment/convergence, line crossing and whether a usable corridor remains before apex/expiry.
+Derive a stable *formation identity* from symbol, source timeframe and signal-time structural evidence so later Scanner
+observations update the **same formation** rather than replacing it with unrelated/stale four-point candidates. Preserve
+the initial immutable event/signal snapshot alongside current observations and explicit version/revision; if anchors change,
+mark the previous hypothesis superseded rather than silently moving a frozen line. UNKNOWN subtype or insufficient
+pre-pattern history is an explicit state, not a reason to manufacture an impulse or a definitive wedge label.
+
+**First delivery is observation and chart only:** inspect the current detector's candidate/touch gates and use existing
+`pivots.py`, `geometry/candidate.py`, `geometry/engine.py`, `chart_clean.py`, signal snapshot/identity contracts and
+Scanner chart/Telegram paths before specifying a bounded preliminary candidate model. Do not relax existing canonical
+admission/ranking or change Robot orders to surface provisional formations. Verify both wedge orientations, 1m/5m,
+four exactly confirmed pivots versus three/pending fourth, alternative anchor hypotheses, crossing/non-converging
+lines, short remaining corridor, missing history, new fifth/sixth pivot, breakout/invalidated/expired states, repeated
+scans and restart recovery; benchmark bounded cost against current Scanner hot path. Record provenance at each observation.
+
+### G3R — Telegram `Освежить` for an evolving Scanner formation (AFTER G3P, BEFORE G4 Triangle)
+**User request (2026-09-20):** add an inline **Освежить** button below Scanner signals for still-forming patterns,
+including previously posted four-point candidates. A click requests a new **bounded current** Scanner evaluation of
+the referenced formation (symbol + source timeframe + stable formation ID) and sends a **new current signal/chart post**
+showing confirmed pivots, current/provisional line revisions, context/status and current price. Do not simply resend the
+old PNG/snapshot or silently rewrite a frozen Robot trade. Keep old posts and their signal-time evidence immutable; show
+the current revision and, when useful, its relationship to the earlier post. For insufficient history, failed fetch,
+expired/invalidated/replaced formation, and missing/ambiguous identity, return an explicit status rather than a stale
+or fabricated signal. Do not resurrect a stale approved candidate.
+
+**Implementation gate:** inspect the existing Telegram callback routing, signal keyboard, scanner-on-demand path,
+candidate identity and authorization before coding. Manual refresh must work when the periodic Scanner is PAUSED if
+the authorized current-snapshot fetch path permits it; it must **not unpause Scanner, restart the Robot, or order
+a trade**. Reject unauthorized callbacks; bound per-user/formation rate, deduplicate repeated taps, avoid blocking
+the bot polling loop and preserve callback payload size. Validate callback after restart, legacy posts if sufficient
+identity is present (otherwise explain unavailable), 1m/5m, and whether the new post's chart and caption refer to
+the *same* current evaluation.
+
+### G3C — Robot trade inside a forming wedge: boundary-to-boundary PAPER research (AFTER G3P/G3R, BEFORE G4 Triangle)
+**User strategy intent (2026-09-20):** explore a **separate intrapattern/corridor trade mode** for provisional
+four-point wedges. Falling wedge example: tentative LONG entry near the lower boundary, exit near the upper boundary
+while both boundaries are still forming; Rising wedge counterpart needs a separately specified direction/entry
+rule. Neither a four-point detection nor an `Освежить` button grants automatic entry permission.
+
+**Strategy/risk decision required before execution:** define confirmed-pivot minimums, admissible geometry confidence,
+proximity/price tolerance to a projected boundary, LIMIT versus MARKET entry, position ownership and re-entry,
+STOP placement beyond the invalidation boundary, TAKE/exit inside the opposite boundary (including fees/slippage,
+shrinking corridor and minimum net RR), expiration/apex and breakout behavior, resizing of protection on fills,
+what happens after line re-anchoring or a new fifth/sixth pivot, cancel/close behavior if a formation invalidates,
+and fail-closed feed/recovery/risk gates. Keep current VW/volume caps, protected order lifecycle, one-owner-per-symbol,
+no martingale and PAPER-first constraints. A forming pattern's projected line is an *estimate*, not a promised future
+execution price. Do not retrofit existing Robot breakout/retest admission or silently mutate frozen geometry to add
+corridor trading.
+
+**Delivery:** (1) replay/side-by-side diagnostics on four-point signals, including rejected/no-trade cases;
+(2) separately approved isolated PAPER strategy with deterministic tests for lower-entry/upper-exit, late/early
+fill, fees/RR, stops, line revision, breakthrough and restart; (3) manual acceptance on real forming-signal
+cards; only then discuss any LIVE authority as a new explicit decision. Keep these stages separate from G2a
+lookahead correction and from the G3 context-label feature.
+
+**Queue order:** G2a remove future-pivot membership leak → G2b observational START alternatives →
+G3 verified context and signal/chart labels → **G3P provisional four-point visualization** →
+**G3R manual `Освежить`** → **G3C corridor-trading research and separately approved PAPER rollout** →
+G4 Triangle. G1 remaining chart-history / Robot chart display work remains a prerequisite wherever needed.
+
 ### G4 — Triangle in the robot
 Scanner detects Triangle Compression. Needs the trading rule decision: symmetric, ascending, descending or all three; direction of
 the breakout trade; stop/take source; whether `_PATTERN_DIRECTION` becomes per-variant. Depends on G2 (anchors).
