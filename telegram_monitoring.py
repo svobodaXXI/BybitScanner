@@ -23,6 +23,9 @@ import requests
 
 import config
 import telegram_bot
+from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
+from robot_position_chart import render_position_chart
+from robot_position_view import format_position_card, load_position_view, with_last_price
 from robot_telegram_feed import (
     VIEW_POSITIONS, build_robot_control_keyboard, format_paper_positions_view,
     format_robot_status_text, parse_robot_view_callback,
@@ -90,7 +93,7 @@ def _send_scanner_control(chat_id):
         state = _scanner_request()
         _send_text(
             chat_id,
-            "Сканер: "
+            f"{SCANNER_EMOJI} Сканер: "
             + {
                 "SCANNER_RUNNING": "запущен",
                 "SCANNER_PAUSED": "на паузе",
@@ -113,7 +116,7 @@ def _send_robot_status(chat_id):
         recovery_status = runtime.recovery_status if runtime is not None else "ROBOT_STOPPED"
         _send_text(
             chat_id,
-            f"Робот: {_robot_status_text(runtime)}\n"
+            f"{ROBOT_EMOJI} Робот: {_robot_status_text(runtime)}\n"
             f"Статус робота: Наблюдение: {watching} кандидатов\n"
             f"Открытых позиций: {opened}",
             reply_markup=build_robot_control_keyboard(mode, recovery_status),
@@ -167,6 +170,7 @@ def _send_paper_positions(chat_id):
             )
 
         uncertain = bool(unfinished_commands or unfinished_reconciliation)
+        position_rows = build_position_buttons(positions)
 
         if not positions and uncertain:
             messages = (
@@ -186,11 +190,86 @@ def _send_paper_positions(chat_id):
         _send_text(chat_id, "Данные позиций недоступны.")
         return
     url = _workspace_url(positions=True)
-    markup = {
-        "inline_keyboard": [[{"text": "Открыть в терминале", "web_app": {"url": url}}]],
-    } if url else None
+    rows = list(position_rows)
+    if url:
+        rows.append([{"text": "Открыть в терминале", "web_app": {"url": url}}])
+    markup = {"inline_keyboard": rows} if rows else None
     for index, text in enumerate(messages):
         _send_text(chat_id, text, reply_markup=markup if index == len(messages) - 1 else None)
+
+
+POSITION_CARD_PREFIX = "pos:card:"
+POSITIONS_BACK_MARKUP = {
+    "inline_keyboard": [[{"text": "⬅️ К позициям", "callback_data": "robot:view:positions"}]],
+}
+
+
+def build_position_buttons(positions) -> list[list[dict[str, str]]]:
+    # Numbering and order match format_paper_positions_view's list.
+    return [
+        [{
+            "text": f"{index}. {record.position_key.symbol.value} · {record.side.value}",
+            "callback_data": POSITION_CARD_PREFIX + record.position_key.symbol.value,
+        }]
+        for index, record in enumerate(positions, start=1)
+    ]
+
+
+def parse_position_card_callback(data) -> str | None:
+    text = str(data)
+    if not text.startswith(POSITION_CARD_PREFIX):
+        return None
+    symbol = text[len(POSITION_CARD_PREFIX):].strip().upper()
+    return symbol if symbol and symbol.isalnum() else None
+
+
+def _send_position_card(chat_id, symbol: str) -> None:
+    try:
+        with _robot_store() as store:
+            view = load_position_view(store, symbol)
+    except Exception as exc:
+        print("[POSITION CARD ERROR]", symbol, exc)
+        _send_text(chat_id, "Данные позиции недоступны.", reply_markup=POSITIONS_BACK_MARKUP)
+        return
+    if view is None:
+        _send_text(
+            chat_id,
+            f"{symbol}: открытой позиции нет. Обновите список позиций.",
+            reply_markup=POSITIONS_BACK_MARKUP,
+        )
+        return
+
+    candles = None
+    try:
+        import bybit_api
+
+        candles = bybit_api.get_candles(view.symbol, "1", 300)
+        if candles is not None and len(candles):
+            view = with_last_price(view, candles["close"].iloc[-1])
+    except Exception as exc:
+        print("[POSITION CARD CANDLES ERROR]", view.symbol, exc)
+
+    caption = format_position_card(view)
+    if not view.is_robot:
+        _send_text(chat_id, caption, reply_markup=POSITIONS_BACK_MARKUP)
+        return
+
+    try:
+        chart_path = render_position_chart(view, candles)
+    except Exception as exc:
+        print("[POSITION CHART ERROR]", view.symbol, exc)
+        _send_text(chat_id, caption + "\nГрафик недоступен", reply_markup=POSITIONS_BACK_MARKUP)
+        return
+    try:
+        response = telegram_bot.send_photo(
+            config.TELEGRAM_TOKEN, chat_id, str(chart_path),
+            caption=caption, reply_markup=POSITIONS_BACK_MARKUP,
+        )
+        if not (isinstance(response, Mapping) and response.get("ok")):
+            raise RuntimeError(f"sendPhoto failed: {response}")
+    except Exception as exc:
+        print("[POSITION CARD PHOTO ERROR]", view.symbol, exc)
+        _send_text(chat_id, caption, reply_markup=POSITIONS_BACK_MARKUP)
 
 
 def _send_workspace(chat_id, *, positions=False):
@@ -331,7 +410,7 @@ def format_candidate_card(record: RobotCandidateRecord) -> str:
         f"Состояние: {_phase_label(record)}\n"
         f"Качество: {_quality_text(snapshot)}\n"
         f"Потенциал: {_potential_text(snapshot)}\n\n"
-        f"Робот: {robot_status}\n"
+        f"{ROBOT_EMOJI} Робот: {robot_status}\n"
         "Сделка: не открыта"
     )
 
@@ -440,7 +519,9 @@ def _process_message(message) -> bool:
 
 
 def _process_positions_callback(callback_query) -> bool:
-    if parse_robot_view_callback(callback_query.get("data", "")) != VIEW_POSITIONS:
+    data = callback_query.get("data", "")
+    card_symbol = parse_position_card_callback(data)
+    if card_symbol is None and parse_robot_view_callback(data) != VIEW_POSITIONS:
         return False
     user_id = (callback_query.get("from") or {}).get("id")
     chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
@@ -448,7 +529,10 @@ def _process_positions_callback(callback_query) -> bool:
         _answer_callback(callback_query.get("id"), "Недостаточно прав")
         return True
     _answer_callback(callback_query.get("id"))
-    _send_paper_positions(chat_id)
+    if card_symbol is not None:
+        _send_position_card(chat_id, card_symbol)
+    else:
+        _send_paper_positions(chat_id)
     return True
 
 
@@ -461,7 +545,7 @@ def refresh_command_menu() -> None:
         state = _scanner_request()
         scanner_label = SCANNER_ACTIONS[state["mode"]][0]
     except Exception:
-        scanner_label = "Сканер: состояние недоступно"
+        scanner_label = f"{SCANNER_EMOJI} Сканер: состояние недоступно"
     commands = json.dumps(
         [
             {"command": "terminal", "description": "Терминал"},

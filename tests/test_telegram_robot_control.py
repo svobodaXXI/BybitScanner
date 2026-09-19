@@ -67,9 +67,9 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         pause_mock.assert_called_once_with(
             http_post=telegram_review._post_robot_synchronize_pending_entries,
         )
-        answer_mock.assert_called_once_with("cb-1", "Робот: на паузе ⏸")
+        answer_mock.assert_called_once_with("cb-1", "🤖 Робот: на паузе ⏸")
         send_mock.assert_called_once()
-        self.assertIn("Робот: на паузе ⏸", send_mock.call_args.args[2])
+        self.assertIn("🤖 Робот: на паузе ⏸", send_mock.call_args.args[2])
         self.assertIn("Статус робота: Запущен / Пауза", send_mock.call_args.args[2])
 
     def test_owner_resume_callback_invokes_resume_robot(self):
@@ -89,7 +89,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
             telegram_review._process_callback(callback_query)
 
         resume_mock.assert_called_once_with()
-        answer_mock.assert_called_once_with("cb-2", "Робот: возобновлён ▶")
+        answer_mock.assert_called_once_with("cb-2", "🤖 Робот: возобновлён ▶")
         send_mock.assert_called_once()
         self.assertIn("Статус робота: Запущен / Готов", send_mock.call_args.args[2])
 
@@ -110,7 +110,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
             telegram_review._process_callback(callback_query)
 
         start_mock.assert_called_once_with()
-        answer_mock.assert_called_once_with("cb-3", "Робот: запущен ▶")
+        answer_mock.assert_called_once_with("cb-3", "🤖 Робот: запущен ▶")
         send_mock.assert_called_once()
 
     def test_owner_stop_callback_invokes_stop_robot(self):
@@ -132,7 +132,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         stop_mock.assert_called_once_with(
             http_post=telegram_review._post_robot_synchronize_pending_entries,
         )
-        answer_mock.assert_called_once_with("cb-4", "Робот: остановлен ⏹")
+        answer_mock.assert_called_once_with("cb-4", "🤖 Робот: остановлен ⏹")
         send_mock.assert_called_once()
         self.assertIn("Статус робота: Остановлен", send_mock.call_args.args[2])
 
@@ -151,7 +151,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
 
         answer_mock.assert_called_once_with(
             "cb-5",
-            "Робот: отклонено — pause_robot is legal only from (ROBOT_RUNNING, READY)",
+            "🤖 Робот: отклонено — pause_robot is legal only from (ROBOT_RUNNING, READY)",
         )
 
     def test_close_all_callback_requests_confirmation_without_executing(self):
@@ -194,9 +194,9 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
 
         close_all_mock.assert_called_once()
         self.assertIs(close_all_mock.call_args.kwargs["http_post"], telegram_review._post_robot_close_all_now)
-        answer_mock.assert_called_once_with("cb-8", "Робот: закрытие отправлено ❌")
+        answer_mock.assert_called_once_with("cb-8", "🤖 Робот: закрытие отправлено ❌")
         send_mock.assert_called_once()
-        self.assertIn("Робот: закрытие отправлено ❌", send_mock.call_args.args[2])
+        self.assertIn("🤖 Робот: закрытие отправлено ❌", send_mock.call_args.args[2])
 
     def test_close_all_confirm_rejected_answers_with_reason(self):
         callback_query = _owner_callback("cb-9", "close_all_confirm")
@@ -213,7 +213,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
 
         answer_mock.assert_called_once_with(
             "cb-9",
-            "Робот: отклонено — close_all_now is legal only from (ROBOT_RUNNING, READY) or (ROBOT_RUNNING, PAUSED)",
+            "🤖 Робот: отклонено — close_all_now is legal only from (ROBOT_RUNNING, READY) or (ROBOT_RUNNING, PAUSED)",
         )
 
     def test_close_all_cancel_callback_does_not_execute(self):

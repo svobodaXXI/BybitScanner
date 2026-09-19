@@ -25,6 +25,7 @@ from signal_adapter import prepare_signal
 from signal_memory import update_signal
 from scanner_diary import record_scanner_diary_observation
 from scanner_diary_factors import record_scanner_p0_factors
+from telegram_labels import SCANNER_EMOJI
 from notification import (
     send_message_to_recipients as send_message,
     send_signal,
@@ -39,7 +40,7 @@ def build_scan_started_message(
     """Build the Scanner-started notification announced before the scan loop."""
 
     return (
-        "Сканер запущен\n"
+        f"{SCANNER_EMOJI} Сканер запущен\n"
         f"Mode: {mode}\n"
         f"Minimum Score: {min_score}\n"
         f"Symbols: {symbol_count}"

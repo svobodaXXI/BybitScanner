@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
+from telegram_labels import ROBOT_EMOJI
+
 VIEW_FEED = "feed"
 VIEW_POSITIONS = "positions"
 VIEW_WATCHING = "watching"
@@ -301,7 +303,7 @@ def format_paper_positions_view(
     if max_message_length < 500:
         raise ValueError("max_message_length is too small")
 
-    header = "\U0001F4CC PAPER \u00b7 \u041e\u0442\u043a\u0440\u044b\u0442\u044b\u0435 \u043f\u043e\u0437\u0438\u0446\u0438\u0438"
+    header = ROBOT_EMOJI + " PAPER \u00b7 \u041e\u0442\u043a\u0440\u044b\u0442\u044b\u0435 \u043f\u043e\u0437\u0438\u0446\u0438\u0438"
     if not records:
         return (
             header
