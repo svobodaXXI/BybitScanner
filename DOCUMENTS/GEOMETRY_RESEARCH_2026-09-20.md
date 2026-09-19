@@ -196,3 +196,89 @@ G2a add a focused *pure read-only* impulse-evidence helper and regression using 
 G2b compare a bounded shortlist of START/geometry alternatives observationally on saved user-reviewed signals;
 G3a establish subtype+UNKNOWN evidence and label display after examples; G3b separately evaluate any Robot selection
 priority. Preserve scanner throughput and the current PAPER runtime until each smaller gate is verified.
+
+## G2a implementation specification — terminal-pivot evidence (2026-09-20)
+
+**Task and status:** scoped RESEARCH / DESIGN for a future small Codex slice after G1a review.
+No Scanner admission, robot execution, trade/risk priority, current geometry winner, Telegram
+labels, live DB, VPS or running-process change is authorized. No numeric impulse threshold is
+validated or chosen in this design.
+
+### Existing contracts verified against repository main
+
+- `pivots.find_pivots(df, left=3, right=3, min_change=0.003)` returns two lists of dicts
+  `{"index": int, "price": float, "type": "high"|"low"}`. A returned pivot at index `i`
+  uses subsequent `right` candles, so its confirmation becomes available **at or after
+  the close of source candle `i + right`**, not at candle `i`. Its same-side
+  `filter_pivots` may drop a terminal candidate: do not presume the filtered lists
+  are exhaustive. `find_pivots` also cleans/copies some frame data; reuse the lists
+  that Scanner already calculated instead of running it again in the hot path.
+- `analyzer/core.py` has the already-loaded OHLC frame and pivot lists before calling
+  `analyze_wedge`; `geometry/evaluation.py` currently computes
+  `start_index=min(first upper line pivot, first lower line pivot)` and stores
+  `pair_metrics["pre_pattern_impulse"]` from `detect_pre_pattern_impulse` using its
+  20-candle endpoint-close window. `geometry/ranking.py` chooses geometry before
+  final wedge classification. **Do not replace this existing evidence or interpret its
+  nonzero close-change direction as confirmed strong impulse.**
+
+### Proposed first code slice: pure diagnostic, no pipeline wiring
+
+Implement only a pure helper in `geometry/pre_pattern.py` (or an equally small reused
+existing module) which accepts already-loaded **closed source candles**, existing
+`highs`/`lows` pivot lists, a proposed episode `start_index`, an explicit last
+available **closed** source-bar index `as_of_index`, and the pivot right-window
+parameter actually used in that scan. Return a small result object with:
+`status = EVIDENCE_AVAILABLE | INSUFFICIENT_HISTORY | UNCONFIRMED_PIVOT |
+AMBIGUOUS | INVALID_INPUT`, bounded source window and time range, and a bounded
+chronological list of possible transition pivots:
+`index`, `time_ms`, `side` (`HIGH`/`LOW`), `price`, `confirmed_at_index`,
+`confirmed_at_time_ms`, previous opposing-pivot index/time, relative swing
+displacement, duration in source bars, and the provisional swing direction
+`UP`/`DOWN`/`UNKNOWN`. Reuse source OHLC `time` and prices, not Robot's
+projected 1m cursor. No final context subtype or replacement START is output.
+
+The context window must be **bounded and explicit**, with enough preceding history
+to contain the swing's opposing pivot and terminal pivot. If the fixed 20-bar
+historical window or fetched OHLC is insufficient, return `INSUFFICIENT_HISTORY`
+instead of treating the nearest available candle as the impulse's true origin.
+Do not pick numeric displacement/ATR/duration admission thresholds yet; include
+measurements for comparison against labeled 1m/5m examples. Do not assume the
+actual strongest extreme in all of history is the first terminal pivot at the
+impulse-to-pattern transition. Do not discard alternative HIGH/LOW candidates
+just because a current geometry line starts later.
+
+**No lookahead:** exclude any pivot with `index + right > as_of_index` and any
+OHLC after `as_of_index`; a pivot becomes eligible only once the required right
+candles have **closed**. Never use the final extreme of a subsequently completed
+pattern to classify an earlier signal. Pending candidates may be reported
+as pending diagnostics without qualifying as confirmed START or subtype evidence.
+
+**Speed and compatibility:** do not add a network request, run all possible
+candidate-pair combinations, change `pivots.find_pivots` defaults, refit lines,
+or alter `detect_pre_pattern_impulse`'s existing return keys/meaning. Keep G2a
+helper uncalled by production Scanner/Robot until an independently reviewed
+follow-up integration slice. Reuse existing pivot lists; if later measurements
+prove that same-side `filter_pivots` removes required terminal extrema, make
+that a separate tested change, not an implicit pivot-engine replacement.
+
+### Focused verification / completion evidence
+
+- Rising corrective episode: preceding DOWN swing ending at a confirmed LOW;
+  falling corrective episode: preceding UP swing ending at a confirmed HIGH.
+- Falling deceleration episode: DOWN impulse transition pivot remains
+  observational; opposing later lows must not move the earlier START.
+  Mirrored rising deceleration remains an unconfirmed anchor-rule proposal.
+- A provisional terminal pivot at source index `i` is not confirmed at
+  `as_of=i+right-1`, becomes eligible at `as_of=i+right`; future appended
+  bars must not rewrite an earlier recorded evidence snapshot.
+- Noisy/flat movement, two neighboring candidate pivots, insufficient
+  preceding candles, corrupt/non-monotonic timestamps, and an anchor near
+  either edge return bounded, non-fabricated results.
+- Same closed bar history on 1m and 5m produces source-index-consistent
+  results without a 1m/5m unit mix-up. A focused test confirms old
+  `detect_pre_pattern_impulse`, geometry winner, scanner posts and Robot
+  states are not modified by this slice.
+
+**Next gate:** review Codex G1a diff and publish/synchronize it separately,
+then request a bounded G2a pure-helper implementation and compare the output
+against user-reviewed examples before any scanner integration.
