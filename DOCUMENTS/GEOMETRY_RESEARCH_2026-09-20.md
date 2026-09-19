@@ -181,6 +181,29 @@ These are reusable concepts, not proof that any particular threshold generates p
 | StockCharts categorizes the same Falling Wedge as possible continuation after UP and reversal after DOWN, while breakout confirms the bullish interpretation. | ADAPT: prior impulse and geometric wedge are separate signal-time features/cohorts. Correction/deceleration context alone does not authorize an entry or imply an observed profit edge. |
 | Freqtrade lookahead analysis checks whether using future candles changes historical entries/indicator values. | ADAPT: replay stored signals one closed candle at a time and assert that the frozen pivot/START/context at historical signal time does not depend on later candles. Do not substitute a successful hindsight scan for signal-time correctness. |
 
+### External-source findings captured versus follow-up research still owed (2026-09-20)
+
+- **Captured for G2a:** TradingView's pivot confirmation delay requires separate pivot-event and
+  availability/confirmation indexes; its retroactively plotted pivot label does not make the
+  event known on the pivot candle. QuantConnect's sequential-indicator model motivates
+  closed-bar-only replay, not an alternative production ZigZag dependency. Freqtrade's
+  lookahead-analysis motivates the **paired truncated-history versus full-history pivot-list**
+  regression; filtering future OHLC alone does not prevent lookahead through supplied pivot
+  *membership*. The regression and the research helper described below implement this narrow
+  adaptation; neither result demonstrates profitable entries or establishes a context subtype.
+- **Captured for G1/G2/G3:** earlier in this document, original links and ADAPT/DEFER choices
+  preserve TradingView Lightweight Charts, mplfinance, TradingView pivot/ZigZag,
+  SciPy prominence/distance, QuantConnect Zig Zag, StockCharts wedge context and Freqtrade
+  lookahead patterns. They are *reference concepts*, not imported source code or thresholds.
+- **Not yet externally researched:** detecting and tracking a provisional wedge on exactly
+  four confirmed pivots, Telegram on-demand `Освежить` callbacks, and Robot
+  boundary-to-boundary corridor trading. These are currently **user-requested requirements**
+  recorded as G3P/G3R/G3C in `DOCUMENTS/BACKLOG.md`, not findings validated against mature
+  projects. Before those implementation slices, inspect the relevant official/public source
+  examples and record each concrete source URL, useful mechanism, BybitScanner adaptation,
+  limitations, and why an additional dependency is or is not necessary. In particular,
+  no external reference by itself authorizes tentative-pivot admission or Robot orders.
+
 ### Proposed reuse-first pipeline, not yet a production rule
 
 1. **Reuse existing data/evidence.** `geometry/evaluation.py` computes `start_index=min(first upper pivot,first lower pivot)`, then calls `detect_pre_pattern_impulse(candles,start_index)` **for every candidate pair**. `geometry/ranking.py` chooses geometry before final pattern classification. The current impulse's `lookback=20` and endpoint-close sign cannot classify impulse strength or deceleration; its start is also not necessarily the historical terminal high/low demanded by the user's corrective START rule.
@@ -199,10 +222,12 @@ priority. Preserve scanner throughput and the current PAPER runtime until each s
 
 ## G2a implementation specification — terminal-pivot evidence (2026-09-20)
 
-**Task and status:** scoped RESEARCH / DESIGN for a future small Codex slice after G1a review.
-No Scanner admission, robot execution, trade/risk priority, current geometry winner, Telegram
-labels, live DB, VPS or running-process change is authorized. No numeric impulse threshold is
-validated or chosen in this design.
+**Task and status (updated 2026-09-20):** the G2a pure research helper and 17 focused tests were published
+as commit `44ef535` in draft PR #156, branch `feat/geometry-pattern-chart-window` (not merged into main).
+The standalone exact-scope verifier passed; `task finish` did not produce a transaction-bound PASS receipt
+because the test file was already untracked at task start. Scanner admission, Robot execution, trade/risk
+priority, current geometry winner, Telegram labels, live DB, VPS and running processes remain out of scope.
+No numeric impulse threshold is validated or chosen in this research.
 
 ### Existing contracts verified against repository main
 
@@ -250,8 +275,14 @@ just because a current geometry line starts later.
 **No lookahead:** exclude any pivot with `index + right > as_of_index` and any
 OHLC after `as_of_index`; a pivot becomes eligible only once the required right
 candles have **closed**. Never use the final extreme of a subsequently completed
-pattern to classify an earlier signal. Pending candidates may be reported
-as pending diagnostics without qualifying as confirmed START or subtype evidence.
+pattern to classify an earlier signal. **Implemented G2a provenance correction:** an unconfirmed pivot MUST NOT be exposed even as a pending
+candidate merely because it appears in a pivot list calculated from later candles. Such future-known
+pivot membership is itself lookahead; the helper excludes it before reading its price/type or
+forming swings/status. Consequently `pending_candidates` is empty in this helper. A later,
+separate provisional-pivot feature may identify tentative extrema **only from source candles
+closed by `as_of_index`** and must not promote them to confirmed START/context evidence.
+Regression compares pivot lists calculated with truncated-at-`as_of_index` history against
+full-history lists both immediately before and at confirmation, for `right=1,2,3`.
 
 **Speed and compatibility:** do not add a network request, run all possible
 candidate-pair combinations, change `pivots.find_pivots` defaults, refit lines,
