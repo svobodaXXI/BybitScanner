@@ -69,6 +69,7 @@ DEFAULT_TICK_INTERVAL_S = 60.0
 DEFAULT_LATE_MARKET_MAX_BOOK_AGE_MS = 1000
 
 INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
+PHASE_INVALIDATED_UNSUPPORTED_PATTERN = "INVALIDATED_UNSUPPORTED_PATTERN"
 
 
 class ActionExecutor(Protocol):
@@ -285,9 +286,16 @@ class RobotBreakoutMonitor:
 
     def _advance_one(self, record: RobotCandidateRecord) -> bool:
         if record.robot_state is None:
-            state, _event = robot_state_machine.initialize_state(
-                self._candidate_payload(record),
-            )
+            try:
+                state, _event = robot_state_machine.initialize_state(
+                    self._candidate_payload(record),
+                )
+            except robot_state_machine.RobotStateMachineError as error:
+                pattern = (record.signal_snapshot or {}).get("pattern")
+                if robot_state_machine.is_supported_pattern(pattern):
+                    raise
+                self._invalidate_unsupported_pattern(record, error)
+                return True
             if (
                 state.get("phase") != robot_state_machine.PHASE_EXPIRED_AT_APEX
                 and self._get_admission_catchup_candles is not None
@@ -1096,6 +1104,34 @@ class RobotBreakoutMonitor:
             )
         except ConcurrentUpdate:
             pass
+
+    def _invalidate_unsupported_pattern(
+        self, record: RobotCandidateRecord, error: Exception,
+    ) -> None:
+        # An APPROVED candidate without robot_state would otherwise fail every
+        # tick and block restart reconciliation; it never had an order.
+        now_ms = self._now_ms()
+        state = {
+            "state_version": robot_state_machine.STATE_VERSION,
+            "phase": PHASE_INVALIDATED_UNSUPPORTED_PATTERN,
+            "pattern": (record.signal_snapshot or {}).get("pattern"),
+            "invalidated_reason": str(error),
+            "invalidated_at_ms": now_ms,
+        }
+        try:
+            self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status="INVALIDATED",
+                robot_state=state,
+                expected_revision=record.state_revision,
+                updated_at_ms=now_ms,
+            )
+        except ConcurrentUpdate:
+            return
+        print(
+            "[ROBOT CANDIDATE INVALIDATED] "
+            f"candidate_id={record.candidate_id} reason={error}"
+        )
 
     def _fail_closed_unprotected_fill(
         self, record: RobotCandidateRecord, error: Exception,

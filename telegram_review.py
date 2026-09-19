@@ -54,6 +54,7 @@ ROBOT_ADMISSION_REASON_LABELS = {
     "Robot runtime state is unavailable": "Состояние робота недоступно",
     "Scanner candidate is not admissible": "Сигнал сканера не допускается к приёму",
     "Scanner candidate snapshot is invalid": "Данные сигнала сканера некорректны",
+    "Scanner candidate pattern is not supported by Robot": "паттерн не поддерживается роботом",
     "Robot admission clock returned invalid timestamp": "Некорректная временная метка при приёме сигнала",
     "Robot candidate identity conflicts with durable state": "Идентификатор сигнала конфликтует с сохранёнными данными",
 }

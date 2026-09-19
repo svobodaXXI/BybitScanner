@@ -34,6 +34,7 @@ from robot_candidate_store import (
 )
 
 from timeframe_format import format_timeframe_ru
+from robot_state_machine import is_supported_pattern
 
 import config
 from telegram_labels import SCANNER_EMOJI
@@ -406,10 +407,11 @@ def send_signal(
     # Only production Scanner signals can be handed to Robot.  Persist the
     # complete signal payload first; a failed persistence simply withholds the
     # Robot button and does not break ordinary Scanner notification delivery.
+    # Patterns without a Robot lifecycle get no candidate and no Robot button.
     robot_handoff_ready = (
         timeframe == "1"
         or result.get("robot_handoff_ready") is True
-    )
+    ) and is_supported_pattern(result.get("pattern"))
     if owner_chat_id and not test_mode and robot_handoff_ready:
         try:
             candidate = create_signal_snapshot(

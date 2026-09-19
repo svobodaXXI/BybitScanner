@@ -13,11 +13,13 @@ from terminal.persistence.sqlite_store import SQLiteStore
 
 
 class RobotAdmissionGateTests(unittest.TestCase):
-    def _make_candidate(self, directory: Path, candidate_id: str = "candidate-1"):
+    def _make_candidate(
+        self, directory: Path, candidate_id: str = "candidate-1", pattern: str = "Falling Wedge",
+    ):
         return create_signal_snapshot(
             {
                 "symbol": "ONGUSDT",
-                "pattern": "Falling Wedge",
+                "pattern": pattern,
                 "geometry": {
                     "current_index": 10,
                     "apex": {"index": 30},
@@ -75,6 +77,37 @@ class RobotAdmissionGateTests(unittest.TestCase):
             legacy = load_candidate("candidate-1", store_dir=candidate_dir)
             self.assertEqual(legacy["status"], "AVAILABLE")
 
+            store = SQLiteStore.open(db_path)
+            try:
+                self.assertIsNone(store.get_robot_candidate("candidate-1"))
+            finally:
+                store.close()
+
+    def test_unsupported_pattern_is_rejected_before_sqlite_admission(self):
+        import telegram_review
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate_dir = root / "candidates"
+            db_path = root / "paper.sqlite3"
+            self._make_candidate(candidate_dir, pattern="Triangle Compression")
+            self._ready_database(db_path)
+
+            with self.assertRaises(RobotAdmissionRejected) as raised:
+                admit_robot_candidate(
+                    "candidate-1",
+                    database_path=db_path,
+                    store_dir=candidate_dir,
+                    clock_ms=lambda: 2000,
+                )
+
+            self.assertEqual(
+                telegram_review._robot_admission_reason_text(raised.exception),
+                "паттерн не поддерживается роботом",
+            )
+            self.assertEqual(
+                load_candidate("candidate-1", store_dir=candidate_dir)["status"], "AVAILABLE",
+            )
             store = SQLiteStore.open(db_path)
             try:
                 self.assertIsNone(store.get_robot_candidate("candidate-1"))

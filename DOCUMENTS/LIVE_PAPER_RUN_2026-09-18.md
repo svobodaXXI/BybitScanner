@@ -200,3 +200,31 @@ Supersedes section 1 (runtime layout) and the last bullet of section 6 (robot on
   Risk on the first position card: the chart calls `bybit_api.get_candles` and the VPS copy of `bybit_api.py` has
   local changes; if its signature differs the card falls back to text with "график недоступен".
 - The robot takes only signals for which the user pressed "🤖 Робот"; there is no automatic selection in v0.1.
+
+## 9. Incident 2026-09-19: ingress overflow, EMERGENCY_CLOSE and a poisoned candidate
+
+Times are VPS time (CEST). The user's Telegram shows MSK, i.e. +1 hour.
+
+- 09:23:53: the protection queue overflowed for CVXUSDT and CFGUSDT (capacity 64). The robot was moved to
+  `RECONCILIATION_REQUIRED` (`ROBOT_PROTECTION_COVERAGE_LOST symbol=CVXUSDT reason=ingress_overflow`). Both
+  positions were closed as `EMERGENCY_CLOSE` (obligations with `market_event_id` "rest-recovery") at 09:23:56 and
+  09:23:59. `protection-health` afterwards: `high_watermark` 64, `max_queue_latency_ms` 3552,
+  `max_processing_ms` 935.
+- 4 of the 8 closes in the last 24 h were `EMERGENCY_CLOSE` (KSMUSDT 18th 17:49, AEONUSDT 18th 17:59, CVXUSDT and
+  CFGUSDT 19th 09:23). These are not strategy exits: exclude them from STOP/TAKE statistics.
+- Poisoned candidate: FIGHTUSDT (Triangle Compression), approved 19th 08:40. Admission did not check the pattern;
+  the monitor cannot create a state for it (`unsupported Robot v0.1 pattern`), so `robot_state` stayed NULL and the
+  error repeated every 60 s. `reconcile_restart` then fails on "approved candidate lacks durable recovery state"
+  -> reconcile returns 409. Stop/Start does not help (the entry sync starts the same monitor).
+- Resolution 19th 16:24: DB copy `/root/backup_paper_runtime_20260919_162437.sqlite3`; the one candidate was moved
+  to `INVALIDATED` via `SQLiteStore.save_robot_candidate_state`; reconcile -> HTTP 200, `PAUSED`; 2 PAPER limit
+  orders were cancelled. The user left the robot paused until the fix and diagnostics are in.
+- Cause of the overflow is not proven. Suspect: a blocking REST request in `LiveOrderBookProvider.get_book` on the
+  owner thread; the more symbols under protection, the higher the load on the 64-slot queue.
+- Open: CSOPSAMSUNG2LUSDT (approved 18th 11:22, `WAITING_RETEST`) survived "Стоп"; cause not established.
+- Fee is about 0.06% per leg (~0.15 USDT on 250 USDT), for a LIMIT entry as well.
+- Follow-up implemented locally (uncommitted): no "🤖 Робот" button and admission rejection ("паттерн не
+  поддерживается роботом") for patterns other than Falling/Rising Wedge; the monitor moves an APPROVED candidate
+  without `robot_state` and with an unsupported pattern to `INVALIDATED` (phase
+  `INVALIDATED_UNSUPPORTED_PATTERN`); `SerializedPaperRuntime` logs a WARNING for owner tasks > 200 ms (task
+  qualname, queue depth) and `protection-health` ingress reports `slowest_task_label` / `slowest_task_ms`.
