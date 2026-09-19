@@ -1042,6 +1042,19 @@ class _BookUpdateNotification:
     book_update_id: str
 
 
+SLOW_OWNER_TASK_WARNING_MS = 200.0
+
+
+BOOK_UPDATE_TASK_LABEL = "process_orderbook_update"
+
+
+def _owner_task_label(operation: Callable[[object], None]) -> str:
+    if isinstance(operation, str):
+        return operation
+    target = getattr(operation, "func", operation)  # unwrap functools.partial
+    return getattr(target, "__qualname__", None) or type(target).__qualname__
+
+
 @dataclass(frozen=True)
 class _OwnerTask:
     operation: Callable[[object], None]
@@ -1080,6 +1093,9 @@ class SerializedPaperRuntime:
         self._protection_ingress_high_watermark = 0
         self._protection_ingress_max_queue_latency_ms = 0.0
         self._protection_ingress_max_processing_ms = 0.0
+        # Slowest owner request of any kind since start: (ms, kind, label source).
+        # Written only by the owner thread as one tuple; the label is resolved lazily.
+        self._slowest_owner_task: tuple[float, str | None, object] = (0.0, None, None)
         self._protection_ingress_last_symbol: str | None = None
         self._protection_ingress_last_role: str | None = None
         self._protection_ingress_last_overflow_symbol: str | None = None
@@ -1183,6 +1199,10 @@ class SerializedPaperRuntime:
         ))
 
     def protection_ingress_metrics(self) -> dict[str, object]:
+        slowest_ms, slowest_kind, slowest_source = self._slowest_owner_task
+        slowest_label = (
+            _owner_task_label(slowest_source) if slowest_source is not None else None
+        )
         with self._protection_ingress_lock:
             return {
                 "capacity": self._protection_ingress_capacity,
@@ -1190,6 +1210,9 @@ class SerializedPaperRuntime:
                 "high_watermark": self._protection_ingress_high_watermark,
                 "max_queue_latency_ms": self._protection_ingress_max_queue_latency_ms,
                 "max_processing_ms": self._protection_ingress_max_processing_ms,
+                "slowest_task_kind": slowest_kind,
+                "slowest_task_label": slowest_label,
+                "slowest_task_ms": slowest_ms,
                 "last_symbol": self._protection_ingress_last_symbol,
                 "last_role": self._protection_ingress_last_role,
                 "last_overflow_symbol": self._protection_ingress_last_overflow_symbol,
@@ -1203,6 +1226,19 @@ class SerializedPaperRuntime:
         self._requests.put((None, completed, {}))
         completed.wait(15)
         self._thread.join(timeout=15)
+
+    def _observe_owner_task(
+        self, kind: str, label_source: object, processing_ms: float, detail: str = "",
+    ) -> None:
+        """Owner thread only. Cheap unless the task is slow or the slowest so far."""
+        if processing_ms > self._slowest_owner_task[0]:
+            self._slowest_owner_task = (processing_ms, kind, label_source)
+        if processing_ms > SLOW_OWNER_TASK_WARNING_MS:
+            LOGGER.warning(
+                "Slow PAPER owner task: kind=%s task=%s processing_ms=%.1f queue_depth=%d%s",
+                kind, _owner_task_label(label_source), processing_ms,
+                self._requests.qsize(), detail,
+            )
 
     def _run(self, factory) -> None:
         runtime = None
@@ -1222,6 +1258,7 @@ class SerializedPaperRuntime:
                             self._latest_book_update_id or request.book_update_id
                         )
                         self._book_update_pending = False
+                    started_at = time.perf_counter()
                     try:
                         runtime.process_orderbook_update(book_update_id)
                     except BaseException:
@@ -1229,6 +1266,10 @@ class SerializedPaperRuntime:
                             "PAPER Limit update processing failed; book_update_id=%s",
                             book_update_id,
                         )
+                    self._observe_owner_task(
+                        "book_update", BOOK_UPDATE_TASK_LABEL,
+                        (time.perf_counter() - started_at) * 1000,
+                    )
                     continue
                 if isinstance(request, _OwnerTask):
                     started_at = time.perf_counter()
@@ -1241,6 +1282,7 @@ class SerializedPaperRuntime:
                         processing_ms = (time.perf_counter() - started_at) * 1000
                         with self._protection_ingress_lock:
                             self._protection_ingress_pending -= 1
+                            pending = self._protection_ingress_pending
                             self._protection_ingress_max_queue_latency_ms = max(
                                 self._protection_ingress_max_queue_latency_ms,
                                 queue_latency_ms,
@@ -1249,17 +1291,26 @@ class SerializedPaperRuntime:
                                 self._protection_ingress_max_processing_ms,
                                 processing_ms,
                             )
+                        self._observe_owner_task(
+                            "protection", request.operation, processing_ms,
+                            f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"
+                            f" symbol={request.symbol or 'UNKNOWN'} role={request.coverage_role}"
+                            if processing_ms > SLOW_OWNER_TASK_WARNING_MS else "",
+                        )
                     continue
                 operation, completed, response = request
                 if operation is None:
                     completed.set()
                     return
+                started_at = time.perf_counter()
                 try:
                     response["result"] = operation(runtime)
                 except BaseException as exc:
                     response["error"] = exc
                 finally:
+                    processing_ms = (time.perf_counter() - started_at) * 1000
                     completed.set()
+                self._observe_owner_task("call", operation, processing_ms)
         finally:
             runtime.close()
 

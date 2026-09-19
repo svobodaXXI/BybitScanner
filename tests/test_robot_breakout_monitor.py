@@ -372,6 +372,45 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             self.feed.push(SYMBOL, _candle_at(104, high=99, low=97, close=98))
         return record
 
+    def test_unsupported_pattern_without_state_is_invalidated_once_and_unblocks_recovery(self):
+        from contextlib import redirect_stdout
+        import io
+
+        from terminal.application.robot_recovery import RobotRecoveryCoordinator
+
+        self._create_candidate(pattern="Triangle Compression")
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(self.monitor.tick(), ("candidate-1",))
+            self.assertEqual(self.monitor.tick(), ())
+
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        self.assertEqual(record.robot_state["phase"], "INVALIDATED_UNSUPPORTED_PATTERN")
+        self.assertEqual(record.robot_state["pattern"], "Triangle Compression")
+        self.assertIn("unsupported Robot v0.1 pattern", record.robot_state["invalidated_reason"])
+        self.assertEqual(output.getvalue().count("[ROBOT CANDIDATE INVALIDATED]"), 1)
+        self.assertNotIn("[ROBOT CANDIDATE ERROR]", output.getvalue())
+
+        # reconcile_restart only sees APPROVED candidates: recovery no longer fails.
+        result = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID,
+            latest_geometry_index_provider=lambda candidate_id, snapshot: 100,
+            clock_ms=self.clock,
+        ).recover()
+        self.assertEqual(result.runtime_state.recovery_status, "READY")
+        self.assertEqual(result.decisions, ())
+
+    def test_supported_pattern_state_error_is_not_invalidated(self):
+        self._create_candidate(apex_index="broken")
+
+        self.assertEqual(self.monitor.tick(), ())
+
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertIsNone(record.robot_state)
+
     def test_lazily_initializes_missing_robot_state_without_reading_a_candle(self):
         self._create_candidate()
 

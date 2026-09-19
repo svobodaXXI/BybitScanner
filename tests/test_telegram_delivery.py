@@ -282,6 +282,36 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             "robot:approve:candidate-ready",
         )
 
+    def test_unsupported_pattern_gets_no_robot_candidate_or_button(self):
+        with tempfile.TemporaryDirectory() as directory:
+            chart = Path(directory) / "BTCUSDT_analysis.png"
+            chart.write_bytes(b"test-image")
+            signal = self.signal()
+            signal.update(timeframe="1", pattern="Triangle Compression")
+
+            with patch.object(
+                notification.config, "TELEGRAM_CHAT_IDS", ("owner",),
+            ), patch.object(
+                notification.config, "TELEGRAM_CHAT_ID", "owner",
+            ), patch.object(
+                notification, "CHARTS_DIR", directory,
+            ), patch.object(
+                notification, "send_message", return_value={"ok": True},
+            ), patch.object(
+                notification, "send_photo", return_value={"ok": True},
+            ) as photo_mock, patch.object(
+                notification, "create_signal_snapshot",
+                return_value={"candidate_id": "candidate-x"},
+            ) as create_mock:
+                delivered = notification.send_signal(signal)
+
+        self.assertTrue(delivered)
+        create_mock.assert_not_called()
+        keyboard = photo_mock.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        self.assertNotIn(
+            "🤖 Робот", [button["text"] for row in keyboard for button in row],
+        )
+
     def test_two_non_owner_recipients_receive_only_tradingview(self):
         with tempfile.TemporaryDirectory() as directory:
             chart = Path(directory) / "BTCUSDT_analysis.png"

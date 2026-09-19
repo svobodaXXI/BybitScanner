@@ -1162,6 +1162,9 @@ def test_robot_protection_health_get_returns_ingress_diagnostics():
                     "high_watermark": 11,
                     "max_queue_latency_ms": 4.5,
                     "max_processing_ms": 2.25,
+                    "slowest_task_kind": "protection",
+                    "slowest_task_label": "Coverage.evaluate",
+                    "slowest_task_ms": 2.25,
                     "last_symbol": "BTCUSDT",
                     "last_role": "EXPOSURE",
                     "last_overflow_symbol": None,
@@ -1194,6 +1197,9 @@ def test_robot_protection_health_get_returns_ingress_diagnostics():
         assert response["body"]["ingress"]["high_watermark"] == 11
         assert response["body"]["ingress"]["max_queue_latency_ms"] == 4.5
         assert response["body"]["ingress"]["max_processing_ms"] == 2.25
+        assert response["body"]["ingress"]["slowest_task_kind"] == "protection"
+        assert response["body"]["ingress"]["slowest_task_label"] == "Coverage.evaluate"
+        assert response["body"]["ingress"]["slowest_task_ms"] == 2.25
     finally:
         server.server_close()
 
@@ -1741,6 +1747,78 @@ def test_enqueue_is_bounded_and_fails_closed_with_protection_ingress_overflow():
         runtime.enqueue(lambda _owner: None)
     finally:
         release.set()
+        runtime.close()
+
+
+def test_slow_owner_task_logs_warning_and_reports_slowest_task(monkeypatch, caplog):
+    import terminal.runtime.paper_http_server as paper_http_server
+
+    monkeypatch.setattr(paper_http_server, "SLOW_OWNER_TASK_WARNING_MS", 20.0)
+
+    class IdleRuntime:
+        def close(self) -> None:
+            return None
+
+    def slow_task(_owner: object) -> None:
+        time.sleep(0.05)
+
+    runtime = SerializedPaperRuntime(lambda: IdleRuntime())
+    try:
+        with caplog.at_level("WARNING", logger=paper_http_server.__name__):
+            runtime.enqueue(slow_task, symbol="cvxusdt", coverage_role="EXPOSURE")
+            runtime.enqueue(lambda _owner: None, symbol="CFGUSDT")
+            runtime.call(lambda _: None)
+
+        metrics = runtime.protection_ingress_metrics()
+        assert metrics["slowest_task_kind"] == "protection"
+        assert metrics["slowest_task_label"].endswith("<locals>.slow_task")
+        assert metrics["slowest_task_ms"] >= 40
+        assert metrics["slowest_task_ms"] == metrics["max_processing_ms"]
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert "kind=protection task=" in warnings[0] and "<locals>.slow_task" in warnings[0]
+        assert "queue_depth=" in warnings[0] and "symbol=CVXUSDT role=EXPOSURE" in warnings[0]
+    finally:
+        runtime.close()
+
+
+def test_slow_call_and_book_update_log_warning_and_count_as_slowest(monkeypatch, caplog):
+    import terminal.runtime.paper_http_server as paper_http_server
+
+    monkeypatch.setattr(paper_http_server, "SLOW_OWNER_TASK_WARNING_MS", 20.0)
+
+    class SlowBookRuntime:
+        def process_orderbook_update(self, book_update_id: str) -> None:
+            time.sleep(0.04)
+
+        def close(self) -> None:
+            return None
+
+    def slow_call(_owner: object) -> str:
+        time.sleep(0.08)
+        return "done"
+
+    runtime = SerializedPaperRuntime(lambda: SlowBookRuntime())
+    try:
+        with caplog.at_level("WARNING", logger=paper_http_server.__name__):
+            runtime.enqueue_book_update("book-1")
+            assert runtime.call(slow_call) == "done"
+            runtime.call(lambda _: None)
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 2
+        assert "kind=book_update task=process_orderbook_update" in warnings[0]
+        assert "kind=call task=" in warnings[1] and "<locals>.slow_call" in warnings[1]
+        assert all("queue_depth=" in item for item in warnings)
+
+        metrics = runtime.protection_ingress_metrics()
+        assert metrics["slowest_task_kind"] == "call"
+        assert metrics["slowest_task_label"].endswith("<locals>.slow_call")
+        assert metrics["slowest_task_ms"] >= 70
+        # Protection-only maxima are untouched by non-protection requests.
+        assert metrics["max_processing_ms"] == 0.0
+        assert metrics["max_queue_latency_ms"] == 0.0
+    finally:
         runtime.close()
 
 

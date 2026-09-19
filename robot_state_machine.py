@@ -41,8 +41,17 @@ _TERMINAL_PHASES = {
 }
 
 
+SUPPORTED_PATTERNS = frozenset(_PATTERN_DIRECTION)
+
+
 class RobotStateMachineError(RuntimeError):
     """Raised when lifecycle input cannot be trusted."""
+
+
+def is_supported_pattern(pattern: Any) -> bool:
+    """Whether Robot v0.1 has a breakout lifecycle for this Scanner pattern."""
+
+    return str(pattern or "").strip() in SUPPORTED_PATTERNS
 
 
 def _finite_number(value: Any, field: str) -> float:

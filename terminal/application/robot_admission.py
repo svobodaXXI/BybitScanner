@@ -14,6 +14,7 @@ from typing import Any, Mapping
 import time
 
 from robot_candidate_store import approve_candidate, load_candidate
+from robot_state_machine import is_supported_pattern
 from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
     PersistenceError,
@@ -89,6 +90,8 @@ def admit_robot_candidate(
     snapshot = candidate.get("signal_snapshot")
     if not isinstance(snapshot, dict):
         raise RobotAdmissionRejected("Scanner candidate snapshot is invalid")
+    if not is_supported_pattern(snapshot.get("pattern")):
+        raise RobotAdmissionRejected("Scanner candidate pattern is not supported by Robot")
 
     source_timeframe = str(candidate.get("timeframe", "")).strip()
     if source_timeframe != "1":
