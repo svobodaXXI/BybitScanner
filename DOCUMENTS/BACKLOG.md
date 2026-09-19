@@ -126,6 +126,32 @@ remain unchanged until a separate strategy decision.
 - Rising Wedge after UP impulse: `RISING_DECELERATION_AFTER_UP` — upward move losing pace inside an ascending
   contraction, candidate bearish exhaustion/reversal SHORT cohort.
 - `PREPATTERN_CONTEXT_UNKNOWN` for missing/ambiguous prior history; do not force a subtype from wedge slope alone.
+**Signal and chart presentation (user requirement, 2026-09-20):** after G3 classification is implemented and tested,
+show the *same immutable signal-time subtype* on each wedge signal in BOTH presentation surfaces:
+- Scanner Telegram signal **text post** (`notification.py::format_signal`): one standalone line, for example
+  `Контекст: Замедление после падения`, `Контекст: Коррекция после роста`,
+  `Контекст: Замедление после роста`, `Контекст: Коррекция после падения`, or
+  `Контекст: Не определён` for missing/ambiguous prior history. Keep the geometric
+  `Паттерн: Нисходящий/Восходящий клин` line separate; do not imply a measured advantage in the label.
+- The **Scanner signal PNG title/header** (`chart_clean.py::build_chart_title`, reached through
+  `analyzer/charts.py`): add one clearly readable standalone `Контекст: …` line directly below the pattern/
+  timeframe heading, without covering candles, boundaries, or the preceding impulse. `chart.py` is a separate
+  chart renderer: inspect actual call sites and cover it only if it produces a user-facing signal.
+- Robot **position/lifecycle chart and caption** (`robot_position_chart.py`,
+  `robot_position_view.py::format_position_card`, `telegram_monitoring.py`): where a wedge signal snapshot
+  exists, show the same context line in the chart header and text/photo caption, not a newly inferred
+  context from subsequent candles. For legacy snapshots without subtype, use `Контекст: Не определён`.
+The presentation reads one validated, versioned context value from the frozen signal/snapshot; no independent
+classification in notification, chart renderer, or bot. A label is descriptive, not a Robot admission/
+position-sizing instruction. For non-wedge patterns, keep the existing presentation unchanged.
+Acceptance tests: all four subtype IDs + UNKNOWN appear consistently in the Scanner text and PNG header, and
+in the Robot position/lifecycle caption and chart where applicable, on 1m and 5m; missing history does not produce
+a fabricated impulse/context label. Respect Telegram photo-caption length and distinguish chart unavailable from
+context unknown. Existing signal delivery/Robot ownership/STOP/TAKE are unchanged.
+**Sequencing:** G1 must first make pre-pattern candles visible; G3 classification and the context UI are one
+separate observable feature before G4 Triangle. Do not show a specific subtype in production until G3 has
+validated signal-time evidence; until then keep UI unchanged or show only an explicitly unknown label.
+
 **Desired trading-workflow priority:** investigate giving deceleration/exhaustion cohorts higher priority for Robot candidate
 selection than corrective cohorts. This is a user-requested strategy hypothesis, NOT a validated edge or permission to
 increase size, relax RR/STOP/TAKE, bypass ownership/admission, or activate preferential orders now.
