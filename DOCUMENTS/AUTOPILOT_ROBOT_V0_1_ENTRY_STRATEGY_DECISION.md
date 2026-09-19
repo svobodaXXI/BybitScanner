@@ -1,7 +1,7 @@
 # BybitScanner — Robot v0.1 entry strategy decision
 
-Version: 1.3
-Date: 2026-09-08
+Version: 1.4
+Date: 2026-09-19
 Status: ACCEPTED DESIGN / PAPER PROTOTYPE
 Implementation authorization: NONE
 
@@ -58,6 +58,20 @@ The price is normalized only through the shared authoritative instrument metadat
 A LIMIT fill during the retest is a valid Robot entry even though the later confirmation candle has not yet occurred.
 
 No independent Robot-specific definition of retest-zone width is introduced in v0.1.
+
+### 4.1 Take/stop ratio filter for the retest LIMIT — MIN_ENTRY_RR 1.5 (2026-09-19, user)
+
+Before the initial retest LIMIT is placed, Robot evaluates the planned trade with the same STOP/TAKE code that runs after the fill:
+- entry = the LIMIT price;
+- STOP = `robot_protection.structural_stop(...)` from the same structural extreme that `build_protection_plan` uses;
+- TAKE = `robot_protection.frozen_take_90(...)` from the frozen signal reference and target;
+- `rr = risk_reward_ratio(direction, entry, stop, take)`.
+
+If `rr < MIN_ENTRY_RR`, no LIMIT is placed and the candidate terminates without entry through the existing pre-entry terminal path: status `INVALIDATED`, `stopped_without_entry_reason = "SKIPPED_POOR_RR"`, and `execution.entry_rr_filter` holds `entry_price`, `stop_price`, `take_price`, `rr`, `min_rr`. A ratio exactly equal to the threshold enters.
+
+The threshold is `robot_protection.MIN_ENTRY_RR = 1.5`, overridable by the environment variable `ROBOT_MIN_ENTRY_RR` (a Decimal in 0..10; anything else falls back to 1.5). `MIN_LATE_ADMISSION_RR` of the late Market path shares the same default and is not affected by the variable. If RR cannot be computed, the initial LIMIT is not placed and the candidate is terminalized as `INVALIDATED` with reason `SKIPPED_RR_UNAVAILABLE`; `execution.entry_rr_filter` records the planned entry, threshold and calculation error. An RR of zero is rejected even when the configured threshold is zero. The post-fill protection and emergency-close path remains unchanged for already-executed or legacy resting orders. A proposed reprice is also checked against the same threshold using its normalized new LIMIT price. If its RR is below the threshold or cannot be computed, Robot does not amend or cancel the existing unfilled order; it remains APPROVED and continues monitoring the original order, with another reprice evaluation on a later tick. The late Market path keeps its own handling: `SKIPPED_POOR_RR` there does not terminate the candidate, it is re-evaluated on the next tick.
+
+STOP, TAKE, protection and admission logic are unchanged; a minimum-stop-distance floor is a separate task.
 
 ## 5. Unfilled LIMIT repositioning
 

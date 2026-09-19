@@ -1,7 +1,9 @@
 from contextlib import redirect_stdout
+import os
 from decimal import Decimal
 import io
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import time
 import unittest
@@ -481,6 +483,155 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.load_robot_candidates_by_status(ACCOUNT_ID, ("DONE",))
 
+    # --- retest LIMIT take/stop filter (MIN_ENTRY_RR) -------------------------------------
+
+    def _rr_check(self, direction, *, reference, extreme, entry="1000", env=None):
+        """Call the pre-placement filter directly with a planned entry of ``entry``.
+
+        Snapshot geometry gives stop = extreme -/+ 0.1 (1% from entry 1000) and
+        take = reference +/- 0.9 * 10, so ``reference`` picks the ratio.
+        """
+        long_side = direction == "LONG"
+        snapshot = _snapshot(
+            pattern="Falling Wedge" if long_side else "Rising Wedge",
+            lower_touch_prices=(extreme,) if long_side else (1.0,),
+            upper_touch_prices=(1.0,) if long_side else (extreme,),
+            reference_price=reference, start_width=10.0,
+        )
+        record = SimpleNamespace(
+            candidate_id="candidate-rr", symbol=Symbol(SYMBOL), signal_snapshot=snapshot,
+        )
+        plan = SimpleNamespace(
+            direction=direction, request=SimpleNamespace(limit_price=Decimal(entry)),
+        )
+        environment = {"ROBOT_MIN_ENTRY_RR": env} if env is not None else {}
+        with patch.dict(os.environ, environment):
+            if env is None:
+                os.environ.pop("ROBOT_MIN_ENTRY_RR", None)
+            with redirect_stdout(io.StringIO()):
+                return self.monitor._entry_rr_skip(record, plan)
+
+    def test_entry_rr_below_threshold_is_skipped_for_long_and_short(self):
+        # LONG: entry 1000, stop 990 (1% risk), take = reference + 9 -> rr = reward% / 1%.
+        long_skip = self._rr_check("LONG", reference=1005.0, extreme=990.1)  # take 1014 -> 1.4
+        self.assertEqual(long_skip[0], "SKIPPED_POOR_RR")
+        self.assertEqual(
+            {key: Decimal(value) for key, value in long_skip[1].items()},
+            {
+                "entry_price": Decimal("1000"), "min_rr": Decimal("1.5"),
+                "stop_price": Decimal("990"), "take_price": Decimal("1014"), "rr": Decimal("1.4"),
+            },
+        )
+        # SHORT: entry 1000, stop 1010, take = reference - 9 -> 986 -> 1.4
+        short_skip = self._rr_check("SHORT", reference=995.0, extreme=1009.9)
+        self.assertEqual(short_skip[0], "SKIPPED_POOR_RR")
+        self.assertEqual(
+            tuple(Decimal(short_skip[1][key]) for key in ("stop_price", "take_price", "rr")),
+            (Decimal("1010"), Decimal("986"), Decimal("1.4")),
+        )
+
+    def test_entry_rr_at_or_above_threshold_is_not_skipped(self):
+        for direction, extreme, references in (
+            ("LONG", 990.1, (1006.0, 1011.0)),   # take 1015 -> rr 1.5, take 1020 -> rr 2.0
+            ("SHORT", 1009.9, (994.0, 989.0)),   # take 985 -> rr 1.5, take 980 -> rr 2.0
+        ):
+            for reference in references:
+                with self.subTest(direction=direction, reference=reference):
+                    self.assertIsNone(
+                        self._rr_check(direction, reference=reference, extreme=extreme)
+                    )
+
+    def test_entry_rr_threshold_follows_environment_variable(self):
+        # rr is 1.5 here: passes by default, skipped when the threshold is raised.
+        self.assertIsNone(self._rr_check("LONG", reference=1006.0, extreme=990.1))
+        raised = self._rr_check("LONG", reference=1006.0, extreme=990.1, env="1.6")
+        self.assertEqual(raised[0], "SKIPPED_POOR_RR")
+        self.assertEqual((Decimal(raised[1]["min_rr"]), Decimal(raised[1]["rr"])), (Decimal("1.6"), Decimal("1.5")))
+        # rr 1.4 passes when the threshold is lowered.
+        self.assertIsNone(self._rr_check("LONG", reference=1005.0, extreme=990.1, env="1.4"))
+        # Invalid values fall back to the default 1.5.
+        for bad in ("abc", "-1", "11", "NaN", ""):
+            with self.subTest(env=bad):
+                skipped = self._rr_check("LONG", reference=1005.0, extreme=990.1, env=bad)
+                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("1.5"))
+
+    def test_entry_rr_unavailable_blocks_initial_entry(self):
+        # A zero-width frozen target cannot yield a valid TAKE.
+        snapshot = _snapshot(reference_price=100.0, start_width=0.0)
+        record = SimpleNamespace(
+            candidate_id="candidate-rr", symbol=Symbol(SYMBOL), signal_snapshot=snapshot,
+        )
+        plan = SimpleNamespace(direction="LONG", request=SimpleNamespace(limit_price=Decimal("100")))
+        with redirect_stdout(io.StringIO()) as output:
+            skipped = self.monitor._entry_rr_skip(record, plan)
+        self.assertEqual(skipped[0], "SKIPPED_RR_UNAVAILABLE")
+        self.assertEqual(skipped[1]["entry_price"], "100")
+        self.assertEqual(skipped[1]["min_rr"], "1.5")
+        self.assertIn("error", skipped[1])
+        self.assertIn("[ROBOT ENTRY RR UNAVAILABLE]", output.getvalue())
+
+    def test_uncomputable_initial_entry_never_places_limit_and_terminates(self):
+        for index, snapshot_kwargs in enumerate(({"start_width": 0.0}, {"lower_touch_prices": ()})):
+            with self.subTest(snapshot_kwargs=snapshot_kwargs):
+                candidate_id = f"invalid-{index}"
+                self._create_candidate(candidate_id, **snapshot_kwargs)
+                # Drive one candidate at a time. No active other owner remains
+                # after invalidation, so the next case can use the same symbol.
+                self._drive_to_retest_detected(candidate_id)
+                with redirect_stdout(io.StringIO()):
+                    self.monitor.tick()
+                record = self.store.get_robot_candidate(candidate_id)
+                self.assertEqual(record.status, "INVALIDATED")
+                self.assertEqual(self.executor.limit_calls, [])
+                self.assertEqual(self.executor.protection_calls, [])
+                execution = record.robot_state["execution"]
+                self.assertEqual(execution["stopped_without_entry_reason"], "SKIPPED_RR_UNAVAILABLE")
+                self.assertIn("error", execution["entry_rr_filter"])
+                self.assertNotIn("limit_order_id", execution)
+                self.assertEqual(self.monitor.tick(), ())
+
+    def test_zero_rr_is_skipped_even_if_threshold_configured_to_zero(self):
+        skipped = self._rr_check("LONG", reference=991.0, extreme=990.1, env="0")
+        self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
+        self.assertEqual(Decimal(skipped[1]["rr"]), Decimal("0"))
+        self.assertEqual(skipped[1]["min_rr"], "0")
+
+    def test_poor_rr_candidate_places_no_limit_and_is_terminated_with_reason(self):
+        # start_width=1 keeps the frozen take close: rr is about 1.9 (default fixture is above 10).
+        self._create_candidate(start_width=1.0)
+        self._drive_to_retest_detected()
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "10"}), \
+                redirect_stdout(io.StringIO()):
+            self.monitor.tick()
+
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        execution = record.robot_state["execution"]
+        self.assertNotIn("limit_order_id", execution)
+        self.assertEqual(execution["stopped_without_entry_reason"], "SKIPPED_POOR_RR")
+        details = execution["entry_rr_filter"]
+        self.assertEqual(details["min_rr"], "10")
+        self.assertEqual(
+            sorted(details), ["entry_price", "min_rr", "rr", "stop_price", "take_price"],
+        )
+        self.assertLess(Decimal(details["rr"]), Decimal("10"))
+
+    def test_rr_equal_to_threshold_still_places_the_limit(self):
+        self._create_candidate(start_width=1.0)
+        record = self._drive_to_retest_detected()
+        plan = self.monitor._build_initial_retest_limit_plan(record, record.robot_state)
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "10"}), redirect_stdout(io.StringIO()):
+            rr = self.monitor._entry_rr_skip(record, plan)[1]["rr"]
+
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": rr}):
+            self.monitor.tick()
+
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        execution = self.store.get_robot_candidate("candidate-1").robot_state["execution"]
+        self.assertIn("limit_order_id", execution)
+        self.assertNotIn("entry_rr_filter", execution)
+
     def test_lazily_initializes_missing_robot_state_without_reading_a_candle(self):
         self._create_candidate()
 
@@ -538,6 +689,54 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.robot_state["execution"]["last_limit_index"], 109)
         self.assertEqual(len(self.executor.limit_calls), 1)
+
+    def test_poor_rr_reprice_does_not_amend_or_cancel_original_entry(self):
+        # Initial RR is valid with a 5-point frozen width, but a stricter
+        # threshold would reject the proposed reprice. Keep the original
+        # accepted order under observation rather than making a worse amend.
+        self._create_candidate(start_width=5.0)
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        order_id = record.robot_state["execution"]["limit_order_id"]
+        original_price = self.store.get_paper_limit(order_id, ACCOUNT_ID).price
+
+        self.feed.push(SYMBOL, _candle_at(109, high=99, low=90, close=92))
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "10"}), redirect_stdout(io.StringIO()) as output:
+            advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())
+        self.assertIn("SKIPPED_POOR_RR", output.getvalue())
+        self.assertEqual(self.executor.amend_calls, [])
+        self.assertEqual(self.executor.cancel_calls, [])
+        still_resting = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(still_resting.price, original_price)
+        self.assertEqual(still_resting.status, "open")
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(record.robot_state["execution"]["last_limit_index"], 104)
+
+    def test_unavailable_rr_reprice_does_not_amend_original_entry(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        order_id = record.robot_state["execution"]["limit_order_id"]
+        original_price = self.store.get_paper_limit(order_id, ACCOUNT_ID).price
+
+        self.feed.push(SYMBOL, _candle_at(109, high=99, low=90, close=92))
+        with patch.object(self.monitor, "_frozen_prices", side_effect=ValueError("bad snapshot")), \
+                redirect_stdout(io.StringIO()) as output:
+            advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())
+        self.assertIn("[ROBOT ENTRY RR UNAVAILABLE]", output.getvalue())
+        self.assertEqual(self.executor.amend_calls, [])
+        self.assertEqual(self.executor.cancel_calls, [])
+        self.assertEqual(self.store.get_paper_limit(order_id, ACCOUNT_ID).price, original_price)
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(record.robot_state["execution"]["last_limit_index"], 104)
 
     def test_unfilled_entry_limit_cancels_and_expires_at_apex(self):
         self._create_candidate(apex_index=110)
@@ -1042,6 +1241,19 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
 
+    def _place_legacy_unfiltered_limit(self):
+        """Seed an order admitted by the pre-RR version of the Robot.
+
+        A restart can encounter such an already-executed order. Post-fill
+        emergency-close tests must still cover that legacy exposure without
+        permitting malformed *new* orders under the entry RR gate.
+        """
+        with patch.object(self.monitor, "_entry_rr_skip", return_value=None):
+            self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertIn("limit_order_id", record.robot_state["execution"])
+        return record.robot_state["execution"]["limit_order_id"]
+
     def test_protection_plan_failure_after_fill_closes_flat_without_robot_trade(self):
         """A filled Robot position whose initial protection plan cannot be
         built at all (here: frozen_take_90() rejects a degenerate zero-width
@@ -1052,7 +1264,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         candidate so it can never re-enter the same setup."""
         self._create_candidate(start_width=0.0)  # target == reference -> frozen_take_90() rejects
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
 
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
@@ -1091,7 +1303,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         the candidate prematurely -- the position may still be open."""
         self._create_candidate(start_width=0.0)  # forces the same plan failure as above
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
 
@@ -1112,7 +1324,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         only a proven FLAT may invalidate the candidate."""
         self._create_candidate(start_width=0.0)
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
 
@@ -1134,7 +1346,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         candidate becomes terminal exactly once."""
         self._create_candidate(start_width=0.0)
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
         limit_calls_before = list(self.executor.limit_calls)
@@ -1803,7 +2015,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         close, exactly as before, regardless of durable admission state."""
         self._create_candidate(lower_touch_prices=())  # no counted touches -> _structural_extreme raises
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT while still READY
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order while still READY
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
 

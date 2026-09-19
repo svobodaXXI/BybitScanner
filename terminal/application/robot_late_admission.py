@@ -31,7 +31,7 @@ from terminal.paper.matching import (
 )
 
 
-MIN_LATE_ADMISSION_RR = Decimal("1.5")
+MIN_LATE_ADMISSION_RR = robot_protection.MIN_ENTRY_RR  # same default as the retest-LIMIT filter
 MIN_LATE_ADMISSION_REWARD = MIN_EXPECTED_REWARD
 MAX_LATE_ADMISSION_SLIPPAGE = MAX_ADVERSE_MOVE
 
