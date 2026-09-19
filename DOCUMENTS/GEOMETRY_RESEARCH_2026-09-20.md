@@ -195,14 +195,55 @@ These are reusable concepts, not proof that any particular threshold generates p
   preserve TradingView Lightweight Charts, mplfinance, TradingView pivot/ZigZag,
   SciPy prominence/distance, QuantConnect Zig Zag, StockCharts wedge context and Freqtrade
   lookahead patterns. They are *reference concepts*, not imported source code or thresholds.
-- **Not yet externally researched:** detecting and tracking a provisional wedge on exactly
-  four confirmed pivots, Telegram on-demand `Освежить` callbacks, and Robot
-  boundary-to-boundary corridor trading. These are currently **user-requested requirements**
-  recorded as G3P/G3R/G3C in `DOCUMENTS/BACKLOG.md`, not findings validated against mature
-  projects. Before those implementation slices, inspect the relevant official/public source
-  examples and record each concrete source URL, useful mechanism, BybitScanner adaptation,
-  limitations, and why an additional dependency is or is not necessary. In particular,
-  no external reference by itself authorizes tentative-pivot admission or Robot orders.
+- **G3P four-point reference research completed below; G3R/G3C still pending:**
+  Telegram on-demand `Освежить` callbacks and Robot boundary-to-boundary corridor trading
+  remain **user-requested requirements**, not validated external implementations. Before
+  those slices, inspect relevant official/public sources and record each URL, reusable
+  mechanism, BybitScanner adaptation, limitations, and dependency decision. An external
+  chart-pattern reference does not authorize preliminary Robot admission or orders.
+
+## G3P external reference — four-point *forming* wedges (reviewed 2026-09-20; before Triangle)
+
+**Source and observed behavior (not an imported trading rule):**
+
+| Primary/public reference | Relevant documented behavior | Our decision |
+| --- | --- | --- |
+| [StockCharts Falling Wedge](https://chartschool.stockcharts.com/table-of-contents/chart-analysis/chart-patterns/falling-wedge) | Upper resistance line needs **at least two reaction highs** (ideally three); lower support line needs **at least two reaction lows**; the descending lines must converge. StockCharts distinguishes the pattern's potential from an actual resistance breakout. | **ADAPT** two HIGH + two LOW as a *minimum geometric hypothesis*, not proof of a mature wedge, confirmation of a breakout, or a profitable corridor trade. Preserve separate preceding-impulse/START evidence. StockCharts' examples concern longer stock-market horizons, not validated thresholds for 1m/5m crypto. |
+| [TradingView automated Falling Wedge](https://www.tradingview.com/support/solutions/43000697938-chart-pattern-falling-wedge/) and [Rising Wedge](https://www.tradingview.com/support/solutions/43000653219-chart-pattern-rising-wedge/) | Separate **In Progress** mode can display emerging formations; its published pivot model is 5 left / 5 right bars. The last two forming-pattern points need not themselves be confirmed pivots, and the last price line is dotted. It checks for invalid line/close intersections and reports lifecycle states such as Awaiting, Failed and Indefinable. Its “New Pattern” alert uses the position of point 1 or 3 to distinguish a new formation. | **ADAPT** separate emerging vs mature pattern state, projected/dotted *future portions of boundaries*, intersection/containment and explicit invalid/ambiguous states. **Do not copy** its 5/5 settings, target prices, permissive unconfirmed-last-point rule, or point-1/3 identity algorithm. G3P first requires four genuinely confirmed source-timeframe pivots; an optional three-pivot or provisional fourth-point *preview* would need its own future-only, past-closed-bar spec. |
+| [TradingView Pine plotting/repainting](https://www.tradingview.com/pine-script-docs/concepts/repainting/) and [trend-line visuals](https://www.tradingview.com/pine-script-docs/faq/visuals/) | A pivot plotted at its historic candle may have become observable only after several additional bars. Its documented trend-line example extends a line joining two same-side pivots into the future. | **ADAPT** distinct pivot event time / availability time, solid observed segment versus clearly dashed extrapolation, and historical truncated-frame replay. In a four-point signal, do not backdate detection to the first anchor candle or treat a future-selected pivot as known at that time. No extra rendering dependency. |
+| [QuantConnect LEAN Zig Zag](https://www.quantconnect.com/docs/v2/writing-algorithms/indicators/supported-indicators/zig-zag) | A stream-updated swing-point indicator uses reversal sensitivity and minimum trend length to reduce noise. | **DEFER** replacing `find_pivots`: compare existing filtered swing history first; any optional alternate candidate-finding or noise threshold requires measured 1m/5m evidence and a separate slice. |
+
+**Repository gap verified at PR #156 HEAD `d2882da`:** `geometry/engine.py` returns `None` if
+`len(highs) < 4` **or** `len(lows) < 4`; the mature production geometry therefore cannot
+surface a total-four-pivot (2 HIGH + 2 LOW) wedge. Meanwhile
+`geometry/candidate.py::build_candidate_lines` already fits each same-side line from two
+real anchors but applies `DEFAULT_MIN_LINE_SPAN = 30` and
+`DEFAULT_MIN_CONFIRMATIONS = 2` (additional matching points after the primary anchor)
+for regular candidates. These are existing *mature-detector* gates, **not** G3P approval
+thresholds. Simply lowering either gate globally would change current Scanner/Robot admission
+and is outside G3P observation-only scope.
+
+**Bounded first G3P design:** start from the same already-closed OHLC and verified 2 HIGH +
+2 LOW; create an independent *observational* provisional line-pair record using the
+existing anchor-fitting function (without feeding it into the mature geometry winner).
+Check source-time order and confirmation times, descending/ascending slopes, positive
+corridor width throughout the observed span, projected convergence/apex, actual historical
+close/intersection violations, a minimum usable future corridor and ambiguous alternate
+pairings. The projected right-hand segments are estimates and carry a distinct revision;
+never fabricate price candles or promise the future intersection price. Freeze the initial
+signal-time hypothesis; on later closed bars distinguish a revised version of the same
+formation from an invalidated/expired/replaced formation. Stable identity must be tested
+against re-anchoring and replay; TradingView's point-1/3 rule is an *example of identity
+semantics*, not an adequate drop-in ID for our immutable Robot snapshots.
+
+**G3P acceptance before G3R/G3C:** 3 confirmed + future-known fourth must never produce
+a four-point signal; exactly 2 HIGH + 2 LOW becomes eligible only at the latest actual
+right-confirmation CLOSE; regression compares truncated-versus-full source pivot lists at
+the same as-of index. Check false wedges (parallel/diverging/crossed lines), revision after
+fifth/sixth pivot, lost/incomplete source history, 1m/5m index/time alignment and
+bounded Scanner hot-path cost. A plotted forecast, even when all four pivots were
+confirmed, must not independently enable a Robot order. G3R button research and G3C
+corridor execution research remain separate subsequent micro-slices.
 
 ### Proposed reuse-first pipeline, not yet a production rule
 
