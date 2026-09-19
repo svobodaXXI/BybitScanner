@@ -1,4 +1,6 @@
+from contextlib import redirect_stdout
 from decimal import Decimal
+import io
 from pathlib import Path
 import tempfile
 import time
@@ -410,6 +412,74 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.status, "APPROVED")
         self.assertIsNone(record.robot_state)
+
+    def _seed_finished_history(self, count):
+        """``count`` CLOSED/EXPIRED/INVALIDATED candidates on other symbols."""
+        for index in range(count):
+            candidate_id = f"finished-{index}"
+            symbol = f"OLD{index}USDT"
+            self.store.create_robot_candidate(
+                candidate_id=candidate_id, trading_account_id=ACCOUNT_ID, symbol=Symbol(symbol),
+                status="APPROVED", signal_snapshot=_snapshot(symbol=symbol),
+                approved_at_ms=1, updated_at_ms=1,
+            )
+            kind = index % 3
+            if kind == 0:
+                self.store.create_robot_trade(
+                    trade_id=f"trade-{candidate_id}", trading_account_id=ACCOUNT_ID,
+                    candidate_id=candidate_id, symbol=Symbol(symbol), direction="LONG",
+                    pattern="Falling Wedge", source_timeframe="1", signal_time_ms=1,
+                    entry_time_ms=2, entry_path="LIMIT", actual_wv=Decimal("1"),
+                    average_entry=Decimal("100"), stop_price=Decimal("90"),
+                    take_price=Decimal("120"), entry_quantity=Decimal("1"),
+                    entry_position_version=1, created_at_ms=2,
+                )
+                self.store.close_robot_trade(
+                    f"trade-{candidate_id}", exit_time_ms=3, exit_price=Decimal("120"),
+                    exit_reason="TAKE", realized_pnl_usdt=Decimal("20"),
+                    realized_pnl_pct=Decimal("20"), fees_costs_usdt=Decimal("0"),
+                    updated_at_ms=3,
+                )
+            else:
+                self.store.save_robot_candidate_state(
+                    candidate_id, status=("EXPIRED", "INVALIDATED")[kind - 1],
+                    robot_state={"phase": "EXPIRED_AT_APEX"}, expected_revision=0,
+                    updated_at_ms=2,
+                )
+
+    def test_tick_does_not_read_finished_candidates(self):
+        self._create_candidate()
+        self._seed_finished_history(100)
+        statuses = {r.status for r in self.store.load_robot_candidates(ACCOUNT_ID)}
+        self.assertEqual(statuses, {"APPROVED", "CLOSED", "EXPIRED", "INVALIDATED"})
+        # Corrupt every finished snapshot: parsing any of them would now raise.
+        self.store._connection.execute(
+            "UPDATE robot_candidates SET signal_snapshot_json='not json' WHERE status!='APPROVED'"
+        )
+        with self.assertRaises(Exception):
+            self.store.load_robot_candidates(ACCOUNT_ID)
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(self.monitor.tick(), ("candidate-1",))
+        self.assertNotIn("ERROR", output.getvalue())
+        self.assertIsNotNone(self.store.get_robot_candidate("candidate-1").robot_state)
+
+    def test_load_robot_candidates_by_status_matches_full_read(self):
+        self._create_candidate("candidate-1")
+        self._create_candidate("candidate-2", symbol="OTHERUSDT")
+        self._seed_finished_history(6)
+        full = self.store.load_robot_candidates(ACCOUNT_ID)
+        for statuses in (("APPROVED",), ("CLOSED", "EXPIRED"), ("OPEN",), ("INVALIDATED", "APPROVED")):
+            with self.subTest(statuses=statuses):
+                self.assertEqual(
+                    self.store.load_robot_candidates_by_status(ACCOUNT_ID, statuses),
+                    tuple(record for record in full if record.status in statuses),
+                )
+        with self.assertRaises(ValueError):
+            self.store.load_robot_candidates_by_status(ACCOUNT_ID, ())
+        with self.assertRaises(ValueError):
+            self.store.load_robot_candidates_by_status(ACCOUNT_ID, ("DONE",))
 
     def test_lazily_initializes_missing_robot_state_without_reading_a_candle(self):
         self._create_candidate()

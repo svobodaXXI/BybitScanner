@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 from terminal.domain.models import (
     Category,
@@ -502,6 +502,16 @@ class RobotCandidateRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RobotCandidateStateRecord:
+    """Lightweight active-candidate projection: no signal snapshot, no hash check."""
+
+    candidate_id: str
+    symbol: Symbol
+    status: str
+    robot_state: dict[str, object] | None
+
+
+@dataclass(frozen=True, slots=True)
 class RobotTradeRecord:
     trade_id: str
     trading_account_id: TradingAccountId
@@ -725,6 +735,19 @@ def _robot_candidate_from_row(row: sqlite3.Row) -> RobotCandidateRecord:
         snapshot_sha256=row["snapshot_sha256"], robot_state=state,
         state_revision=int(row["state_revision"]), approved_at_ms=int(row["approved_at_ms"]),
         updated_at_ms=int(row["updated_at_ms"]),
+    )
+
+
+def _robot_candidate_state_from_row(row: sqlite3.Row) -> RobotCandidateStateRecord:
+    try:
+        state = json.loads(row["robot_state_json"]) if row["robot_state_json"] else None
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise SchemaError("persisted Robot candidate JSON is corrupt") from exc
+    if state is not None and not isinstance(state, dict):
+        raise SchemaError("persisted Robot candidate JSON must contain objects")
+    return RobotCandidateStateRecord(
+        candidate_id=row["candidate_id"], symbol=Symbol(row["symbol"]),
+        status=row["status"], robot_state=state,
     )
 
 
@@ -3778,6 +3801,45 @@ class SQLiteStore:
             (trading_account_id.value,),
         )
         return tuple(_robot_candidate_from_row(row) for row in rows)
+
+    def load_robot_candidates_by_status(
+        self, trading_account_id: TradingAccountId, statuses: Iterable[str],
+    ) -> tuple[RobotCandidateRecord, ...]:
+        """Full candidate records (snapshot included) limited to ``statuses``.
+
+        Same ordering and row parsing as ``load_robot_candidates``; finished
+        history outside ``statuses`` is neither read nor parsed.
+        """
+        self._assert_owner()
+        wanted = tuple(dict.fromkeys(statuses))
+        if not wanted or any(status not in ROBOT_CANDIDATE_STATUSES for status in wanted):
+            raise ValueError("invalid Robot candidate statuses")
+        placeholders = ", ".join("?" for _ in wanted)
+        rows = self._connection.execute(
+            f"""SELECT * FROM robot_candidates
+                WHERE trading_account_id=? AND status IN ({placeholders})
+                ORDER BY approved_at_ms, candidate_id""",
+            (trading_account_id.value, *wanted),
+        )
+        return tuple(_robot_candidate_from_row(row) for row in rows)
+
+    def load_active_robot_candidate_states(
+        self, trading_account_id: TradingAccountId,
+    ) -> tuple[RobotCandidateStateRecord, ...]:
+        """Read-only: APPROVED/OPEN candidates without their signal snapshot.
+
+        For hot owner-thread paths (protection coverage, per-event recovery):
+        cost follows the active candidates, not the whole candidate history.
+        Same ordering as ``load_robot_candidates``.
+        """
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT candidate_id, symbol, status, robot_state_json FROM robot_candidates
+               WHERE trading_account_id=? AND status IN ('APPROVED', 'OPEN')
+               ORDER BY approved_at_ms, candidate_id""",
+            (trading_account_id.value,),
+        )
+        return tuple(_robot_candidate_state_from_row(row) for row in rows)
 
     def load_robot_candidates_for_symbol(
         self, trading_account_id: TradingAccountId, symbol: Symbol,

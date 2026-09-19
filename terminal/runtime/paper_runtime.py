@@ -1283,7 +1283,7 @@ class PaperRuntime:
         )
         monitor.process_authoritative_fill(normalized.value)
 
-        for candidate in self.store.load_robot_candidates(self._paper_account_id):
+        for candidate in self.store.load_active_robot_candidate_states(self._paper_account_id):
             if (
                 candidate.symbol != normalized
                 or candidate.status != "APPROVED"
@@ -1483,7 +1483,8 @@ class PaperRuntime:
 
     def robot_protection_coverage_roles(self) -> dict[str, str]:
         """Return the highest-severity lifecycle role for each covered symbol."""
-        candidates = self.store.load_robot_candidates(self._paper_account_id)
+        # Only OPEN/APPROVED rows matter; skip snapshots and finished history (hot path).
+        candidates = self.store.load_active_robot_candidate_states(self._paper_account_id)
         roles = {
             candidate.symbol.value: "EXPOSURE"
             for candidate in candidates
@@ -1955,7 +1956,7 @@ class PaperRuntime:
         before this method is ever reached; this method only reuses the
         existing Robot-scoped execution path, never a second one.
         """
-        candidates = self.store.load_robot_candidates(self._account_id)
+        candidates = self.store.load_active_robot_candidate_states(self._account_id)
         robot_symbols = sorted({
             item.symbol.value for item in candidates if item.status == "OPEN"
         })
@@ -2026,7 +2027,7 @@ class PaperRuntime:
         """
         before = {
             item.candidate_id: item
-            for item in self.store.load_robot_candidates(self._account_id)
+            for item in self.store.load_active_robot_candidate_states(self._account_id)
             if item.status == "APPROVED"
         }
 
@@ -2150,8 +2151,9 @@ class PaperRuntime:
         )
         candidates = tuple(
             self._robot_candidate_ownership(candidate, open_trade_candidate_ids)
-            for candidate in self.store.load_robot_candidates(self._paper_account_id)
-            if candidate.symbol == trade.symbol
+            for candidate in self.store.load_robot_candidates_for_symbol(
+                self._paper_account_id, trade.symbol,
+            )
         )
         has_unresolved_obligation = any(
             obligation.trade_id == trade.trade_id
@@ -2235,7 +2237,7 @@ class PaperRuntime:
             # close, so checking ownership only after resuming obligations
             # would be too late. Never dispatch any close until every active
             # symbol proves at most one Robot owner.
-            candidates = self.store.load_robot_candidates(self._paper_account_id)
+            candidates = self.store.load_active_robot_candidate_states(self._paper_account_id)
             symbols = sorted({
                 item.symbol for item in candidates if item.status in {"APPROVED", "OPEN"}
             }, key=lambda item: item.value)
@@ -2276,7 +2278,7 @@ class PaperRuntime:
                     + ",".join(sorted(unresolved_obligation_ids))
                 )
 
-            candidates = self.store.load_robot_candidates(self._paper_account_id)
+            candidates = self.store.load_active_robot_candidate_states(self._paper_account_id)
             for candidate in candidates:
                 if candidate.status != "OPEN":
                     continue

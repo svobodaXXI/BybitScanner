@@ -48,7 +48,8 @@ def active_robot_owner_candidate_ids(
     candidates are not owners and remain recoverable.
     """
     owners: list[str] = []
-    for record in store.load_robot_candidates(trading_account_id):
+    # Only APPROVED/OPEN can own exposure; skip snapshots and finished history.
+    for record in store.load_active_robot_candidate_states(trading_account_id):
         if record.symbol != symbol or record.candidate_id == excluding_candidate_id:
             continue
         if record.status == "OPEN":

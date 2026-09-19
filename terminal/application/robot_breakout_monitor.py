@@ -223,9 +223,9 @@ class RobotBreakoutMonitor:
     def tick(self) -> tuple[str, ...]:
         """Advance every durable APPROVED candidate by at most one step."""
         advanced: list[str] = []
-        for record in self._store().load_robot_candidates(self._account_id):
-            if record.status != "APPROVED":
-                continue
+        for record in self._store().load_robot_candidates_by_status(
+            self._account_id, ("APPROVED",),
+        ):
             try:
                 if self._advance_one(record):
                     advanced.append(record.candidate_id)
