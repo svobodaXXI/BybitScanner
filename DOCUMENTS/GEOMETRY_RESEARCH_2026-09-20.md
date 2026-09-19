@@ -28,6 +28,9 @@ No external code is copied. External approaches are presentation/research patter
 
 The user explicitly needs to see **price action before** the wedge to distinguish a countertrend correction
 from same-direction deceleration. Rendering the first wedge anchor at the left edge is insufficient.
+The current frozen START is a recorded hypothesis, not necessarily the appropriate START for every wedge
+subtype. G1 exposes enough preceding bars to inspect the last impulse's terminal pivot versus the lowest
+local-structure extremum; G1 must not retrospectively modify existing geometry or choose a trading subtype.
 
 1. Derive the earlier of the two frozen line anchors using the current `robot_position_chart._line_start_index`
    conversion from Scanner source-bar coordinates to the immutable 1m Robot cursor; locate its candle time
@@ -76,6 +79,42 @@ identity and independently record one of these five context values, based on **h
 | Rising Wedge | DOWN | `RISING_CORRECTION_AFTER_DOWN` | `Контекст: Коррекция после падения` |
 | Rising Wedge | UP | `RISING_DECELERATION_AFTER_UP` | `Контекст: Замедление после роста` |
 | Either / insufficient evidence | UNKNOWN | `PREPATTERN_CONTEXT_UNKNOWN` | `Контекст: Не определён` |
+
+### G2/G3 first-anchor distinction (user clarification, 2026-09-20)
+
+The user additionally differentiates the historical **first structural anchor** by wedge context; this is
+a candidate-selection constraint, not a different plotted caption for the same geometry:
+
+- **Descending deceleration wedge after a downward impulse:** select the first terminal pivot produced
+  by that prior falling impulse at its transition into the wedge as the first structural anchor candidate.
+  Do not replace it mechanically with the lowest wick or a later minimum inside the wedge.
+- **Descending corrective wedge after an upward impulse:** use the **lowest extremum of the local
+  structure** as the first-anchor candidate, rather than automatically reusing the preceding impulse's
+  terminal pivot. The user's definition is preserved as given; the precise bounded local interval,
+  pivot confirmation and whether the extremum is a confirmed swing low or a wick remain open.
+- **Ascending deceleration and corrective wedges:** a terminal pivot after the upward impulse and
+  a highest local-structure extremum for the rising correction are *mirrored design hypotheses*,
+  respectively, **not** confirmed user definitions yet.
+
+A wedge has potentially different concepts of “first anchor”: the episode's historical START,
+the first evidence pivot after the preceding impulse, and each upper/lower boundary's two actual
+line-fitting pivots. Do not assume the selected structural START lies on both boundary lines or
+derive line prices by forcing it onto an unrelated boundary. Preserve actual pivot provenance,
+the chosen start rule and alternative candidate evidence in an immutable signal-time snapshot.
+
+**Dependency / avoidance of circular inference:** G2 must supply alternative pre-pattern terminal
+pivots and local extrema without needing a preselected final subtype. G3 then tests provisional
+impulse direction and within-wedge deceleration evidence against the corresponding candidate
+anchor rule, validates upper/lower line geometry, and emits the subtype/START only if jointly
+supported. Otherwise retain UNKNOWN and the prior safe geometry behavior; no label/Robot
+priority from a guessed START. Use only candles available at each signal's decision time, never
+a “lowest” pivot established by later candles or post-trade hindsight. New rules require
+user-reviewed examples and focused tests before replacing current detector anchors.
+
+The G1 visualization should retain enough older candles to show the preceding impulse and
+both plausible START candidates, subject to the API cap; report truncated earlier history
+instead of moving an anchor to make it fit. The display-only work does not await agreement on
+G2/G3 pivot thresholds.
 
 The UP/DOWN impulse label alone does not prove actual deceleration. A G3 specification must distinguish a bounded
 prior directional impulse from range noise and measure weakening movement **inside** the wedge without hindsight.
