@@ -195,13 +195,12 @@ These are reusable concepts, not proof that any particular threshold generates p
   preserve TradingView Lightweight Charts, mplfinance, TradingView pivot/ZigZag,
   SciPy prominence/distance, QuantConnect Zig Zag, StockCharts wedge context and Freqtrade
   lookahead patterns. They are *reference concepts*, not imported source code or thresholds.
-- **G3P/G3R reference research completed below; G3C still pending:**
-  Four-point emerging-wedge visuals and Telegram `Освежить` callbacks now have recorded
-  reference behaviors and BybitScanner-specific design choices. Robot boundary-to-boundary
-  corridor trading remains a **user-requested strategy hypothesis**, not a validated
-  external implementation or an authorized order path. Before G3C implementation,
-  research relevant source examples, assumptions, edge/risk evidence and failure modes
-  separately. Neither reference research nor a display button authorizes Robot orders.
+- **G3P/G3R/G3C reference research recorded below; strategy validation pending:**
+  Four-point emerging-wedge visuals, Telegram `Освежить` callbacks and corridor-order
+  lifecycle have source links, observed mechanisms and local adaptations. G3C remains a
+  **user-requested strategy hypothesis**, not a validated statistical edge or an authorized
+  Robot order path. Four-point visibility, a refresh button, and external order-management
+  examples do not authorize entry/risk changes; preserve existing PAPER/LIVE boundaries.
 
 ## G3P external reference — four-point *forming* wedges (reviewed 2026-09-20; before Triangle)
 
@@ -317,6 +316,62 @@ share one current evaluation ID/time; paused periodic scanner stays paused;
 failures/expiry are explicit; bot polling and Robot admission remain unaffected.
 G3R is still documentation-only, and has no implementation authorization to
 change trading behavior.
+
+## G3C external reference — intra-wedge boundary-to-boundary PAPER hypothesis (reviewed 2026-09-20)
+
+**User requirement, not a source-derived expectancy claim:** for a *forming falling wedge*, research
+buying near its currently projected lower line and exiting near the currently projected
+upper line, before breakout. These lines contract and may be revised on later confirmed
+pivots. The counterpart for a rising wedge, thresholds, order type, full STOP/TAKE policy,
+re-entry, and post-breakout behavior are **not yet owner-approved strategy rules**.
+
+| Original reference | Source behavior / limitation | BybitScanner decision |
+| --- | --- | --- |
+| [Backtrader: Bracket Orders](https://www.backtrader.com/blog/posts/2017-04-01-bracket/bracket/) | Parent entry and dependent STOP + TAKE children are linked; children remain inactive until parent execution, and completion of one exit cancels its sibling in Backtrader's supported model. Order transmission/parent association matters. | **ADAPT order-state principle**, not Backtrader's API: after an *actual* entry fill, establish durable protection for actual filled quantity, with mutually exclusive terminal close outcomes. Handle partial fills, cancel/replace, uncertain acknowledgements and restart through existing Robot PAPER execution/protection paths. A planned LIMIT at a lower line is not a filled position. |
+| [QuantConnect LEAN: Other Order Types / OCO](https://www.quantconnect.com/docs/v2/writing-algorithms/trading-and-orders/order-types/other-order-types) | LEAN documentation says native OCO is not generally supported; its illustrated application-managed OCO cancels the sibling in an order-event handler, while warning that close price levels can lead to both orders filling in one time step. | **ADAPT reconciliation/fail-closed principle**: a software-managed exit pair is not atomic. Require one-owner, no duplicated close quantity, durable exit obligations and ambiguous-fill fencing before adding corridor exits. Never assume an opposite-boundary TAKE and STOP are harmless merely because they are paired in local state. |
+| [Bybit: TP/SL for Perpetual and Futures](https://www.bybit.com/en/help-center/article/Introduction-to-Take-Profit-Stop-Loss-Perpetual-Futures-Contracts) and [How to Set Up and Modify TP/SL](https://www.bybit.com/en/help-center/article/How-to-Set-Up-and-Modify-TP-SL-Perpetual-Futures-Contracts) | Bybit documents position-wide TP/SL and partial-position TP/SL; position-wide triggers close through Market, while partial-position settings can use Market/Limit and corresponding exits are linked. Quantity and price choice can differ across modes. | **DEFER any LIVE order mapping** until exact API/account semantics, current project protection ownership, partial-fill handling, trigger source and actual order status are verified. PAPER simulation must not assume a limit TAKE or Market STOP fills precisely at the projected boundary. Existing production protection rules stay unchanged. |
+| [Bybit: Spot OCO Orders](https://www.bybit.com/en/help-center/article/One-Cancels-the-Other-OCO-Orders) | Bybit's general Spot OCO documentation explicitly limits that product to Spot/Spot Margin and disallows it via API; for a conditional-limit OCO trigger it may cancel its sibling *before* the triggered limit actually fills. | **REJECT as a futures execution shortcut**. Do not confuse Spot OCO with USDT perpetual TP/SL or substitute conditional-limit-trigger semantics for demonstrated position protection. |
+| [Freqtrade: Backtesting assumptions](https://docs.freqtrade.io/en/stable/backtesting/) and [lookahead-analysis](https://docs.freqtrade.io/en/stable/lookahead-analysis/) | Its OHLC backtest assumes a limit order fills if its price lies between a candle's high and low, assumes no slippage for such fills, and applies entry + exit fees; a full dataframe can permit future-aware indicators unless tested. | **ADAPT conservative research evidence**: record spread, maker/taker fees, latency/slippage, intrabar STOP-versus-TAKE ordering ambiguity, limit-touch non-fill, and signal-time pivot availability; compare replay with prospective PAPER fills. Never infer boundary-to-boundary profitability from two drawn lines or optimistic candle-touch fills. |
+| [Freqtrade: strategy callbacks](https://www.freqtrade.io/en/stable/strategy-callbacks/) | Distinguishes exit condition, changing ROI target and custom stoploss. Its dynamic stoploss can tighten but is not a general permission to loosen the pre-existing risk boundary. | **ADAPT separation of concerns**: a newly observed upper-line target or revised geometry is *strategy evidence*, not an automatic amend of an existing trade's protected STOP/TAKE. Define explicit per-trade immutable entry geometry and any later target-update rule only after strategy/risk approval; default research behavior is to report suggested revisions without modifying orders. |
+
+### G3C bounded first research contract — no Robot execution
+
+1. Use only G3P *four actually confirmed* source pivots and a frozen signal-time
+   formation/revision; preserve the decision's last closed candle, both fitted
+   boundaries and their actual confirmed anchors. A later 5th/6th pivot does
+   not rewrite the historic episode, entry forecast or measured alternative.
+2. For falling wedges only, model candidate entry near **lower** line and a
+   candidate target strictly **inside** the **upper** projected line at the
+   *relevant expected exit time*, rather than comparing both lines at the
+   detection timestamp. Explicitly compute corridor width as a function of
+   time; flag nonpositive width, apex arrival, crossed/diverging lines,
+   near-zero expected gross gain and unverifiable price/target assumptions.
+   No fixed entry offset, tolerance, take fraction or STOP distance is
+   authorized yet. Rising-wedge corridor side/direction is an open owner decision.
+3. A usable idea needs an independently justified STOP/invalidation boundary
+   and a net-profit / risk measurement **after two-sided fees, plausible
+   spread/slippage, tick/qty precision, latency and non-fill scenarios**.
+   A visually plausible boundary touch does not imply a fill. In OHLC replay,
+   do not award a win if entry/STOP/TAKE ordering within the same candle is
+   unknown; label it ambiguous or apply a conservative, explicitly specified
+   case. Split results by 1m vs 5m, wedge context, exact four-point age,
+   geometry revision and rejected/unknown cases; capture subsequent PAPER
+   fills separately from hindsight charts.
+4. For any future trade integration, retain current one-owner-per-symbol,
+   account/session and recovery fences, Robot protection lifecycle, volume
+   caps and emergency exits. A pending entry that no longer qualifies must
+   be cancelled *with exchange/PAPER acknowledgement and reconciliation*,
+   not silently marked closed; an already-filled protected position cannot
+   have its STOP removed while refreshing projected geometry. Examine
+   entry/exit partial fills, concurrent triggers, manual intervention,
+   restart with unresolved orders and loss of price/protection feeds.
+5. Deliver only diagnostic tables/chart overlays and no-trade reasons first.
+   A subsequent separately approved PAPER strategy must freeze its own
+   explicit policy for admission, entry, fixed versus dynamic TAKE,
+   risk/STOP, expiry/apex, breakout, refits, order status and recovery;
+   use focused deterministic PAPER tests and real manual acceptance.
+   **No trading parameters, preference in candidate ranking, extra order,
+   or LIVE behavior are approved by this section.**
 
 ### Proposed reuse-first pipeline, not yet a production rule
 
