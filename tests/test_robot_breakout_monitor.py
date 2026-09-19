@@ -555,16 +555,46 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
                 skipped = self._rr_check("LONG", reference=1005.0, extreme=990.1, env=bad)
                 self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("1.5"))
 
-    def test_entry_rr_unavailable_places_the_limit_as_before(self):
-        # Target on the wrong side of the reference: no take can be computed.
+    def test_entry_rr_unavailable_blocks_initial_entry(self):
+        # A zero-width frozen target cannot yield a valid TAKE.
         snapshot = _snapshot(reference_price=100.0, start_width=0.0)
         record = SimpleNamespace(
             candidate_id="candidate-rr", symbol=Symbol(SYMBOL), signal_snapshot=snapshot,
         )
         plan = SimpleNamespace(direction="LONG", request=SimpleNamespace(limit_price=Decimal("100")))
         with redirect_stdout(io.StringIO()) as output:
-            self.assertIsNone(self.monitor._entry_rr_skip(record, plan))
+            skipped = self.monitor._entry_rr_skip(record, plan)
+        self.assertEqual(skipped[0], "SKIPPED_RR_UNAVAILABLE")
+        self.assertEqual(skipped[1]["entry_price"], "100")
+        self.assertEqual(skipped[1]["min_rr"], "1.5")
+        self.assertIn("error", skipped[1])
         self.assertIn("[ROBOT ENTRY RR UNAVAILABLE]", output.getvalue())
+
+    def test_uncomputable_initial_entry_never_places_limit_and_terminates(self):
+        for snapshot_kwargs in ({"start_width": 0.0}, {"lower_touch_prices": ()}):
+            with self.subTest(snapshot_kwargs=snapshot_kwargs):
+                candidate_id = "invalid-" + str(len(self.executor.limit_calls))
+                self._create_candidate(candidate_id, **snapshot_kwargs)
+                # Drive one candidate at a time. No active other owner remains
+                # after invalidation, so the next case can use the same symbol.
+                self._drive_to_retest_detected(candidate_id)
+                with redirect_stdout(io.StringIO()):
+                    self.monitor.tick()
+                record = self.store.get_robot_candidate(candidate_id)
+                self.assertEqual(record.status, "INVALIDATED")
+                self.assertEqual(self.executor.limit_calls, [])
+                self.assertEqual(self.executor.protection_calls, [])
+                execution = record.robot_state["execution"]
+                self.assertEqual(execution["stopped_without_entry_reason"], "SKIPPED_RR_UNAVAILABLE")
+                self.assertIn("error", execution["entry_rr_filter"])
+                self.assertNotIn("limit_order_id", execution)
+                self.assertEqual(self.monitor.tick(), ())
+
+    def test_zero_rr_is_skipped_even_if_threshold_configured_to_zero(self):
+        skipped = self._rr_check("LONG", reference=991.0, extreme=990.1, env="0")
+        self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
+        self.assertEqual(Decimal(skipped[1]["rr"]), Decimal("0"))
+        self.assertEqual(skipped[1]["min_rr"], "0")
 
     def test_poor_rr_candidate_places_no_limit_and_is_terminated_with_reason(self):
         # start_width=1 keeps the frozen take close: rr is about 1.9 (default fixture is above 10).
@@ -1211,6 +1241,19 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
 
+    def _place_legacy_unfiltered_limit(self):
+        """Seed an order admitted by the pre-RR version of the Robot.
+
+        A restart can encounter such an already-executed order. Post-fill
+        emergency-close tests must still cover that legacy exposure without
+        permitting malformed *new* orders under the entry RR gate.
+        """
+        with patch.object(self.monitor, "_entry_rr_skip", return_value=None):
+            self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertIn("limit_order_id", record.robot_state["execution"])
+        return record.robot_state["execution"]["limit_order_id"]
+
     def test_protection_plan_failure_after_fill_closes_flat_without_robot_trade(self):
         """A filled Robot position whose initial protection plan cannot be
         built at all (here: frozen_take_90() rejects a degenerate zero-width
@@ -1221,7 +1264,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         candidate so it can never re-enter the same setup."""
         self._create_candidate(start_width=0.0)  # target == reference -> frozen_take_90() rejects
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
 
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
@@ -1260,7 +1303,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         the candidate prematurely -- the position may still be open."""
         self._create_candidate(start_width=0.0)  # forces the same plan failure as above
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
 
@@ -1281,7 +1324,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         only a proven FLAT may invalidate the candidate."""
         self._create_candidate(start_width=0.0)
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
 
@@ -1303,7 +1346,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         candidate becomes terminal exactly once."""
         self._create_candidate(start_width=0.0)
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
         limit_calls_before = list(self.executor.limit_calls)
@@ -1972,7 +2015,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         close, exactly as before, regardless of durable admission state."""
         self._create_candidate(lower_touch_prices=())  # no counted touches -> _structural_extreme raises
         self._drive_to_retest_detected()
-        self.monitor.tick()  # submits the initial LIMIT while still READY
+        self._place_legacy_unfiltered_limit()  # reproduce an older, already-admitted order while still READY
         order_id = self.store.get_robot_candidate("candidate-1").robot_state["execution"]["limit_order_id"]
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
 
