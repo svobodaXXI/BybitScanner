@@ -660,6 +660,54 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(record.robot_state["execution"]["last_limit_index"], 109)
         self.assertEqual(len(self.executor.limit_calls), 1)
 
+    def test_poor_rr_reprice_does_not_amend_or_cancel_original_entry(self):
+        # Initial RR is valid with a 5-point frozen width, but a stricter
+        # threshold would reject the proposed reprice. Keep the original
+        # accepted order under observation rather than making a worse amend.
+        self._create_candidate(start_width=5.0)
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        order_id = record.robot_state["execution"]["limit_order_id"]
+        original_price = self.store.get_paper_limit(order_id, ACCOUNT_ID).price
+
+        self.feed.push(SYMBOL, _candle_at(109, high=99, low=90, close=92))
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "10"}), redirect_stdout(io.StringIO()) as output:
+            advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())
+        self.assertIn("SKIPPED_POOR_RR", output.getvalue())
+        self.assertEqual(self.executor.amend_calls, [])
+        self.assertEqual(self.executor.cancel_calls, [])
+        still_resting = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(still_resting.price, original_price)
+        self.assertEqual(still_resting.status, "active")
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(record.robot_state["execution"]["last_limit_index"], 104)
+
+    def test_unavailable_rr_reprice_does_not_amend_original_entry(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        order_id = record.robot_state["execution"]["limit_order_id"]
+        original_price = self.store.get_paper_limit(order_id, ACCOUNT_ID).price
+
+        self.feed.push(SYMBOL, _candle_at(109, high=99, low=90, close=92))
+        with patch.object(self.monitor, "_frozen_prices", side_effect=ValueError("bad snapshot")), \
+                redirect_stdout(io.StringIO()) as output:
+            advanced = self.monitor.tick()
+
+        self.assertEqual(advanced, ())
+        self.assertIn("[ROBOT ENTRY RR UNAVAILABLE]", output.getvalue())
+        self.assertEqual(self.executor.amend_calls, [])
+        self.assertEqual(self.executor.cancel_calls, [])
+        self.assertEqual(self.store.get_paper_limit(order_id, ACCOUNT_ID).price, original_price)
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(record.robot_state["execution"]["last_limit_index"], 104)
+
     def test_unfilled_entry_limit_cancels_and_expires_at_apex(self):
         self._create_candidate(apex_index=110)
         self._drive_to_retest_detected()
