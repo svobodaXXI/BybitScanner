@@ -13,6 +13,37 @@ Owner: DOCUMENTS/BACKLOG.md section 3 (G0–G2)
 - `robot_position_view.py::chart_candle_limit` sizes the request **only from trade entry time**; `telegram_monitoring.py::_with_candles` makes the single bounded candle request. Thus the plotted pattern can begin before the downloaded chart window even when the entry is visible. This is a display-window error, not proof that detection chose a wrong anchor.
 - `DOCUMENTS/ROADMAP.md::FUTURE_MISSION_ANCHOR_QUALITY_LEARNING` already describes multiple plausible historical anchor candidates, immutable signal-time evidence, and future retrospective calibration. That separate research mission does not authorize present-day model training or live strategy changes.
 
+## Additional existing code: impulse context is already computed (2026-09-20)
+
+A targeted code review found `geometry/pre_pattern.py::detect_pre_pattern_impulse(candles, start_index, lookback=20)`.
+`geometry/evaluation.py::evaluate_candidate_pair` already derives `start_index` from the earliest of the
+upper/lower line candidate's first pivots, calls that helper and writes its result into
+`pair_metrics["pre_pattern_impulse"]`. It records lookback-window indexes, first/last close,
+percentage change and `UP` / `DOWN` / `FLAT`. This is **existing groundwork to reuse, not a new detector
+to build from scratch**. Before proposing new fields or running another candle request, trace how
+`pair_metrics` reaches Scanner signal and frozen Robot snapshot; do not presume it already does.
+
+Limitations that matter for G2/G3:
+- The helper classifies **any nonzero endpoint-close change** as UP or DOWN; it has no
+  volatility/ATR significance threshold, no trend persistence, no pivot confirmation and no
+  measurement of deceleration *within* the wedge. Its result must **not** be displayed as a
+  definitive correction/deceleration label or treated as a Robot priority rule.
+- Its input START is currently derived from existing line anchors. Since the user's corrected
+  START can be the impulse-ending high/low rather than either fitted boundary's first pivot,
+  a future context classifier must evaluate bounded alternative transition pivots and retain
+  their time/index evidence, rather than accepting the current `start_index` as ground truth.
+- `lookback=20` is a present implementation constant, **not** an approved definition of an
+  impulse for 1m and 5m. A source-timeframe-aware measurement window is a future G3 decision.
+
+For G2 reuse existing anchor-based candidate generation and actual pivot support. A proposed
+small extension to research **without changing execution** is to attach provenance to each
+candidate transition pivot: event candle index/time, pivot side (HIGH/LOW), confirmation
+index/time, provisional impulse direction, and which fitted boundary candidates use it.
+Retain only candidates already confirmed by the signal's decision time. G3 can then match
+UP-ending HIGH to falling correction, DOWN-ending LOW to rising correction, and test the
+falling/rising deceleration transition hypotheses separately. Continue to record UNKNOWN if
+evidence does not discriminate.
+
 ## External examples and BybitScanner-specific reuse
 
 | Reference | Verified useful behavior | Decision |
