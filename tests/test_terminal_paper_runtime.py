@@ -2415,3 +2415,204 @@ def test_robot_market_event_skips_fill_finalization_when_no_limit_execution():
             monitor.assert_not_called()
         finally:
             runtime.close()
+
+
+def _legacy_coverage_roles(runtime) -> dict[str, str]:
+    """Verbatim copy of robot_protection_coverage_roles before the light read."""
+    from terminal.runtime.paper_runtime import INACTIVE_LIMIT_STATUSES
+
+    account = TradingAccountId("paper")
+    candidates = runtime.store.load_robot_candidates(account)
+    roles = {
+        candidate.symbol.value: "EXPOSURE"
+        for candidate in candidates
+        if candidate.status == "OPEN"
+    }
+    for obligation in runtime.store.load_unresolved_paper_protection_obligations(account):
+        roles[obligation.symbol.value] = "OBLIGATION"
+    for candidate in candidates:
+        if candidate.status != "APPROVED" or candidate.robot_state is None:
+            continue
+        if candidate.robot_state.get("phase") != "RETEST_DETECTED":
+            continue
+        execution = candidate.robot_state.get("execution") or {}
+        order_id = execution.get("limit_order_id")
+        needs_coverage = not order_id
+        if order_id:
+            order = runtime.store.get_paper_limit(order_id, account)
+            needs_coverage = (
+                order is not None
+                and (
+                    order.status not in INACTIVE_LIMIT_STATUSES
+                    or order.filled_quantity > 0
+                )
+            )
+        if needs_coverage:
+            roles.setdefault(candidate.symbol.value, "ENTRY_PENDING")
+    return dict(sorted(roles.items()))
+
+
+def _seed_candidate(runtime, candidate_id, symbol, *, state=None, final_status=None, snapshot=None):
+    runtime.store.create_robot_candidate(
+        candidate_id=candidate_id, trading_account_id=TradingAccountId("paper"),
+        symbol=Symbol(symbol), status="APPROVED",
+        signal_snapshot=snapshot or {"symbol": symbol, "pattern": "Falling Wedge"},
+        approved_at_ms=1000, updated_at_ms=1000,
+    )
+    revision = 0
+    if state is not None:
+        runtime.store.save_robot_candidate_state(
+            candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=revision, updated_at_ms=1001,
+        )
+        revision += 1
+    if final_status is not None:
+        runtime.store.save_robot_candidate_state(
+            candidate_id, status=final_status, robot_state=state or {"phase": final_status},
+            expected_revision=revision, updated_at_ms=1002,
+        )
+
+
+def _seed_mixed_coverage_fixture(runtime) -> None:
+    account = TradingAccountId("paper")
+    retest = {"phase": "RETEST_DETECTED", "execution": {}}
+    # OPEN -> EXPOSURE
+    _open_robot_position_with_confirmed_protection(
+        runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+        stop_price=Decimal("64000"), take_price=Decimal("64600"),
+        trade_id="trade-mixed-open", candidate_id="candidate-mixed-open",
+    )
+    # Closed trade (candidate CLOSED) with an unresolved obligation -> OBLIGATION
+    _seed_candidate(runtime, "candidate-mixed-obligation", "ETHUSDT")
+    runtime.store.create_robot_trade(
+        trade_id="trade-mixed-obligation", trading_account_id=account,
+        candidate_id="candidate-mixed-obligation", symbol=Symbol("ETHUSDT"),
+        direction="LONG", pattern="Falling Wedge", source_timeframe="1",
+        signal_time_ms=900, entry_time_ms=1500, entry_path="LIMIT",
+        actual_wv=Decimal("0.8"), average_entry=Decimal("100"),
+        stop_price=Decimal("98"), take_price=Decimal("104"),
+        entry_quantity=Decimal("1"), entry_position_version=1, created_at_ms=1500,
+    )
+    runtime.store.latch_paper_protection_obligation(
+        trade_id="trade-mixed-obligation", protection_version=1, winning_leg="STOP",
+        trigger_price=Decimal("98"), observed_exit_price=Decimal("97.9"),
+        observed_quantity=Decimal("1"), market_event_id="evt-mixed",
+        source_received_at_ms=2000,
+        source_generation=0, source_sequence=2000, source_update_id=2000,
+        source_event_at_ms=2000, source_matching_engine_cts_ms=None,
+        observed_bid_price=Decimal("97.9"), observed_ask_price=Decimal("98.1"),
+        latched_at_ms=2000,
+    )
+    runtime.store.close_robot_trade(
+        "trade-mixed-obligation", exit_time_ms=3000, exit_price=Decimal("98"),
+        exit_reason="STOP", realized_pnl_usdt=Decimal("-2"),
+        realized_pnl_pct=Decimal("-2"), fees_costs_usdt=Decimal("0.1"),
+        updated_at_ms=3000,
+    )
+    # RETEST_DETECTED with a resting entry LIMIT / with no LIMIT yet -> ENTRY_PENDING
+    _seed_pending_candidate_with_resting_limit(
+        runtime, candidate_id="candidate-mixed-limit", order_id="mixed-limit", symbol="SOLUSDT",
+    )
+    _seed_candidate(runtime, "candidate-mixed-prelimit", "XRPUSDT", state=retest)
+    # Not covered: unknown LIMIT, still waiting for breakout, no state yet
+    _seed_candidate(
+        runtime, "candidate-mixed-unknown-limit", "ADAUSDT",
+        state={"phase": "RETEST_DETECTED", "execution": {"limit_order_id": "missing"}},
+    )
+    _seed_candidate(runtime, "candidate-mixed-waiting", "DOGEUSDT", state={"phase": "WAITING_BREAKOUT"})
+    _seed_candidate(runtime, "candidate-mixed-no-state", "LTCUSDT")
+    # Finished RETEST_DETECTED candidates must stay uncovered
+    _seed_candidate(runtime, "candidate-mixed-expired", "AVAXUSDT", state=retest, final_status="EXPIRED")
+    _seed_candidate(
+        runtime, "candidate-mixed-invalidated", "LINKUSDT", state=retest, final_status="INVALIDATED",
+    )
+
+
+def test_coverage_roles_from_light_read_match_the_previous_full_read():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _seed_mixed_coverage_fixture(runtime)
+            statuses = {
+                item.candidate_id: item.status
+                for item in runtime.store.load_robot_candidates(TradingAccountId("paper"))
+            }
+            assert statuses["candidate-mixed-open"] == "OPEN"
+            assert statuses["candidate-mixed-obligation"] == "CLOSED"
+
+            roles = runtime.robot_protection_coverage_roles()
+            assert roles == _legacy_coverage_roles(runtime)
+            assert roles == {
+                "BTCUSDT": "EXPOSURE",
+                "ETHUSDT": "OBLIGATION",
+                "SOLUSDT": "ENTRY_PENDING",
+                "XRPUSDT": "ENTRY_PENDING",
+            }
+            assert runtime.robot_protection_coverage_symbols() == tuple(roles)
+        finally:
+            runtime.close()
+
+
+def test_active_candidate_states_skip_finished_rows_and_never_read_the_snapshot():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _seed_mixed_coverage_fixture(runtime)
+            account = TradingAccountId("paper")
+            # Break every snapshot: the full read must now fail, the light read must not.
+            runtime.store._connection.execute(
+                "UPDATE robot_candidates SET signal_snapshot_json='not json'"
+            )
+            with pytest.raises(Exception):
+                runtime.store.load_robot_candidates(account)
+
+            states = runtime.store.load_active_robot_candidate_states(account)
+            assert {item.candidate_id: item.status for item in states} == {
+                "candidate-mixed-open": "OPEN",
+                "candidate-mixed-limit": "APPROVED",
+                "candidate-mixed-prelimit": "APPROVED",
+                "candidate-mixed-unknown-limit": "APPROVED",
+                "candidate-mixed-waiting": "APPROVED",
+                "candidate-mixed-no-state": "APPROVED",
+            }
+            by_id = {item.candidate_id: item for item in states}
+            assert by_id["candidate-mixed-limit"].symbol == Symbol("SOLUSDT")
+            assert by_id["candidate-mixed-limit"].robot_state == {
+                "phase": "RETEST_DETECTED", "execution": {"limit_order_id": "mixed-limit"},
+            }
+            assert by_id["candidate-mixed-no-state"].robot_state is None
+            assert not hasattr(by_id["candidate-mixed-open"], "signal_snapshot")
+        finally:
+            runtime.close()
+
+
+def test_coverage_roles_do_not_parse_finished_candidate_history():
+    import terminal.persistence.sqlite_store as sqlite_store
+
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            big_snapshot = {"symbol": "OLDUSDT", "pattern": "Falling Wedge", "pad": "x" * 20_000}
+            for index in range(300):
+                _seed_candidate(
+                    runtime, f"candidate-history-{index}", "OLDUSDT",
+                    state={"phase": "RETEST_DETECTED", "execution": {}},
+                    final_status=("EXPIRED", "INVALIDATED")[index % 2],
+                    snapshot={**big_snapshot, "n": index},  # snapshot hashes are unique
+                )
+            _seed_candidate(
+                runtime, "candidate-live", "XRPUSDT",
+                state={"phase": "RETEST_DETECTED", "execution": {}},
+            )
+
+            with patch.object(
+                sqlite_store, "_robot_candidate_from_row",
+                side_effect=AssertionError("full candidate row parsed"),
+            ), patch.object(
+                sqlite_store, "_robot_candidate_state_from_row",
+                wraps=sqlite_store._robot_candidate_state_from_row,
+            ) as light_rows:
+                assert runtime.robot_protection_coverage_roles() == {"XRPUSDT": "ENTRY_PENDING"}
+            assert light_rows.call_count == 1
+        finally:
+            runtime.close()

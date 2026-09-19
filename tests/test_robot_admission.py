@@ -361,5 +361,121 @@ class RobotAdmissionGateTests(unittest.TestCase):
                 store.close()
 
 
+def _legacy_active_robot_owner_candidate_ids(store, account, symbol, *, excluding_candidate_id=None):
+    """Verbatim copy of active_robot_owner_candidate_ids before the light read."""
+    from collections.abc import Mapping
+
+    owners = []
+    for record in store.load_robot_candidates(account):
+        if record.symbol != symbol or record.candidate_id == excluding_candidate_id:
+            continue
+        if record.status == "OPEN":
+            owners.append(record.candidate_id)
+            continue
+        if record.status != "APPROVED" or not isinstance(record.robot_state, Mapping):
+            continue
+        execution = record.robot_state.get("execution")
+        if not isinstance(execution, Mapping):
+            continue
+        order_id = execution.get("limit_order_id")
+        if not isinstance(order_id, str) or not order_id.strip():
+            continue
+        order = store.get_paper_limit(order_id, account)
+        if order is not None and order.filled_quantity > 0:
+            owners.append(record.candidate_id)
+    return tuple(sorted(set(owners)))
+
+
+class ActiveRobotOwnerLightReadTests(unittest.TestCase):
+    ACCOUNT = TradingAccountId("paper")
+
+    def _candidate(self, store, candidate_id, symbol, *, state=None, final_status=None):
+        store.create_robot_candidate(
+            candidate_id=candidate_id, trading_account_id=self.ACCOUNT, symbol=Symbol(symbol),
+            status="APPROVED", signal_snapshot={"symbol": symbol, "id": candidate_id},
+            approved_at_ms=1000, updated_at_ms=1000,
+        )
+        revision = 0
+        if state is not None:
+            store.save_robot_candidate_state(
+                candidate_id, status="APPROVED", robot_state=state,
+                expected_revision=revision, updated_at_ms=1001,
+            )
+            revision += 1
+        if final_status is not None:
+            store.save_robot_candidate_state(
+                candidate_id, status=final_status, robot_state=state or {},
+                expected_revision=revision, updated_at_ms=1002,
+            )
+
+    def _trade(self, store, candidate_id, symbol):
+        store.create_robot_trade(
+            trade_id=f"trade-{candidate_id}", trading_account_id=self.ACCOUNT,
+            candidate_id=candidate_id, symbol=Symbol(symbol), direction="LONG",
+            pattern="Falling Wedge", source_timeframe="1", signal_time_ms=1500,
+            entry_time_ms=1600, entry_path="LIMIT", actual_wv=Decimal("1"),
+            average_entry=Decimal("1"), stop_price=Decimal("0.9"), take_price=Decimal("1.2"),
+            entry_quantity=Decimal("1"), entry_position_version=1, created_at_ms=1600,
+        )
+
+    def test_owners_match_previous_full_read(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from terminal.application.robot_admission import active_robot_owner_candidate_ids
+
+        filled = lambda order_id: {"execution": {"limit_order_id": order_id}}
+        fills = {"lim-filled": Decimal("0.5"), "lim-unfilled": Decimal("0"),
+                 "lim-other-symbol": Decimal("1"), "lim-expired": Decimal("1"),
+                 "lim-invalidated": Decimal("1")}
+        with tempfile.TemporaryDirectory() as tmp:
+            store = SQLiteStore.open(Path(tmp) / "paper.sqlite3")
+            try:
+                self._candidate(store, "open", "ONGUSDT")
+                self._trade(store, "open", "ONGUSDT")                       # OPEN -> owner
+                self._candidate(store, "approved-filled", "ONGUSDT", state=filled("lim-filled"))
+                self._candidate(store, "approved-unfilled", "ONGUSDT", state=filled("lim-unfilled"))
+                self._candidate(store, "approved-missing-order", "ONGUSDT", state=filled("lim-missing"))
+                self._candidate(store, "approved-no-state", "ONGUSDT")
+                self._candidate(store, "other-symbol", "ETHUSDT", state=filled("lim-other-symbol"))
+                self._candidate(store, "expired", "ONGUSDT", state=filled("lim-expired"),
+                                final_status="EXPIRED")
+                self._candidate(store, "invalidated", "ONGUSDT", state=filled("lim-invalidated"),
+                                final_status="INVALIDATED")
+                self._candidate(store, "closed", "ONGUSDT")
+                self._trade(store, "closed", "ONGUSDT")
+                store.close_robot_trade(
+                    "trade-closed", exit_time_ms=3000, exit_price=Decimal("1.1"),
+                    exit_reason="TAKE", realized_pnl_usdt=Decimal("0.1"),
+                    realized_pnl_pct=Decimal("10"), fees_costs_usdt=Decimal("0"),
+                    updated_at_ms=3000,
+                )
+                self.assertEqual(store.get_robot_candidate("closed").status, "CLOSED")
+
+                fake_limit = lambda order_id, account: (
+                    SimpleNamespace(filled_quantity=fills[order_id]) if order_id in fills else None
+                )
+                with patch.object(store, "get_paper_limit", side_effect=fake_limit):
+                    for symbol, excluding in (
+                        ("ONGUSDT", None), ("ONGUSDT", "open"), ("ONGUSDT", "approved-filled"),
+                        ("ETHUSDT", None), ("BTCUSDT", None),
+                    ):
+                        with self.subTest(symbol=symbol, excluding=excluding):
+                            new = active_robot_owner_candidate_ids(
+                                store, self.ACCOUNT, Symbol(symbol),
+                                excluding_candidate_id=excluding,
+                            )
+                            old = _legacy_active_robot_owner_candidate_ids(
+                                store, self.ACCOUNT, Symbol(symbol),
+                                excluding_candidate_id=excluding,
+                            )
+                            self.assertEqual(new, old)
+                    self.assertEqual(
+                        active_robot_owner_candidate_ids(store, self.ACCOUNT, Symbol("ONGUSDT")),
+                        ("approved-filled", "open"),
+                    )
+            finally:
+                store.close()
+
 if __name__ == "__main__":
     unittest.main()
