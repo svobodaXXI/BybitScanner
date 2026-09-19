@@ -571,9 +571,9 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertIn("[ROBOT ENTRY RR UNAVAILABLE]", output.getvalue())
 
     def test_uncomputable_initial_entry_never_places_limit_and_terminates(self):
-        for snapshot_kwargs in ({"start_width": 0.0}, {"lower_touch_prices": ()}):
+        for index, snapshot_kwargs in enumerate(({"start_width": 0.0}, {"lower_touch_prices": ()})):
             with self.subTest(snapshot_kwargs=snapshot_kwargs):
-                candidate_id = "invalid-" + str(len(self.executor.limit_calls))
+                candidate_id = f"invalid-{index}"
                 self._create_candidate(candidate_id, **snapshot_kwargs)
                 # Drive one candidate at a time. No active other owner remains
                 # after invalidation, so the next case can use the same symbol.
