@@ -3974,6 +3974,20 @@ class SQLiteStore:
         ).fetchall()
         return tuple(_robot_trade_from_row(row) for row in rows)
 
+    def load_robot_trades_with_events_since(
+        self, trading_account_id: TradingAccountId, since_ms: int,
+    ) -> tuple[RobotTradeRecord, ...]:
+        """Read-only: Robot trades opened or closed at or after ``since_ms``."""
+
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM robot_trades
+               WHERE trading_account_id=? AND (entry_time_ms>=? OR exit_time_ms>=?)
+               ORDER BY entry_time_ms, trade_id""",
+            (trading_account_id.value, since_ms, since_ms),
+        ).fetchall()
+        return tuple(_robot_trade_from_row(row) for row in rows)
+
     def get_open_robot_trade_for_symbol(
         self, trading_account_id: TradingAccountId, symbol: Symbol,
     ) -> RobotTradeRecord | None:

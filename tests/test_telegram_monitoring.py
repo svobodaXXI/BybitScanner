@@ -538,5 +538,164 @@ class TelegramMonitoringTests(unittest.TestCase):
             monitoring._scanner_request()
 
 
+class RobotLifecyclePollTests(unittest.TestCase):
+    INIT_MS = 1_000_000
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        for key, value in (("TELEGRAM_CHAT_ID", "123"), ("TELEGRAM_TOKEN", "test")):
+            fixture = patch.object(monitoring.config, key, value, create=True)
+            fixture.start()
+            self.addCleanup(fixture.stop)
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.state_file = Path(temp.name) / ".robot_lifecycle_notified"
+        self.trades = []
+        store = patch("telegram_monitoring._robot_store")
+        self.store = store.start().return_value.__enter__.return_value
+        self.addCleanup(store.stop)
+        self.store.load_robot_trades_with_events_since.side_effect = lambda account, since: self.trades
+        for fixture in (
+            patch.object(monitoring, "LIFECYCLE_STATE_FILE", self.state_file),
+            patch("telegram_monitoring.load_position_view",
+                  side_effect=lambda store, symbol, trade_id: SimpleNamespace(trade_id=trade_id)),
+        ):
+            fixture.start()
+            self.addCleanup(fixture.stop)
+
+    def _trade(self, trade_id, entry_ms, exit_ms=None):
+        return SimpleNamespace(
+            trade_id=trade_id, symbol=Symbol("SAGAUSDT"), entry_time_ms=entry_ms,
+            exit_time_ms=exit_ms, exit_reason="STOP" if exit_ms else None,
+        )
+
+    def _state(self):
+        return json.loads(self.state_file.read_text(encoding="utf-8"))
+
+    def _poll(self, results=None, now_ms=None):
+        sent = []
+
+        def send(chat_id, event, view):
+            sent.append((event.kind, event.trade_id))
+            return True if results is None else results.pop(0)
+
+        with patch("telegram_monitoring._send_lifecycle_post", side_effect=send):
+            monitoring.poll_lifecycle_once(now_ms=now_ms or self.INIT_MS)
+        return sent
+
+    def test_first_run_does_not_backfill_history(self):
+        self.trades = [self._trade("old", self.INIT_MS - 100, self.INIT_MS - 10)]
+        self.assertEqual(self._poll(now_ms=self.INIT_MS), [])
+        self.assertEqual(self._state(), {"initialized_at_ms": self.INIT_MS, "opened": [], "closed": []})
+
+    def test_open_then_close_are_sent_once_across_restart(self):
+        self._poll()  # initializes the dedup file
+        self.trades = [self._trade("t1", self.INIT_MS + 1, self.INIT_MS + 2)]
+
+        self.assertEqual(self._poll(), [("OPENED", "t1"), ("CLOSED", "t1")])
+        self.assertEqual(self._state()["opened"], ["t1"])
+        self.assertEqual(self._state()["closed"], ["t1"])
+        # Restart: state is re-read from the file on every poll; nothing is re-sent.
+        self.assertEqual(self._poll(now_ms=self.INIT_MS + 10**9), [])
+
+    def test_failed_open_is_retried_and_close_waits_for_it(self):
+        self._poll()
+        self.trades = [self._trade("t1", self.INIT_MS + 1, self.INIT_MS + 2)]
+
+        self.assertEqual(self._poll(results=[False]), [("OPENED", "t1")])
+        self.assertEqual((self._state()["opened"], self._state()["closed"]), ([], []))
+        self.assertEqual(self._poll(results=[True, True]), [("OPENED", "t1"), ("CLOSED", "t1")])
+
+    def test_failed_close_is_retried_without_resending_open(self):
+        self._poll()
+        self.trades = [self._trade("t1", self.INIT_MS + 1, self.INIT_MS + 2)]
+
+        self._poll(results=[True, False])
+        self.assertEqual((self._state()["opened"], self._state()["closed"]), (["t1"], []))
+        self.assertEqual(self._poll(), [("CLOSED", "t1")])
+
+    def test_send_exception_is_logged_not_raised(self):
+        self._poll()
+        self.trades = [self._trade("t1", self.INIT_MS + 1)]
+        with patch("telegram_monitoring._send_lifecycle_post", side_effect=RuntimeError("net")):
+            monitoring.poll_lifecycle_once(now_ms=self.INIT_MS)
+        self.assertEqual(self._state()["opened"], [])
+
+    def test_loop_survives_poll_errors(self):
+        class StopLoop(BaseException):
+            pass
+
+        with patch("telegram_monitoring.poll_lifecycle_once",
+                   side_effect=[RuntimeError("db"), None]) as poll, \
+                patch("telegram_monitoring.time.sleep", side_effect=[None, StopLoop()]):
+            with self.assertRaises(StopLoop):
+                monitoring._lifecycle_loop()
+        self.assertEqual(poll.call_count, 2)
+
+
+class RobotLifecyclePostDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        for key, value in (("TELEGRAM_CHAT_ID", "123"), ("TELEGRAM_TOKEN", "test")):
+            fixture = patch.object(monitoring.config, key, value, create=True)
+            fixture.start()
+            self.addCleanup(fixture.stop)
+        fake_api = ModuleType("bybit_api")
+        fake_api.get_candles = lambda symbol, interval, limit: None
+        fixture = patch.dict(sys.modules, {"bybit_api": fake_api})
+        fixture.start()
+        self.addCleanup(fixture.stop)
+
+    def _event_and_view(self):
+        from decimal import Decimal
+        from robot_lifecycle_posts import EVENT_CLOSED, LifecycleEvent
+        from robot_position_view import PositionView
+
+        trade = SimpleNamespace(
+            exit_price=Decimal("0.0249"), exit_reason="TAKE", realized_pnl_usdt=Decimal("3"),
+            realized_pnl_pct=Decimal("1.1"), fees_costs_usdt=Decimal("0.1"),
+            exit_time_ms=2, entry_quantity=Decimal("1"), average_entry=Decimal("1"),
+        )
+        view = PositionView(
+            symbol="SAGAUSDT", direction="LONG", is_open=False, quantity=Decimal("1"),
+            average_entry=Decimal("1"), stop_price=None, take_price=None,
+            pattern="Falling Wedge", trade=trade,
+        )
+        return LifecycleEvent(EVENT_CLOSED, "t1", "SAGAUSDT", 2, "TAKE"), view
+
+    @patch("telegram_monitoring.render_position_chart", return_value="chart.png")
+    @patch("telegram_monitoring.telegram_bot.send_photo", return_value={"ok": True})
+    def test_closed_post_is_photo_with_all_positions_keyboard(self, photo, render):
+        event, view = self._event_and_view()
+
+        self.assertTrue(monitoring._send_lifecycle_post(123, event, view))
+
+        caption = photo.call_args.kwargs["caption"]
+        self.assertTrue(caption.startswith("🤖 Сделка закрыта · по тейку"))
+        # Only the button with a working handler.
+        self.assertEqual(
+            photo.call_args.kwargs["reply_markup"],
+            {"inline_keyboard": [[{"text": "Все позиции", "callback_data": "robot:view:positions"}]]},
+        )
+
+    @patch("telegram_monitoring.render_position_chart", return_value="chart.png")
+    @patch("telegram_monitoring.telegram_bot.send_photo", return_value={"ok": False})
+    @patch("telegram_monitoring._send_text", return_value={"ok": True})
+    def test_photo_failure_falls_back_to_text(self, send, photo, render):
+        event, view = self._event_and_view()
+
+        self.assertTrue(monitoring._send_lifecycle_post(123, event, view))
+        self.assertTrue(send.call_args.args[1].startswith("🤖 Сделка закрыта · по тейку"))
+
+    @patch("telegram_monitoring.render_position_chart", side_effect=RuntimeError("render"))
+    @patch("telegram_monitoring._send_text", return_value={"ok": False})
+    def test_undelivered_text_reports_failure(self, send, render):
+        event, view = self._event_and_view()
+
+        self.assertFalse(monitoring._send_lifecycle_post(123, event, view))
+        self.assertTrue(send.call_args.args[1].endswith("\nГрафик недоступен"))
+
+
 if __name__ == "__main__":
     unittest.main()

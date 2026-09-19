@@ -1,6 +1,6 @@
 # AUTOPILOT Robot v0.1 — Telegram position card, `/positions` menu and closed-trade post (implementation spec)
 
-Status: IMPLEMENTATION SPEC — Slice 1 and Slice 2 implemented locally (uncommitted), Slice 3 PLANNED
+Status: IMPLEMENTATION SPEC — Slice 1 and Slice 2 merged (PR #148); Slice 3 implemented locally (uncommitted)
 Date: 2026-09-18
 Implementation authorization: GRANTED 2026-09-18 (user)
 Parent design: `AUTOPILOT_ROBOT_V0_1_TELEGRAM_FEED_AND_SHORT_WEDGE_DECISION.md`
@@ -123,27 +123,34 @@ Implementation notes:
 - (e) The exit marker from `robot_trades` is not drawn if an execution already drawn has
   |dt| <= 2 s from `exit_time_ms` and the same price (MARKET entry: the exit fill is in the window).
 
-## 5. Slice 3 — closed-trade post (PLANNED)
+## 5. Slice 3 — Lifecycle posts (opened + closed)
 
-Decisions (defaults chosen by the assistant; change on request):
+Decisions (implemented; change on request):
 
-1. Trigger: the Telegram listener (`telegram_monitoring.py`) detects newly closed robot trades
-   (`robot_trades.exit_time_ms IS NOT NULL`). The listener loop blocks in `getUpdates` (timeout 30 s),
-   so use a daemon thread (own SQLite connection per poll) checking every ~10 s.
-   Read-only with respect to trading state. Posting from the PAPER backend is rejected: it would put
-   Telegram network calls into the robot hot path.
-2. De-duplication: durable watermark file `review_queue/.robot_closed_notified` (directory is git-ignored)
-   with the last notified `exit_time_ms` and the most recent notified `trade_id`s.
-   First run initializes the watermark to the current time (no back-fill of history).
-3. Post = the Slice 2 card and chart for the closed trade (exit marker added) plus:
-   - close reason label: `STOP` -> "стоп", `TAKE` -> "тейк" (verify the exact enum values in code/DB first),
-     `EMERGENCY_CLOSE` -> "аварийное закрытие (Закрыть всё)", unknown -> raw value;
-   - result: `realized_pnl_usdt` is GROSS and `realized_pnl_pct` is NET of fees (see
-     `robot_flat_closure.py:335-336`); show both explicitly:
-     "Итог: X USDT (до комиссий), комиссии Y USDT, Z% (после комиссий)" until fee attribution is fixed.
-4. Chart window: `get_candles` returns only the latest 300 1m candles; if the trade ended earlier than
-   the window start, render the latest window without the exit marker and say so in the caption.
-5. Out of scope now: "trade opened" and "signal accepted" posts (present in the parent design).
+1. Trigger: a daemon thread in the Telegram listener (`telegram_monitoring.py`) polls every ~10 s
+   (`LIFECYCLE_POLL_SECONDS`) with its own SQLite connection and posts newly opened and newly closed
+   robot trades (read-only store query `load_robot_trades_with_events_since`). The listener loop blocks
+   in `getUpdates`, hence the separate thread. Read-only with respect to trading state; posting from the
+   PAPER backend is rejected (Telegram network calls would enter the robot hot path).
+2. De-duplication: durable state file `review_queue/.robot_lifecycle_notified` (directory is git-ignored)
+   with `initialized_at_ms` and the most recent notified `trade_id`s per kind (opened / closed).
+   The first run initializes it to the current time: no back-fill of history. A `trade_id` is recorded
+   only after a successful send, so an undelivered post is retried; a damaged file restarts from now.
+3. Post = the Slice 2 card and chart for the trade, headed "🤖 Сделка открыта" or
+   "🤖 Сделка закрыта · <причина>". Close reason labels (the values actually written):
+   `STOP` -> "по стопу", `TAKE` -> "по тейку", `EMERGENCY_CLOSE` -> "аварийное закрытие",
+   unknown -> raw value.
+4. Result of a closed trade (post and closed-trade card):
+   "Итог: X USDT (до комиссий), комиссии Y USDT (вход + выход), Z% (после комиссий)", where
+   X = `realized_pnl_usdt` (gross), Y = sum of `fee` over the trade's executions — the same executions
+   drawn as filled markers (entry fills incl. partials + closing fill; for a LIMIT entry the closing-side
+   executions within 5 s of `exit_time_ms` are added), Z = (X − Y) / (`entry_quantity` × `average_entry`) × 100.
+   Stored `fees_costs_usdt` / `realized_pnl_pct` cover only the closing execution and are not shown;
+   they are not changed here (see "Robot closed-trade fee attribution" in `PROJECT_STATE.md`).
+5. Keyboard of lifecycle posts: only "Все позиции" (`robot:view:positions`). `build_robot_tab_keyboard`
+   is unchanged; its "Под наблюдением" and "Обновить" buttons have no handlers yet (separate task).
+6. Open: the chart uses the latest 300 1m candles; a trade that ended before that window is not
+   specially handled.
 
 ## 6. Constraints (all slices)
 
@@ -160,5 +167,5 @@ Decisions (defaults chosen by the assistant; change on request):
 - Slice 2: `/positions` shows one button per open position; tapping an open robot position sends a photo with
   the card; lines follow the frozen wedge; entry/STOP/TAKE lines match the card; filled triangles at fills.
   Tapping CELOUSDT (manual dust) gives the text card without a chart.
-- Slice 3: after a robot trade closes, within ~10 s one post arrives with the exit marker and the
-  correct close reason; a restart of the listener does not re-send it.
+- Slice 3: after a robot trade opens / closes, within ~10 s one post arrives (closed: exit marker, the
+  correct close reason, entry + exit fees); a restart of the listener does not re-send it.
