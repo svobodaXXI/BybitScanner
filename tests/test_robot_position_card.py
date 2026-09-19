@@ -25,7 +25,7 @@ def _trade(**overrides):
         entry_time_ms=START_MS + 120 * 60_000, average_entry=Decimal("0.0254"),
         stop_price=Decimal("0.0249"), take_price=Decimal("0.0284"),
         entry_quantity=Decimal("100"), exit_time_ms=None, exit_price=None,
-        exit_reason=None, realized_pnl_usdt=None, realized_pnl_pct=None,
+        exit_reason=None, realized_pnl_usdt=None, realized_pnl_pct=None, fees_costs_usdt=None,
     )
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -101,13 +101,19 @@ class FormatPositionCardTests(unittest.TestCase):
     def test_closed_trade_card(self):
         trade = _trade(
             exit_time_ms=START_MS + 200 * 60_000, exit_price=Decimal("0.0249"),
-            exit_reason="STOP", realized_pnl_usdt=Decimal("-5.17"),
-            realized_pnl_pct=Decimal("-2.13"),
+            exit_reason="STOP", realized_pnl_usdt=Decimal("-0.05"),
+            realized_pnl_pct=Decimal("-2.02"), fees_costs_usdt=Decimal("0.0013"),
         )
-        card = format_position_card(_view(is_open=False, trade=trade))
+        card = format_position_card(_view(is_open=False, trade=trade, fees_usdt=Decimal("0.0026")))
         self.assertIn("Статус: закрыта", card)
-        self.assertIn("Выход: 0.0249 (STOP)", card)
-        self.assertIn("PnL: -5.17 USDT (-2.13%)", card)
+        self.assertIn("Выход: 0.0249 (по стопу)", card)
+        # Before fees, then entry + exit fees and (-0.05 - 0.0026) / (100 * 0.0254) * 100.
+        self.assertIn(
+            "Итог: -0.05 USDT (до комиссий), комиссии 0.0026 USDT (вход + выход), "
+            "-2.07% (после комиссий)",
+            card,
+        )
+        self.assertNotIn("PnL:", card)
 
     def test_caption_fits_telegram_limit(self):
         card = format_position_card(_view(pattern="X" * 2000))
@@ -118,7 +124,7 @@ class LoadPositionViewTests(unittest.TestCase):
     def _store(self, *, trade, protection=None, limit_status="filled"):
         execution = lambda order_id, ts, side: SimpleNamespace(
             order_id=order_id, exchange_timestamp_ms=ts, side=side,
-            price=SimpleNamespace(value=Decimal("0.0254")),
+            price=SimpleNamespace(value=Decimal("0.0254")), fee=Decimal("0.001"),
         )
         entry = execution("limit-1", trade.entry_time_ms, OrderSide.BUY)
         other = execution("other", trade.entry_time_ms + 1_000, OrderSide.BUY)
@@ -176,6 +182,47 @@ class LoadPositionViewTests(unittest.TestCase):
         view = load_position_view(store, "SAGAUSDT", now_ms=_trade().entry_time_ms + 2_000)
         self.assertEqual([(m.side, m.filled) for m in view.markers],
                          [("Buy", True), ("Buy", True), ("Buy", False)])
+
+    def test_closed_trade_fees_sum_entry_and_exit_executions(self):
+        exit_ms = _trade().entry_time_ms + 60 * 60_000
+        trade = _trade(
+            exit_time_ms=exit_ms, exit_price=Decimal("0.0249"), exit_reason="STOP",
+            realized_pnl_usdt=Decimal("-0.05"), realized_pnl_pct=Decimal("-2.02"),
+            fees_costs_usdt=Decimal("0.0013"),  # closing leg only; not what the card shows
+        )
+        fill = lambda order_id, ts, side, price, fee: SimpleNamespace(
+            order_id=order_id, exchange_timestamp_ms=ts, side=side,
+            price=SimpleNamespace(value=Decimal(price)), fee=Decimal(fee),
+        )
+        # Two partial fills of the entry limit, then the closing fill.
+        partials = (
+            fill("limit-1", trade.entry_time_ms, OrderSide.BUY, "0.0254", "0.0005"),
+            fill("limit-1", trade.entry_time_ms + 30_000, OrderSide.BUY, "0.0254", "0.0008"),
+        )
+        closing = fill("stop-1", exit_ms, OrderSide.SELL, "0.0249", "0.0013")
+        unrelated = (
+            fill("next-entry", exit_ms + 1_000, OrderSide.BUY, "0.0249", "0.5"),
+            fill("old", trade.entry_time_ms - 60_000, OrderSide.SELL, "0.0260", "0.5"),
+        )
+        for entry_path in ("LIMIT", "MARKET"):
+            with self.subTest(entry_path=entry_path):
+                store = self._store(trade=_trade(**{**vars(trade), "entry_path": entry_path}))
+                store.load_executions_for_order = lambda account, order_id: (
+                    partials if order_id.value == "limit-1" else ()
+                )
+                symbol_fills = (unrelated[1], *partials, closing)
+                if entry_path == "LIMIT":
+                    symbol_fills += (unrelated[0],)  # excluded by side at exit time
+                store.load_executions_for_symbol = lambda account, symbol, f=symbol_fills: f
+                view = load_position_view(store, "SAGAUSDT", trade_id="robot-trade-1")
+
+                self.assertEqual(view.fees_usdt, Decimal("0.0026"))
+                self.assertEqual([(m.side, m.filled) for m in view.markers],
+                                 [("Buy", True), ("Buy", True), ("Sell", True)])
+                self.assertIn(
+                    "комиссии 0.0026 USDT (вход + выход), -2.07% (после комиссий)",
+                    format_position_card(view),
+                )
 
 
 class RenderPositionChartTests(unittest.TestCase):

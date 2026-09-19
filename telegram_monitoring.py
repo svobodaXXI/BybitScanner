@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -24,10 +25,15 @@ import requests
 import config
 import telegram_bot
 from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
+from robot_lifecycle_posts import (
+    build_lifecycle_keyboard, collect_new_lifecycle_events, format_lifecycle_caption,
+    load_lifecycle_state, mark_notified, save_lifecycle_state,
+)
 from robot_position_chart import render_position_chart
 from robot_position_view import format_position_card, load_position_view, with_last_price
 from robot_telegram_feed import (
-    VIEW_POSITIONS, build_robot_control_keyboard, format_paper_positions_view,
+    VIEW_POSITIONS, build_robot_control_keyboard,
+    format_paper_positions_view,
     format_robot_status_text, parse_robot_view_callback,
 )
 from terminal.application.robot_control import get_robot_runtime_status
@@ -37,6 +43,9 @@ from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 OFFSET_FILE = PROJECT_ROOT / "review_queue" / ".telegram_offset"
+LIFECYCLE_STATE_FILE = PROJECT_ROOT / "review_queue" / ".robot_lifecycle_notified"
+LIFECYCLE_POLL_SECONDS = 10
+_CHART_LOCK = threading.Lock()
 PAPER_ACCOUNT_ID = TradingAccountId("paper")
 DB_PATH = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
 
@@ -76,7 +85,7 @@ def _scanner_request(action=None):
 
 
 def _send_text(chat_id, text, **kwargs):
-    telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text, **kwargs)
+    return telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text, **kwargs)
 
 
 def _send_scanner_control(chat_id):
@@ -239,6 +248,15 @@ def _send_position_card(chat_id, symbol: str) -> None:
         )
         return
 
+    view, candles = _with_candles(view)
+    caption = format_position_card(view)
+    if not view.is_robot:
+        _send_text(chat_id, caption, reply_markup=POSITIONS_BACK_MARKUP)
+        return
+    _send_chart_card(chat_id, view, candles, caption, POSITIONS_BACK_MARKUP)
+
+
+def _with_candles(view):
     candles = None
     try:
         import bybit_api
@@ -248,28 +266,88 @@ def _send_position_card(chat_id, symbol: str) -> None:
             view = with_last_price(view, candles["close"].iloc[-1])
     except Exception as exc:
         print("[POSITION CARD CANDLES ERROR]", view.symbol, exc)
+    return view, candles
 
-    caption = format_position_card(view)
-    if not view.is_robot:
-        _send_text(chat_id, caption, reply_markup=POSITIONS_BACK_MARKUP)
-        return
 
-    try:
-        chart_path = render_position_chart(view, candles)
-    except Exception as exc:
-        print("[POSITION CHART ERROR]", view.symbol, exc)
-        _send_text(chat_id, caption + "\nГрафик недоступен", reply_markup=POSITIONS_BACK_MARKUP)
-        return
-    try:
-        response = telegram_bot.send_photo(
-            config.TELEGRAM_TOKEN, chat_id, str(chart_path),
-            caption=caption, reply_markup=POSITIONS_BACK_MARKUP,
-        )
-        if not (isinstance(response, Mapping) and response.get("ok")):
+def _delivered(response) -> bool:
+    return isinstance(response, Mapping) and bool(response.get("ok"))
+
+
+def _send_chart_card(chat_id, view, candles, caption, reply_markup) -> bool:
+    """Photo card; a chart or sendPhoto failure falls back to text. True if delivered."""
+
+    # pyplot is not thread-safe and the chart path is per symbol: one render+send at a time.
+    with _CHART_LOCK:
+        try:
+            chart_path = render_position_chart(view, candles)
+        except Exception as exc:
+            print("[POSITION CHART ERROR]", view.symbol, exc)
+            return _delivered(
+                _send_text(chat_id, caption + "\nГрафик недоступен", reply_markup=reply_markup)
+            )
+        try:
+            response = telegram_bot.send_photo(
+                config.TELEGRAM_TOKEN, chat_id, str(chart_path),
+                caption=caption, reply_markup=reply_markup,
+            )
+            if _delivered(response):
+                return True
             raise RuntimeError(f"sendPhoto failed: {response}")
-    except Exception as exc:
-        print("[POSITION CARD PHOTO ERROR]", view.symbol, exc)
-        _send_text(chat_id, caption, reply_markup=POSITIONS_BACK_MARKUP)
+        except Exception as exc:
+            print("[POSITION CARD PHOTO ERROR]", view.symbol, exc)
+    return _delivered(_send_text(chat_id, caption, reply_markup=reply_markup))
+
+
+def _send_lifecycle_post(chat_id, event, view) -> bool:
+    view, candles = _with_candles(view)
+    caption = format_lifecycle_caption(event, view)
+    return _send_chart_card(chat_id, view, candles, caption, build_lifecycle_keyboard())
+
+
+def poll_lifecycle_once(now_ms: int | None = None) -> None:
+    chat_id = _owner_id()
+    if not chat_id:
+        return
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    state = load_lifecycle_state(LIFECYCLE_STATE_FILE, now_ms)
+    with _robot_store() as store:
+        events = collect_new_lifecycle_events(store, state)
+        pending = [
+            (event, load_position_view(store, event.symbol, trade_id=event.trade_id))
+            for event in events
+        ]
+    blocked = set()
+    for event, view in pending:
+        # "закрыта" never goes out before a failed "открыта" of the same trade.
+        if event.trade_id in blocked:
+            continue
+        try:
+            sent = view is not None and _send_lifecycle_post(chat_id, event, view)
+        except Exception as exc:
+            print("[LIFECYCLE SEND ERROR]", event.kind, event.trade_id, exc)
+            sent = False
+        if not sent:
+            print("[LIFECYCLE] not delivered, will retry:", event.kind, event.trade_id)
+            blocked.add(event.trade_id)
+            continue
+        mark_notified(state, event)
+        save_lifecycle_state(LIFECYCLE_STATE_FILE, state)
+        print("[LIFECYCLE]", event.kind, event.symbol, event.trade_id)
+
+
+def _lifecycle_loop() -> None:
+    while True:
+        try:
+            poll_lifecycle_once()
+        except Exception as exc:
+            print("[LIFECYCLE LOOP ERROR]", exc)
+        time.sleep(LIFECYCLE_POLL_SECONDS)
+
+
+def start_lifecycle_thread() -> threading.Thread:
+    thread = threading.Thread(target=_lifecycle_loop, name="robot-lifecycle-posts", daemon=True)
+    thread.start()
+    return thread
 
 
 def _send_workspace(chat_id, *, positions=False):
@@ -584,6 +662,7 @@ def run() -> None:
     print(f"DB: {DB_PATH}")
     print("=" * 60)
     configure_monitoring_menu()
+    start_lifecycle_thread()
     offset = _load_offset()
 
     while True:

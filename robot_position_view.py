@@ -24,6 +24,18 @@ CAPTION_LIMIT = 1024
 EXECUTION_WINDOW_MS = 5_000
 RESTING_LIMIT_STATUSES = frozenset({"open", "partially_filled"})
 NOT_ROBOT_LINE = "Позиция не от робота — график недоступен"
+# Values actually written: STOP/TAKE (winning protection leg) and EMERGENCY_CLOSE
+# (flat closure); anything else is shown raw.
+EXIT_REASON_LABELS = {
+    "STOP": "по стопу",
+    "TAKE": "по тейку",
+    "EMERGENCY_CLOSE": "аварийное закрытие",
+}
+
+
+def exit_reason_label(reason: Any) -> str:
+    text = str(reason or "").strip()
+    return EXIT_REASON_LABELS.get(text, text or "—")
 
 
 @dataclass(frozen=True)
@@ -49,6 +61,9 @@ class PositionView:
     signal_snapshot: Mapping[str, Any] | None = None
     markers: tuple[TradeMarker, ...] = ()
     last_price: Decimal | None = None
+    # Sum of fee over the executions drawn as filled markers (entry + exit legs);
+    # None when no execution evidence was found.
+    fees_usdt: Decimal | None = None
 
     @property
     def is_robot(self) -> bool:
@@ -94,31 +109,48 @@ def _is_open_projection(projection) -> bool:
     return quantity is not None and quantity != 0
 
 
-def _trade_markers(store, account, trade, candidate, *, now_ms: int) -> tuple[TradeMarker, ...]:
+def _trade_executions(store, account, trade, limit_order_id: str, *, now_ms: int) -> tuple:
+    if trade.entry_path == "LIMIT" and limit_order_id:
+        executions = tuple(store.load_executions_for_order(account, OrderId(limit_order_id)))
+        if trade.exit_time_ms is None:
+            return executions
+        # The closing fill is a separate order: take the closing-side executions at exit time.
+        closing_side = "Sell" if trade.direction == "LONG" else "Buy"
+        return executions + tuple(
+            item for item in store.load_executions_for_symbol(account, trade.symbol)
+            if abs(item.exchange_timestamp_ms - trade.exit_time_ms) <= EXECUTION_WINDOW_MS
+            and item.side.value == closing_side
+        )
+    start = trade.entry_time_ms - EXECUTION_WINDOW_MS
+    end = (trade.exit_time_ms if trade.exit_time_ms is not None else now_ms) + EXECUTION_WINDOW_MS
+    return tuple(
+        item for item in store.load_executions_for_symbol(account, trade.symbol)
+        if start <= item.exchange_timestamp_ms <= end
+    )
+
+
+def _trade_markers(
+    store, account, trade, candidate, *, now_ms: int,
+) -> tuple[tuple[TradeMarker, ...], Decimal | None]:
+    """Markers for the chart and the summed fee of the same filled executions."""
+
     state = candidate.robot_state if candidate is not None else None
     execution = state.get("execution") if isinstance(state, Mapping) else None
     limit_order_id = execution.get("limit_order_id") if isinstance(execution, Mapping) else None
     limit_order_id = str(limit_order_id).strip() if limit_order_id else ""
 
-    if trade.entry_path == "LIMIT" and limit_order_id:
-        executions = store.load_executions_for_order(account, OrderId(limit_order_id))
-    else:
-        start = trade.entry_time_ms - EXECUTION_WINDOW_MS
-        end = (trade.exit_time_ms if trade.exit_time_ms is not None else now_ms) + EXECUTION_WINDOW_MS
-        executions = tuple(
-            item for item in store.load_executions_for_symbol(account, trade.symbol)
-            if start <= item.exchange_timestamp_ms <= end
-        )
+    executions = _trade_executions(store, account, trade, limit_order_id, now_ms=now_ms)
     markers = [
         TradeMarker(item.exchange_timestamp_ms, item.price.value, item.side.value, True)
         for item in executions
     ]
+    fees = sum((item.fee for item in executions), Decimal(0)) if executions else None
 
     if limit_order_id:
         limit = store.get_paper_limit(limit_order_id, account)
         if limit is not None and limit.status in RESTING_LIMIT_STATUSES:
             markers.append(TradeMarker(limit.created_at_ms, limit.price, limit.side.value, False))
-    return tuple(markers)
+    return tuple(markers), fees
 
 
 def load_position_view(
@@ -172,13 +204,14 @@ def load_position_view(
 
     candidate = snapshot = None
     markers: tuple[TradeMarker, ...] = ()
+    fees = None
     pattern = None
     if trade is not None:
         direction = trade.direction
         pattern = trade.pattern
         candidate = store.get_robot_candidate(trade.candidate_id)
         snapshot = candidate.signal_snapshot if candidate is not None else None
-        markers = _trade_markers(store, account, trade, candidate, now_ms=now_ms)
+        markers, fees = _trade_markers(store, account, trade, candidate, now_ms=now_ms)
 
     return PositionView(
         symbol=sym.value,
@@ -193,6 +226,7 @@ def load_position_view(
         trade=trade,
         signal_snapshot=snapshot,
         markers=markers,
+        fees_usdt=fees,
     )
 
 
@@ -215,6 +249,27 @@ def _format_quantity(value: Any) -> str:
 def _signed_usdt(value: Decimal) -> str:
     sign = "+" if value >= 0 else "-"
     return f"{sign}{format_price(abs(value))} USDT"
+
+
+def format_trade_result(view: PositionView) -> str:
+    # realized_pnl_usdt excludes fees. The stored fees_costs_usdt / realized_pnl_pct
+    # cover only the closing execution, so fees here are summed over the trade's
+    # executions (entry + exit) and the net percentage is recomputed from them.
+    trade = view.trade
+    gross = trade.realized_pnl_usdt
+    fees = view.fees_usdt
+    notional = (
+        trade.entry_quantity * trade.average_entry
+        if trade.entry_quantity is not None and trade.average_entry is not None else None
+    )
+    fees_text = f"{format_price(fees)} USDT" if fees is not None else "—"
+    net_text = (
+        f"{(gross - fees) / notional * 100:+.2f}%" if fees is not None and notional else "—"
+    )
+    return (
+        f"Итог: {_signed_usdt(gross)} (до комиссий), "
+        f"комиссии {fees_text} (вход + выход), {net_text} (после комиссий)"
+    )
 
 
 def _unrealized_pnl(view: PositionView) -> tuple[Decimal, Decimal] | None:
@@ -240,12 +295,10 @@ def format_position_card(view: PositionView) -> str:
         )
     else:
         trade = view.trade
-        reason = f" ({trade.exit_reason})" if trade.exit_reason else ""
+        reason = f" ({exit_reason_label(trade.exit_reason)})" if trade.exit_reason else ""
         lines.append(f"Выход: {format_price(trade.exit_price)}{reason}")
-        if trade.realized_pnl_usdt is not None and trade.realized_pnl_pct is not None:
-            lines.append(
-                f"PnL: {_signed_usdt(trade.realized_pnl_usdt)} ({trade.realized_pnl_pct:+.2f}%)"
-            )
+        if trade.realized_pnl_usdt is not None:
+            lines.append(format_trade_result(view))
     lines += [
         f"STOP: {format_price(view.stop_price)}",
         f"TAKE: {format_price(view.take_price)}",
