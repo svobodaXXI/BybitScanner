@@ -24,14 +24,78 @@ Owner: DOCUMENTS/BACKLOG.md section 3 (G0–G2)
 
 No external code is copied. External approaches are presentation/research patterns, not trading rules.
 
-## G1: smallest chart-only implementation contract
+## G1: expose the preceding impulse on the signal/position chart
 
-1. Derive the earliest historical start of **both** frozen pattern lines from their `anchor_index` in source-candle coordinates, transformed to 1-minute Robot geometry coordinates by the existing `_line_start_index` function. Use the immutable Scanner cursor (`geometry_index`, `source_candle_time_ms`) to compute a start timestamp. The chart must cover the earlier of that start and entry time.
-2. Pad the left side by `max(10 bars, ceil(0.08 * number_of_bars_in_span))`, subject to the existing 1,000-candle API cap and current-candle/right-edge behavior. Keep the 300-bar (1m) / 120-bar (other) minimums. For 5m source geometry do **not** mistake a source-bar anchor for a 1-minute Robot index.
-3. If a start index/cursor is missing or invalid, degrade safely to the current entry-based chart window; do not fabricate an anchor. If the 1,000-bar cap or the exchange's returned range excludes the pattern start, mark it explicitly: `Начало паттерна раньше окна графика`. Display the old entry-window warning independently when applicable.
-4. Handle candle boundaries and source-timeframe alignment using actual returned OHLC timestamps; test 1m and 5m, different upper/lower start indices, missing/invalid anchor, capped history, and a window whose start is returned/visible. No DB writes, no change to scanner detection, signal snapshot, trading state, entry or protection.
-5. Verify through the Telegram chart code and focused tests before merging. Actual Telegram visual acceptance remains a separate check when an operating PAPER listener is available; no backend/VPS restart for this task.
+The user explicitly needs to see **price action before** the wedge to distinguish a countertrend correction
+from same-direction deceleration. Rendering the first wedge anchor at the left edge is insufficient.
+
+1. Derive the earlier of the two frozen line anchors using the current `robot_position_chart._line_start_index`
+   conversion from Scanner source-bar coordinates to the immutable 1m Robot cursor; locate its candle time
+   relative to `scanner_geometry_cursor.source_candle_time_ms`. Cover the earlier of pattern start and entry.
+2. Target an extra **pre-pattern** context window equal to one pattern-formation span (earliest anchor through
+   frozen detection time). This is only a presentation window, not a qualifying impulse definition or a
+   strategy predicate. Keep a left margin of max(10 chart bars, 8% of pattern-to-current span), the current
+   candle on the right, and existing minimum 1m/5m request lengths.
+3. Cap the request at 1,000 candles. Preserve figure-start visibility first, then allocate remaining history
+   to the preceding impulse. Derive visibility from the **actual timestamps returned** (not just requested
+   candle count). If the full figure does not fit, show `Начало паттерна раньше окна графика`; if the
+   figure fits but older context is truncated, show `Предшествующий импульс показан не полностью`.
+   Preserve the entry-window warning independently. Never claim the entire impulse is shown merely because
+   a fixed number of candles was requested.
+4. Cover the Scanner-generated signal PNG as well as Robot position/lifecycle chart surfaces: inspect
+   `chart_clean.py::draw_chart`, `analyzer/charts.py`, `notification.py::send_signal`, and
+   `telegram_monitoring.py::_with_candles`. Do not assume the Robot position chart and Scanner signal
+   image share a candle-loading path. If a legacy snapshot is missing/invalid, retain the previous
+   entry/available-data window with an explicit unknown-context outcome; do not make up earlier data.
+5. Test 1m and 5m source timeframes, unequal boundary anchor ages, old entry, bounded/missing pre-pattern
+   history, and visual readability of the line START points and preceding candles. No new geometry,
+   trade admission, risk/execution, persistence writes, backend/VPS restart, or automatic context label in G1.
 
 ## G2: later, not part of the chart task
 
-Collect 3–5 mis-anchored chart examples; record signal timestamp and whether a pivot was confirmed by that time. Compare existing `fit_anchor_trendline` candidates against bounded pivot prominence/distance variants offline, preserving all original frozen snapshots. Define ranking evidence and tolerances before proposing production geometry changes. Never use future candles to rank live-time anchor candidates.
+Collect 3–5 mis-anchored chart examples; record signal timestamp and whether a pivot was confirmed by that time.
+Compare existing `fit_anchor_trendline` candidates against bounded pivot prominence/distance variants offline,
+preserving all original frozen snapshots. Define ranking evidence and tolerances before proposing production geometry
+changes. Never use future candles to rank live-time anchor candidates.
+
+## G3: two contexts per wedge orientation, including signal/chart labels (before Triangle)
+
+Existing groundwork is explicit but incomplete. `DOCUMENTS/TRADING_STRATEGY_SPEC.md` §3.2 calls for independent
+Falling Wedge reversal/exhaustion vs controlled-pullback/continuation cohorts and Rising Wedge topping/exhaustion
+vs bearish-continuation/recovery cohorts. `DOCUMENTS/AUTOPILOT_STRATEGY_ACCUMULATED_DESIGN.md` §7.1 notes that a
+Rising Wedge following an upward impulse may provide exhaustion evidence for managing an existing LONG.
+Neither document specifies a completed, measurable four-subtype detector or authorizes a Robot priority change.
+
+The intended classification is contextual: retain the existing geometrical `Falling Wedge` or `Rising Wedge`
+identity and independently record one of these five context values, based on **history available at signal time**:
+
+| Geometric pattern | Pre-pattern impulse | Context ID | Signal / chart caption |
+| --- | --- | --- | --- |
+| Falling Wedge | UP | `FALLING_CORRECTION_AFTER_UP` | `Контекст: Коррекция после роста` |
+| Falling Wedge | DOWN | `FALLING_DECELERATION_AFTER_DOWN` | `Контекст: Замедление после падения` |
+| Rising Wedge | DOWN | `RISING_CORRECTION_AFTER_DOWN` | `Контекст: Коррекция после падения` |
+| Rising Wedge | UP | `RISING_DECELERATION_AFTER_UP` | `Контекст: Замедление после роста` |
+| Either / insufficient evidence | UNKNOWN | `PREPATTERN_CONTEXT_UNKNOWN` | `Контекст: Не определён` |
+
+The UP/DOWN impulse label alone does not prove actual deceleration. A G3 specification must distinguish a bounded
+prior directional impulse from range noise and measure weakening movement **inside** the wedge without hindsight.
+Choose the lookback horizon, trend/volatility normalization, and UNKNOWN thresholds from stored, user-reviewed
+examples; avoid confusing a trendline's slope with the impulse that preceded the line's start.
+
+**Display requirement once the G3 classifier exists:** show precisely one `Контекст: …` line in the Scanner
+signal's Telegram text (`notification.py::format_signal`) and in its PNG title/header
+(`chart_clean.py::build_chart_title`). Propagate the exact frozen, versioned subtype into the Robot
+candidate/signal snapshot; show the same line in the Robot position/lifecycle chart title and text/photo caption
+(`robot_position_chart.py`, `robot_position_view.py`, `telegram_monitoring.py`). A legacy/missing subtype
+remains UNKNOWN; no late chart renderer or notification may independently infer or revise it. Keep the ordinary
+`Паттерн: …` identity separate from the context label. Non-wedge patterns are unaffected.
+
+Validate all four context values plus UNKNOWN in both the signal text and PNG and, when Robot evidence exists,
+the position/lifecycle chart and caption, including 1m/5m and Telegram caption-length constraints.
+Do not show a definitive correction/deceleration label in production until measured signal-time classification
+is available and accepted.
+
+**Robot priority is a separate strategy hypothesis:** the user wants to favor deceleration/exhaustion variants
+over corrective ones. Study their risk-adjusted outcomes in distinct comparable cohorts before defining
+candidate-selection priority. No automatic preferential entry, position size, STOP/TAKE, or ownership-gate
+change is authorized by this research/UX requirement.
