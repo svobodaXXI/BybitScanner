@@ -31,6 +31,7 @@ from typing import Callable, Mapping, Protocol
 import robot_entry_limit
 import robot_protection
 import robot_state_machine
+from robot_market_confirmation import risk_reward_ratio
 from scanner_geometry_cursor import (
     ScannerGeometryCursorError,
     latest_scanner_closed_candle,
@@ -70,6 +71,7 @@ DEFAULT_LATE_MARKET_MAX_BOOK_AGE_MS = 1000
 
 INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
 PHASE_INVALIDATED_UNSUPPORTED_PATTERN = "INVALIDATED_UNSUPPORTED_PATTERN"
+ENTRY_RR_SKIP_POOR_RR = "SKIPPED_POOR_RR"  # same name as the late-admission decision
 
 
 class ActionExecutor(Protocol):
@@ -398,7 +400,13 @@ class RobotBreakoutMonitor:
                 self._invalidate_pre_entry_candidate(record, reason=block_reason)
                 return True
 
-            result = self._submit_initial_retest_limit(record, record.robot_state)
+            plan = self._build_initial_retest_limit_plan(record, record.robot_state)
+            rr_skip = self._entry_rr_skip(record, plan)
+            if rr_skip is not None:
+                reason, details = rr_skip
+                self._invalidate_pre_entry_candidate(record, reason=reason, details=details)
+                return True
+            result = robot_entry_limit.submit_initial_retest_limit(self._action_executor, plan)
             order_id = getattr(result, "order_id", None)
             if not order_id:
                 return False
@@ -1061,7 +1069,7 @@ class RobotBreakoutMonitor:
         )
         return reference, target
 
-    def _submit_initial_retest_limit(
+    def _build_initial_retest_limit_plan(
         self, record: RobotCandidateRecord, state: Mapping[str, object],
     ):
         payload = {
@@ -1071,10 +1079,59 @@ class RobotBreakoutMonitor:
             "signal_snapshot": record.signal_snapshot,
         }
         tick_size = self._tick_size_provider(record.symbol.value)
-        plan = robot_entry_limit.build_initial_retest_limit(
+        return robot_entry_limit.build_initial_retest_limit(
             payload, state, tick_size=tick_size,
         )
-        return robot_entry_limit.submit_initial_retest_limit(self._action_executor, plan)
+
+    def _entry_rr_skip(
+        self, record: RobotCandidateRecord, plan,
+    ) -> tuple[str, dict[str, object]] | None:
+        """Planned take/stop ratio for the retest LIMIT, before it is placed.
+
+        Uses the same inputs as ``robot_protection.build_protection_plan`` after
+        the fill (structural extreme and frozen prices from the snapshot), with
+        the LIMIT price as the entry. Returns ``(reason, details)`` when the
+        candidate must be skipped, ``None`` when the LIMIT may be placed. If the
+        ratio cannot be computed the LIMIT is placed as before: the existing
+        post-fill protection path (including its fail-closed handling) stays
+        the single owner of that case.
+        """
+        threshold = robot_protection.min_entry_rr()
+        details: dict[str, object] = {
+            "entry_price": str(plan.request.limit_price), "min_rr": str(threshold),
+        }
+        try:
+            direction = plan.direction
+            structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
+            tick_size = self._tick_size_provider(record.symbol.value)
+            reference_price, target_price = self._frozen_prices(record.signal_snapshot, direction)
+            stop_price = robot_protection.structural_stop(
+                direction, average_entry=plan.request.limit_price,
+                structural_extreme=structural_extreme, tick_size=tick_size,
+            )
+            take_price = robot_protection.frozen_take_90(
+                direction, frozen_signal_reference_price=reference_price,
+                frozen_scanner_target_price=target_price,
+            )
+            rr = risk_reward_ratio(
+                direction, entry_price=plan.request.limit_price,
+                stop_price=stop_price, take_price=take_price,
+            )
+        except Exception as error:
+            print(
+                "[ROBOT ENTRY RR UNAVAILABLE] "
+                f"candidate_id={record.candidate_id} symbol={record.symbol.value} error={error}"
+            )
+            return None
+        details.update(stop_price=str(stop_price), take_price=str(take_price), rr=str(rr))
+        if rr < threshold:
+            print(
+                "[ROBOT ENTRY SKIPPED] "
+                f"candidate_id={record.candidate_id} symbol={record.symbol.value} "
+                f"reason={ENTRY_RR_SKIP_POOR_RR} rr={rr} min_rr={threshold}"
+            )
+            return ENTRY_RR_SKIP_POOR_RR, details
+        return None
 
     def _read_admission_gate(self) -> tuple[bool, bool]:
         state = self._store().get_robot_runtime_state(self._account_id)
@@ -1088,10 +1145,13 @@ class RobotBreakoutMonitor:
 
     def _invalidate_pre_entry_candidate(
         self, record: RobotCandidateRecord, *, reason: str,
+        details: Mapping[str, object] | None = None,
     ) -> None:
         execution = dict(record.robot_state.get("execution") or {})
         execution["stopped_without_entry_at_ms"] = self._now_ms()
         execution["stopped_without_entry_reason"] = reason
+        if details:
+            execution["entry_rr_filter"] = dict(details)
         new_state = dict(record.robot_state)
         new_state["execution"] = execution
         try:

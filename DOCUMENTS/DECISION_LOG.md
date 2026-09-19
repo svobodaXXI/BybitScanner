@@ -527,3 +527,42 @@ consequences:
   `.agents/skills/strategy-hypothesis-capture/SKILL.md`, and is not renumbered;
 * only documentation changes; no runtime or code behavior changes.
 
+---
+
+## DECISION-011
+
+title:
+
+Take/Stop Ratio Filter for the Retest LIMIT Entry (MIN_ENTRY_RR)
+
+date:
+
+2026-09-19
+
+status:
+
+ACCEPTED / IMPLEMENTED
+
+category:
+
+Robot Strategy / Entry Quality
+
+context:
+
+Late Market entry already skipped trades with take/stop ratio below 1.5, while the normal retest LIMIT entry computed STOP and TAKE only after the fill, so trades with a poor ratio were entered. The closed-trade analysis on the PC database showed a low hit rate.
+
+decision:
+
+Before the initial retest LIMIT is placed, the planned STOP and TAKE are computed with the same code as after the fill and `rr = risk_reward_ratio(...)`. If `rr < MIN_ENTRY_RR` (default 1.5, user decision 2026-09-19; env override `ROBOT_MIN_ENTRY_RR`, Decimal 0..10), no LIMIT is placed and the candidate ends as `INVALIDATED` with reason `SKIPPED_POOR_RR` and the entry, stop, take and rr stored in `execution.entry_rr_filter`. A ratio equal to the threshold enters.
+
+rationale:
+
+The same quality bar for both entry paths, configurable so it can be tuned from collected data.
+
+consequences:
+
+* STOP, TAKE, protection and admission logic are unchanged; the 0.7% minimum stop is a separate task;
+* if the ratio cannot be computed the LIMIT is placed as before (post-fill protection stays the owner);
+* only the initial LIMIT is checked, repricing is unchanged;
+* `MIN_LATE_ADMISSION_RR` keeps its own constant with the same default; the environment variable does not apply to it;
+* the running backend picks the code up only after a restart.

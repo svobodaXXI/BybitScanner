@@ -1,7 +1,9 @@
 from contextlib import redirect_stdout
+import os
 from decimal import Decimal
 import io
 from pathlib import Path
+from types import SimpleNamespace
 import tempfile
 import time
 import unittest
@@ -480,6 +482,125 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             self.store.load_robot_candidates_by_status(ACCOUNT_ID, ())
         with self.assertRaises(ValueError):
             self.store.load_robot_candidates_by_status(ACCOUNT_ID, ("DONE",))
+
+    # --- retest LIMIT take/stop filter (MIN_ENTRY_RR) -------------------------------------
+
+    def _rr_check(self, direction, *, reference, extreme, entry="1000", env=None):
+        """Call the pre-placement filter directly with a planned entry of ``entry``.
+
+        Snapshot geometry gives stop = extreme -/+ 0.1 (1% from entry 1000) and
+        take = reference +/- 0.9 * 10, so ``reference`` picks the ratio.
+        """
+        long_side = direction == "LONG"
+        snapshot = _snapshot(
+            pattern="Falling Wedge" if long_side else "Rising Wedge",
+            lower_touch_prices=(extreme,) if long_side else (1.0,),
+            upper_touch_prices=(1.0,) if long_side else (extreme,),
+            reference_price=reference, start_width=10.0,
+        )
+        record = SimpleNamespace(
+            candidate_id="candidate-rr", symbol=Symbol(SYMBOL), signal_snapshot=snapshot,
+        )
+        plan = SimpleNamespace(
+            direction=direction, request=SimpleNamespace(limit_price=Decimal(entry)),
+        )
+        environment = {"ROBOT_MIN_ENTRY_RR": env} if env is not None else {}
+        with patch.dict(os.environ, environment):
+            if env is None:
+                os.environ.pop("ROBOT_MIN_ENTRY_RR", None)
+            with redirect_stdout(io.StringIO()):
+                return self.monitor._entry_rr_skip(record, plan)
+
+    def test_entry_rr_below_threshold_is_skipped_for_long_and_short(self):
+        # LONG: entry 1000, stop 990 (1% risk), take = reference + 9 -> rr = reward% / 1%.
+        long_skip = self._rr_check("LONG", reference=1005.0, extreme=990.1)  # take 1014 -> 1.4
+        self.assertEqual(long_skip[0], "SKIPPED_POOR_RR")
+        self.assertEqual(
+            {key: Decimal(value) for key, value in long_skip[1].items()},
+            {
+                "entry_price": Decimal("1000"), "min_rr": Decimal("1.5"),
+                "stop_price": Decimal("990"), "take_price": Decimal("1014"), "rr": Decimal("1.4"),
+            },
+        )
+        # SHORT: entry 1000, stop 1010, take = reference - 9 -> 986 -> 1.4
+        short_skip = self._rr_check("SHORT", reference=995.0, extreme=1009.9)
+        self.assertEqual(short_skip[0], "SKIPPED_POOR_RR")
+        self.assertEqual(
+            tuple(Decimal(short_skip[1][key]) for key in ("stop_price", "take_price", "rr")),
+            (Decimal("1010"), Decimal("986"), Decimal("1.4")),
+        )
+
+    def test_entry_rr_at_or_above_threshold_is_not_skipped(self):
+        for direction, extreme, references in (
+            ("LONG", 990.1, (1006.0, 1011.0)),   # take 1015 -> rr 1.5, take 1020 -> rr 2.0
+            ("SHORT", 1009.9, (994.0, 989.0)),   # take 985 -> rr 1.5, take 980 -> rr 2.0
+        ):
+            for reference in references:
+                with self.subTest(direction=direction, reference=reference):
+                    self.assertIsNone(
+                        self._rr_check(direction, reference=reference, extreme=extreme)
+                    )
+
+    def test_entry_rr_threshold_follows_environment_variable(self):
+        # rr is 1.5 here: passes by default, skipped when the threshold is raised.
+        self.assertIsNone(self._rr_check("LONG", reference=1006.0, extreme=990.1))
+        raised = self._rr_check("LONG", reference=1006.0, extreme=990.1, env="1.6")
+        self.assertEqual(raised[0], "SKIPPED_POOR_RR")
+        self.assertEqual((Decimal(raised[1]["min_rr"]), Decimal(raised[1]["rr"])), (Decimal("1.6"), Decimal("1.5")))
+        # rr 1.4 passes when the threshold is lowered.
+        self.assertIsNone(self._rr_check("LONG", reference=1005.0, extreme=990.1, env="1.4"))
+        # Invalid values fall back to the default 1.5.
+        for bad in ("abc", "-1", "11", "NaN", ""):
+            with self.subTest(env=bad):
+                skipped = self._rr_check("LONG", reference=1005.0, extreme=990.1, env=bad)
+                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("1.5"))
+
+    def test_entry_rr_unavailable_places_the_limit_as_before(self):
+        # Target on the wrong side of the reference: no take can be computed.
+        snapshot = _snapshot(reference_price=100.0, start_width=0.0)
+        record = SimpleNamespace(
+            candidate_id="candidate-rr", symbol=Symbol(SYMBOL), signal_snapshot=snapshot,
+        )
+        plan = SimpleNamespace(direction="LONG", request=SimpleNamespace(limit_price=Decimal("100")))
+        with redirect_stdout(io.StringIO()) as output:
+            self.assertIsNone(self.monitor._entry_rr_skip(record, plan))
+        self.assertIn("[ROBOT ENTRY RR UNAVAILABLE]", output.getvalue())
+
+    def test_poor_rr_candidate_places_no_limit_and_is_terminated_with_reason(self):
+        # start_width=1 keeps the frozen take close: rr is about 1.9 (default fixture is above 10).
+        self._create_candidate(start_width=1.0)
+        self._drive_to_retest_detected()
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "10"}), \
+                redirect_stdout(io.StringIO()):
+            self.monitor.tick()
+
+        self.assertEqual(self.executor.limit_calls, [])
+        record = self.store.get_robot_candidate("candidate-1")
+        self.assertEqual(record.status, "INVALIDATED")
+        execution = record.robot_state["execution"]
+        self.assertNotIn("limit_order_id", execution)
+        self.assertEqual(execution["stopped_without_entry_reason"], "SKIPPED_POOR_RR")
+        details = execution["entry_rr_filter"]
+        self.assertEqual(details["min_rr"], "10")
+        self.assertEqual(
+            sorted(details), ["entry_price", "min_rr", "rr", "stop_price", "take_price"],
+        )
+        self.assertLess(Decimal(details["rr"]), Decimal("10"))
+
+    def test_rr_equal_to_threshold_still_places_the_limit(self):
+        self._create_candidate(start_width=1.0)
+        record = self._drive_to_retest_detected()
+        plan = self.monitor._build_initial_retest_limit_plan(record, record.robot_state)
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "10"}), redirect_stdout(io.StringIO()):
+            rr = self.monitor._entry_rr_skip(record, plan)[1]["rr"]
+
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": rr}):
+            self.monitor.tick()
+
+        self.assertEqual(len(self.executor.limit_calls), 1)
+        execution = self.store.get_robot_candidate("candidate-1").robot_state["execution"]
+        self.assertIn("limit_order_id", execution)
+        self.assertNotIn("entry_rr_filter", execution)
 
     def test_lazily_initializes_missing_robot_state_without_reading_a_candle(self):
         self._create_candidate()

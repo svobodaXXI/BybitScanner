@@ -1,5 +1,7 @@
 from decimal import Decimal
+import os
 import unittest
+from unittest.mock import patch
 
 from robot_protection import (
     PROTECTION_DEADLINE_MS,
@@ -262,6 +264,40 @@ class RobotProtectionTests(unittest.TestCase):
         self.assertEqual(at_entry, Decimal("102.00"))
         self.assertEqual(below_entry, Decimal("102.00"))
         self.assertGreater(below_entry, Decimal("100"))
+
+
+class MinEntryRrTests(unittest.TestCase):
+    def _threshold(self, value):
+        import robot_protection
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ROBOT_MIN_ENTRY_RR", None)
+            if value is not None:
+                os.environ["ROBOT_MIN_ENTRY_RR"] = value
+            return robot_protection.min_entry_rr()
+
+    def test_default_is_one_and_a_half(self):
+        import robot_protection
+
+        self.assertEqual(robot_protection.MIN_ENTRY_RR, Decimal("1.5"))
+        self.assertEqual(self._threshold(None), Decimal("1.5"))
+
+    def test_environment_value_in_bounds_is_used(self):
+        for raw, expected in (("2", "2"), (" 1.25 ", "1.25"), ("0", "0"), ("10", "10")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self._threshold(raw), Decimal(expected))
+
+    def test_invalid_or_out_of_bounds_value_falls_back_to_default(self):
+        for raw in ("", "  ", "abc", "-0.1", "10.01", "NaN", "Infinity", "1,5"):
+            with self.subTest(raw=raw):
+                self.assertEqual(self._threshold(raw), Decimal("1.5"))
+
+    def test_late_admission_keeps_its_own_constant_with_the_same_default(self):
+        from terminal.application.robot_late_admission import MIN_LATE_ADMISSION_RR
+
+        self.assertEqual(MIN_LATE_ADMISSION_RR, Decimal("1.5"))
+        with patch.dict(os.environ, {"ROBOT_MIN_ENTRY_RR": "5"}):
+            self.assertEqual(MIN_LATE_ADMISSION_RR, Decimal("1.5"))  # env applies to the LIMIT path only
 
 
 if __name__ == "__main__":

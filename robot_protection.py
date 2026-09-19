@@ -8,8 +8,9 @@ TAKE recovery.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import hashlib
+import os
 from typing import Any, Mapping, Protocol
 
 from robot_state_machine import DIRECTION_LONG, DIRECTION_SHORT
@@ -22,6 +23,10 @@ from terminal.api.models import (
 MAX_STOP_DISTANCE = Decimal("0.02")
 TAKE_REALIZATION = Decimal("0.90")
 PROTECTION_DEADLINE_MS = 5_000
+# Minimum planned take/stop ratio for a new entry (retest LIMIT and late Market entry).
+MIN_ENTRY_RR = Decimal("1.5")
+MIN_ENTRY_RR_ENV = "ROBOT_MIN_ENTRY_RR"
+MIN_ENTRY_RR_BOUNDS = (Decimal("0"), Decimal("10"))
 
 RECOVERY_PROTECTED = "PROTECTED"
 RECOVERY_TAKE_ONLY = "TAKE_RECOVERY"
@@ -33,6 +38,20 @@ RECOVERY_CLOSED = "CLOSED_EMERGENCY_PROTECTION_FAILURE"
 
 class RobotProtectionError(RuntimeError):
     pass
+
+
+def min_entry_rr() -> Decimal:
+    """Retest-LIMIT entry threshold: ``ROBOT_MIN_ENTRY_RR`` when a valid Decimal in 0..10, else the default."""
+
+    raw = os.environ.get(MIN_ENTRY_RR_ENV)
+    if raw is None or not raw.strip():
+        return MIN_ENTRY_RR
+    try:
+        value = Decimal(raw.strip())
+    except InvalidOperation:
+        return MIN_ENTRY_RR
+    low, high = MIN_ENTRY_RR_BOUNDS
+    return value if value.is_finite() and low <= value <= high else MIN_ENTRY_RR
 
 
 class ProtectionSubmitter(Protocol):
