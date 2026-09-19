@@ -681,7 +681,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(self.executor.cancel_calls, [])
         still_resting = self.store.get_paper_limit(order_id, ACCOUNT_ID)
         self.assertEqual(still_resting.price, original_price)
-        self.assertEqual(still_resting.status, "active")
+        self.assertEqual(still_resting.status, "open")
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.status, "APPROVED")
         self.assertEqual(record.robot_state["execution"]["last_limit_index"], 104)
