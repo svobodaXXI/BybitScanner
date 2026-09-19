@@ -1822,6 +1822,42 @@ def test_slow_call_and_book_update_log_warning_and_count_as_slowest(monkeypatch,
         runtime.close()
 
 
+def test_owner_diagnostics_failure_is_logged_once_and_owner_keeps_working(monkeypatch, caplog):
+    import terminal.runtime.paper_http_server as paper_http_server
+
+    def broken_label(_source: object) -> str:
+        raise RuntimeError("label boom")
+
+    # Every task is "slow", so each observation reaches the broken label.
+    monkeypatch.setattr(paper_http_server, "SLOW_OWNER_TASK_WARNING_MS", -1.0)
+    monkeypatch.setattr(paper_http_server, "_owner_task_label", broken_label)
+
+    class RecordingRuntime:
+        def __init__(self) -> None:
+            self.received: list[str] = []
+
+        def close(self) -> None:
+            return None
+
+    target = RecordingRuntime()
+    runtime = SerializedPaperRuntime(lambda: target)
+    try:
+        with caplog.at_level("WARNING", logger=paper_http_server.__name__):
+            assert runtime.call(lambda _: "first") == "first"
+            runtime.enqueue(lambda owner: owner.received.append("protection"))
+            assert runtime.call(lambda _: "second") == "second"
+            runtime.enqueue(lambda owner: owner.received.append("protection-2"))
+            assert runtime.call(lambda _: "third") == "third"
+
+        assert runtime._thread.is_alive()
+        assert target.received == ["protection", "protection-2"]
+        errors = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert [r.getMessage() for r in errors] == ["PAPER owner diagnostics failed; disabling"]
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+    finally:
+        runtime.close()
+
+
 class _CoverageTrades:
     def apply_message(self, message: dict) -> str:
         return "IGNORED"

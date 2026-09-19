@@ -1096,6 +1096,7 @@ class SerializedPaperRuntime:
         # Slowest owner request of any kind since start: (ms, kind, label source).
         # Written only by the owner thread as one tuple; the label is resolved lazily.
         self._slowest_owner_task: tuple[float, str | None, object] = (0.0, None, None)
+        self._owner_diagnostics_disabled = False
         self._protection_ingress_last_symbol: str | None = None
         self._protection_ingress_last_role: str | None = None
         self._protection_ingress_last_overflow_symbol: str | None = None
@@ -1230,15 +1231,25 @@ class SerializedPaperRuntime:
     def _observe_owner_task(
         self, kind: str, label_source: object, processing_ms: float, detail: str = "",
     ) -> None:
-        """Owner thread only. Cheap unless the task is slow or the slowest so far."""
-        if processing_ms > self._slowest_owner_task[0]:
-            self._slowest_owner_task = (processing_ms, kind, label_source)
-        if processing_ms > SLOW_OWNER_TASK_WARNING_MS:
-            LOGGER.warning(
-                "Slow PAPER owner task: kind=%s task=%s processing_ms=%.1f queue_depth=%d%s",
-                kind, _owner_task_label(label_source), processing_ms,
-                self._requests.qsize(), detail,
-            )
+        """Owner thread only. Cheap unless the task is slow or the slowest so far.
+
+        Diagnostics must never take down the owner thread: the first failure is
+        logged once and disables them for the rest of the process.
+        """
+        if self._owner_diagnostics_disabled:
+            return
+        try:
+            if processing_ms > self._slowest_owner_task[0]:
+                self._slowest_owner_task = (processing_ms, kind, label_source)
+            if processing_ms > SLOW_OWNER_TASK_WARNING_MS:
+                LOGGER.warning(
+                    "Slow PAPER owner task: kind=%s task=%s processing_ms=%.1f queue_depth=%d%s",
+                    kind, _owner_task_label(label_source), processing_ms,
+                    self._requests.qsize(), detail,
+                )
+        except Exception:
+            self._owner_diagnostics_disabled = True
+            LOGGER.exception("PAPER owner diagnostics failed; disabling")
 
     def _run(self, factory) -> None:
         runtime = None
