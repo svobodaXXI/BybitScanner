@@ -59,7 +59,8 @@ from terminal.application.robot_recovery import (
     RobotRecoveryCoordinator,
 )
 from robot_flat_closure import CandidateOwnership, prove_flat_closure
-from scanner_geometry_cursor import latest_scanner_closed_candle
+from scanner_geometry_cursor import latest_scanner_closed_candle, load_scanner_catchup_closed_candles
+from terminal.runtime.closed_candle_cache import CachedClosedCandleProvider
 from terminal.domain.models import (
     Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
     PositionSide, Quantity, Symbol, TradingAccountId,
@@ -693,11 +694,29 @@ class PaperRuntime:
         # call below) so robot_synchronize_pending_entries() can build an
         # equivalent one-shot RobotBreakoutMonitor with the exact same
         # market-data source.
-        self._robot_closed_candle_provider = robot_closed_candle_provider or latest_scanner_closed_candle
+        # Default production provider: a cache so the one-shot monitors that run on
+        # this (owner) thread read candles fetched by the background monitor
+        # instead of blocking on REST. An injected plain callable is used as is.
+        provider = robot_closed_candle_provider or CachedClosedCandleProvider()
+        self.robot_closed_candle_cache = (
+            provider if isinstance(provider, CachedClosedCandleProvider) else None
+        )
+        if self.robot_closed_candle_cache is not None:
+            self.robot_closed_candle_cache.bind_owner_thread(self.store.is_owned_by_current_thread)
+        self._robot_closed_candle_provider = provider
+        # RobotBreakoutMonitor enables admission catch-up only for the bare
+        # latest_scanner_closed_candle; keep that when the cache wraps it.
+        self._robot_admission_catchup_candles = (
+            load_scanner_catchup_closed_candles
+            if self.robot_closed_candle_cache is not None
+            and self.robot_closed_candle_cache.fetch is latest_scanner_closed_candle
+            else None
+        )
         self._robot_breakout_monitor = RobotBreakoutMonitor(
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
             get_closed_candle=self._robot_closed_candle_provider,
+            get_admission_catchup_candles=self._robot_admission_catchup_candles,
             action_executor=RobotPaperActionExecutor(self),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
@@ -1203,6 +1222,7 @@ class PaperRuntime:
                 lambda: self.store,
                 self._paper_account_id,
                 get_closed_candle=self._robot_closed_candle_provider,
+                get_admission_catchup_candles=self._robot_admission_catchup_candles,
                 action_executor=_DirectRobotActionExecutor(self),
                 tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
                 clock_ms=lambda: int(time.time() * 1000),
@@ -1277,6 +1297,7 @@ class PaperRuntime:
             lambda: self.store,
             self._paper_account_id,
             get_closed_candle=self._robot_closed_candle_provider,
+            get_admission_catchup_candles=self._robot_admission_catchup_candles,
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
@@ -1480,6 +1501,14 @@ class PaperRuntime:
         if not sep or not symbol or not reason:
             return None
         return symbol, reason
+
+    def robot_approved_candidate_symbols(self) -> tuple[str, ...]:
+        """Symbols of APPROVED candidates (light read) for the candle cache warm-up."""
+        return tuple(sorted({
+            candidate.symbol.value
+            for candidate in self.store.load_active_robot_candidate_states(self._paper_account_id)
+            if candidate.status == "APPROVED"
+        }))
 
     def robot_protection_coverage_roles(self) -> dict[str, str]:
         """Return the highest-severity lifecycle role for each covered symbol."""
@@ -2035,6 +2064,7 @@ class PaperRuntime:
             lambda: self.store,
             self._account_id,
             get_closed_candle=self._robot_closed_candle_provider,
+            get_admission_catchup_candles=self._robot_admission_catchup_candles,
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
