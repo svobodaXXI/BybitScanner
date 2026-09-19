@@ -1,7 +1,9 @@
-"""1m chart for one Robot position or closed Robot trade (read-only).
+"""Candle chart for one Robot position or closed Robot trade (read-only).
 
-Pattern lines come only from the frozen candidate snapshot: the 1m
-``robot_geometry`` lines are evaluated at the candle index produced by
+The timeframe is ``view.chart_candle_minutes`` (the Robot signal's timeframe).
+
+Pattern lines come only from the frozen candidate snapshot: the 1m-cursor
+``robot_geometry`` lines are evaluated at each candle's open time through
 ``scanner_geometry_cursor.project_latest_geometry_index``; nothing is refit.
 Horizontal levels show average entry, STOP and TAKE. Filled triangles are
 executions (Buy up, Sell down); a hollow triangle is a resting limit order.
@@ -24,7 +26,9 @@ import mplfinance as mpf  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from robot_position_view import PositionView, format_price  # noqa: E402
+from robot_position_view import (  # noqa: E402
+    CHART_MAX_CANDLES, PositionView, format_price,
+)
 from scanner_geometry_cursor import (  # noqa: E402
     ONE_MINUTE_MS, ScannerGeometryCursorError, project_latest_geometry_index,
 )
@@ -41,6 +45,9 @@ ENTRY_COLOR = "#1e88e5"
 STOP_COLOR = "#d50000"
 TAKE_COLOR = "#00a152"
 LINE_COLOR = "#ff9800"
+# Windows up to CHART_MAX_CANDLES (see chart_candle_limit): above WIDE_WINDOW_CANDLES the
+# default canvas gives ~1 px per candle, so a wider, denser canvas keeps bodies visible.
+WIDE_WINDOW_CANDLES = 500
 
 
 class PositionChartError(RuntimeError):
@@ -123,9 +130,10 @@ def _pattern_lines(view: PositionView, times: np.ndarray) -> list[np.ndarray]:
     return lines
 
 
-def _candle_position(times: np.ndarray, time_ms: int) -> int | None:
+def _candle_position(times: np.ndarray, time_ms: int, candle_ms: int) -> int | None:
+    """Index of the candle whose [open, open + candle_ms) span contains ``time_ms``."""
     position = int(np.searchsorted(times, time_ms, side="right")) - 1
-    if position < 0 or time_ms >= times[position] + ONE_MINUTE_MS:
+    if position < 0 or time_ms >= times[position] + candle_ms:
         return None
     return position
 
@@ -154,7 +162,13 @@ def _draw_level(ax, price: float, label: str, color: str, style: str) -> None:
     )
 
 
-def render_position_chart(view: PositionView, candles_df, out_path: Path | str | None = None) -> Path:
+def render_position_chart(
+    view: PositionView,
+    candles_df,
+    out_path: Path | str | None = None,
+) -> Path:
+    candle_minutes = view.chart_candle_minutes
+    candle_ms = candle_minutes * ONE_MINUTE_MS
     df = _prepare_candles(candles_df)
     times = df["time"].to_numpy(dtype="int64")
     out = Path(out_path) if out_path is not None else default_chart_path(view.symbol)
@@ -164,11 +178,16 @@ def render_position_chart(view: PositionView, candles_df, out_path: Path | str |
         mpf.make_addplot(values, color=LINE_COLOR, width=2)
         for values in _pattern_lines(view, times)
     ]
-    title = f"{view.symbol} | {view.pattern or '—'} | {view.direction} | 1m"
+    title = f"{view.symbol} | {view.pattern or '—'} | {view.direction} | {candle_minutes}m"
+    wide = len(df) > WIDE_WINDOW_CANDLES
     plot_kwargs = dict(
-        type="candle", style="charles", title=title, volume=False, figsize=(12, 6),
+        type="candle", style="charles", title=title, volume=False,
+        figsize=(16, 7) if wide else (12, 6),
         datetime_format="%H:%M", xrotation=0, ylabel="", returnfig=True,
+        warn_too_much_data=CHART_MAX_CANDLES + 1,
     )
+    if wide:
+        plot_kwargs["update_width_config"] = {"candle_width": 0.8, "candle_linewidth": 0.5}
     if addplots:
         plot_kwargs["addplot"] = addplots
     fig, axes = mpf.plot(df[["open", "high", "low", "close"]], **plot_kwargs)
@@ -200,7 +219,7 @@ def render_position_chart(view: PositionView, candles_df, out_path: Path | str |
                 exit_side = "Sell" if view.direction == "LONG" else "Buy"
                 markers.append((view.exit_time_ms, exit_price, exit_side, True))
         for time_ms, price, side, filled in markers:
-            x = _candle_position(times, int(time_ms))
+            x = _candle_position(times, int(time_ms), candle_ms)
             if x is not None:
                 _draw_marker(ax, x, price, side, filled=filled)
                 prices.append(price)
@@ -208,7 +227,7 @@ def render_position_chart(view: PositionView, candles_df, out_path: Path | str |
         low, high = min(prices), max(prices)
         pad = (high - low) * 0.05 or abs(high) * 0.01 or 1.0
         ax.set_ylim(low - pad, high + pad)
-        fig.savefig(out, dpi=100, bbox_inches="tight")
+        fig.savefig(out, dpi=120 if wide else 100, bbox_inches="tight")
     finally:
         plt.close(fig)
 
