@@ -2,11 +2,11 @@
 
 Version:
 
-4.40
+4.41
 
 Date:
 
-2026-09-15
+2026-09-19
 
 Document Type:
 
@@ -75,6 +75,9 @@ Responses should be concise, current-stage-oriented, technically precise, and fr
 unnecessary process narration. A natural, lightly humorous tone is allowed only when it does not reduce clarity,
 discipline, or productivity.
 
+Priority: saving the user's time and manual effort outranks the assistant's response brevity. The assistant prepares
+the commands and prompts itself; it does not shorten a response by moving work onto the user (see `2.2.2` and `8.11`).
+
 ## 2.1 USER_ACTION_EXPLICITNESS_RULE
 
 If work cannot continue without a user action, introduce it exactly with:
@@ -102,7 +105,7 @@ For dependent commands:
 3. wait for or observe that result;
 4. provide the next dependent step separately.
 
-Independent safe commands may be batched. A required action chain must begin from the last known user state and
+Independent safe commands may be batched, only within the limit of `2.2.2 COMMAND_LOAD_LIMIT_RULE`. A required action chain must begin from the last known user state and
 include every prerequisite: application/terminal, directory, runtime activation, exact input location, required
 restart, and expected outcome. Never require the user to infer missing setup.
 
@@ -123,6 +126,17 @@ Immediately before sending any response that requires user action, verify that:
 
 If any condition fails, correct the response before sending it. This is an enforcement/preflight gate for the
 existing `COPY_READY_ACTION_BLOCK_RULE`, not a second copy-ready specification.
+
+### 2.2.2 COMMAND_LOAD_LIMIT_RULE — HARD RULE
+
+One response contains at most 2 commands or blocks for the user to execute (PowerShell, bash, or any other shell).
+A chain joined with `;` or `&&`, and a multi-line script, each count as several commands. Dependent steps are given one
+per message, per `2.2`.
+
+Everything the assistant can do automatically — Git operations, process restarts, checks, file edits — is delegated to
+Claude Code (or Codex) through a prompt, not handed to the user as commands. A prompt for Claude Code counts as 1
+block. The batching allowance in `2.2` ("Independent safe commands may be batched.") applies only within this limit.
+Preflight `2.2.1` also verifies this limit before sending a response that requires user action.
 
 ## 2.3 NO ASSUMED USER STATE + BEGINNER-SAFE STEP-BY-STEP
 
@@ -664,7 +678,8 @@ here-strings, manual Notepad editing, or fragile inline replacement commands.
 
 Preferred order:
 1. Codex/local automation when authorized and available;
-2. a downloadable deterministic Python/patch helper with anchor/version preflight and fail-closed behavior;
+2. a deterministic Python/patch helper with anchor/version preflight and fail-closed behavior, created in the
+   repository by Codex/Claude Code (never a file the user downloads or places; see `8.11`);
 3. a short targeted command only when the edit is genuinely small and encoding-safe;
 4. manual fragment editing only when no safer automated path exists and the user explicitly accepts it.
 
@@ -731,12 +746,22 @@ solutions exist, tests disagree with runtime behavior, a repeated manual workaro
 project is likely to have already solved the same class of problem. It is not required for a trivial deterministic
 fix with a proven local cause, and it must not become broad browsing that delays an obvious safe correction.
 
+## 8.11 NO_MANUAL_FILE_PLACEMENT_RULE — HARD RULE
+
+The user does not download, rename, drag, or manually place files (documents, patches, scripts) created by the
+assistant. Such files are created in the repository through Claude Code (or Codex): the prompt contains the full text of
+the file or the command Claude Code runs. For edits to existing files, the prompt contains the exact changes.
+
+A manual path is allowed only when the automatic path is impossible and the user has explicitly agreed to it. This
+extends `8.7` (no user as file transport) and `8.8` (machine-applied file changes) to files the assistant produces.
+
 ---
 
 # 9. CURRENT REVISION RECORD
 
-`4.40` removes the stale main-only local sync requirement and aligns task preflight wording with the GitHub-first
-feature-branch workflow and the actual `task start` remote-tracking check. Freshness remains fail-closed: the local
-HEAD must match the intended branch's remote tracking ref before editing. Detailed history remains in Git.
+`4.41` adds the user requirements of 2026-09-19 as hard rules: `2.2.2 COMMAND_LOAD_LIMIT_RULE` (at most 2 commands or
+blocks per response; automatable work goes to Claude Code as a prompt), `8.11 NO_MANUAL_FILE_PLACEMENT_RULE` (the user
+never places assistant-created files by hand), and the priority of the user's time over response brevity. See
+`DECISION-010` in `DECISION_LOG.md`. Detailed history remains in Git.
 
 # END_OF_DOCUMENT

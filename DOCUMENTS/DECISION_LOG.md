@@ -480,3 +480,50 @@ consequences:
 * the /positions header uses 🤖 instead of 📌;
 * texts that already start with 🤖 are unchanged;
 * only message texts change; logic and callback_data are unchanged.
+
+---
+
+## DECISION-010
+
+title:
+
+Assistant Command Load Limit and No Manual File Placement
+
+date:
+
+2026-09-19
+
+status:
+
+ACCEPTED / IMPLEMENTED
+
+category:
+
+Workflow / Assistant Protocol
+
+context:
+
+User requirements of 2026-09-19: long command lists and manually placed files (downloading, renaming, dragging
+documents, patches or scripts) cost the user more time than the assistant saves by shortening its answers.
+
+decision:
+
+`ASSISTANT_PROTOCOL.md` 4.41 adds two hard rules. `2.2.2 COMMAND_LOAD_LIMIT_RULE`: at most 2 commands or blocks for the
+user per response; a `;`/`&&` chain or a multi-line script counts as several; dependent steps go one per message;
+automatable work (Git, restarts, checks, file edits) is delegated to Claude Code as a prompt, which counts as 1 block.
+`8.11 NO_MANUAL_FILE_PLACEMENT_RULE`: assistant-created files are created in the repository through Claude Code; the
+prompt carries the full file text, the command, or the exact changes; a manual path only when the automatic one is
+impossible and the user explicitly agrees. Priority: the user's time outranks the assistant's response brevity.
+
+rationale:
+
+The assistant, not the user, prepares commands and prompts. This keeps user actions few, verifiable and copy-ready.
+
+consequences:
+
+* the batching allowance of `2.2` applies only within the 2-block limit;
+* `8.8` item 2 no longer allows a downloadable helper: the helper is created in the repository by Claude Code/Codex;
+* the new file rule is `8.11`, not `8.9`: `8.9` is the existing NEW STRATEGY IDEA CAPTURE rule, referenced by
+  `.agents/skills/strategy-hypothesis-capture/SKILL.md`, and is not renumbered;
+* only documentation changes; no runtime or code behavior changes.
+
