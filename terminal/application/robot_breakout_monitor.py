@@ -72,6 +72,7 @@ DEFAULT_LATE_MARKET_MAX_BOOK_AGE_MS = 1000
 INACTIVE_LIMIT_STATUSES = {"filled", "cancelled"}
 PHASE_INVALIDATED_UNSUPPORTED_PATTERN = "INVALIDATED_UNSUPPORTED_PATTERN"
 ENTRY_RR_SKIP_POOR_RR = "SKIPPED_POOR_RR"  # same name as the late-admission decision
+ENTRY_RR_SKIP_UNAVAILABLE = "SKIPPED_RR_UNAVAILABLE"
 
 
 class ActionExecutor(Protocol):
@@ -514,7 +515,6 @@ class RobotBreakoutMonitor:
             # uncomputable RR; keep monitoring the original proven order.
             if self._entry_rr_skip(
                 record, plan, direction=str(record.robot_state["direction"]),
-                block_unavailable=True,
             ) is not None:
                 return False
             result = robot_entry_limit.submit_retest_limit_reprice(
@@ -1094,17 +1094,15 @@ class RobotBreakoutMonitor:
     def _entry_rr_skip(
         self, record: RobotCandidateRecord, plan, *,
         direction: str | None = None,
-        block_unavailable: bool = False,
     ) -> tuple[str, dict[str, object]] | None:
         """Planned take/stop ratio for the retest LIMIT, before it is placed.
 
         Uses the same inputs as ``robot_protection.build_protection_plan`` after
         the fill (structural extreme and frozen prices from the snapshot), with
         the LIMIT price as the entry. Returns ``(reason, details)`` when the
-        candidate must be skipped, ``None`` when the LIMIT may be placed. If the
-        ratio cannot be computed the LIMIT is placed as before: the existing
-        post-fill protection path (including its fail-closed handling) stays
-        the single owner of that case.
+        candidate must be skipped, ``None`` only when RR is computable and
+        meets the threshold. Existing filled positions continue through their
+        independent post-fill protection and emergency-close lifecycle.
         """
         threshold = robot_protection.min_entry_rr()
         details: dict[str, object] = {
@@ -1132,13 +1130,10 @@ class RobotBreakoutMonitor:
                 "[ROBOT ENTRY RR UNAVAILABLE] "
                 f"candidate_id={record.candidate_id} symbol={record.symbol.value} error={error}"
             )
-            # Initial-entry compatibility is handled separately: do not let
-            # an uncomputable reprice worsen an existing resting LIMIT.
-            if block_unavailable:
-                return "SKIPPED_RR_UNAVAILABLE", details
-            return None
+            details["error"] = str(error)
+            return ENTRY_RR_SKIP_UNAVAILABLE, details
         details.update(stop_price=str(stop_price), take_price=str(take_price), rr=str(rr))
-        if rr < threshold:
+        if rr <= 0 or rr < threshold:
             print(
                 "[ROBOT ENTRY SKIPPED] "
                 f"candidate_id={record.candidate_id} symbol={record.symbol.value} "
