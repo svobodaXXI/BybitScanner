@@ -94,6 +94,9 @@ with concrete ideas to borrow. Output: `DOCUMENTS/GEOMETRY_RESEARCH_<date>.md`.
 ### G1 — Chart window showing both the pattern and its preceding impulse (small, do first)
 Purpose: expose the movement immediately **before** the first pattern anchor, not merely the full wedge. That history is necessary
 for visual review and for collecting labeled examples for G3; chart history does NOT by itself change detector/Robot decisions.
+The existing frozen START may be an unsuitable choice for a subtype not yet distinguished by the detector.
+G1 displays that recorded START and enough preceding bars to inspect alternative terminal/local extrema;
+it must not silently relocate existing line anchors based on a retrospective subtype guess.
 Window: request enough historical candles for the earlier of both frozen line anchors and the entry, plus a **pre-pattern context**
 target of one pattern-formation span (earliest anchor to frozen Scanner detection time), in the source chart timeframe; keep the
 current candles on the right. This is a display-only lookback target, NOT an algorithmic definition of a qualifying impulse.
@@ -108,10 +111,26 @@ Acceptance: on representative 1m and 5m signal/position cards, both START anchor
 is visible when available, and capped/missing history is marked rather than invented. No DB writes, frozen-geometry revisions,
 trading-rule changes, or VPS/runtime operations in this task.
 
-### G2 — Adequate anchor detection
-Depends on G0 and G1. Inputs from the user: 3-5 chart examples where anchors were wrong (Anchor/START feedback already exists in
+### G2 — Adequate, context-dependent anchor detection
+Depends on G0 and G1. Inputs from the user: 3–5 chart examples where anchors were wrong (Anchor/START feedback already exists in
 the Telegram posts). Output: spec (which pivots are candidates, ranking, tolerance), then implementation behind a flag with
 side-by-side comparison on saved signals.
+**User clarification, 2026-09-20: START/first-anchor semantics differ by wedge context.** For a descending
+deceleration wedge after a DOWN impulse, the intended first anchor is the **first terminal pivot formed by the
+preceding falling impulse immediately before the wedge**, not simply the absolute low of all later local price
+action. For a descending corrective wedge after an UP impulse, the intended first anchor is **the lowest
+extremum of the local structure**, not necessarily that impulse-terminal pivot. Preserve these two distinct
+candidate rules in G2; do not force both wedge types to share an identical START heuristic.
+G2 must retain alternative pivot candidates and the preceding price history to allow G3 to resolve context
+and choose/validate the appropriate structural START without future candles. The historical START of the
+overall figure and the separate actual pivot anchors defining its upper/lower trendlines are not automatically
+the same point. Do not move a frozen signal's historical anchors when rendering a chart; new selection
+affects only new versioned signal snapshots after validation.
+**Open for the G2/G3 spec:** the precise local-structure interval and definition of "lowest extremum"
+(confirmed swing low versus raw candle wick), which high/low terminal pivot is meant at the transition,
+confirmation delay and tolerances, and how to avoid picking an extremum that appeared only *after* signal time.
+For the mirrored rising wedge, a terminal pivot after an UP impulse and the highest local-structure extremum
+for a correction after DOWN are **mirror hypotheses, not yet user-confirmed anchor rules**.
 
 ### G3 — Context subtype classification for BOTH wedge orientations (before G4 Triangle)
 **User intent (2026-09-20):** classify each wedge using the preceding impulse. These are two *context subtypes per geometric
@@ -126,6 +145,14 @@ remain unchanged until a separate strategy decision.
 - Rising Wedge after UP impulse: `RISING_DECELERATION_AFTER_UP` — upward move losing pace inside an ascending
   contraction, candidate bearish exhaustion/reversal SHORT cohort.
 - `PREPATTERN_CONTEXT_UNKNOWN` for missing/ambiguous prior history; do not force a subtype from wedge slope alone.
+**Subtype-specific first anchor:** the user distinguishes the first terminal pivot of the preceding downward
+impulse for a falling *deceleration* wedge from the lowest local-structure extremum for a falling *correction*
+wedge. This is part of G2/G3 geometry semantics, not just an extra post/chart label. Evaluate a bounded
+set of alternative START candidates against provisional prior-impulse evidence, then resolve context and
+validate the corresponding START and both line anchors together using only available closed candles.
+Avoid circular logic: do not require a final subtype to generate all anchor candidates and do not claim a
+final subtype merely because one anchor candidate fits it. If evidence is insufficient, retain UNKNOWN and
+do not silently substitute the other subtype's START. Rising-wedge mirror rules remain proposals until clarified.
 **Signal and chart presentation (user requirement, 2026-09-20):** after G3 classification is implemented and tested,
 show the *same immutable signal-time subtype* on each wedge signal in BOTH presentation surfaces:
 - Scanner Telegram signal **text post** (`notification.py::format_signal`): one standalone line, for example
@@ -155,7 +182,7 @@ validated signal-time evidence; until then keep UI unchanged or show only an exp
 **Desired trading-workflow priority:** investigate giving deceleration/exhaustion cohorts higher priority for Robot candidate
 selection than corrective cohorts. This is a user-requested strategy hypothesis, NOT a validated edge or permission to
 increase size, relax RR/STOP/TAKE, bypass ownership/admission, or activate preferential orders now.
-Prerequisites: G1 preceding-impulse chart; G2 anchor adequacy; user-labeled examples of each orientation/context (at least
+Prerequisites: G1 preceding-impulse chart; G2 alternative START candidates and anchor adequacy; user-labeled examples of each orientation/context (at least
 one each, ideally 3–5 uncertain examples). G3 sequence: (a) choose bounded pre-pattern horizon and reproducible impulse
 direction/strength, distinguish deceleration from a sharp continuation and from noisy/sideways context; (b) freeze a
 signal-time-only subtype and evidence version, with `UNKNOWN` fallback; (c) classify existing wedge detections without
