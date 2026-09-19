@@ -563,6 +563,6 @@ consequences:
 
 * STOP, TAKE, protection and admission logic are unchanged; the 0.7% minimum stop is a separate task;
 * if the ratio cannot be computed the LIMIT is placed as before (post-fill protection stays the owner);
-* only the initial LIMIT is checked, repricing is unchanged;
+* proposed reprices are checked against the same threshold; an uncomputed or poor-RR reprice is not submitted, and the existing unfilled order remains in place and under normal monitoring;
 * `MIN_LATE_ADMISSION_RR` keeps its own constant with the same default; the environment variable does not apply to it;
 * the running backend picks the code up only after a restart.
