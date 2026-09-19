@@ -195,12 +195,13 @@ These are reusable concepts, not proof that any particular threshold generates p
   preserve TradingView Lightweight Charts, mplfinance, TradingView pivot/ZigZag,
   SciPy prominence/distance, QuantConnect Zig Zag, StockCharts wedge context and Freqtrade
   lookahead patterns. They are *reference concepts*, not imported source code or thresholds.
-- **G3P four-point reference research completed below; G3R/G3C still pending:**
-  Telegram on-demand `Освежить` callbacks and Robot boundary-to-boundary corridor trading
-  remain **user-requested requirements**, not validated external implementations. Before
-  those slices, inspect relevant official/public sources and record each URL, reusable
-  mechanism, BybitScanner adaptation, limitations, and dependency decision. An external
-  chart-pattern reference does not authorize preliminary Robot admission or orders.
+- **G3P/G3R reference research completed below; G3C still pending:**
+  Four-point emerging-wedge visuals and Telegram `Освежить` callbacks now have recorded
+  reference behaviors and BybitScanner-specific design choices. Robot boundary-to-boundary
+  corridor trading remains a **user-requested strategy hypothesis**, not a validated
+  external implementation or an authorized order path. Before G3C implementation,
+  research relevant source examples, assumptions, edge/risk evidence and failure modes
+  separately. Neither reference research nor a display button authorizes Robot orders.
 
 ## G3P external reference — four-point *forming* wedges (reviewed 2026-09-20; before Triangle)
 
@@ -244,6 +245,78 @@ fifth/sixth pivot, lost/incomplete source history, 1m/5m index/time alignment an
 bounded Scanner hot-path cost. A plotted forecast, even when all four pivots were
 confirmed, must not independently enable a Robot order. G3R button research and G3C
 corridor execution research remain separate subsequent micro-slices.
+
+## G3R external reference — Telegram `Освежить` and stable formation identity (reviewed 2026-09-20)
+
+**Primary/official sources and reuse choices:**
+
+| Reference | Documented behavior or limitation | BybitScanner adaptation |
+| --- | --- | --- |
+| [Telegram Bot API: InlineKeyboardButton and CallbackQuery](https://core.telegram.org/bots/api#inlinekeyboardbutton) / [CallbackQuery](https://core.telegram.org/bots/api#callbackquery) | An inline button's `callback_data` is limited to **1–64 bytes**. A callback includes the user, a query ID and, when accessible, the originating bot message; callback data cannot be trusted as a live copy of the message's current keyboard. Telegram displays a progress indicator until the bot calls `answerCallbackQuery`. | **ADAPT** a compact, versioned, opaque formation-reference token instead of embedding symbol + timeframe + pivot arrays + entire snapshot. Check both authorized user/chat and the token's ownership/formation binding. Answer each callback promptly **before** a bounded scan or PNG render; report invalid/expired tokens explicitly. A token is a reference, not authority to trade. |
+| [Telegram Bot API: sendPhoto](https://core.telegram.org/bots/api#sendphoto), [sendMessage](https://core.telegram.org/bots/api#sendmessage), [editMessageMedia](https://core.telegram.org/bots/api#editmessagemedia) | A bot can send a new photo with inline keyboard/caption, or modify media where supported. Photo captions are limited to 1024 characters after entity parsing. | **ADAPT** send a **new** text + PNG signal pair and leave the old signal/time-stamped chart untouched. The two posts must share the same one-pass refreshed observation ID/time and geometry revision; don't silently edit the historical post or resend its old filename as if current. Keep caption short; existing Scanner sends its signal text separately and currently attaches the inline keyboard to the photo. |
+| [Telegram Bot FAQ: broadcasting limits](https://core.telegram.org/bots/faq#broadcasting-to-users) | Avoid more than about one outgoing message per second to the same chat; sustained bursts can yield HTTP 429. | **ADAPT** per-owner/per-formation cooldown, in-flight single-flight/deduplication for repeated taps and respectful 429 handling. Don't serialize the whole bot behind a network chart fetch. Use measured, bounded queueing rather than speculative infrastructure. |
+| [python-telegram-bot example: persisted arbitrary callback data](https://github.com/python-telegram-bot/python-telegram-bot/blob/master/examples/arbitrarycallbackdatabot.py) | Its optional arbitrary-object callback mode resolves a short Telegram identifier through a cache; unpersisted identifiers may become invalid after a restart or eviction. | **ADAPT the reference-token concept only, not the PTB dependency**: this repository already uses `requests` and a single `getUpdates` listener. A short token must resolve via a durable existing data owner (or the smallest approved durable mapping) so a recently posted button can survive listener restart. Expired/unresolvable legacy buttons return a clear status instead of guessing by ticker. |
+
+**Repository integration facts verified against PR #156 HEAD `e7c5376`:**
+
+- `notification.py::send_signal` currently sends **signal text first**, then a Scanner PNG
+  with `build_tradingview_keyboard`. That keyboard identifies existing review buttons
+  by `symbol:timeframe`, not by an immutable unique formation/message instance. The
+  current generic `{symbol}_analysis.png` path can be reused by a later scan; an on-demand
+  refresh must render/send a per-request consistent chart snapshot and never mistake
+  that file path for a durable image or formation identifier.
+- `telegram_monitoring.py::run` is the existing **single** long-polling listener and routes
+  positions/monitoring callbacks before delegating to `telegram_review._process_callback`.
+  `_process_monitor_callback` and `telegram_review._process_callback` already enforce
+  owner checks and acknowledge callbacks. Add one narrow refresh callback dispatch in
+  this listener, without a second `getUpdates` consumer, unbounded handler latency,
+  or routing into Robot approval/control actions.
+- `telegram_monitoring.py::_scanner_request` currently targets Scanner
+  `/api/scanner/status|start|pause|resume`; `main.py::run_scan_pass` scans all discovered
+  symbols and emits scan-start/scan-finish notifications. Neither should be called
+  as a quick-refresh shortcut. Locate/reuse the smallest existing single-symbol
+  analyzer / frozen-observation builder; if a bounded read-only on-demand route does
+  not yet exist, define one **only within G3R**, without starting the periodic Scanner
+  or changing candidate admission or Robot state.
+
+**Proposed minimal refresh contract (not implemented):**
+
+1. The initial G3P signal registers a **durable stable formation ID** (symbol,
+   source timeframe and signal-time pivot/geometry provenance; exact identity
+   and schema are G3P outputs), initial revision and originating Telegram
+   chat/message. Store a compact opaque token referring to this identity;
+   do not base the lookup on mutable ticker-only review keys or on an
+   in-memory cache that is lost on restart. Preserve old snapshot/lines.
+2. On an owner click, promptly acknowledge the Telegram query; validate
+   chat + original-message binding, token version, formation identity,
+   current lifecycle and duplicate/in-flight requests. A missing original
+   message or ambiguous/missing formation returns explicit `unavailable`,
+   not a new candidate chosen merely by symbol. Invalidated/expired/
+   superseded formations return their current state without resurrecting
+   an old approved signal.
+3. Fetch **bounded current closed candles** for only this symbol/timeframe,
+   reconstruct its current observation with signal-time-safe pivots,
+   and verify it still refers to the same formation. Construct **one**
+   immutable refreshed snapshot, then render text and image from that
+   exact revision/current candle time. Send a new linked Telegram signal
+   pair; allow a valid refresh when the periodic scanner is PAUSED only if
+   a separately authorized read-only fetch is available. Do not call
+   full-pass scanning, unpause/start the Scanner, write a new Robot approval,
+   mutate an existing Robot snapshot, or send any order.
+4. Deduplicate repeated taps while work is in progress. On stale inputs,
+   incomplete history, fetch/chart failure or Telegram 429, report the
+   actual failure without posting an old chart as current; avoid duplicate
+   text-only or photo-only 'successful refresh' claims. The original
+   message and earlier revisions remain inspectable after restart.
+
+**G3R focused acceptance:** callback data <=64 **UTF-8 bytes**; wrong user/chat and
+fabricated token rejected; correct post/formation survives restart; no cross-talk
+between same symbol on 1m/5m or between two generations of its wedge; double tap
+produces no duplicate updated signals; old photo stays old; new text and photo
+share one current evaluation ID/time; paused periodic scanner stays paused;
+failures/expiry are explicit; bot polling and Robot admission remain unaffected.
+G3R is still documentation-only, and has no implementation authorization to
+change trading behavior.
 
 ### Proposed reuse-first pipeline, not yet a production rule
 
