@@ -29,8 +29,9 @@ No external code is copied. External approaches are presentation/research patter
 The user explicitly needs to see **price action before** the wedge to distinguish a countertrend correction
 from same-direction deceleration. Rendering the first wedge anchor at the left edge is insufficient.
 The current frozen START is a recorded hypothesis, not necessarily the appropriate START for every wedge
-subtype. G1 exposes enough preceding bars to inspect the last impulse's terminal pivot versus the lowest
-local-structure extremum; G1 must not retrospectively modify existing geometry or choose a trading subtype.
+subtype. G1 exposes enough preceding bars to inspect the last impulse's terminal HIGH (falling correction),
+terminal LOW (rising correction), and transition pivot for an impulse-deceleration wedge; G1 must not
+retrospectively modify existing geometry or choose a trading subtype.
 
 1. Derive the earlier of the two frozen line anchors using the current `robot_position_chart._line_start_index`
    conversion from Scanner source-bar coordinates to the immutable 1m Robot cursor; locate its candle time
@@ -80,41 +81,33 @@ identity and independently record one of these five context values, based on **h
 | Rising Wedge | UP | `RISING_DECELERATION_AFTER_UP` | `Контекст: Замедление после роста` |
 | Either / insufficient evidence | UNKNOWN | `PREPATTERN_CONTEXT_UNKNOWN` | `Контекст: Не определён` |
 
-### G2/G3 first-anchor distinction (user clarification, 2026-09-20)
+### G2/G3 historical START — corrected definition (user, 2026-09-20)
 
-The user additionally differentiates the historical **first structural anchor** by wedge context; this is
-a candidate-selection constraint, not a different plotted caption for the same geometry:
+**The earlier claim that a falling corrective wedge STARTs at the lowest local-structure extremum was a misunderstanding and is SUPERSEDED.** The user's clarified rule is the impulse-ending peak/trough at which the countertrend correction begins:
 
-- **Descending deceleration wedge after a downward impulse:** select the first terminal pivot produced
-  by that prior falling impulse at its transition into the wedge as the first structural anchor candidate.
-  Do not replace it mechanically with the lowest wick or a later minimum inside the wedge.
-- **Descending corrective wedge after an upward impulse:** use the **lowest extremum of the local
-  structure** as the first-anchor candidate, rather than automatically reusing the preceding impulse's
-  terminal pivot. The user's definition is preserved as given; the precise bounded local interval,
-  pivot confirmation and whether the extremum is a confirmed swing low or a wick remain open.
-- **Ascending deceleration and corrective wedges:** a terminal pivot after the upward impulse and
-  a highest local-structure extremum for the rising correction are *mirrored design hypotheses*,
-  respectively, **not** confirmed user definitions yet.
+| Wedge context | Preceding impulse | Historical START candidate | Clarification status |
+| --- | --- | --- | --- |
+| Falling correction | Sharp UP | **Terminal HIGH (upper extreme / swing high) completing that bullish impulse**; downward correction/wedge begins there. | User-confirmed correction. |
+| Rising correction | Sharp DOWN | **Terminal LOW (lower extreme / swing low) completing that bearish impulse**; upward rebound/wedge begins there. | User-confirmed mirror of corrective rule. |
+| Falling deceleration | DOWN | First impulse-terminal pivot at falling-impulse → decelerating-wedge transition (working interpretation: transition LOW, not necessarily later final minimum). | User's original first-terminal-pivot principle; exact pivot criterion remains open. |
+| Rising deceleration | UP | Terminal pivot at rising-impulse → decelerating-wedge transition (working interpretation: transition HIGH). | Mirrored **proposal**, not independently user-confirmed. |
 
-A wedge has potentially different concepts of “first anchor”: the episode's historical START,
-the first evidence pivot after the preceding impulse, and each upper/lower boundary's two actual
-line-fitting pivots. Do not assume the selected structural START lies on both boundary lines or
-derive line prices by forcing it onto an unrelated boundary. Preserve actual pivot provenance,
-the chosen start rule and alternative candidate evidence in an immutable signal-time snapshot.
+A chart's historical **pattern START**, the pivot ending an impulse and each upper/lower trendline's
+individual pivot anchors must be stored/identified separately when they are not the same point.
+Do not force both wedge boundaries through the correction's terminal high or low.
+Do not search for the extreme of a future-completed pattern: each pivot needs its event time,
+confirmation time and evidence available at signal time.
 
-**Dependency / avoidance of circular inference:** G2 must supply alternative pre-pattern terminal
-pivots and local extrema without needing a preselected final subtype. G3 then tests provisional
-impulse direction and within-wedge deceleration evidence against the corresponding candidate
-anchor rule, validates upper/lower line geometry, and emits the subtype/START only if jointly
-supported. Otherwise retain UNKNOWN and the prior safe geometry behavior; no label/Robot
-priority from a guessed START. Use only candles available at each signal's decision time, never
-a “lowest” pivot established by later candles or post-trade hindsight. New rules require
-user-reviewed examples and focused tests before replacing current detector anchors.
+**Avoid circular inference:** G2 supplies multiple plausible impulse-ending extrema and
+boundary-pivot candidates without assigning a final subtype. G3 evaluates preceding impulse
+direction and independent within-wedge deceleration evidence, then jointly validates context,
+START and both boundaries. If evidence is unavailable or contradictory, keep UNKNOWN and
+retain safe existing geometry rather than manufacturing a definitive context. Historical
+snapshots and drawn lines are immutable; G1 simply exposes old candles for review.
 
-The G1 visualization should retain enough older candles to show the preceding impulse and
-both plausible START candidates, subject to the API cap; report truncated earlier history
-instead of moving an anchor to make it fit. The display-only work does not await agreement on
-G2/G3 pivot thresholds.
+Open thresholds: what counts as a sharp preceding impulse, how many closed candles confirm the
+terminal pivot, how to identify a transition amid consecutive highs/lows, and how to treat
+unconfirmed START candidates. Collect representative user-reviewed examples of all four variants.
 
 The UP/DOWN impulse label alone does not prove actual deceleration. A G3 specification must distinguish a bounded
 prior directional impulse from range noise and measure weakening movement **inside** the wedge without hindsight.
