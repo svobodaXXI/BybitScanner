@@ -77,6 +77,11 @@ Resolution (guarded, PAPER only):
 
 Total: gross -2.9610, fees 0.6928, net -3.6538 USDT; 1 win, 4 losses. Robot flat afterwards (no open trades).
 
+Caveat: the Fees column (`fees_costs_usdt`) is ONLY the fee of the closing execution; the entry fee is not
+included (roughly 0.15 USDT per trade, e.g. WUSDT). Net USDT and Net % are therefore better than reality:
+the real result is worse by about one more fee per trade. See "Robot closed-trade fee attribution" in
+`PROJECT_STATE.md`.
+
 Observations:
 - Every exit reason matches the level side (long stop below entry, short stop above entry, take on the profit side),
   so STOP/TAKE fired on the right legs for both LONG and SHORT. The first TAKE exit (UAIUSDT, long) and the first
@@ -96,9 +101,12 @@ Observations:
 
 ## 4. Findings and open items
 
-1. PnL accounting: `realized_pnl_usdt` is gross, `realized_pnl_pct` is net of fees
-   (`robot_flat_closure.py:335-336`, matches the WUSDT numbers). This is the known "closed-trade fee
-   attribution" item in `PROJECT_STATE.md`. Do not treat the USDT column as net.
+1. PnL accounting: `realized_pnl_usdt` is gross, `realized_pnl_pct` is net of `fees_costs_usdt`
+   (`robot_flat_closure.py:335-336`, matches the WUSDT numbers). `fees_costs_usdt` holds only the closing
+   execution's fee; the entry fee (~0.15 USDT per trade for WUSDT) is missing, so the Fees and Net columns
+   in 3b understate costs and the real result is worse than shown. This is the "Robot closed-trade fee
+   attribution" item in `PROJECT_STATE.md`. Do not treat the USDT column as net. The Telegram closed-trade
+   post/card sums entry + exit fees from executions for display only; stored values are unchanged.
 2. Doc bug: `AUTOPILOT_ROBOT_V0_1_TELEGRAM_FEED_AND_SHORT_WEDGE_DECISION.md` line 124 says TAKE is
    "90% of `potential_percent` from the actual entry price downward". Code (`robot_protection.py`) freezes
    TAKE as `reference - 0.9 * (reference - target)` from the signal reference price toward the scanner
@@ -158,3 +166,37 @@ D. Read-only inspection of the local DB: open `paper_runtime.sqlite3` with
 4. Later: fee attribution fix; cleanup of the August manual-test residue; stale PR cleanup;
    decide when the robot moves to the VPS (needs the VPS DB state, the token owner decision, and
    the user-owned `bybit_api.py` there).
+
+## 8. Move of the live run from the PC to the VPS (2026-09-19 morning)
+
+Supersedes section 1 (runtime layout) and the last bullet of section 6 (robot on the PC).
+
+- PC: all project python processes stopped (backend, Telegram listener, Scanner). Local DB left as is:
+  `ROBOT_RUNNING/READY` (v54), candidates APPROVED 1 / CLOSED 22 / EXPIRED 33 / INVALIDATED 1, no open trades.
+  Nothing from the PC DB is carried to the VPS (separate databases). Do not start the PC listener while the VPS
+  listener runs (one bot token = one poller).
+- VPS `/root/BybitScanner` at `0f4cffc` (local user-owned `bybit_api.py` modification present, untouched).
+  Backend `bybitscanner-terminal.service` was not restarted. Listener and Scanner run in tmux sessions
+  `telegram` and `scanner`, started by `bash /root/vps_restart.sh` (kills and recreates both sessions, prints
+  state first). They do not survive a VPS reboot (not systemd services yet).
+- VPS state found: `ROBOT_RUNNING/RECONCILIATION_REQUIRED` (v16), reason
+  `ROBOT_PROTECTION_COVERAGE_LOST symbol=EDGEUSDT reason=ingress_overflow`, set 09-18 18:59 (the ingress
+  overflow fixed by PRs #143-#147). No open trades, no open limit orders, 3 APPROVED candidates from 09-18
+  11:22-11:28 (KMNOUSDT, CSOPSAMSUNG2LUSDT, LGELECTRONICSUSDT). `protection-health`: healthy, high watermark 6
+  of capacity 64, max queue latency about 0.4 s.
+- `POST /api/robot/reconcile` at 08:30 -> HTTP 200, `PAUSED`. User pressed "Старт" at 09:32 -> `Запущен / Готов`.
+- Lesson (an earlier expectation was wrong): stale APPROVED candidates do NOT expire on resume. Per
+  `resume_without_replay` (`robot_state_machine.py`) a resumed candidate expires only when the geometry cursor
+  reaches the frozen `apex_index`; missed candles are not replayed, the candidate just keeps watching the
+  extrapolated frozen lines from "now". After ~21 h the three candidates were still active and LGELECTRONICSUSDT got a
+  working entry LIMIT at the retest level computed from the day-old geometry.
+- Clean slate without SQL (`AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md`, Section 7): PAUSE only blocks
+  entries and keeps candidates APPROVED; STOP cancels a working entry LIMIT and gives every zero-fill pending
+  candidate the terminal `INVALIDATED` status (never revived), allowed only with no open Robot position. Then
+  "Запустить робота" (start from STOPPED) and, if it lands on PAUSED, "Старт". User chose this on 2026-09-19;
+  outcome not verified at the time of writing.
+- Deploy path for new code (Slices 1-2): commit -> PR -> merge -> on the VPS `git pull --ff-only origin main` ->
+  `bash /root/vps_restart.sh` (listener and Scanner only; the backend is not needed for Telegram-side changes).
+  Risk on the first position card: the chart calls `bybit_api.get_candles` and the VPS copy of `bybit_api.py` has
+  local changes; if its signature differs the card falls back to text with "график недоступен".
+- The robot takes only signals for which the user pressed "🤖 Робот"; there is no automatic selection in v0.1.
