@@ -16,6 +16,7 @@ import sqlite3
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -30,7 +31,9 @@ from robot_lifecycle_posts import (
     load_lifecycle_state, mark_notified, save_lifecycle_state,
 )
 from robot_position_chart import render_position_chart
-from robot_position_view import format_position_card, load_position_view, with_last_price
+from robot_position_view import (
+    chart_candle_limit, format_position_card, load_position_view, with_last_price,
+)
 from robot_telegram_feed import (
     VIEW_POSITIONS, build_robot_control_keyboard,
     format_paper_positions_view,
@@ -256,14 +259,22 @@ def _send_position_card(chat_id, symbol: str) -> None:
     _send_chart_card(chat_id, view, candles, caption, POSITIONS_BACK_MARKUP)
 
 
-def _with_candles(view):
+def _with_candles(view, now_ms: int | None = None):
+    """One candle request per chart, shared by the position card and lifecycle posts."""
+
+    now_ms = int(time.time() * 1000) if now_ms is None else now_ms
+    minutes = view.chart_candle_minutes
+    limit, entry_before_chart = chart_candle_limit(view.entry_time_ms, now_ms, minutes)
     candles = None
     try:
         import bybit_api
 
-        candles = bybit_api.get_candles(view.symbol, "1", 300)
+        candles = bybit_api.get_candles(view.symbol, str(minutes), limit)
         if candles is not None and len(candles):
-            view = with_last_price(view, candles["close"].iloc[-1])
+            view = replace(
+                with_last_price(view, candles["close"].iloc[-1]),
+                entry_before_chart=entry_before_chart,
+            )
     except Exception as exc:
         print("[POSITION CARD CANDLES ERROR]", view.symbol, exc)
     return view, candles

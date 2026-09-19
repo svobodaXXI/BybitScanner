@@ -24,6 +24,16 @@ CAPTION_LIMIT = 1024
 EXECUTION_WINDOW_MS = 5_000
 RESTING_LIMIT_STATUSES = frozenset({"open", "partially_filled"})
 NOT_ROBOT_LINE = "Позиция не от робота — график недоступен"
+ENTRY_BEFORE_CHART_LINE = "Вход раньше окна графика"
+MINUS_SIGN = "−"
+# Position chart: candles of the Robot signal's timeframe from the entry (plus a margin)
+# to now, within Bybit's kline limit.
+CHART_TIMEFRAMES_MINUTES = frozenset({1, 3, 5, 15, 30, 60})
+CHART_DEFAULT_CANDLE_MINUTES = 5
+CHART_MIN_CANDLES = 120
+CHART_MIN_CANDLES_1M = 300
+CHART_MAX_CANDLES = 1000
+CHART_ENTRY_MARGIN_CANDLES = 24
 # Values actually written: STOP/TAKE (winning protection leg) and EMERGENCY_CLOSE
 # (flat closure); anything else is shown raw.
 EXIT_REASON_LABELS = {
@@ -61,6 +71,10 @@ class PositionView:
     signal_snapshot: Mapping[str, Any] | None = None
     markers: tuple[TradeMarker, ...] = ()
     last_price: Decimal | None = None
+    entry_before_chart: bool = False  # the entry is older than the fetched candle window
+    # Chart timeframe: the Robot signal's timeframe (5 for a manual position). The single
+    # source for both the candle request and the renderer.
+    chart_candle_minutes: int = CHART_DEFAULT_CANDLE_MINUTES
     # Sum of fee over the executions drawn as filled markers (entry + exit legs);
     # None when no execution evidence was found.
     fees_usdt: Decimal | None = None
@@ -84,6 +98,56 @@ class PositionView:
 
 def with_last_price(view: PositionView, price: Any) -> PositionView:
     return replace(view, last_price=_decimal(price))
+
+
+def _timeframe_minutes(value: Any) -> int | None:
+    try:
+        minutes = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return minutes if minutes in CHART_TIMEFRAMES_MINUTES else None
+
+
+def signal_chart_candle_minutes(signal_snapshot: Any) -> int:
+    """Chart timeframe = the Robot signal's timeframe; 5 when missing or unsupported.
+
+    Source: ``scanner_source_timeframe``, then ``robot_geometry.scanner_source_timeframe``.
+    """
+
+    if isinstance(signal_snapshot, Mapping):
+        geometry = signal_snapshot.get("robot_geometry")
+        for value in (
+            signal_snapshot.get("scanner_source_timeframe"),
+            geometry.get("scanner_source_timeframe") if isinstance(geometry, Mapping) else None,
+        ):
+            minutes = _timeframe_minutes(value)
+            if minutes is not None:
+                return minutes
+    return CHART_DEFAULT_CANDLE_MINUTES
+
+
+def chart_candle_limit(
+    entry_time_ms: int | None, now_ms: int, candle_minutes: int = CHART_DEFAULT_CANDLE_MINUTES,
+) -> tuple[int, bool]:
+    """Candles to request so the entry is on the chart, and whether it still is not.
+
+    limit = min(1000, max(min_candles, ceil(minutes since entry / candle_minutes) + 24)),
+    min_candles = 300 for 1m and 120 otherwise. The entry is outside even the largest
+    window when its candle is 1000+ candles back (~16.7 h on 1m, ~83 h on 5m).
+    """
+
+    min_candles = CHART_MIN_CANDLES_1M if candle_minutes == 1 else CHART_MIN_CANDLES
+    if entry_time_ms is None:
+        return min_candles, False
+    candle_ms = candle_minutes * 60_000
+    candles_since_entry = -(-max(0, now_ms - entry_time_ms) // candle_ms)  # ceil
+    limit = min(
+        CHART_MAX_CANDLES,
+        max(min_candles, candles_since_entry + CHART_ENTRY_MARGIN_CANDLES),
+    )
+    # The window holds the current candle and the CHART_MAX_CANDLES - 1 before it.
+    entry_outside = now_ms // candle_ms - entry_time_ms // candle_ms >= CHART_MAX_CANDLES
+    return limit, entry_outside
 
 
 def _decimal(value: Any) -> Decimal | None:
@@ -227,6 +291,7 @@ def load_position_view(
         signal_snapshot=snapshot,
         markers=markers,
         fees_usdt=fees,
+        chart_candle_minutes=signal_chart_candle_minutes(snapshot),
     )
 
 
@@ -272,6 +337,11 @@ def format_trade_result(view: PositionView) -> str:
     )
 
 
+def _signed_2dp(value: Decimal, suffix: str) -> str:
+    sign = "+" if value >= 0 else MINUS_SIGN
+    return f"{sign}{abs(value):.2f}{suffix}"
+
+
 def _unrealized_pnl(view: PositionView) -> tuple[Decimal, Decimal] | None:
     if None in (view.last_price, view.average_entry, view.quantity) or view.average_entry == 0:
         return None
@@ -291,7 +361,8 @@ def format_position_card(view: PositionView) -> str:
     if view.is_open:
         pnl = _unrealized_pnl(view)
         lines.append(
-            f"PnL: ~{_signed_usdt(pnl[0])} ({pnl[1]:+.2f}%)" if pnl is not None else "PnL: —"
+            f"PnL: ≈ {_signed_2dp(pnl[0], ' USDT')} ({_signed_2dp(pnl[1], '%')})"
+            if pnl is not None else "PnL: —"
         )
     else:
         trade = view.trade
@@ -304,6 +375,8 @@ def format_position_card(view: PositionView) -> str:
         f"TAKE: {format_price(view.take_price)}",
         f"Паттерн: {view.pattern or '—'}",
     ]
+    if view.entry_before_chart:
+        lines.append(ENTRY_BEFORE_CHART_LINE)
     if not view.is_robot:
         lines.append(NOT_ROBOT_LINE)
     return "\n".join(lines)[:CAPTION_LIMIT]

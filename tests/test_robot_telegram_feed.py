@@ -218,10 +218,23 @@ class PaperPositionsViewTests(unittest.TestCase):
         self.assertIn("ETHUSDT", text)
         self.assertIn("SHORT", text)
         self.assertIn("2.5", text)
-        self.assertIn("250 USDT", text)
+        self.assertIn("250.00 USDT", text)
         self.assertIn("2000", text)
-        self.assertIn("6000 USDT", text)
+        self.assertIn("6000.00 USDT", text)
         self.assertNotIn("PnL", text)
+
+    def test_average_entry_uses_card_price_format_and_notional_two_decimals(self):
+        text = "\n".join(format_paper_positions_view([
+            self._projection(
+                "SAGAUSDT", "LONG", quantity="9810",
+                average_entry="0.025441255", engaged_notional="249.5787",
+            ),
+        ]))
+        self.assertIn("Количество: 9810\n", text)
+        self.assertIn("Средний вход: 0.0254413\n", text)
+        self.assertIn(
+            "Задействовано: 249.58 USDT\n", text,
+        )
 
     def test_uncertain_sync_state_is_visible_and_warned(self):
         messages = format_paper_positions_view([

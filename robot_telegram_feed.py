@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
+from robot_position_view import format_price
 from telegram_labels import ROBOT_EMOJI
 
 VIEW_FEED = "feed"
@@ -199,6 +200,10 @@ def _format_decimal(value: Decimal | None) -> str:
     return format(value.normalize(), "f")
 
 
+def _format_usdt(value: Decimal | None) -> str:
+    return "—" if value is None else f"{value:.2f} USDT"
+
+
 def build_static_chart_projection(record: Mapping[str, Any]) -> dict[str, Any]:
     symbol = _required_text(record, "symbol")
     timeframe = str(record.get("timeframe", "1")).strip() or "1"
@@ -327,8 +332,8 @@ def format_paper_positions_view(
         blocks.append(
             f"{index}. {symbol} \u00b7 {side}\n"
             f"\u041a\u043e\u043b\u0438\u0447\u0435\u0441\u0442\u0432\u043e: {_format_decimal(quantity)}\n"
-            f"\u0421\u0440\u0435\u0434\u043d\u0438\u0439 \u0432\u0445\u043e\u0434: {_format_decimal(average_entry)}\n"
-            f"\u0417\u0430\u0434\u0435\u0439\u0441\u0442\u0432\u043e\u0432\u0430\u043d\u043e: {_format_decimal(engaged_notional)} USDT\n"
+            f"\u0421\u0440\u0435\u0434\u043d\u0438\u0439 \u0432\u0445\u043e\u0434: {format_price(average_entry)}\n"
+            f"\u0417\u0430\u0434\u0435\u0439\u0441\u0442\u0432\u043e\u0432\u0430\u043d\u043e: {_format_usdt(engaged_notional)}\n"
             f"{sync_line}"
         )
 

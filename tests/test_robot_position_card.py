@@ -5,13 +5,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 
 import robot_position_chart as chart
 from robot_position_chart import PositionChartError, render_position_chart
 from robot_position_view import (
-    CAPTION_LIMIT, NOT_ROBOT_LINE, PositionView, TradeMarker, format_position_card,
-    load_position_view, with_last_price,
+    CAPTION_LIMIT, ENTRY_BEFORE_CHART_LINE, NOT_ROBOT_LINE, PositionView, TradeMarker,
+    chart_candle_limit, format_position_card, load_position_view, signal_chart_candle_minutes,
+    with_last_price,
 )
 from terminal.domain.models import OrderSide, PositionSide, Symbol
 
@@ -58,8 +60,12 @@ def _view(**overrides):
     return PositionView(**values)
 
 
+FIVE_MIN_MS = 5 * 60_000
+CANDLES_START_MS = START_MS - START_MS % FIVE_MIN_MS  # 5m candles open on a 5-minute boundary
+
+
 def _candles(count=300):
-    times = [START_MS + index * 60_000 for index in range(count)]
+    times = [CANDLES_START_MS + index * FIVE_MIN_MS for index in range(count)]
     close = [0.0255 + 0.0002 * ((index % 20) - 10) / 10 for index in range(count)]
     return pd.DataFrame({
         "time": times,
@@ -78,7 +84,7 @@ class FormatPositionCardTests(unittest.TestCase):
         self.assertIn("Статус: открыта", card)
         self.assertIn("Размер: 100", card)
         self.assertIn("Средний вход: 0.0254", card)
-        self.assertIn("PnL: ~+0.06 USDT (+2.36%)", card)
+        self.assertIn("PnL: ≈ +0.06 USDT (+2.36%)", card)
         self.assertIn("STOP: 0.0249", card)
         self.assertIn("TAKE: 0.0284", card)
         self.assertIn("Паттерн: Falling Wedge", card)
@@ -86,8 +92,20 @@ class FormatPositionCardTests(unittest.TestCase):
 
     def test_short_pnl_sign_and_missing_price(self):
         short = _view(direction="SHORT")
-        self.assertIn("PnL: ~-0.06 USDT (-2.36%)", format_position_card(with_last_price(short, "0.0260")))
+        # U+2212 minus, two decimals, no "~".
+        self.assertIn("PnL: ≈ −0.06 USDT (−2.36%)", format_position_card(with_last_price(short, "0.0260")))
         self.assertIn("PnL: —", format_position_card(short))
+
+    def test_pnl_always_two_decimals_and_zero_is_plus(self):
+        card = format_position_card(with_last_price(_view(quantity=Decimal("10000")), "0.02573"))
+        self.assertIn("PnL: ≈ +3.30 USDT (+1.30%)", card)
+        flat = format_position_card(with_last_price(_view(), "0.0254"))
+        self.assertIn("PnL: ≈ +0.00 USDT (+0.00%)", flat)
+        self.assertNotIn("~", card)
+
+    def test_entry_before_chart_line(self):
+        self.assertNotIn(ENTRY_BEFORE_CHART_LINE, format_position_card(_view()))
+        self.assertIn(ENTRY_BEFORE_CHART_LINE, format_position_card(_view(entry_before_chart=True)))
 
     def test_manual_position_card_has_no_chart_line(self):
         card = format_position_card(_view(
@@ -118,6 +136,67 @@ class FormatPositionCardTests(unittest.TestCase):
     def test_caption_fits_telegram_limit(self):
         card = format_position_card(_view(pattern="X" * 2000))
         self.assertLessEqual(len(card), CAPTION_LIMIT)
+
+
+class ChartCandleLimitTests(unittest.TestCase):
+    NOW = START_MS + 2_000 * 60_000
+
+    def _minutes_ago(self, minutes):
+        return self.NOW - minutes * 60_000
+
+    def test_short_position_uses_minimum_window(self):
+        self.assertEqual(chart_candle_limit(self._minutes_ago(30), self.NOW), (120, False))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(6 * 60), self.NOW), (120, False))
+        self.assertEqual(chart_candle_limit(None, self.NOW), (120, False))
+
+    def test_longer_position_covers_entry_plus_margin(self):
+        # ceil(minutes / 5) + 24
+        self.assertEqual(chart_candle_limit(self._minutes_ago(12 * 60), self.NOW), (168, False))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(12 * 60 + 1), self.NOW), (169, False))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(24 * 60), self.NOW), (312, False))
+
+    def test_window_is_capped_and_old_entry_is_flagged(self):
+        self.assertEqual(chart_candle_limit(self._minutes_ago(81 * 60), self.NOW), (996, False))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(82 * 60), self.NOW), (1000, False))
+        # The entry candle is still the oldest of the 1000 / already outside them.
+        self.assertEqual(chart_candle_limit(self._minutes_ago(4_999), self.NOW), (1000, False))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(5_000), self.NOW), (1000, True))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(90 * 60), self.NOW), (1000, True))
+
+
+class ChartTimeframeTests(unittest.TestCase):
+    NOW = START_MS + 2_000 * 60_000
+
+    def test_signal_timeframe_source_and_fallbacks(self):
+        for snapshot, expected in (
+            ({"scanner_source_timeframe": "5"}, 5),
+            ({"scanner_source_timeframe": "1"}, 1),
+            ({"scanner_source_timeframe": 15}, 15),
+            ({"robot_geometry": {"scanner_source_timeframe": "1"}}, 1),
+            ({"scanner_source_timeframe": "junk", "robot_geometry": {"scanner_source_timeframe": "1"}}, 1),
+            ({"scanner_source_timeframe": "7"}, 5),
+            ({"scanner_source_timeframe": "junk"}, 5),
+            ({"scanner_source_timeframe": None, "robot_geometry": "junk"}, 5),
+            ({}, 5),
+            (None, 5),
+        ):
+            with self.subTest(snapshot=snapshot):
+                self.assertEqual(signal_chart_candle_minutes(snapshot), expected)
+
+    def _minutes_ago(self, minutes):
+        return self.NOW - minutes * 60_000
+
+    def test_one_minute_limit(self):
+        self.assertEqual(chart_candle_limit(self._minutes_ago(30), self.NOW, 1), (300, False))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(6 * 60), self.NOW, 1), (384, False))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(999), self.NOW, 1), (1000, False))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(1000), self.NOW, 1), (1000, True))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(17 * 60), self.NOW, 1), (1000, True))
+        self.assertEqual(chart_candle_limit(None, self.NOW, 1), (300, False))
+
+    def test_other_timeframes_use_120_minimum(self):
+        self.assertEqual(chart_candle_limit(self._minutes_ago(30), self.NOW, 15), (120, False))
+        self.assertEqual(chart_candle_limit(self._minutes_ago(60 * 60), self.NOW, 15), (264, False))
 
 
 class LoadPositionViewTests(unittest.TestCase):
@@ -159,6 +238,8 @@ class LoadPositionViewTests(unittest.TestCase):
         self.assertEqual(view.stop_price, Decimal("0.0248"))
         self.assertEqual(view.take_price, Decimal("0.0284"))
         self.assertEqual([m.filled for m in view.markers], [True])
+        # The frozen snapshot is a 1m signal (robot_geometry.scanner_source_timeframe).
+        self.assertEqual(view.chart_candle_minutes, 1)
 
     def test_only_open_paper_limit_from_robot_state_becomes_hollow_marker(self):
         # Resting (open / partially_filled) -> hollow; the filled part stays a filled triangle.
@@ -247,6 +328,12 @@ class RenderPositionChartTests(unittest.TestCase):
             [("Buy", True), ("Buy", False), ("Sell", True)],
         )
 
+    def test_renders_wide_window_of_max_candles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "wide.png"
+            render_position_chart(_view(), _candles(1000), out)
+            self.assertEqual(out.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+
     def test_market_exit_execution_is_drawn_once(self):
         exit_ms = START_MS + 200 * 60_000
         markers = (
@@ -265,6 +352,47 @@ class RenderPositionChartTests(unittest.TestCase):
             [(c.args[3], c.kwargs["filled"]) for c in draw.call_args_list],
             [("Sell", True), ("Buy", True)],
         )
+
+    def test_candle_position_covers_every_minute_of_a_5m_candle(self):
+        times = np.array([CANDLES_START_MS + i * FIVE_MIN_MS for i in range(3)], dtype="int64")
+        for minute, second, expected in (
+            (0, 0, 0), (1, 0, 0), (4, 0, 0), (4, 59, 0), (5, 0, 1), (9, 0, 1), (10, 0, 2),
+        ):
+            with self.subTest(minute=minute, second=second):
+                time_ms = CANDLES_START_MS + minute * 60_000 + second * 1_000
+                self.assertEqual(chart._candle_position(times, time_ms, FIVE_MIN_MS), expected)
+        self.assertIsNone(chart._candle_position(times, CANDLES_START_MS - 1, FIVE_MIN_MS))
+        self.assertIsNone(chart._candle_position(times, CANDLES_START_MS + 15 * 60_000, FIVE_MIN_MS))
+
+    def test_1m_signal_chart_uses_1m_candles_and_title(self):
+        candles = _candles(300)
+        candles["time"] = [START_MS + index * 60_000 for index in range(300)]
+        base = START_MS + 40 * 60_000
+        markers = (
+            TradeMarker(base + 700, Decimal("0.0254"), "Buy", True),
+            TradeMarker(base + 60_000 + 700, Decimal("0.0254"), "Buy", True),
+        )
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("robot_position_chart._draw_marker", wraps=chart._draw_marker) as draw, \
+                patch("robot_position_chart.mpf.plot", wraps=chart.mpf.plot) as plot:
+            render_position_chart(
+                _view(markers=markers, chart_candle_minutes=1), candles, Path(directory) / "x.png",
+            )
+        self.assertEqual([c.args[1] for c in draw.call_args_list], [40, 41])
+        self.assertTrue(plot.call_args.kwargs["title"].endswith("| LONG | 1m"))
+
+    def test_fills_inside_one_5m_candle_share_it_and_title_says_5m(self):
+        candle = CANDLES_START_MS + 40 * FIVE_MIN_MS
+        markers = tuple(
+            TradeMarker(candle + minute * 60_000 + 700, Decimal("0.0254"), "Buy", True)
+            for minute in (0, 1, 4, 5)
+        )
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("robot_position_chart._draw_marker", wraps=chart._draw_marker) as draw, \
+                patch("robot_position_chart.mpf.plot", wraps=chart.mpf.plot) as plot:
+            render_position_chart(_view(markers=markers), _candles(), Path(directory) / "x.png")
+        self.assertEqual([c.args[1] for c in draw.call_args_list], [40, 40, 40, 41])
+        self.assertTrue(plot.call_args.kwargs["title"].endswith("| LONG | 5m"))
 
     def test_hollow_marker_has_outline_only(self):
         import matplotlib.pyplot as plt

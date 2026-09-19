@@ -92,7 +92,8 @@ Decisions:
    average entry, current PnL (approximate, from the last 1m close), STOP, TAKE, pattern.
    STOP/TAKE come from `protection_projections` (what is actually working); fallback
    `robot_trades.stop_price` / `take_price`.
-5. Chart (1m candles, `bybit_api.get_candles(symbol, "1", 300)`):
+5. Chart (candles of the signal's timeframe, `bybit_api.get_candles(symbol, str(minutes), limit)`;
+   timeframe and `limit` per Section 5, item 6):
    - pattern lines only from the frozen snapshot: price = `slope * idx + intercept`, with
      `idx = project_latest_geometry_index(snapshot, latest_closed_candle_time_ms=t)`;
      never recompute or refit geometry; draw until the apex time or the window end;
@@ -149,8 +150,24 @@ Decisions (implemented; change on request):
    they are not changed here (see "Robot closed-trade fee attribution" in `PROJECT_STATE.md`).
 5. Keyboard of lifecycle posts: only "Все позиции" (`robot:view:positions`). `build_robot_tab_keyboard`
    is unchanged; its "Под наблюдением" and "Обновить" buttons have no handlers yet (separate task).
-6. Open: the chart uses the latest 300 1m candles; a trade that ended before that window is not
-   specially handled.
+6. Chart timeframe and window (implemented, `fix/telegram-cards-formatting`): the chart timeframe is the
+   Robot signal's timeframe. Source: `signal_snapshot["scanner_source_timeframe"]` (minutes as a string,
+   e.g. "5" or "1"), fallback `signal_snapshot["robot_geometry"]["scanner_source_timeframe"]`; allowed
+   1, 3, 5, 15, 30, 60; anything else, a missing field or a parse error -> 5; a manual position (no robot
+   trade) -> 5. The value is `PositionView.chart_candle_minutes` (set by `load_position_view`), the single
+   source for the candle request and the renderer: `bybit_api.get_candles(symbol, str(minutes), limit)`,
+   title "... | {minutes}m", time axis in MSK. One request helper (`telegram_monitoring._with_candles` +
+   `robot_position_view.chart_candle_limit`) and one renderer (`render_position_chart`) serve both the
+   position card and the lifecycle posts.
+   `limit = min(1000, max(min_candles, ceil(minutes from entry_time_ms to now / minutes) + 24))`,
+   `min_candles` = 300 for 1m and 120 for every other timeframe; for a closed trade also from
+   `entry_time_ms` to now (the post goes out right after the close). If the entry's candle is 1000+ candles
+   back (~16.7 h on 1m, ~83 h on 5m) it is outside even the largest window: 1000 candles are requested and
+   the caption gets the line "Вход раньше окна графика". A fill or order at any time inside a candle is drawn
+   on that candle (`[open, open + candle duration)`; for 1m this is the previous behaviour). Pattern lines
+   are unchanged: evaluated at each candle's open time through `project_latest_geometry_index` in the frozen
+   1m cursor space. PnL of an open position uses the close of the last candle. Windows above 500 candles are
+   rendered on a wider canvas (16x7 in, 120 dpi, candle width 0.8) so bodies stay distinguishable.
 
 ## 6. Constraints (all slices)
 

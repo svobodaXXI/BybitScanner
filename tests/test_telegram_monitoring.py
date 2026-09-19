@@ -378,7 +378,11 @@ class TelegramMonitoringTests(unittest.TestCase):
 
     def _card_patches(self, view, *, candles=None):
         fake_api = ModuleType("bybit_api")
-        fake_api.get_candles = lambda symbol, interval, limit: candles
+        self.candle_requests = []
+        fake_api.get_candles = (
+            lambda symbol, interval, limit: self.candle_requests.append((symbol, interval, limit))
+            or candles
+        )
         for fixture in (
             patch("telegram_monitoring._robot_store"),
             patch("telegram_monitoring.load_position_view", return_value=view),
@@ -394,7 +398,7 @@ class TelegramMonitoringTests(unittest.TestCase):
         return PositionView(
             symbol="SAGAUSDT", direction="LONG", is_open=True, quantity=Decimal("1"),
             average_entry=Decimal("1"), stop_price=None, take_price=None,
-            pattern="Falling Wedge", trade=SimpleNamespace(),
+            pattern="Falling Wedge", trade=SimpleNamespace(entry_time_ms=1_000),
         )
 
     @patch("telegram_monitoring.render_position_chart")
@@ -427,8 +431,31 @@ class TelegramMonitoringTests(unittest.TestCase):
 
         send.assert_not_called()
         caption = photo.call_args.kwargs["caption"]
-        self.assertIn("PnL: ~+0.1 USDT (+10.00%)", caption)
+        self.assertIn("PnL: ≈ +0.10 USDT (+10.00%)", caption)
         self.assertEqual(photo.call_args.kwargs["reply_markup"], monitoring.POSITIONS_BACK_MARKUP)
+
+    def test_candle_window_follows_entry_age(self):
+        import pandas as pd
+        from dataclasses import replace
+
+        candles = pd.DataFrame({"close": [1.0, 1.1]})
+        now_ms = 1_789_760_700_000
+        for timeframe, minutes, limit, note in (
+            (5, 30, 120, False), (5, 12 * 60, 168, False), (5, 90 * 60, 1000, True),
+            (1, 30, 300, False), (1, 6 * 60, 384, False), (1, 17 * 60, 1000, True),
+        ):
+            with self.subTest(timeframe=timeframe, minutes=minutes):
+                view = replace(
+                    self._robot_view(),
+                    trade=SimpleNamespace(entry_time_ms=now_ms - minutes * 60_000),
+                    chart_candle_minutes=timeframe,
+                )
+                self._card_patches(view, candles=candles)
+                view, _ = monitoring._with_candles(view, now_ms=now_ms)
+                self.assertEqual(self.candle_requests, [("SAGAUSDT", str(timeframe), limit)])
+                self.assertEqual(
+                    "Вход раньше окна графика" in monitoring.format_position_card(view), note,
+                )
 
     @patch("telegram_monitoring.render_position_chart", side_effect=RuntimeError("no candles"))
     @patch("telegram_monitoring.telegram_bot.send_photo")
@@ -655,7 +682,7 @@ class RobotLifecyclePostDeliveryTests(unittest.TestCase):
         trade = SimpleNamespace(
             exit_price=Decimal("0.0249"), exit_reason="TAKE", realized_pnl_usdt=Decimal("3"),
             realized_pnl_pct=Decimal("1.1"), fees_costs_usdt=Decimal("0.1"),
-            exit_time_ms=2, entry_quantity=Decimal("1"), average_entry=Decimal("1"),
+            entry_time_ms=1, exit_time_ms=2, entry_quantity=Decimal("1"), average_entry=Decimal("1"),
         )
         view = PositionView(
             symbol="SAGAUSDT", direction="LONG", is_open=False, quantity=Decimal("1"),
