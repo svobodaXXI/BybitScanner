@@ -162,3 +162,37 @@ is available and accepted.
 over corrective ones. Study their risk-adjusted outcomes in distinct comparable cohorts before defining
 candidate-selection priority. No automatic preferential entry, position size, STOP/TAKE, or ownership-gate
 change is authorized by this research/UX requirement.
+
+## G2/G3: external algorithm patterns and incremental reuse plan (2026-09-20)
+
+**Sources checked:** [TradingView Zigzag](https://www.tradingview.com/support/solutions/43000591664-zigzag-indicator/),
+[TradingView Pivot Points High Low](https://www.tradingview.com/support/solutions/43000589195-pivot-points-high-low/),
+[SciPy find_peaks](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.find_peaks.html),
+[QuantConnect Zig Zag](https://www.quantconnect.com/docs/v2/writing-algorithms/indicators/supported-indicators/zig-zag),
+[StockCharts Falling Wedge](https://chartschool.stockcharts.com/table-of-contents/chart-analysis/chart-patterns/falling-wedge),
+[Freqtrade lookahead-analysis](https://docs.freqtrade.io/en/latest/lookahead-analysis/).
+These are reusable concepts, not proof that any particular threshold generates positive trading expectancy.
+
+| External design pattern | Decision for BybitScanner |
+| --- | --- |
+| TradingView pivots are confirmed using bars on both sides; its Zigzag distinguishes confirmed swing points from temporary projected pivots, and applies a price-reversal threshold. | ADAPT: candidate `pivot_time`, `confirmed_at`, `HIGH/LOW`, `PENDING/CONFIRMED`, and structural swing significance. PENDING points may be observational on a chart, but must not retroactively appear in an earlier signal-time context. Existing Scanner pivots should be reused first. |
+| SciPy `find_peaks` exposes candidate peak distance and prominence, plus width; a negative price series produces trough candidates. | ADAPT **criteria**, not a new mandatory SciPy dependency: measure local prominence in the bounded pre-pattern segment and avoid choosing micro-extrema. Compare with current pivot generator; normalized prominence/thresholds remain to be calibrated for 1m and 5m. |
+| QuantConnect Zig Zag uses reversal sensitivity and minimum trend length to filter noise. | ADAPT: impulse candidate is a *swing* with observable displacement and duration, not the sign of one close-to-close endpoint difference. Test ATR-relative and percentage displacements, preserving source-timeframe candle units and avoiding a magic copied threshold. |
+| StockCharts categorizes the same Falling Wedge as possible continuation after UP and reversal after DOWN, while breakout confirms the bullish interpretation. | ADAPT: prior impulse and geometric wedge are separate signal-time features/cohorts. Correction/deceleration context alone does not authorize an entry or imply an observed profit edge. |
+| Freqtrade lookahead analysis checks whether using future candles changes historical entries/indicator values. | ADAPT: replay stored signals one closed candle at a time and assert that the frozen pivot/START/context at historical signal time does not depend on later candles. Do not substitute a successful hindsight scan for signal-time correctness. |
+
+### Proposed reuse-first pipeline, not yet a production rule
+
+1. **Reuse existing data/evidence.** `geometry/evaluation.py` computes `start_index=min(first upper pivot,first lower pivot)`, then calls `detect_pre_pattern_impulse(candles,start_index)` **for every candidate pair**. `geometry/ranking.py` chooses geometry before final pattern classification. The current impulse's `lookback=20` and endpoint-close sign cannot classify impulse strength or deceleration; its start is also not necessarily the historical terminal high/low demanded by the user's corrective START rule.
+2. **Observe without affecting the existing winner.** For bounded *distinct* candidate STARTs, compute (and memoize per scan) read-only prior-swing evidence from already-loaded, closed OHLC and existing Scanner pivots: direction, terminal HIGH/LOW event time, confirmation time, duration, price displacement and volatility-relative magnitude. Label missing history/noisy/nonconfirmed evidence UNKNOWN. Do not add a second network request per candidate, rewrite existing geometry ranking or add a second detector.
+3. **Small shortlist, then joint evaluation.** Initially retain a small, bounded set of existing *validated geometry pairs* at the current ranker's selection boundary for side-by-side research only, and compare their independent candidate START/context evidence against the chosen production pair. Do not explode the existing pair-generation loop into multiple full passes. If alternative geometry cannot be retrieved from the current selection boundary without a substantial refactor, first log alternatives observationally rather than expanding core contracts.
+4. **Candidate terminal pivots versus line anchors.** For a falling corrective wedge use the terminal HIGH of its preceding UP impulse; for a rising corrective wedge use the terminal LOW of its preceding DOWN impulse; evaluate falling deceleration at its DOWN-impulse transition pivot. A candidate episode START is **not** automatically one of both fitted boundaries' `anchor_index` values. Keep independent authentic upper/lower support pivots; never backfill/shift the frozen geometry to a desired episode START.
+5. **Require real deceleration evidence.** An impulse DOWN followed by descending/converging lines is necessary context for a falling deceleration *hypothesis*, not sufficient to call it slowing. Compare progression of successive directional pivot excursions and displacement per elapsed time inside the wedge with the pre-pattern impulse; require converging genuine bounds/containment as already validated. Record any inability to measure the trend change as UNKNOWN. No ad hoc hard thresholds are authorized before labeled examples.
+6. **Version and replay.** Store observational provenance (`source_timeframe`, `signal_time`, `pivot_time`, `confirmed_at`, bounded lookback, candidate START, separate line anchors, classification evidence/version) with each *new* signal-time research record when an approved slice specifies its persistence shape. Do not mutate legacy snapshots or current trading DB during research. Compare the same historical event under truncated-at-signal-time replay and full-history inspection; classify only from evidence observable by the signal time.
+7. **Strategy separation.** After four variants plus UNKNOWN can be differentiated on user-reviewed 1m/5m examples and prospective PAPER observations, display one frozen `Контекст: …` line consistently in Telegram text, Scanner PNG, Robot position/lifecycle caption and chart. Evaluate subtype results net of fees under matched entry rules; a proposed deceleration candidate-selection preference needs its own risk/admission decision, never follows automatically from a label.
+
+**Implementation sequence:** complete/review G1a (Codex's unpublished display-only slice), then G1b Robot chart if needed;
+G2a add a focused *pure read-only* impulse-evidence helper and regression using existing candles/pivots;
+G2b compare a bounded shortlist of START/geometry alternatives observationally on saved user-reviewed signals;
+G3a establish subtype+UNKNOWN evidence and label display after examples; G3b separately evaluate any Robot selection
+priority. Preserve scanner throughput and the current PAPER runtime until each smaller gate is verified.
