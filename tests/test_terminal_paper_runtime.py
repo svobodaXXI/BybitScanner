@@ -2616,3 +2616,133 @@ def test_coverage_roles_do_not_parse_finished_candidate_history():
             assert light_rows.call_count == 1
         finally:
             runtime.close()
+
+
+_CACHE_SYMBOLS = ("AUSDT", "BUSDT", "CUSDT", "DUSDT", "EUSDT")
+
+
+def _runtime_with_candle_cache(path: Path, fetch):
+    from terminal.runtime.closed_candle_cache import CachedClosedCandleProvider
+
+    primary = _instrument()
+    return PaperRuntime(
+        path,
+        book_provider=StaticBookProvider(),
+        instrument_snapshot=primary,
+        instrument_provider=lambda symbol: replace(primary, symbol=symbol),
+        robot_closed_candle_provider=CachedClosedCandleProvider(fetch),
+        # Fixed geometry index so reconcile's recovery policy reaches the synchronization.
+        robot_latest_geometry_index_provider=lambda *args: 101,
+    )
+
+
+def _seed_waiting_candidates(runtime) -> None:
+    # WAITING_BREAKOUT: every synchronization tick reads a closed candle per candidate.
+    import robot_state_machine
+    from test_robot_breakout_monitor import _snapshot
+
+    for index, symbol in enumerate(_CACHE_SYMBOLS):
+        candidate_id = f"candidate-cache-{index}"
+        snapshot = _snapshot(symbol=symbol)
+        state, _ = robot_state_machine.initialize_state({
+            "candidate_id": candidate_id, "status": "APPROVED", "timeframe": "1",
+            "signal_snapshot": snapshot,
+        })
+        assert state["phase"] == robot_state_machine.PHASE_WAITING_BREAKOUT
+        runtime.store.create_robot_candidate(
+            candidate_id=candidate_id, trading_account_id=TradingAccountId("paper"),
+            symbol=Symbol(symbol), status="APPROVED", signal_snapshot=snapshot,
+            approved_at_ms=1000, updated_at_ms=1000,
+        )
+        runtime.store.save_robot_candidate_state(
+            candidate_id, status="APPROVED", robot_state=state,
+            expected_revision=0, updated_at_ms=1001,
+        )
+
+
+def _run_robot_command(runtime, command: str) -> None:
+    if command == "pause":
+        _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="PAUSED")
+        runtime.robot_synchronize_pending_entries()
+    elif command == "stop":
+        _set_admission(runtime, mode="ROBOT_STOPPED", recovery_status="ROBOT_STOPPED")
+        runtime.robot_synchronize_pending_entries()
+    else:
+        _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED")
+        runtime.robot_reconcile()
+
+
+@pytest.mark.parametrize("command", ["pause", "stop", "reconcile"])
+def test_robot_commands_with_warm_candle_cache_do_no_network_on_owner_thread(command):
+    import threading
+
+    calls = []
+
+    def fetch(symbol):
+        calls.append((symbol, threading.get_ident()))
+        return {"time_ms": 60_000, "high": 1.0, "low": 1.0, "close": 1.0}
+
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_with_candle_cache(Path(temp) / "paper.sqlite3", fetch)
+        try:
+            owner = threading.get_ident()  # this runtime's SQLiteStore owner
+            _seed_waiting_candidates(runtime)
+            assert runtime.robot_approved_candidate_symbols() == _CACHE_SYMBOLS
+
+            # Warm-up happens off the owner thread (as the HTTP handler does it).
+            warm = threading.Thread(
+                target=runtime.robot_closed_candle_cache.warm, args=(_CACHE_SYMBOLS,),
+            )
+            warm.start()
+            warm.join(timeout=10)
+            assert len(calls) == 5 and all(ident != owner for _, ident in calls)
+
+            _run_robot_command(runtime, command)
+
+            assert [symbol for symbol, ident in calls if ident == owner] == []
+            assert runtime.robot_closed_candle_cache.metrics()["candle_cache_misses_owner"] == 0
+        finally:
+            runtime.close()
+
+
+@pytest.mark.parametrize("command", ["pause", "stop", "reconcile"])
+def test_robot_commands_without_warm_cache_still_fetch_on_owner_thread_as_before(command):
+    import threading
+
+    calls = []
+
+    def fetch(symbol):
+        calls.append((symbol, threading.get_ident()))
+        return {"time_ms": 60_000, "high": 1.0, "low": 1.0, "close": 1.0}
+
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_with_candle_cache(Path(temp) / "paper.sqlite3", fetch)
+        try:
+            _seed_waiting_candidates(runtime)
+            _run_robot_command(runtime, command)
+            # Fallback: the previous in-place fetch, one per candidate.
+            assert sorted(symbol for symbol, _ in calls) == list(_CACHE_SYMBOLS)
+            assert all(ident == threading.get_ident() for _, ident in calls)
+            assert runtime.robot_closed_candle_cache.metrics() == {
+                "candle_cache_hits": 0, "candle_cache_misses_owner": 5,
+            }
+        finally:
+            runtime.close()
+
+
+def test_default_candle_cache_keeps_admission_catchup_enabled():
+    from scanner_geometry_cursor import latest_scanner_closed_candle, load_scanner_catchup_closed_candles
+    from terminal.runtime.closed_candle_cache import CachedClosedCandleProvider
+
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            cache = runtime.robot_closed_candle_cache
+            assert isinstance(cache, CachedClosedCandleProvider)
+            assert cache.fetch is latest_scanner_closed_candle
+            monitor = runtime._robot_breakout_monitor
+            assert monitor._get_closed_candle is cache
+            # Same as before: the bare default provider switched catch-up on.
+            assert monitor._get_admission_catchup_candles is load_scanner_catchup_closed_candles
+        finally:
+            runtime.close()

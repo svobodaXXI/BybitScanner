@@ -1097,6 +1097,7 @@ class SerializedPaperRuntime:
         # Written only by the owner thread as one tuple; the label is resolved lazily.
         self._slowest_owner_task: tuple[float, str | None, object] = (0.0, None, None)
         self._owner_diagnostics_disabled = False
+        self._candle_cache = None  # the owned runtime's CachedClosedCandleProvider, if any
         self._protection_ingress_last_symbol: str | None = None
         self._protection_ingress_last_role: str | None = None
         self._protection_ingress_last_overflow_symbol: str | None = None
@@ -1199,7 +1200,25 @@ class SerializedPaperRuntime:
             normalized_role,
         ))
 
+    def warm_robot_closed_candles(self) -> None:
+        """Fetch closed candles for APPROVED candidates on the calling thread.
+
+        Called by Robot command handlers before they queue owner work that
+        synchronizes pending entries, so that work reads cached candles
+        instead of blocking the owner thread on REST.
+        """
+        cache = self._candle_cache
+        if cache is None:
+            return
+        symbols = self.call(lambda runtime: runtime.robot_approved_candidate_symbols())
+        cache.warm(symbols)
+
     def protection_ingress_metrics(self) -> dict[str, object]:
+        cache = self._candle_cache
+        candle_cache = (
+            cache.metrics() if cache is not None
+            else {"candle_cache_hits": 0, "candle_cache_misses_owner": 0}
+        )
         slowest_ms, slowest_kind, slowest_source = self._slowest_owner_task
         slowest_label = (
             _owner_task_label(slowest_source) if slowest_source is not None else None
@@ -1214,6 +1233,7 @@ class SerializedPaperRuntime:
                 "slowest_task_kind": slowest_kind,
                 "slowest_task_label": slowest_label,
                 "slowest_task_ms": slowest_ms,
+                **candle_cache,
                 "last_symbol": self._protection_ingress_last_symbol,
                 "last_role": self._protection_ingress_last_role,
                 "last_overflow_symbol": self._protection_ingress_last_overflow_symbol,
@@ -1259,6 +1279,7 @@ class SerializedPaperRuntime:
             self._initialization_error = exc
             self._ready.set()
             return
+        self._candle_cache = getattr(runtime, "robot_closed_candle_cache", None)
         self._ready.set()
         try:
             while True:
@@ -2632,6 +2653,18 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _warm_robot_closed_candles(self) -> None:
+        # pause/stop/reconcile synchronize pending entries on the owner thread;
+        # fetch their candles here first. Failures are ignored: an owner-thread
+        # cache miss still falls back to the previous in-place fetch.
+        warm = getattr(self.server.runtime, "warm_robot_closed_candles", None)
+        if warm is None:
+            return
+        try:
+            warm()
+        except Exception:
+            LOGGER.warning("Robot candle cache warm-up failed", exc_info=True)
+
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         if path in {OPERATOR_ARM_PATH, OPERATOR_REVOKE_PATH}:
@@ -2929,6 +2962,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         if self.path == "/api/robot/synchronize-pending-entries":
             try:
                 self._payload(ROBOT_SYNCHRONIZE_PENDING_ENTRIES_FIELDS)
+                self._warm_robot_closed_candles()
                 result = self.server.runtime.call(
                     lambda runtime: _execute_robot_route(
                         runtime,
@@ -2948,6 +2982,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         if self.path == "/api/robot/reconcile":
             try:
                 self._payload(ROBOT_RECONCILE_FIELDS)
+                self._warm_robot_closed_candles()
                 result = self.server.runtime.call(
                     lambda runtime: _execute_robot_route(
                         runtime, "reconcile_robot", runtime.robot_reconcile,

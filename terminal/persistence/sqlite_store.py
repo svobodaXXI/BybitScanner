@@ -1337,8 +1337,11 @@ class SQLiteStore:
     def __exit__(self, exc_type, exc, traceback) -> None:
         self.close()
 
+    def is_owned_by_current_thread(self) -> bool:
+        return threading.get_ident() == self._owner_thread
+
     def _assert_owner(self) -> None:
-        if threading.get_ident() != self._owner_thread:
+        if not self.is_owned_by_current_thread():
             raise PersistenceError("SQLiteStore must be used by its owning writer thread")
 
     @contextmanager
