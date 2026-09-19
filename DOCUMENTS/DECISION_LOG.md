@@ -562,7 +562,7 @@ The same quality bar for both entry paths, configurable so it can be tuned from 
 consequences:
 
 * STOP, TAKE, protection and admission logic are unchanged; the 0.7% minimum stop is a separate task;
-* if the ratio cannot be computed the LIMIT is placed as before (post-fill protection stays the owner);
+* when RR cannot be computed, no initial LIMIT is placed; candidate becomes `INVALIDATED` with `SKIPPED_RR_UNAVAILABLE` and diagnostic `execution.entry_rr_filter` details; RR=0 never qualifies even with a zero configured threshold; already-filled and legacy resting orders retain the independent post-fill protection and emergency-close lifecycle;
 * proposed reprices are checked against the same threshold; an uncomputed or poor-RR reprice is not submitted, and the existing unfilled order remains in place and under normal monitoring;
 * `MIN_LATE_ADMISSION_RR` keeps its own constant with the same default; the environment variable does not apply to it;
 * the running backend picks the code up only after a restart.
