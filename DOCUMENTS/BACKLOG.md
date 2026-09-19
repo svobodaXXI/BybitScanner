@@ -88,6 +88,10 @@ Findings so far:
   structure definition is an open item there (item 7). No code.
 - Box/rectangle: no design found; closest code is `structures/channel.py`.
 - Geometry code lives in `wedge/` (detector, classifier, integrity, potential) and `structures/`.
+- Impulse groundwork already exists: `geometry.pre_pattern.detect_pre_pattern_impulse` is called by
+  `geometry/evaluation.py` and stored as `pair_metrics["pre_pattern_impulse"]` for each geometry candidate.
+  Its current 20-bar endpoint-close direction is preliminary evidence only (any nonzero change yields UP/DOWN);
+  G3 must reuse/validate this existing path rather than implement a second impulse detector. See the research note.
 To do: a short survey of mature open-source pattern-detection approaches (anchor/pivot selection, scaling), written to a doc,
 with concrete ideas to borrow. Output: `DOCUMENTS/GEOMETRY_RESEARCH_<date>.md`.
 
