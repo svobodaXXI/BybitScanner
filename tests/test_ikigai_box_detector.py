@@ -243,14 +243,22 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
         self.assertIsNone(detect_ikigai_box(
             continued, as_of_index=box_end + 1,
         ))
-        after = detect_ikigai_box_watches(
-            continued, as_of_index=box_end + 2,
+        on_break = detect_ikigai_box_watches(
+            continued, as_of_index=box_end + 1,
         )
-        breakout = next(w for w in after if w.anchor_identity == prior.anchor_identity)
+        breakout = next(
+            w for w in on_break if w.anchor_identity == prior.anchor_identity
+        )
         self.assertEqual(breakout.phase, "BOX_BREAK_OBSERVED")
         self.assertEqual(breakout.first_box_exit_index, box_end + 1)
         self.assertEqual(breakout.box_end_index, prior.box_end_index)
         self.assertEqual(breakout.fibonacci_1_618, prior.fibonacci_1_618)
+        # After a re-entry the pure stateless WATCH may observe a wider shelf.
+        # The caller must persist the first frozen box by anchor_identity.
+        after_reentry = detect_ikigai_box_watches(continued)
+        self.assertTrue(any(
+            w.anchor_identity == prior.anchor_identity for w in after_reentry
+        ))
 
     def test_watch_rejects_stale_entry_after_extension_touch(self):
         frame, box_end = _terminal_wick_two_impulses()
@@ -264,8 +272,9 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             w.anchor_identity == ("SHORT", 20, 23) for w in watches
         ))
         self.assertEqual(
-            next(w for w in detect_ikigai_box_watches(frame)
-                 if w.anchor_identity == ("SHORT", 20, 23)).as_of_index,
+            next(w for w in detect_ikigai_box_watches(
+                frame, as_of_index=box_end,
+            ) if w.anchor_identity == ("SHORT", 20, 23)).as_of_index,
             box_end,
         )
 
