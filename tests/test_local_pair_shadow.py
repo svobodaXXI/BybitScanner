@@ -106,6 +106,21 @@ class LocalPairShadowContract(unittest.TestCase):
         pivots[0]["confirmation_contiguous"] = False
         self.assertEqual(check(frame, pivots, anchors)["status"], "UNKNOWN")
 
+    def test_unquantified_outer_wick_remains_unknown(self):
+        frame, pivots, anchors = sample()
+        frame.loc[10, "high"] = 9.0  # Outer wick after the last anchor, body unchanged.
+        result = check(frame, pivots, anchors)
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertIn(10, result["strict"]["E"]["wick_indices"])
+        self.assertIn(10, result["strict"]["FULL"]["wick_indices"])
+
+    def test_pivot_price_must_match_source_ohlc(self):
+        frame, pivots, anchors = sample()
+        pivots[0]["price"] += 0.1
+        result = check(frame, pivots, anchors)
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertIn("UNPROVEN_PIVOT_PROVENANCE", result["reasons"])
+
     def test_no_existing_production_imports_new_module(self):
         root = Path(__file__).resolve().parents[1]
         for name in ("analyzer/core.py", "wedge/analyzer.py", "wedge/__init__.py",
