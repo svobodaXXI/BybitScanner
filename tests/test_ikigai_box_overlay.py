@@ -171,6 +171,10 @@ class IkigaiBoxOverlayTests(unittest.TestCase):
         # A malformed future candle must not even be converted to float:
         # as_of is a hard provenance boundary, not just a comparison bound.
         for column in ("open", "high", "low", "close"):
+            # pandas 3 rejects assigning a string into a float64 column.
+            # Cast explicitly so the intentionally malformed FUTURE row
+            # tests our as_of boundary, not pandas assignment semantics.
+            future[column] = future[column].astype(object)
             future.loc[future.index[-1], column] = "NOT_YET_KNOWN"
         self.assertEqual(
             build_trade_overlay(candles, setup),
