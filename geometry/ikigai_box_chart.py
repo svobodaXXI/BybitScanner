@@ -74,7 +74,8 @@ def render_ikigai_box_chart(
                 raise ValueError("BOX_READY cannot have a prior breakout")
         elif formation.phase == "BOX_BREAK_OBSERVED":
             if not (
-                formation.box_end_index
+                type(formation.first_box_exit_index) is int
+                and formation.box_end_index
                 < formation.first_box_exit_index
                 <= end
             ):
