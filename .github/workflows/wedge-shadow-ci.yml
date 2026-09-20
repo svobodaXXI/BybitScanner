@@ -1,0 +1,39 @@
+name: Wedge shadow focused checks
+
+on:
+  pull_request:
+    paths:
+      - "pivots.py"
+      - "wedge/local_pair_shadow.py"
+      - "wedge/local_episode_shadow.py"
+      - "tests/test_pivots_detect_equivalence.py"
+      - "tests/test_local_pair_shadow.py"
+      - "tests/test_local_episode_shadow.py"
+      - "tests/test_real_crcl_pair_shadow.py"
+      - "tests/test_real_crv_pair_extension.py"
+      - "tests/test_real_crv_followup_shadow.py"
+      - "tests/fixtures/crcl_20260920_closed_5m.csv.zlib.b64"
+      - "tests/fixtures/crv_20260920_closed_5m.csv.zlib.b64"
+      - "tests/fixtures/crv_20260920_followup_71_5m.csv.zlib.b64"
+      - "tests/fixtures/0g_a_20260920_closed_5m.csv.zlib.b64"
+      - "tests/fixtures/0g_b_20260920_closed_5m.csv.zlib.b64"
+      - ".github/workflows/wedge-shadow-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  local-pair-shadow:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install focused test dependencies
+        run: python -m pip install "pandas==3.0.5" "numpy==2.5.1"
+      - name: Compile isolated shadow code and tests
+        run: python -m py_compile pivots.py wedge/local_pair_shadow.py wedge/local_episode_shadow.py tests/test_pivots_detect_equivalence.py tests/test_local_pair_shadow.py tests/test_real_crcl_pair_shadow.py tests/test_local_episode_shadow.py tests/test_real_crv_pair_extension.py tests/test_real_crv_followup_shadow.py
+      - name: Run raw-pivot and local pair shadow regressions
+        run: python -m unittest -v tests.test_pivots_detect_equivalence tests.test_local_pair_shadow tests.test_real_crcl_pair_shadow tests.test_local_episode_shadow tests.test_real_crv_pair_extension tests.test_real_crv_followup_shadow

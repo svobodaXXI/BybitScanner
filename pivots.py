@@ -14,7 +14,18 @@ pivots.py
 """
 
 
-def find_pivots(df, left=3, right=3, min_change=0.003):
+def detect_pivots(df, left=3, right=3):
+    """
+    Возвращает НЕотфильтрованные Pivot High / Pivot Low.
+
+    Тот же алгоритм left/right и те же строгие сравнения,
+    что и раньше в find_pivots; индексы — позиции в кадре
+    после dropna/reset_index, как и прежде.
+
+    Работает на копии данных и не изменяет переданный
+    DataFrame. Смотрит только на свечи внутри переданного
+    кадра: будущие свечи должен отсекать вызывающий код.
+    """
 
     highs = []
     lows = []
@@ -23,7 +34,6 @@ def find_pivots(df, left=3, right=3, min_change=0.003):
         return [], []
 
 
-    # дополнительная очистка входных данных
     required = [
         "high",
         "low"
@@ -34,29 +44,38 @@ def find_pivots(df, left=3, right=3, min_change=0.003):
         if col not in df.columns:
             return [], []
 
-        df[col] = df[col].apply(
+
+    frame = df.loc[
+        :,
+        required
+    ].copy()
+
+
+    for col in required:
+
+        frame[col] = frame[col].apply(
             lambda x: float(x)
             if x is not None
             else None
         )
 
 
-    df = df.dropna(
+    frame = frame.dropna(
         subset=required
     ).reset_index(drop=True)
 
 
-    for i in range(left, len(df) - right):
+    for i in range(left, len(frame) - right):
 
-        high = df.loc[i, "high"]
-        low = df.loc[i, "low"]
+        high = frame.loc[i, "high"]
+        low = frame.loc[i, "low"]
 
 
-        left_high = df.loc[i-left:i-1, "high"]
-        right_high = df.loc[i+1:i+right, "high"]
+        left_high = frame.loc[i-left:i-1, "high"]
+        right_high = frame.loc[i+1:i+right, "high"]
 
-        left_low = df.loc[i-left:i-1, "low"]
-        right_low = df.loc[i+1:i+right, "low"]
+        left_low = frame.loc[i-left:i-1, "low"]
+        right_low = frame.loc[i+1:i+right, "low"]
 
 
         if (
@@ -81,6 +100,41 @@ def find_pivots(df, left=3, right=3, min_change=0.003):
                 "price": low,
                 "type": "low"
             })
+
+
+    return highs, lows
+
+
+
+def find_pivots(df, left=3, right=3, min_change=0.003):
+
+    if df is None or df.empty:
+        return [], []
+
+
+    # дополнительная очистка входных данных
+    required = [
+        "high",
+        "low"
+    ]
+
+    for col in required:
+
+        if col not in df.columns:
+            return [], []
+
+        df[col] = df[col].apply(
+            lambda x: float(x)
+            if x is not None
+            else None
+        )
+
+
+    highs, lows = detect_pivots(
+        df,
+        left=left,
+        right=right
+    )
 
 
     return (
