@@ -98,7 +98,10 @@ def analyze_symbol(symbol):
                 "symbol": symbol,
                 "result": None,
                 "highs": highs,
-                "lows": lows
+                "lows": lows,
+                # Reuse this OHLC snapshot for opt-in Box observation even
+                # when Wedge pivot or geometry admission fails.
+                "data": df
             }
 
         # =========================
@@ -120,7 +123,10 @@ def analyze_symbol(symbol):
                 "symbol": symbol,
                 "result": None,
                 "highs": highs,
-                "lows": lows
+                "lows": lows,
+                # Reuse this OHLC snapshot for opt-in Box observation even
+                # when Wedge pivot or geometry admission fails.
+                "data": df
             }
 
         # Scanner geometry stays in its native timeframe for charting and
