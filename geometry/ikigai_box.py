@@ -23,6 +23,11 @@ class IkigaiBoxParameters:
     min_impulse_fraction: float = 0.01
     max_box_width_fraction: float = 0.55
     max_box_retrace_fraction: float = 0.60
+    # Alternative path for a first impulse ending in a rejection wick.
+    # Never relax the ordinary body-driven impulse path globally.
+    max_wick_box_retrace_fraction: float = 0.70
+    min_terminal_rejection_fraction: float = 0.35
+    min_wick_close_progress_fraction: float = 0.30
     min_second_progress: float = 0.30
     max_second_progress: float = 1.90
 
@@ -100,7 +105,9 @@ def detect_ikigai_box(
         p.min_impulse_atr > 0
         and p.min_impulse_fraction > 0
         and 0 < p.max_box_width_fraction < 1
-        and 0 < p.max_box_retrace_fraction < 1
+        and 0 < p.max_box_retrace_fraction <= p.max_wick_box_retrace_fraction < 1
+        and 0 < p.min_terminal_rejection_fraction < 1
+        and 0 < p.min_wick_close_progress_fraction < 0.60
         and 0 < p.min_second_progress < p.max_second_progress
     ):
         raise ValueError("Invalid Ikigai Box geometry thresholds")
@@ -184,20 +191,42 @@ def detect_ikigai_box(
                     close_move = sign * (
                         rows[first_end][3] - rows[first_start][0]
                     )
-                    if close_move < 0.60 * span:
-                        continue
                     forward_bars = sum(
                         sign * (row[3] - row[0]) > 0 for row in first_rows
                     )
-                    if forward_bars * 5 < first_n * 3:
+                    ordinary_impulse = (
+                        close_move >= 0.60 * span
+                        and forward_bars * 5 >= first_n * 3
+                    )
+                    # Some genuine impulses finish on a spike-and-rejection
+                    # candle: B is the terminal WICK, so body-only gates can
+                    # discard a legitimate A/B. Require both a material
+                    # terminal rejection AND earlier net directional progress;
+                    # do not admit an isolated wick in a sideways range.
+                    terminal_rejection = sign * (
+                        b - rows[first_end][3]
+                    )
+                    wick_impulse = (
+                        terminal_rejection
+                        >= p.min_terminal_rejection_fraction * span
+                        and close_move
+                        >= p.min_wick_close_progress_fraction * span
+                        and forward_bars * 2 >= first_n
+                    )
+                    if not (ordinary_impulse or wick_impulse):
                         continue
                     if box_high - box_low > p.max_box_width_fraction * span:
                         continue
                     # A shallow shelf remains near the FIRST terminal wick.
                     retrace = (b - box_low) if sign == 1 else (box_high - b)
                     extension = (box_high - b) if sign == 1 else (b - box_low)
+                    allowed_retrace = (
+                        p.max_wick_box_retrace_fraction
+                        if wick_impulse
+                        else p.max_box_retrace_fraction
+                    )
                     if not (
-                        0 <= retrace <= p.max_box_retrace_fraction * span
+                        0 <= retrace <= allowed_retrace * span
                         and extension <= 0.12 * span
                     ):
                         continue
