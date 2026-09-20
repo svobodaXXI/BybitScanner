@@ -134,14 +134,25 @@ def run_scan_pass():
                 and analysis_result.get("data") is not None
             ):
                 try:
-                    from ikigai_box_scanner import send_ikigai_box_observation
+                    if os.environ.get("BYBITSCANNER_IKIGAI_BOX_WATCH") == "1":
+                        from ikigai_box_watch_stream import process_ikigai_box_watches
 
-                    if send_ikigai_box_observation(
-                        symbol,
-                        analysis_result["data"],
-                        timeframe=config.TIMEFRAME,
-                        test_mode=config.TELEGRAM_TEST_MODE,
-                    ):
+                        box_sent = process_ikigai_box_watches(
+                            symbol,
+                            analysis_result["data"],
+                            timeframe=config.TIMEFRAME,
+                            test_mode=config.TELEGRAM_TEST_MODE,
+                        )
+                    else:
+                        from ikigai_box_scanner import send_ikigai_box_observation
+
+                        box_sent = send_ikigai_box_observation(
+                            symbol,
+                            analysis_result["data"],
+                            timeframe=config.TIMEFRAME,
+                            test_mode=config.TELEGRAM_TEST_MODE,
+                        )
+                    if box_sent:
                         box_observation_count += 1
                         sent_to_telegram_count += 1
                         print(f"{symbol:<15} IKIGAI BOX observation SENT")
