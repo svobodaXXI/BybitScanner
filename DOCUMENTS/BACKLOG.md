@@ -116,6 +116,49 @@ is visible when available, and capped/missing history is marked rather than inve
 trading-rule changes, or VPS/runtime operations in this task.
 
 ### G2 — Adequate, context-dependent anchor detection
+**Priority correction from local SOLUSDT 5m acceptance (2026-09-20): REJECT the example as a wedge,
+not as a chart-history or START-repair sample.** In a one-pass, 200-bar local scan the
+fitted upper and lower first anchors were indices 19 and 124: **105 x 5m = 525 minutes,
+8 h 45 m apart**. Despite a CANONICAL Falling Wedge / 95 quality display, the owner
+sees no coherent local wedge formation; extending the chart or shifting the START
+cannot make that fitted pair legitimate. Do NOT use this case to select a historical
+START, subtype, G3P four-point candidate or corridor-trade geometry.
+
+**G2-P0 structural-coherence gate BEFORE further START/window/subtype work:** inspect why
+this pair survived rather than treating its high quality score as evidence of a wedge.
+`geometry/engine.py` currently evaluates a Cartesian product of separately generated
+upper and lower lines. `geometry/pair_metrics.py` already enforces that the lower first
+anchor of a falling pair equals the **next LOW in the supplied filtered list** after
+its upper first anchor (and mirrors this for a rising pair). The SOL case proves
+that “next surviving opposite pivot” is **insufficient**: `pivots.py::filter_pivots`
+filters highs and lows independently using same-side price change, potentially leaving
+a large temporal gap even when its adjacency check passes. Investigate the actual
+pivot sequence and any omitted local extremes; do not assume adjacency was absent
+or that a magic score/tolerance fixes it.
+
+Owner requirement: a candidate pattern begins with **neighboring, meaningful,
+opposite-side structural pivots in one local formation episode** (HIGH -> LOW for
+falling, LOW -> HIGH for rising), not two anchors gathered from distant, unrelated
+swings. Verify a coherent alternating sequence and a bounded first-opposite-pivot
+bar/time separation **relative to the formation's timeframe and observed local
+swings**, including the raw versus filtered pivot-gap distinction. Numeric duration
+and pivot-significance limits are NOT approved; calibrate on locally captured
+accepted/rejected 1m/5m examples, including this negative control. If coherent
+local formation evidence is missing or ambiguous, REJECT the pair **before ranking
+or presentation as a confirmed wedge**, rather than hiding its mismatch by drawing
+more history, changing chart START, globally lowering confirmations, or trusting
+95/100. A correct pair may retain distinct genuine HIGH/LOW start anchors, but
+its opening opposite swing must be structurally adjacent, not hours apart.
+
+**Next micro-slice:** read-only trace on the rejected SOL example (raw and filtered
+pivots, anchor order/confirmation, gap in bars, existing anchor_sequence validity,
+why the geometry and quality gates admitted it) and a small positive local control.
+Then specify and test the minimal fail-closed *wedge-only* pair-coherence gate
+before wiring any production behavior. Keep current Scanner/Robot execution,
+prior frozen signals, live PAPER/VPS and unrelated patterns unchanged; do not
+rerun the dismissed SOL extended-window demonstration. G2a/G2b0 remain
+research-only tools for subsequently verified coherent formations.
+
 Depends on G0 and G1. Inputs from the user: 3–5 chart examples where anchors were wrong (Anchor/START feedback already exists in
 the Telegram posts). Output: spec (which pivots are candidates, ranking, tolerance), then implementation behind a flag with
 side-by-side comparison on saved signals.
