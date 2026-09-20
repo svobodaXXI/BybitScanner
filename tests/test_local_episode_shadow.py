@@ -14,7 +14,8 @@ import pandas as pd
 
 from pivots import detect_pivots
 from tests.test_real_crcl_pair_shadow import _confirmed, _frame
-from wedge.local_episode_shadow import propose_local_episodes, trace_episode_checkpoints
+from wedge.local_episode_shadow import (propose_local_episodes, trace_episode_checkpoints,
+                                       trace_explicit_pair_checkpoints)
 
 
 ZERO_G = Path(__file__).parent / "fixtures/0g_a_20260920_closed_5m.csv.zlib.b64"
@@ -180,6 +181,90 @@ class LocalEpisodeChronology(unittest.TestCase):
         )
         self.assertEqual(bad_provenance["status"], "UNKNOWN")
         self.assertIn("CONFIRMED_LEDGER_UNPROVEN", bad_provenance["reasons"])
+
+    def test_two_explicit_crcl_pairs_have_separate_first_knowable_verdicts(self):
+        frame = _frame()
+        original = frame.copy(deep=True)
+        raw = _confirmed(frame)
+        pair_specs = (
+            {"id": "legacy-L123", "episode_start": 119,
+             "anchors": {"h1": 119, "h2": 195, "l1": 123, "l2": 185}},
+            {"id": "local-L114", "episode_start": 114,
+             "anchors": {"h1": 119, "h2": 195, "l1": 114, "l2": 185}},
+        )
+        traced = trace_explicit_pair_checkpoints(
+            frame, raw, as_of_index=198,
+            checkpoints=(187, 188, 197, 198), pair_specs=pair_specs,
+        )
+        self.assertEqual(traced["status"], "OK", traced)
+        self.assertEqual(traced["membership"], "UNPROVEN")
+        self.assertEqual([r["as_of_index"] for r in traced["history"]],
+                         [187, 188, 197, 198])
+        for checkpoint in traced["history"][:-1]:
+            self.assertEqual([r["id"] for r in checkpoint["pairs"]],
+                             ["legacy-L123", "local-L114"])
+            for pair in checkpoint["pairs"]:
+                self.assertEqual(pair["pair_status"], "NOT_YET_EVALUABLE")
+                self.assertIsNone(pair["pair_result"])
+                self.assertEqual(pair["membership"], "UNPROVEN")
+                self.assertNotIn({"index": 195, "side": "HIGH"},
+                                 pair["confirmed_anchors"])
+        self.assertNotIn({"index": 185, "side": "LOW"},
+                         traced["history"][0]["pairs"][1]["confirmed_anchors"])
+        self.assertIn({"index": 185, "side": "LOW"},
+                      traced["history"][1]["pairs"][1]["confirmed_anchors"])
+        old, local = traced["history"][-1]["pairs"]
+        self.assertEqual((old["pair_status"], local["pair_status"]),
+                         ("INVALID", "VALID_RESEARCH_PAIR"))
+        self.assertIn("LOCAL_PIVOT_OUTSIDE_ANCHORED_ENVELOPE",
+                      old["pair_result"]["reasons"])
+        self.assertEqual(local["pair_result"]["completion_status"], "UNKNOWN")
+        self.assertEqual(old["membership"], "UNPROVEN")
+        self.assertEqual(local["membership"], "UNPROVEN")
+        pd.testing.assert_frame_equal(frame, original)
+
+    def test_explicit_pair_order_cannot_rewrite_a_prior_checkpoint(self):
+        frame, raw = _frame(), _confirmed(_frame())
+        a = {"id": "old", "episode_start": 119,
+             "anchors": {"h1": 119, "h2": 195, "l1": 123, "l2": 185}}
+        b = {"id": "new", "episode_start": 114,
+             "anchors": {"h1": 119, "h2": 195, "l1": 114, "l2": 185}}
+        early = trace_explicit_pair_checkpoints(
+            frame, raw, as_of_index=198, checkpoints=(187,), pair_specs=(a, b)
+        )
+        full = trace_explicit_pair_checkpoints(
+            frame, raw, as_of_index=198, checkpoints=(187, 198), pair_specs=(a, b)
+        )
+        reversed_pairs = trace_explicit_pair_checkpoints(
+            frame, raw, as_of_index=198, checkpoints=(187, 198), pair_specs=(b, a)
+        )
+        self.assertEqual(early["status"], "OK", early)
+        self.assertEqual(full["status"], "OK", full)
+        self.assertEqual(reversed_pairs["status"], "OK", reversed_pairs)
+        self.assertEqual(early["history"][0], full["history"][0])
+        for idx in range(2):
+            ordinary = {p["id"]: p for p in full["history"][idx]["pairs"]}
+            reversed_set = {p["id"]: p for p in reversed_pairs["history"][idx]["pairs"]}
+            self.assertEqual(ordinary, reversed_set)
+
+    def test_explicit_pair_replay_fail_closed_on_bad_input(self):
+        frame = _frame()
+        raw = _confirmed(frame)
+        spec = {"id": "A", "episode_start": 114,
+                "anchors": {"h1": 119, "h2": 195, "l1": 114, "l2": 185}}
+        for pairs in ((spec, spec), ({**spec, "episode_start": 150},)):
+            out = trace_explicit_pair_checkpoints(
+                frame, raw, as_of_index=198, checkpoints=(197, 198),
+                pair_specs=pairs,
+            )
+            self.assertEqual(out["status"], "UNKNOWN")
+            self.assertIn("INVALID_EXPLICIT_PAIR_REPLAY_INPUT", out["reasons"])
+        no_future = trace_explicit_pair_checkpoints(
+            frame.iloc[:198].copy(), _confirmed(frame.iloc[:198].copy()),
+            as_of_index=197, checkpoints=(197,), pair_specs=(spec,)
+        )
+        self.assertEqual(no_future["status"], "UNKNOWN")
+        self.assertIn("INVALID_EXPLICIT_PAIR_REPLAY_INPUT", no_future["reasons"])
 
     def test_not_imported_by_production_path(self):
         root = Path(__file__).resolve().parents[1]
