@@ -279,8 +279,10 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
         )
 
     def test_watch_long_is_mirror_and_has_no_future_peeking(self):
-        frame, box_end = _terminal_wick_two_impulses(direction=-1)
-        original = detect_ikigai_box_watches(frame)
+        frame, box_end = _terminal_wick_two_impulses(
+            direction=-1, second=False,
+        )
+        original = detect_ikigai_box_watches(frame, as_of_index=box_end)
         match = next(w for w in original if w.anchor_identity == ("LONG", 20, 23))
         self.assertEqual(match.phase, "BOX_READY")
         self.assertGreater(match.fibonacci_1_0, match.fibonacci_1_618)
