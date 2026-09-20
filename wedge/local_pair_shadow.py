@@ -75,7 +75,8 @@ def evaluate_local_pair(frame, confirmed_points, *, as_of_index, timeframe,
         return result
     try:
         times = [int(v) for v in frame["time"].tolist()]
-        if not times or any(b - a != 300_000 for a, b in zip(times, times[1:])):
+        if (not times or any(t < 1_000_000_000_000 or t >= 10_000_000_000_000 for t in times)
+                or any(b - a != 300_000 for a, b in zip(times, times[1:]))):
             reasons.append("NONCONTIGUOUS_OR_UNPROVEN_SOURCE_BARS")
             return result
         for column in ("open", "high", "low", "close"):
@@ -113,7 +114,9 @@ def evaluate_local_pair(frame, confirmed_points, *, as_of_index, timeframe,
                     or not p.get("confirmation_contiguous", False)
                     or int(p["event_time_ms"]) != times[index]
                     or int(p["confirm_time_ms"]) != times[confirm] + 300_000
-                    or not math.isfinite(float(p["price"]))):
+                    or not math.isfinite(float(p["price"]))
+                    or abs(float(p["price"]) - float(frame.iloc[index]["high" if side == "HIGH" else "low"]))
+                       > 1e-12 * max(1.0, abs(float(p["price"])))):
                 raise ValueError("not confirmed on source-time closed prefix")
             key = (index, side)
             if key in by_key:
@@ -192,9 +195,9 @@ def evaluate_local_pair(frame, confirmed_points, *, as_of_index, timeframe,
         result["status"] = "UNKNOWN"
     elif (result["strict"]["A"]["body_count"]
           or result["strict"]["E"]["body_count"]
-          or result["strict"]["E"]["max_wick_run"] >= 2):
+          or any(zone["wick_count"] for zone in result["strict"].values() if not zone["empty"])):
         result["status"] = "UNKNOWN"
-        reasons.append("UNRESOLVED_PRE_ANCHOR_OR_POST_ANCHOR_BREACH")
+        reasons.append("UNRESOLVED_PRE_OR_POST_ANCHOR_BREACH_OR_UNCALIBRATED_WICKS")
     else:
         result["status"] = "VALID_RESEARCH_PAIR"
     return result
