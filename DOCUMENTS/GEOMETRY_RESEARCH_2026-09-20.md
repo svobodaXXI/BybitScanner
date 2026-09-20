@@ -383,11 +383,78 @@ re-entry, and post-breakout behavior are **not yet owner-approved strategy rules
 6. **Version and replay.** Store observational provenance (`source_timeframe`, `signal_time`, `pivot_time`, `confirmed_at`, bounded lookback, candidate START, separate line anchors, classification evidence/version) with each *new* signal-time research record when an approved slice specifies its persistence shape. Do not mutate legacy snapshots or current trading DB during research. Compare the same historical event under truncated-at-signal-time replay and full-history inspection; classify only from evidence observable by the signal time.
 7. **Strategy separation.** After four variants plus UNKNOWN can be differentiated on user-reviewed 1m/5m examples and prospective PAPER observations, display one frozen `Контекст: …` line consistently in Telegram text, Scanner PNG, Robot position/lifecycle caption and chart. Evaluate subtype results net of fees under matched entry rules; a proposed deceleration candidate-selection preference needs its own risk/admission decision, never follows automatically from a label.
 
-**Implementation sequence:** complete/review G1a (Codex's unpublished display-only slice), then G1b Robot chart if needed;
-G2a add a focused *pure read-only* impulse-evidence helper and regression using existing candles/pivots;
-G2b compare a bounded shortlist of START/geometry alternatives observationally on saved user-reviewed signals;
-G3a establish subtype+UNKNOWN evidence and label display after examples; G3b separately evaluate any Robot selection
-priority. Preserve scanner throughput and the current PAPER runtime until each smaller gate is verified.
+**Implementation checkpoint (2026-09-20):** G1a Scanner chart window and G2a pure research helper
+are published in *draft* PR #156, not yet merged or runtime-accepted; G1b Robot chart remains
+conditional on separate chart inspection. The **next code slice is G2b0**, a pure, read-only
+comparison of the current geometry's baseline START/line anchors and confirmed historical
+terminal-pivot alternatives, with no production call path. G2b1 may later compare a small
+set of previously validated alternative geometry pairs observationally, but only if
+user-reviewed examples establish a need. G3 context/UNKNOWN labels follow only after
+G2b evidence and labeled examples; preferential Robot entries require an independent
+strategy/risk decision. Preserve Scanner throughput and the current PAPER runtime.
+
+
+## G2b0 implementation contract — observational START versus line anchors (2026-09-20)
+
+**Observed code boundary:** `geometry/evaluation.py::evaluate_candidate_pair` currently sets
+`start_index = min(upper_points[0].index, lower_points[0].index)`. This index is the
+*first fitted-line anchor*, not a proven historical impulse-to-wedge transition.
+`geometry/engine.py::analyze_geometry` evaluates validated candidate pairs and returns
+one existing winner using CANONICAL/EXPLORATORY mode priority and `rank_geometry`.
+`geometry/envelope_metrics.py::calculate_reference_anchor_metrics` searches within
+`common_start` and therefore may miss a terminal HIGH/LOW before either line anchor.
+The existing G2a `collect_impulse_terminal_evidence` observes only terminal pivots
+`<= start_index` from a bounded past window; it cannot discover later transition
+pivots when given the earliest line anchor. These distinct notions of START must not
+be silently aliased.
+
+**Smallest safe G2b0 code slice (pure helper + focused tests; no Scanner wiring):**
+
+1. Accept the already-selected, *unchanged* geometry's upper/lower first anchor
+   indices, its existing `start_index`, source candles, existing `highs/lows`,
+   actual pivot `right`, and explicit last **closed** source-bar `as_of_index`.
+   Record baseline START separately from both individual boundary anchors.
+   Do **not** create alternate line fits or run the pair-generation/ranker again.
+2. Reuse G2a to collect a bounded chronological selection of plausible earlier
+   transition HIGH/LOW pivots and preceding opposing swings, keeping their event
+   times, right-confirmation candle/index, duration, displacement, evidence status
+   and any shortlist/history clipping. For the **first G2b0 slice**, query the
+   history up to the *earliest boundary anchor*; this deliberately does **not**
+   see candidate transitions between the first and second anchor. Mark that
+   coverage limitation explicitly (`BETWEEN_ANCHORS_NOT_EVALUATED`) rather than
+   pretending the search is exhaustive. Only after 1m/5m labeled examples
+   establish the need should G2b1 extend its bounded horizon through the second
+   anchor or consider alternative geometry pairs. An unconfirmed terminal does
+   not become a historical START just because it is visible in full-history pivots.
+3. Return a **diagnostic** structure with baseline START, two distinct anchor
+   indexes/times, `as_of`, bounded window and independent candidate records;
+   never return `selected_start`, a definitive subtype, a revised upper/lower
+   line, or a Robot admission decision. Candidate comparison may report the
+   index/bar distance to baseline, not a best/worst score or a new geometry
+   winner. A candidate `HIGH` with a confirmed preceding UP swing is relevant
+   to the falling-*correction* hypothesis, and `LOW` after DOWN to rising
+   correction; an observed swing's direction alone does **not** establish
+   impulse strength or within-wedge deceleration. Preserve UNKNOWN/AMBIGUOUS.
+4. Treat missing source time/anchor mappings, insufficient history, non-closed
+   confirmation, inconsistent pivot provenance, more candidates than the cap,
+   and line anchor windows that cannot be aligned as **explicit limitations**.
+   Never infer chart START from the displayed left edge, reposition existing
+   lines or mutate a frozen signal/Robot snapshot. The current `find_pivots`
+   same-side filtering can omit a legitimate transition pivot; identify such
+   examples before proposing a separate pivot-engine change.
+5. Verify both wedge orientations and 1m/5m with different first-upper and
+   first-lower anchors, genuine earlier HIGH/LOW, no earlier opposing swing,
+   truncated/ambiguous shortlist, different as-of cutoffs, and regression:
+   **the same as-of observation must agree when supplied with truncated-frame
+   versus full-future-frame pivot lists**. Assert no call to the legacy
+   detector's selection/ranking pipeline, no production Scanner/Robot import,
+   no persistence/HTTP and no change to `detect_pre_pattern_impulse`.
+
+**Next evidence gate:** compare G2b0's separate baseline/line-anchor/confirmed
+transition candidates on 3–5 user-reviewed signal-time chart examples for wrong
+START (ideally 1m and 5m). Only then choose whether to widen the window or inspect
+validated geometry-pair alternatives in G2b1. Current G2a's 20-bar lookback is
+an observational default, **not** a calibrated impulse or future corridor threshold.
 
 ## G2a implementation specification — terminal-pivot evidence (2026-09-20)
 
