@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from geometry.pre_pattern import collect_impulse_terminal_evidence
 from geometry.start_diagnostics import compare_start_anchor_evidence
 from pivots import find_pivots
 
@@ -100,11 +101,14 @@ class StartDiagnosticsTests(unittest.TestCase):
                     prefix, early_highs, early_lows, **options,
                 )
                 self.assertEqual(full, truncated)
-                self.assertFalse(any(
-                    c["index"] == 6 for c in full["candidates"]
-                )) if as_of == 8 else self.assertEqual(
-                    self.candidate(full, 6, "HIGH")["confirmed_at_index"], 9,
-                )
+                if as_of == 8:
+                    self.assertFalse(any(
+                        c["index"] == 6 for c in full["candidates"]
+                    ))
+                else:
+                    self.assertEqual(
+                        self.candidate(full, 6, "HIGH")["confirmed_at_index"], 9,
+                    )
 
     def test_only_earliest_anchor_horizon_is_observed(self):
         frame = self.candles()
@@ -181,9 +185,7 @@ class StartDiagnosticsTests(unittest.TestCase):
         original_pivots = copy.deepcopy((highs, lows))
         with patch(
             "geometry.start_diagnostics.collect_impulse_terminal_evidence",
-            wraps=__import__(
-                "geometry.pre_pattern", fromlist=["collect_impulse_terminal_evidence"]
-            ).collect_impulse_terminal_evidence,
+            wraps=collect_impulse_terminal_evidence,
         ) as evidence:
             result = self.compare(frame, highs, lows)
         evidence.assert_called_once()
