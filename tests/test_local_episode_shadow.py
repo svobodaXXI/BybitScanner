@@ -296,10 +296,10 @@ class LocalEpisodeChronology(unittest.TestCase):
         repeated = full["history"][3]["pairs"][0]
         self.assertEqual(before["pair_status"], "NOT_YET_EVALUABLE")
         self.assertEqual(frozen["pair_status"], "VALID_RESEARCH_PAIR")
-        self.assertEqual(frozen["first_evaluable_as_of"], 11)
+        self.assertEqual(frozen["baseline_checked_as_of"], 11)
         self.assertIsNone(frozen["extension_since_first"])
         self.assertEqual(crossed["frozen_first_status"], "VALID_RESEARCH_PAIR")
-        self.assertEqual(crossed["first_evaluable_as_of"], 11)
+        self.assertEqual(crossed["baseline_checked_as_of"], 11)
         self.assertEqual(crossed["pair_status"], "UNKNOWN")
         self.assertEqual(crossed["extension_since_first"]["status"],
                          "EXCURSION_OBSERVED")
@@ -310,6 +310,21 @@ class LocalEpisodeChronology(unittest.TestCase):
         self.assertEqual(repeated["extension_since_first"]["membership"],
                          "UNPROVEN")
         self.assertEqual(frozen["pair_result"]["strict"]["E"]["body_indices"], [])
+
+    def test_sparse_checkpoints_do_not_claim_first_historical_pair_verdict(self):
+        frame, ledger, anchors = sample()
+        result = trace_explicit_pair_checkpoints(
+            frame, ledger, as_of_index=13, checkpoints=(13,),
+            pair_specs=({"id": "sparse", "episode_start": 1,
+                         "anchors": anchors},),
+        )
+        self.assertEqual(result["status"], "OK", result)
+        row = result["history"][0]["pairs"][0]
+        self.assertEqual(row["first_knowable_as_of"], 11)
+        self.assertEqual(row["baseline_checked_as_of"], 13)
+        self.assertEqual(row["frozen_first_status"], "VALID_RESEARCH_PAIR")
+        self.assertIsNone(row["extension_since_first"])
+        self.assertEqual(row["membership"], "UNPROVEN")
 
     def test_no_new_excursion_is_not_evidence_of_episode_continuity(self):
         frame, ledger, anchors = sample()
@@ -322,7 +337,7 @@ class LocalEpisodeChronology(unittest.TestCase):
         initial, later = (entry["pairs"][0] for entry in result["history"])
         self.assertEqual(initial["frozen_first_status"], "VALID_RESEARCH_PAIR")
         self.assertEqual(later["pair_status"], "VALID_RESEARCH_PAIR")
-        self.assertEqual(later["first_evaluable_as_of"], 11)
+        self.assertEqual(later["baseline_checked_as_of"], 11)
         self.assertEqual(later["extension_since_first"]["status"], "NO_NEW_EVIDENCE")
         self.assertEqual(later["extension_since_first"]["membership"], "UNPROVEN")
         self.assertEqual(result["membership"], "UNPROVEN")
