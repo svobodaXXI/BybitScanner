@@ -8,12 +8,12 @@ from unittest.mock import patch
 import pandas as pd
 from matplotlib.collections import LineCollection
 
-from geometry.ikigai_box import detect_ikigai_box
+from geometry.ikigai_box import detect_ikigai_box, detect_ikigai_box_watches
 from geometry.ikigai_box_chart import (
     fibonacci_chart_levels,
     render_ikigai_box_chart,
 )
-from tests.test_ikigai_box_detector import _two_impulses
+from tests.test_ikigai_box_detector import _two_impulses, _terminal_wick_two_impulses
 
 
 def _sample(direction=1):
@@ -129,6 +129,74 @@ class IkigaiBoxChartTests(unittest.TestCase):
                 - max(0, setup.impulse_start_index - 10) + 1,
             )
             self.assertLess(float(plotted["high"].max()), 100_000)
+
+    def test_render_early_watch_ready_before_second_impulse(self):
+        frame, box_end = _terminal_wick_two_impulses(second=False)
+        frame["time"] = [
+            1_790_000_000_000 + 3_600_000 * i
+            for i in range(len(frame))
+        ]
+        watch = next(
+            w for w in detect_ikigai_box_watches(frame)
+            if w.anchor_identity == ("SHORT", 20, 23)
+        )
+        self.assertEqual(watch.phase, "BOX_READY")
+        self.assertEqual(watch.as_of_index, box_end)
+        self.assertIsNone(watch.first_box_exit_index)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "watch-ready.png"
+            result = render_ikigai_box_chart(
+                frame, watch, path, symbol="HEIUSDT", timeframe="60",
+            )
+            self.assertEqual(path, result)
+            self.assertGreater(path.stat().st_size, 10_000)
+            with path.open("rb") as image:
+                self.assertEqual(image.read(8), b"\x89PNG\r\n\x1a\n")
+            # The future OHLC candle is not required to chart BOX_READY.
+            extra = pd.concat([frame, pd.DataFrame([{
+                "time": int(frame.iloc[-1]["time"]) + 3_600_000,
+                "open": 1000, "high": 1001, "low": 999, "close": 1000,
+            }])], ignore_index=True)
+            path2 = Path(directory) / "watch-no-future.png"
+            render_ikigai_box_chart(
+                extra, watch, path2, symbol="HEIUSDT", timeframe="60",
+            )
+            self.assertGreater(path2.stat().st_size, 10_000)
+
+    def test_render_break_watch_keeps_original_box_and_marks_break(self):
+        from dataclasses import replace
+
+        frame, box_end = _terminal_wick_two_impulses(second=False)
+        frame["time"] = [
+            1_790_000_000_000 + 3_600_000 * i
+            for i in range(len(frame))
+        ]
+        prior = detect_ikigai_box_watches(frame)
+        first = next(w for w in prior if w.anchor_identity == ("SHORT", 20, 23))
+        candle = {
+            "time": int(frame.iloc[-1]["time"]) + 3_600_000,
+            "open": 0.1400, "high": 0.1456,
+            "low": 0.1398, "close": 0.14412,
+        }
+        frame = pd.concat([frame, pd.DataFrame([candle])], ignore_index=True)
+        watches = detect_ikigai_box_watches(
+            frame, previous_watches=prior,
+        )
+        watch = next(w for w in watches if w.anchor_identity == first.anchor_identity)
+        self.assertEqual(watch.phase, "BOX_BREAK_OBSERVED")
+        self.assertEqual(watch.box_end_index, box_end)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "watch-break.png"
+            render_ikigai_box_chart(
+                frame, watch, target, symbol="HEIUSDT", timeframe="60",
+            )
+            self.assertGreater(target.stat().st_size, 10_000)
+            with self.assertRaises(ValueError):
+                render_ikigai_box_chart(
+                    frame, replace(watch, first_box_exit_index=None),
+                    Path(directory) / "invalid.png",
+                    symbol="HEIUSDT", timeframe="60",
+                )
 
     def test_invalid_as_of_or_anchor_fails_before_output(self):
         from dataclasses import replace
