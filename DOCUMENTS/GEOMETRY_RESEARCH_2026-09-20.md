@@ -385,14 +385,50 @@ re-entry, and post-breakout behavior are **not yet owner-approved strategy rules
 
 **Implementation checkpoint (2026-09-20):** G1a Scanner chart window and G2a pure research helper
 are published in *draft* PR #156, not yet merged or runtime-accepted; G1b Robot chart remains
-conditional on separate chart inspection. The **next code slice is G2b0**, a pure, read-only
-comparison of the current geometry's baseline START/line anchors and confirmed historical
-terminal-pivot alternatives, with no production call path. G2b1 may later compare a small
+conditional on separate chart inspection. G2b0 pure read-only START diagnostics have been implemented on the draft branch;
+**further acceptance of G2b0 on candidate charts is BLOCKED by the G2-P0 structural-
+coherence issue recorded below.** G2b1 may later compare a small
 set of previously validated alternative geometry pairs observationally, but only if
 user-reviewed examples establish a need. G3 context/UNKNOWN labels follow only after
 G2b evidence and labeled examples; preferential Robot entries require an independent
 strategy/risk decision. Preserve Scanner throughput and the current PAPER runtime.
 
+
+## Local acceptance override — reject nonlocal paired anchors before studying START (2026-09-20)
+
+**Owner decision after SOLUSDT 5m local chart:** reject this candidate as a wedge.
+The reported upper first-anchor index 19 and lower first-anchor index 124 are **105
+five-minute bars (8 h 45 m) apart**. There is no visually coherent local wedge
+formation joining those distant anchors. The 95/100 quality and CANONICAL label
+are evidence that existing validation/ranking admitted the pair, **not** proof
+that this geometry is valid. An expanded chart or alternative historical START
+cannot repair the fundamental mismatch. Retire the proposed expanded-history
+SOL demonstration; keep SOL only as a **negative structural-coherence control**.
+
+**Root-cause hypothesis from code review, not yet established by pivot trace:**
+`geometry/engine.py` pairs separate upper/lower candidate lines. The
+`geometry/pair_metrics.py` CANONICAL anchor-sequence check already requires
+falling upper-first anchor followed by the *next LOW in the supplied lows list*
+(rising is mirrored). But `pivots.py::filter_pivots` prunes each side separately
+by price-change, so a list-adjacent LOW may be chronologically remote or
+other local structural extrema may have been removed. Determine raw vs
+filtered opposite-pivot order on the actual saved signal/closed-source bars;
+do not state that no adjacency check exists or assign the omission a cause
+without the trace. A duration penalty inside rank cannot substitute for
+structural admissibility.
+
+**New immediate order:** G2-P0 read-only reproduction of one invalid pair and
+one coherent control -> narrow *wedge-only* structural-coherence gate spec
+(using adjacent meaningful opposite-side pivots from one local episode,
+source-timeframe-aware bounded separation, chronological support, and
+fail-closed UNKNOWN/reject when not proven) -> focused deterministic tests ->
+only then G2b0 evaluation on structurally coherent examples and G3/G3P.
+No arbitrary number-of-bars or percent threshold is authorized; derive it
+from real accepted/rejected 1m/5m examples rather than turning the owner's
+“not hours apart” observation into an invented global constant. A genuine
+historical pattern START and the two *individual* line anchors can remain
+distinct, but a structurally incoherent anchor pair may not qualify as a wedge.
+No Scanner/Robot/PAPER/VPS change is authorized by this research note.
 
 ## G2b0 implementation contract — observational START versus line anchors (2026-09-20)
 
