@@ -263,8 +263,11 @@ class LocalEpisodeChronology(unittest.TestCase):
             frame.iloc[:198].copy(), _confirmed(frame.iloc[:198].copy()),
             as_of_index=197, checkpoints=(197,), pair_specs=(spec,)
         )
-        self.assertEqual(no_future["status"], "UNKNOWN")
-        self.assertIn("INVALID_EXPLICIT_PAIR_REPLAY_INPUT", no_future["reasons"])
+        self.assertEqual(no_future["status"], "OK", no_future)
+        before_confirmation = no_future["history"][0]["pairs"][0]
+        self.assertEqual(before_confirmation["pair_status"], "NOT_YET_EVALUABLE")
+        self.assertIsNone(before_confirmation["pair_result"])
+        self.assertEqual(before_confirmation["membership"], "UNPROVEN")
 
     def test_not_imported_by_production_path(self):
         root = Path(__file__).resolve().parents[1]
