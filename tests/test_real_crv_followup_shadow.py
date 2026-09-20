@@ -10,8 +10,8 @@ import zlib
 import pandas as pd
 
 from tests.test_real_crcl_pair_shadow import _confirmed
-from tests.test_real_crv_pair_extension import _crv_frame
-from wedge.local_episode_shadow import propose_local_episodes
+from tests.test_real_crv_pair_extension import _crv_frame, PAIRS
+from wedge.local_episode_shadow import propose_local_episodes, trace_explicit_pair_checkpoints
 from wedge.local_pair_shadow import evaluate_local_pair
 
 
@@ -89,6 +89,34 @@ class CRVFollowupControl(unittest.TestCase):
         self.assertGreater(pair["geometry"]["width_last_anchor"],
                            pair["geometry"]["width_start"])
         self.assertEqual(pair["episode_membership"], "CALLER_PROPOSED")
+
+
+    def test_appended_bars_cannot_rewrite_original_frozen_crv_pair_history(self):
+        old = _crv_frame()
+        new = _extended()
+        previous = trace_explicit_pair_checkpoints(
+            old, _confirmed(old), as_of_index=198,
+            checkpoints=(168, 178, 198), pair_specs=PAIRS,
+        )
+        current = trace_explicit_pair_checkpoints(
+            new, _confirmed(new), as_of_index=238,
+            checkpoints=(168, 178, 198, 203, 236, 238), pair_specs=PAIRS,
+        )
+        self.assertEqual(previous["status"], "OK", previous)
+        self.assertEqual(current["status"], "OK", current)
+        self.assertEqual(previous["history"], current["history"][:3])
+        for checkpoint in current["history"]:
+            for row in checkpoint["pairs"]:
+                self.assertEqual(row["membership"], "UNPROVEN")
+        later = {row["id"]: row for row in current["history"][-1]["pairs"]}
+        self.assertEqual(later["CRV-A"]["baseline_checked_as_of"], 178)
+        self.assertEqual(later["CRV-B"]["baseline_checked_as_of"], 168)
+        self.assertIn(
+            {"index": 200, "side": "LOW", "confirm_index": 203},
+            later["CRV-A"]["extension_since_first"][
+                "new_confirmed_post_anchor_pivots"
+            ],
+        )
 
 
 if __name__ == "__main__":
