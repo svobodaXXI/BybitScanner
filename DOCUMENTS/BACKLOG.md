@@ -137,9 +137,13 @@ pivot sequence and any omitted local extremes; do not assume adjacency was absen
 or that a magic score/tolerance fixes it.
 
 Owner requirement: a candidate pattern begins with **neighboring, meaningful,
-opposite-side structural pivots in one local formation episode** (HIGH -> LOW for
-falling, LOW -> HIGH for rising), not two anchors gathered from distant, unrelated
-swings. Verify a coherent alternating sequence and a bounded first-opposite-pivot
+opposite-side structural pivots in one local formation episode**, not two anchors
+gathered from distant, unrelated swings. **Do not impose one fixed initial order
+solely from wedge orientation:** a falling *correction* after an UP impulse may
+begin at a terminal HIGH then a nearby LOW, whereas a falling *deceleration*
+after a DOWN impulse may begin at its terminal transition LOW then a nearby
+rebound HIGH. Rising contexts require the corresponding context-dependent
+analysis; confirm actual source-pivot availability before adopting any rule. Verify a coherent alternating sequence and a bounded first-opposite-pivot
 bar/time separation **relative to the formation's timeframe and observed local
 swings**, including the raw versus filtered pivot-gap distinction. Numeric duration
 and pivot-significance limits are NOT approved; calibrate on locally captured
@@ -149,6 +153,20 @@ or presentation as a confirmed wedge**, rather than hiding its mismatch by drawi
 more history, changing chart START, globally lowering confirmations, or trusting
 95/100. A correct pair may retain distinct genuine HIGH/LOW start anchors, but
 its opening opposite swing must be structurally adjacent, not hours apart.
+
+**CRCLUSDT 5m positive user annotation (2026-09-20):** the original Scanner PNG
+shows a steeply descending lower line fitted from a later point and a misplaced
+START. On a separate annotated TradingView chart, the owner draws the local
+falling *deceleration* wedge immediately after a sharp DOWN impulse: first
+structural LOW at the post-collapse trough (historical episode START), the
+nearby rebound HIGH as the first upper-boundary anchor, a comparatively shallow
+lower support from the transition LOW, and descending upper resistance through
+subsequent reaction highs. **The visually labeled order is LOW -> HIGH**, not
+HIGH -> LOW. Its actual pivot indices/times, confirmation candles, line fit,
+and retention by Scanner filtering have not yet been verified; map this case to
+the saved original signal-time OHLC/pivots before any quantitative selection.
+Treat the annotated chart as owner-provided positive research target, not a
+proven automatic detection, entry signal or authorization to trade.
 
 **Next micro-slice:** read-only trace on the rejected SOL example (raw and filtered
 pivots, anchor order/confirmation, gap in bars, existing anchor_sequence validity,
