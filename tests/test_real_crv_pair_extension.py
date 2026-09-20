@@ -96,6 +96,25 @@ class RealCRVPairExtension(unittest.TestCase):
                          "EXCURSION_OBSERVED")
         pd.testing.assert_frame_equal(frame, before)
 
+    def test_no_confirmed_new_turn_after_first_crv_E_crossing(self):
+        frame = _crv_frame()
+        ledger = _confirmed(frame)
+        # First CRV-A body crossing is on index 195; source bars stop at 198.
+        # A raw pivot on 196 would require a *closed* confirming bar 199,
+        # absent from this fixture. Do not import the forming bar as evidence.
+        self.assertEqual(len(frame) - 1, 198)
+        self.assertEqual(
+            [(p["index"], p["side"]) for p in ledger if p["index"] >= 195],
+            [],
+        )
+        self.assertIn((194, "HIGH"), {(p["index"], p["side"]) for p in ledger})
+        result = _replay(frame, (178, 194, 195, 198))
+        a_at_195 = result["history"][2]["pairs"][0]
+        a_at_198 = result["history"][3]["pairs"][0]
+        self.assertEqual(a_at_195["extension_since_first"]["new_E_body_indices"], [195])
+        self.assertEqual(a_at_198["membership"], "UNPROVEN")
+        self.assertEqual(a_at_198["pair_result"]["completion_status"], "UNKNOWN")
+
     def test_future_bars_do_not_rewrite_past_prefix(self):
         full = _crv_frame()
         original = full.iloc[:191].copy()
