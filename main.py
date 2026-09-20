@@ -63,7 +63,7 @@ def build_scan_finished_message(
         f"Найдено сигналов: {approved_pattern_count}\n"
         f"Отправлено в Telegram: {sent_to_telegram_count}\n"
         + (f"Наблюдений коробки Икигаи: {box_observation_count}\n" if box_observation_count else "")
-        + f"Просканировано тикеров: {total_symbols_scanned}\\n"
+        + f"Просканировано тикеров: {total_symbols_scanned}\n"
         f"Elapsed: "
         f"{elapsed_minutes:02d}:"
         f"{elapsed_remainder:02d}"
