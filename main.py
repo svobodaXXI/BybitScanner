@@ -15,6 +15,7 @@ main.py
 """
 
 import config
+import os
 import time
 
 from analyzer import analyze_symbol
@@ -53,6 +54,7 @@ def build_scan_finished_message(
     total_symbols_scanned,
     elapsed_minutes,
     elapsed_remainder,
+    box_observation_count=0,
 ):
     """Build the final Scanner notification from the admission-owned count."""
 
@@ -60,7 +62,8 @@ def build_scan_finished_message(
         "🏁 Сканирование завершено\n"
         f"Найдено сигналов: {approved_pattern_count}\n"
         f"Отправлено в Telegram: {sent_to_telegram_count}\n"
-        f"Просканировано тикеров: {total_symbols_scanned}\n"
+        + (f"Наблюдений коробки Икигаи: {box_observation_count}\\n" if box_observation_count else "")
+        + f"Просканировано тикеров: {total_symbols_scanned}\\n"
         f"Elapsed: "
         f"{elapsed_minutes:02d}:"
         f"{elapsed_remainder:02d}"
@@ -79,6 +82,7 @@ def run_scan_pass():
     scan_started_at = time.perf_counter()
     approved_pattern_count = 0
     sent_to_telegram_count = 0
+    box_observation_count = 0
 
     symbols = get_symbols()
 
@@ -121,6 +125,30 @@ def run_scan_pass():
             if not analysis_result:
                 print(f"{symbol:<15} NO RESULT")
                 continue
+
+            # Experimental Box observations are explicitly opt-in and use
+            # the same fetched OHLC snapshot even when no Wedge exists.
+            # A Box photo never enters the Wedge quality/Robot admission path.
+            if (
+                os.environ.get("BYBITSCANNER_IKIGAI_BOX_SIGNALS") == "1"
+                and analysis_result.get("data") is not None
+            ):
+                try:
+                    from ikigai_box_scanner import send_ikigai_box_observation
+
+                    if send_ikigai_box_observation(
+                        symbol,
+                        analysis_result["data"],
+                        timeframe=config.TIMEFRAME,
+                        test_mode=config.TELEGRAM_TEST_MODE,
+                    ):
+                        box_observation_count += 1
+                        sent_to_telegram_count += 1
+                        print(f"{symbol:<15} IKIGAI BOX observation SENT")
+                except Exception as box_error:
+                    # An experimental pattern must not suppress the existing
+                    # Wedge Scanner signal on the same market.
+                    print(f"{symbol:<15} IKIGAI BOX ERROR: {box_error}")
 
             analysis = analysis_result.get("result")
 
@@ -254,6 +282,8 @@ def run_scan_pass():
             )
 
     print(f"Найдено паттернов: {approved_pattern_count}")
+    if box_observation_count:
+        print(f"Наблюдений коробки Икигаи: {box_observation_count}")
     print(f"Отправлено в Telegram: {sent_to_telegram_count}")
     print(f"Просканировано тикеров: {len(symbols)}")
 
@@ -288,6 +318,7 @@ def run_scan_pass():
                 len(symbols),
                 elapsed_minutes,
                 elapsed_remainder,
+                box_observation_count=box_observation_count,
             )
         )
     except Exception as e:
