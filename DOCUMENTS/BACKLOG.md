@@ -116,6 +116,19 @@ is visible when available, and capped/missing history is marked rather than inve
 trading-rule changes, or VPS/runtime operations in this task.
 
 ### G2 — Adequate, context-dependent anchor detection
+**Latest implementation reference (2026-09-20):**
+[WEDGE_LOCAL_EPISODE_REFERENCE_AND_IMPLEMENTATION_PLAN_2026-09-20.md](WEDGE_LOCAL_EPISODE_REFERENCE_AND_IMPLEMENTATION_PLAN_2026-09-20.md).
+It compares official TradingView Zigzag/Auto Trendlines/Auto Patterns, QuantConnect
+LEAN Zig Zag, StockCharts, SciPy and Freqtrade with this repository and sets
+the dependent order S0 snapshot/pivot trace → S1 chronological local swing
+episodes → S2 shadow wedge-only coherence → S3 scoped fail-closed integration
+→ S4 G2b/G3 START+subtype on coherent episodes → S5 G3P/G3R/G3C.
+**Next step is S0, not production implementation.** The observed ALT/CRCL
+falling slowdown and CRV rising correction both have LOW-first episode
+hypotheses: pivot order alone does NOT establish subtype. Existing
+research scanner remains running independently; this doc authorizes no
+restart/Robot candidate/LIVE action.
+
 **Priority correction from local SOLUSDT 5m acceptance (2026-09-20): REJECT the example as a wedge,
 not as a chart-history or START-repair sample.** In a one-pass, 200-bar local scan the
 fitted upper and lower first anchors were indices 19 and 124: **105 x 5m = 525 minutes,
@@ -168,11 +181,12 @@ the saved original signal-time OHLC/pivots before any quantitative selection.
 Treat the annotated chart as owner-provided positive research target, not a
 proven automatic detection, entry signal or authorization to trade.
 
-**Next micro-slice:** read-only trace on the rejected SOL example (raw and filtered
-pivots, anchor order/confirmation, gap in bars, existing anchor_sequence validity,
-why the geometry and quality gates admitted it) and a small positive local control.
-Then specify and test the minimal fail-closed *wedge-only* pair-coherence gate
-before wiring any production behavior. Keep current Scanner/Robot execution,
+**Next micro-slice:** S0 read-only trace on frozen SOL/0G negatives and
+ALT/CRCL/CRV user-labeled positives where their historical snapshots exist:
+raw/filtered confirmed pivots, chrono sequence, source-time identity, anchor
+separation and exact CANONICAL/containment/ranking reason. Then S1 pure
+local episode diagnostics and S2 shadow wedge-only coherence on those
+same stored inputs **before** any S3 production gate. See linked plan. Keep current Scanner/Robot execution,
 prior frozen signals, live PAPER/VPS and unrelated patterns unchanged; do not
 rerun the dismissed SOL extended-window demonstration. G2a/G2b0 remain
 research-only tools for subsequently verified coherent formations.
