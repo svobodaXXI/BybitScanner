@@ -5,12 +5,14 @@ on:
     paths:
       - "geometry/ikigai_box.py"
       - "geometry/ikigai_box_chart.py"
+      - "geometry/ikigai_box_overlay.py"
       - "ikigai_box_scanner.py"
       - "ikigai_box_watch_stream.py"
       - "analyzer/core.py"
       - "main.py"
       - "tests/test_ikigai_box_detector.py"
       - "tests/test_ikigai_box_chart.py"
+      - "tests/test_ikigai_box_overlay.py"
       - "tests/test_ikigai_box_scanner_delivery.py"
       - "tests/test_ikigai_box_watch_stream.py"
       - ".github/workflows/ikigai-box-detector-ci.yml"
@@ -31,5 +33,5 @@ jobs:
         run: python -m pip install pandas==3.0.5 numpy==2.5.1 matplotlib==3.11.1 mplfinance==0.12.10b0 pillow==12.3.0 requests==2.34.2 PySocks==1.7.1 websocket-client==1.9.0
       - name: Compile detector and run focused tests
         run: |
-          python -m py_compile geometry/ikigai_box.py geometry/ikigai_box_chart.py ikigai_box_scanner.py ikigai_box_watch_stream.py analyzer/core.py main.py tests/test_ikigai_box_detector.py tests/test_ikigai_box_chart.py tests/test_ikigai_box_scanner_delivery.py tests/test_ikigai_box_watch_stream.py
-          python -m unittest -v tests.test_ikigai_box_detector tests.test_ikigai_box_chart tests.test_ikigai_box_scanner_delivery tests.test_ikigai_box_watch_stream
+          python -m py_compile geometry/ikigai_box.py geometry/ikigai_box_chart.py geometry/ikigai_box_overlay.py ikigai_box_scanner.py ikigai_box_watch_stream.py analyzer/core.py main.py tests/test_ikigai_box_detector.py tests/test_ikigai_box_chart.py tests/test_ikigai_box_overlay.py tests/test_ikigai_box_scanner_delivery.py tests/test_ikigai_box_watch_stream.py
+          python -m unittest -v tests.test_ikigai_box_detector tests.test_ikigai_box_chart tests.test_ikigai_box_overlay tests.test_ikigai_box_scanner_delivery tests.test_ikigai_box_watch_stream

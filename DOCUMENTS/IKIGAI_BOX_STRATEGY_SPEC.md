@@ -143,3 +143,31 @@ the separate L-shape impulse-retracement preview.
 4. This document records design intent and examples; it does **not** assert
    positive expectancy, completed implementation, actual exchange-side
    protective orders, or readiness to run against the working PAPER database.
+
+## 5. Chart/card trade overlay — presentation only (implemented)
+
+`geometry/ikigai_box_overlay.py` + `geometry/ikigai_box_chart.py` draw a PLANNED
+trade overlay on the Ikigai Box chart. Detection, Scanner, Telegram, Robot
+admission, order placement and candidate creation are untouched.
+
+- Stage label: `BOX_READY` / `BOX_BREAK_OBSERVED` / `CONFIRMED`, plus whether
+  `F(1.618)` has been touched by a closed candle after B (through `as_of` only).
+- `F(1.618)` not reached: observation only, **no** entry zone, grid or STOP.
+- `F(1.618)` reached historically: draw an **illustrative**, non-actionable
+  scheme of four LIMIT price levels, each marked 1/4 РО, equally spaced,
+  furthest one beyond 1.618 in the leg-two direction (above for SHORT,
+  below for LONG). Historical touch does not authorize an active entry;
+  no orders were placed. The exact numeric prices use an unapproved
+  placeholder spacing and must not be treated as an executable trade plan.
+- STOP: extreme of the latest closed reversal candle (bearish engulfing /
+  shooting star for SHORT; bullish engulfing / hammer for LONG) when it
+  protects the planned entry; otherwise fallback -1.5% from the planned equal-
+  weight average entry (LONG below, SHORT above).
+- Target: `F(1.0)`, with only a text note that partial profit-taking starts
+  before it.
+
+Still **not** decided or implemented: the real grid spacing (the drawn step is a
+visualisation placeholder, `GRID_STEP_FRACTION`), partial-take trigger/fraction,
+fee-aware breakeven stop, attempt 2 at `F(2.618)`, any order execution, and the
+Scanner caption text. `build_entry_grid(anchor_level=...)` is reusable for the
+2.618 grid but no second-attempt logic exists.
