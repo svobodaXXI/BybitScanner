@@ -51,10 +51,19 @@ class IkigaiBoxChartTests(unittest.TestCase):
         original = candles.copy(deep=True)
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "ikigai" / "BTC-5m-abc.png"
+            import mplfinance as mpf
+            actual_plot = mpf.plot
+            observed = {}
+
+            def observe_plot(frame, **options):
+                observed["frame"] = frame
+                observed["figure"], observed["axes"] = actual_plot(frame, **options)
+                return observed["figure"], observed["axes"]
+
             with patch(
                 "geometry.ikigai_box_chart.mpf.plot",
-                wraps=__import__("mplfinance").plot,
-            ) as plot:
+                side_effect=observe_plot,
+            ):
                 rendered = render_ikigai_box_chart(
                     candles, setup, target, symbol="BTCUSDT",
                     timeframe="5", context_bars=7,
@@ -63,13 +72,13 @@ class IkigaiBoxChartTests(unittest.TestCase):
             self.assertGreater(target.stat().st_size, 10_000)
             with target.open("rb") as stream:
                 self.assertEqual(stream.read(8), b"\x89PNG\r\n\x1a\n")
-            window = plot.call_args.args[0]
+            window = observed["frame"]
             self.assertEqual(
                 len(window),
                 setup.as_of_index
                 - max(0, setup.impulse_start_index - 7) + 1,
             )
-            figure, axes = plot.return_value
+            axes = observed["axes"]
             chart_lines = [
                 collection for collection in axes[0].collections
                 if isinstance(collection, LineCollection)
@@ -97,15 +106,23 @@ class IkigaiBoxChartTests(unittest.TestCase):
             ]),
         ], ignore_index=True)
         with tempfile.TemporaryDirectory() as directory:
+            import mplfinance as mpf
+            actual_plot = mpf.plot
+            observed = {}
+
+            def observe_plot(frame, **options):
+                observed["frame"] = frame
+                return actual_plot(frame, **options)
+
             with patch(
                 "geometry.ikigai_box_chart.mpf.plot",
-                wraps=__import__("mplfinance").plot,
-            ) as plot:
+                side_effect=observe_plot,
+            ):
                 render_ikigai_box_chart(
                     future, setup, Path(directory) / "only-past.png",
                     symbol="TESTUSDT", timeframe="5",
                 )
-            plotted = plot.call_args.args[0]
+            plotted = observed["frame"]
             self.assertEqual(
                 len(plotted),
                 setup.as_of_index
