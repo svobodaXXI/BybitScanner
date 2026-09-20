@@ -260,6 +260,99 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             w.anchor_identity == prior.anchor_identity for w in after_reentry
         ))
 
+    def test_sequential_watch_freezes_box_through_reentry_and_second_break(self):
+        frame, box_end = _terminal_wick_two_impulses(second=False)
+        # At T0 an observed qualified shelf is not yet a confirmed leg two.
+        prior = detect_ikigai_box_watches(frame, as_of_index=box_end)
+        target = ("SHORT", 20, 23)
+        ready = next(w for w in prior if w.anchor_identity == target)
+        self.assertEqual(ready.phase, "BOX_READY")
+        self.assertEqual((ready.box_start_index, ready.box_end_index), (24, 29))
+        extra = pd.DataFrame([
+            # T1: first close above the frozen shelf high.
+            {"open": 0.1400, "high": 0.14560, "low": 0.1398, "close": 0.14412},
+            # T2–T5: returns inside; do not absorb T1 into a wider box.
+            {"open": 0.14412, "high": 0.1450, "low": 0.1390, "close": 0.1400},
+            {"open": 0.1400, "high": 0.1410, "low": 0.1388, "close": 0.1394},
+            {"open": 0.1394, "high": 0.1412, "low": 0.1388, "close": 0.1400},
+            {"open": 0.1400, "high": 0.1415, "low": 0.1390, "close": 0.1398},
+            # T6–T7: another break; the old first-exit evidence stays frozen.
+            {"open": 0.1398, "high": 0.1444, "low": 0.1397, "close": 0.1440},
+            {"open": 0.1440, "high": 0.1460, "low": 0.1439, "close": 0.1458},
+        ])
+        history = pd.concat([frame, extra], ignore_index=True)
+        frozen = None
+        for end in range(box_end + 1, len(history)):
+            current = detect_ikigai_box_watches(
+                history, as_of_index=end, previous_watches=prior,
+            )
+            assert current
+            found = next(w for w in current if w.anchor_identity == target)
+            self.assertEqual(found.as_of_index, end)
+            self.assertEqual(found.phase, "BOX_BREAK_OBSERVED")
+            self.assertEqual(found.first_box_exit_index, box_end + 1)
+            self.assertEqual((found.box_start_index, found.box_end_index), (24, 29))
+            self.assertAlmostEqual(found.box_high, 0.1420)
+            self.assertEqual(found.fibonacci_1_618, ready.fibonacci_1_618)
+            if frozen is None:
+                frozen = found
+            else:
+                self.assertEqual(found.box_end_index, frozen.box_end_index)
+                self.assertEqual(found.first_box_exit_index, frozen.first_box_exit_index)
+            prior = current
+
+    def test_sequential_watch_does_not_freeze_while_shelf_continues(self):
+        frame, box_end = _terminal_wick_two_impulses(second=False)
+        previous = detect_ikigai_box_watches(frame, as_of_index=box_end)
+        extended = pd.concat([frame, pd.DataFrame([
+            {"open": 0.1400, "high": 0.1415, "low": 0.1380, "close": 0.1404},
+        ])], ignore_index=True)
+        current = detect_ikigai_box_watches(
+            extended, as_of_index=box_end + 1, previous_watches=previous,
+        )
+        found = next(w for w in current if w.anchor_identity == ("SHORT", 20, 23))
+        self.assertEqual(found.phase, "BOX_READY")
+        self.assertIsNone(found.first_box_exit_index)
+        self.assertEqual(found.box_end_index, box_end + 1)
+
+    def test_sequential_watch_rejects_future_or_ambiguous_prior_state(self):
+        from dataclasses import replace
+        frame, box_end = _terminal_wick_two_impulses(second=False)
+        prior = detect_ikigai_box_watches(frame, as_of_index=box_end)
+        target = next(w for w in prior if w.anchor_identity == ("SHORT", 20, 23))
+        continuation = pd.concat([frame, pd.DataFrame([{
+            "open": 0.1400, "high": 0.14560,
+            "low": 0.1398, "close": 0.14412,
+        }])], ignore_index=True)
+        for bad in (
+            replace(target, as_of_index=box_end + 1),
+            replace(target, box_high=0.99),
+            replace(target, anchor_end_price=0.99),
+            replace(target, phase="BOX_BREAK_OBSERVED",
+                    first_box_exit_index=None),
+        ):
+            with self.subTest(prior=bad):
+                with self.assertRaises(ValueError):
+                    detect_ikigai_box_watches(
+                        continuation, previous_watches=(bad,),
+                    )
+        with self.assertRaises(ValueError):
+            detect_ikigai_box_watches(
+                continuation, previous_watches=(target, target),
+            )
+
+    def test_sequential_watch_drops_frozen_zone_after_actual_touch(self):
+        frame, box_end = _terminal_wick_two_impulses(second=False)
+        prior = detect_ikigai_box_watches(frame)
+        target = ("SHORT", 20, 23)
+        touch = pd.concat([frame, pd.DataFrame([{
+            "open": 0.1400, "high": 0.17, "low": 0.1398, "close": 0.168,
+        }])], ignore_index=True)
+        later = detect_ikigai_box_watches(
+            touch, previous_watches=prior,
+        )
+        self.assertNotIn(target, {w.anchor_identity for w in later})
+
     def test_watch_rejects_stale_entry_after_extension_touch(self):
         frame, box_end = _terminal_wick_two_impulses()
         touch = pd.DataFrame([{
