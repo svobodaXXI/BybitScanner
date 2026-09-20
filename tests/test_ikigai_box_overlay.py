@@ -99,6 +99,7 @@ class IkigaiBoxOverlayTests(unittest.TestCase):
                     (grid.prices[-1] - setup.fibonacci_2_618) * sign, 0
                 )
                 self.assertIn("ДОСТИГНУТ", _stage_caption(overlay))
+                self.assertIn("НЕ сигнал входа", _stage_caption(overlay))
 
     def test_grid_structure_is_reusable_for_the_2_618_zone_later(self):
         _, setup = _confirmed(-1, 6)
@@ -163,6 +164,14 @@ class IkigaiBoxOverlayTests(unittest.TestCase):
             "open": 1.0, "high": 1.0, "low": 0.5, "close": 1.0,
         }])], ignore_index=True)
 
+        self.assertEqual(
+            build_trade_overlay(candles, setup),
+            build_trade_overlay(future, setup),
+        )
+        # A malformed future candle must not even be converted to float:
+        # as_of is a hard provenance boundary, not just a comparison bound.
+        for column in ("open", "high", "low", "close"):
+            future.loc[future.index[-1], column] = "NOT_YET_KNOWN"
         self.assertEqual(
             build_trade_overlay(candles, setup),
             build_trade_overlay(future, setup),
