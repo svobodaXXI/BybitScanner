@@ -200,14 +200,54 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             {w.anchor_identity for w in watches},
         )
 
-        # SAME red core and A/B, but the observed wider shelf now occupies
-        # 0.00271 / 0.00450 = 60.22%, above the unchanged 55% gate.
+        # FLOCK-style: full range 0.00271 / 0.00450 = 60.22%,
+        # but retracement ABOVE B is 0.00247 / 0.00450 = 54.89%.
+        # The shallow BELOW-B overshoot is only 5.33%, within the
+        # existing separate 12% cap. Do not raise the 55% cap.
         wide = sample([box[0], (0.06670, 0.06780, 0.06610, 0.06680),
                        box[2], box[3]])
+        corresponding = [
+            w for w in detect_ikigai_box_watches(wide)
+            if w.anchor_identity == ("LONG", 24, 28)
+        ]
+        self.assertEqual(len(corresponding), 1)
+        self.assertEqual((corresponding[0].box_low, corresponding[0].box_high),
+                         (0.06509, 0.06780))
+        self.assertEqual(corresponding[0].phase, "BOX_READY")
+        self.assertAlmostEqual(corresponding[0].fibonacci_1_618, 0.062549)
+        # A deeper correction must STILL be rejected, even with the
+        # same permitted overshoot past terminal B.
+        deep_retrace = sample([
+            box[0], (0.06670, 0.06795, 0.06610, 0.06680),
+            box[2], box[3],
+        ])
         self.assertNotIn(
             ("LONG", 24, 28),
-            {w.anchor_identity for w in detect_ikigai_box_watches(wide)},
+            {w.anchor_identity for w in detect_ikigai_box_watches(deep_retrace)},
         )
+        # A large B-side excursion cannot bypass the existing 12% cap.
+        deep_overshoot = sample([
+            (0.06666, 0.06710, 0.06470, 0.06670),
+            (0.06670, 0.06780, 0.06610, 0.06680),
+            box[2], box[3],
+        ])
+        self.assertNotIn(
+            ("LONG", 24, 28),
+            {w.anchor_identity for w in detect_ikigai_box_watches(deep_overshoot)},
+        )
+
+        # The box-width decomposition is symmetrical for upward setups.
+        mirrored = wide.copy(deep=True)
+        mirrored["open"] = 0.40 - wide["open"]
+        mirrored["high"] = 0.40 - wide["low"]
+        mirrored["low"] = 0.40 - wide["high"]
+        mirrored["close"] = 0.40 - wide["close"]
+        counterpart = [
+            w for w in detect_ikigai_box_watches(mirrored)
+            if w.anchor_identity == ("SHORT", 24, 28)
+        ]
+        self.assertEqual(len(counterpart), 1)
+        self.assertAlmostEqual(counterpart[0].fibonacci_1_618, 0.40 - 0.062549)
 
     def test_generic_horizontal_range_without_two_impulses_is_not_ikigai_box(self):
         frame = pd.DataFrame([
