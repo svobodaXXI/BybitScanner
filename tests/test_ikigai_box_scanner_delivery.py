@@ -43,6 +43,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             target.write_bytes(b"fresh-ikigai-image")
             return target
 
+        real_sender = box.send_ikigai_box_observation
         with tempfile.TemporaryDirectory() as folder, patch.dict(
             os.environ, {"BYBITSCANNER_IKIGAI_BOX_SIGNALS": "1"}
         ), patch.object(main, "get_symbols", return_value=["TESTUSDT"]), patch.object(
@@ -58,13 +59,13 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             box, "load_memory", side_effect=lambda: dict(history),
         ), patch.object(
             box, "save_memory", side_effect=lambda record: history.update(record),
-        ), patch.object(box, "get_telegram_chat_ids", return_value=("owner",)), patch.object(
-            box, "chart_dir", folder, create=True,
-        ), patch("notification.create_signal_snapshot") as robot:
+        ), patch.object(box, "get_telegram_chat_ids", return_value=("owner",)), patch(
+            "notification.create_signal_snapshot",
+        ) as robot:
             # Actual Scanner integration; temporary chart root can be passed by
             # patching the module's default function call below.
             def send_under_test(symbol, candles, *, timeframe, test_mode=False):
-                return box.send_ikigai_box_observation(
+                return real_sender(
                     symbol, candles, timeframe=timeframe,
                     test_mode=test_mode, chart_dir=folder,
                 )
