@@ -306,7 +306,10 @@ def trace_explicit_pair_checkpoints(
                         "e_wick": tuple(e.get("wick_indices", ())),
                     }
                 frozen = frozen_first[pair_id]
-                row["first_evaluable_as_of"] = frozen["as_of_index"]
+                # The baseline is the first REQUESTED evaluable checkpoint;
+                # it may be later than the first knowable right-confirmation bar.
+                row["first_knowable_as_of"] = max(anchors.values()) + RIGHT_BARS
+                row["baseline_checked_as_of"] = frozen["as_of_index"]
                 row["frozen_first_status"] = frozen["status"]
                 row["extension_since_first"] = None
                 if cutoff > frozen["as_of_index"]:
