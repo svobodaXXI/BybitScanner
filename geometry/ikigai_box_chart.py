@@ -34,6 +34,38 @@ def fibonacci_chart_levels(formation):
     )
 
 
+# TradingView-style zones between ADJACENT Fibonacci levels. Colours cycle by
+# zone so every boundary is obvious; fill is light and sits under the candles.
+FIBONACCI_BAND_COLORS = ("#2f6fed", "#1fa971", "#f08c00")
+FIBONACCI_BAND_ALPHA = 0.16
+
+
+def fibonacci_band_ranges(levels):
+    """[(low_level, high_level, low_price, high_price)] for adjacent levels."""
+    ordered = sorted(levels, key=lambda item: item[0])
+    return [
+        (a_level, b_level, min(a_price, b_price), max(a_price, b_price))
+        for (a_level, a_price), (b_level, b_price) in zip(ordered, ordered[1:])
+    ]
+
+
+def _draw_fibonacci_bands(ax, levels):
+    """Full-width translucent bands; presentation only, prices untouched."""
+    for number, (low_level, high_level, low, high) in enumerate(
+        fibonacci_band_ranges(levels)
+    ):
+        color = FIBONACCI_BAND_COLORS[number % len(FIBONACCI_BAND_COLORS)]
+        ax.axhspan(low, high, xmin=0.0, xmax=1.0, facecolor=color,
+                   edgecolor="none", alpha=FIBONACCI_BAND_ALPHA, zorder=0.5)
+        ax.text(
+            0.008, (low + high) / 2, f"{low_level:.3f} ↔ {high_level:.3f}",
+            transform=ax.get_yaxis_transform(), fontsize=8, color=color,
+            fontweight="bold", va="center", ha="left", zorder=1.5,
+            bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
+                      edgecolor="none", alpha=0.7),
+        )
+
+
 def _stage_caption(overlay):
     reached = (
         "1.618 БЫЛ ДОСТИГНУТ · сетка 4 × 1/4 РО — схема, НЕ сигнал входа"
@@ -239,6 +271,7 @@ def render_ikigai_box_chart(
             ha="right", va="bottom" if a_below else "top",
         )
 
+        _draw_fibonacci_bands(ax, levels)
         for level, price in levels:
             ax.hlines(price, start, last, linestyles="--" if level > 1 else "-",
                       linewidth=1.1, alpha=0.80)

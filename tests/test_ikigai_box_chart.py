@@ -10,6 +10,7 @@ from matplotlib.collections import LineCollection
 
 from geometry.ikigai_box import detect_ikigai_box, detect_ikigai_box_watches
 from geometry.ikigai_box_chart import (
+    fibonacci_band_ranges,
     fibonacci_chart_levels,
     render_ikigai_box_chart,
 )
@@ -152,6 +153,55 @@ class IkigaiBoxChartTests(unittest.TestCase):
                 self.assertFalse(
                     any(t.get_text() == "TP план · цель" for t in ax.texts)
                 )
+
+    def test_fibonacci_bands_fill_adjacent_zones_for_long_and_short(self):
+        from matplotlib.patches import Rectangle
+
+        for direction, side in ((1, "SHORT"), (-1, "LONG")):
+            with self.subTest(side=side):
+                candles, setup = _sample(direction)
+                levels = fibonacci_chart_levels(setup)
+                prices = dict(levels)
+                bands = fibonacci_band_ranges(levels)
+                # 0<->1, 1<->1.618, 1.618<->2.618 by the displayed level order.
+                self.assertEqual(
+                    [(low, high) for low, high, _, _ in bands],
+                    [(0.0, 1.0), (1.0, 1.618), (1.618, 2.618)],
+                )
+                for low_level, high_level, low, high in bands:
+                    self.assertEqual(
+                        sorted((prices[low_level], prices[high_level])),
+                        [low, high],
+                    )
+
+                import mplfinance as mpf
+                actual_plot = mpf.plot
+                observed = {}
+
+                def observe(frame, **options):
+                    observed["figure"], observed["axes"] = actual_plot(
+                        frame, **options)
+                    return observed["figure"], observed["axes"]
+
+                with tempfile.TemporaryDirectory() as directory:
+                    with patch("geometry.ikigai_box_chart.mpf.plot",
+                               side_effect=observe):
+                        render_ikigai_box_chart(
+                            candles, setup, Path(directory) / "bands.png",
+                            symbol="TESTUSDT", timeframe="5",
+                        )
+                shaded = [
+                    patch_ for patch_ in observed["axes"][0].patches
+                    if isinstance(patch_, Rectangle)
+                    and 0.0 < patch_.get_alpha() <= 0.25
+                    and abs(patch_.get_width() - 1.0) < 1e-9
+                ]
+                for _, _, low, high in bands:
+                    self.assertTrue(any(
+                        abs(rect.get_y() - low) < 1e-8
+                        and abs(rect.get_height() - (high - low)) < 1e-8
+                        for rect in shaded
+                    ), f"Missing full-width band {low}..{high}")
 
     def test_prefix_does_not_draw_future_candles(self):
         candles, setup = _sample(-1)
