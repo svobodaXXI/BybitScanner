@@ -129,6 +129,35 @@ class IkigaiBoxWatchStreamTests(unittest.TestCase):
             ))
         notify.assert_not_called()
 
+    def test_revised_closed_candle_discards_pending_delivery(self):
+        frame, end = _historical_frame()
+        with patch.object(
+            stream, "send_ikigai_box_watch_observation", return_value=False,
+        ) as notify:
+            stream.process_ikigai_box_watches(
+                "HEIUSDT", _bybit_snapshot(frame, 23), timeframe="60",
+            )
+            last_end = None
+            for closed_end in range(24, end + 1):
+                snapshot = _bybit_snapshot(frame, closed_end)
+                stream.process_ikigai_box_watches(
+                    "HEIUSDT", snapshot, timeframe="60",
+                )
+                if stream._WATCH_CURSORS[("HEIUSDT", "60")]["pending"]:
+                    last_end = closed_end
+                    break
+            self.assertIsNotNone(last_end)
+            attempts_before = notify.call_count
+            revised = _bybit_snapshot(frame, last_end)
+            revised.loc[len(revised) - 2, "high"] += 0.0001
+            self.assertFalse(stream.process_ikigai_box_watches(
+                "HEIUSDT", revised, timeframe="60",
+            ))
+            self.assertEqual(notify.call_count, attempts_before)
+            self.assertIsNone(
+                stream._WATCH_CURSORS[("HEIUSDT", "60")]["pending"]
+            )
+
     def test_main_opt_in_watch_routes_without_changing_old_box_sender(self):
         frame, end = _historical_frame()
         snapshot = _bybit_snapshot(frame, end)
