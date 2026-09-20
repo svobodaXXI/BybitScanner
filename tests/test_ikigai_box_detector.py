@@ -50,7 +50,11 @@ def _terminal_wick_two_impulses(direction=1, *, second=True):
     directional first-impulse candles, box retrace approx 65.2%.
     Synthetic shape guards the rule; it is NOT an archived Bybit feed.
     """
-    raw = [_bar(0.12925, 0.12925) for _ in range(20)]
+    raw = [
+        {"open": 0.12925, "high": 0.12940,
+         "low": 0.12915, "close": 0.12925}
+        for _ in range(20)
+    ]
     raw.extend([
         {"open": 0.12925, "high": 0.13470, "low": 0.12911, "close": 0.13450},
         {"open": 0.13450, "high": 0.14130, "low": 0.13445, "close": 0.14100},
