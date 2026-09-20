@@ -1,4 +1,4 @@
-"""Synthetic contract tests; the uploaded S3 sources ZIP did not contain frozen OHLC."""
+"""Synthetic contract tests; original 5m control OHLC are verified separately, not committed."""
 
 import unittest
 from pathlib import Path
