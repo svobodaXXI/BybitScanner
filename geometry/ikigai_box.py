@@ -23,6 +23,11 @@ class IkigaiBoxParameters:
     min_impulse_fraction: float = 0.01
     max_box_width_fraction: float = 0.55
     max_box_retrace_fraction: float = 0.60
+    # Alternative path for a first impulse ending in a rejection wick.
+    # Never relax the ordinary body-driven impulse path globally.
+    max_wick_box_retrace_fraction: float = 0.70
+    min_terminal_rejection_fraction: float = 0.35
+    min_wick_close_progress_fraction: float = 0.30
     min_second_progress: float = 0.30
     max_second_progress: float = 1.90
 
@@ -54,6 +59,39 @@ class IkigaiBoxFormation:
         )
 
 
+
+@dataclass(frozen=True)
+class IkigaiBoxWatch:
+    """Early observational candidate. NOT a confirmed reversal or order signal.
+
+    One identity per (direction, A, B); the box is provisional until the
+    caller freezes it. No chart/Telegram/Robot integration in this slice.
+    """
+    direction: str
+    phase: str  # BOX_READY or BOX_BREAK_OBSERVED (not confirmed leg two)
+    as_of_index: int
+    anchor_start_index: int
+    anchor_end_index: int
+    anchor_start_price: float
+    anchor_end_price: float
+    box_start_index: int
+    box_end_index: int
+    box_low: float
+    box_high: float
+    first_box_exit_index: Optional[int]
+    fibonacci_1_0: float
+    fibonacci_1_618: float
+    fibonacci_2_618: float
+
+    @property
+    def anchor_identity(self):
+        return self.direction, self.anchor_start_index, self.anchor_end_index
+
+    def fibonacci_price(self, level: float) -> float:
+        return self.anchor_start_price + level * (
+            self.anchor_end_price - self.anchor_start_price
+        )
+
 def _valid_ohlc(row):
     op, hi, lo, cl = row
     return (
@@ -75,18 +113,9 @@ def _pre_impulse_atr(rows, start):
     return sum(ranges) / len(ranges)
 
 
-def detect_ikigai_box(
-    candles,
-    *,
-    as_of_index: Optional[int] = None,
-    parameters: Optional[IkigaiBoxParameters] = None,
-) -> Optional[IkigaiBoxFormation]:
-    """Find a recent two-impulse / box / same-direction leg approaching extension.
 
-    A false/ambiguous setup returns None. Offline observation only, not entry
-    permission. There is no caller-supplied default distance for a LIMIT grid.
-    """
-    p = parameters or IkigaiBoxParameters()
+
+def _validate_parameters(p):
     if any(
         getattr(p, start) < 1 or getattr(p, end) < getattr(p, start)
         for start, end in (
@@ -100,10 +129,87 @@ def detect_ikigai_box(
         p.min_impulse_atr > 0
         and p.min_impulse_fraction > 0
         and 0 < p.max_box_width_fraction < 1
-        and 0 < p.max_box_retrace_fraction < 1
+        and 0 < p.max_box_retrace_fraction <= p.max_wick_box_retrace_fraction < 1
+        and 0 < p.min_terminal_rejection_fraction < 1
+        and 0 < p.min_wick_close_progress_fraction < 0.60
         and 0 < p.min_second_progress < p.max_second_progress
     ):
         raise ValueError("Invalid Ikigai Box geometry thresholds")
+
+def _qualified_first_impulse_and_box(
+    rows, first_start, first_end, box_low, box_high, sign, p,
+):
+    """Shared frozen-A/B and consolidation gates for WATCH and confirmation."""
+    first_n = first_end - first_start + 1
+    first_rows = rows[first_start : first_end + 1]
+    a = rows[first_start][2 if sign == 1 else 1]
+    b = rows[first_end][1 if sign == 1 else 2]
+    span = sign * (b - a)
+    if span <= 0 or a <= 0:
+        return None
+    atr = _pre_impulse_atr(rows, first_start)
+    if not atr or span < max(
+        p.min_impulse_atr * atr, p.min_impulse_fraction * a
+    ):
+        return None
+    # The origin is the earliest valid first-impulse extreme, and terminal B
+    # its FIRST unique extremum, not an equal wick inside the following shelf.
+    if (
+        (sign == 1 and (
+            min(row[2] for row in first_rows) < a
+            or max(row[1] for row in first_rows[:-1]) >= b
+        ))
+        or (sign == -1 and (
+            max(row[1] for row in first_rows) > a
+            or min(row[2] for row in first_rows[:-1]) <= b
+        ))
+    ):
+        return None
+    close_move = sign * (rows[first_end][3] - rows[first_start][0])
+    forward_bars = sum(
+        sign * (row[3] - row[0]) > 0 for row in first_rows
+    )
+    ordinary_impulse = (
+        close_move >= 0.60 * span
+        and forward_bars * 5 >= first_n * 3
+    )
+    terminal_rejection = sign * (b - rows[first_end][3])
+    wick_impulse = (
+        terminal_rejection >= p.min_terminal_rejection_fraction * span
+        and close_move >= p.min_wick_close_progress_fraction * span
+        and forward_bars * 2 >= first_n
+    )
+    if not (ordinary_impulse or wick_impulse):
+        return None
+    if box_high - box_low > p.max_box_width_fraction * span:
+        return None
+    retrace = (b - box_low) if sign == 1 else (box_high - b)
+    extension = (box_high - b) if sign == 1 else (b - box_low)
+    allowed_retrace = (
+        p.max_wick_box_retrace_fraction
+        if wick_impulse
+        else p.max_box_retrace_fraction
+    )
+    if not (
+        0 <= retrace <= allowed_retrace * span
+        and extension <= 0.12 * span
+    ):
+        return None
+    return a, b, span, atr
+
+def detect_ikigai_box(
+    candles,
+    *,
+    as_of_index: Optional[int] = None,
+    parameters: Optional[IkigaiBoxParameters] = None,
+) -> Optional[IkigaiBoxFormation]:
+    """Find a recent two-impulse / box / same-direction leg approaching extension.
+
+    A false/ambiguous setup returns None. Offline observation only, not entry
+    permission. There is no caller-supplied default distance for a LIMIT grid.
+    """
+    p = parameters or IkigaiBoxParameters()
+    _validate_parameters(p)
 
     if candles is None or not all(
         column in candles.columns for column in ("open", "high", "low", "close")
@@ -154,53 +260,13 @@ def detect_ikigai_box(
                     first_start = first_end - first_n + 1
                     if first_start < 14:
                         continue
-                    first_rows = rows[first_start : first_end + 1]
-                    a = rows[first_start][2 if sign == 1 else 1]
-                    b = rows[first_end][1 if sign == 1 else 2]
-                    span = sign * (b - a)
-                    if span <= 0 or a <= 0:
-                        continue
-                    atr = _pre_impulse_atr(rows, first_start)
-                    if not atr or span < max(
-                        p.min_impulse_atr * atr, p.min_impulse_fraction * a
-                    ):
-                        continue
-                    # Origin/terminal WICKS, not interior extrema or second-leg
-                    # wicks; require a directional close and no larger wick in
-                    # the first impulse.
-                    if (
-                        (sign == 1 and (
-                            min(row[2] for row in first_rows) < a
-                            or max(row[1] for row in first_rows[:-1]) >= b
-                        ))
-                        or (sign == -1 and (
-                            max(row[1] for row in first_rows) > a
-                            or min(row[2] for row in first_rows[:-1]) <= b
-                        ))
-                    ):
-                        # The first leg ends at its FIRST terminal wick.
-                        # A shelf bar with the same wick cannot move B forward.
-                        continue
-                    close_move = sign * (
-                        rows[first_end][3] - rows[first_start][0]
+                    qualified = _qualified_first_impulse_and_box(
+                        rows, first_start, first_end,
+                        box_low, box_high, sign, p,
                     )
-                    if close_move < 0.60 * span:
+                    if qualified is None:
                         continue
-                    forward_bars = sum(
-                        sign * (row[3] - row[0]) > 0 for row in first_rows
-                    )
-                    if forward_bars * 5 < first_n * 3:
-                        continue
-                    if box_high - box_low > p.max_box_width_fraction * span:
-                        continue
-                    # A shallow shelf remains near the FIRST terminal wick.
-                    retrace = (b - box_low) if sign == 1 else (box_high - b)
-                    extension = (box_high - b) if sign == 1 else (b - box_low)
-                    if not (
-                        0 <= retrace <= p.max_box_retrace_fraction * span
-                        and extension <= 0.12 * span
-                    ):
-                        continue
+                    a, b, span, atr = qualified
                     progress = sign * (second_extreme - b) / span
                     if not (
                         p.min_second_progress
@@ -247,3 +313,236 @@ def detect_ikigai_box(
                         fibonacci_2_618=a + 2.618 * (b - a),
                     )
     return best
+
+
+def detect_ikigai_box_watches(
+    candles,
+    *,
+    as_of_index: Optional[int] = None,
+    parameters: Optional[IkigaiBoxParameters] = None,
+    previous_watches=(),
+):
+    """Return distinct early WATCH candidates by FIRST-impulse anchor pair.
+
+    BOX_READY needs only the first impulse and the following consolidation;
+    BOX_BREAK_OBSERVED means at least one subsequent CLOSE broke the frozen
+    box in the impulse direction, but does NOT confirm a sustained second leg.
+    The first extension must not have been touched in the known prefix. This
+    is pure offline discovery: no Scanner/Telegram/Robot emission or orders.
+    A and B are not re-anchored to any later candle or other WATCH identity.
+
+    Pass previous_watches from the preceding CLOSED-candle scan to preserve
+    the first observed box break across a later re-entry. Without previous
+    state this function is a stateless snapshot and cannot infer whether an
+    earlier wider box has already been frozen. It never persists by itself.
+    """
+    p = parameters or IkigaiBoxParameters()
+    _validate_parameters(p)
+    if candles is None or not all(
+        col in candles.columns for col in ("open", "high", "low", "close")
+    ):
+        return ()
+    count = len(candles)
+    end = count - 1 if as_of_index is None else as_of_index
+    if type(end) is not int or not 0 <= end < count:
+        return ()
+    if end + 1 < 14 + p.first_min_bars + p.box_min_bars:
+        return ()
+    # The source may include future rows; never read outside the closed prefix.
+    try:
+        rows = [
+            tuple(map(float, row))
+            for row in candles.iloc[: end + 1][
+                ["open", "high", "low", "close"]
+            ].itertuples(index=False, name=None)
+        ]
+    except (TypeError, ValueError, OverflowError):
+        return ()
+    if not all(_valid_ohlc(row) for row in rows):
+        return ()
+
+    # Only the preceding candle's observations can freeze this next step.
+    # Reject future/stale or inconsistent snapshots instead of accepting
+    # invented anchors/box bounds from another timeframe or a later scan.
+    prior = {}
+    for watch in previous_watches:
+        if not isinstance(watch, IkigaiBoxWatch):
+            raise ValueError("Expected previous IkigaiBoxWatch records")
+        if watch.as_of_index != end - 1:
+            raise ValueError("WATCH state must come from previous closed candle")
+        a_idx, b_idx = watch.anchor_start_index, watch.anchor_end_index
+        lo_idx, hi_idx = watch.box_start_index, watch.box_end_index
+        if not (0 <= a_idx < b_idx < lo_idx <= hi_idx <= end - 1):
+            raise ValueError("Invalid previous WATCH indices")
+        sign = 1 if watch.direction == "SHORT" else -1 if watch.direction == "LONG" else 0
+        if sign == 0 or watch.phase not in (
+            "BOX_READY", "BOX_BREAK_OBSERVED",
+        ):
+            raise ValueError("Invalid previous WATCH state")
+        old_box = rows[lo_idx : hi_idx + 1]
+        if not (
+            watch.anchor_start_price == rows[a_idx][2 if sign == 1 else 1]
+            and watch.anchor_end_price == rows[b_idx][1 if sign == 1 else 2]
+            and watch.box_low == min(row[2] for row in old_box)
+            and watch.box_high == max(row[1] for row in old_box)
+        ):
+            raise ValueError("Previous WATCH geometry does not match candles")
+        if watch.anchor_identity in prior:
+            raise ValueError("Duplicate prior WATCH anchor identity")
+        if watch.phase == "BOX_READY" and watch.first_box_exit_index is not None:
+            raise ValueError("BOX_READY cannot already have a breakout")
+        if watch.phase == "BOX_BREAK_OBSERVED" and (
+            watch.first_box_exit_index is None
+            or not hi_idx < watch.first_box_exit_index <= end - 1
+        ):
+            raise ValueError("Invalid frozen breakout evidence")
+        prior[watch.anchor_identity] = watch
+
+    selected = {}  # Stable independent identities: (direction, A-index, B-index).
+    for sign, direction in ((1, "SHORT"), (-1, "LONG")):
+        # A WATCH may persist during the early box break, without requiring
+        # a second-impulse progress/close threshold or an apex.
+        earliest_end = max(
+            0, end - p.second_max_bars,
+        )
+        for box_end in range(end, earliest_end - 1, -1):
+            followed = rows[box_end + 1 : end + 1]
+            for box_n in range(p.box_min_bars, p.box_max_bars + 1):
+                box_start = box_end - box_n + 1
+                first_end = box_start - 1
+                if first_end - p.first_min_bars + 1 < 14:
+                    continue
+                box_rows = rows[box_start : box_end + 1]
+                box_low = min(row[2] for row in box_rows)
+                box_high = max(row[1] for row in box_rows)
+                # A CLOSE beyond the preceding shelf boundary marks a
+                # possible breakout candle, not a newly enlarged shelf.
+                # Without this, adding the breakout bar to the box hides
+                # the first breakout until much later.
+                if box_end == end and len(box_rows) > 1:
+                    before_last = box_rows[:-1]
+                    if (
+                        rows[end][3] > max(row[1] for row in before_last)
+                        if sign == 1
+                        else rows[end][3] < min(row[2] for row in before_last)
+                    ):
+                        continue
+                # A previous box can only persist if the subsequent candles
+                # exhibit a real close outside its frozen boundary. Otherwise
+                # the latest known candle must still belong to the shelf.
+                first_exit = next((
+                    box_end + 1 + i for i, row in enumerate(followed)
+                    if (row[3] > box_high if sign == 1 else row[3] < box_low)
+                ), None)
+                if box_end != end and first_exit is None:
+                    continue
+                phase = (
+                    "BOX_BREAK_OBSERVED" if first_exit is not None
+                    else "BOX_READY"
+                )
+                for first_n in range(p.first_min_bars, p.first_max_bars + 1):
+                    first_start = first_end - first_n + 1
+                    if first_start < 14:
+                        continue
+                    qualified = _qualified_first_impulse_and_box(
+                        rows, first_start, first_end,
+                        box_low, box_high, sign, p,
+                    )
+                    if qualified is None:
+                        continue
+                    a, b, span, atr = qualified
+                    extension = a + 1.618 * (b - a)
+                    # An observation created AFTER the proposed entry zone
+                    # was already reached is stale, not an advance WATCH.
+                    # Also reject previously touched zones since box closure.
+                    if any(
+                        row[1] >= extension if sign == 1
+                        else row[2] <= extension
+                        for row in followed
+                    ):
+                        continue
+                    watch = IkigaiBoxWatch(
+                        direction=direction,
+                        phase=phase,
+                        as_of_index=end,
+                        anchor_start_index=first_start,
+                        anchor_end_index=first_end,
+                        anchor_start_price=a,
+                        anchor_end_price=b,
+                        box_start_index=box_start,
+                        box_end_index=box_end,
+                        box_low=box_low,
+                        box_high=box_high,
+                        first_box_exit_index=first_exit,
+                        fibonacci_1_0=b,
+                        fibonacci_1_618=extension,
+                        fibonacci_2_618=a + 2.618 * (b - a),
+                    )
+                    identity = watch.anchor_identity
+                    # Keep each independent A/B candidate. Within that pair,
+                    # preserve an already-observed EARLIER box exit rather
+                    # than extending the box through its breakout candle.
+                    rank = (
+                        # Prefer the latest completed shelf when no current
+                        # close has actually broken its preceding boundary.
+                        # A short-lived excursion inside a later wider box
+                        # must not be promoted into a confirmed second leg.
+                        box_end,
+                        box_n,
+                        int(first_exit is not None),
+                    )
+                    previous = selected.get(identity)
+                    if previous is None or rank > previous[0]:
+                        selected[identity] = rank, watch
+    # The first observed close beyond a qualified shelf makes that exact
+    # box immutable. A later close back INSIDE must not erase the first exit
+    # or absorb the breakout bar into a new enlarged shelf for the same A/B.
+    # This is an explicit state transition; a single stateless snapshot alone
+    # cannot know what was already emitted on a prior closed candle.
+    for identity, old in prior.items():
+        sign = 1 if old.direction == "SHORT" else -1
+        level = old.fibonacci_1_618
+        if (
+            end - old.box_end_index > p.second_max_bars
+            or any(
+                row[1] >= level if sign == 1 else row[2] <= level
+                for row in rows[old.anchor_end_index + 1 : end + 1]
+            )
+        ):
+            # Stale: no replacement with the same A/B after zone was touched.
+            selected.pop(identity, None)
+            continue
+        if old.phase == "BOX_BREAK_OBSERVED":
+            # The box/exit are already frozen; only the observation timestamp
+            # advances. Revisiting the candidate cannot change its identity.
+            updated = old.__class__(
+                **{**old.__dict__, "as_of_index": end}
+            )
+            selected[identity] = ((end, 0, 0), updated)
+            continue
+        row = rows[end]
+        broke = row[3] > old.box_high if sign == 1 else row[3] < old.box_low
+        if broke:
+            updated = old.__class__(
+                **{
+                    **old.__dict__,
+                    "phase": "BOX_BREAK_OBSERVED",
+                    "as_of_index": end,
+                    "first_box_exit_index": end,
+                }
+            )
+            selected[identity] = ((end, 0, 0), updated)
+        elif identity not in selected:
+            # Do not silently replace a previously observed A/B with a
+            # different one; a valid shelf may remain in progress.
+            selected[identity] = (
+                (old.box_end_index, 0, 0),
+                old.__class__(**{**old.__dict__, "as_of_index": end}),
+            )
+
+    # Do not rank away newer A/B just because older ones are closer to 1.618.
+    return tuple(
+        item[1] for _, item in sorted(
+            selected.items(), key=lambda record: record[0], reverse=True,
+        )
+    )
