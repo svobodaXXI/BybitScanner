@@ -85,7 +85,7 @@ Findings so far:
   `robot_state_machine._PATTERN_DIRECTION`; button and admission now refuse it).
 - L-shaped continuation: only in `AUTOPILOT_STRATEGY_ACCUMULATED_DESIGN.md` ("L-shaped post-impulse consolidation"); the exact
   structure definition is an open item there (item 7). No code.
-- Box/rectangle: no design found; closest code is `structures/channel.py`.
+- Ikigai Box is NOT a generic rectangle/breakout. Existing archived cases are in `training/reference_patterns/HEIUSDT/post_pump_two_drop_fib_1618_1h/`, `AEONUSDT/ikigai_box_15m/`, and `VELVETUSDT/ikigai_boxes/`; authoritative design: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`. The older generic-range wording in this backlog was incorrect.
 - Geometry code lives in `wedge/` (detector, classifier, integrity, potential) and `structures/`.
 To do: a short survey of mature open-source pattern-detection approaches (anchor/pivot selection, scaling), written to a doc,
 with concrete ideas to borrow. Output: `DOCUMENTS/GEOMETRY_RESEARCH_<date>.md`.
@@ -110,9 +110,16 @@ Rising -> SHORT; new categories need their own direction and entry rules.
 Scanner detects Triangle Compression. Needs the trading rule decision: symmetric, ascending, descending or all three; direction of
 the breakout trade; stop/take source; whether `_PATTERN_DIRECTION` becomes per-variant. Depends on G2 (anchors).
 
-### G5 — Box (horizontal range)
-Definition and detector needed (support/resistance band, minimum touches, containment tolerance); entry on breakout of either
-side with retest; stop inside the box vs beyond. Input from the user: example chart and the desired entry rule.
+### G5 — Ikigai Box (two-impulse Fibonacci reversal; NOT a range breakout)
+Authoritative definition and historical references: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
+First impulse and second impulse are in the SAME direction, separated by consolidation. Freeze first-impulse A/B;
+F(0)=origin, F(1)=first-impulse terminal, F(1.618) and F(2.618) extend along that impulse.
+SHORT on second UP impulse near 1.618; mirrored LONG on second DOWN impulse. Four advance LIMITs of 1/4 РО,
+outermost beyond extension. Confirmed reversal candle's extremum for STOP if valid; otherwise -1.5% from actual
+average entry. Following a confirmed first STOP, verified flat/cancelled, one sequential second grid at 2.618;
+main target F(1.0), partial profit-taking before target and then fee-aware breakeven. Exact grid spacing,
+partial-TP and breakeven triggers remain undefined, so no Robot order execution is authorized by this description.
+Priority after user-requested L-shape work: detector + visual Scanner/Telegram signal, then separate PAPER Robot lifecycle.
 
 ### G6 — L-shaped continuation
 Definition is an open design item (impulse, then compression at the top). Input from the user: example chart; then the exact
@@ -124,8 +131,10 @@ Constraints found in code: (1) `TIMEFRAME` is a global constant read by `analyze
 candidate owner per symbol (a second one escalates DUPLICATE_ROBOT_OWNER to RECONCILIATION_REQUIRED), so a rule is needed for
 5m and 1m signals on one ticker; (4) scan time roughly doubles (about 20 to 40 minutes). Needs a spec and a decision on priority.
 
-Order (user 2026-09-19, confirmed): two wedge categories (G3) before any other pattern, then triangle (G4), L-shaped (G6), box (G5).
-G0 and G1 run first (research doc + chart window), then G2 (anchors); G7 (dual timeframe) after G2.
+Latest user priority (2026-09-20): finish L-shaped (G6) visualization and its signal path first; then Ikigai Box (G5)
+with the correct two-impulse Fibonacci design, ahead of triangle and additional wedge taxonomy. Earlier ordering
+was superseded. Draft PR #156 and the unpublished local L-shape worktree remain separate; neither is a prerequisite
+for the Box's offline detector. G7 (dual timeframe) is deferred.
 Blocking input for G3: description of the two wedge categories with one example chart each.
 Every pattern follows the same path: definition with examples -> spec -> detection -> signal/post -> robot rules -> tests ->
 live verification -> record.
@@ -133,7 +142,9 @@ live verification -> record.
 ## 4. Decisions waiting for the user
 1. Reward/risk filter: RESOLVED, yes, configurable, start 1.5, tune later.
 2. Minimum stop 0.7%: confirm after the back-test A-3.
-3. Pattern order RESOLVED: triangle, L-shaped, box (two wedge categories first). Still open: one example chart per pattern and the desired entry rule.
+3. Pattern order RESOLVED (2026-09-20): L-shaped first, Ikigai Box second, others later. Box reference examples and
+   primary/secondary entry, fallback STOP and principal target are in `IKIGAI_BOX_STRATEGY_SPEC.md`; exact grid spacing,
+   early TP split/price and breakeven trigger still require user approval before executable PAPER Robot integration.
 4. Dual timeframe: RESOLVED, required. Still open: how to resolve two signals (5m and 1m) on one ticker (which one the robot takes).
 
 ## 5. Facts to keep in mind when reading results
