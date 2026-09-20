@@ -210,3 +210,94 @@ def trace_episode_checkpoints(frame, confirmed_points, *, as_of_index,
         previous = cutoff
     out["status"] = "OK"
     return out
+
+
+def trace_explicit_pair_checkpoints(
+    frame, confirmed_points, *, as_of_index, checkpoints, pair_specs, timeframe="5"
+):
+    """Compare independently supplied anchor pairs only when historically knowable.
+
+    This is a research-side replay of EXPLICIT hindsight hypotheses, not pair
+    discovery, episode membership or an algorithm for changing frozen candidates.
+    Each pair is evaluated on its own truncated source prefix; the previous
+    checkpoint's result is never overwritten by a later pair or later OHLC.
+    """
+    from .local_pair_shadow import evaluate_local_pair
+
+    out = {"status": "UNKNOWN", "reasons": [], "history": [],
+           "scope": "EXPLICIT_PAIR_REPLAY_ONLY", "membership": "UNPROVEN"}
+    try:
+        final = int(as_of_index)
+        steps = [int(c) for c in checkpoints]
+        specs = list(pair_specs)
+        if (frame is None or len(frame) != final + 1 or not steps
+                or steps != sorted(set(steps))
+                or steps[0] < 0 or steps[-1] > final or not specs):
+            raise ValueError("prefix, checkpoint or specs")
+        ids = set()
+        checked_specs = []
+        for spec in specs:
+            pair_id = spec["id"]
+            if not isinstance(pair_id, str) or not pair_id or pair_id in ids:
+                raise ValueError("duplicate or missing pair ID")
+            ids.add(pair_id)
+            a = {key: int(spec["anchors"][key]) for key in ("h1", "h2", "l1", "l2")}
+            start = int(spec["episode_start"])
+            if not (0 <= start <= min(a.values()) and a["h1"] < a["h2"]
+                    and a["l1"] < a["l2"] and max(a.values()) <= final):
+                raise ValueError("invalid explicit anchors")
+            first = min((i, side) for side, i in (
+                ("HIGH", a["h1"]), ("HIGH", a["h2"]),
+                ("LOW", a["l1"]), ("LOW", a["l2"])
+            ))
+            checked_specs.append((pair_id, start, a, first))
+    except (KeyError, TypeError, ValueError, OverflowError):
+        out["reasons"].append("INVALID_EXPLICIT_PAIR_REPLAY_INPUT")
+        return out
+
+    # trace_episode_checkpoints performs the full and each historical-prefix
+    # source/ledger provenance validation; it DOES NOT infer episode membership.
+    trace_by_id = {}
+    for pair_id, _, _, (seed_index, seed_side) in checked_specs:
+        traced = trace_episode_checkpoints(
+            frame, confirmed_points, as_of_index=final,
+            seed_index=seed_index, seed_side=seed_side,
+            checkpoints=steps, timeframe=timeframe,
+        )
+        if traced["status"] != "OK":
+            out["reasons"].extend(traced["reasons"])
+            return out
+        trace_by_id[pair_id] = traced["history"]
+
+    for position, cutoff in enumerate(steps):
+        prefix = frame.iloc[:cutoff + 1].copy()
+        available = [
+            dict(p) for p in confirmed_points if int(p["confirm_index"]) <= cutoff
+        ]
+        keys = {(int(p["index"]), p["side"]) for p in available}
+        rows = []
+        for pair_id, start, anchors, _ in checked_specs:
+            required = [(anchors["h1"], "HIGH"), (anchors["h2"], "HIGH"),
+                        (anchors["l1"], "LOW"), (anchors["l2"], "LOW")]
+            present = [{"index": i, "side": side} for i, side in required
+                       if (i, side) in keys]
+            chronological = trace_by_id[pair_id][position]
+            row = {"id": pair_id, "as_of_index": cutoff,
+                   "anchors": dict(anchors), "episode_start": start,
+                   "confirmed_anchors": present,
+                   "seed_status": chronological["seed_status"],
+                   "seed_reasons": list(chronological["reasons"]),
+                   "membership": "UNPROVEN",
+                   "pair_status": "NOT_YET_EVALUABLE",
+                   "pair_result": None}
+            if len(present) == len(required):
+                result = evaluate_local_pair(
+                    prefix, available, as_of_index=cutoff, timeframe=timeframe,
+                    episode_start=start, anchors=dict(anchors),
+                )
+                row["pair_status"] = result["status"]
+                row["pair_result"] = result
+            rows.append(row)
+        out["history"].append({"as_of_index": cutoff, "pairs": rows})
+    out["status"] = "OK"
+    return out
