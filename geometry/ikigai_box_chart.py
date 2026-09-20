@@ -36,9 +36,9 @@ def fibonacci_chart_levels(formation):
 
 def _stage_caption(overlay):
     reached = (
-        "1.618 ДОСТИГНУТ · зона входа: сетка 4 лимитки × 1/4 РО (план)"
+        "1.618 БЫЛ ДОСТИГНУТ · сетка 4 × 1/4 РО — схема, НЕ сигнал входа"
         if overlay.level_1_618_reached else
-        "1.618 НЕ достигнут · НАБЛЮДЕНИЕ, активной зоны входа нет"
+        "1.618 НЕ достигнут · НАБЛЮДЕНИЕ, схема сетки не показана"
     )
     lines = [f"Статус: {overlay.stage} ({overlay.direction})", reached]
     if overlay.stop is not None:
@@ -77,7 +77,7 @@ def _draw_trade_overlay(ax, overlay, offset, last):
         for number, price in enumerate(grid.prices, start=1)
     )
     ax.annotate(
-        "Сетка входа (план)" + chr(10) + listing,
+        "Схема сетки · шаг НЕ утверждён" + chr(10) + listing,
         (max(reach - 1, 0), sum(grid.prices) / len(grid.prices)),
         xytext=(-8, 0), textcoords="offset points", fontsize=7,
         va="center", ha="right", color="crimson",
