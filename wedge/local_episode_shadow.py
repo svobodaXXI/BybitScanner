@@ -269,6 +269,7 @@ def trace_explicit_pair_checkpoints(
             return out
         trace_by_id[pair_id] = traced["history"]
 
+    frozen_first = {}  # One independent baseline per explicit pair ID, never revised.
     for position, cutoff in enumerate(steps):
         prefix = frame.iloc[:cutoff + 1].copy()
         available = [
@@ -297,6 +298,40 @@ def trace_explicit_pair_checkpoints(
                 )
                 row["pair_status"] = result["status"]
                 row["pair_result"] = result
+                e = result.get("strict", {}).get("E") or {}
+                if pair_id not in frozen_first:
+                    frozen_first[pair_id] = {
+                        "as_of_index": cutoff, "status": result["status"],
+                        "e_body": tuple(e.get("body_indices", ())),
+                        "e_wick": tuple(e.get("wick_indices", ())),
+                    }
+                frozen = frozen_first[pair_id]
+                row["first_evaluable_as_of"] = frozen["as_of_index"]
+                row["frozen_first_status"] = frozen["status"]
+                row["extension_since_first"] = None
+                if cutoff > frozen["as_of_index"]:
+                    post_anchor = sorted(
+                        ({"index": int(point["index"]), "side": point["side"],
+                          "confirm_index": int(point["confirm_index"])}
+                         for point in available
+                         if max(anchors.values()) < int(point["index"])
+                         and frozen["as_of_index"] < int(point["confirm_index"]) <= cutoff),
+                        key=lambda point: (point["confirm_index"], point["index"],
+                                           point["side"]),
+                    )
+                    new_bodies = sorted(set(e.get("body_indices", ()))
+                                        - set(frozen["e_body"]))
+                    new_wicks = sorted(set(e.get("wick_indices", ()))
+                                       - set(frozen["e_wick"]))
+                    row["extension_since_first"] = {
+                        "status": ("EXCURSION_OBSERVED" if new_bodies or new_wicks
+                                   else "NEW_POST_ANCHOR_PIVOT" if post_anchor
+                                   else "NO_NEW_EVIDENCE"),
+                        "membership": "UNPROVEN",
+                        "new_E_body_indices": new_bodies,
+                        "new_E_wick_indices": new_wicks,
+                        "new_confirmed_post_anchor_pivots": post_anchor,
+                    }
             rows.append(row)
         out["history"].append({"as_of_index": cutoff, "pairs": rows})
     out["status"] = "OK"
