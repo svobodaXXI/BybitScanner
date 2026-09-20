@@ -76,11 +76,15 @@ def _draw_trade_overlay(ax, overlay, offset, last):
         f"{number}/4 · 1/4 РО  {price:.8g}"
         for number, price in enumerate(grid.prices, start=1)
     )
-    ax.annotate(
+    # Place the numeric illustration beyond the RIGHT edge of the price
+    # axes: when 1.618 is touched by the latest candle, an in-axes label
+    # covers precisely the bars the user needs to inspect. Tight PNG bounds
+    # include this margin text without changing candle or Fibonacci x-coords.
+    ax.text(
+        1.03, sum(grid.prices) / len(grid.prices),
         "Схема сетки · шаг НЕ утверждён" + chr(10) + listing,
-        (max(reach - 1, 0), sum(grid.prices) / len(grid.prices)),
-        xytext=(-8, 0), textcoords="offset points", fontsize=7,
-        va="center", ha="right", color="crimson",
+        transform=ax.get_yaxis_transform(), clip_on=False,
+        fontsize=7, va="center", ha="left", color="crimson",
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.85,
                   edgecolor="crimson"),
     )
