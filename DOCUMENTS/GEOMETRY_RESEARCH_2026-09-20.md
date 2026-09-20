@@ -417,6 +417,22 @@ do not state that no adjacency check exists or assign the omission a cause
 without the trace. A duration penalty inside rank cannot substitute for
 structural admissibility.
 
+**CRCLUSDT 5m owner annotation (2026-09-20), positive target:** in the owner's
+annotated chart a sharp preceding DOWN impulse ends at the local transition
+LOW, which anchors shallow lower support. The adjacent rebound HIGH starts
+descending upper resistance; later highs/lows form the observed contracting
+falling *deceleration* wedge. The Scanner image instead fits a later, steeper
+lower line and misplaces the episode START. **A valid falling deceleration
+hypothesis may therefore have LOW -> HIGH first-anchor order**, unlike falling
+correction after UP, which can start HIGH -> LOW. Current
+`geometry/pair_metrics.py` gives CANONICAL status to falling lines only when
+upper first HIGH precedes the next filtered LOW; combined with CANONICAL-first
+ranking this may exclude the user's LOW-first geometry even when it is locally
+coherent. Check actual signal-time source OHLC/pivot timestamps and right-
+confirmation before calling any annotated pixel a confirmed pivot. Preserve
+the originally sent snapshot and use the annotated TradingView chart as an
+owner label, not a retroactive production signal or Robot admission.
+
 **New immediate order:** G2-P0 read-only reproduction of one invalid pair and
 one coherent control -> narrow *wedge-only* structural-coherence gate spec
 (using adjacent meaningful opposite-side pivots from one local episode,
