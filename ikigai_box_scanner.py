@@ -161,7 +161,12 @@ def send_ikigai_box_watch_observation(
     if b_time <= a_time:
         return False
     identity = f"{a_time}:{b_time}"
-    memory_key = f"ikigai_box_watch:{symbol}:{timeframe}:{watch.direction}"
+    # Keep every frozen A/B identity independent. One symbol can have several
+    # historical boxes; a later send must not overwrite earlier dedup evidence.
+    memory_key = (
+        f"ikigai_box_watch:{symbol}:{timeframe}:{watch.direction}:"
+        f"{a_time}:{b_time}"
+    )
     history = load_memory()
     if not test_mode and (
         history.get(memory_key, {}).get("anchors") == identity
