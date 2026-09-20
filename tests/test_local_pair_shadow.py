@@ -121,6 +121,51 @@ class LocalPairShadowContract(unittest.TestCase):
         self.assertEqual(result["status"], "UNKNOWN")
         self.assertIn("UNPROVEN_PIVOT_PROVENANCE", result["reasons"])
 
+    def test_nonanchor_same_candle_does_not_hide_independent_invalid_geometry(self):
+        frame, pivots, anchors = sample()
+        # This simulated ambiguity is not an anchor; change the later HIGH anchor
+        # so that the two slopes have opposite signs, independently of pivot order.
+        frame.loc[8, "high"] = 12.0
+        for pivot in pivots:
+            if pivot["side"] == "HIGH" and pivot["index"] == 8:
+                pivot["price"] = 12.0
+        pivots.append({
+            "index": 5, "side": "LOW", "price": float(frame.loc[5, "low"]),
+            "event_time_ms": BASE + 5 * STEP, "confirm_index": 8,
+            "confirm_time_ms": BASE + 9 * STEP,
+            "confirmation_contiguous": True, "ambiguous_same_candle": True,
+        })
+        result = check(frame, pivots, anchors)
+        self.assertEqual(result["status"], "INVALID")
+        self.assertIn("NOT_A_WEDGE_SLOPE_FAMILY", result["reasons"])
+        self.assertIn(5, result["ambiguous_indices"])
+
+    def test_nonanchor_ambiguous_pair_cannot_be_valid(self):
+        frame, pivots, anchors = sample()
+        pivots.append({
+            "index": 5, "side": "LOW", "price": float(frame.loc[5, "low"]),
+            "event_time_ms": BASE + 5 * STEP, "confirm_index": 8,
+            "confirm_time_ms": BASE + 9 * STEP,
+            "confirmation_contiguous": True, "ambiguous_same_candle": True,
+        })
+        result = check(frame, pivots, anchors)
+        self.assertEqual(result["status"], "AMBIGUOUS")
+        self.assertEqual(result["completion_status"], "UNKNOWN")
+
+    def test_post_anchor_breach_is_reported_even_if_line_support_is_unknown(self):
+        frame, pivots, anchors = sample()
+        pivots = [p for p in pivots if not (p["side"] == "HIGH" and p["index"] == 5)]
+        frame.loc[12, "open"] = 10
+        frame.loc[12, "high"] = 10
+        result = check(frame, pivots, anchors)
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertIn("NO_ADDITIONAL_LOCAL_HIGH_SUPPORT", result["open_questions"])
+        self.assertIn(
+            "UNRESOLVED_PRE_OR_POST_ANCHOR_BREACH_OR_UNCALIBRATED_WICKS",
+            result["open_questions"],
+        )
+        self.assertIn(12, result["strict"]["E"]["body_indices"])
+
     def test_no_existing_production_imports_new_module(self):
         root = Path(__file__).resolve().parents[1]
         for name in ("analyzer/core.py", "wedge/analyzer.py", "wedge/__init__.py",
