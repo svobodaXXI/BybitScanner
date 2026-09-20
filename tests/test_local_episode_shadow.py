@@ -21,6 +21,8 @@ from wedge.local_episode_shadow import (propose_local_episodes, trace_episode_ch
 
 ZERO_G = Path(__file__).parent / "fixtures/0g_a_20260920_closed_5m.csv.zlib.b64"
 ZERO_G_SHA = "ed7919a3ef95b0767009bcf42d19c60849569663914ea413a6a326cbf0ab6d8f"
+ZERO_G_LATER = Path(__file__).parent / "fixtures/0g_b_20260920_closed_5m.csv.zlib.b64"
+ZERO_G_LATER_SHA = "6c1a7bb1e47cb2266ba87bc6b8586a6c2950fd98b33fafd2f7a0a3d4006f7fc4"
 STEP_MS = 300_000
 
 
@@ -28,6 +30,15 @@ def _zero_g_frame():
     raw = zlib.decompress(base64.b64decode(ZERO_G.read_text(encoding="ascii").strip()))
     if hashlib.sha256(raw).hexdigest() != ZERO_G_SHA:
         raise AssertionError("original 0G#A closed source candle checksum differs")
+    result = pd.read_csv(io.BytesIO(raw))
+    assert len(result) == 199 and list(result) == ["time", "open", "high", "low", "close"]
+    return result
+
+
+def _zero_g_later_frame():
+    raw = zlib.decompress(base64.b64decode(ZERO_G_LATER.read_text(encoding="ascii").strip()))
+    if hashlib.sha256(raw).hexdigest() != ZERO_G_LATER_SHA:
+        raise AssertionError("later 0G#B source candle checksum differs")
     result = pd.read_csv(io.BytesIO(raw))
     assert len(result) == 199 and list(result) == ["time", "open", "high", "low", "close"]
     return result
@@ -341,6 +352,72 @@ class LocalEpisodeChronology(unittest.TestCase):
         self.assertEqual(later["extension_since_first"]["status"], "NO_NEW_EVIDENCE")
         self.assertEqual(later["extension_since_first"]["membership"], "UNPROVEN")
         self.assertEqual(result["membership"], "UNPROVEN")
+
+    def test_0g_two_saved_windows_share_exact_ohlc_but_not_source_positions(self):
+        earlier, later = _zero_g_frame(), _zero_g_later_frame()
+        earlier_original, later_original = earlier.copy(deep=True), later.copy(deep=True)
+        shared = earlier.merge(later, on="time", suffixes=("_old", "_new"))
+        self.assertEqual(len(shared), 194)
+        for column in ("open", "high", "low", "close"):
+            self.assertEqual(
+                shared[column + "_old"].tolist(), shared[column + "_new"].tolist()
+            )
+        self.assertEqual(later.time.iloc[0] - earlier.time.iloc[0], 5 * STEP_MS)
+        self.assertEqual(int(earlier.time.iloc[-1]), int(later.time.iloc[193]))
+        self.assertEqual(
+            later.time.iloc[194:].tolist(),
+            [int(earlier.time.iloc[-1]) + i * STEP_MS for i in range(1, 6)],
+        )
+        pd.testing.assert_frame_equal(earlier, earlier_original)
+        pd.testing.assert_frame_equal(later, later_original)
+
+    def test_0g_same_source_turn_retains_ambiguity_after_window_roll(self):
+        earlier, later = _zero_g_frame(), _zero_g_later_frame()
+        old_pivots, newer_pivots = _confirmed(earlier), _confirmed(later)
+        old_turn = [p for p in old_pivots if p["index"] == 87]
+        new_turn = [p for p in newer_pivots if p["index"] == 82]
+        self.assertEqual({p["side"] for p in old_turn}, {"HIGH", "LOW"})
+        self.assertEqual({p["side"] for p in new_turn}, {"HIGH", "LOW"})
+        for side in ("HIGH", "LOW"):
+            old = next(p for p in old_turn if p["side"] == side)
+            new = next(p for p in new_turn if p["side"] == side)
+            self.assertEqual(old["event_time_ms"], new["event_time_ms"])
+            self.assertEqual(old["confirm_time_ms"], new["confirm_time_ms"])
+            self.assertEqual(old["price"], new["price"])
+        same_as_of = later.iloc[:194].copy()  # later[193] == earlier[198] in UTC
+        first = propose_local_episodes(
+            earlier, old_pivots, as_of_index=198, seed_indices={87}
+        )
+        replay = propose_local_episodes(
+            same_as_of, _confirmed(same_as_of), as_of_index=193,
+            seed_indices={82},
+        )
+        future = propose_local_episodes(
+            later, newer_pivots, as_of_index=198, seed_indices={82},
+        )
+        self.assertEqual(first["status"], replay["status"])
+        self.assertEqual(first["status"], future["status"])
+        self.assertEqual(
+            {p["seed_side"]: p["status"] for p in first["proposals"]},
+            {"HIGH": "AMBIGUOUS", "LOW": "AMBIGUOUS"},
+        )
+        self.assertEqual(
+            {p["seed_side"]: p["status"] for p in replay["proposals"]},
+            {"HIGH": "AMBIGUOUS", "LOW": "AMBIGUOUS"},
+        )
+        self.assertEqual(
+            {p["seed_side"]: p["status"] for p in future["proposals"]},
+            {"HIGH": "AMBIGUOUS", "LOW": "AMBIGUOUS"},
+        )
+        # New future candle H195 in B has not confirmed at B as_of197.
+        self.assertNotIn(
+            (195, "HIGH"),
+            {(p["index"], p["side"]) for p in _confirmed(later.iloc[:198].copy())},
+        )
+        self.assertIn(
+            (195, "HIGH"),
+            {(p["index"], p["side"]) for p in newer_pivots},
+        )
 
     def test_not_imported_by_production_path(self):
         root = Path(__file__).resolve().parents[1]
