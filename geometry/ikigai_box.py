@@ -372,6 +372,18 @@ def detect_ikigai_box_watches(
                 box_rows = rows[box_start : box_end + 1]
                 box_low = min(row[2] for row in box_rows)
                 box_high = max(row[1] for row in box_rows)
+                # A CLOSE beyond the preceding shelf boundary marks a
+                # possible breakout candle, not a newly enlarged shelf.
+                # Without this, adding the breakout bar to the box hides
+                # the first breakout until much later.
+                if box_end == end and len(box_rows) > 1:
+                    before_last = box_rows[:-1]
+                    if (
+                        rows[end][3] > max(row[1] for row in before_last)
+                        if sign == 1
+                        else rows[end][3] < min(row[2] for row in before_last)
+                    ):
+                        continue
                 # A previous box can only persist if the subsequent candles
                 # exhibit a real close outside its frozen boundary. Otherwise
                 # the latest known candle must still belong to the shelf.
@@ -428,10 +440,13 @@ def detect_ikigai_box_watches(
                     # preserve an already-observed EARLIER box exit rather
                     # than extending the box through its breakout candle.
                     rank = (
-                        int(first_exit is not None),
-                        -first_exit if first_exit is not None else 0,
+                        # Prefer the latest completed shelf when no current
+                        # close has actually broken its preceding boundary.
+                        # A short-lived excursion inside a later wider box
+                        # must not be promoted into a confirmed second leg.
                         box_end,
                         box_n,
+                        int(first_exit is not None),
                     )
                     previous = selected.get(identity)
                     if previous is None or rank > previous[0]:
