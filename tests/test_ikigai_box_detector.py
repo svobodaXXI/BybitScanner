@@ -7,6 +7,7 @@ import pandas as pd
 
 from geometry.ikigai_box import (
     IkigaiBoxParameters,
+    _qualified_first_impulse_and_box,
     detect_ikigai_box,
     detect_ikigai_box_watches,
 )
@@ -135,6 +136,119 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             + 1.618 * (found.anchor_end_price - found.anchor_start_price),
         )
 
+    def test_first_down_leg_stops_at_any_green_or_doji_candle(self):
+        frame, first_end, shelf_end = _two_impulses(-1)
+        self.assertEqual(first_end, 27)
+        for candle_close in (198.05, 198.0):
+            with self.subTest(close=candle_close):
+                modified = frame.copy(deep=True)
+                # Candle 22 opens at 198.0; a green or doji inside the
+                # otherwise bearish 20..27 run must break that run.
+                modified.loc[22, "close"] = candle_close
+                rows = list(modified[["open", "high", "low", "close"]]
+                            .itertuples(index=False, name=None))
+                box = rows[first_end + 1:shelf_end + 1]
+                self.assertIsNone(_qualified_first_impulse_and_box(
+                    rows, 20, first_end,
+                    min(row[2] for row in box),
+                    max(row[1] for row in box),
+                    -1, IkigaiBoxParameters(),
+                ))
+
+    def test_flock_style_green_wick_anchors_red_core_and_55pct_box_gate(self):
+        # Synthetic OHLC around the user-supplied FLOCK 986..994 pattern.
+        # The actual archived 999-candle sample is NOT embedded here.
+        calm = [dict(open=0.07010, high=0.07012, low=0.07008,
+                     close=0.07010) for _ in range(20)]
+        first = [
+            (0.07006, 0.07037, 0.07006, 0.07017),  # 986 GREEN
+            (0.07017, 0.07021, 0.06933, 0.06970),
+            (0.06970, 0.06994, 0.06951, 0.06960),
+            (0.06960, 0.06975, 0.06933, 0.06944),
+            (0.06944, 0.06983, 0.06940, 0.06955),  # 990 GREEN A
+            (0.06955, 0.06956, 0.06837, 0.06917),  # red core
+            (0.06917, 0.06936, 0.06761, 0.06775),
+            (0.06775, 0.06831, 0.06548, 0.06578),
+            (0.06578, 0.06717, 0.06533, 0.06666),  # 994 GREEN B
+        ]
+        box = [
+            (0.06666, 0.06710, 0.06509, 0.06670),
+            (0.06670, 0.06740, 0.06610, 0.06680),
+            (0.06680, 0.06715, 0.06620, 0.06670),
+            (0.06670, 0.06720, 0.06640, 0.06690),
+        ]
+        def sample(rows):
+            return pd.DataFrame(
+                calm + [dict(zip(("open", "high", "low", "close"), row))
+                        for row in first + rows]
+            )
+
+        narrow = sample(box)
+        watches = detect_ikigai_box_watches(narrow)
+        matching = [
+            w for w in watches if w.anchor_identity == ("LONG", 24, 28)
+        ]
+        self.assertEqual(len(matching), 1)
+        found = matching[0]
+        self.assertEqual((found.anchor_start_price, found.anchor_end_price),
+                         (0.06983, 0.06533))
+        self.assertEqual(found.phase, "BOX_READY")
+        self.assertEqual((found.box_start_index, found.box_end_index), (29, 32))
+        self.assertAlmostEqual(found.fibonacci_1_618, 0.062549)
+        self.assertNotIn(
+            ("LONG", 20, 28),
+            {w.anchor_identity for w in watches},
+        )
+
+        # FLOCK-style: full range 0.00271 / 0.00450 = 60.22%,
+        # but retracement ABOVE B is 0.00247 / 0.00450 = 54.89%.
+        # The shallow BELOW-B overshoot is only 5.33%, within the
+        # existing separate 12% cap. Do not raise the 55% cap.
+        wide = sample([box[0], (0.06670, 0.06780, 0.06610, 0.06680),
+                       box[2], box[3]])
+        corresponding = [
+            w for w in detect_ikigai_box_watches(wide)
+            if w.anchor_identity == ("LONG", 24, 28)
+        ]
+        self.assertEqual(len(corresponding), 1)
+        self.assertEqual((corresponding[0].box_low, corresponding[0].box_high),
+                         (0.06509, 0.06780))
+        self.assertEqual(corresponding[0].phase, "BOX_READY")
+        self.assertAlmostEqual(corresponding[0].fibonacci_1_618, 0.062549)
+        # A deeper correction must STILL be rejected, even with the
+        # same permitted overshoot past terminal B.
+        deep_retrace = sample([
+            box[0], (0.06670, 0.06795, 0.06610, 0.06680),
+            box[2], box[3],
+        ])
+        self.assertNotIn(
+            ("LONG", 24, 28),
+            {w.anchor_identity for w in detect_ikigai_box_watches(deep_retrace)},
+        )
+        # A large B-side excursion cannot bypass the existing 12% cap.
+        deep_overshoot = sample([
+            (0.06666, 0.06710, 0.06470, 0.06670),
+            (0.06670, 0.06780, 0.06610, 0.06680),
+            box[2], box[3],
+        ])
+        self.assertNotIn(
+            ("LONG", 24, 28),
+            {w.anchor_identity for w in detect_ikigai_box_watches(deep_overshoot)},
+        )
+
+        # The box-width decomposition is symmetrical for upward setups.
+        mirrored = wide.copy(deep=True)
+        mirrored["open"] = 0.40 - wide["open"]
+        mirrored["high"] = 0.40 - wide["low"]
+        mirrored["low"] = 0.40 - wide["high"]
+        mirrored["close"] = 0.40 - wide["close"]
+        counterpart = [
+            w for w in detect_ikigai_box_watches(mirrored)
+            if w.anchor_identity == ("SHORT", 24, 28)
+        ]
+        self.assertEqual(len(counterpart), 1)
+        self.assertAlmostEqual(counterpart[0].fibonacci_1_618, 0.40 - 0.062549)
+
     def test_generic_horizontal_range_without_two_impulses_is_not_ikigai_box(self):
         frame = pd.DataFrame([
             _bar(100.0, 100.1 if i % 2 else 99.9) for i in range(90)
@@ -197,16 +311,19 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             detect_ikigai_box(future, as_of_index=len(frame) - 1), found
         )
 
-    def test_terminal_rejection_wick_long_is_true_mirror(self):
-        frame, _ = _terminal_wick_two_impulses(direction=-1)
-        found = detect_ikigai_box(frame)
-        self.assertIsNotNone(found)
-        self.assertEqual(found.direction, "LONG")
-        self.assertEqual((found.anchor_start_index, found.anchor_end_index), (20, 23))
-        self.assertAlmostEqual(found.anchor_start_price, 0.27089)
-        self.assertAlmostEqual(found.anchor_end_price, 0.24802)
-        self.assertGreater(found.fibonacci_1_0, found.fibonacci_1_618)
-        self.assertGreater(found.fibonacci_1_618, found.fibonacci_2_618)
+    def test_mixed_body_down_wick_leg_is_not_one_red_impulse(self):
+        frame, box_end = _terminal_wick_two_impulses(
+            direction=-1, second=False,
+        )
+        first = frame.iloc[20:24]
+        self.assertTrue((first["close"] >= first["open"]).any())
+        watches = detect_ikigai_box_watches(frame, as_of_index=box_end)
+        self.assertNotIn(
+            ("LONG", 20, 23),
+            {watch.anchor_identity for watch in watches},
+        )
+        # A longer or later red-only leg may remain eligible; only the
+        # mixed-body first-impulse boundaries are forbidden.
 
     def test_wick_box_is_watch_before_second_impulse_and_full_extension(self):
         frame, box_end = _terminal_wick_two_impulses()
@@ -371,12 +488,13 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             box_end,
         )
 
-    def test_watch_long_is_mirror_and_has_no_future_peeking(self):
-        frame, box_end = _terminal_wick_two_impulses(
-            direction=-1, second=False,
-        )
+    def test_red_only_long_watch_has_no_future_peeking(self):
+        frame, first_end, box_end = _two_impulses(direction=-1)
         original = detect_ikigai_box_watches(frame, as_of_index=box_end)
-        match = next(w for w in original if w.anchor_identity == ("LONG", 20, 23))
+        match = next(
+            w for w in original
+            if w.anchor_identity == ("LONG", 20, first_end)
+        )
         self.assertEqual(match.phase, "BOX_READY")
         self.assertGreater(match.fibonacci_1_0, match.fibonacci_1_618)
         future = pd.concat([frame, pd.DataFrame([

@@ -1,7 +1,8 @@
 # Ikigai Box — two-impulse Fibonacci reversal (user-defined PAPER strategy)
 
-Status: **DESIGN / IMPLEMENTATION NOT STARTED**. Scope: proposed Scanner recognition, Telegram
-signal chart, and later separately authorized PAPER Robot execution. This is **not** the
+Status: **observational geometry/opt-in Scanner WATCH implemented; Robot execution NOT implemented**.
+Scope: Scanner recognition, Telegram observation charts, and later separately
+authorized PAPER Robot execution. This is **not** the
 ordinary horizontal-range breakout/rectangle pattern. The 2026-09-20 user screenshot and
 explicit trading decisions in the current conversation take precedence over the obsolete
 `DOCUMENTS/BACKLOG.md` G5 "horizontal range / breakout" text.
@@ -48,6 +49,25 @@ and `B` is its ending LOW before consolidation; the second impulse is DOWN, and
 the entries near 1.618/2.618 are LONG. The first impulse and second impulse have
 the **same** direction. Do not reinterpret the first leg as a preceding opposite
 trend or replace the two-impulse sequence with a generic rectangle.
+
+**First DOWN impulse / box boundary (FLOCK 5m acceptance, 2026-09-20):**
+A and B are the wick extremes of the first impulse; each may belong to an
+adjacent green boundary candle, provided all candle bodies strictly between
+A and B form one uninterrupted bearish (red) run. A green or doji candle
+*inside* that red core splits the run. A/B are frozen independently of later
+box wicks or the second impulse; this narrower red-core rule currently applies
+to DOWN impulses only, without silently changing the established UP detector.
+
+A consolidation box may briefly wick **past B** before the second impulse
+(for LONG, below B; for SHORT, above B). That wick does not redefine B.
+The ordinary full box range remains limited to 55% of the A/B impulse span.
+As a bounded alternative when full range exceeds 55%, retracement measured
+*from B in the opposite direction* must remain <=55% of the span, and the
+overshoot past B in the impulse direction must remain <=12% of the span,
+subject to the existing impulse-specific retracement gates. This is a
+geometry/WATCH allowance only, **not** proof of a valid entry or permission
+to place an order. FLOCK's observed 5m example had 54.89% retracement and
+5.33% overshoot; no threshold was increased to accommodate it.
 
 **Numerical convention, independent of the charting tool's click/drag direction:**
 
