@@ -21,6 +21,7 @@ import pandas as pd
 
 from timeframe_format import format_timeframe_ru
 from geometry.ikigai_box import IkigaiBoxWatch
+from geometry.ikigai_box_overlay import build_trade_overlay
 
 
 def fibonacci_chart_levels(formation):
@@ -31,6 +32,75 @@ def fibonacci_chart_levels(formation):
         (1.618, formation.fibonacci_1_618),
         (2.618, formation.fibonacci_2_618),
     )
+
+
+def _stage_caption(overlay):
+    reached = (
+        "1.618 ДОСТИГНУТ · зона входа: сетка 4 лимитки × 1/4 РО (план)"
+        if overlay.level_1_618_reached else
+        "1.618 НЕ достигнут · НАБЛЮДЕНИЕ, активной зоны входа нет"
+    )
+    lines = [f"Статус: {overlay.stage} ({overlay.direction})", reached]
+    if overlay.stop is not None:
+        basis = (
+            f"за экстремумом свечи {overlay.stop.anchor_kind}"
+            if overlay.stop.basis == "REVERSAL_CANDLE"
+            else "запас −1.5% от плановой средней цены входа"
+        )
+        lines.append(f"STOP план {overlay.stop.price:.8g} · {basis}")
+    lines.append(
+        f"Цель F(1.0) {overlay.target_price:.8g} · {overlay.partial_take_note}"
+    )
+    return chr(10).join(lines)
+
+
+def _draw_trade_overlay(ax, overlay, offset, last):
+    """Draw planned grid/STOP/target; returns the prices to keep in view."""
+    prices = [overlay.target_price]
+    ax.annotate(
+        "TP план · цель", (last, overlay.target_price), xytext=(3, -11),
+        textcoords="offset points", fontsize=8, va="top", ha="right",
+        color="darkgreen",
+    )
+    if overlay.grid is None:
+        return prices
+    grid = overlay.grid
+    reach = overlay.first_reach_index - offset
+    ax.axvline(reach, linestyle="-.", linewidth=0.9, color="crimson")
+    ax.axhspan(min(grid.prices), max(grid.prices), alpha=0.10, color="crimson")
+    for price in grid.prices:
+        ax.hlines(price, max(reach - 1, 0), last, colors="crimson",
+                  linestyles=":", linewidth=1.3)
+    # One combined label: four close lines would overprint separate captions.
+    listing = chr(10).join(
+        f"{number}/4 · 1/4 РО  {price:.8g}"
+        for number, price in enumerate(grid.prices, start=1)
+    )
+    ax.annotate(
+        "Сетка входа (план)" + chr(10) + listing,
+        (max(reach - 1, 0), sum(grid.prices) / len(grid.prices)),
+        xytext=(-8, 0), textcoords="offset points", fontsize=7,
+        va="center", ha="right", color="crimson",
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.85,
+                  edgecolor="crimson"),
+    )
+    prices += list(grid.prices)
+    if overlay.stop is not None:
+        stop = overlay.stop
+        ax.hlines(stop.price, max(reach - 1, 0), last, colors="black",
+                  linestyles="-", linewidth=1.4)
+        # Caption on the adverse side of the line, away from the entry grid.
+        above = overlay.direction == "SHORT"
+        ax.annotate(
+            f"STOP план {stop.price:.8g}", (last, stop.price),
+            xytext=(-3, 3 if above else -3), textcoords="offset points",
+            fontsize=8, va="bottom" if above else "top", ha="right",
+        )
+        if stop.anchor_index is not None:
+            ax.scatter([stop.anchor_index - offset], [stop.price],
+                       marker="v", s=40, zorder=7, color="black")
+        prices.append(stop.price)
+    return prices
 
 
 def render_ikigai_box_chart(
@@ -171,9 +241,15 @@ def render_ikigai_box_chart(
                 va="bottom", ha="right",
             )
 
+        # Planning overlay (presentation only): stage, 1.618 reached?, the
+        # four-LIMIT grid, STOP and target. No orders, no candidates.
+        overlay = build_trade_overlay(candles, formation)
+        overlay_prices = _draw_trade_overlay(ax, overlay, offset, last)
+
         # Include both target and secondary zone even if not reached yet.
         visible = [float(window["low"].min()), float(window["high"].max())]
         visible += [price for _, price in levels]
+        visible += overlay_prices
         spread = max(visible) - min(visible)
         pad = max(spread * 0.055, formation.anchor_start_price * 0.0001)
         ax.set_ylim(min(visible) - pad, max(visible) + pad)
@@ -188,6 +264,16 @@ def render_ikigai_box_chart(
             )
             + "Фибо первого импульса · зоны входа ПЛАН (не ордера)",
             fontsize=12,
+        )
+        # Put the status box on the side opposite to point A so it does not
+        # cover the first impulse: LONG starts high (box low), SHORT the reverse.
+        box_top = formation.direction == "SHORT"
+        ax.text(
+            0.01, 0.985 if box_top else 0.015, _stage_caption(overlay),
+            transform=ax.transAxes,
+            va="top" if box_top else "bottom", ha="left", fontsize=9,
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85,
+                      edgecolor="slategray"),
         )
         fig.savefig(target, dpi=125, bbox_inches="tight")
     finally:
