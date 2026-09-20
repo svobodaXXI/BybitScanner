@@ -14,6 +14,7 @@ import pandas as pd
 
 from pivots import detect_pivots
 from tests.test_real_crcl_pair_shadow import _confirmed, _frame
+from tests.test_local_pair_shadow import sample
 from wedge.local_episode_shadow import (propose_local_episodes, trace_episode_checkpoints,
                                        trace_explicit_pair_checkpoints)
 
@@ -268,6 +269,63 @@ class LocalEpisodeChronology(unittest.TestCase):
         self.assertEqual(before_confirmation["pair_status"], "NOT_YET_EVALUABLE")
         self.assertIsNone(before_confirmation["pair_result"])
         self.assertEqual(before_confirmation["membership"], "UNPROVEN")
+
+    def test_frozen_pair_extension_reports_new_E_body_without_rewriting_baseline(self):
+        frame, ledger, anchors = sample()
+        # The initial four anchors are confirmed on bar 11. Only bar 12
+        # crosses the existing frozen resistance; no new pair is proposed.
+        frame.loc[12, "open"] = 10.0
+        frame.loc[12, "high"] = 10.0
+        specs = ({"id": "synthetic-explicit-pair", "episode_start": 1,
+                  "anchors": anchors},)
+        first = trace_explicit_pair_checkpoints(
+            frame.iloc[:12].copy(),
+            [dict(p) for p in ledger if p["confirm_index"] <= 11],
+            as_of_index=11, checkpoints=(10, 11), pair_specs=specs,
+        )
+        full = trace_explicit_pair_checkpoints(
+            frame, ledger, as_of_index=13, checkpoints=(10, 11, 12, 13),
+            pair_specs=specs,
+        )
+        self.assertEqual(first["status"], "OK", first)
+        self.assertEqual(full["status"], "OK", full)
+        self.assertEqual(first["history"], full["history"][:2])
+        before = full["history"][0]["pairs"][0]
+        frozen = full["history"][1]["pairs"][0]
+        crossed = full["history"][2]["pairs"][0]
+        repeated = full["history"][3]["pairs"][0]
+        self.assertEqual(before["pair_status"], "NOT_YET_EVALUABLE")
+        self.assertEqual(frozen["pair_status"], "VALID_RESEARCH_PAIR")
+        self.assertEqual(frozen["first_evaluable_as_of"], 11)
+        self.assertIsNone(frozen["extension_since_first"])
+        self.assertEqual(crossed["frozen_first_status"], "VALID_RESEARCH_PAIR")
+        self.assertEqual(crossed["first_evaluable_as_of"], 11)
+        self.assertEqual(crossed["pair_status"], "UNKNOWN")
+        self.assertEqual(crossed["extension_since_first"]["status"],
+                         "EXCURSION_OBSERVED")
+        self.assertEqual(crossed["extension_since_first"]["new_E_body_indices"],
+                         [12])
+        self.assertEqual(repeated["extension_since_first"]["new_E_body_indices"],
+                         [12])
+        self.assertEqual(repeated["extension_since_first"]["membership"],
+                         "UNPROVEN")
+        self.assertEqual(frozen["pair_result"]["strict"]["E"]["body_indices"], [])
+
+    def test_no_new_excursion_is_not_evidence_of_episode_continuity(self):
+        frame, ledger, anchors = sample()
+        result = trace_explicit_pair_checkpoints(
+            frame, ledger, as_of_index=13, checkpoints=(11, 13),
+            pair_specs=({"id": "clean", "episode_start": 1,
+                         "anchors": anchors},),
+        )
+        self.assertEqual(result["status"], "OK", result)
+        initial, later = (entry["pairs"][0] for entry in result["history"])
+        self.assertEqual(initial["frozen_first_status"], "VALID_RESEARCH_PAIR")
+        self.assertEqual(later["pair_status"], "VALID_RESEARCH_PAIR")
+        self.assertEqual(later["first_evaluable_as_of"], 11)
+        self.assertEqual(later["extension_since_first"]["status"], "NO_NEW_EVIDENCE")
+        self.assertEqual(later["extension_since_first"]["membership"], "UNPROVEN")
+        self.assertEqual(result["membership"], "UNPROVEN")
 
     def test_not_imported_by_production_path(self):
         root = Path(__file__).resolve().parents[1]
