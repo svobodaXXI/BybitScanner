@@ -153,8 +153,12 @@ admission, order placement and candidate creation are untouched.
 - Stage label: `BOX_READY` / `BOX_BREAK_OBSERVED` / `CONFIRMED`, plus whether
   `F(1.618)` has been touched by a closed candle after B (through `as_of` only).
 - `F(1.618)` not reached: observation only, **no** entry zone, grid or STOP.
-- `F(1.618)` reached: four LIMITs, each 1/4 РО, equally spaced, furthest one
-  beyond 1.618 in the leg-two direction (above for SHORT, below for LONG).
+- `F(1.618)` reached historically: draw an **illustrative**, non-actionable
+  scheme of four LIMIT price levels, each marked 1/4 РО, equally spaced,
+  furthest one beyond 1.618 in the leg-two direction (above for SHORT,
+  below for LONG). Historical touch does not authorize an active entry;
+  no orders were placed. The exact numeric prices use an unapproved
+  placeholder spacing and must not be treated as an executable trade plan.
 - STOP: extreme of the latest closed reversal candle (bearish engulfing /
   shooting star for SHORT; bullish engulfing / hammer for LONG) when it
   protects the planned entry; otherwise fallback -1.5% from the planned equal-
