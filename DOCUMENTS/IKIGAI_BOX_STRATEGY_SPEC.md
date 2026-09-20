@@ -123,6 +123,15 @@ the separate L-shape impulse-retracement preview.
   breakeven. Exact partial-exit fraction, trigger price/offset and breakeven
   buffer are **user decisions still pending**: not an execution-ready policy.
   No position size, STOP or TAKE may be fabricated from these placeholders.
+- **Potential (planning metric):** measured on the frozen first-impulse
+  Fibonacci from the entry reference `F(1.618)` to the common target `F(1.0)`.
+  Rising first impulse (SHORT setup): from `F(1.618)` down to `F(1.0)`. Falling
+  first impulse (LONG setup): from `F(1.618)` up to `F(1.0)`. Percentage
+  potential = `abs(F(1.0) - F(1.618)) / F(1.618) * 100`, reported as a
+  magnitude. It is measured from the level, not from actual fills or the
+  average entry, and is before fees/slippage. Example: FLOCKUSDT LONG
+  `0.062549 -> 0.06533` = approximately +4.45%. It is a display/planning
+  figure only and changes no STOP, TAKE, sizing or execution rule.
 
 ## 4. Minimal implementation boundary / non-goals
 
