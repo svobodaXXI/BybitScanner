@@ -57,11 +57,8 @@ def _stage_caption(overlay):
 def _draw_trade_overlay(ax, overlay, offset, last):
     """Draw planned grid/STOP/target; returns the prices to keep in view."""
     prices = [overlay.target_price]
-    ax.annotate(
-        "TP план · цель", (last, overlay.target_price), xytext=(3, -11),
-        textcoords="offset points", fontsize=8, va="top", ha="right",
-        color="darkgreen",
-    )
+    # F(1.0) is annotated once, outside the price axes by the caller.
+    # Repeating "TP план" here crowded B and the final box wicks.
     if overlay.grid is None:
         return prices
     grid = overlay.grid
@@ -225,10 +222,22 @@ def render_ikigai_box_chart(
             [formation.anchor_start_price, formation.anchor_end_price],
             marker="o", s=48, zorder=6, color="black",
         )
-        ax.annotate("A / 0", (start, formation.anchor_start_price),
-                    xytext=(5, -17), textcoords="offset points", fontsize=9)
-        ax.annotate("B / 1", (terminal, formation.anchor_end_price),
-                    xytext=(5, 9), textcoords="offset points", fontsize=9)
+        # Keep the anchor labels on the OUTER side of the impulse: A above
+        # and to the left of its high, B below and to the left of its low.
+        # In a short first impulse, labels on the right obscure the next bar.
+        a_below = formation.direction == "SHORT"
+        ax.annotate(
+            "A / 0", (start, formation.anchor_start_price),
+            xytext=(-8, -10 if a_below else 10),
+            textcoords="offset points", fontsize=9,
+            ha="right", va="top" if a_below else "bottom",
+        )
+        ax.annotate(
+            "B / 1", (terminal, formation.anchor_end_price),
+            xytext=(-8, 10 if a_below else -10),
+            textcoords="offset points", fontsize=9,
+            ha="right", va="bottom" if a_below else "top",
+        )
 
         for level, price in levels:
             ax.hlines(price, start, last, linestyles="--" if level > 1 else "-",
@@ -238,12 +247,21 @@ def render_ikigai_box_chart(
                 f"{level:.3f} · зона {'I' if level == 1.618 else 'II'}"
                 if level > 1 else "0.000 · старт"
             )
-            ax.annotate(
-                f"{label}  {price:.8g}",
-                (last, price), xytext=(3, 1),
-                textcoords="offset points", fontsize=8,
-                va="bottom", ha="right",
-            )
+            if level == 1:
+                # Keep the F(1.0) price label OUTSIDE the candle axes. Its
+                # previous end-of-line position overprinted B and box wicks.
+                ax.text(
+                    1.03, price, f"{label}  {price:.8g}",
+                    transform=ax.get_yaxis_transform(), clip_on=False,
+                    fontsize=8, va="center", ha="left",
+                )
+            else:
+                ax.annotate(
+                    f"{label}  {price:.8g}",
+                    (last, price), xytext=(3, 1),
+                    textcoords="offset points", fontsize=8,
+                    va="bottom", ha="right",
+                )
 
         # Planning overlay (presentation only): stage, 1.618 reached?, the
         # four-LIMIT grid, STOP and target. No orders, no candidates.
