@@ -12,7 +12,8 @@ import pandas as pd
 import tests.test_telegram_delivery  # noqa: F401
 import main
 import ikigai_box_scanner as box
-from tests.test_ikigai_box_detector import _two_impulses
+from tests.test_ikigai_box_detector import _two_impulses, _terminal_wick_two_impulses
+from geometry.ikigai_box import detect_ikigai_box_watches
 
 
 def _candles():
@@ -94,6 +95,88 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         robot.assert_not_called()
         self.assertEqual(len(history), 1)
         pd.testing.assert_frame_equal(source, original)
+
+    def test_watch_ready_photo_is_distinct_and_never_creates_robot_candidate(self):
+        history = {}
+        frames, end = _terminal_wick_two_impulses(second=False)
+        frames["time"] = [
+            1_790_000_000_000 + i * 3_600_000
+            for i in range(len(frames))
+        ]
+        watch = next(
+            w for w in detect_ikigai_box_watches(frames)
+            if w.anchor_identity == ("SHORT", 20, 23)
+        )
+        self.assertEqual(watch.phase, "BOX_READY")
+        # Bybit returns one still-forming newest candle. Its extreme must
+        # never alter WATCH's current frame, frozen anchor or chart.
+        live = pd.concat([frames, pd.DataFrame([{
+            "time": int(frames.iloc[-1]["time"]) + 3_600_000,
+            "open": 1000, "high": 1001, "low": 999, "close": 1000,
+        }])], ignore_index=True)
+        with tempfile.TemporaryDirectory() as root, patch.object(
+            box, "get_telegram_chat_ids", return_value=("owner",),
+        ), patch.object(
+            box, "send_photo", return_value={"ok": True},
+        ) as photo, patch.object(
+            box, "load_memory", side_effect=lambda: dict(history),
+        ), patch.object(
+            box, "save_memory", side_effect=lambda v: history.update(v),
+        ), patch("notification.create_signal_snapshot") as robot:
+            self.assertTrue(box.send_ikigai_box_watch_observation(
+                "HEIUSDT", live, watch, timeframe="60", chart_dir=root,
+            ))
+            self.assertFalse(box.send_ikigai_box_watch_observation(
+                "HEIUSDT", live, watch, timeframe="60", chart_dir=root,
+            ))
+        photo.assert_called_once()
+        sent = photo.call_args
+        self.assertIn("WATCH", sent.kwargs["caption"])
+        self.assertIn("второй импульс НЕ подтверждён", sent.kwargs["caption"])
+        self.assertIn("0.16611366", sent.kwargs["caption"])
+        self.assertNotIn("_analysis.png", sent.args[2])
+        self.assertIn("_WATCH_", sent.args[2])
+        self.assertEqual(len(history), 1)
+        robot.assert_not_called()
+
+    def test_watch_invalid_or_zone_touched_is_not_telegram_signal(self):
+        from dataclasses import replace
+        frames, _ = _terminal_wick_two_impulses(second=False)
+        frames["time"] = [
+            1_790_000_000_000 + i * 3_600_000
+            for i in range(len(frames))
+        ]
+        watch = next(
+            w for w in detect_ikigai_box_watches(frames)
+            if w.anchor_identity == ("SHORT", 20, 23)
+        )
+        live = pd.concat([frames, pd.DataFrame([{
+            "time": int(frames.iloc[-1]["time"]) + 3_600_000,
+            "open": 0.1400, "high": 0.1700,
+            "low": 0.1398, "close": 0.1680,
+        }])], ignore_index=True)
+        with patch.object(box, "send_photo") as photo, patch.object(
+            box, "render_ikigai_box_chart",
+        ) as render, patch.object(
+            box, "get_telegram_chat_ids", return_value=("owner",),
+        ):
+            self.assertFalse(box.send_ikigai_box_watch_observation(
+                "HEIUSDT", live, replace(watch, anchor_end_price=0.150),
+                timeframe="60",
+            ))
+            # Real data now includes an already touched extension, but caller
+            # may still carry the earlier frozen WATCH: fail closed.
+            touched = pd.concat([live, pd.DataFrame([{
+                "time": int(live.iloc[-1]["time"]) + 3_600_000,
+                "open": 0.168, "high": 0.170,
+                "low": 0.167, "close": 0.169,
+            }])], ignore_index=True)
+            current_watch = replace(watch, as_of_index=len(touched)-2)
+            self.assertFalse(box.send_ikigai_box_watch_observation(
+                "HEIUSDT", touched, current_watch, timeframe="60",
+            ))
+        photo.assert_not_called()
+        render.assert_not_called()
 
     def test_opt_in_off_preserves_old_scanner_behavior(self):
         with patch.dict(os.environ, {"BYBITSCANNER_IKIGAI_BOX_SIGNALS": "0"}), patch.object(
