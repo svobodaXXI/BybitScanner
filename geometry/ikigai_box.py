@@ -320,6 +320,7 @@ def detect_ikigai_box_watches(
     *,
     as_of_index: Optional[int] = None,
     parameters: Optional[IkigaiBoxParameters] = None,
+    previous_watches=(),
 ):
     """Return distinct early WATCH candidates by FIRST-impulse anchor pair.
 
@@ -329,6 +330,11 @@ def detect_ikigai_box_watches(
     The first extension must not have been touched in the known prefix. This
     is pure offline discovery: no Scanner/Telegram/Robot emission or orders.
     A and B are not re-anchored to any later candle or other WATCH identity.
+
+    Pass previous_watches from the preceding CLOSED-candle scan to preserve
+    the first observed box break across a later re-entry. Without previous
+    state this function is a stateless snapshot and cannot infer whether an
+    earlier wider box has already been frozen. It never persists by itself.
     """
     p = parameters or IkigaiBoxParameters()
     _validate_parameters(p)
@@ -354,6 +360,43 @@ def detect_ikigai_box_watches(
         return ()
     if not all(_valid_ohlc(row) for row in rows):
         return ()
+
+    # Only the preceding candle's observations can freeze this next step.
+    # Reject future/stale or inconsistent snapshots instead of accepting
+    # invented anchors/box bounds from another timeframe or a later scan.
+    prior = {}
+    for watch in previous_watches:
+        if not isinstance(watch, IkigaiBoxWatch):
+            raise ValueError("Expected previous IkigaiBoxWatch records")
+        if watch.as_of_index != end - 1:
+            raise ValueError("WATCH state must come from previous closed candle")
+        a_idx, b_idx = watch.anchor_start_index, watch.anchor_end_index
+        lo_idx, hi_idx = watch.box_start_index, watch.box_end_index
+        if not (0 <= a_idx < b_idx < lo_idx <= hi_idx <= end - 1):
+            raise ValueError("Invalid previous WATCH indices")
+        sign = 1 if watch.direction == "SHORT" else -1 if watch.direction == "LONG" else 0
+        if sign == 0 or watch.phase not in (
+            "BOX_READY", "BOX_BREAK_OBSERVED",
+        ):
+            raise ValueError("Invalid previous WATCH state")
+        old_box = rows[lo_idx : hi_idx + 1]
+        if not (
+            watch.anchor_start_price == rows[a_idx][2 if sign == 1 else 1]
+            and watch.anchor_end_price == rows[b_idx][1 if sign == 1 else 2]
+            and watch.box_low == min(row[2] for row in old_box)
+            and watch.box_high == max(row[1] for row in old_box)
+        ):
+            raise ValueError("Previous WATCH geometry does not match candles")
+        if watch.anchor_identity in prior:
+            raise ValueError("Duplicate prior WATCH anchor identity")
+        if watch.phase == "BOX_READY" and watch.first_box_exit_index is not None:
+            raise ValueError("BOX_READY cannot already have a breakout")
+        if watch.phase == "BOX_BREAK_OBSERVED" and (
+            watch.first_box_exit_index is None
+            or not hi_idx < watch.first_box_exit_index <= end - 1
+        ):
+            raise ValueError("Invalid frozen breakout evidence")
+        prior[watch.anchor_identity] = watch
 
     selected = {}  # Stable independent identities: (direction, A-index, B-index).
     for sign, direction in ((1, "SHORT"), (-1, "LONG")):
@@ -451,8 +494,53 @@ def detect_ikigai_box_watches(
                     previous = selected.get(identity)
                     if previous is None or rank > previous[0]:
                         selected[identity] = rank, watch
-    # Do not rank away a newer A/B just because an older setup is closer
-    # to 1.618. Consumers must track by anchor_identity, not by symbol only.
+    # The first observed close beyond a qualified shelf makes that exact
+    # box immutable. A later close back INSIDE must not erase the first exit
+    # or absorb the breakout bar into a new enlarged shelf for the same A/B.
+    # This is an explicit state transition; a single stateless snapshot alone
+    # cannot know what was already emitted on a prior closed candle.
+    for identity, old in prior.items():
+        sign = 1 if old.direction == "SHORT" else -1
+        level = old.fibonacci_1_618
+        if (
+            end - old.box_end_index > p.second_max_bars
+            or any(
+                row[1] >= level if sign == 1 else row[2] <= level
+                for row in rows[old.anchor_end_index + 1 : end + 1]
+            )
+        ):
+            # Stale: no replacement with the same A/B after zone was touched.
+            selected.pop(identity, None)
+            continue
+        if old.phase == "BOX_BREAK_OBSERVED":
+            # The box/exit are already frozen; only the observation timestamp
+            # advances. Revisiting the candidate cannot change its identity.
+            updated = old.__class__(
+                **{**old.__dict__, "as_of_index": end}
+            )
+            selected[identity] = ((end, 0, 0), updated)
+            continue
+        row = rows[end]
+        broke = row[3] > old.box_high if sign == 1 else row[3] < old.box_low
+        if broke:
+            updated = old.__class__(
+                **{
+                    **old.__dict__,
+                    "phase": "BOX_BREAK_OBSERVED",
+                    "as_of_index": end,
+                    "first_box_exit_index": end,
+                }
+            )
+            selected[identity] = ((end, 0, 0), updated)
+        elif identity not in selected:
+            # Do not silently replace a previously observed A/B with a
+            # different one; a valid shelf may remain in progress.
+            selected[identity] = (
+                (old.box_end_index, 0, 0),
+                old.__class__(**{**old.__dict__, "as_of_index": end}),
+            )
+
+    # Do not rank away newer A/B just because older ones are closer to 1.618.
     return tuple(
         item[1] for _, item in sorted(
             selected.items(), key=lambda record: record[0], reverse=True,
