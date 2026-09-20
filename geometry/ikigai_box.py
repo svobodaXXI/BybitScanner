@@ -191,10 +191,19 @@ def _qualified_first_impulse_and_box(
     )
     if not (ordinary_impulse or wick_impulse):
         return None
-    if box_high - box_low > p.max_box_width_fraction * span:
-        return None
     retrace = (b - box_low) if sign == 1 else (box_high - b)
     extension = (box_high - b) if sign == 1 else (b - box_low)
+    # Normally bound the WHOLE shelf range. Alternatively, permit a shelf
+    # whose retracement from terminal B stays within the SAME width cap
+    # while a small independent overshoot past B widens the full wick
+    # range. The overshoot must still pass the existing 12% gate below.
+    # This separates correction depth from a shallow B-side wick without
+    # raising the 55% retracement threshold or admitting deep ranges.
+    if box_high - box_low > p.max_box_width_fraction * span and not (
+        0 <= retrace <= p.max_box_width_fraction * span
+        and 0 < extension <= 0.12 * span
+    ):
+        return None
     allowed_retrace = (
         p.max_wick_box_retrace_fraction
         if wick_impulse
