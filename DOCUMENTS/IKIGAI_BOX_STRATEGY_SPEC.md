@@ -150,15 +150,23 @@ the separate L-shape impulse-retracement preview.
 trade overlay on the Ikigai Box chart. Detection, Scanner, Telegram, Robot
 admission, order placement and candidate creation are untouched.
 
+- **Fibonacci grid = the terminal tool.** The signal PNG mirrors
+  `terminal/frontend/src/chart/drawingModel.ts` and `DrawingOverlay.tsx`:
+  levels `0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 3.618, 4.236`,
+  price `first + (second - first) * level` with first = A, second = B (equal to
+  the frozen `fibonacci_price`), a translucent band between every ADJACENT pair
+  of levels, the terminal's five-colour palette cycled by band index, the
+  terminal line colour and `level  price` labels. Only the fill opacity is lifted
+  for a white PNG; off-screen levels are clipped as in the terminal.
 - Stage label: `BOX_READY` / `BOX_BREAK_OBSERVED` / `CONFIRMED`, plus whether
   `F(1.618)` has been touched by a closed candle after B (through `as_of` only).
 - `F(1.618)` not reached: observation only, **no** entry zone, grid or STOP.
-- `F(1.618)` reached historically: draw an **illustrative**, non-actionable
-  scheme of four LIMIT price levels, each marked 1/4 РО, equally spaced,
-  furthest one beyond 1.618 in the leg-two direction (above for SHORT,
-  below for LONG). Historical touch does not authorize an active entry;
-  no orders were placed. The exact numeric prices use an unapproved
-  placeholder spacing and must not be treated as an executable trade plan.
+- `F(1.618)` reached: four LIMITs, each 1/4 РО, equally spaced. Most of the grid
+  (3 of 4) sits on the APPROACH side of 1.618 — it fills before price reaches the
+  level — and only the furthest LIMIT is beyond it (for LONG: three above 1.618,
+  one below; SHORT is the mirror). This distribution is the user's instruction:
+  the terminal Fibonacci tool defines NO limit-order placement rule, so nothing
+  about spacing or the split was copied from it.
 - STOP: extreme of the latest closed reversal candle (bearish engulfing /
   shooting star for SHORT; bullish engulfing / hammer for LONG) when it
   protects the planned entry; otherwise fallback -1.5% from the planned equal-

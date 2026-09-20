@@ -10,8 +10,11 @@ from matplotlib.collections import LineCollection
 
 from geometry.ikigai_box import detect_ikigai_box, detect_ikigai_box_watches
 from geometry.ikigai_box_chart import (
+    TERMINAL_BAND_RGB,
+    TERMINAL_FIBONACCI_LEVELS,
     fibonacci_band_ranges,
     fibonacci_chart_levels,
+    terminal_fibonacci_levels,
     render_ikigai_box_chart,
 )
 from tests.test_ikigai_box_detector import _two_impulses, _terminal_wick_two_impulses
@@ -154,25 +157,32 @@ class IkigaiBoxChartTests(unittest.TestCase):
                     any(t.get_text() == "TP план · цель" for t in ax.texts)
                 )
 
-    def test_fibonacci_bands_fill_adjacent_zones_for_long_and_short(self):
+    def test_fibonacci_bands_mirror_the_terminal_tool(self):
+        """Levels, prices, adjacent bands and palette follow drawingModel.ts."""
+        from matplotlib.colors import to_rgba
         from matplotlib.patches import Rectangle
 
+        self.assertEqual(
+            TERMINAL_FIBONACCI_LEVELS,
+            (0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 3.618, 4.236),
+        )
         for direction, side in ((1, "SHORT"), (-1, "LONG")):
             with self.subTest(side=side):
                 candles, setup = _sample(direction)
-                levels = fibonacci_chart_levels(setup)
-                prices = dict(levels)
-                bands = fibonacci_band_ranges(levels)
-                # 0<->1, 1<->1.618, 1.618<->2.618 by the displayed level order.
-                self.assertEqual(
-                    [(low, high) for low, high, _, _ in bands],
-                    [(0.0, 1.0), (1.0, 1.618), (1.618, 2.618)],
-                )
-                for low_level, high_level, low, high in bands:
-                    self.assertEqual(
-                        sorted((prices[low_level], prices[high_level])),
-                        [low, high],
+                levels = terminal_fibonacci_levels(setup)
+                # fibonacciPrices: first + (second - first) * level
+                for level, price in levels:
+                    self.assertAlmostEqual(
+                        price,
+                        setup.anchor_start_price
+                        + (setup.anchor_end_price - setup.anchor_start_price)
+                        * level,
                     )
+                bands = fibonacci_band_ranges(levels)
+                self.assertEqual(len(bands), len(levels) - 1)
+                self.assertEqual(bands[0][:2], (0, 0.236))
+                self.assertEqual(bands[6][:2], (1, 1.618))
+                self.assertEqual(bands[7][:2], (1.618, 2.618))
 
                 import mplfinance as mpf
                 actual_plot = mpf.plot
@@ -191,17 +201,20 @@ class IkigaiBoxChartTests(unittest.TestCase):
                             symbol="TESTUSDT", timeframe="5",
                         )
                 shaded = [
-                    patch_ for patch_ in observed["axes"][0].patches
-                    if isinstance(patch_, Rectangle)
-                    and 0.0 < patch_.get_alpha() <= 0.25
-                    and abs(patch_.get_width() - 1.0) < 1e-9
+                    p for p in observed["axes"][0].patches
+                    if isinstance(p, Rectangle) and p.get_zorder() == 0.5
                 ]
-                for _, _, low, high in bands:
-                    self.assertTrue(any(
-                        abs(rect.get_y() - low) < 1e-8
-                        and abs(rect.get_height() - (high - low)) < 1e-8
-                        for rect in shaded
-                    ), f"Missing full-width band {low}..{high}")
+                self.assertEqual(len(shaded), len(bands))
+                for number, (_, _, low, high) in enumerate(bands):
+                    rect = shaded[number]
+                    self.assertAlmostEqual(rect.get_y(), low)
+                    self.assertAlmostEqual(rect.get_height(), high - low)
+                    red, green, blue = TERMINAL_BAND_RGB[
+                        number % len(TERMINAL_BAND_RGB)]
+                    self.assertEqual(
+                        to_rgba(rect.get_facecolor())[:3],
+                        (red / 255, green / 255, blue / 255),
+                    )
 
     def test_prefix_does_not_draw_future_candles(self):
         candles, setup = _sample(-1)
