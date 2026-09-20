@@ -23,9 +23,12 @@ GRID_ORDERS = 4
 ORDER_FRACTION = 1 / GRID_ORDERS            # each LIMIT is 1/4 РО
 # Visualisation placeholder: step as a fraction of |F(2.618) - F(1.618)|.
 GRID_STEP_FRACTION = 0.05
-# Grid = one step on the approach side of the level, the level itself, and two
-# steps beyond it, so the furthest LIMIT is always past the level.
-GRID_OFFSET_STEPS = (1, 0, -1, -2)         # in the direction of the leg-two move
+# Most of the grid (3 of 4) sits on the APPROACH side of the level -- i.e.
+# it fills BEFORE price reaches the level -- and the furthest LIMIT is the
+# one beyond it. Equal spacing, half-step offsets so no order sits exactly
+# on the level. User instruction; the terminal Fibonacci tool defines no
+# limit-order rule, and the real spacing stays unapproved.
+GRID_OFFSET_STEPS = (2.5, 1.5, 0.5, -0.5)  # >0 approach side, <0 beyond
 FALLBACK_STOP_FRACTION = 0.015             # -1.5% from (planned) average entry
 # Textbook candle shapes; named so they are never mistaken for tuned values.
 PIN_BAR_MIN_WICK_TO_BODY = 2.0

@@ -94,6 +94,18 @@ class IkigaiBoxOverlayTests(unittest.TestCase):
                     (grid.prices[-1] - grid.anchor_price) * sign, 0
                 )
                 self.assertTrue(grid.furthest_beyond_anchor)
+                # Most of the grid fills BEFORE price reaches 1.618: three on
+                # the approach side, only the furthest one beyond the level.
+                approach = [
+                    p for p in grid.prices
+                    if (p - grid.anchor_price) * sign < 0
+                ]
+                beyond = [
+                    p for p in grid.prices
+                    if (p - grid.anchor_price) * sign > 0
+                ]
+                self.assertEqual((len(approach), len(beyond)), (3, 1))
+                self.assertEqual(beyond, [grid.prices[-1]])
                 # The secondary 2.618 area is not swallowed by the first grid.
                 self.assertLess(
                     (grid.prices[-1] - setup.fibonacci_2_618) * sign, 0
@@ -149,8 +161,12 @@ class IkigaiBoxOverlayTests(unittest.TestCase):
 
     def test_reversal_extreme_that_does_not_protect_falls_back(self):
         candles, setup = _confirmed(1, 6)
-        weak = _with_last_bar(          # high is below the planned entry
-            candles, open=113.30, close=113.28, high=113.40, low=113.27,
+        # F(1.618) is touched one bar earlier; the last bar is a pin bar whose
+        # high stays below the planned average entry, so it cannot protect it.
+        touch = candles.copy(deep=True)
+        touch.loc[touch.index[-2], "high"] = 113.40
+        weak = _with_last_bar(
+            touch, open=112.75, close=112.73, high=112.80, low=112.72,
         )
         stop = build_trade_overlay(weak, setup).stop
 

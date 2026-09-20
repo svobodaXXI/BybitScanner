@@ -10,7 +10,11 @@ from matplotlib.collections import LineCollection
 
 from geometry.ikigai_box import detect_ikigai_box, detect_ikigai_box_watches
 from geometry.ikigai_box_chart import (
+    TERMINAL_BAND_RGB,
+    TERMINAL_FIBONACCI_LEVELS,
+    fibonacci_band_ranges,
     fibonacci_chart_levels,
+    terminal_fibonacci_levels,
     render_ikigai_box_chart,
 )
 from tests.test_ikigai_box_detector import _two_impulses, _terminal_wick_two_impulses
@@ -94,6 +98,123 @@ class IkigaiBoxChartTests(unittest.TestCase):
                     f"Missing Fibonacci price line at {price}",
                 )
         pd.testing.assert_frame_equal(candles, original)
+
+    def test_anchor_and_target_labels_stay_clear_of_candle_area(self):
+        # Regression for A / 0 on the next impulse candle and F(1.0)
+        # overlapping B and the final box wicks in the FLOCK WATCH PNG.
+        import mplfinance as mpf
+
+        for direction in (-1, 1):
+            with self.subTest(direction=direction):
+                candles, setup = _sample(direction)
+                actual_plot = mpf.plot
+                observed = {}
+
+                def capture(frame, **options):
+                    fig, axes = actual_plot(frame, **options)
+                    observed["axis"] = axes[0]
+                    return fig, axes
+
+                with tempfile.TemporaryDirectory() as directory:
+                    with patch(
+                        "geometry.ikigai_box_chart.mpf.plot",
+                        side_effect=capture,
+                    ):
+                        render_ikigai_box_chart(
+                            candles, setup, Path(directory) / "labels.png",
+                            symbol="TESTUSDT", timeframe="5",
+                        )
+                ax = observed["axis"]
+                a = [t for t in ax.texts if t.get_text() == "A / 0"]
+                b = [t for t in ax.texts if t.get_text() == "B / 1"]
+                target = [
+                    t for t in ax.texts
+                    if t.get_text().startswith("1.000 · цель")
+                ]
+                self.assertEqual((len(a), len(b), len(target)), (1, 1, 1))
+                # Anchor captions are on the preceding-bar side, with a
+                # positive y offset for the high and negative for the low.
+                self.assertLess(a[0].get_position()[0], 0)
+                self.assertLess(b[0].get_position()[0], 0)
+                self.assertLess(
+                    a[0].get_position()[1] if direction == 1
+                    else b[0].get_position()[1], 0
+                )
+                self.assertGreater(
+                    b[0].get_position()[1] if direction == 1
+                    else a[0].get_position()[1], 0
+                )
+                # The single F(1.0) numeric caption is outside the plot;
+                # do not overlay another TP-plan caption at the same y.
+                self.assertGreater(target[0].get_position()[0], 1.0)
+                self.assertEqual(
+                    target[0].get_transform(), ax.get_yaxis_transform()
+                )
+                self.assertAlmostEqual(
+                    target[0].get_position()[1], setup.fibonacci_1_0
+                )
+                self.assertFalse(
+                    any(t.get_text() == "TP план · цель" for t in ax.texts)
+                )
+
+    def test_fibonacci_bands_mirror_the_terminal_tool(self):
+        """Levels, prices, adjacent bands and palette follow drawingModel.ts."""
+        from matplotlib.colors import to_rgba
+        from matplotlib.patches import Rectangle
+
+        self.assertEqual(
+            TERMINAL_FIBONACCI_LEVELS,
+            (0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 3.618, 4.236),
+        )
+        for direction, side in ((1, "SHORT"), (-1, "LONG")):
+            with self.subTest(side=side):
+                candles, setup = _sample(direction)
+                levels = terminal_fibonacci_levels(setup)
+                # fibonacciPrices: first + (second - first) * level
+                for level, price in levels:
+                    self.assertAlmostEqual(
+                        price,
+                        setup.anchor_start_price
+                        + (setup.anchor_end_price - setup.anchor_start_price)
+                        * level,
+                    )
+                bands = fibonacci_band_ranges(levels)
+                self.assertEqual(len(bands), len(levels) - 1)
+                self.assertEqual(bands[0][:2], (0, 0.236))
+                self.assertEqual(bands[6][:2], (1, 1.618))
+                self.assertEqual(bands[7][:2], (1.618, 2.618))
+
+                import mplfinance as mpf
+                actual_plot = mpf.plot
+                observed = {}
+
+                def observe(frame, **options):
+                    observed["figure"], observed["axes"] = actual_plot(
+                        frame, **options)
+                    return observed["figure"], observed["axes"]
+
+                with tempfile.TemporaryDirectory() as directory:
+                    with patch("geometry.ikigai_box_chart.mpf.plot",
+                               side_effect=observe):
+                        render_ikigai_box_chart(
+                            candles, setup, Path(directory) / "bands.png",
+                            symbol="TESTUSDT", timeframe="5",
+                        )
+                shaded = [
+                    p for p in observed["axes"][0].patches
+                    if isinstance(p, Rectangle) and p.get_zorder() == 0.5
+                ]
+                self.assertEqual(len(shaded), len(bands))
+                for number, (_, _, low, high) in enumerate(bands):
+                    rect = shaded[number]
+                    self.assertAlmostEqual(rect.get_y(), low)
+                    self.assertAlmostEqual(rect.get_height(), high - low)
+                    red, green, blue = TERMINAL_BAND_RGB[
+                        number % len(TERMINAL_BAND_RGB)]
+                    self.assertEqual(
+                        to_rgba(rect.get_facecolor())[:3],
+                        (red / 255, green / 255, blue / 255),
+                    )
 
     def test_prefix_does_not_draw_future_candles(self):
         candles, setup = _sample(-1)

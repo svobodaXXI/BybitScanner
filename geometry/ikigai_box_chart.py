@@ -34,6 +34,76 @@ def fibonacci_chart_levels(formation):
     )
 
 
+# Mirror of the terminal Fibonacci drawing tool (the source of truth):
+#   terminal/frontend/src/chart/drawingModel.ts  -> FIBONACCI_LEVELS,
+#       fibonacciPrices (first + (second - first) * level), fibonacciBands
+#       (one band between every ADJACENT pair of levels, in level order);
+#   terminal/frontend/src/chart/DrawingOverlay.tsx -> band palette (cycled by
+#       band index), line colour and the "level  price" label form.
+# Here first = A (F0) and second = B (F1), so prices equal the frozen
+# ``formation.fibonacci_price(level)``; nothing is recalculated.
+TERMINAL_FIBONACCI_LEVELS = (
+    0, 0.236, 0.382, 0.5, 0.618, 0.786, 1, 1.618, 2.618, 3.618, 4.236,
+)
+TERMINAL_BAND_RGB = (
+    (59, 198, 57), (92, 156, 196), (224, 180, 91), (150, 112, 196),
+    (205, 77, 90),
+)
+# The terminal fills at 8% on a dark canvas; lifted for a white PNG.
+TERMINAL_BAND_ALPHA = 0.18
+TERMINAL_LINE_COLOR = "#e0b45b"
+TERMINAL_LINE_WIDTH = 1.5
+
+
+def terminal_fibonacci_levels(formation):
+    """All terminal levels as (level, price) from the frozen first impulse."""
+    return tuple(
+        (level, formation.fibonacci_price(level))
+        for level in TERMINAL_FIBONACCI_LEVELS
+    )
+
+
+def fibonacci_band_ranges(levels):
+    """[(from_level, to_level, low_price, high_price)] for ADJACENT levels."""
+    return [
+        (a_level, b_level, min(a_price, b_price), max(a_price, b_price))
+        for (a_level, a_price), (b_level, b_price) in zip(levels, levels[1:])
+    ]
+
+
+def _draw_fibonacci_bands(ax, levels, x_left, x_right):
+    """Translucent terminal-palette bands over the formation x-range."""
+    from matplotlib.patches import Rectangle
+
+    for number, (_, _, low, high) in enumerate(fibonacci_band_ranges(levels)):
+        red, green, blue = TERMINAL_BAND_RGB[number % len(TERMINAL_BAND_RGB)]
+        ax.add_patch(Rectangle(
+            (x_left, low), x_right - x_left, high - low,
+            facecolor=(red / 255, green / 255, blue / 255, TERMINAL_BAND_ALPHA),
+            edgecolor="none", zorder=0.5,
+        ))
+
+
+def _draw_terminal_levels(ax, levels, key_levels, x_left, x_right):
+    """Terminal-style lines and "level  price" labels for the non-key levels.
+
+    Only levels inside the visible price range are drawn, as the terminal
+    clips off-screen levels; the four key levels keep their role captions.
+    Labels sit beyond the price-axis tick labels so they never overprint them.
+    """
+    low_view, high_view = ax.get_ylim()
+    for level, price in levels:
+        if level in key_levels or not low_view <= price <= high_view:
+            continue
+        ax.hlines(price, x_left, x_right, colors=TERMINAL_LINE_COLOR,
+                  linewidth=TERMINAL_LINE_WIDTH, alpha=0.9)
+        ax.text(
+            1.115, price, f"{level:g}  {price:.8g}",
+            transform=ax.get_yaxis_transform(), clip_on=False, fontsize=8,
+            va="center", ha="left", color="#7a5a13",
+        )
+
+
 def _stage_caption(overlay):
     reached = (
         "1.618 БЫЛ ДОСТИГНУТ · сетка 4 × 1/4 РО — схема, НЕ сигнал входа"
@@ -57,17 +127,21 @@ def _stage_caption(overlay):
 def _draw_trade_overlay(ax, overlay, offset, last):
     """Draw planned grid/STOP/target; returns the prices to keep in view."""
     prices = [overlay.target_price]
-    ax.annotate(
-        "TP план · цель", (last, overlay.target_price), xytext=(3, -11),
-        textcoords="offset points", fontsize=8, va="top", ha="right",
-        color="darkgreen",
-    )
+    # F(1.0) is annotated once, outside the price axes by the caller.
+    # Repeating "TP план" here crowded B and the final box wicks.
     if overlay.grid is None:
         return prices
     grid = overlay.grid
     reach = overlay.first_reach_index - offset
     ax.axvline(reach, linestyle="-.", linewidth=0.9, color="crimson")
-    ax.axhspan(min(grid.prices), max(grid.prices), alpha=0.10, color="crimson")
+    # Grid zone only over the part of the chart where the grid applies, so it
+    # does not fight the terminal-palette Fibonacci bands across the whole plot.
+    from matplotlib.patches import Rectangle
+    ax.add_patch(Rectangle(
+        (max(reach - 1, 0) - 0.5, min(grid.prices)), last - max(reach - 1, 0) + 1,
+        max(grid.prices) - min(grid.prices),
+        facecolor="crimson", alpha=0.10, edgecolor="none", zorder=0.6,
+    ))
     for price in grid.prices:
         ax.hlines(price, max(reach - 1, 0), last, colors="crimson",
                   linestyles=":", linewidth=1.3)
@@ -225,25 +299,48 @@ def render_ikigai_box_chart(
             [formation.anchor_start_price, formation.anchor_end_price],
             marker="o", s=48, zorder=6, color="black",
         )
-        ax.annotate("A / 0", (start, formation.anchor_start_price),
-                    xytext=(5, -17), textcoords="offset points", fontsize=9)
-        ax.annotate("B / 1", (terminal, formation.anchor_end_price),
-                    xytext=(5, 9), textcoords="offset points", fontsize=9)
+        # Keep the anchor labels on the OUTER side of the impulse: A above
+        # and to the left of its high, B below and to the left of its low.
+        # In a short first impulse, labels on the right obscure the next bar.
+        a_below = formation.direction == "SHORT"
+        ax.annotate(
+            "A / 0", (start, formation.anchor_start_price),
+            xytext=(-8, -10 if a_below else 10),
+            textcoords="offset points", fontsize=9,
+            ha="right", va="top" if a_below else "bottom",
+        )
+        ax.annotate(
+            "B / 1", (terminal, formation.anchor_end_price),
+            xytext=(-8, 10 if a_below else -10),
+            textcoords="offset points", fontsize=9,
+            ha="right", va="bottom" if a_below else "top",
+        )
 
+        terminal_levels = terminal_fibonacci_levels(formation)
+        _draw_fibonacci_bands(ax, terminal_levels, start - 0.5, last + 0.5)
         for level, price in levels:
-            ax.hlines(price, start, last, linestyles="--" if level > 1 else "-",
-                      linewidth=1.1, alpha=0.80)
+            ax.hlines(price, start, last, colors=TERMINAL_LINE_COLOR,
+                      linewidth=TERMINAL_LINE_WIDTH, alpha=0.95)
             label = (
                 "1.000 · цель" if level == 1 else
                 f"{level:.3f} · зона {'I' if level == 1.618 else 'II'}"
                 if level > 1 else "0.000 · старт"
             )
-            ax.annotate(
-                f"{label}  {price:.8g}",
-                (last, price), xytext=(3, 1),
-                textcoords="offset points", fontsize=8,
-                va="bottom", ha="right",
-            )
+            if level == 1:
+                # Keep the F(1.0) price label OUTSIDE the candle axes. Its
+                # previous end-of-line position overprinted B and box wicks.
+                ax.text(
+                    1.03, price, f"{label}  {price:.8g}",
+                    transform=ax.get_yaxis_transform(), clip_on=False,
+                    fontsize=8, va="center", ha="left",
+                )
+            else:
+                ax.annotate(
+                    f"{label}  {price:.8g}",
+                    (last, price), xytext=(3, 1),
+                    textcoords="offset points", fontsize=8,
+                    va="bottom", ha="right",
+                )
 
         # Planning overlay (presentation only): stage, 1.618 reached?, the
         # four-LIMIT grid, STOP and target. No orders, no candidates.
@@ -258,6 +355,9 @@ def render_ikigai_box_chart(
         pad = max(spread * 0.055, formation.anchor_start_price * 0.0001)
         ax.set_ylim(min(visible) - pad, max(visible) + pad)
         ax.set_xlim(-1, len(window) + 0.5)
+        _draw_terminal_levels(
+            ax, terminal_levels, {level for level, _ in levels}, start, last
+        )
         ax.set_xlabel("МСК")
         ax.set_title(
             f"{symbol} · {format_timeframe_ru(timeframe)} · "
