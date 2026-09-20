@@ -14,7 +14,7 @@ import pandas as pd
 
 from pivots import detect_pivots
 from tests.test_real_crcl_pair_shadow import _confirmed, _frame
-from wedge.local_episode_shadow import propose_local_episodes
+from wedge.local_episode_shadow import propose_local_episodes, trace_episode_checkpoints
 
 
 ZERO_G = Path(__file__).parent / "fixtures/0g_a_20260920_closed_5m.csv.zlib.b64"
@@ -105,6 +105,81 @@ class LocalEpisodeChronology(unittest.TestCase):
         out = propose_local_episodes(frame, p, as_of_index=198)
         self.assertEqual(out["status"], "UNKNOWN")
         self.assertIn("SOURCE_PREFIX_UNPROVEN", out["reasons"])
+
+    def test_crcl_late_anchor_is_only_reported_when_source_confirmed(self):
+        frame = _frame()
+        ledger = _confirmed(frame)
+        traced = trace_episode_checkpoints(
+            frame, ledger, as_of_index=198, seed_index=114, seed_side="LOW",
+            checkpoints=(178, 188, 197, 198),
+        )
+        self.assertEqual(traced["status"], "OK", traced)
+        self.assertEqual(traced["membership"], "UNPROVEN")
+        self.assertTrue(all(row["membership"] == "UNPROVEN" for row in traced["history"]))
+        at_197, at_198 = traced["history"][-2:]
+        self.assertNotIn(
+            (195, "HIGH"),
+            {(p["index"], p["side"]) for row in traced["history"][:-1]
+             for p in row["newly_confirmed"]},
+        )
+        self.assertIn(
+            (195, "HIGH"),
+            {(p["index"], p["side"]) for p in at_198["newly_confirmed"]},
+        )
+        self.assertEqual(at_197["as_of_index"], 197)
+        self.assertEqual(at_198["as_of_index"], 198)
+        self.assertIn(136, at_198["competing_same_side_indices"])
+        self.assertIn("COMPETING_SAME_SIDE_TURNS", at_198["reasons"])
+
+    def test_crcl_old_checkpoint_remains_identical_after_future_bars(self):
+        full = _frame()
+        cutoff = 178
+        old = trace_episode_checkpoints(
+            full.iloc[:cutoff + 1].copy(), _confirmed(full.iloc[:cutoff + 1].copy()),
+            as_of_index=cutoff, seed_index=114, seed_side="LOW",
+            checkpoints=(cutoff,),
+        )
+        current = trace_episode_checkpoints(
+            full, _confirmed(full), as_of_index=198,
+            seed_index=114, seed_side="LOW", checkpoints=(cutoff, 198),
+        )
+        self.assertEqual(old["status"], "OK", old)
+        self.assertEqual(current["status"], "OK", current)
+        self.assertEqual(old["history"][0], current["history"][0])
+        self.assertEqual(old["history"][0]["membership"], "UNPROVEN")
+
+    def test_0g_coincident_seed_remains_unproven_on_historical_checkpoints(self):
+        frame = _zero_g_frame()
+        raw = _confirmed(frame)
+        traced = trace_episode_checkpoints(
+            frame, raw, as_of_index=198, seed_index=87, seed_side="HIGH",
+            checkpoints=(89, 90, 198),
+        )
+        self.assertEqual(traced["status"], "OK", traced)
+        self.assertEqual(
+            [row["seed_status"] for row in traced["history"]],
+            ["NOT_YET_CONFIRMED", "AMBIGUOUS", "AMBIGUOUS"],
+        )
+        coincident = {(p["index"], p["side"]) for p in traced["history"][1]["newly_confirmed"]}
+        self.assertTrue({(87, "HIGH"), (87, "LOW")} <= coincident)
+        self.assertTrue(all(row["membership"] == "UNPROVEN" for row in traced["history"]))
+
+    def test_history_rejects_impossible_checkpoint_or_future_ledger(self):
+        frame = _frame()
+        raw = _confirmed(frame)
+        bad_order = trace_episode_checkpoints(
+            frame, raw, as_of_index=198, seed_index=114, seed_side="LOW",
+            checkpoints=(188, 178),
+        )
+        self.assertEqual(bad_order["status"], "UNKNOWN")
+        self.assertIn("INVALID_CHECKPOINTS_OR_AS_OF", bad_order["reasons"])
+        raw[0]["confirm_time_ms"] += STEP_MS
+        bad_provenance = trace_episode_checkpoints(
+            frame, raw, as_of_index=198, seed_index=114, seed_side="LOW",
+            checkpoints=(178,),
+        )
+        self.assertEqual(bad_provenance["status"], "UNKNOWN")
+        self.assertIn("CONFIRMED_LEDGER_UNPROVEN", bad_provenance["reasons"])
 
     def test_not_imported_by_production_path(self):
         root = Path(__file__).resolve().parents[1]
