@@ -197,6 +197,16 @@ class IkigaiBoxOverlayChartTests(unittest.TestCase):
                 )
             self.assertGreater(path.stat().st_size, 10_000)
         axes = observed["axes"][0]
+        if build_trade_overlay(candles, setup).grid is not None:
+            labels = [
+                item for item in axes.texts
+                if item.get_text().startswith("Схема сетки")
+            ]
+            self.assertEqual(len(labels), 1)
+            # The four-order illustration must be outside the candle plot,
+            # not obscuring the latest post-1.618 bars.
+            self.assertGreater(labels[0].get_position()[0], 1.0)
+            self.assertIs(labels[0].get_transform(), axes.get_yaxis_transform())
         return [
             segment
             for collection in axes.collections
