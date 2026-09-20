@@ -80,7 +80,7 @@ def first_reach_index(candles, formation, level_price: float) -> Optional[int]:
     """First closed candle after B whose extreme touched ``level_price``."""
     sign = _sign(formation)
     column = "high" if sign == 1 else "low"
-    values = candles[column].to_numpy(dtype=float)
+    values = candles[column].iloc[: formation.as_of_index + 1].to_numpy(dtype=float)
     for index in range(formation.anchor_end_index + 1, formation.as_of_index + 1):
         if (sign == 1 and values[index] >= level_price) or (
             sign == -1 and values[index] <= level_price
@@ -141,7 +141,9 @@ def _reversal_kind(row, previous, sign: int) -> Optional[str]:
 def find_reversal_stop_anchor(candles, formation, from_index: int):
     """Latest closed reversal candle in [from_index, as_of], or None."""
     sign = _sign(formation)
-    rows = candles[["open", "high", "low", "close"]].to_numpy(dtype=float)
+    rows = candles[["open", "high", "low", "close"]].iloc[
+        : formation.as_of_index + 1
+    ].to_numpy(dtype=float)
     for index in range(formation.as_of_index, max(from_index, 1) - 1, -1):
         previous = tuple(rows[index - 1]) if index > 0 else None
         kind = _reversal_kind(tuple(rows[index]), previous, sign)
