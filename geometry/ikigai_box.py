@@ -59,6 +59,39 @@ class IkigaiBoxFormation:
         )
 
 
+
+@dataclass(frozen=True)
+class IkigaiBoxWatch:
+    """Early observational candidate. NOT a confirmed reversal or order signal.
+
+    One identity per (direction, A, B); the box is provisional until the
+    caller freezes it. No chart/Telegram/Robot integration in this slice.
+    """
+    direction: str
+    phase: str  # BOX_READY or BOX_BREAK_OBSERVED (not confirmed leg two)
+    as_of_index: int
+    anchor_start_index: int
+    anchor_end_index: int
+    anchor_start_price: float
+    anchor_end_price: float
+    box_start_index: int
+    box_end_index: int
+    box_low: float
+    box_high: float
+    first_box_exit_index: Optional[int]
+    fibonacci_1_0: float
+    fibonacci_1_618: float
+    fibonacci_2_618: float
+
+    @property
+    def anchor_identity(self):
+        return self.direction, self.anchor_start_index, self.anchor_end_index
+
+    def fibonacci_price(self, level: float) -> float:
+        return self.anchor_start_price + level * (
+            self.anchor_end_price - self.anchor_start_price
+        )
+
 def _valid_ohlc(row):
     op, hi, lo, cl = row
     return (
@@ -280,3 +313,133 @@ def detect_ikigai_box(
                         fibonacci_2_618=a + 2.618 * (b - a),
                     )
     return best
+
+
+def detect_ikigai_box_watches(
+    candles,
+    *,
+    as_of_index: Optional[int] = None,
+    parameters: Optional[IkigaiBoxParameters] = None,
+):
+    """Return distinct early WATCH candidates by FIRST-impulse anchor pair.
+
+    BOX_READY needs only the first impulse and the following consolidation;
+    BOX_BREAK_OBSERVED means at least one subsequent CLOSE broke the frozen
+    box in the impulse direction, but does NOT confirm a sustained second leg.
+    The first extension must not have been touched in the known prefix. This
+    is pure offline discovery: no Scanner/Telegram/Robot emission or orders.
+    A and B are not re-anchored to any later candle or other WATCH identity.
+    """
+    p = parameters or IkigaiBoxParameters()
+    _validate_parameters(p)
+    if candles is None or not all(
+        col in candles.columns for col in ("open", "high", "low", "close")
+    ):
+        return ()
+    count = len(candles)
+    end = count - 1 if as_of_index is None else as_of_index
+    if type(end) is not int or not 0 <= end < count:
+        return ()
+    if end + 1 < 14 + p.first_min_bars + p.box_min_bars:
+        return ()
+    # The source may include future rows; never read outside the closed prefix.
+    try:
+        rows = [
+            tuple(map(float, row))
+            for row in candles.iloc[: end + 1][
+                ["open", "high", "low", "close"]
+            ].itertuples(index=False, name=None)
+        ]
+    except (TypeError, ValueError, OverflowError):
+        return ()
+    if not all(_valid_ohlc(row) for row in rows):
+        return ()
+
+    selected = {}  # Stable independent identities: (direction, A-index, B-index).
+    for sign, direction in ((1, "SHORT"), (-1, "LONG")):
+        # A WATCH may persist during the early box break, without requiring
+        # a second-impulse progress/close threshold or an apex.
+        earliest_end = max(
+            0, end - p.second_max_bars,
+        )
+        for box_end in range(end, earliest_end - 1, -1):
+            followed = rows[box_end + 1 : end + 1]
+            for box_n in range(p.box_min_bars, p.box_max_bars + 1):
+                box_start = box_end - box_n + 1
+                first_end = box_start - 1
+                if first_end - p.first_min_bars + 1 < 14:
+                    continue
+                box_rows = rows[box_start : box_end + 1]
+                box_low = min(row[2] for row in box_rows)
+                box_high = max(row[1] for row in box_rows)
+                # A previous box can only persist if the subsequent candles
+                # exhibit a real close outside its frozen boundary. Otherwise
+                # the latest known candle must still belong to the shelf.
+                first_exit = next((
+                    box_end + 1 + i for i, row in enumerate(followed)
+                    if (row[3] > box_high if sign == 1 else row[3] < box_low)
+                ), None)
+                if box_end != end and first_exit is None:
+                    continue
+                phase = (
+                    "BOX_BREAK_OBSERVED" if first_exit is not None
+                    else "BOX_READY"
+                )
+                for first_n in range(p.first_min_bars, p.first_max_bars + 1):
+                    first_start = first_end - first_n + 1
+                    if first_start < 14:
+                        continue
+                    qualified = _qualified_first_impulse_and_box(
+                        rows, first_start, first_end,
+                        box_low, box_high, sign, p,
+                    )
+                    if qualified is None:
+                        continue
+                    a, b, span, atr = qualified
+                    extension = a + 1.618 * (b - a)
+                    # An observation created AFTER the proposed entry zone
+                    # was already reached is stale, not an advance WATCH.
+                    # Also reject previously touched zones since box closure.
+                    if any(
+                        row[1] >= extension if sign == 1
+                        else row[2] <= extension
+                        for row in followed
+                    ):
+                        continue
+                    watch = IkigaiBoxWatch(
+                        direction=direction,
+                        phase=phase,
+                        as_of_index=end,
+                        anchor_start_index=first_start,
+                        anchor_end_index=first_end,
+                        anchor_start_price=a,
+                        anchor_end_price=b,
+                        box_start_index=box_start,
+                        box_end_index=box_end,
+                        box_low=box_low,
+                        box_high=box_high,
+                        first_box_exit_index=first_exit,
+                        fibonacci_1_0=b,
+                        fibonacci_1_618=extension,
+                        fibonacci_2_618=a + 2.618 * (b - a),
+                    )
+                    identity = watch.anchor_identity
+                    # Keep each independent A/B candidate. Within that pair,
+                    # preserve an already-observed EARLIER box exit rather
+                    # than extending the box through its breakout candle.
+                    rank = (
+                        int(first_exit is not None),
+                        -first_exit if first_exit is not None else 0,
+                        box_end,
+                        box_n,
+                    )
+                    previous = selected.get(identity)
+                    if previous is None or rank > previous[0]:
+                        selected[identity] = rank, watch
+    # Do not rank away a newer A/B just because an older setup is closer
+    # to 1.618. Consumers must track by anchor_identity, not by symbol only.
+    return tuple(
+        item[1] for _, item in sorted(
+            selected.items(), key=lambda record: record[0], reverse=True,
+        )
+    )
