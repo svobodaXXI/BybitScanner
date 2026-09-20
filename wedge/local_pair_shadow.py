@@ -135,9 +135,11 @@ def evaluate_local_pair(frame, confirmed_points, *, as_of_index, timeframe,
     if any(k not in by_key for k in required):
         reasons.append("MISSING_CONFIRMED_ANCHOR")
         return result
-    if any(index in ambiguous_indices for index in range(start, last + 1)):
+    ambiguous_in_episode = sorted(i for i in ambiguous_indices if start <= i <= last)
+    result["ambiguous_indices"] = ambiguous_in_episode
+    if any(index in ambiguous_indices for index, _ in required):
         result["status"] = "AMBIGUOUS"
-        reasons.append("SAME_CANDLE_HIGH_LOW_ORDER_UNPROVEN")
+        reasons.append("SAME_CANDLE_ANCHOR_ORDER_UNPROVEN")
         return result
     points = [p for p in by_key.values() if start <= p["index"] <= last]
     h1, h2, l1, l2 = [by_key[k] for k in required]
@@ -189,15 +191,20 @@ def evaluate_local_pair(frame, confirmed_points, *, as_of_index, timeframe,
         b = result["strict"]["B"]
         if b["body_count"] or b["max_wick_run"] >= 2:
             reasons.append("STRICT_BOUNDARY_VIOLATED_WITHIN_ANCHORED_EXTENT")
+    # Diagnose the FULL span even when a separate support question remains unresolved.
+    if family and (result["strict"]["A"]["body_count"]
+                   or result["strict"]["E"]["body_count"]
+                   or any(zone["wick_count"] for zone in result["strict"].values()
+                          if not zone["empty"])):
+        result.setdefault("open_questions", []).append(
+            "UNRESOLVED_PRE_OR_POST_ANCHOR_BREACH_OR_UNCALIBRATED_WICKS")
     if reasons:
         result["status"] = "INVALID"
+    elif ambiguous_in_episode:
+        result["status"] = "AMBIGUOUS"
+        result.setdefault("open_questions", []).append("SAME_CANDLE_HIGH_LOW_ORDER_UNPROVEN")
     elif result.get("open_questions"):
         result["status"] = "UNKNOWN"
-    elif (result["strict"]["A"]["body_count"]
-          or result["strict"]["E"]["body_count"]
-          or any(zone["wick_count"] for zone in result["strict"].values() if not zone["empty"])):
-        result["status"] = "UNKNOWN"
-        reasons.append("UNRESOLVED_PRE_OR_POST_ANCHOR_BREACH_OR_UNCALIBRATED_WICKS")
     else:
         result["status"] = "VALID_RESEARCH_PAIR"
     return result
