@@ -20,6 +20,7 @@ import mplfinance as mpf
 import pandas as pd
 
 from timeframe_format import format_timeframe_ru
+from geometry.ikigai_box import IkigaiBoxWatch
 
 
 def fibonacci_chart_levels(formation):
@@ -58,20 +59,35 @@ def render_ikigai_box_chart(
     end = formation.as_of_index
     if type(end) is not int or not 0 <= end < len(candles):
         raise ValueError("Formation is outside candle data")
+    is_watch = isinstance(formation, IkigaiBoxWatch)
     if not (
         0 <= formation.anchor_start_index
-        <= formation.anchor_end_index
+        < formation.anchor_end_index
         < formation.box_start_index
         <= formation.box_end_index
-        < formation.second_start_index
         <= end
     ):
         raise ValueError("Invalid frozen Ikigai Box anchor/segment order")
-    if (
-        formation.impulse_start_index != formation.anchor_start_index
-        or formation.impulse_end_index != formation.anchor_end_index
+    if is_watch:
+        if formation.phase == "BOX_READY":
+            if formation.first_box_exit_index is not None:
+                raise ValueError("BOX_READY cannot have a prior breakout")
+        elif formation.phase == "BOX_BREAK_OBSERVED":
+            if not (
+                type(formation.first_box_exit_index) is int
+                and formation.box_end_index
+                < formation.first_box_exit_index
+                <= end
+            ):
+                raise ValueError("Invalid observed box breakout")
+        else:
+            raise ValueError("Unknown Ikigai Box WATCH phase")
+    elif not (
+        formation.box_end_index < formation.second_start_index <= end
+        and formation.impulse_start_index == formation.anchor_start_index
+        and formation.impulse_end_index == formation.anchor_end_index
     ):
-        raise ValueError("Formation anchors disagree with first impulse")
+        raise ValueError("Invalid confirmed Ikigai Box segments")
     levels = fibonacci_chart_levels(formation)
     if not all(isfinite(price) and price > 0 for _, price in levels):
         raise ValueError("Invalid frozen Fibonacci price")
@@ -85,7 +101,7 @@ def render_ikigai_box_chart(
     ) <= 0:
         raise ValueError("Fibonacci direction conflicts with setup")
 
-    offset = max(0, formation.impulse_start_index - context_bars)
+    offset = max(0, formation.anchor_start_index - context_bars)
     window = candles.iloc[offset : end + 1].copy()
     # DataFrame is deep-copied, so signal rendering cannot mutate Scanner
     # source candles. Time is in Bybit milliseconds, not local chart indices.
@@ -119,13 +135,17 @@ def render_ikigai_box_chart(
         terminal = formation.anchor_end_index - offset
         box_first = formation.box_start_index - offset
         box_last = formation.box_end_index - offset
-        leg_two = formation.second_start_index - offset
+        leg_two = (
+            formation.first_box_exit_index if is_watch
+            else formation.second_start_index
+        )
         last = len(window) - 1
 
         ax.axvspan(box_first - 0.5, box_last + 0.5, alpha=0.12,
                    color="slateblue", label="Проторговка")
-        ax.axvline(leg_two - 0.5, linestyle=":", linewidth=0.8,
-                   color="slategray")
+        if leg_two is not None:
+            ax.axvline(leg_two - offset - 0.5, linestyle=":", linewidth=0.8,
+                       color="slategray")
         ax.scatter(
             [start, terminal],
             [formation.anchor_start_price, formation.anchor_end_price],
@@ -162,7 +182,11 @@ def render_ikigai_box_chart(
         ax.set_title(
             f"{symbol} · {format_timeframe_ru(timeframe)} · "
             f"Коробка Икигаи / {formation.direction}\n"
-            "Фибо первого импульса · зоны входа ПЛАН (не ордера)",
+            + (
+                f"WATCH {formation.phase} · второй импульс НЕ подтверждён · "
+                if is_watch else ""
+            )
+            + "Фибо первого импульса · зоны входа ПЛАН (не ордера)",
             fontsize=12,
         )
         fig.savefig(target, dpi=125, bbox_inches="tight")
