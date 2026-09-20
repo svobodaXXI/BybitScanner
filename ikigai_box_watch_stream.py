@@ -88,6 +88,11 @@ def process_ikigai_box_watches(
         _bootstrap(key, frame, times)
         return False
     if old["time"] == times[-1]:
+        last = frame.iloc[-1]
+        if tuple(float(last[col]) for col in
+                 ("open", "high", "low", "close")) != old["last_ohlc"]:
+            _bootstrap(key, frame, times)
+            return False
         pending = old["pending"]
         if pending is None:
             return False
@@ -132,7 +137,8 @@ def process_ikigai_box_watches(
         first_break = (
             watch.phase == "BOX_BREAK_OBSERVED"
             and watch.first_box_exit_index == now
-            and (old_watch is None or old_watch.phase == "BOX_READY")
+            and old_watch is not None
+            and old_watch.phase == "BOX_READY"
         )
         if first_ready or first_break:
             candidates.append(watch)
