@@ -95,6 +95,64 @@ class IkigaiBoxChartTests(unittest.TestCase):
                 )
         pd.testing.assert_frame_equal(candles, original)
 
+    def test_anchor_and_target_labels_stay_clear_of_candle_area(self):
+        # Regression for A / 0 on the next impulse candle and F(1.0)
+        # overlapping B and the final box wicks in the FLOCK WATCH PNG.
+        import mplfinance as mpf
+
+        for direction in (-1, 1):
+            with self.subTest(direction=direction):
+                candles, setup = _sample(direction)
+                actual_plot = mpf.plot
+                observed = {}
+
+                def capture(frame, **options):
+                    fig, axes = actual_plot(frame, **options)
+                    observed["axis"] = axes[0]
+                    return fig, axes
+
+                with tempfile.TemporaryDirectory() as directory:
+                    with patch(
+                        "geometry.ikigai_box_chart.mpf.plot",
+                        side_effect=capture,
+                    ):
+                        render_ikigai_box_chart(
+                            candles, setup, Path(directory) / "labels.png",
+                            symbol="TESTUSDT", timeframe="5",
+                        )
+                ax = observed["axis"]
+                a = [t for t in ax.texts if t.get_text() == "A / 0"]
+                b = [t for t in ax.texts if t.get_text() == "B / 1"]
+                target = [
+                    t for t in ax.texts
+                    if t.get_text().startswith("1.000 · цель")
+                ]
+                self.assertEqual((len(a), len(b), len(target)), (1, 1, 1))
+                # Anchor captions are on the preceding-bar side, with a
+                # positive y offset for the high and negative for the low.
+                self.assertLess(a[0].get_position()[0], 0)
+                self.assertLess(b[0].get_position()[0], 0)
+                self.assertLess(
+                    a[0].get_position()[1] if direction == 1
+                    else b[0].get_position()[1], 0
+                )
+                self.assertGreater(
+                    b[0].get_position()[1] if direction == 1
+                    else a[0].get_position()[1], 0
+                )
+                # The single F(1.0) numeric caption is outside the plot;
+                # do not overlay another TP-plan caption at the same y.
+                self.assertGreater(target[0].get_position()[0], 1.0)
+                self.assertEqual(
+                    target[0].get_transform(), ax.get_yaxis_transform()
+                )
+                self.assertAlmostEqual(
+                    target[0].get_position()[1], setup.fibonacci_1_0
+                )
+                self.assertFalse(
+                    any(t.get_text() == "TP план · цель" for t in ax.texts)
+                )
+
     def test_prefix_does_not_draw_future_candles(self):
         candles, setup = _sample(-1)
         future = pd.concat([
