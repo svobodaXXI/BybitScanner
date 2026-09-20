@@ -33,7 +33,12 @@ class StartDiagnosticsTests(unittest.TestCase):
 
     def compare(self, candles, highs=None, lows=None, **changes):
         if highs is None or lows is None:
-            highs, lows = self.pivots(candles, right=changes.get("right", 2))
+            # find_pivots needs a usable right window; a deliberately invalid
+            # right belongs to the function under test, not to this fixture.
+            right = changes.get("right", 2)
+            if isinstance(right, bool) or not isinstance(right, int) or right < 1:
+                right = 2
+            highs, lows = self.pivots(candles, right=right)
         settings = {
             "baseline_start_index": 8, "upper_anchor_index": 8,
             "lower_anchor_index": 9, "as_of_index": 9, "right": 2,
