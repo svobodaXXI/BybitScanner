@@ -142,12 +142,15 @@ def _qualified_first_impulse_and_box(
     """Shared frozen-A/B and consolidation gates for WATCH and confirmation."""
     first_n = first_end - first_start + 1
     first_rows = rows[first_start : first_end + 1]
-    # A DOWN first impulse is one uninterrupted run of bearish candle
-    # bodies. A green or doji bar terminates that run: it cannot be
-    # absorbed merely to move A higher or increase the measured span.
-    # Keep the UP path unchanged: the HEI reference has a terminal
-    # rejection wick with mixed body directions.
-    if sign == -1 and any(close >= opened for opened, _, _, close in first_rows):
+    # The DOWN impulse has an uninterrupted red-body CORE between its
+    # price-extreme anchors A and B. One adjacent boundary candle at
+    # either end may be green: its wick can supply A or B without making
+    # that candle part of the red run. A green/doji INSIDE the core splits
+    # the impulse and cannot be absorbed to extend the measured A/B span.
+    # Keep the UP path unchanged (HEI's terminal rejection-wick case).
+    if sign == -1 and any(
+        close >= opened for opened, _, _, close in first_rows[1:-1]
+    ):
         return None
     a = rows[first_start][2 if sign == 1 else 1]
     b = rows[first_end][1 if sign == 1 else 2]
