@@ -532,6 +532,16 @@ Robot order или LIVE; если пользователь хочет верну
 
 **Still pending:** actual production geometry math and source-time-replay CI evidence at GitHub HEAD; independent episode selection/continuity for arbitrary proposals; historical prefix replay including anchors present only after their confirmation; 1m acceptance and policy decisions for strict hard gate, Rising, external quote precision and legacy ATR. Keep PR #156 draft, no merge, no runtime switch and no admission change on these findings.
 
+### 5A.15. Реальная CRCL фикстура и GitHub CI для S3-1d (2026-09-20)
+
+**GitHub-only publication:** исходный источник — пользовательский ZIP с шестью снимками, содержащий `candles.csv` и `analysis.json`. В PR #156 опубликованы только 199 закрытых исходных 5m баров CRCL (колонки time/open/high/low/close) в сжатой фикстуре `tests/fixtures/crcl_20260920_closed_5m.csv.zlib.b64`, commit `338e896`, и воспроизводимый тест `tests/test_real_crcl_pair_shadow.py`, commit `37e867e`. SHA256 распакованного канонического CSV: `d5fd8cf3cb5b90e923186cf72c6ada44bb38853649e2c85c2df7a940480833d2`; тест проверяет хэш, исходный decision timestamp и closed-as_of. Из 200 сохранённых баров последний формирующийся удалён. Тест не зависит от символа при расчёте вердикта: входы — оригинальные баровые значения и независимо восстановленные `detect_pivots` raw-пивоты с source provenance. Времени решения из даты запуска теста не берёт.
+
+**Узкое доказательство:** на настоящем сохранённом CRCL проверены три случая: исходный 200-й бар не используется при 10:04:52Z; HIGH195 впервые доступен после закрытия подтверждающего бара 198, а на префиксе 197 ещё не обнаруживается; явно предложенная `U119→195 / L114→185` получает `VALID_RESEARCH_PAIR`, а та же верхняя линия со старым нижним первым анкером L123 — `INVALID` с выходами локальных pivots за оболочку. Это не независимое обнаружение эпизода и не доказательство Robot admission.
+
+**GitHub CI:** добавлен только scope-limited `.github/workflows/wedge-shadow-ci.yml` (commit `f4abd77`, `pull_request` только при изменениях модуля/пивотов/узких тестов/фикстуры/workflow). На этом кодовом SHA `f4abd77fb51789d25add806f27922562e38a50ac` job `local-pair-shadow` в GitHub Actions run `35513234567` завершился `success`: установка pandas/numpy, py_compile и `unittest` для pivot equivalence, 14 synthetic local-pair cases и 3 real CRCL cases. GitHub CI PASS относится к указанному SHA, не автоматически к более поздним документальным коммитам и не заменяет 1m/полный 395-snapshot или runtime acceptance.
+
+**Следующий один зависимый шаг:** вынести из локального S1a/S3-1c минимальную чистую `propose_episode` логику, которая берёт confirmed raw ledger и возвращает bounded chronological proposals c обоими начальными порядками, не выбирая победителя и не меняя production. Её требуется проверить на реальных исторических префиксах CRCL и на неоднозначной 0G, затем подключить к uncalled pair inspector только внутри shadow. Сначала доказать, что существующие tracked функции не реализуют это уже, и не копировать исследовательский раннер целиком. Включение hard gate/Signal/Robot, merge и deployment остаются отдельно заблокированы.
+
 ## 6. Acceptance / отклонённые короткие пути
 
 Позитивные пользовательские картинки ALT, CRCL, CRV
