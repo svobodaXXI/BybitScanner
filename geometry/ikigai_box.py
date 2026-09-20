@@ -83,25 +83,25 @@ def _pre_impulse_atr(rows, start):
 
 
 def _validate_parameters(p):
-        if any(
-            getattr(p, start) < 1 or getattr(p, end) < getattr(p, start)
-            for start, end in (
-                ("first_min_bars", "first_max_bars"),
-                ("box_min_bars", "box_max_bars"),
-                ("second_min_bars", "second_max_bars"),
-            )
-        ):
-            raise ValueError("Invalid Ikigai Box segment lengths")
-        if not (
-            p.min_impulse_atr > 0
-            and p.min_impulse_fraction > 0
-            and 0 < p.max_box_width_fraction < 1
-            and 0 < p.max_box_retrace_fraction <= p.max_wick_box_retrace_fraction < 1
-            and 0 < p.min_terminal_rejection_fraction < 1
-            and 0 < p.min_wick_close_progress_fraction < 0.60
-            and 0 < p.min_second_progress < p.max_second_progress
-        ):
-            raise ValueError("Invalid Ikigai Box geometry thresholds")
+    if any(
+        getattr(p, start) < 1 or getattr(p, end) < getattr(p, start)
+        for start, end in (
+            ("first_min_bars", "first_max_bars"),
+            ("box_min_bars", "box_max_bars"),
+            ("second_min_bars", "second_max_bars"),
+        )
+    ):
+        raise ValueError("Invalid Ikigai Box segment lengths")
+    if not (
+        p.min_impulse_atr > 0
+        and p.min_impulse_fraction > 0
+        and 0 < p.max_box_width_fraction < 1
+        and 0 < p.max_box_retrace_fraction <= p.max_wick_box_retrace_fraction < 1
+        and 0 < p.min_terminal_rejection_fraction < 1
+        and 0 < p.min_wick_close_progress_fraction < 0.60
+        and 0 < p.min_second_progress < p.max_second_progress
+    ):
+        raise ValueError("Invalid Ikigai Box geometry thresholds")
 
 def _qualified_first_impulse_and_box(
     rows, first_start, first_end, box_low, box_high, sign, p,
