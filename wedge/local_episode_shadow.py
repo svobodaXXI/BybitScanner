@@ -129,3 +129,84 @@ def propose_local_episodes(frame, confirmed_points, *, as_of_index, timeframe="5
         })
     result["status"] = "OK"
     return result
+
+
+def trace_episode_checkpoints(frame, confirmed_points, *, as_of_index,
+                              seed_index, seed_side, checkpoints, timeframe="5"):
+    """Replay bounded source-time checkpoints without joining or selecting episodes.
+
+    This function records which *confirmed* swings were observable at each prefix.
+    It does NOT infer that later same-side/alternating pivots belong to a seed's
+    wedge, and it never mutates or upgrades an earlier checkpoint.
+    """
+    out = {"status": "UNKNOWN", "reasons": [], "seed_index": seed_index,
+           "seed_side": seed_side, "history": [], "membership": "UNPROVEN"}
+    if seed_side not in ("HIGH", "LOW"):
+        out["reasons"].append("INVALID_SEED_SIDE")
+        return out
+    try:
+        final = int(as_of_index)
+        seed = int(seed_index)
+        steps = [int(c) for c in checkpoints]
+        if (frame is None or len(frame) != final + 1 or not steps
+                or any(c < 0 or c > final for c in steps)
+                or steps != sorted(set(steps))):
+            raise ValueError("invalid checkpoint range/order")
+    except (TypeError, ValueError, OverflowError):
+        out["reasons"].append("INVALID_CHECKPOINTS_OR_AS_OF")
+        return out
+
+    # Full-prefix provenance is checked once by the existing proposal builder;
+    # each selected prefix is independently revalidated on truncated OHLC.
+    full = propose_local_episodes(
+        frame, confirmed_points, as_of_index=final, timeframe=timeframe,
+        seed_indices={seed}
+    )
+    if full["status"] != "OK":
+        out["reasons"].extend(full["reasons"])
+        return out
+    if not any(p["seed_index"] == seed and p["seed_side"] == seed_side
+               for p in full["proposals"]):
+        out["reasons"].append("SEED_NOT_CONFIRMED_AT_FULL_AS_OF")
+        return out
+
+    previous = -1
+    for cutoff in steps:
+        prefix = frame.iloc[:cutoff + 1].copy()
+        available = [
+            dict(p) for p in confirmed_points if int(p["confirm_index"]) <= cutoff
+        ]
+        checked = propose_local_episodes(
+            prefix, available, as_of_index=cutoff, timeframe=timeframe,
+            seed_indices={seed}
+        )
+        if checked["status"] != "OK":
+            out["reasons"].extend(checked["reasons"])
+            return out
+        proposed = next(
+            (p for p in checked["proposals"]
+             if p["seed_index"] == seed and p["seed_side"] == seed_side),
+            None
+        )
+        new_events = sorted(
+            ({"index": p["index"], "side": p["side"],
+              "confirm_index": p["confirm_index"],
+              "confirm_time_ms": p["confirm_time_ms"]}
+             for p in available
+             if previous < p["confirm_index"] <= cutoff and p["index"] >= seed),
+            key=lambda p: (p["confirm_index"], p["index"], p["side"])
+        )
+        out["history"].append({
+            "as_of_index": cutoff,
+            "seed_status": proposed["status"] if proposed else "NOT_YET_CONFIRMED",
+            "turn_indices": [t["index"] for t in proposed["turns"]] if proposed else [],
+            "competing_same_side_indices": [
+                t["index"] for t in proposed["competing_same_side"]
+            ] if proposed else [],
+            "reasons": list(proposed["reasons"]) if proposed else [],
+            "newly_confirmed": new_events,
+            "membership": "UNPROVEN",
+        })
+        previous = cutoff
+    out["status"] = "OK"
+    return out
