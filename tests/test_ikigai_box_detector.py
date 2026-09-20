@@ -8,6 +8,7 @@ import pandas as pd
 from geometry.ikigai_box import (
     IkigaiBoxParameters,
     detect_ikigai_box,
+    detect_ikigai_box_watches,
 )
 
 
@@ -206,6 +207,90 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
         self.assertAlmostEqual(found.anchor_end_price, 0.24802)
         self.assertGreater(found.fibonacci_1_0, found.fibonacci_1_618)
         self.assertGreater(found.fibonacci_1_618, found.fibonacci_2_618)
+
+    def test_wick_box_is_watch_before_second_impulse_and_full_extension(self):
+        frame, box_end = _terminal_wick_two_impulses()
+        # The independent WATCH exists at the end of consolidation, when
+        # confirmed detector still correctly requires a second impulse.
+        self.assertIsNone(detect_ikigai_box(frame, as_of_index=box_end))
+        watches = detect_ikigai_box_watches(frame, as_of_index=box_end)
+        matching = [w for w in watches if w.anchor_identity == ("SHORT", 20, 23)]
+        self.assertEqual(len(matching), 1)
+        early = matching[0]
+        self.assertEqual(early.phase, "BOX_READY")
+        self.assertIsNone(early.first_box_exit_index)
+        self.assertEqual((early.box_start_index, early.box_end_index), (24, 29))
+        self.assertAlmostEqual(early.box_low, 0.13707)
+        self.assertAlmostEqual(early.box_high, 0.1420)
+        self.assertAlmostEqual(early.fibonacci_1_0, 0.15198)
+        self.assertAlmostEqual(early.fibonacci_1_618, 0.16611366)
+        self.assertAlmostEqual(early.fibonacci_2_618, 0.18898366)
+        self.assertEqual((early.anchor_start_price, early.anchor_end_price),
+                         (0.12911, 0.15198))
+
+    def test_watch_records_first_break_without_requiring_second_progress(self):
+        frame, box_end = _terminal_wick_two_impulses()
+        first = detect_ikigai_box_watches(frame, as_of_index=box_end)
+        prior = next(w for w in first if w.anchor_identity == ("SHORT", 20, 23))
+        continued = pd.concat([frame, pd.DataFrame([
+            {"open": 0.1400, "high": 0.1456,
+             "low": 0.1398, "close": 0.14412},
+            {"open": 0.14412, "high": 0.1450,
+             "low": 0.1390, "close": 0.1400},
+        ])], ignore_index=True)
+        # The first breakout candle does not cross B=0.15198, so the old
+        # confirmed detector stays silent; the WATCH has a first-exit index.
+        self.assertIsNone(detect_ikigai_box(
+            continued, as_of_index=box_end + 1,
+        ))
+        after = detect_ikigai_box_watches(
+            continued, as_of_index=box_end + 2,
+        )
+        breakout = next(w for w in after if w.anchor_identity == prior.anchor_identity)
+        self.assertEqual(breakout.phase, "BOX_BREAK_OBSERVED")
+        self.assertEqual(breakout.first_box_exit_index, box_end + 1)
+        self.assertEqual(breakout.box_end_index, prior.box_end_index)
+        self.assertEqual(breakout.fibonacci_1_618, prior.fibonacci_1_618)
+
+    def test_watch_rejects_stale_entry_after_extension_touch(self):
+        frame, box_end = _terminal_wick_two_impulses()
+        touch = pd.DataFrame([{
+            "open": 0.1400, "high": 0.1700,
+            "low": 0.1398, "close": 0.1680,
+        }])
+        later = pd.concat([frame, touch], ignore_index=True)
+        watches = detect_ikigai_box_watches(later)
+        self.assertFalse(any(
+            w.anchor_identity == ("SHORT", 20, 23) for w in watches
+        ))
+        self.assertEqual(
+            next(w for w in detect_ikigai_box_watches(frame)
+                 if w.anchor_identity == ("SHORT", 20, 23)).as_of_index,
+            box_end,
+        )
+
+    def test_watch_long_is_mirror_and_has_no_future_peeking(self):
+        frame, box_end = _terminal_wick_two_impulses(direction=-1)
+        original = detect_ikigai_box_watches(frame)
+        match = next(w for w in original if w.anchor_identity == ("LONG", 20, 23))
+        self.assertEqual(match.phase, "BOX_READY")
+        self.assertGreater(match.fibonacci_1_0, match.fibonacci_1_618)
+        future = pd.concat([frame, pd.DataFrame([
+            {"open": 0.1, "high": 0.101, "low": 0.099, "close": 0.1},
+        ])], ignore_index=True)
+        self.assertEqual(
+            original,
+            detect_ikigai_box_watches(future, as_of_index=box_end),
+        )
+
+    def test_watch_does_not_redefine_standalone_range_as_box(self):
+        frame = pd.DataFrame([
+            _bar(100.0, 100.1 if i % 2 else 99.9) for i in range(90)
+        ])
+        self.assertEqual(detect_ikigai_box_watches(frame), ())
+        self.assertEqual(
+            detect_ikigai_box_watches(frame, as_of_index=len(frame)), ()
+        )
 
     def test_terminal_wick_relaxation_not_applied_to_body_driven_box(self):
         frame, _ = _terminal_wick_two_impulses()
