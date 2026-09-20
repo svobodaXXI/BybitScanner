@@ -80,6 +80,90 @@ def _pre_impulse_atr(rows, start):
     return sum(ranges) / len(ranges)
 
 
+
+
+def _validate_parameters(p):
+        if any(
+            getattr(p, start) < 1 or getattr(p, end) < getattr(p, start)
+            for start, end in (
+                ("first_min_bars", "first_max_bars"),
+                ("box_min_bars", "box_max_bars"),
+                ("second_min_bars", "second_max_bars"),
+            )
+        ):
+            raise ValueError("Invalid Ikigai Box segment lengths")
+        if not (
+            p.min_impulse_atr > 0
+            and p.min_impulse_fraction > 0
+            and 0 < p.max_box_width_fraction < 1
+            and 0 < p.max_box_retrace_fraction <= p.max_wick_box_retrace_fraction < 1
+            and 0 < p.min_terminal_rejection_fraction < 1
+            and 0 < p.min_wick_close_progress_fraction < 0.60
+            and 0 < p.min_second_progress < p.max_second_progress
+        ):
+            raise ValueError("Invalid Ikigai Box geometry thresholds")
+
+def _qualified_first_impulse_and_box(
+    rows, first_start, first_end, box_low, box_high, sign, p,
+):
+    """Shared frozen-A/B and consolidation gates for WATCH and confirmation."""
+    first_n = first_end - first_start + 1
+    first_rows = rows[first_start : first_end + 1]
+    a = rows[first_start][2 if sign == 1 else 1]
+    b = rows[first_end][1 if sign == 1 else 2]
+    span = sign * (b - a)
+    if span <= 0 or a <= 0:
+        return None
+    atr = _pre_impulse_atr(rows, first_start)
+    if not atr or span < max(
+        p.min_impulse_atr * atr, p.min_impulse_fraction * a
+    ):
+        return None
+    # The origin is the earliest valid first-impulse extreme, and terminal B
+    # its FIRST unique extremum, not an equal wick inside the following shelf.
+    if (
+        (sign == 1 and (
+            min(row[2] for row in first_rows) < a
+            or max(row[1] for row in first_rows[:-1]) >= b
+        ))
+        or (sign == -1 and (
+            max(row[1] for row in first_rows) > a
+            or min(row[2] for row in first_rows[:-1]) <= b
+        ))
+    ):
+        return None
+    close_move = sign * (rows[first_end][3] - rows[first_start][0])
+    forward_bars = sum(
+        sign * (row[3] - row[0]) > 0 for row in first_rows
+    )
+    ordinary_impulse = (
+        close_move >= 0.60 * span
+        and forward_bars * 5 >= first_n * 3
+    )
+    terminal_rejection = sign * (b - rows[first_end][3])
+    wick_impulse = (
+        terminal_rejection >= p.min_terminal_rejection_fraction * span
+        and close_move >= p.min_wick_close_progress_fraction * span
+        and forward_bars * 2 >= first_n
+    )
+    if not (ordinary_impulse or wick_impulse):
+        return None
+    if box_high - box_low > p.max_box_width_fraction * span:
+        return None
+    retrace = (b - box_low) if sign == 1 else (box_high - b)
+    extension = (box_high - b) if sign == 1 else (b - box_low)
+    allowed_retrace = (
+        p.max_wick_box_retrace_fraction
+        if wick_impulse
+        else p.max_box_retrace_fraction
+    )
+    if not (
+        0 <= retrace <= allowed_retrace * span
+        and extension <= 0.12 * span
+    ):
+        return None
+    return a, b, span, atr
+
 def detect_ikigai_box(
     candles,
     *,
@@ -92,25 +176,7 @@ def detect_ikigai_box(
     permission. There is no caller-supplied default distance for a LIMIT grid.
     """
     p = parameters or IkigaiBoxParameters()
-    if any(
-        getattr(p, start) < 1 or getattr(p, end) < getattr(p, start)
-        for start, end in (
-            ("first_min_bars", "first_max_bars"),
-            ("box_min_bars", "box_max_bars"),
-            ("second_min_bars", "second_max_bars"),
-        )
-    ):
-        raise ValueError("Invalid Ikigai Box segment lengths")
-    if not (
-        p.min_impulse_atr > 0
-        and p.min_impulse_fraction > 0
-        and 0 < p.max_box_width_fraction < 1
-        and 0 < p.max_box_retrace_fraction <= p.max_wick_box_retrace_fraction < 1
-        and 0 < p.min_terminal_rejection_fraction < 1
-        and 0 < p.min_wick_close_progress_fraction < 0.60
-        and 0 < p.min_second_progress < p.max_second_progress
-    ):
-        raise ValueError("Invalid Ikigai Box geometry thresholds")
+    _validate_parameters(p)
 
     if candles is None or not all(
         column in candles.columns for column in ("open", "high", "low", "close")
@@ -161,75 +227,13 @@ def detect_ikigai_box(
                     first_start = first_end - first_n + 1
                     if first_start < 14:
                         continue
-                    first_rows = rows[first_start : first_end + 1]
-                    a = rows[first_start][2 if sign == 1 else 1]
-                    b = rows[first_end][1 if sign == 1 else 2]
-                    span = sign * (b - a)
-                    if span <= 0 or a <= 0:
-                        continue
-                    atr = _pre_impulse_atr(rows, first_start)
-                    if not atr or span < max(
-                        p.min_impulse_atr * atr, p.min_impulse_fraction * a
-                    ):
-                        continue
-                    # Origin/terminal WICKS, not interior extrema or second-leg
-                    # wicks; require a directional close and no larger wick in
-                    # the first impulse.
-                    if (
-                        (sign == 1 and (
-                            min(row[2] for row in first_rows) < a
-                            or max(row[1] for row in first_rows[:-1]) >= b
-                        ))
-                        or (sign == -1 and (
-                            max(row[1] for row in first_rows) > a
-                            or min(row[2] for row in first_rows[:-1]) <= b
-                        ))
-                    ):
-                        # The first leg ends at its FIRST terminal wick.
-                        # A shelf bar with the same wick cannot move B forward.
-                        continue
-                    close_move = sign * (
-                        rows[first_end][3] - rows[first_start][0]
+                    qualified = _qualified_first_impulse_and_box(
+                        rows, first_start, first_end,
+                        box_low, box_high, sign, p,
                     )
-                    forward_bars = sum(
-                        sign * (row[3] - row[0]) > 0 for row in first_rows
-                    )
-                    ordinary_impulse = (
-                        close_move >= 0.60 * span
-                        and forward_bars * 5 >= first_n * 3
-                    )
-                    # Some genuine impulses finish on a spike-and-rejection
-                    # candle: B is the terminal WICK, so body-only gates can
-                    # discard a legitimate A/B. Require both a material
-                    # terminal rejection AND earlier net directional progress;
-                    # do not admit an isolated wick in a sideways range.
-                    terminal_rejection = sign * (
-                        b - rows[first_end][3]
-                    )
-                    wick_impulse = (
-                        terminal_rejection
-                        >= p.min_terminal_rejection_fraction * span
-                        and close_move
-                        >= p.min_wick_close_progress_fraction * span
-                        and forward_bars * 2 >= first_n
-                    )
-                    if not (ordinary_impulse or wick_impulse):
+                    if qualified is None:
                         continue
-                    if box_high - box_low > p.max_box_width_fraction * span:
-                        continue
-                    # A shallow shelf remains near the FIRST terminal wick.
-                    retrace = (b - box_low) if sign == 1 else (box_high - b)
-                    extension = (box_high - b) if sign == 1 else (b - box_low)
-                    allowed_retrace = (
-                        p.max_wick_box_retrace_fraction
-                        if wick_impulse
-                        else p.max_box_retrace_fraction
-                    )
-                    if not (
-                        0 <= retrace <= allowed_retrace * span
-                        and extension <= 0.12 * span
-                    ):
-                        continue
+                    a, b, span, atr = qualified
                     progress = sign * (second_extreme - b) / span
                     if not (
                         p.min_second_progress
