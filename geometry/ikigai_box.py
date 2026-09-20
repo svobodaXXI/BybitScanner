@@ -171,13 +171,15 @@ def detect_ikigai_box(
                     if (
                         (sign == 1 and (
                             min(row[2] for row in first_rows) < a
-                            or max(row[1] for row in first_rows) > b
+                            or max(row[1] for row in first_rows[:-1]) >= b
                         ))
                         or (sign == -1 and (
                             max(row[1] for row in first_rows) > a
-                            or min(row[2] for row in first_rows) < b
+                            or min(row[2] for row in first_rows[:-1]) <= b
                         ))
                     ):
+                        # The first leg ends at its FIRST terminal wick.
+                        # A shelf bar with the same wick cannot move B forward.
                         continue
                     close_move = sign * (
                         rows[first_end][3] - rows[first_start][0]
