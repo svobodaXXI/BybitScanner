@@ -14,6 +14,7 @@ on:
       - "tests/fixtures/crcl_20260920_closed_5m.csv.zlib.b64"
       - "tests/fixtures/crv_20260920_closed_5m.csv.zlib.b64"
       - "tests/fixtures/0g_a_20260920_closed_5m.csv.zlib.b64"
+      - "tests/fixtures/0g_b_20260920_closed_5m.csv.zlib.b64"
       - ".github/workflows/wedge-shadow-ci.yml"
 
 permissions:
