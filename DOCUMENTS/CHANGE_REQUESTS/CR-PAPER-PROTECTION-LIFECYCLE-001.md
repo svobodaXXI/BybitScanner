@@ -976,3 +976,117 @@ plus the proven close execution fee, store that lifecycle total in `fees_costs_u
 fee-inclusive `realized_pnl_pct`. Never aggregate all executions for a symbol because manual/unrelated fills must
 not contaminate Robot economics.
 
+
+---
+
+## 23. Local protection-ingress investigation and unpublished Slice C candidate (2026-09-20)
+
+**Evidence status and work boundary.** This section records the user's local Codex reports and a review of the
+`ad19c47` source. The reported offline test results below are *Codex-reported*, not GitHub CI results. On
+2026-09-20, the VPS project had been removed; prior KSMUSDT/EDGEUSDT observations in §22 are historical,
+not measurements of a currently running service. The local HTTP backend was not listening on port 8765,
+so no current ingress-pressure telemetry was obtained. Do not infer that saturation persists after PRs
+#145/#146/#150/#151/#153 or that an offline pass constitutes live PAPER acceptance.
+
+### 23.1 Verified local startup boundary
+
+The local `main` had been fetched and was aligned to `origin/main` at `ad19c47` (untracked user files
+untouched). A **read-only**, `mode=ro` / `query_only=ON` inspection of
+`C:\BybitScanner\paper_runtime.sqlite3` reported `paper / ROBOT_RUNNING / READY` (state
+version 61), five `APPROVED` candidates, two unclosed Robot trades (1000RATSUSDT and STGUSDT),
+and three non-flat PAPER projections (including a CELOUSDT residual). This is a historical
+snapshot of the stopped local process, not evidence of live position or market-data continuity.
+
+`start_robot.bat` also starts the Telegram listener and Scanner. Starting only
+`start_paper_backend.bat` still starts `runtime.start_robot_monitor()`, can resume entry/protection
+processing against that state, and may open/migrate the existing SQLite database. There is no
+read-only/observe startup switch on that path. **Neither launcher nor the production database
+was used in the offline investigation.** Do not start this database merely to inspect
+`/api/robot/protection-health`; preserve position/protection/recovery safety when scheduling
+any later live acceptance.
+
+### 23.2 Reproduced defect on baseline `ad19c47`
+
+The offline reproduction used a throwaway temporary SQLite store, a bounded
+`SerializedPaperRuntime` and a `RobotProtectionCoverageManager` test double, with no Bybit network.
+For both (A) an `ENTRY_PENDING` zero-fill candidate and (B) an exposure-grade overflow, the
+observed path was identical:
+
+`_on_update` → `ProtectionIngressOverflow` → `_mark_unhealthy` →
+`_enqueue_runtime_fence` → `fence_robot_protection_continuity_loss`.
+
+The cached coverage role only populated diagnostics; it did not alter the fallback fence.
+The seeded `ROBOT_RUNNING/READY` row became `ROBOT_RUNNING/RECONCILIATION_REQUIRED`
+(version 2→3); repeated fencing was idempotent. Admission closed globally, while the
+unfilled candidate remained `APPROVED` pending later continuity recovery. A fresh
+recovery snapshot can restore *coverage health* but does not automatically restore
+`READY`; that remains an explicit reconciliation decision. Thus the baseline fails
+to distinguish a genuinely zero-exposure entry-only loss from an exposure/obligation loss.
+
+A queued durable fence uses the same owner queue as other work; a saturated queue can
+delay the durable transition after the in-memory unhealthy flag is set. This ordering
+must be preserved/verified in any later revision; never treat an in-memory flag alone as
+persisted admission authority.
+
+### 23.3 Candidate Slice C implementation — local only, **not merged**
+
+Codex reported implementing the lifecycle-scoped correction in the separate worktree
+`C:\BybitScanner-ingress`, branch `fix/paper-ingress-entry-only-terminalization`, based on
+`ad19c47`. Its changes were **uncommitted and not pushed** when reported. The main checkout,
+working PAPER database, running processes, and untracked user files were not changed.
+The isolated diff reportedly contained exactly:
+
+- `terminal/runtime/paper_runtime.py`: owner-thread
+  `resolve_robot_protection_continuity_loss()`, zero-exposure predicates and
+  `CONTINUITY_FENCED` / `CONTINUITY_ENTRY_ONLY_TERMINALIZED` outcomes;
+  the existing `fence_robot_protection_continuity_loss()` remains the fallback.
+- `terminal/runtime/paper_http_server.py`: enqueue continuity resolution instead of
+  unconditionally enqueuing a fence; clear a symbol's unhealthy flag only on successful
+  entry-only resolution. Queue limits, market-event ordering and snapshot recovery remain.
+- New `tests/test_robot_protection_entry_only_terminalization.py` (10 focused cases);
+  small compatibility updates in `tests/test_robot_protection_overflow_recovery.py` and
+  `tests/test_terminal_paper_http.py`.
+
+The intended owner-thread decision first lets previously queued fills execute, then proves
+a **single** `APPROVED` entry lifecycle on the symbol with an identified active LIMIT,
+zero filled quantity after successful cancellation, no OPEN Robot candidate/trade, no
+non-flat or ambiguous position, and no unresolved protection obligation. It uses an
+explicit open-trade count: `get_open_robot_trade_for_symbol() is None` also occurs when
+*multiple* trades make attribution ambiguous, so it is never proof of zero exposure.
+Candidate-revision compare-and-set, post-cancel order checks and a second exposure check
+precede local `INVALIDATED` terminalization. Another candidate on the symbol, partial
+fill, stale/uncertain ownership, failed cancellation, any unresolved obligation, a
+non-`ingress_overflow` continuity reason, or a failed check falls back to the existing
+global `RECONCILIATION_REQUIRED` fence. No automatic account-wide recovery to `READY`
+or change to STOP/TAKE, sizing, LIVE behavior, queue capacity or event coalescing is intended.
+
+**Atomicity limitation:** LIMIT cancellation and candidate terminalization are two
+separate durable writes, not a cross-aggregate transaction. Codex reported that the
+existing monitor invalidates an `APPROVED` candidate with an inactive zero-fill LIMIT
+on a later tick (`ENTRY_LIMIT_INACTIVE_BEFORE_FILL`), providing a restart-convergence
+argument for a crash between the writes. A dedicated crash-window regression test was
+*not yet added* when the report was produced. Do not represent that convergence as
+test-verified or assert one atomic transaction. No durable in-progress marker was added.
+
+### 23.4 Offline evidence and explicit remaining work
+
+Codex reported: 10/10 newly focused tests passed; 149 surrounding Robot/PAPER tests
+passed. A wider `-k "robot or paper or protection"` selection reportedly yielded
+670 passed and 4 failed; rerunning the same four against untouched `ad19c47`
+reproduced those failures, attributed to unrelated runtime-wiring, schema-v9 migration
+and live-account-reconciliation tests. These results are **local reports only**;
+the isolated branch has no published PR diff or CI receipt yet.
+
+If Slice C is resumed, first add the single crash-window convergence test and review
+the exact isolated diff, including queue ordering, repeated overflow/resync, ownership
+ambiguity and fallback fencing. Publish/review one focused PR only if needed; do not
+merge or deploy the unverified local change on the strength of this note. The correction
+limits *consequences* of a proven entry-only overflow; it does **not** remove the
+shared-queue saturation root cause. Revisit Slice D only if new, safely obtained
+runtime metrics prove sustained backlog after existing hot-path fixes.
+
+**User-directed handoff:** after recording these findings, prioritize the
+**L-shaped (Г-образная) formation first**, then the box/rectangle pattern.
+No additional ingress investigation, PAPER runtime startup, rollout or infrastructure
+work is required for the geometry task. Retain this section as the recovery record
+until the user explicitly resumes the Robot queue work.
