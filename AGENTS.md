@@ -58,6 +58,10 @@ Before the first project-specific user action in a session, load the relevant co
 
 If user action is objectively required, follow the protocol’s exact `Сейчас сделай:` and copy-ready rules. Do not ask the user to run read-only repository inspection that an available repository connector can perform.
 
+## Active Scanner geometry course
+
+For work on Wedge/Triangle candidate generation, containment, anchor order or the next Scanner acceptance, read `DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md` before choosing the next micro-slice. It is the current evidence-led working plan, not authority to override the owning geometry/ATR contracts. Update it when new evidence changes the course; do not restart a completed diagnostic by default.
+
 ## Authority routing
 
 Use the narrowest owner that answers the current question:
