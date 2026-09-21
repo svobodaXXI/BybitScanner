@@ -246,7 +246,7 @@ def format_signal(
 
     message = f"""
 {SCANNER_EMOJI} Сканер: {symbol} {circle}
-Паттерн: {pattern_label}
+{pattern_label}
 Таймфрейм: {timeframe_label}{test_marker}
 
 Баллы: {score}
