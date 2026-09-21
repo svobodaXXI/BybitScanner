@@ -121,7 +121,10 @@ def analyze_wedge(
         highs,
         lows,
         current_index=current_index,
-        candles=candles
+        candles=candles,
+        freshness_predicate=lambda candidate: detect_structure(
+            _normalize_geometry(candidate), candles=candles
+        ).get("features", {}).get("freshness", False),
     )
 
     geometry_data = _normalize_geometry(
