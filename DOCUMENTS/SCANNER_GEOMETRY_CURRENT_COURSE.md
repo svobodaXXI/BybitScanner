@@ -39,6 +39,35 @@ First identify the actual existing decision boundary that promotes an invalid li
 
 The next implementation is authorized only after one concise, evidence-backed candidate correction explains AAVE and does not repeat the known POL, AEVO, WLD or XRP regressions. If that condition is not met with the existing snapshots, stop the change rather than create another multi-stage diagnostic campaign. If the actual fix requires a new hard containment gate or reinterpretation of existing soft-penalty policy, resolve the owning `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` approval boundary before code changes.
 
+### 1b. RESOLVED 2026-09-21: boundary-validity admission implemented
+
+The bounded review finished. The decision boundary responsible for AAVE was not
+the ranking order but a missing admission condition: nothing rejected a boundary
+contradicted by its own evidence. AAVE's upper line is contradicted at bar 179
+(pivot 0.909% outside, body breaching the same line, inside the 176-183 run),
+16 bars before END 195; POL is the same class at bar 178.
+
+An unscoped version of the rule was measured and rejected because it also
+removed PONS, whose only contradiction sits at bar 193, seven bars AFTER its
+END 186 - a legitimate post-completion breakout. Scoping the check to bars no
+later than END preserves PONS with its original winner and still rejects AAVE
+and POL. A pivot-only variant was also rejected: it removed INJ, whose lower
+pivot at 172 is 1.422% outside yet has zero body breaches, so no pivot-only
+metric separates INJ from AAVE.
+
+The narrow exception is recorded in
+`DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` ("Approved narrow
+exception - 2026-09-21"); the soft-penalty/no-generic-hard-containment policy
+and the disabled evaluator are unchanged. Implemented in `geometry/engine.py`
+as an admission step after the locality gate and before ranking, with focused
+coverage in `tests/test_geometry_boundary_validity.py`.
+
+AAOI remains a recorded caveat rather than a claim: its decisive bar 185 is 11
+bars before END 196 and price never returns inside the lower boundary
+afterwards, which is equally consistent with a late breakdown. AAOI is removed
+by the rule, but that removal must not be presented as proof of an invalid
+boundary. Breakout and END semantics were deliberately NOT redesigned here.
+
 ### 2. Execute and verify as one owned task
 
 Choose direct GitHub authoring, local Codex or Claude Code case by case for the **least total user time** (prompt transfer, result relay, correction and verification included), not by a fixed tool preference. GitHub remains publication authority but need not be the editing engine. Give the local agent one task with implementation, focused fixture checks and a concise final report when local evidence is required. Reuse an existing PR for corrections to the same logical change; do not spread a single defect across serial PRs.
