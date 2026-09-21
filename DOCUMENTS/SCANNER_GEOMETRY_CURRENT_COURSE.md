@@ -25,7 +25,7 @@ The 2026-09-21 full Scanner pass exposed wrong local selections and boundary anc
 
 ## Current order of work and acceptance
 
-### 1. Correct the evidenced containment interval mismatch (current micro-slice)
+### 1. Integrate the evidenced containment interval correction (PR #178)
 
 The AAVE 179→189/195 what-if produced a validated local Falling Wedge with lower
 anchor 145 and one post-END breach, but its EXPLORATORY mode loses to the
@@ -49,15 +49,73 @@ body metric on common_start..END, and record START..END separately as a raw
 full-formation diagnostic. Do not route the unsupported prefix diagnostic
 into ranking, CANONICAL, detection or quality penalties. Preserve the
 approved soft-penalty/no-hard-gate decision and disabled containment switch.
-Use focused interval and AEVO/INJ/JTO evidence plus the existing saved
-windows to verify the delta. Historical windows remain local; no broad
-Scanner pass is warranted for this patch.
+PR #178 (`fix/scanner-formation-containment-interval`) implements this
+separation. Local Codex verified the code at `4930ebc`: 43 focused tests
+passed, 31/31 saved windows and 3,587 candidates compared, AEVO/INJ retained
+their winners, and JTO no longer loses due to four post-END breaches. Seven
+winners changed (APT, ATOM, JTO, NIL, POL, PTB, WLD), while confirmed
+detection remained 27/31. POL changes Triangle -> Rising Wedge and its raw
+full-formation breach count increases 13 -> 32. This number **alone** cannot
+establish a regression: it includes the unsupported one-boundary prefix.
 
-### 2. Reassess absolute geometric admission after the interval fix
+**Only remaining pre-merge check:** use the existing POL snapshot and diagnostic
+artifacts to distinguish unsupported prefix from common_start..END breaches,
+and compare actual boundary support, envelope width and shape credibility.
+A genuine supported-interval regression requires a scoped fix in the same PR;
+otherwise merge after the existing focused evidence, with no repeat of the
+31-window experiment. Do not restart Scanner, synchronize the user's dirty
+Windows checkout, or open another geometry PR before this checkpoint.
 
-Rerun the same bounded offline sample after step 1. Evaluate absolute containment using existing body_zone_breaches and pivot-boundary metrics, rather than only relative ranking within a poor pool. Distinguish wrong anchors from a truly invalid shape; avoid duplicating the disabled wedge/integrity.py containment-penalty mechanism or silently overriding DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md. If a new hard admission rule conflicts with that decision's soft-penalty/no-hard-reject boundary, update the owning decision/approval explicitly before code changes.
+### 2. Correct local boundary selection, then evaluate signal admission
 
-Do not implement GEOMETRY_MAX_BODY_BREACH_RATIO=0.35 solely on the 31-window sample. If still warranted, check a distinct historical period, effect on other patterns, absent/missing ATR data, and the precise denominator/index interval before selecting an operational threshold. With no acceptable candidate, return no confirmed signal; do not silently substitute another malformed figure.
+**Next mission after PR #178:** reliably select a *supported local* wedge or
+triangle instead of merely the highest-ranked valid pair. AAVE remains
+unrepaired: the late 179→189/195 upper line can pair with lower anchor 145
+as a valid local EXPLORATORY Falling Wedge, but it loses to the old CANONICAL
+136/140 winner with eight consecutive upper-body breaches. The short-span
+generator change alone was measured and rejected. AAOI still has no
+acceptable local alternative in its observed pool. Do not relaunch these
+completed hypotheses as exploratory default work.
+
+Use the existing supported-formation breach metric (`common_start..END`),
+pivot-support evidence, envelope width and shape validity to determine the
+*smallest failing selection or candidate-admission boundary* on AAVE and
+one relevant counterexample (AAOI/POL, as evidence requires). Do not optimize
+for keeping `detected=True` at 27/31: unchanged detection does not prove
+unchanged signal quality. In particular, a zero-breach but extremely wide
+backward-extrapolated envelope is not a verified local formation.
+
+Explicitly keep three distinct concerns:
+- **Geometry integrity:** actual anchor support, line/candle intersections,
+  interval ownership, compression and credible envelope width.
+- **Historical formation state:** confirmed pivots and original frozen
+  as-of/END remain historically true even if the current detector later
+  rejects a stale or broken setup; no future candles may confirm a pivot
+  at an earlier decision point.
+- **Actionable signal:** existing Validation/freshness, pattern and trading
+  quality policies remain independently enforced; a visually nice line does
+  not authorize a Robot trade.
+
+Fix a demonstrated candidate-selection/anchor problem before tuning arbitrary
+global breach thresholds. Neither globally lowering min_line_span nor
+reordering CANONICAL ahead/behind breaches is authorized by the current
+evidence. Do not promote an EXPLORATORY line to CANONICAL merely to make it win.
+
+**Contract boundary:** `DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`
+currently prescribes soft quality penalties and no new hard containment
+reject; its evaluator is currently disabled and Rising Wedge / Triangle
+Compression have no corresponding penalty. Never silently turn a raw
+diagnostic or ranking metric into a hard gate, enable the penalty, or alter
+Robot admission. If a verified malformed shape requires absolute rejection
+with no acceptable alternative, establish and approve the narrowly owned
+geometric-integrity/decision-contract change before implementation; keep
+signal suppression distinct from downgrading trade-quality tiers.
+
+The existing 31-window sample already covered PR #178. Reuse its saved
+snapshots and prior candidate evidence for focused changes; reserve a distinct
+historical period for a *new calibrated numeric threshold* only if one
+actually proves necessary. Do not introduce the proposed
+`GEOMETRY_MAX_BODY_BREACH_RATIO=0.35` on the selected sample alone.
 
 ### 3. Wedge subtype and anchor sequence
 
@@ -65,7 +123,44 @@ After reliable boundary selection, distinguish corrective vs deceleration wedges
 
 ### 4. Acceptance and deployment
 
-Focused historical replay, targeted tests and a compact comparison of selected geometry/alerts first; confirm no future-candle leakage and no accidental history-window dependence. One GitHub PR per logical validated change (reuse the same PR for small review fixes); integrate through GitHub-first; then safely sync local main while preserving unrelated tracked/untracked user work. Only after fixes pass, run one full Scanner acceptance, with the user's approval for actual launch and awareness that start_scanner.bat also starts PAPER backend and Telegram Monitoring. No LIVE/Robot state or trading policy changes.
+Use the few frozen positive/negative cases relevant to each demonstrated
+defect, plus one affected counterexample, before a bounded historical replay
+of any changed winners/signals. Include actual selected anchors, containment
+and envelope width (not just the count of detected signals). Confirm that
+each candidate uses only pivots confirmed by its original as-of candle and
+that the same as-of decision does not depend on later history. Preserve
+historical confirmation separately from current actionable status.
+
+One logical change per GitHub branch/PR; keep review fixes in the existing
+PR. After required focused evidence passes, merge on GitHub and safely sync
+the local main without altering user-owned dirty/untracked files. A single
+approved full Scanner acceptance follows *the geometry-selection fix*, not
+every diagnostic or PR. Before launching, inspect the actual launcher
+dependency/side-effect chain: start_scanner.bat may also start the PAPER
+backend and Telegram Monitoring. No implicit Robot/LIVE activation, trading
+policy change, or unauthorized Telegram alerts.
+
+## External reference reuse — scoped adaptation (reviewed 2026-09-21)
+
+- **pytrendline** — https://github.com/ednunezg/pytrendline
+  (ADAPT): pivot-count/support requirements, point-to-line error and
+  candle-body intersections are separately configurable in its trendline
+  detector. Reuse the *separation of evidence* with our existing geometry
+  and ATR metrics; do not import its exhaustive O(N^3) search, default
+  breakout rejection or arbitrary tolerances. Post-END breakout/retest is
+  not historical formation damage in BybitScanner.
+- **Stock Indicators, Zig Zag** —
+  https://python.stockindicators.dev/indicators/ZigZag/
+  (ADAPT): its last Zig Zag segment can redraw as later quotes arrive.
+  Protect our decision-time pivot-confirmation cursor/frozen as-of boundary;
+  verify this in focused replay, without replacing the pivot engine.
+- **vectorbt splitters** — https://vectorbt.dev/api/generic/splitters/
+  (DEFER): separate parameter-development and later historical validation
+  periods if calibrating a new global threshold. Do not add a framework
+  or run broad optimization merely for this scoped geometry repair.
+
+These references supply engineering patterns, not trading performance
+evidence or authority to change BybitScanner detector/risk contracts.
 
 ## Course correction and time economy
 
