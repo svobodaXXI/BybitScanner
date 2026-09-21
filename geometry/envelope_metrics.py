@@ -1142,7 +1142,9 @@ def calculate_envelope_metrics(
     lows,
     current_index,
     tolerance_percent=DEFAULT_TOLERANCE_PERCENT,
-    candles=None
+    candles=None,
+    formation_start_index=None,
+    formation_end_index=None
 ):
     if (
         upper_candidate is None
@@ -1233,13 +1235,37 @@ def calculate_envelope_metrics(
         )
     )
 
-    body_zone_breaches = (
-        evaluate_body_zone_breaches(
+    # Both boundaries have primary-anchor support only from common_start.
+    # Post-END candles describe subsequent price action, not formation quality.
+    # Keep the earlier one-boundary prefix as a separate raw diagnostic.
+    formation_end = (
+        min(int(formation_end_index), int(current_index))
+        if formation_end_index is not None
+        else current_index
+    )
+    formation_start = (
+        int(formation_start_index)
+        if formation_start_index is not None
+        else common_start
+    )
+
+    body_zone_breaches = evaluate_body_zone_breaches(
+        upper_line,
+        lower_line,
+        candles,
+        common_start,
+        formation_end
+    )
+
+    full_formation_body_zone_breaches = (
+        body_zone_breaches
+        if formation_start == common_start
+        else evaluate_body_zone_breaches(
             upper_line,
             lower_line,
             candles,
-            common_start,
-            current_index
+            formation_start,
+            formation_end
         )
     )
 
@@ -1264,6 +1290,9 @@ def calculate_envelope_metrics(
 
         "body_zone_breaches":
             body_zone_breaches,
+
+        "full_formation_body_zone_breaches":
+            full_formation_body_zone_breaches,
 
         "reference_anchor":
             reference_anchor

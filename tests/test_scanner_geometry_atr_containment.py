@@ -17,7 +17,10 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from geometry.envelope_metrics import evaluate_body_zone_breaches
+from geometry.envelope_metrics import (
+    calculate_envelope_metrics,
+    evaluate_body_zone_breaches,
+)
 from geometry.reversal_patterns import (
     is_bullish_engulfing,
     is_morning_star,
@@ -98,6 +101,41 @@ class BodyZoneBreachTests(unittest.TestCase):
 
         self.assertEqual(result["lower_body_breach_late_indices"], [])
         self.assertEqual(result["lower_body_breach_early_indices"], [])
+
+    def test_formation_interval_routing_preserves_legacy_downgrade(self):
+        # START=16, second primary anchor=20, END=25, current=30.
+        # Separate breaches before common_start, inside both-boundary
+        # formation support, and after the completed formation.
+        candles = _make_candles({
+            17: {"open": 105.0, "close": 106.0, "high": 107.0},
+            22: {"open": 105.0, "close": 106.0, "high": 107.0},
+            28: {"open": 105.0, "close": 106.0, "high": 107.0},
+        }, count=40)
+        upper = {
+            "line": {**UPPER_LINE, "anchor_index": 20},
+            "points": [{"index": 20, "price": 105.0},
+                       {"index": 25, "price": 105.0}],
+        }
+        lower = {
+            "line": {**LOWER_LINE, "anchor_index": 16},
+            "points": [{"index": 16, "price": 95.0},
+                       {"index": 25, "price": 95.0}],
+        }
+        metrics = calculate_envelope_metrics(
+            upper, lower,
+            highs=upper["points"], lows=lower["points"],
+            current_index=30, candles=candles,
+            formation_start_index=16, formation_end_index=25,
+        )
+        ranking = metrics["body_zone_breaches"]
+        full = metrics["full_formation_body_zone_breaches"]
+        legacy = metrics["candle_containment"]
+        self.assertEqual((ranking["start_index"], ranking["end_index"]), (20, 25))
+        self.assertEqual(ranking["upper_body_breach_indices"], [22])
+        self.assertEqual((full["start_index"], full["end_index"]), (16, 25))
+        self.assertEqual(full["upper_body_breach_indices"], [17, 22])
+        self.assertEqual(legacy["evaluated_count"], 11)  # 20..30 unchanged
+        self.assertIn(28, legacy["upper_outside_indices"])
 
     def test_returns_none_without_required_inputs(self):
         self.assertIsNone(

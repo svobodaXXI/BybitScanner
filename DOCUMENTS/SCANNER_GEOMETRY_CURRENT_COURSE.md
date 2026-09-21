@@ -25,13 +25,35 @@ The 2026-09-21 full Scanner pass exposed wrong local selections and boundary anc
 
 ## Current order of work and acceptance
 
-### 1. AAVE: make the missing late local line eligible, then evaluate it
+### 1. Correct the evidenced containment interval mismatch (current micro-slice)
 
-Use the already recovered AAVE snapshot. First perform an isolated, read-only what-if: generate the upper candidate starting at pivot 179 with the **existing** pivot-line fit, tolerance, and forward confirmations; pair it through the normal evaluation, Validation, locality, freshness, classification, and ranking path. Report actual resulting lower anchor, pattern, mode, body breaches and detector decision. A plausible upper trendline alone is not enough.
+The AAVE 179→189/195 what-if produced a validated local Falling Wedge with lower
+anchor 145 and one post-END breach, but its EXPLORATORY mode loses to the
+existing 136/140 CANONICAL pair with eight late upper-body breaches. A global
+min_line_span 30→10 what-if across the same 31 saved windows changed nine
+winners, left detected=True at 27, did not repair AAVE and degraded XRP
+(15 breaches inside the new winner, two after END). **Do not extend the
+generator or mechanically upgrade anchor_sequence.**
 
-Only if a correct pair survives, implement the smallest *scoped* change to the candidate generator to allow that late, adequately confirmed line. Avoid globally lowering DEFAULT_MIN_LINE_SPAN=30 or introducing a parallel Pivot/trendline engine. Verify effects on the saved sample and the earlier AEVO/TOSHI/XEC regression cases before publication. If no valid pair exists, stop: record the rejecting gate and reconsider the hypothesis rather than force a signal.
+A bounded production-pool comparison found eight of 27 fresh-window winners
+differing from the cleanest full-formation alternative. A blanket
+containment-before-CANONICAL swap is also unsafe: on PONS it would select
+a triangle with 17 full-formation breaches rather than the existing winner
+with two. The present cached body metric conflates unsupported prefix
+START..common_start-1, common two-boundary interval common_start..END and
+post-formation END+1..current.
 
-### 2. Absolute geometric admission, after the candidate-pool change
+The scoped correction is to preserve common_start..current for legacy
+candle_containment and structural support; calculate the candidate-selection
+body metric on common_start..END, and record START..END separately as a raw
+full-formation diagnostic. Do not route the unsupported prefix diagnostic
+into ranking, CANONICAL, detection or quality penalties. Preserve the
+approved soft-penalty/no-hard-gate decision and disabled containment switch.
+Use focused interval and AEVO/INJ/JTO evidence plus the existing saved
+windows to verify the delta. Historical windows remain local; no broad
+Scanner pass is warranted for this patch.
+
+### 2. Reassess absolute geometric admission after the interval fix
 
 Rerun the same bounded offline sample after step 1. Evaluate absolute containment using existing body_zone_breaches and pivot-boundary metrics, rather than only relative ranking within a poor pool. Distinguish wrong anchors from a truly invalid shape; avoid duplicating the disabled wedge/integrity.py containment-penalty mechanism or silently overriding DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md. If a new hard admission rule conflicts with that decision's soft-penalty/no-hard-reject boundary, update the owning decision/approval explicitly before code changes.
 

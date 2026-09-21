@@ -209,7 +209,9 @@ def evaluate_candidate_pair(
         highs or [],
         lows or [],
         current_index,
-        candles=candles
+        candles=candles,
+        formation_start_index=start_index,
+        formation_end_index=end_index
     )
 
     candle_containment = (
