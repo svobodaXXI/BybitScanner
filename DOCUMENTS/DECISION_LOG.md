@@ -566,3 +566,44 @@ consequences:
 * proposed reprices are checked against the same threshold; an uncomputed or poor-RR reprice is not submitted, and the existing unfilled order remains in place and under normal monitoring;
 * `MIN_LATE_ADMISSION_RR` keeps its own constant with the same default; the environment variable does not apply to it;
 * the running backend picks the code up only after a restart.
+
+
+---
+
+## DECISION-012
+
+title:
+
+Scanner Signal Presentation Format
+
+date:
+
+2026-09-21
+
+status:
+
+ACCEPTED / PARTIALLY IMPLEMENTED
+
+category:
+
+Scanner / Presentation
+
+context:
+
+Ни один документ не описывал формат Telegram-сообщения Scanner и заголовка графика Wedge/Triangle; оба существовали только в коде.
+
+decision:
+
+Формат закреплён в `DOCUMENTS/SCANNER_SIGNAL_PRESENTATION_FORMAT.md`. В Telegram-сообщении и в заголовке графика имя паттерна показывается напрямую, без префиксов `Паттерн:` и `СТРУКТУРА:`. Из заголовка графика убираются строки `ПАТТЕРН:`, `ГЕОМЕТРИЯ:` и `ОБУЧЕНИЕ:`; для клиньев добавляется `Тип клина: не определено`, для треугольников эта строка не показывается.
+
+rationale:
+
+Единый источник истины для презентации Scanner и разделение реализованного и целевого поведения.
+
+consequences:
+
+* Telegram-часть уже реализована на `main` (коммит `90368d4`, PR #171);
+* заголовок графика остаётся TARGET и не реализован; `chart_clean.py` и `tests/test_chart_clean_title.py` не изменяются этим решением;
+* форматы Robot, Telegram Monitoring и Ikigai Box не затрагиваются;
+* позиция строки `Тип клина` не зафиксирована утверждением и выбрана как последняя;
+* только документация; поведение кода не меняется.
