@@ -53,11 +53,82 @@ from .debug.logger import (
 )
 
 
+def _body_zone_breach_count(
+    geometry
+):
+    """
+    Total body-zone breaches already computed for this candidate by
+    geometry/envelope_metrics.py:evaluate_body_zone_breaches().
+
+    Read-only reuse: no recomputation, no new tolerance, and no relation
+    to wedge.integrity's disabled containment-violation penalty.
+    """
+
+    envelope_metrics = getattr(
+        geometry,
+        "envelope_metrics",
+        {}
+    ) or {}
+
+    breaches = (
+        envelope_metrics.get(
+            "body_zone_breaches"
+        )
+        or {}
+    )
+
+    return (
+        len(breaches.get("upper_body_breach_indices") or [])
+        + len(breaches.get("lower_body_breach_early_indices") or [])
+        + len(breaches.get("lower_body_breach_late_indices") or [])
+    )
+
+
+def _is_candidate_fresh(
+    geometry,
+    freshness_predicate
+):
+    """
+    Apply the INJECTED Pattern-layer freshness predicate to one candidate.
+
+    Geometry never imports Wedge; wedge/analyzer.py supplies the predicate.
+    Without a predicate every candidate stays eligible (previous behavior).
+    """
+
+    if freshness_predicate is None:
+        return True
+
+    apex = (
+        getattr(
+            geometry,
+            "apex",
+            None
+        )
+        or {}
+    )
+
+    apex_index = (
+        apex.get("index")
+        if isinstance(apex, dict)
+        else None
+    )
+
+    return bool(
+        freshness_predicate(
+            getattr(geometry, "start_index", None),
+            getattr(geometry, "end_index", None),
+            apex_index,
+            getattr(geometry, "current_index", None)
+        )
+    )
+
+
 def analyze_geometry(
     highs,
     lows,
     current_index=None,
-    candles=None
+    candles=None,
+    freshness_predicate=None
 ):
     """
     Р“Р»Р°РІРЅР°СЏ С„СѓРЅРєС†РёСЏ Р°РЅР°Р»РёР·Р° РіРµРѕРјРµС‚СЂРёРё.
@@ -144,9 +215,7 @@ def analyze_geometry(
     # 3. Evaluation РІСЃРµС… РїР°СЂ
     #
 
-    best_geometry = None
-    best_score = -999
-    best_mode_priority = -1
+    ranked_candidates = []
 
     for upper_candidate in upper_candidates:
 
@@ -211,17 +280,66 @@ def analyze_geometry(
                 else 0
             )
 
-            if (
-                mode_priority > best_mode_priority
-                or (
-                    mode_priority == best_mode_priority
-                    and geometry_score > best_score
-                )
-            ):
+            ranked_candidates.append(
+                {
+                    "geometry":
+                        geometry,
 
-                best_mode_priority = mode_priority
-                best_score = geometry_score
-                best_geometry = geometry
+                    "mode_priority":
+                        mode_priority,
+
+                    "body_breaches":
+                        _body_zone_breach_count(
+                            geometry
+                        ),
+
+                    "score":
+                        geometry_score,
+
+                    "fresh":
+                        _is_candidate_fresh(
+                            geometry,
+                            freshness_predicate
+                        )
+                }
+            )
+
+    #
+    # 5b. Eligibility and selection
+    #
+    # Stale candidates are excluded BEFORE ranking so a clean-but-stale
+    # structure can never displace a fresh one. If nothing is fresh, the
+    # unfiltered pool is kept so downstream detection keeps reporting the
+    # same geometry with detected=False instead of losing it entirely.
+    #
+    # Order: CANONICAL first (unchanged), then fewer body-zone breaches,
+    # then the existing geometry_score. Scores are not recalculated.
+    #
+
+    eligible_candidates = [
+        candidate
+        for candidate in ranked_candidates
+        if candidate["fresh"]
+    ]
+
+    if not eligible_candidates:
+        eligible_candidates = ranked_candidates
+
+    best_geometry = None
+
+    if eligible_candidates:
+
+        best_candidate = max(
+            eligible_candidates,
+            key=lambda candidate: (
+                candidate["mode_priority"],
+                -candidate["body_breaches"],
+                candidate["score"]
+            )
+        )
+
+        best_geometry = best_candidate["geometry"]
+        best_score = best_candidate["score"]
 
     #
     # 6. РўРѕР»СЊРєРѕ РІР°Р»РёРґРёСЂРѕРІР°РЅРЅР°СЏ РјРѕРґРµР»СЊ

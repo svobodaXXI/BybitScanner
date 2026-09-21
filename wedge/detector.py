@@ -86,6 +86,87 @@ def _normalize_geometry(
 
 
 
+def evaluate_structure_freshness(
+    start_index,
+    end_index,
+    apex_index,
+    current_index
+):
+    """
+    Freshness predicate of the Pattern Detection layer.
+
+    Extracted verbatim from detect_structure() so Geometry candidate
+    selection can reuse the SAME predicate through injection (Geometry
+    must not import Wedge). Formula, constants and semantics unchanged.
+
+    Returns:
+
+    {
+        "freshness_bars": int | None,
+        "freshness_window": int,
+        "before_apex": bool,
+        "fresh": bool
+    }
+    """
+
+    freshness_bars = None
+
+    if (
+        current_index is not None
+        and end_index is not None
+    ):
+        freshness_bars = (
+            current_index
+            -
+            end_index
+        )
+
+    structure_length = 0
+
+    if (
+        start_index is not None
+        and end_index is not None
+    ):
+        try:
+            structure_length = max(
+                0,
+                int(end_index) - int(start_index)
+            )
+        except (TypeError, ValueError):
+            structure_length = 0
+
+    freshness_window = max(
+        FRESHNESS_WINDOW_MIN_BARS,
+        round(structure_length * FRESHNESS_WINDOW_FACTOR)
+    )
+
+    before_apex = bool(
+        current_index is not None
+        and apex_index is not None
+        and current_index <= apex_index
+    )
+
+    return {
+
+        "freshness_bars":
+            freshness_bars,
+
+        "freshness_window":
+            freshness_window,
+
+        "before_apex":
+            before_apex,
+
+        "fresh":
+            bool(
+                freshness_bars is not None
+                and 0 <= freshness_bars <= freshness_window
+                and before_apex
+            )
+
+    }
+
+
 def detect_structure(
     geometry,
     candles=None
@@ -274,42 +355,18 @@ def detect_structure(
         else None
     )
 
-    freshness_bars = None
-
-    if (
-        current_index is not None
-        and end_index is not None
-    ):
-        freshness_bars = (
-            current_index
-            -
-            end_index
-        )
-
-    structure_length = 0
-
-    if (
-        start_index is not None
-        and end_index is not None
-    ):
-        try:
-            structure_length = max(
-                0,
-                int(end_index) - int(start_index)
-            )
-        except (TypeError, ValueError):
-            structure_length = 0
-
-    freshness_window = max(
-        FRESHNESS_WINDOW_MIN_BARS,
-        round(structure_length * FRESHNESS_WINDOW_FACTOR)
+    freshness_state = evaluate_structure_freshness(
+        start_index,
+        end_index,
+        apex_index,
+        current_index
     )
 
-    before_apex = bool(
-        current_index is not None
-        and apex_index is not None
-        and current_index <= apex_index
-    )
+    freshness_bars = freshness_state["freshness_bars"]
+
+    freshness_window = freshness_state["freshness_window"]
+
+    before_apex = freshness_state["before_apex"]
 
     features = {
 
