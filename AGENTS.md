@@ -15,6 +15,8 @@ Recovery is staged and stops as soon as the task is safe to execute:
 
 Routine scoped work must not run full Project Sync, generate a ContextDump, or load the deep-recovery set merely to restore context. Reuse fresh authority already loaded.
 
+**Operational requests:** For start/stop/restart, enable/configure, deploy, or synchronize requests, resolve the actual entrypoint and invoked dependency/side-effect chain from repository sources before asking the user to inspect files or run commands. Follow `DOCUMENTS/ASSISTANT_PROTOCOL.md` §2.2.3; request only genuinely host-local evidence that the connector cannot provide. A launcher name alone never proves which services it starts. This is a task-triggered check, not another routine recovery stage.
+
 ## Repository edits
 
 For a local/Codex edit, use the protected task facade:
