@@ -53,6 +53,12 @@ from .debug.logger import (
 )
 
 
+# A candidate may span at most this share of the analysed window. A structure
+# stretched across almost the whole window is not a local formation; it only
+# passes the span-proportional freshness gate because it is long.
+GEOMETRY_MAX_STRUCTURE_SPAN_RATIO = 0.60
+
+
 def _body_zone_breach_count(
     geometry
 ):
@@ -82,6 +88,37 @@ def _body_zone_breach_count(
         + len(breaches.get("lower_body_breach_early_indices") or [])
         + len(breaches.get("lower_body_breach_late_indices") or [])
     )
+
+
+def _is_candidate_local(
+    geometry,
+    current_index
+):
+    """
+    Locality admission: span (end_index - start_index) must not exceed
+    GEOMETRY_MAX_STRUCTURE_SPAN_RATIO of the analysed window
+    (current_index + 1 bars).
+
+    Uses only the existing start/end indices; no new tolerance or metric.
+    A candidate without indices is not admitted. Without current_index the
+    window length is unknown and the gate is not applied.
+    """
+
+    if current_index is None:
+        return True
+
+    start_index = getattr(geometry, "start_index", None)
+    end_index = getattr(geometry, "end_index", None)
+
+    if start_index is None or end_index is None:
+        return False
+
+    max_span = round(
+        (current_index + 1)
+        * GEOMETRY_MAX_STRUCTURE_SPAN_RATIO
+    )
+
+    return (end_index - start_index) <= max_span
 
 
 def _is_candidate_fresh(
@@ -249,6 +286,19 @@ def analyze_geometry(
             if not validation.get(
                 "valid",
                 False
+            ):
+                continue
+
+            #
+            # 4b. Locality admission
+            #
+            # A non-local candidate never enters the pool, and there is no
+            # fallback to it: an empty pool means no geometry.
+            #
+
+            if not _is_candidate_local(
+                geometry,
+                current_index
             ):
                 continue
 

@@ -112,7 +112,9 @@ def _select(candidates):
         return engine.analyze_geometry(
             highs=[{"index": index, "price": 1.0} for index in range(4)],
             lows=[{"index": index, "price": 1.0} for index in range(4)],
-            current_index=110,
+            # 200-bar analysis window: keeps every stub span (<=100) inside
+            # the locality gate so these tests still exercise ordering only.
+            current_index=199,
             candles=None,
             freshness_predicate=_freshness_predicate,
         )
