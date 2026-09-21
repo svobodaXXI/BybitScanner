@@ -90,9 +90,9 @@ Wedges (Falling Wedge / Rising Wedge):
 ```text
 {symbol} · {timeframe}
 {structure_name}
+Тип клина: не определено
 КАЧЕСТВО СТРУКТУРЫ: {score}/100
 ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}
-Тип клина: не определено
 ```
 
 Triangles (Triangle Compression) — identical, but with **no** `Тип клина` line:
@@ -117,16 +117,12 @@ Acceptance criteria for the future renderer change:
 
 1. No chart header contains `СТРУКТУРА:`, `ГЕОМЕТРИЯ:`, `ОБУЧЕНИЕ:` or a `ПАТТЕРН:` line.
 2. The pattern name is the second line, rendered directly.
-3. A Falling Wedge or Rising Wedge header contains exactly one `Тип клина: не определено` line.
+3. A Falling Wedge or Rising Wedge header contains exactly one `Тип клина: не определено` line immediately after the pattern name and before quality/potential.
 4. A Triangle Compression header contains no `Тип клина` line.
 5. Symbol/timeframe, `КАЧЕСТВО СТРУКТУРЫ` and `ПОТЕНЦИАЛ ДВИЖЕНИЯ` lines are byte-identical to CURRENT.
 6. `tests/test_chart_clean_title.py` is updated in the same change; no detector, scoring, geometry or Robot behavior changes.
 
-### 2.3 Open point
-
-The approval does not fix the position of the `Тип клина` line. This document places it last. If a different position is wanted, decide it before the renderer change.
-
-## Ownership boundary
+ ## Ownership boundary
 
 This document is presentation-only. It does not alter pattern classification, detection, geometry, scoring, training eligibility, Robot/PAPER/LIVE behavior or any data written to the diary, `signals/` or `review_queue/`. `geometry_mode` and `detection.detected` remain available in `result` and keep their existing non-presentational consumers; only their appearance in the chart header changes.
 
