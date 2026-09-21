@@ -38,11 +38,35 @@ class ChartTitleTests(unittest.TestCase):
     def test_title_falls_back_to_bare_symbol_without_a_result(self):
         self.assertEqual(build_chart_title("BTCUSDT", None), "BTCUSDT")
 
-    def test_title_still_contains_the_existing_structure_lines(self):
-        title = build_chart_title("BTCUSDT", self._result())
+    def test_wedge_header_uses_approved_format(self):
+        for pattern, name in (
+            ("Falling Wedge", "Нисходящий клин"),
+            ("Rising Wedge", "Восходящий клин"),
+        ):
+            with self.subTest(pattern=pattern):
+                title = build_chart_title(
+                    "BTCUSDT",
+                    self._result(pattern=pattern, timeframe="5",
+                                 potential={"signed_percent": -2.69}),
+                )
+                self.assertEqual(title.splitlines(), [
+                    "BTCUSDT · 5м",
+                    name,
+                    "Тип клина: не определено",
+                    "КАЧЕСТВО СТРУКТУРЫ: 82/100",
+                    "ПОТЕНЦИАЛ ДВИЖЕНИЯ: -2.69%",
+                ])
 
-        self.assertIn("СТРУКТУРА: Нисходящий клин", title)
-        self.assertIn("КАЧЕСТВО СТРУКТУРЫ: 82/100", title)
+    def test_triangle_has_no_wedge_type_line(self):
+        title = build_chart_title(
+            "BTCUSDT", self._result(pattern="Triangle Compression", timeframe="5")
+        )
+        self.assertEqual(title.splitlines(), [
+            "BTCUSDT · 5м",
+            "Сжимающийся треугольник",
+            "КАЧЕСТВО СТРУКТУРЫ: 82/100",
+            "ПОТЕНЦИАЛ ДВИЖЕНИЯ: РАСЧЁТ НЕДОСТУПЕН",
+        ])
 
 
 if __name__ == "__main__":
