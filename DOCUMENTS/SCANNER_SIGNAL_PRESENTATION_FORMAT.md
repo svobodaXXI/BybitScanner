@@ -63,27 +63,13 @@ Acceptance criteria:
 3. `🧪 TEST MODE` continues to append after the timeframe line in test mode.
 4. Robot, Telegram Monitoring and Ikigai Box card formats are unaffected.
 
-## 2. Wedge/Triangle chart header — CURRENT vs TARGET
+## 2. Wedge/Triangle chart header — CURRENT
 
 Owner: `chart_clean.py:build_chart_title()`.
 
-### 2.1 CURRENT (deployed — do not treat the target below as live)
+Status: **IMPLEMENTED** — the approved header landed in PR #175 ("fix: apply approved Scanner wedge and triangle chart headers"). `tests/test_chart_clean_title.py` asserts the exact titles below.
 
-```text
-{symbol} · {timeframe}
-СТРУКТУРА: {structure_name}
-ГЕОМЕТРИЯ: {geometry_name}
-ПАТТЕРН: {detection_name}
-КАЧЕСТВО СТРУКТУРЫ: {score}/100
-ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}
-ОБУЧЕНИЕ: {training_name}
-```
-
-`tests/test_chart_clean_title.py` currently asserts this CURRENT form.
-
-### 2.2 TARGET (approved 2026-09-21 — NOT IMPLEMENTED)
-
-The renderer change is **not** authorized or performed by this document. Until it lands, charts render the CURRENT form above.
+### 2.1 CURRENT (deployed)
 
 Wedges (Falling Wedge / Rising Wedge):
 
@@ -104,7 +90,19 @@ Triangles (Triangle Compression) — identical, but with **no** `Тип клин
 ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}
 ```
 
-Changes from CURRENT:
+### 2.2 PREVIOUS form (replaced by PR #175 — historical)
+
+```text
+{symbol} · {timeframe}
+СТРУКТУРА: {structure_name}
+ГЕОМЕТРИЯ: {geometry_name}
+ПАТТЕРН: {detection_name}
+КАЧЕСТВО СТРУКТУРЫ: {score}/100
+ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}
+ОБУЧЕНИЕ: {training_name}
+```
+
+Changes from the previous form:
 
 - the `СТРУКТУРА:` prefix is removed; the pattern name is shown directly;
 - the whole `ПАТТЕРН: {detection_name}` line is removed (both `ПОДТВЕРЖДЕН` and `НЕ ПОДТВЕРЖДЕН`);
@@ -113,13 +111,13 @@ Changes from CURRENT:
 - wedges gain a fixed `Тип клина: не определено` placeholder until wedge-type classification is implemented;
 - symbol/timeframe, quality score and movement potential are preserved, including the `РАСЧЁТ НЕДОСТУПЕН` fallback when `potential.signed_percent` is absent.
 
-Acceptance criteria for the future renderer change:
+Acceptance criteria (met by the PR #175 renderer change):
 
 1. No chart header contains `СТРУКТУРА:`, `ГЕОМЕТРИЯ:`, `ОБУЧЕНИЕ:` or a `ПАТТЕРН:` line.
 2. The pattern name is the second line, rendered directly.
 3. A Falling Wedge or Rising Wedge header contains exactly one `Тип клина: не определено` line immediately after the pattern name and before quality/potential.
 4. A Triangle Compression header contains no `Тип клина` line.
-5. Symbol/timeframe, `КАЧЕСТВО СТРУКТУРЫ` and `ПОТЕНЦИАЛ ДВИЖЕНИЯ` lines are byte-identical to CURRENT.
+5. Symbol/timeframe, `КАЧЕСТВО СТРУКТУРЫ` and `ПОТЕНЦИАЛ ДВИЖЕНИЯ` lines are byte-identical to the previous form.
 6. `tests/test_chart_clean_title.py` is updated in the same change; no detector, scoring, geometry or Robot behavior changes.
 
  ## Ownership boundary

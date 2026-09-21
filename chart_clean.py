@@ -136,87 +136,12 @@ def build_chart_title(symbol, result):
         pattern
     )
 
-    geometry = (
-        result.get(
-            "geometry"
-        )
-        or {}
-    )
-
-    pair_metrics = (
-        geometry.get(
-            "pair_metrics"
-        )
-        or {}
-    )
-
-    geometry_mode = result.get(
-        "geometry_mode"
-    )
-
-    if not geometry_mode:
-        geometry_mode = pair_metrics.get(
-            "geometry_mode",
-            "NONE"
-        )
-
-    geometry_names = {
-        "CANONICAL":
-            'КАНОНИЧЕСКАЯ',
-
-        "EXPLORATORY":
-            'ИССЛЕДОВАТЕЛЬСКАЯ',
-
-        "NONE":
-            'НЕТ',
-
-        "UNKNOWN":
-            'НЕТ',
-
-        "REJECT":
-            'ОТКЛОНЕНА',
-    }
-
-    geometry_name = geometry_names.get(
-        geometry_mode,
-        str(geometry_mode)
-    )
-
-    detection = (
-        result.get(
-            "detection"
-        )
-        or {}
-    )
-
-    pattern_confirmed = bool(
-        detection.get(
-            "detected",
-            False
-        )
-    )
-
-    detection_name = (
-        "ПОДТВЕРЖДЕН"
-        if pattern_confirmed
-        else "НЕ ПОДТВЕРЖДЕН"
-    )
-
     score = result.get(
         "final_score",
         result.get(
             "score",
             0
         )
-    )
-
-    training_name = (
-        "ПОДХОДИТ"
-        if (
-            geometry_mode == "CANONICAL"
-            and pattern_confirmed
-        )
-        else "НЕ ИСПОЛЬЗУЕТСЯ"
     )
 
     potential = (
@@ -248,15 +173,14 @@ def build_chart_title(symbol, result):
         else symbol
     )
 
-    return (
-        f"{title_symbol_line}\n"
-        f"СТРУКТУРА: {structure_name}\n"
-        f"ГЕОМЕТРИЯ: {geometry_name}\n"
-        f"ПАТТЕРН: {detection_name}\n"
-        f"КАЧЕСТВО СТРУКТУРЫ: {score}/100\n"
-        f"ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}\n"
-        f"ОБУЧЕНИЕ: {training_name}"
-    )
+    lines = [title_symbol_line, structure_name]
+    if pattern in ("Falling Wedge", "Rising Wedge"):
+        lines.append("Тип клина: не определено")
+    lines.extend((
+        f"КАЧЕСТВО СТРУКТУРЫ: {score}/100",
+        f"ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}",
+    ))
+    return "\n".join(lines)
 
 
 
