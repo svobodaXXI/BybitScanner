@@ -78,3 +78,26 @@ def test_canonical_priority_is_preserved():
             freshness_predicate=lambda geometry: True,
         )
     assert result is canonical
+
+
+def test_all_stale_pool_still_returns_geometry():
+    """No fresh candidate: keep pre-change behaviour instead of dropping
+    geometry, so the detector still receives it and reports detected=False
+    itself. Ranking among the stale pool stays (mode_priority, score)."""
+
+    low = _candidate("EXPLORATORY", 100, 0, 20)
+    high = _candidate("EXPLORATORY", 200, 7, 156)
+    low.score, high.score = 100, 200
+    with (
+        patch("geometry.engine.build_candidate_lines", side_effect=[
+            [{"line": 1}], [{"line": 2}, {"line": 3}]
+        ]),
+        patch("geometry.engine.filter_candidates", side_effect=lambda values: values),
+        patch("geometry.engine.evaluate_candidate_pair", side_effect=[low, high]),
+        patch("geometry.engine.rank_geometry", side_effect=lambda geometry: geometry.score),
+    ):
+        result = analyze_geometry(
+            [None] * 4, [None] * 4,
+            freshness_predicate=lambda geometry: False,
+        )
+    assert result is high
