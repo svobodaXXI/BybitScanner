@@ -237,6 +237,25 @@ and at the SAME bar, all of the following hold:
 
 An emptied pool is not rescued: no admissible candidate means no geometry.
 
+### Applicable interval - measured limitation, 2026-09-21
+
+`calculate_envelope_metrics()` computes BOTH evidence lists - the boundary's
+`outside_indices` and the body-zone breach indices - starting at
+`common_start`, the later of the two primary anchors. The rule as written
+above says "at or after that boundary's own primary anchor"; for the
+earlier-anchored boundary that evidence does not exist, so the check in fact
+applies over `common_start..end_index` and the own-anchor condition is a
+non-binding guard.
+
+Extending the gate evidence to each boundary's own anchor was measured on the
+saved snapshots and is NOT authorized: it rejects the committed AEVOUSDT
+reference winner U156/L95 95-190 (lower contradictions at bars 102 and 140,
+inside the 95..155 prefix) and moves the INJ winner 68-184 -> 77-184 and the
+WLD winner 117-196 -> 129-196. That is the same class of reference regression
+that closed PR #178, so the narrower `common_start..END` interval stands as
+the approved applicability. Widening it would require a separate decision that
+first resolves the AEVO reference.
+
 ### Why this is not the disabled containment penalty
 
 - It is a *boundary-validity* statement, not a containment measurement: a line

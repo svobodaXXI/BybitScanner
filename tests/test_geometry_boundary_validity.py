@@ -220,6 +220,45 @@ class BoundaryContradictionTest(unittest.TestCase):
         self.assertIsNone(_select([candidate]))
 
 
+class EvidenceIntervalTest(unittest.TestCase):
+    """Pins the measured limitation: the gate can only see evidence that
+    calculate_envelope_metrics() actually produces, which starts at
+    common_start (the later primary anchor), not at each boundary's own
+    anchor. Widening it rejects the AEVO reference, so this is deliberate."""
+
+    def test_gate_evidence_starts_at_common_start(self):
+        import pandas as pd
+
+        from geometry.envelope_metrics import calculate_envelope_metrics
+
+        candles = pd.DataFrame(
+            [{"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0}] * 40,
+            columns=["open", "high", "low", "close"],
+        )
+        upper = {
+            "line": {"slope": 0.0, "intercept": 105.0, "anchor_index": 20},
+            "points": [{"index": 20, "price": 105.0}, {"index": 30, "price": 105.0}],
+        }
+        lower = {
+            "line": {"slope": 0.0, "intercept": 95.0, "anchor_index": 10},
+            "points": [{"index": 10, "price": 95.0}, {"index": 30, "price": 95.0}],
+        }
+
+        metrics = calculate_envelope_metrics(
+            upper,
+            lower,
+            highs=upper["points"],
+            lows=lower["points"],
+            current_index=35,
+            candles=candles,
+        )
+
+        # common_start is max(20, 10); the lower boundary's own anchor 10 is
+        # NOT the start of its evidence.
+        self.assertEqual(metrics["common_start"], 20)
+        self.assertEqual(metrics["body_zone_breaches"]["start_index"], 20)
+
+
 class ConfirmedCaseUnchangedTest(unittest.TestCase):
 
     @unittest.skipUnless(os.path.exists(FIXTURE), "AEVOUSDT fixture not present")

@@ -143,6 +143,16 @@ def _boundary_contradiction_index(
     Post-END price action is deliberately NOT a formation defect: a break
     after the structure completed is a breakout, not an invalid boundary.
 
+    APPLICABLE INTERVAL, measured 2026-09-21: calculate_envelope_metrics()
+    produces both evidence lists from `common_start`, the LATER of the two
+    primary anchors, so in practice this check spans common_start..END and
+    the own-anchor condition below is a non-binding guard for the
+    earlier-anchored boundary. Recomputing the evidence from each
+    boundary's own anchor was measured and REJECTED: it rejects the
+    committed AEVOUSDT reference (lower contradictions at bars 102 and 140,
+    inside its 95..155 prefix) and moves the INJ and WLD winners. See the
+    owning decision document.
+
     Returns the first contradicted bar, or None.
     """
 
