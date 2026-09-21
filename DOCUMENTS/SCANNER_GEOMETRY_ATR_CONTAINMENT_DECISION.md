@@ -211,4 +211,66 @@ Containment evaluation must not be re-enabled merely by flipping the production 
 
 `tests/test_scanner_geometry_atr_containment.py` confirms default OFF behavior for Falling Wedge, Rising Wedge, and Triangle Compression with breaches present. Existing tests temporarily enable the switch through `unittest.mock.patch` to exercise the preserved Falling Wedge upper, lower-strict, late-flexible, reversal-exception, and missing-candles behavior. The focused module passed all 29 tests on 2026-09-12; this result verifies the switch behavior and retained implementation, not calibration acceptance.
 
+## Approved narrow exception - 2026-09-21: Geometry-layer boundary validity
+
+Status: APPROVED, NARROW
+
+The soft-penalty policy recorded above is unchanged,
+`CONTAINMENT_VIOLATION_EVALUATION_ENABLED` stays `False`, and no generic hard
+containment gate on breach count, ratio or severity is authorized. This
+section records one narrowly scoped exception, approved by the user on
+2026-09-21 after the AAVE/POL/PONS historical review.
+
+### Rule
+
+`geometry/engine.py` rejects a candidate before ranking when, on ONE boundary
+and at the SAME bar, all of the following hold:
+
+- a confirmed pivot of that boundary's own type lies outside the line beyond
+  the EXISTING pivot-line tolerance (`evaluate_boundary()` already filters
+  these into `envelope_metrics[side]["outside_indices"]`);
+- the candle body breaches that same line at that bar
+  (`evaluate_body_zone_breaches()`);
+- the bar is at or after that boundary's own primary anchor, so the boundary
+  is applicable there;
+- the bar is no later than the existing formation `end_index`.
+
+An emptied pool is not rescued: no admissible candidate means no geometry.
+
+### Why this is not the disabled containment penalty
+
+- It is a *boundary-validity* statement, not a containment measurement: a line
+  contradicted by its own confirmed extremum AND its own candle body at the
+  same in-formation bar is not a boundary at all.
+- It adds no threshold and no new constant; both inputs are already computed
+  with existing tolerances.
+- It never rejects on breach count, ratio or severity. Bodies alone never
+  reject; an outside pivot alone never rejects; evidence split across the two
+  different boundaries is not a contradiction.
+- It does not enable or alter `evaluate_containment_violations()`, the Falling
+  Wedge penalty, the tier-downgrade scale, or the Rising Wedge / Triangle
+  KNOWN_GAP recorded above.
+
+### Explicitly excluded
+
+- **Post-END price action is never a formation defect.** A break after the
+  structure completed is a breakout; the formation and its historical
+  confirmation stand. PONSUSDT is the recorded reference for this.
+- No symbol-specific rule, and no change to generator spacing, ranking
+  priority, freshness, formation END or detector semantics.
+
+### Unchanged boundaries
+
+Freshness remains a hard gate. Validation, touch logic, body-zone calculation,
+reversal-pattern recognizers, the disabled evaluator, the quality downgrade and
+Robot admission are all unchanged.
+
+### Verification
+
+`tests/test_geometry_boundary_validity.py` covers the actual contradiction, the
+same-boundary/same-bar requirement, boundary applicability, post-END exclusion,
+the at-END case and the no-fallback empty pool. The existing AEVO fixture
+regressions in `tests/test_geometry_candidate_selection_freshness.py` and
+`tests/test_geometry_locality_admission.py` are run unchanged.
+
 # END_OF_DOCUMENT
