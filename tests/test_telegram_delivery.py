@@ -68,7 +68,7 @@ class TelegramSignalFormattingTests(unittest.TestCase):
         self.assertEqual(
             message,
             "📡 Сканер: 1000NEIROCTOUSDT 🟠\n"
-            "Паттерн: Нисходящий клин\n"
+            "Нисходящий клин\n"
             "Таймфрейм: 1м\n"
             "\n"
             "Баллы: 78",
