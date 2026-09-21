@@ -2,7 +2,7 @@
 
 Version:
 
-4.41
+4.42
 
 Date:
 
@@ -122,7 +122,9 @@ Immediately before sending any response that requires user action, verify that:
 6. any exact requested user reply—including `готово`, `да`, `PASS`, `A`, `э`, or another literal confirmation—is
    itself in a copy-ready block introduced by `Сейчас сделай:`;
 7. current communication authority has been loaded and, if this protocol changed during the session, its changed
-   communication/workflow sections have been reloaded.
+   communication/workflow sections have been reloaded;
+8. when the action operates on a project component, its real entrypoint, dependency chain and side effects have
+   been resolved as required by `2.2.3`.
 
 If any condition fails, correct the response before sending it. This is an enforcement/preflight gate for the
 existing `COPY_READY_ACTION_BLOCK_RULE`, not a second copy-ready specification.
@@ -137,6 +139,33 @@ Everything the assistant can do automatically — Git operations, process restar
 Claude Code (or Codex) through a prompt, not handed to the user as commands. A prompt for Claude Code counts as 1
 block. The batching allowance in `2.2` ("Independent safe commands may be batched.") applies only within this limit.
 Preflight `2.2.1` also verifies this limit before sending a response that requires user action.
+
+### 2.2.3 OPERATIONAL ENTRYPOINT TRACE — HARD RULE
+
+Before asking the user to start, stop, restart, enable, configure, deploy, or synchronize a BybitScanner component,
+resolve the smallest actual operational path **yourself**:
+
+1. Identify the real entrypoint for the requested outcome (launcher, menu command, service, API or task). Read its
+   current repository source and trace calls to other launchers, modules, environment/config loaders and relevant
+   runtime owners until the processes started, configuration inheritance and material side effects are clear. Use
+   the repository connector for committed sources; never ask the user to paste those files. A filename, remembered
+   command or previous chat is not evidence of what the entrypoint currently does.
+2. Separate repository facts from host reality. For current processes, unsaved edits, ignored local config,
+   runtime state, installed services or network access, use existing local evidence; ask for only the specific
+   missing host-local fact that cannot be obtained directly. Never request API keys, tokens or secret-bearing
+   config contents. Do not infer the Windows or VPS state from the other host.
+3. Check whether the path also starts unrelated components, sends Telegram messages, creates duplicate workers,
+   changes Robot state, places orders or changes LIVE/PAPER boundaries. Distinguish launching a PAPER backend from
+   enabling autonomous trading. Do not silently substitute a multi-component launcher for a scanner-only request;
+   explain side effects and secure any necessary authorization before the launch.
+4. Give the next safe actionable step only **after** the trace, reusing the project's existing control surface.
+   If the path cannot be established, stop at the narrowest missing dependency rather than issuing exploratory
+   commands one after another.
+
+Apply the same task-scoped trace when recommending test/build commands (actual harness), Telegram signal enablement
+(flag → consumer → sender), Trading Workspace access (frontend build → backend → tunnel), or Git/VPS synchronization
+(branch → host → runtime). This rule requires no new skill, global inventory, full Project Sync or repeated checks
+when the relevant trace has already been verified and its source/host state has not changed.
 
 ## 2.3 NO ASSUMED USER STATE + BEGINNER-SAFE STEP-BY-STEP
 
@@ -758,6 +787,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.42` adds §2.2.3 and the §2.2.1 operational preflight gate: resolve real launch/control dependencies and side effects from repository sources before asking the user to inspect files or execute an operational command. Root AGENTS.md routes operational intent here. No new skill or startup infrastructure is required.
 
 `4.41` adds the user requirements of 2026-09-19 as hard rules: `2.2.2 COMMAND_LOAD_LIMIT_RULE` (at most 2 commands or
 blocks per response; automatable work goes to Claude Code as a prompt), `8.11 NO_MANUAL_FILE_PLACEMENT_RULE` (the user
