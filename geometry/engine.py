@@ -150,6 +150,13 @@ def analyze_geometry(
     best_mode_priority = -1
     best_body_breaches = float("inf")
 
+    # Fallback used ONLY when no candidate passes freshness, so that a pool
+    # without any fresh structure keeps returning geometry exactly as before
+    # this change and the detector still decides detected=False itself.
+    fallback_geometry = None
+    fallback_score = -999
+    fallback_mode_priority = -1
+
     for upper_candidate in upper_candidates:
 
         for lower_candidate in lower_candidates:
@@ -188,6 +195,32 @@ def analyze_geometry(
             # Use the detector's existing freshness decision when supplied by
             # the wedge coordinator; do not impose a second freshness formula.
             if freshness_predicate is not None and not freshness_predicate(geometry):
+
+                stale_score = rank_geometry(geometry)
+
+                stale_mode_priority = (
+                    1
+                    if (
+                        getattr(geometry, "pair_metrics", {}) or {}
+                    ).get(
+                        "geometry_mode",
+                        "EXPLORATORY"
+                    ) == "CANONICAL"
+                    else 0
+                )
+
+                if (
+                    stale_mode_priority > fallback_mode_priority
+                    or (
+                        stale_mode_priority == fallback_mode_priority
+                        and stale_score > fallback_score
+                    )
+                ):
+
+                    fallback_mode_priority = stale_mode_priority
+                    fallback_score = stale_score
+                    fallback_geometry = geometry
+
                 continue
 
             body_zones = (
@@ -249,6 +282,11 @@ def analyze_geometry(
                 best_score = geometry_score
                 best_body_breaches = body_breaches
                 best_geometry = geometry
+
+    if best_geometry is None:
+
+        best_geometry = fallback_geometry
+        best_score = fallback_score
 
     #
     # 6. РўРѕР»СЊРєРѕ РІР°Р»РёРґРёСЂРѕРІР°РЅРЅР°СЏ РјРѕРґРµР»СЊ
