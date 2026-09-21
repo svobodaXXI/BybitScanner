@@ -158,7 +158,7 @@ class IkigaiBoxWatchStreamTests(unittest.TestCase):
                 stream._WATCH_CURSORS[("HEIUSDT", "60")]["pending"]
             )
 
-    def test_main_opt_in_watch_routes_without_changing_old_box_sender(self):
+    def test_main_opt_in_watch_runs_alongside_the_confirmed_box_sender(self):
         frame, end = _historical_frame()
         snapshot = _bybit_snapshot(frame, end)
         with patch.dict(os.environ, {
@@ -173,8 +173,11 @@ class IkigaiBoxWatchStreamTests(unittest.TestCase):
             "ikigai_box_scanner.send_ikigai_box_observation",
         ) as old_box, patch("notification.create_signal_snapshot") as robot:
             main.run_scan_pass()
+        # WATCH supplements the stateless confirmed-formation sender; it must
+        # not replace it, or an initial pass could never report an existing
+        # Box while its process-local cursor is still bootstrapping.
         watch.assert_called_once()
-        old_box.assert_not_called()
+        old_box.assert_called_once()
         robot.assert_not_called()
 
 

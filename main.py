@@ -133,25 +133,18 @@ def run_scan_pass():
                 os.environ.get("BYBITSCANNER_IKIGAI_BOX_SIGNALS") == "1"
                 and analysis_result.get("data") is not None
             ):
+                # The confirmed-formation sender is stateless, so it runs on
+                # every pass and the very first one can already report Boxes
+                # that formed before the Scanner started.
                 try:
-                    if os.environ.get("BYBITSCANNER_IKIGAI_BOX_WATCH") == "1":
-                        from ikigai_box_watch_stream import process_ikigai_box_watches
+                    from ikigai_box_scanner import send_ikigai_box_observation
 
-                        box_sent = process_ikigai_box_watches(
-                            symbol,
-                            analysis_result["data"],
-                            timeframe=config.TIMEFRAME,
-                            test_mode=config.TELEGRAM_TEST_MODE,
-                        )
-                    else:
-                        from ikigai_box_scanner import send_ikigai_box_observation
-
-                        box_sent = send_ikigai_box_observation(
-                            symbol,
-                            analysis_result["data"],
-                            timeframe=config.TIMEFRAME,
-                            test_mode=config.TELEGRAM_TEST_MODE,
-                        )
+                    box_sent = send_ikigai_box_observation(
+                        symbol,
+                        analysis_result["data"],
+                        timeframe=config.TIMEFRAME,
+                        test_mode=config.TELEGRAM_TEST_MODE,
+                    )
                     if box_sent:
                         box_observation_count += 1
                         sent_to_telegram_count += 1
@@ -160,6 +153,29 @@ def run_scan_pass():
                     # An experimental pattern must not suppress the existing
                     # Wedge Scanner signal on the same market.
                     print(f"{symbol:<15} IKIGAI BOX ERROR: {box_error}")
+
+                # WATCH is an additional early-observation mode, never a
+                # replacement: its process-local cursor deliberately only
+                # bootstraps on the first pass and emits from the next closed
+                # candle on. A WATCH card for an A/B pair the confirmed sender
+                # already delivered is suppressed by the shared signal_memory
+                # identity, so no second mechanism is needed here.
+                if os.environ.get("BYBITSCANNER_IKIGAI_BOX_WATCH") == "1":
+                    try:
+                        from ikigai_box_watch_stream import process_ikigai_box_watches
+
+                        watch_sent = process_ikigai_box_watches(
+                            symbol,
+                            analysis_result["data"],
+                            timeframe=config.TIMEFRAME,
+                            test_mode=config.TELEGRAM_TEST_MODE,
+                        )
+                        if watch_sent:
+                            box_observation_count += 1
+                            sent_to_telegram_count += 1
+                            print(f"{symbol:<15} IKIGAI BOX WATCH observation SENT")
+                    except Exception as watch_error:
+                        print(f"{symbol:<15} IKIGAI BOX WATCH ERROR: {watch_error}")
 
             analysis = analysis_result.get("result")
 
