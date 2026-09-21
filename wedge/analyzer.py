@@ -46,7 +46,10 @@ Result
 from geometry.engine import analyze_geometry
 
 
-from .detector import detect_structure
+from .detector import (
+    detect_structure,
+    evaluate_structure_freshness
+)
 
 
 from .result import (
@@ -103,6 +106,29 @@ def _normalize_geometry(
 
 
 
+def _freshness_predicate(
+    start_index,
+    end_index,
+    apex_index,
+    current_index
+):
+    """
+    Wedge-owned freshness predicate handed to the Geometry candidate
+    selector.
+
+    Geometry must not import Wedge (LAYER_REGISTRY: Geometry Engine sits
+    below Pattern Detection), so the Pattern layer injects its own gate
+    here. Same function, constants and semantics detect_structure() uses.
+    """
+
+    return evaluate_structure_freshness(
+        start_index,
+        end_index,
+        apex_index,
+        current_index
+    )["fresh"]
+
+
 def analyze_wedge(
     highs,
     lows,
@@ -121,7 +147,8 @@ def analyze_wedge(
         highs,
         lows,
         current_index=current_index,
-        candles=candles
+        candles=candles,
+        freshness_predicate=_freshness_predicate
     )
 
     geometry_data = _normalize_geometry(
