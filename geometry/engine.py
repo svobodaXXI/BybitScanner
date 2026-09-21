@@ -57,7 +57,8 @@ def analyze_geometry(
     highs,
     lows,
     current_index=None,
-    candles=None
+    candles=None,
+    freshness_predicate=None
 ):
     """
     Р“Р»Р°РІРЅР°СЏ С„СѓРЅРєС†РёСЏ Р°РЅР°Р»РёР·Р° РіРµРѕРјРµС‚СЂРёРё.
@@ -147,6 +148,7 @@ def analyze_geometry(
     best_geometry = None
     best_score = -999
     best_mode_priority = -1
+    best_body_breaches = float("inf")
 
     for upper_candidate in upper_candidates:
 
@@ -183,6 +185,24 @@ def analyze_geometry(
             ):
                 continue
 
+            # Use the detector's existing freshness decision when supplied by
+            # the wedge coordinator; do not impose a second freshness formula.
+            if freshness_predicate is not None and not freshness_predicate(geometry):
+                continue
+
+            body_zones = (
+                (getattr(geometry, "envelope_metrics", {}) or {})
+                .get("body_zone_breaches") or {}
+            )
+            body_breaches = sum(
+                len(body_zones.get(key) or ())
+                for key in (
+                    "upper_body_breach_indices",
+                    "lower_body_breach_early_indices",
+                    "lower_body_breach_late_indices",
+                )
+            )
+
             #
             # 5. Geometry Ranking
             #
@@ -215,12 +235,19 @@ def analyze_geometry(
                 mode_priority > best_mode_priority
                 or (
                     mode_priority == best_mode_priority
-                    and geometry_score > best_score
+                    and (
+                        body_breaches < best_body_breaches
+                        or (
+                            body_breaches == best_body_breaches
+                            and geometry_score > best_score
+                        )
+                    )
                 )
             ):
 
                 best_mode_priority = mode_priority
                 best_score = geometry_score
+                best_body_breaches = body_breaches
                 best_geometry = geometry
 
     #
