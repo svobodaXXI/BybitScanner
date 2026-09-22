@@ -149,7 +149,8 @@ def evaluate_candidate_pair(
         lower_candidate,
         current_index,
         highs=highs or [],
-        lows=lows or []
+        lows=lows or [],
+        candles=candles
     )
 
     if pair_metrics is None:

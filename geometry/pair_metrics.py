@@ -195,12 +195,58 @@ def calculate_convergence_metrics(
     }
 
 
+def _is_leg_extreme(
+    side,
+    price,
+    origin_index,
+    end_index,
+    candles,
+    same_points
+):
+    """
+    True when `price` is the most extreme `side` price in the leg
+    origin_index < index <= end_index. Uses candle highs/lows when
+    available, otherwise the confirmed same-side pivots.
+    """
+
+    if candles is not None:
+
+        try:
+            values = [
+                float(value)
+                for value in candles[side].iloc[
+                    origin_index + 1:end_index + 1
+                ]
+            ]
+        except Exception:
+            return False
+
+    else:
+
+        values = [
+            float(point["price"])
+            for point in (same_points or [])
+            if (
+                isinstance(point, dict)
+                and point.get("index") is not None
+                and point.get("price") is not None
+                and origin_index < point["index"] <= end_index
+            )
+        ]
+
+    if side == "high":
+        return all(value <= price for value in values)
+
+    return all(value >= price for value in values)
+
+
 def calculate_pair_metrics(
     upper_candidate,
     lower_candidate,
     current_index,
     highs=None,
-    lows=None
+    lows=None,
+    candles=None
 ):
     """
     Собирает диагностические
@@ -419,6 +465,9 @@ def calculate_pair_metrics(
         #
 
         opposite_points = []
+        same_points = []
+        primary_side = None
+        primary_price = None
 
         if upper_anchor < lower_anchor:
 
@@ -428,6 +477,9 @@ def calculate_pair_metrics(
             primary_anchor = upper_anchor
             secondary_anchor = lower_anchor
             opposite_points = lows
+            same_points = highs
+            primary_side = "high"
+            primary_price = upper_line.get("anchor_price")
 
         elif lower_anchor < upper_anchor:
 
@@ -437,6 +489,9 @@ def calculate_pair_metrics(
             primary_anchor = lower_anchor
             secondary_anchor = upper_anchor
             opposite_points = highs
+            same_points = lows
+            primary_side = "low"
+            primary_price = lower_line.get("anchor_price")
 
         # Equal anchor indices: no chronological first anchor exists;
         # primary_anchor stays None and the pair fails below.
@@ -464,11 +519,59 @@ def calculate_pair_metrics(
         # later opposite-side pivot skipped forward to from a
         # different, later episode.
 
+        # The first anchor must END the preceding impulse: the impulse leg
+        # starts at the last confirmed opposite-side pivot before it and
+        # reverses into the second anchor, so no price on the first
+        # anchor's side within that leg may exceed it. Strict price
+        # comparison only -- no new threshold. Without a confirmed origin
+        # the impulse is not established and the pair fails closed.
+        # NOT covered: whether that leg is the directional impulse or only
+        # a counter-trend swing (e.g. a lower high after a higher peak);
+        # separating them needs an owner-defined swing criterion.
+
+        impulse_origin_index = None
+        first_anchor_terminal = False
+
+        if (
+            primary_anchor is not None
+            and secondary_anchor is not None
+            and primary_price is not None
+        ):
+
+            earlier_opposite = [
+                point["index"]
+                for point in (opposite_points or [])
+                if (
+                    isinstance(point, dict)
+                    and point.get("index") is not None
+                    and point["index"] < primary_anchor
+                )
+            ]
+
+            if earlier_opposite:
+
+                impulse_origin_index = max(earlier_opposite)
+
+                first_anchor_terminal = _is_leg_extreme(
+                    primary_side,
+                    float(primary_price),
+                    impulse_origin_index,
+                    secondary_anchor,
+                    candles,
+                    same_points
+                )
+
         sequence_valid = (
             secondary_anchor is not None
             and secondary_anchor
             == expected_secondary_index
+            and first_anchor_terminal
         )
+
+    else:
+
+        impulse_origin_index = None
+        first_anchor_terminal = None
 
     anchor_sequence = {
         "family":
@@ -482,6 +585,12 @@ def calculate_pair_metrics(
 
         "expected_secondary_index":
             expected_secondary_index,
+
+        "impulse_origin_index":
+            impulse_origin_index,
+
+        "first_anchor_terminal":
+            first_anchor_terminal,
 
         "valid":
             sequence_valid

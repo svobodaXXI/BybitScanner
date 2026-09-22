@@ -89,6 +89,46 @@ class BonkAnchorLocalityNegativeTest(unittest.TestCase):
         self.assertNotEqual(result.get("pattern"), "Rising Wedge")
 
 
+class FirstAnchorMustEndPrecedingImpulseTest(unittest.TestCase):
+    """False-positive pair: anchors in the right order and the second anchor
+    IS the next confirmed opposite-side pivot, but the first anchor does not
+    end the preceding impulse -- a higher HIGH20 follows it inside the same
+    leg LOW0 -> LOW40. Changing only HIGH20 into a lower high must make the
+    same pair valid, so the terminal-extreme check is the discriminator.
+    """
+
+    def _anchor_sequence(self, high20_price):
+        from geometry.pair_metrics import calculate_pair_metrics
+
+        frame = pd.DataFrame([dict(high=98., low=96.) for _ in range(61)])
+        frame.loc[0, "low"] = 90.
+        frame.loc[10, "high"] = 100.
+        frame.loc[20, "high"] = high20_price
+        frame.loc[40, "low"] = 95.
+        highs = [dict(index=10, price=100.), dict(index=20, price=high20_price)]
+        lows = [dict(index=0, price=90.), dict(index=40, price=95.)]
+        upper = {"line": dict(slope=.1, intercept=99., anchor_index=10,
+                              anchor_price=100., structure_span=30)}
+        lower = {"line": dict(slope=.2, intercept=87., anchor_index=40,
+                              anchor_price=95., structure_span=20)}
+        metrics = calculate_pair_metrics(upper, lower, 60, highs=highs, lows=lows, candles=frame)
+        return metrics["anchor_sequence"]
+
+    def test_first_anchor_not_ending_the_impulse_is_rejected(self):
+        sequence = self._anchor_sequence(high20_price=105.)
+        self.assertEqual(sequence["family"], "rising")
+        self.assertEqual(sequence["primary_anchor"], 10)
+        self.assertEqual(sequence["secondary_anchor"], 40)
+        self.assertEqual(sequence["expected_secondary_index"], 40)
+        self.assertEqual(sequence["impulse_origin_index"], 0)
+        self.assertFalse(sequence["first_anchor_terminal"])
+        self.assertFalse(sequence["valid"])
+
+        control = self._anchor_sequence(high20_price=99.)
+        self.assertTrue(control["first_anchor_terminal"])
+        self.assertTrue(control["valid"])
+
+
 class PonsUniversalAnchorPositiveControlTest(unittest.TestCase):
     """PONS is the one wedge (not triangle) case in the frozen eleven-case
     fixture whose already-selected anchors satisfy the universal rule
