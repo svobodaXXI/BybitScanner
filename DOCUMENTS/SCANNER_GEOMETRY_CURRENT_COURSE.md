@@ -103,8 +103,8 @@ universal numeric impulse threshold from one historical example.
 isolated `C:\BybitScanner-lshape` checkpoint (`geometry/l_shape.py`,
 `geometry/l_shape_preview.py`, `tests/test_l_shape_detector.py`,
 `tests/test_l_shape_preview.py`) are published to GitHub `main` in
-REPLACE_WITH_PR_LINK, commit
-`REPLACE_WITH_SHA`. The owner-corrected drawing above is implemented exactly:
+[PR #195](https://github.com/svobodaXXI/BybitScanner/pull/195), commit
+`0d8966b`. The owner-corrected drawing above is implemented exactly:
 `render_l_shape_preview()` draws only a dashed rightward ray at the confirmed
 impulse HIGH `H` (`formation.impulse_high`) and one target level
 `T = 2*H - L`, where `L = formation.shelf_low` -- already the detector's own

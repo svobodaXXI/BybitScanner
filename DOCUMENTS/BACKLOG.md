@@ -157,7 +157,7 @@ Priority after user-requested L-shape work: detector + visual Scanner/Telegram s
 
 ### G6 — L-shaped continuation
 Offline detector and preview published to `main` in
-REPLACE_WITH_PR_LINK: impulse, then a
+[PR #195](https://github.com/svobodaXXI/BybitScanner/pull/195): impulse, then a
 narrow shelf near the extreme; HIGH-first (LONG) preview draws only the
 impulse-HIGH ray and target `T = 2*H - L`, no Fibonacci. Current status,
 what remains unimplemented (preceding-impulse-vs-ordinary-swing proof) and
