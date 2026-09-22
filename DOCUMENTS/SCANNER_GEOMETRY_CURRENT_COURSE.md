@@ -10,17 +10,21 @@ The user-authorized post-#182 full 5m Scanner acceptance pass surfaced a new
 defect class: `1000BONKUSDT`, `1000TURBOUSDT`, `1000XECUSDT` admitted as
 `Rising Wedge EXPLORATORY score=95 STRENGTHENING` with an upper boundary anchored
 before the reversal impulse the lower boundary anchors to, drawn forward across
-an unrelated later consolidation. Candle bodies stay inside both boundaries
-(confirmed by zoomed chart inspection and by re-measuring `formation_body_fit` at
-0 breaches), so this is not the #182 body-containment defect class. Every existing
-pair-level metric (anchor order, breach run, slope ratio, anchor/support balance,
-fit error, convergence flags) was tested against the frozen 11-case fixture and
-none separates this shape from the already-accepted INJ/WLD/XRP/AAVE/AZTEC/PONS
-counterexamples without regressing them. No admission/ranking code change was
+a later consolidation. The original signal-time 200-bar OHLC windows were not
+persisted: later/reconstructed windows reporting zero body breaches cannot prove
+that the original bodies did not cross the boundaries. Both anchor locality
+and the original signal-time containment remain open. Tested existing pair-level
+metrics (anchor order, breach run, slope ratio, anchor/support balance, fit error
+and convergence flags) did not yield a justified universal gate using the
+existing 11-case fixture; these historical selections are comparison evidence,
+not immutable winners if their anchors are structurally wrong. No admission/ranking code change was
 made; full evidence and the recommended next step are recorded in
 `SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` ("Investigated and NOT implemented
 — 2026-09-22: BONK/TURBO/XEC anchor-locality defect"). Read that section before
-retrying — do not re-run the same falsified numeric candidates.
+retrying — do not re-run the same falsified numeric candidates. The next
+bounded correction is to validate which local price phase owns each confirmed
+anchor, using existing pivots/candles and retained historical cases, rather
+than tune another global cutoff or assume later OHLC reproduces the signal.
 
 The Scanner that surfaced this was left running throughout the investigation, per
 explicit instruction; this defect is therefore still live in that pass's output
