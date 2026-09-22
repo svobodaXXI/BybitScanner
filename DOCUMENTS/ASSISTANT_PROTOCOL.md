@@ -287,6 +287,21 @@ A previously authorized long-running scan/build/CI job with a clear purpose
 may continue without repeated polling, redundant tests, or interrupting
 unrelated processes. Do not claim completion for an unfinished step.
 
+### 3.2.2 DEFERRED: chat-independent task continuation (idea, NOT an active migration)
+
+Problem: repeated new-chat handoffs have accumulated overlapping summaries, indexes,
+sync procedures and re-reading. Future simplification, **only when the owner
+returns to this task**: let the repository own a single concise current-task
+checkpoint (goal, binding decision, verified state, next action, done criterion).
+A new chat follows the existing `AGENTS.md` staged entry to that checkpoint,
+reads only necessary code/evidence and continues; ordinary chat changes must
+not trigger full Project Sync, ContextDump, document audit, repeat diagnostics,
+or a user-authored handoff. Prefer reusing the existing task/state location
+and replacing duplicate text with links; create no new subsystem or protocol.
+Trial on one active task, retain required safety and local dirty-work checks,
+and stop if the short entry is sufficient. **No implementation or workflow
+migration is authorized by this note; the owner is working on other tasks now.**
+
 ---
 
 # 4. LOCAL REALITY AND USER-OWNED WORK
