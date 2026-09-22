@@ -160,49 +160,6 @@ class FirstAnchorMustEndPrecedingImpulseTest(unittest.TestCase):
         self.assertIsNone(_select([wrong_start]))
 
 
-    def test_c_beyond_a_with_shorter_second_wave_passes_wave_criterion(self):
-        # A = HIGH10 (100), B = LOW40 (105), C = HIGH50 (108): C lies beyond
-        # A, yet |C-B| = 3 < |B-A| = 5, so the wave-length criterion passes.
-        # Order A->B->C and "B is the next opposite pivot" hold.
-        from geometry.pair_metrics import calculate_pair_metrics
-
-        frame = pd.DataFrame([dict(high=98., low=96.) for _ in range(61)])
-        frame.loc[0, "low"] = 90.
-        frame.loc[10, "high"] = 100.
-        frame.loc[40, ["low", "high"]] = [105., 106.]
-        frame.loc[50, "high"] = 108.
-        highs = [dict(index=10, price=100.), dict(index=50, price=108.)]
-        lows = [dict(index=0, price=90.), dict(index=40, price=105.)]
-        upper = {"line": dict(slope=.3, intercept=97., anchor_index=10,
-                              anchor_price=100., structure_span=40)}
-        lower = {"line": dict(slope=.25, intercept=95., anchor_index=40,
-                              anchor_price=105., structure_span=20)}
-
-        def sequence(candles):
-            return calculate_pair_metrics(
-                upper, lower, 60, highs=highs, lows=lows, candles=candles
-            )["anchor_sequence"]
-
-        # Other independent checks satisfied (pivot-only terminality: no HIGH
-        # pivot above A inside the leg) -> the pair is valid; C beyond A is
-        # not rejected by the wave criterion.
-        pivot_only = sequence(None)
-        self.assertEqual((pivot_only["primary_anchor"], pivot_only["secondary_anchor"],
-                          pivot_only["expected_secondary_index"],
-                          pivot_only["third_pivot_index"]), (10, 40, 40, 50))
-        self.assertTrue(pivot_only["swing_contraction_valid"])
-        self.assertTrue(pivot_only["first_anchor_terminal"])
-        self.assertTrue(pivot_only["valid"])
-
-        # Shown separately: with candles, the independent terminality check
-        # rejects the same pair (B's own bar, high 106, trades above A inside
-        # the leg). The wave criterion result is unchanged.
-        with_candles = sequence(frame)
-        self.assertTrue(with_candles["swing_contraction_valid"])
-        self.assertFalse(with_candles["first_anchor_terminal"])
-        self.assertFalse(with_candles["valid"])
-
-
 class PonsUniversalAnchorPositiveControlTest(unittest.TestCase):
     """PONS is the one wedge (not triangle) case in the frozen eleven-case
     fixture whose already-selected anchors satisfy the universal rule

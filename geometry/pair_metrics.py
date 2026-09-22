@@ -201,12 +201,15 @@ def _is_leg_extreme(
     origin_index,
     end_index,
     candles,
-    same_points
+    same_points,
+    end_price=None
 ):
     """
     True when `price` is the most extreme `side` price in the leg
     origin_index < index <= end_index. Uses candle highs/lows when
-    available, otherwise the confirmed same-side pivots.
+    available, otherwise the confirmed same-side pivots plus the
+    second anchor's own price: its bar traded at least there, so an
+    opposite-side pivot beyond `price` also means the leg passed it.
     """
 
     if candles is not None:
@@ -233,6 +236,9 @@ def _is_leg_extreme(
                 and origin_index < point["index"] <= end_index
             )
         ]
+
+        if end_price is not None:
+            values.append(float(end_price))
 
     if side == "high":
         return all(value <= price for value in values)
@@ -561,7 +567,8 @@ def calculate_pair_metrics(
                     impulse_origin_index,
                     secondary_anchor,
                     candles,
-                    same_points
+                    same_points,
+                    end_price=secondary_price
                 )
 
         # Owner criterion for first anchor A (second anchor B, C = the next
