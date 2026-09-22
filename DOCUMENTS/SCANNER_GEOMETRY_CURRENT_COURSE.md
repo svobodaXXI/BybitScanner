@@ -83,10 +83,21 @@ short, narrow shelf near that extreme, with possible continuation. Keep LONG
 and SHORT symmetric; pattern START is the impulse origin, not the shelf
 start. Distinguish impulse evidence, shelf confirmation, and eventual
 continuation instead of using later price action to retroactively validate
-the original formation. The pattern's Fibonacci display uses the impulse
-itself: 0% at the impulse extreme and 100% at its origin, for both directions.
-Do not infer a universal numeric impulse threshold or measured-move trading
-rule from one historical example without the owning specification.
+the original formation.
+
+**L-shaped signal drawing — owner correction (2026-09-23):** no Fibonacci
+levels or grid anywhere in this pattern's signal/preview. For the UP-impulse,
+local-HIGH setup, show **only** (1) a horizontal rightward ray from the
+impulse-terminal local HIGH at price H and (2) one horizontal potential-target
+level T above H. Let L be the confirmed post-HIGH trough low of the same
+formation, known on or before the signal's historical decision time. The
+potential is the trough depth D = H - L, so **T = H + D = 2H - L**.
+The ray and target use frozen H/L evidence available at signal time; do not
+use later candles to redraw them retrospectively. This defines the requested
+HIGH-first signal, not an extra wedge rule or automatic trade execution. Do
+not add another visual overlay or invent an unapproved mirrored SHORT signal
+formula while implementing this specific HIGH-first drawing. Do not infer a
+universal numeric impulse threshold from one historical example.
 
 **Reuse-first checkpoint (historical, not proof of current local state):**
 the user previously worked in isolated `C:\BybitScanner-lshape`, branch
