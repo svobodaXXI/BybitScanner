@@ -99,28 +99,38 @@ not add another visual overlay or invent an unapproved mirrored SHORT signal
 formula while implementing this specific HIGH-first drawing. Do not infer a
 universal numeric impulse threshold from one historical example.
 
-**Reuse-first checkpoint (historical, not proof of current local state):**
-the user previously worked in isolated `C:\BybitScanner-lshape`, branch
-`feat/l-shaped-formation-detector`, with local-only
-`geometry/l_shape.py` and `geometry/l_shape_preview.py`; 6 detector and
-4 preview tests were reported passing at that checkpoint. These files are
-not in GitHub `main`. Their current checkout, edits and tests must be
-established from the actual local worktree, not guessed from a past chat or
-recreated in a new module. Existing recorded visual reference examples
-include SKHYNIXUSDT and RONIN; use their original saved evidence if present,
-without inventing or refetching a historical signal snapshot.
+**Implementation status (2026-09-23):** the detector and preview from the
+isolated `C:\BybitScanner-lshape` checkpoint (`geometry/l_shape.py`,
+`geometry/l_shape_preview.py`, `tests/test_l_shape_detector.py`,
+`tests/test_l_shape_preview.py`) are published to GitHub `main` in
+REPLACE_WITH_PR_LINK, commit
+`REPLACE_WITH_SHA`. The owner-corrected drawing above is implemented exactly:
+`render_l_shape_preview()` draws only a dashed rightward ray at the confirmed
+impulse HIGH `H` (`formation.impulse_high`) and one target level
+`T = 2*H - L`, where `L = formation.shelf_low` -- already the detector's own
+confirmed post-HIGH trough, read only up to `as_of_index`, so `T` is never
+derived from a later candle. No Fibonacci levels or grid are drawn. This
+applies to the UP-impulse/local-HIGH (LONG) case only; the SHORT preview is
+unchanged and draws no target, since no mirrored formula is approved here.
+12 focused tests pass (6 detector, 6 preview) -- reused, not rerun, when this
+doc-only change is the only edit.
 
-**Next bounded step:** read-only inspect that existing isolated local
-worktree, its actual branch/dirty state, detector, preview and available
-saved positive/negative cases. Identify **one** concrete unimplemented
-impulse-vs-ordinary-swing condition in the L-shaped detector using only
-historically available confirmed evidence. Report that single finding and
-its smallest implementation target, or report if the local worktree or
-relevant data is unavailable; do not reimplement, repeat unchanged passing
-tests, publish, run the full Scanner, connect Telegram/Robot or touch PAPER
-runtime in this inspection step. Only then authorize and execute one focused
-L-shaped implementation slice in the existing worktree. No new design
-document, branch/worktree, broad diagnostic campaign or wedge edit.
+**Not yet implemented:** the preceding-impulse-vs-ordinary-swing distinction
+this doc's "Next bounded step" originally called for. `detect_l_shape()`
+still anchors the impulse at the most recent same-direction extremum inside a
+bounded lookback (`geometry/l_shape.py`, `_last_index_of_min`/`_last_index_of_max`);
+it does not yet prove that extremum ends a genuine preceding directional
+impulse rather than an ordinary countertrend swing, the way #191 proves it
+for the wedge A anchor. `LShapeFormation.start_index` is therefore not yet a
+validated impulse origin.
+
+**Next development step (unstarted):** add that preceding-impulse validation
+inside the L-shaped detector, reusing already-available confirmed pivots and
+candles exactly as #191 did for the wedge A/B/C rule, without importing or
+altering the wedge's own A/B/C admission gate and without a new numeric
+threshold invented from one example. Existing recorded visual reference
+examples (SKHYNIXUSDT, RONIN) remain available for that step; do not invent
+or refetch a historical signal snapshot.
 
 ## Deferred wedge implementation route — four dependent, bounded slices
 

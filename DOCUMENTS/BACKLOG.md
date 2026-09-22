@@ -156,8 +156,15 @@ partial-TP and breakeven triggers remain undefined, so no Robot order execution 
 Priority after user-requested L-shape work: detector + visual Scanner/Telegram signal, then separate PAPER Robot lifecycle.
 
 ### G6 — L-shaped continuation
-Definition is an open design item (impulse, then compression at the top). Input from the user: example chart; then the exact
-structure definition, detection, entry rule.
+Offline detector and preview published to `main` in
+REPLACE_WITH_PR_LINK: impulse, then a
+narrow shelf near the extreme; HIGH-first (LONG) preview draws only the
+impulse-HIGH ray and target `T = 2*H - L`, no Fibonacci. Current status,
+what remains unimplemented (preceding-impulse-vs-ordinary-swing proof) and
+the exact next step are recorded in
+`SCANNER_GEOMETRY_CURRENT_COURSE.md` ("Active development priority —
+L-shaped formation, not wedge S1"); not duplicated here. Entry rule and
+Robot wiring are still open design items, unchanged from before.
 
 ### G7 — Dual-timeframe scanner (5m + 1m per ticker) — REQUIRED (user 2026-09-19)
 Constraints found in code: (1) `TIMEFRAME` is a global constant read by `analyzer/core.py`, `analyzer.py`, `main.py`,
