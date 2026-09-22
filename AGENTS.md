@@ -60,7 +60,7 @@ If user action is objectively required, follow the protocol’s exact `Сейч�
 
 ## Active Scanner geometry course
 
-For work on Wedge/Triangle candidate generation, containment, anchor order or the next Scanner acceptance, read `DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md` before choosing the next micro-slice. It is the current evidence-led working plan, not authority to override the owning geometry/ATR contracts. Update it when new evidence changes the course; do not restart a completed diagnostic by default.
+For work on Wedge/Triangle candidate generation, containment, anchor order or the next Scanner acceptance, read `DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md` before choosing the next micro-slice. For **any wedge-anchor task**, its `UNIVERSAL WEDGE ANCHOR RULE` is mandatory: preceding impulse → terminal extreme as first anchor → next confirmed opposing pivot as second anchor, independent of wedge subtype. Follow that document's link to PR #156 research only if its existing evidence is needed; do not load the long research document routinely. It is the current evidence-led working plan, not authority to override the owning geometry/ATR contracts. Update it when new evidence changes the course; do not restart a completed diagnostic by default.
 
 ## Authority routing
 

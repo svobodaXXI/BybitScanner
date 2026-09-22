@@ -1,64 +1,39 @@
 # Scanner geometry — current corrective course
 
 Status: ACTIVE WORKING PLAN (not a detector contract or implementation authorization)
-Date: 2026-09-21
+Date: 2026-09-22
 Scope: BybitScanner 5m Wedge/Triangle geometry; historical acceptance before any new full Scanner pass.
 
-## OWNER RULE — terminal impulse extreme owns the first formation anchor (2026-09-22)
+## UNIVERSAL WEDGE ANCHOR RULE — OWNER AUTHORITY (2026-09-22)
 
-This is an existing owner-specified pattern definition, **not an unresolved
-research question or an unapproved numeric threshold**. The prior assertion
-that the rising-deceleration first-anchor rule was unknown was wrong. For
-each subtype, the formation START is the terminal structural extreme of the
-preceding directional impulse, followed by the next **meaningful, confirmed
-opposite-side local swing of the SAME episode**:
+**For every wedge, regardless of rising/falling or corrective/decelerating subtype:**
 
-| Subtype | Preceding impulse | First anchor / START | Next opposing anchor |
-| --- | --- | --- | --- |
-| Falling corrective wedge | UP | terminal HIGH | next local LOW |
-| Falling decelerating wedge | DOWN | terminal LOW | next rebound HIGH |
-| Rising corrective wedge | DOWN | terminal LOW | next rebound HIGH |
-| Rising decelerating wedge | UP | terminal HIGH | next local LOW |
+**Preceding impulse → FIRST anchor = the extreme ending that impulse →
+SECOND anchor = the next meaningful, confirmed pivot of the opposite side.**
 
-A candidate's first boundary anchor cannot be borrowed from an earlier,
-unrelated impulse or arbitrarily moved to a later convenient pivot; the
-opposing anchor must belong to the formation beginning at that transition.
-The user-specified sequence is subtype/context-dependent, not a blanket
-HIGH-first or LOW-first rule for every wedge of the same slope. Identify
-actual terminal and opposing confirmed pivots from the as-of price series;
-`filter_pivots` independently filtering highs and lows does not establish
-their adjacency. If the boundary pair cannot be supported from that episode,
-**reject the false wedge**; absence of a replacement local wedge is a valid
-outcome, not a reason to retain a 95-point unrelated pair. A favorable
-score, contained candles, displayed START, or a fixed anchor-spacing cutoff
-cannot substitute for the owner-defined START/episode requirement.
+After an UP impulse: terminal HIGH → next LOW. After a DOWN impulse:
+terminal LOW → next HIGH. Both pivots must belong to the same local
+formation episode and be knowable at the historical decision time.
+Only AFTER this chronological start is established, construct and
+validate upper/lower lines from subsequent pivots. Wedge direction and
+correction/deceleration subtype are determined separately; neither
+changes the universal first/second-anchor search rule. A fitted line's
+earliest convenient anchor or the chart's displayed START cannot
+retroactively determine the episode start. If the anchored formation
+cannot be confirmed, reject the candidate; do not invent a replacement
+or rescue it with a high score, containment alone, a new spacing cutoff
+or ranking preference.
 
-**BONK case, original decision anchored to 2026-09-22 17:05 UTC:** the
-recovered 0..198 closed-candle replay matches all 33 logged pivots and
-reproduces the U81/L128 rising-wedge winner and END191. Its U81 is after
-the earlier local HIGH70 which terminates the preceding UP move; the
-selected L128 instead starts a later recovery leg. The existing eligible
-pool has no both-anchors-in-recovery rising wedge. Thus do NOT rescue
-U81/L128 with ranking or new thresholds; apply the above terminal-HIGH
-then opposite-LOW phase-ownership rule at candidate admission for the
-rising-deceleration hypothesis. Compare against the existing saved
-coherent falling and rising correction examples only to prevent
-rejecting their correct *different* subtype STARTs. The historical
-refetch does not prove byte-for-byte equality for the originally
-still-forming candle199; neither END191 nor the reproduced candidate
-selection depends on it.
-
-**Work rule:** implement this already-agreed ownership contract in one
-small existing-path geometry slice with one affected regression and no
-repeated BONK market requests, new research pipeline, threshold sweep,
-full Scanner pass or runtime restart. Do not ask the owner to define the
-same rule again. If source-as-of data cannot identify a terminal swing,
-report that specific input gap without calling the rule undefined.
-
-**Documentation precedence:** this explicit owner rule supersedes the
-draft PR #156 research note that says rising-deceleration START remains
-undefined. The G1a chart-window portion of #156 was already merged
-separately as PR #186, so do not redo it.
+**Routing and precedence:** This is the single authoritative wording
+for wedge anchor selection. `AGENTS.md` points every wedge-geometry
+task here. The research-only PR #156 episode document points here in
+return; its older subtype-specific descriptions are historical examples,
+NOT alternative anchor-selection rules. Do not reopen this decision or
+ask the owner to restate it. Use the already recovered BONK as-of
+0..198 prefix (U81/L128, END191) and existing accepted local examples
+for one scoped implementation; do not repeat recovery or threshold sweeps.
+A diagnostic tool's uncertainty about autonomous episode detection
+is an *implementation gap*, not absence of the owner's rule.
 
 ## Reuse checkpoint — existing PR #156, checked 2026-09-22
 
