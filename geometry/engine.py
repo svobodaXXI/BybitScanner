@@ -149,6 +149,28 @@ def _is_boundary_structurally_valid(geometry):
     )
 
 
+def _is_anchor_sequence_valid(geometry):
+    """Universal wedge anchor rule (owner authority; see
+    DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md, "Universal wedge anchor
+    rule"): a rising/falling wedge's first anchor must be the extreme ending
+    the preceding directional impulse, and its second anchor the next
+    meaningful, confirmed pivot on the opposite side of that SAME local
+    episode -- not a later anchor from an unrelated later episode. Reuses
+    the existing chronological-order `pair_metrics.anchor_sequence`
+    evidence; no new metric or threshold. A pair that fails this can never
+    be rescued by ranking, score or relaxed validation elsewhere.
+
+    Triangle candidates have no single preceding-impulse anchor order to
+    validate and are left exactly as before (`anchor_sequence.valid` is
+    unconditionally True for them already).
+    """
+    pair_metrics = getattr(geometry, "pair_metrics", {}) or {}
+    anchor_sequence = pair_metrics.get("anchor_sequence") or {}
+    if anchor_sequence.get("family") not in ("rising", "falling"):
+        return True
+    return bool(anchor_sequence.get("valid", False))
+
+
 def _is_candidate_fresh(
     geometry,
     freshness_predicate
@@ -339,6 +361,21 @@ def analyze_geometry(
             #
 
             if not _is_boundary_structurally_valid(
+                geometry
+            ):
+                continue
+
+            #
+            # 4d. Universal wedge anchor admission
+            #
+            # Owner rule: a rising/falling wedge's first anchor must be the
+            # preceding impulse's terminal extreme, its second anchor the
+            # next confirmed opposite-side pivot of that same episode. A
+            # pair anchored across two unrelated episodes never enters the
+            # pool, and there is no fallback rescue through ranking/score.
+            #
+
+            if not _is_anchor_sequence_valid(
                 geometry
             ):
                 continue

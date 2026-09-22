@@ -387,60 +387,12 @@ def calculate_pair_metrics(
 
         anchor_family = "rising"
 
-        primary_anchor = lower_anchor
-        secondary_anchor = upper_anchor
-
-        next_highs = sorted(
-            point["index"]
-            for point in (highs or [])
-            if (
-                isinstance(point, dict)
-                and point.get("index") is not None
-                and point["index"] > primary_anchor
-            )
-        )
-
-        expected_secondary_index = (
-            next_highs[0]
-            if next_highs
-            else None
-        )
-
-        sequence_valid = (
-            secondary_anchor
-            == expected_secondary_index
-        )
-
     elif (
         upper_slope < 0
         and lower_slope < 0
     ):
 
         anchor_family = "falling"
-
-        primary_anchor = upper_anchor
-        secondary_anchor = lower_anchor
-
-        next_lows = sorted(
-            point["index"]
-            for point in (lows or [])
-            if (
-                isinstance(point, dict)
-                and point.get("index") is not None
-                and point["index"] > primary_anchor
-            )
-        )
-
-        expected_secondary_index = (
-            next_lows[0]
-            if next_lows
-            else None
-        )
-
-        sequence_valid = (
-            secondary_anchor
-            == expected_secondary_index
-        )
 
     elif (
         upper_slope < 0
@@ -450,6 +402,73 @@ def calculate_pair_metrics(
         anchor_family = "triangle"
 
         sequence_valid = True
+
+    if anchor_family in (
+        "rising",
+        "falling"
+    ):
+
+        #
+        # Universal wedge anchor rule (owner authority; see
+        # DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md): the first
+        # anchor is the extreme ending the preceding directional
+        # impulse, the second anchor is the next meaningful, confirmed
+        # pivot on the opposite side of that SAME local episode.
+        # Rising vs falling shape must never decide which anchor came
+        # first -- only the anchors' own chronological order does.
+        #
+
+        opposite_points = []
+
+        if upper_anchor < lower_anchor:
+
+            # Preceding impulse UP: terminal HIGH (upper anchor) first,
+            # next confirmed LOW (lower anchor) second.
+
+            primary_anchor = upper_anchor
+            secondary_anchor = lower_anchor
+            opposite_points = lows
+
+        elif lower_anchor < upper_anchor:
+
+            # Preceding impulse DOWN: terminal LOW (lower anchor)
+            # first, next confirmed HIGH (upper anchor) second.
+
+            primary_anchor = lower_anchor
+            secondary_anchor = upper_anchor
+            opposite_points = highs
+
+        # Equal anchor indices: no chronological first anchor exists;
+        # primary_anchor stays None and the pair fails below.
+
+        if primary_anchor is not None:
+
+            next_opposite = sorted(
+                point["index"]
+                for point in (opposite_points or [])
+                if (
+                    isinstance(point, dict)
+                    and point.get("index") is not None
+                    and point["index"] > primary_anchor
+                )
+            )
+
+            expected_secondary_index = (
+                next_opposite[0]
+                if next_opposite
+                else None
+            )
+
+        # The second anchor must be the immediate next confirmed
+        # opposite-side pivot after the first anchor -- not merely any
+        # later opposite-side pivot skipped forward to from a
+        # different, later episode.
+
+        sequence_valid = (
+            secondary_anchor is not None
+            and secondary_anchor
+            == expected_secondary_index
+        )
 
     anchor_sequence = {
         "family":
