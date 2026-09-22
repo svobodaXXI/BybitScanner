@@ -60,7 +60,7 @@ If user action is objectively required, follow the protocol’s exact `Сейч�
 
 ## Active Scanner geometry course
 
-For any Wedge/Triangle geometry task, open the **short current index** `DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md` first. Its `Universal wedge anchor rule` is mandatory for every wedge; follow its scoped links only for evidence the task actually needs. It names implemented vs pending behavior and historical vs active decisions. Do not load lengthy past research, run Project Sync or repeat closed diagnostics by default.
+For any Wedge/Triangle or L-shaped formation geometry task, open the **short current index** `DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md` first. Its `Universal wedge anchor rule` is mandatory for wedges only. The active L-shaped formation scope and next step are recorded separately in the same index; follow scoped links only for evidence the task actually needs. It names implemented vs pending behavior and historical vs active decisions. Do not load lengthy past research, run Project Sync or repeat closed diagnostics by default.
 
 ## Authority routing
 
