@@ -20,6 +20,18 @@ NEVER change first/second-anchor selection. Do not assign START retrospectively
 from whichever two fitted lines have the highest score. If the required local
 formation is absent or not confirmed, do not emit a wedge.
 
+**Owner clarification — mandatory first-anchor criterion (2026-09-22).** With
+A = first anchor, B = second anchor (the next confirmed opposite-side pivot)
+and C = the next confirmed pivot on A's side after B:
+
+    abs(P[C] - P[B]) < abs(P[B] - P[A])
+
+If it fails, A was selected incorrectly: take the next admissible formation
+start among the existing confirmed pivots/candidate pool and apply the same
+full rule to it. Rejecting the pair A/B does not end the search, and A must
+not be swapped for an arbitrary later pivot merely to pass the check. No
+admissible start, or C not yet confirmed, means the wedge is not confirmed.
+
 This section is the **only active wording** of the owner rule. The research
 document in draft [PR #156](https://github.com/svobodaXXI/BybitScanner/pull/156)
 links back here; any earlier subtype-specific START statements there describe
@@ -33,7 +45,12 @@ owner to restate this rule.
   boundary anchor ([PR #186](https://github.com/svobodaXXI/BybitScanner/pull/186));
   triangle symmetric potential display ([PR #183](https://github.com/svobodaXXI/BybitScanner/pull/183)).
   The chart window is presentation only; it does not enforce the owner rule.
-- **Not implemented:** source-time impulse-terminal/next-opposite-pivot
+- **In PR #191 (not merged):** rising/falling pair admission requires
+  chronological first anchor A, B = next opposite pivot, A the extreme of its
+  leg from the previous opposite pivot to B, and the criterion above; failing
+  pairs leave the pool and the remaining pool candidates compete under the
+  same rule. Triangles are unchanged.
+- **Not implemented on main:** source-time impulse-terminal/next-opposite-pivot
   episode ownership as a production wedge admission. Do not claim the
   universal rule is already enforced by the current detector.
 - **Reproducible BONK negative:** original 1000BONKUSDT 5m as-of window

@@ -97,7 +97,8 @@ class FirstAnchorMustEndPrecedingImpulseTest(unittest.TestCase):
     same pair valid, so the terminal-extreme check is the discriminator.
     """
 
-    def _anchor_sequence(self, high20_price):
+    def _anchor_sequence(self, high20_price, c_price=99.):
+        # A = HIGH10 (100), B = LOW40 (95), C = next HIGH after B at 50.
         from geometry.pair_metrics import calculate_pair_metrics
 
         frame = pd.DataFrame([dict(high=98., low=96.) for _ in range(61)])
@@ -106,6 +107,9 @@ class FirstAnchorMustEndPrecedingImpulseTest(unittest.TestCase):
         frame.loc[20, "high"] = high20_price
         frame.loc[40, "low"] = 95.
         highs = [dict(index=10, price=100.), dict(index=20, price=high20_price)]
+        if c_price is not None:
+            frame.loc[50, "high"] = c_price
+            highs.append(dict(index=50, price=c_price))
         lows = [dict(index=0, price=90.), dict(index=40, price=95.)]
         upper = {"line": dict(slope=.1, intercept=99., anchor_index=10,
                               anchor_price=100., structure_span=30)}
@@ -127,6 +131,33 @@ class FirstAnchorMustEndPrecedingImpulseTest(unittest.TestCase):
         control = self._anchor_sequence(high20_price=99.)
         self.assertTrue(control["first_anchor_terminal"])
         self.assertTrue(control["valid"])
+
+    def test_owner_swing_criterion_decides_first_anchor(self):
+        # abs(P[C] - P[B]) < abs(P[B] - P[A]) with |B - A| = 5.
+        inside = self._anchor_sequence(high20_price=99., c_price=99.)   # |C-B| = 4
+        self.assertEqual(inside["third_pivot_index"], 50)
+        self.assertTrue(inside["swing_contraction_valid"])
+        self.assertTrue(inside["valid"])
+
+        beyond = self._anchor_sequence(high20_price=99., c_price=101.)  # |C-B| = 6
+        self.assertTrue(beyond["first_anchor_terminal"])
+        self.assertFalse(beyond["swing_contraction_valid"])
+        self.assertFalse(beyond["valid"])
+
+        unconfirmed = self._anchor_sequence(high20_price=99., c_price=None)
+        self.assertIsNone(unconfirmed["third_pivot_index"])
+        self.assertFalse(unconfirmed["valid"])
+
+        # A rejected start does not end the search: the real selection still
+        # takes another pool candidate that satisfies the rule, and with no
+        # such candidate no wedge is confirmed.
+        from tests.test_geometry_candidate_selection_freshness import _StubGeometry, _select
+        wrong_start = _StubGeometry("wrong_start", 999.)
+        wrong_start.pair_metrics["anchor_sequence"] = beyond
+        next_start = _StubGeometry("next_start", 1.)
+        next_start.pair_metrics["anchor_sequence"] = inside
+        self.assertIs(_select([wrong_start, next_start]), next_start)
+        self.assertIsNone(_select([wrong_start]))
 
 
 class PonsUniversalAnchorPositiveControlTest(unittest.TestCase):

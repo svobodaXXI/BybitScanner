@@ -468,6 +468,7 @@ def calculate_pair_metrics(
         same_points = []
         primary_side = None
         primary_price = None
+        secondary_price = None
 
         if upper_anchor < lower_anchor:
 
@@ -480,6 +481,7 @@ def calculate_pair_metrics(
             same_points = highs
             primary_side = "high"
             primary_price = upper_line.get("anchor_price")
+            secondary_price = lower_line.get("anchor_price")
 
         elif lower_anchor < upper_anchor:
 
@@ -492,6 +494,7 @@ def calculate_pair_metrics(
             same_points = lows
             primary_side = "low"
             primary_price = lower_line.get("anchor_price")
+            secondary_price = upper_line.get("anchor_price")
 
         # Equal anchor indices: no chronological first anchor exists;
         # primary_anchor stays None and the pair fails below.
@@ -561,17 +564,57 @@ def calculate_pair_metrics(
                     same_points
                 )
 
+        # Owner criterion for first anchor A (second anchor B, C = the next
+        # confirmed pivot on A's side after B):
+        #     abs(P[C] - P[B]) < abs(P[B] - P[A])
+        # i.e. the swing after B stays inside A's extreme. Otherwise A did
+        # not end the impulse and is the wrong start; other pairs in the
+        # pool are still evaluated under the same rule. Unconfirmed C:
+        # the wedge is not confirmed.
+
+        third_pivot_index = None
+        swing_contraction_valid = False
+
+        if (
+            secondary_anchor is not None
+            and primary_price is not None
+            and secondary_price is not None
+        ):
+
+            later_same = sorted(
+                (point["index"], float(point["price"]))
+                for point in (same_points or [])
+                if (
+                    isinstance(point, dict)
+                    and point.get("index") is not None
+                    and point.get("price") is not None
+                    and point["index"] > secondary_anchor
+                )
+            )
+
+            if later_same:
+
+                third_pivot_index, third_price = later_same[0]
+
+                swing_contraction_valid = (
+                    abs(third_price - float(secondary_price))
+                    < abs(float(secondary_price) - float(primary_price))
+                )
+
         sequence_valid = (
             secondary_anchor is not None
             and secondary_anchor
             == expected_secondary_index
             and first_anchor_terminal
+            and swing_contraction_valid
         )
 
     else:
 
         impulse_origin_index = None
         first_anchor_terminal = None
+        third_pivot_index = None
+        swing_contraction_valid = None
 
     anchor_sequence = {
         "family":
@@ -591,6 +634,12 @@ def calculate_pair_metrics(
 
         "first_anchor_terminal":
             first_anchor_terminal,
+
+        "third_pivot_index":
+            third_pivot_index,
+
+        "swing_contraction_valid":
+            swing_contraction_valid,
 
         "valid":
             sequence_valid
