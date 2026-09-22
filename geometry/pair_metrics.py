@@ -567,7 +567,10 @@ def calculate_pair_metrics(
         # Owner criterion for first anchor A (second anchor B, C = the next
         # confirmed pivot on A's side after B):
         #     abs(P[C] - P[B]) < abs(P[B] - P[A])
-        # i.e. the swing after B stays inside A's extreme. Otherwise A did
+        # i.e. the second wave B->C is shorter than the first wave A->B.
+        # This compares wave lengths only; it is NOT a ban on C passing
+        # A's price (whether A ended the impulse is the separate
+        # first_anchor_terminal check above). Otherwise A did
         # not end the impulse and is the wrong start; other pairs in the
         # pool are still evaluated under the same rule. Unconfirmed C:
         # the wedge is not confirmed.
