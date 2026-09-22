@@ -41,7 +41,7 @@ indices/пройденный прогноз. До выбора порогов с
   формации, но **без глобально фиксированного порядка HIGH→LOW или LOW→HIGH**.
   Для FALLING_CORRECTION_AFTER_UP START может быть HIGH; для показанного
   FALLING_DECELERATION_AFTER_DOWN — LOW; для RISING_CORRECTION_AFTER_DOWN — LOW.
-  Правило для RISING_DECELERATION_AFTER_UP ещё требует пользовательской разметки.
+  Для RISING_DECELERATION_AFTER_UP START — терминальный HIGH, завершивший предшествующий UP-импульс, затем ближайший значимый подтверждённый LOW того же локального эпизода (явное правило владельца, подтверждено 2026-09-22; см. актуальный DOCUMENTS/SCANNER_GEOMETRY_CURRENT_COURSE.md).
   Эти наблюдения НЕ позволяют угадать подтип только по порядку анкеров.
 
 ## 2. Что конкретно делают зрелые проекты
