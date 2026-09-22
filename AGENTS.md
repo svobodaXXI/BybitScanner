@@ -4,6 +4,39 @@ Compact mandatory entry point for coding agents. It routes to project authority;
 
 ## Fast task entry
 
+## Outcome-first Scanner / PAPER Robot priorities — owner direction
+
+**Business goal:** a Scanner that shows faithful, independently checkable
+formation geometry and a PAPER Robot that reliably completes the signal →
+order → protection → closure lifecycle. Optimize for working results, not
+more test campaigns, new infrastructure, prettier charts or more alerts.
+
+**When choosing the next dependent development slice, use this order:**
+
+1. **False patterns first:** eliminate demonstrably wrong formations and
+   misplaced anchors/START using real saved decision-time candles. A strong
+   score, display adjustment or retrospective fit does not make a wrong
+   structure acceptable.
+2. **Reliable PAPER execution next:** for already confirmed signals, make the
+   Robot's entry, protection, reconciliation and exit work end-to-end and
+   fail-closed. Do not enable or alter LIVE trading or change risk/strategy
+   parameters merely to advance this priority.
+3. **Missed patterns systematically, not by owner manual browsing:** compare
+   source-time Scanner outputs against independently generated potential
+   formation windows in saved OHLC history; surface reproducible chart cases
+   for review. These proposals are **hypotheses**, not proof of real missed
+   patterns or permission to lower admission gates. Measure coverage only
+   after false positives and PAPER reliability are under control.
+
+The owner can visually identify wrong drawn formations and broken PAPER
+execution, but cannot reasonably discover all missed patterns by manually
+watching charts. **Do not outsource missed-pattern discovery to the owner.**
+Follow the currently authorized, task-specific route (the L-shaped detector
+is the active geometry implementation scope); this priority ordering is a
+decision guide, **not permission to switch tasks, restart services, start
+trading, or expand the current slice**. Prefer one evidence-backed micro-slice
+and its narrow changed-behavior check over repeated whole-Scanner runs.
+
 For routine work, start from the intended outcome. Do not require the user to provide recovery boilerplate, file lists, skills, Git commands, safety checklists, or test lists that the repository can infer.
 
 Recovery is staged and stops as soon as the task is safe to execute:
