@@ -4,6 +4,41 @@ Status: ACTIVE WORKING PLAN (not a detector contract or implementation authoriza
 Date: 2026-09-21
 Scope: BybitScanner 5m Wedge/Triangle geometry; historical acceptance before any new full Scanner pass.
 
+## Reuse checkpoint — existing PR #156, checked 2026-09-22
+
+Draft PR #156 already contains two distinct kinds of work; do not merge its
+24-file research branch as a geometry fix or recreate its completed experiments.
+
+- **Ready, independent display slice (G1a):** `chart_clean.py::_chart_window`
+  and `tests/test_chart_clean_window.py` take the earlier of the two actual
+  line anchors, show available pre-formation candles and warn about missing
+  history. Main still uses `primary_anchor - 25`, which may hide the earlier
+  boundary. Port only this chart-window delta to current main as one scoped
+  presentation PR, retaining main's newer triangle-potential title. Its
+  dedicated original-branch tests are already recorded in #156; check only
+  the integration delta and relevant focused rendering. This improves visual
+  inspection but does NOT correct selected anchors or detector admission.
+- **Research to reuse, not production-ready:** #156's `detect_pivots`,
+  `wedge/local_episode_shadow.py`, and `wedge/local_pair_shadow.py` preserve
+  as-of-confirmed 5m raw pivots and inspect explicit local pairs. The saved
+  CRCL positive control supports an independently supplied local pair; 0G
+  retains same-candle ambiguity; CRV's later proposal is not a confirmed
+  convergent wedge. No helper autonomously establishes episode ownership or
+  selects a safe replacement for a production winner. Do not turn shadow
+  statuses into a hard Scanner/Robot gate or repeat the finished CRV parameter
+  and follow-up loops.
+- **Next geometry-dependent slice after G1a:** use the already frozen CRCL
+  positive and 0G negative source-time controls to specify the *missing*
+  episode-ownership decision for existing candidate anchors. Keep historical
+  selections revisable when structurally invalid. The original BONK/TURBO/XEC
+  signal-time OHLC is unavailable; later candles are not a matching replay.
+  If the controls do not demonstrate one narrow safe ownership rule, stop with
+  that precise evidence gap rather than inventing a global threshold.
+
+Neither this checkpoint nor the draft PR authorizes a Scanner restart, Robot
+operation, strategy change, or deployment. Existing running Scanner stays
+untouched.
+
 ## Open defect, uninvestigated fix — 2026-09-22 (post-#182 full pass)
 
 The user-authorized post-#182 full 5m Scanner acceptance pass surfaced a new
