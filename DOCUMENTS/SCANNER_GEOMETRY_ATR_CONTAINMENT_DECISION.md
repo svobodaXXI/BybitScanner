@@ -389,6 +389,10 @@ Verification and publication are recorded in
 
 ## Investigated and NOT implemented — 2026-09-22: BONK/TURBO/XEC anchor-locality defect
 
+Historical diagnostic record below; its former statement that the BONK original decision-time candles cannot be reproduced is superseded by the independently anchored 0..198 replay described in [SCANNER_GEOMETRY_CURRENT_COURSE.md](SCANNER_GEOMETRY_CURRENT_COURSE.md). The universal first/second-anchor owner rule lives **only** in that short index; the following unimplemented numeric experiments are NOT competing selection rules. The original in-progress bar199 is not source-identical.
+
+
+
 Status: OPEN, NO CODE CHANGE. Recorded so the next attempt does not repeat this
 diagnostic campaign from zero.
 
