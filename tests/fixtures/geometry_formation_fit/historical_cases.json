@@ -435,64 +435,66 @@
       "expected": {
         "geometry": {
           "anchors": [
-            105,
-            143,
+            46,
+            138,
             77,
-            184
+            147
           ],
-          "start": 77,
-          "end": 184,
+          "start": 46,
+          "end": 147,
           "mode": "EXPLORATORY",
           "widths": [
-            0.28431578947368497,
-            0.16089473684210365
+            0.2972428571428578,
+            0.15791304347826074
           ],
           "lines": [
             {
-              "slope": -0.0013684210526315919,
-              "intercept": 8.027684210526317,
-              "points": 4,
-              "error_mean": 0.01289473684210507,
-              "error_max": 0.03242105263157846,
+              "slope": -0.0005652173913043532,
+              "intercept": 7.936000000000001,
+              "points": 5,
+              "error_mean": 0.011373913043478368,
+              "error_max": 0.026347826086956516,
               "model": "anchor",
-              "anchor_index": 105,
-              "anchor_price": 7.884,
-              "second_index": 143,
-              "second_price": 7.832,
-              "anchor_span": 38,
-              "confirmations": 3,
-              "support_ratio": 0.6,
-              "structure_span": 45,
-              "confirmation_error_percent": 0.3909818902938443
+              "anchor_index": 46,
+              "anchor_price": 7.91,
+              "second_index": 138,
+              "second_price": 7.858,
+              "anchor_span": 92,
+              "confirmations": 4,
+              "support_ratio": 0.4,
+              "structure_span": 97,
+              "confirmation_error_percent": 0.7605004868242816
             },
             {
-              "slope": -0.00021495327102803447,
-              "intercept": 7.654551401869159,
-              "points": 3,
-              "error_mean": 0.011059190031152669,
-              "error_max": 0.03317757009345801,
+              "slope": 0.0008142857142857198,
+              "intercept": 7.5752999999999995,
+              "points": 5,
+              "error_mean": 0.01275428571428563,
+              "error_max": 0.03469999999999995,
               "model": "anchor",
               "anchor_index": 77,
               "anchor_price": 7.638,
-              "second_index": 184,
-              "second_price": 7.615,
-              "anchor_span": 107,
-              "confirmations": 2,
-              "support_ratio": 0.25,
-              "structure_span": 107,
-              "confirmation_error_percent": 0.9125859956370317
+              "second_index": 147,
+              "second_price": 7.695,
+              "anchor_span": 70,
+              "confirmations": 4,
+              "support_ratio": 0.5,
+              "structure_span": 70,
+              "confirmation_error_percent": 0.823940571060306
             }
           ],
           "support": [
             [
               105,
               138,
-              143,
-              150
+              143
             ],
             [
+              77,
+              124,
               129,
-              184
+              140,
+              147
             ]
           ]
         },
@@ -510,8 +512,8 @@
         ],
         "maxrun": 0,
         "n": 0,
-        "oldn": 0,
-        "detected": true
+        "oldn": 32,
+        "detected": false
       },
       "sensitivity": {
         "4": [
@@ -1485,34 +1487,34 @@
         "geometry": {
           "anchors": [
             127,
-            189,
+            165,
             89,
             146
           ],
           "start": 89,
-          "end": 189,
+          "end": 175,
           "mode": "EXPLORATORY",
           "widths": [
-            0.03836774193548398,
-            0.02599649122807013
+            0.049100000000000144,
+            0.014171929824561502
           ],
           "lines": [
             {
-              "slope": 9.032258064515851e-05,
-              "intercept": 1.421129032258065,
+              "slope": -0.00019210526315789695,
+              "intercept": 1.456997368421053,
               "points": 3,
-              "error_mean": 0.0020387096774193334,
-              "error_max": 0.006116129032258,
+              "error_mean": 0.002332456140350899,
+              "error_max": 0.0069973684210526965,
               "model": "anchor",
               "anchor_index": 127,
               "anchor_price": 1.4326,
-              "second_index": 189,
-              "second_price": 1.4382,
-              "anchor_span": 62,
+              "second_index": 165,
+              "second_price": 1.4253,
+              "anchor_span": 38,
               "confirmations": 2,
               "support_ratio": 0.5,
-              "structure_span": 62,
-              "confirmation_error_percent": 0.5384275650816222
+              "structure_span": 38,
+              "confirmation_error_percent": 0.5967963209563185
             },
             {
               "slope": 0.00021403508771929806,
@@ -1535,8 +1537,8 @@
           "support": [
             [
               127,
-              139,
-              189
+              152,
+              165
             ],
             [
               146,
@@ -1546,9 +1548,17 @@
         },
         "fit": [
           {
-            "indices": [],
-            "runs": [],
-            "max_run": 0
+            "indices": [
+              139,
+              140
+            ],
+            "runs": [
+              [
+                139,
+                140
+              ]
+            ],
+            "max_run": 2
           },
           {
             "indices": [],
@@ -1556,10 +1566,10 @@
             "max_run": 0
           }
         ],
-        "maxrun": 0,
-        "n": 0,
-        "oldn": 1,
-        "detected": true
+        "maxrun": 2,
+        "n": 2,
+        "oldn": 14,
+        "detected": false
       },
       "sensitivity": {
         "4": [
@@ -3344,35 +3354,35 @@
       "expected": {
         "geometry": {
           "anchors": [
-            27,
+            38,
             101,
             46,
             91
           ],
-          "start": 27,
+          "start": 38,
           "end": 108,
           "mode": "EXPLORATORY",
           "widths": [
-            3.726444444444411,
-            2.182093093093073
+            4.0695555555555245,
+            2.120666666666665
           ],
           "lines": [
             {
-              "slope": 0.0033783783783783786,
-              "intercept": 139.69878378378377,
-              "points": 5,
-              "error_mean": 0.3822432432432379,
-              "error_max": 0.7981081081080958,
+              "slope": -0.005396825396825451,
+              "intercept": 140.58507936507937,
+              "points": 3,
+              "error_mean": 0.16920634920634825,
+              "error_max": 0.5076190476190447,
               "model": "anchor",
-              "anchor_index": 27,
-              "anchor_price": 139.79,
+              "anchor_index": 38,
+              "anchor_price": 140.38,
               "second_index": 101,
               "second_price": 140.04,
-              "anchor_span": 74,
-              "confirmations": 4,
-              "support_ratio": 0.36363636363636365,
-              "structure_span": 80,
-              "confirmation_error_percent": 2.920475275131847
+              "anchor_span": 63,
+              "confirmations": 2,
+              "support_ratio": 0.2,
+              "structure_span": 69,
+              "confirmation_error_percent": 3.4955555406456833
             },
             {
               "slope": 0.022444444444444243,
@@ -3394,7 +3404,6 @@
           ],
           "support": [
             [
-              59,
               101,
               107
             ],
