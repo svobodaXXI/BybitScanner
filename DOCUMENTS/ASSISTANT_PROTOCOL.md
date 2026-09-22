@@ -2,11 +2,11 @@
 
 Version:
 
-4.42
+4.43
 
 Date:
 
-2026-09-21
+2026-09-22
 
 Document Type:
 
@@ -257,6 +257,35 @@ its deterministic extraction or duplication measurement in prose or run it routi
 
 Optimize for useful result per Codex limit consumed. Economy never weakens correctness, safety, fail-closed
 behavior, contract checks, mandatory E2E, verification, or governance.
+
+### 3.2.1 BOUNDED_SLICE_AND_NO_REPEAT_RULE — HARD RULE
+
+Applies to ChatGPT, Codex, Claude Code, and delegated agents. Execute the smallest
+complete, independently verifiable step toward the current user outcome; agree
+on a concrete stopping condition before extending scope. Batch inseparable
+edits and their required proof, but do not silently expand a focused task into
+another investigation, refactor, feature, or test campaign.
+
+Before each further read, experiment, test, or retry, identify the **new**
+question/evidence it will resolve. Reuse a passing check for unchanged inputs:
+never rerun the same test, full suite, historical sample, fetch, or status
+inspection for reassurance or "sanity" alone. Recheck only if relevant code,
+inputs, environment, prior result, mandatory verification boundary, or observed
+failure has changed and state why the existing evidence no longer suffices.
+Use the smallest relevant focused check first; do not invent tests for already
+proven unchanged behavior. Existing required safety, contract, harness, build,
+and real-runtime acceptance checks remain mandatory when applicable.
+
+Do not loop through alternative thresholds, repeated reproductions, or new
+research directions without new evidence. After two unsuccessful attempts at
+the same hypothesis, stop that loop, record the narrowest known blocker and
+the next specific missing evidence; escalate only when a distinct risk or
+mandatory safety diagnosis justifies it. If roughly 10 minutes pass without a
+verified intermediate result, stop expanding the work and give a short progress
+report explaining the delay, what is proven, and the bounded next step.
+A previously authorized long-running scan/build/CI job with a clear purpose
+may continue without repeated polling, redundant tests, or interrupting
+unrelated processes. Do not claim completion for an unfinished step.
 
 ---
 
@@ -787,6 +816,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.43` adds §3.2.1: bounded verifiable slices, no redundant tests or repeated diagnostic loops, and an explicit progress/stop boundary for prolonged unproductive work. It operationalizes §3.2 and §7.3 without weakening mandatory verification or requiring new infrastructure.
 
 `4.42` adds §2.2.3 and the §2.2.1 operational preflight gate: resolve real launch/control dependencies and side effects from repository sources before asking the user to inspect files or execute an operational command. Root AGENTS.md routes operational intent here. No new skill or startup infrastructure is required.
 
