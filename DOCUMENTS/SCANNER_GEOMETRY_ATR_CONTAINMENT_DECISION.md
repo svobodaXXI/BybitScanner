@@ -437,7 +437,7 @@ historical selection may be replaced or rejected under the approved course:
   nor supported by these non-identical replay windows.
 - **Slope-imbalance ratio** (`pair_metrics` convergence `slope_ratio`/`slope_balance`):
   signal-time values BONK=11.9x, TURBO=6.7x, XEC=1.6x vs. accepted INJ=6.4x,
-  AAVE=6.6x. Overlaps the protected set (TURBO/XEC sit inside or below the accepted
+  AAVE=6.6x. These values overlap the comparison set (TURBO/XEC sit inside or below its
   range); a threshold here would need to sit between 6.6 and 11.9 on a sample of
   two, which this document's own prior sections already treat as insufficient
   evidence for a general threshold.
@@ -452,17 +452,18 @@ A byte-identical replay of the exact signal-time 200-candle window could not be
 obtained (the market moved during investigation; sliding-window reconstruction
 converged to within 3 bars of the logged anchors but never exact, and every
 re-fetch a few minutes apart selected a *different* winning candidate pair,
-usually with 0 measured breaches). This limits what can be concluded from the tested numeric comparisons; it
-does not establish that the original signals had zero body breaches or that
-a particular new threshold would be valid.
+usually with 0 measured breaches). This limits what can be concluded from the
+tested numeric comparisons; it does not establish that the original signals
+had zero body breaches or that a particular new threshold would be valid.
 
 ### Disposition
 
 Per this course's own standing rule ("stop the change rather than create another
 multi-stage diagnostic campaign" if a bounded correction is not evidenced), no
 admission/ranking change is made in `geometry/engine.py` or
-`geometry/envelope_metrics.py` for this defect class. Next, define and test ownership of each anchor by the actual local price
-phase (preceding impulse, reversal pivot and subsequent consolidation),
+`geometry/envelope_metrics.py` for this defect class. Next, define and test
+ownership of each anchor by the actual local price phase (preceding impulse,
+reversal pivot and subsequent consolidation),
 using the existing pivot/candle pipeline and already retained historical
 cases. Do not repeat the falsified global-threshold campaign or launch
 another full scan to collect data by default. If signal-time OHLC is
