@@ -2,8 +2,9 @@
 
 Status: ACTIVE; owner-defined wedge START is normative. Updated: 2026-09-23.
 Entry: [AGENTS.md](../AGENTS.md#active-scanner-geometry-course).
-Scope: 5m Scanner wedge geometry. This is a navigation/working index, not approval
-to change strategy, risk, Robot/LIVE execution or running services.
+Scope: 5m Scanner wedge geometry and development of the separate L-shaped pattern.
+This is a navigation/working index, not approval to change strategy, risk,
+Robot/LIVE execution or running services.
 
 ## Universal wedge anchor rule — OWNER AUTHORITY
 
@@ -65,7 +66,52 @@ owner to restate this rule.
   Reuse only compatible, independently verified minimal pieces; do not merge
   that 24-file draft wholesale or treat its shadow verdicts as trade admission.
 
-## Implementation route — four dependent, bounded slices
+## Active development priority — L-shaped formation, not wedge S1
+
+**Owner direction (2026-09-23):** develop the preceding directional impulse
+criterion **only within the new, independent L-shaped pattern detector**.
+The wedge implementation route below is **DEFERRED**, including its S1
+impulse/episode gate, candidate-generation expansion and Scanner integration.
+Do not apply the L-shaped detector's impulse criterion as a new wedge
+requirement or alter #191's universal wedge A/B/C rule during this work.
+Sharing a proven future primitive with wedges would require a separate
+scoped decision and validation.
+
+**L-shaped geometry (pattern-specific, not an A/B/C wedge):** strong UP/DOWN
+directional impulse from its source extremum to a new extreme, followed by a
+short, narrow shelf near that extreme, with possible continuation. Keep LONG
+and SHORT symmetric; pattern START is the impulse origin, not the shelf
+start. Distinguish impulse evidence, shelf confirmation, and eventual
+continuation instead of using later price action to retroactively validate
+the original formation. The pattern's Fibonacci display uses the impulse
+itself: 0% at the impulse extreme and 100% at its origin, for both directions.
+Do not infer a universal numeric impulse threshold or measured-move trading
+rule from one historical example without the owning specification.
+
+**Reuse-first checkpoint (historical, not proof of current local state):**
+the user previously worked in isolated `C:\BybitScanner-lshape`, branch
+`feat/l-shaped-formation-detector`, with local-only
+`geometry/l_shape.py` and `geometry/l_shape_preview.py`; 6 detector and
+4 preview tests were reported passing at that checkpoint. These files are
+not in GitHub `main`. Their current checkout, edits and tests must be
+established from the actual local worktree, not guessed from a past chat or
+recreated in a new module. Existing recorded visual reference examples
+include SKHYNIXUSDT and RONIN; use their original saved evidence if present,
+without inventing or refetching a historical signal snapshot.
+
+**Next bounded step:** read-only inspect that existing isolated local
+worktree, its actual branch/dirty state, detector, preview and available
+saved positive/negative cases. Identify **one** concrete unimplemented
+impulse-vs-ordinary-swing condition in the L-shaped detector using only
+historically available confirmed evidence. Report that single finding and
+its smallest implementation target, or report if the local worktree or
+relevant data is unavailable; do not reimplement, repeat unchanged passing
+tests, publish, run the full Scanner, connect Telegram/Robot or touch PAPER
+runtime in this inspection step. Only then authorize and execute one focused
+L-shaped implementation slice in the existing worktree. No new design
+document, branch/worktree, broad diagnostic campaign or wedge edit.
+
+## Deferred wedge implementation route — four dependent, bounded slices
 
 **S1 — Prove the preceding impulse and own the initial episode.**
 Use already saved as-of-closed OHLC and confirmed pivots to distinguish
@@ -126,12 +172,10 @@ demonstrated without hindsight, and changed-path regression is green.
 Real Scanner/PAPER Robot rollout and live operational acceptance remain
 separate, explicitly authorized steps.
 
-**Next action, without a new owner handoff:** S1 only — reuse the current
-main implementation and existing saved positive/negative evidence to isolate
-one concrete impulse-vs-countertrend discriminator at historical as-of. Do
-not start S2 or broaden research before this bounded result. For any new chat,
-`AGENTS.md` already routes wedge work to this section; reread applicable
-current protocol once per session, not historical handoff notes by default.
+**Resume boundary for this deferred wedge route:** do not begin wedge S1–S4
+until the owner explicitly returns to wedge development. The active next step
+is the L-shaped read-only checkpoint above. `AGENTS.md` routes both patterns
+to this index; no chat handoff or repeated research is needed.
 
 ## Open only the evidence needed for the current task
 
