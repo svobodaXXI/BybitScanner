@@ -58,16 +58,19 @@ from .debug.logger import (
 # passes the span-proportional freshness gate because it is long.
 GEOMETRY_MAX_STRUCTURE_SPAN_RATIO = 0.60
 
+# One complete current pivot observation context: 3 left + center + 3 right.
+# Explicit bounded rule, NOT automatically coupled to pivot configuration.
+# Historical winners are stable for cutoffs 4..8; see the owning decision.
+GEOMETRY_MAX_BODY_BREACH_RUN = 7
+
 
 def _body_zone_breach_count(
     geometry
 ):
-    """
-    Total body-zone breaches already computed for this candidate by
-    geometry/envelope_metrics.py:evaluate_body_zone_breaches().
+    """Count measured own-anchor..END breaches for the existing selection key.
 
-    Read-only reuse: no recomputation, no new tolerance, and no relation
-    to wedge.integrity's disabled containment-violation penalty.
+    Legacy candle-free callers/stubs retain the old diagnostic count when the
+    new measurement is unavailable; that is not a measured clean-envelope claim.
     """
 
     envelope_metrics = getattr(
@@ -75,6 +78,13 @@ def _body_zone_breach_count(
         "envelope_metrics",
         {}
     ) or {}
+
+    formation_fit = envelope_metrics.get("formation_body_fit")
+    if formation_fit is not None:
+        return sum(
+            len(formation_fit[side]["body_breach_indices"])
+            for side in ("upper", "lower")
+        )
 
     breaches = (
         envelope_metrics.get(
@@ -121,168 +131,21 @@ def _is_candidate_local(
     return (end_index - start_index) <= max_span
 
 
-def _boundary_contradiction_index(
-    geometry,
-    side
-):
+def _is_boundary_structurally_valid(geometry):
+    """Reject sustained body mismatch, never an isolated candle or post-END break.
+
+    The shared evaluator already scopes each side to its own anchor..END.
+    This replaces #180's independent pivot-plus-body veto: a confirmed outside
+    pivot is neither required nor sufficient. No rescue of an emptied pool.
+    Optional candle-free Geometry calls have no new body assessment.
     """
-    First bar at which ONE boundary is contradicted by its own evidence.
-
-    A contradiction requires all of the following at the SAME bar on the
-    SAME boundary:
-
-    - a confirmed pivot of that boundary's own type lies outside the line,
-      already filtered by evaluate_boundary() with the EXISTING pivot-line
-      tolerance (envelope_metrics[side]["outside_indices"]);
-    - the candle body breaches that same line, already computed by
-      evaluate_body_zone_breaches();
-    - the bar is at or after that boundary's own primary anchor, i.e. the
-      boundary is applicable there;
-    - the bar is no later than the existing formation end_index.
-
-    Post-END price action is deliberately NOT a formation defect: a break
-    after the structure completed is a breakout, not an invalid boundary.
-
-    APPLICABLE INTERVAL, measured 2026-09-21: calculate_envelope_metrics()
-    produces both evidence lists from `common_start`, the LATER of the two
-    primary anchors, so in practice this check spans common_start..END and
-    the own-anchor condition below is a non-binding guard for the
-    earlier-anchored boundary. Recomputing the evidence from each
-    boundary's own anchor was measured and REJECTED: it rejects the
-    committed AEVOUSDT reference (lower contradictions at bars 102 and 140,
-    inside its 95..155 prefix) and moves the INJ and WLD winners. See the
-    owning decision document.
-
-    Returns the first contradicted bar, or None.
-    """
-
-    envelope_metrics = (
-        getattr(
-            geometry,
-            "envelope_metrics",
-            {}
-        )
-        or {}
-    )
-
-    boundary = (
-        envelope_metrics.get(side)
-        or {}
-    )
-
-    outside_indices = (
-        boundary.get("outside_indices")
-        or []
-    )
-
-    if not outside_indices:
-        return None
-
-    breaches = (
-        envelope_metrics.get(
-            "body_zone_breaches"
-        )
-        or {}
-    )
-
-    if side == "upper":
-        body_indices = (
-            breaches.get(
-                "upper_body_breach_indices"
-            )
-            or []
-        )
-        line = getattr(
-            geometry,
-            "upper_line",
-            {}
-        ) or {}
-    else:
-        body_indices = (
-            (
-                breaches.get(
-                    "lower_body_breach_early_indices"
-                )
-                or []
-            )
-            + (
-                breaches.get(
-                    "lower_body_breach_late_indices"
-                )
-                or []
-            )
-        )
-        line = getattr(
-            geometry,
-            "lower_line",
-            {}
-        ) or {}
-
-    if not body_indices:
-        return None
-
-    body_breached = set(
-        body_indices
-    )
-
-    anchor_index = line.get(
-        "anchor_index"
-    )
-
-    end_index = getattr(
-        geometry,
-        "end_index",
-        None
-    )
-
-    for index in sorted(outside_indices):
-
-        if index not in body_breached:
-            continue
-
-        if (
-            anchor_index is not None
-            and index < anchor_index
-        ):
-            continue
-
-        if (
-            end_index is not None
-            and index > end_index
-        ):
-            continue
-
-        return index
-
-    return None
-
-
-def _is_boundary_structurally_valid(
-    geometry
-):
-    """
-    Admission gate: a boundary contradicted by its own pivot AND its own
-    candle body at the same in-formation bar is not a boundary at all, so
-    the candidate never enters the pool and there is no fallback to it.
-
-    This is a Geometry-layer boundary-validity check on already-computed
-    evidence. It is NOT the Wedge-layer ATR containment penalty, adds no
-    threshold, and does not reject on breach count or ratio; see
-    DOCUMENTS/SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md.
-    """
-
-    return (
-        _boundary_contradiction_index(
-            geometry,
-            "upper"
-        )
-        is None
-        and
-        _boundary_contradiction_index(
-            geometry,
-            "lower"
-        )
-        is None
+    envelope = getattr(geometry, "envelope_metrics", {}) or {}
+    fit = envelope.get("formation_body_fit")
+    if fit is None:
+        return True
+    return all(
+        fit[side]["max_consecutive_breaches"] < GEOMETRY_MAX_BODY_BREACH_RUN
+        for side in ("upper", "lower")
     )
 
 
@@ -470,10 +333,9 @@ def analyze_geometry(
             #
             # 4c. Boundary-validity admission
             #
-            # A boundary contradicted by its own confirmed pivot and its
-            # own candle body at the same in-formation bar is rejected.
-            # Post-END action is excluded, so a breakout after completion
-            # never invalidates the formation.
+            # Sustained body mismatch on either own-anchor..END interval
+            # rejects the pair. Isolated excursions and post-END breakouts
+            # cannot independently invalidate a formation.
             #
 
             if not _is_boundary_structurally_valid(
@@ -541,7 +403,7 @@ def analyze_geometry(
     # unfiltered pool is kept so downstream detection keeps reporting the
     # same geometry with detected=False instead of losing it entirely.
     #
-    # Order: CANONICAL first (unchanged), then fewer body-zone breaches,
+    # Order: CANONICAL first (unchanged), then fewer own-anchor..END body breaches,
     # then the existing geometry_score. Scores are not recalculated.
     #
 

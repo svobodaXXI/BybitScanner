@@ -292,4 +292,99 @@ the at-END case and the no-fallback empty pool. The existing AEVO fixture
 regressions in `tests/test_geometry_candidate_selection_freshness.py` and
 `tests/test_geometry_locality_admission.py` are run unchanged.
 
+## Approved bounded revision — 2026-09-22: sustained formation body mismatch
+
+Owner authorization: historical references may be revised when their structural
+defect is evidenced; an isolated candle excursion must not automatically reject
+a formation. The owner authorized one bounded implementation and historical
+verification, not trading/risk changes or symbol-specific calibration.
+
+This section supersedes the 2026-09-21 admission rule and its frozen-reference
+restriction only as specified below. Earlier records remain historical evidence.
+
+### Exact rule and ownership
+
+- Reuse `evaluate_body_zone_breaches()` and its existing strict `> 0.15 * ATR(14)`
+  body-edge comparison. A wick alone is not a body breach. No outside-pivot is
+  required. The rule is symmetric and applies to the existing Wedge/Triangle pool.
+- Evaluate the upper boundary from its own primary anchor through formation END,
+  and the lower boundary from its own primary anchor through that same END,
+  inclusively. Never evaluate a boundary before its own anchor. END remains the
+  last supporting pivot of the existing candidate pair; it is not moved to excuse
+  a breach. Post-END movement never contributes to this new admission or its
+  body-count ranking preference.
+- Replace single pivot-plus-body contradiction rejection with rejection when
+  EITHER boundary has at least **7 consecutive applicable bars** whose bodies
+  exceed the existing ATR tolerance. Isolated breaches, separated single bars,
+  and shorter runs do not independently reject. A gap breaks a run; counts on
+  opposite boundaries never combine into a run.
+- Seven bars cover the current pivot observation context (3 left + center + 3
+  right). This is an explicit engineering duration, not a new pivot algorithm,
+  trading timeframe, or a claim of universal statistical calibration. It does
+  not change automatically if pivot defaults change.
+- Store the assessment in `envelope_metrics.formation_body_fit`, reusing the
+  existing body evaluator rather than adding another candle/ATR implementation.
+  Existing full-window diagnostic keys keep their historical meaning.
+- Keep the existing single selection key: CANONICAL priority, fewer body
+  breaches, then geometry ranking score, after locality and freshness handling.
+  Its body count now comes from the respective own-anchor..END intervals. No
+  alternate ranking system, new detector, generator spacing change or symbol
+  exception is introduced. No admissible pool means no geometry; existing stale
+  diagnostic fallback remains non-actionable under the unchanged freshness gate.
+- Optional candle-free Geometry calls retain their prior ability to construct
+  geometry: the body assessment is unavailable, not evidence of a clean envelope.
+  The production Scanner supplies candles. Missing new metrics on legacy stubs
+  are not represented as a successfully measured zero-breach assessment.
+- The old #180 pivot/body intersection may remain a diagnostic fact, but is no
+  longer an independent admission veto. In particular one candle cannot reject
+  merely because it is also a confirmed pivot.
+
+The disabled Wedge containment penalty stays OFF. Signal score/tier, Robot
+admission code, risk, orders, runtime and Telegram behavior are out of scope.
+100/100 continues to mean capped structural-plus-confirmation points; it is not
+an envelope-fit guarantee. This bounded rule does not claim to catch every
+intermittent or shallow unsupported line.
+
+### Evidence and sensitivity (before algorithm edit)
+
+Eleven frozen 200-bar historical windows were assessed. AZTEC/HIMS reuse the
+previous matching-as-of reconstruction. QQQ/CHIP were recovered through two
+bounded historical kline requests and matched to saved signal as-of, all report
+pivots and selected anchors. Controls reuse the earlier saved windows, not the
+later full-pass reports. No new full Scanner pass was run.
+
+Longest own-anchor..END body-breach runs in the disputed historical boundaries:
+AZTEC 16, HIMS 10, QQQ 45 (including the lower prefix), CHIP 8, AEVO 19,
+INJ 7, WLD 15, AAVE 8, POL 9. XRP has none. PONS has a two-bar shallow
+upper excursion (~0.20 ATR); its later breakout is outside END.
+
+The SAME selected lines and START/END (or empty pool) result on ALL eleven
+windows for every tested rejection duration 4, 5, 6, 7 and 8. At 9, the
+known AAVE/CHIP defects return; at 10 POL returns; at 11 HIMS returns.
+Seven is inside the stable interval and has the observation-context rationale
+above; it was not selected to preserve old reference indices. This is bounded
+historical sensitivity evidence, not out-of-sample calibration or launch approval.
+
+### Reference dispositions to preserve in regression evidence
+
+- AEVO U156/L95, END190: lower runs 101..111 and 128..146 precede
+  common_start156; 35 body breaches, peaks ~3.73 and ~2.84 ATR. The old
+  fixture is evidence of an unsupported lower boundary, not an immutable winner.
+  No admissible replacement exists in this generator pool.
+- INJ U105/L68: lower runs 77..83, 86..91, 94..97 (17 bars) precede
+  common_start105. U105/L77, END184 instead has zero body breaches on both
+  applicable boundaries. The isolated lower wick/pivot at172 is still allowed.
+- WLD U117/L147: upper run126..140 (15 bars, peak ~2.03 ATR) precedes
+  common_start147. The supported replacement is a DIFFERENT, earlier triangle,
+  U129/L61, START61 END177, with zero body breaches; do not describe this as
+  preserving or repairing the same late rising wedge.
+- XRP U127/L89 END189 and PONS U143/L145 END186 remain unchanged.
+- AZTEC selects U106/L102, START102 END148 with zero breaches but is stale:
+  no fresh replacement signal. HIMS, QQQ, CHIP and POL have no admissible pair.
+- AAVE retains only the existing stale U27/L46, START27 END108 diagnostic
+  geometry; the rejected U136/L140 END195 is not rescued.
+
+Verification and publication are recorded in
+`CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-FORMATION-FIT-001.md`.
+
 # END_OF_DOCUMENT
