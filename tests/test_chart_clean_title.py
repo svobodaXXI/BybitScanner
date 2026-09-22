@@ -68,6 +68,27 @@ class ChartTitleTests(unittest.TestCase):
             "ПОТЕНЦИАЛ ДВИЖЕНИЯ: РАСЧЁТ НЕДОСТУПЕН",
         ])
 
+    def test_triangle_potential_renders_as_symmetric_percent(self):
+        title = build_chart_title(
+            "BTCUSDT",
+            self._result(
+                pattern="Triangle Compression",
+                timeframe="5",
+                potential={
+                    "percent": 4.28,
+                    "signed_percent": None,
+                    "direction": "SYMMETRIC",
+                    "method": "STRUCTURE_START_WIDTH",
+                },
+            ),
+        )
+        self.assertEqual(title.splitlines(), [
+            "BTCUSDT · 5м",
+            "Сжимающийся треугольник",
+            "КАЧЕСТВО СТРУКТУРЫ: 82/100",
+            "ПОТЕНЦИАЛ ДВИЖЕНИЯ: ±4.28%",
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

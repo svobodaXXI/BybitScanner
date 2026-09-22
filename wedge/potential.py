@@ -67,6 +67,14 @@ def calculate_potential_move(
         direction = "DOWN"
         signed_percent = -potential_percent
 
+    elif pattern == "Triangle Compression":
+
+        # Breakout direction is not yet confirmed for a triangle, so the
+        # potential is reported as a symmetric +/-X% around the current
+        # price instead of a single signed value.
+        direction = "SYMMETRIC"
+        signed_percent = None
+
     else:
 
         return None
@@ -82,7 +90,7 @@ def calculate_potential_move(
             round(
                 signed_percent,
                 2
-            ),
+            ) if signed_percent is not None else None,
 
         "direction":
             direction,

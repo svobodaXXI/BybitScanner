@@ -387,4 +387,94 @@ historical sensitivity evidence, not out-of-sample calibration or launch approva
 Verification and publication are recorded in
 `CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-FORMATION-FIT-001.md`.
 
+## Investigated and NOT implemented — 2026-09-22: BONK/TURBO/XEC anchor-locality defect
+
+Status: OPEN, NO CODE CHANGE. Recorded so the next attempt does not repeat this
+diagnostic campaign from zero.
+
+### The defect
+
+`1000BONKUSDT`, `1000TURBOUSDT`, `1000XECUSDT` were admitted by the live Scanner
+(post-#182) as `Rising Wedge`, `geometry_mode=EXPLORATORY`, `Pattern Score: 95/100`,
+`signal=STRENGTHENING`, sent to Telegram. Signal-time evidence from the Scanner's
+own debug log:
+
+```
+BONK  : upper_anchor=81  lower_anchor=128  upper_slope=1.5957e-07  lower_slope=1.9048e-06
+TURBO : upper_anchor=81  lower_anchor=128  upper_slope=4.1739e-05  lower_slope=2.8049e-04
+XEC   : upper_anchor=64  lower_anchor=132  upper_slope=3.5439e-06  lower_slope=5.6389e-06
+```
+
+All three: family=`rising`, `anchor_sequence.valid=False` (upper/secondary anchor
+precedes the lower/primary anchor). Rendered charts (`charts/1000BONKUSDT_analysis.png`
+etc., generated at signal time) show the upper boundary anchored at a swing high
+that predates the sharp reversal impulse the lower boundary anchors to, then drawn
+forward across an unrelated later consolidation — the exact shape "do not combine a
+preceding impulse with later consolidation" describes. Zoomed pixel inspection of
+the same charts confirms candle **bodies stay inside both boundaries**; only wicks
+cross the upper line. This was re-verified numerically: re-running the geometry
+engine on freshly fetched candles (and on a same-symbol window reconstructed to
+within 3 bars of the original anchors) measures `formation_body_fit` at 0
+consecutive body breaches on both boundaries for all three symbols.
+
+### Why no fix was implemented this pass
+
+Every existing, already-computed pair-level signal was tested as a candidate
+admission gate against the frozen `tests/fixtures/geometry_formation_fit/historical_cases.json`
+eleven-case set (whose EXPLORATORY winners — INJ, WLD, XRP, AAVE, AZTEC — and
+CANONICAL winner PONS are protected counterexamples per
+`SCANNER_GEOMETRY_CURRENT_COURSE.md`). None separates the defect from the
+protected set without regressing it:
+
+- **Anchor chronological order** (secondary anchor precedes primary anchor):
+  true for BONK/TURBO/XEC, but also true for the accepted INJ (`U105/L77`) and
+  AAVE (`U27/L46` uses the same non-canonical shape) references. Not discriminating.
+- **`formation_body_fit` sustained-run count** (the #182 admission gate): measured
+  0 for BONK/TURBO/XEC's own reconstructed winners, matching the 0-3 range of every
+  accepted historical winner (PONS 2, AAVE 3, all others 0). Tightening
+  `GEOMETRY_MAX_BODY_BREACH_RUN` below 7 would not have rejected this defect and
+  is not proposed.
+- **Slope-imbalance ratio** (`pair_metrics` convergence `slope_ratio`/`slope_balance`):
+  signal-time values BONK=11.9x, TURBO=6.7x, XEC=1.6x vs. accepted INJ=6.4x,
+  AAVE=6.6x. Overlaps the protected set (TURBO/XEC sit inside or below the accepted
+  range); a threshold here would need to sit between 6.6 and 11.9 on a sample of
+  two, which this document's own prior sections already treat as insufficient
+  evidence for a general threshold.
+- **`anchor_balance`, `shared_structure_span`/`common_span` ratio, candidate
+  `support_ratio`, line `error_mean`, `convergence_strength`,
+  `is_converging`/`true_converging`**: all measured and all overlap between the
+  defective and the accepted set (full numbers kept in this task's session
+  record, not restated here to avoid implying a precision this sample does not
+  support).
+
+A byte-identical replay of the exact signal-time 200-candle window could not be
+obtained (the market moved during investigation; sliding-window reconstruction
+converged to within 3 bars of the logged anchors but never exact, and every
+re-fetch a few minutes apart selected a *different* winning candidate pair,
+usually with 0 measured breaches). This is itself evidence that whatever makes
+this shape look wrong to a human reader is not currently captured by any
+persisted, replayable pair-level metric in `geometry/pair_metrics.py` or
+`geometry/envelope_metrics.py`.
+
+### Disposition
+
+Per this course's own standing rule ("stop the change rather than create another
+multi-stage diagnostic campaign" if a bounded correction is not evidenced), no
+admission/ranking change is made in `geometry/engine.py` or
+`geometry/envelope_metrics.py` for this defect class. Recommended before the next
+attempt: collect additional frozen counterexamples (both confirmed-bad structures
+like BONK/TURBO/XEC and further confirmed-good ones) large enough to support an
+evidenced threshold, or design a genuinely new feature — e.g. touch/support
+recency relative to each boundary's own span, not yet computed anywhere — rather
+than retrying the numeric features already falsified above. `1000BONKUSDT`
+(signal-time anchors `U81/L128`) is the recommended primary target, with
+`1000TURBOUSDT`/`1000XECUSDT` and the existing INJ/AAVE/WLD/XRP/PONS/AZTEC set as
+required counterexamples, exactly as this document's process prescribes.
+
+Out of scope for this investigation and unaffected: the Triangle Compression
+movement-potential display gap (`wedge/potential.py` returning `None` for any
+pattern other than Falling/Rising Wedge) is a separate, independent presentation
+defect with no admission/ranking effect; it is fixed in the same task and does not
+require this decision boundary.
+
 # END_OF_DOCUMENT
