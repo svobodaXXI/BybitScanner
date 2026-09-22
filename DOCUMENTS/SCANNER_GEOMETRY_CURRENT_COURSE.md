@@ -4,6 +4,36 @@ Status: ACTIVE WORKING PLAN (not a detector contract or implementation authoriza
 Date: 2026-09-21
 Scope: BybitScanner 5m Wedge/Triangle geometry; historical acceptance before any new full Scanner pass.
 
+## Current bounded result — 2026-09-22
+
+The owner explicitly permits evidence-backed revision of structurally defective
+references, while forbidding automatic rejection for an isolated candle. This
+supersedes the frozen-reference restrictions below, which remain historical
+records. The exact new rule was recorded in
+`SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md` before algorithm changes.
+
+The existing Geometry admission now rejects seven consecutive body breaches
+beyond 0.15 ATR on either boundary's own-anchor..END interval. No outside pivot
+is required. Existing selection uses those same in-formation counts; post-END
+breakouts do not contribute to this body-fit preference. The old single
+pivot-plus-body admission veto is replaced, not widened to the earlier anchor.
+
+Eleven historical replays verify exact line equations, primary/secondary anchors,
+START/END, body evidence and stable winners across cutoffs 4..8. AEVO is rejected
+with its old lower-prefix defect preserved as evidence; INJ moves L68 to L77
+(zero body breaches); WLD changes from the defective U117/L147 wedge to the
+supported U129/L61 triangle, START61 END177. XRP and PONS retain their lines.
+AZTEC retains only stale U106/L102 END148; HIMS, QQQ, CHIP and POL have no
+admissible pair; AAVE retains stale U27/L46 END108. No fresh replacement is
+claimed for AZTEC or AAVE.
+
+Committed regression data replaces dependence on an ignored AEVO fixture.
+The source diagnostic records remain untouched. This is bounded historical
+verification, not universal calibration or production acceptance. Containment
+penalties stay OFF, the 100/100 formula is unchanged, and no service launch is
+authorized. Complete the protected task and one PR; any eventual full Scanner
+acceptance remains a separate owner-authorized operation.
+
 ## Why this record exists
 
 The 2026-09-21 full Scanner pass exposed wrong local selections and boundary anchors. Repeatedly adding global gates without first checking candidate generation can suppress signals without finding the correct structure. This document records the current sequence and the evidence required to change it; read it at the start of the next Scanner-geometry task. Do not treat this as approval to override existing contracts or as proof that the proposed late line is valid.

@@ -1135,6 +1135,47 @@ def evaluate_body_zone_breaches(
     }
 
 
+def evaluate_formation_body_fit(upper_line, lower_line, candles, end_index):
+    """Body evidence for each boundary on its own primary-anchor..END interval.
+
+    Reuses the ATR body evaluator; full-window diagnostic/zone metrics stay
+    unchanged. No pivot evidence is needed and post-END bars cannot form a run.
+    None means unavailable, not a measured clean envelope (optional candle API).
+    """
+    upper_start = (upper_line or {}).get("anchor_index")
+    lower_start = (lower_line or {}).get("anchor_index")
+    if upper_start is None or lower_start is None or end_index is None:
+        return None
+    breaches = evaluate_body_zone_breaches(
+        upper_line, lower_line, candles, min(upper_start, lower_start), end_index
+    )
+    if breaches is None:
+        return None
+    result = {}
+    for side, start, indices in (
+        ("upper", upper_start, breaches["upper_body_breach_indices"]),
+        ("lower", lower_start, breaches["lower_body_breach_early_indices"]
+         + breaches["lower_body_breach_late_indices"]),
+    ):
+        indices = [index for index in indices if start <= index <= end_index]
+        runs = []
+        for index in indices:
+            if runs and index == runs[-1][1] + 1:
+                runs[-1][1] = index
+            else:
+                runs.append([index, index])
+        result[side] = {
+            "start_index": start,
+            "end_index": end_index,
+            "body_breach_indices": indices,
+            "breach_runs": runs,
+            "max_consecutive_breaches": max(
+                (last - first + 1 for first, last in runs), default=0
+            ),
+        }
+    return result
+
+
 def calculate_envelope_metrics(
     upper_candidate,
     lower_candidate,
@@ -1243,7 +1284,16 @@ def calculate_envelope_metrics(
         )
     )
 
+    # Formation END has the same owner/definition as evaluate_candidate_pair:
+    # the last supporting pivot from either existing candidate, never current.
+    points = (upper_candidate.get("points") or []) + (lower_candidate.get("points") or [])
+    formation_end = max((point["index"] for point in points), default=None)
+    formation_body_fit = evaluate_formation_body_fit(
+        upper_line, lower_line, candles, formation_end
+    )
+
     return {
+        "formation_body_fit": formation_body_fit,
         "common_start":
             common_start,
 

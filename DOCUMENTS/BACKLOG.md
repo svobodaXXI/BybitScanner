@@ -48,6 +48,21 @@ single place where new ideas are parked until then.
 | **P3 — later acceptance** | One complete run confirmed Falling/Rising Wedge, Triangle and Ikigai Box SIGNALS wiring; WATCH flag on but 0 cards on **cold start by design**. `structures/` and root `scanner.py` are unused legacy prototypes, not ready patterns. 85 Wedge/Triangle + 71 Box notifications; 239 approved patterns include 154 STABLE/WEAKENING not re-sent. | After fixes, ONE user-approved full production Scanner acceptance with real Telegram; check one controlled continuous WATCH transition **only if specifically relevant**. Do not treat zero WATCH on the initial one-shot run as a defect, promise a further run, or enable Robot autonomously. No blanket connection of unfinished L-shape/flags/HS/Double Top/Bottom prototypes until separately implemented and accepted. |
 | **P3 — cleanup / deferred** | Two old worktrees `C:\\BybitScanner-pr178` and `C:\\BybitScanner-bv` plus other historical worktrees remain; root `analyzer.py` is shadowed by live `analyzer/core.py` and can mislead reviews. Scanner doesn't persist exact candle snapshots. | Do not delete user worktrees or refactor imports just for hygiene. On the next *relevant* scoped task, consider reproducible capture of the single signal-time OHLC snapshot **only if** it measurably saves more user-time than it costs; no new ingestion infrastructure. Cleanup requires separate verification of ownership and explicit authorization. |
 
+**P1 decision/result update — 2026-09-22:** The owner now permits evidence-backed
+revision of defective references; isolated excursions must not automatically
+reject. The earlier P1 prohibition above is superseded only by the bounded rule
+in `SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md`: seven consecutive body breaches
+beyond existing ATR tolerance on each boundary's own-anchor..END interval,
+replacing #180's single pivot/body veto; selection counts use the same intervals.
+Eleven historical cases and cutoff sensitivity 4..8 are verified. AEVO/HIMS/QQQ/
+CHIP/POL have no admissible pair; INJ's lower anchor changes 68->77; WLD changes
+to supported U129/L61 triangle; AZTEC keeps only stale U106/L102 END148; XRP,
+PONS and AAVE's stale diagnostic selection are unchanged. Evidence and tests:
+`CR-SCANNER-GEOMETRY-FORMATION-FIT-001`. Next: protected final verification and
+one PR review/integration; no runtime acceptance is claimed. Score 100/100
+remains structural-plus-confirmation, not an envelope guarantee. Other queue
+items and all runtime/risk authorization boundaries are unchanged.
+
 **Sequencing:** P0 runtime ownership/safety before any next multi-service launcher; P1 one geometry correction and score interpretation; P2 Ikigai and a combined display batch; P2 data resilience when it blocks acceptance; P3 one authorized full rerun only after material fixes. These are distinct issues, not a license to open them all simultaneously. The older Robot/v0.1 financial-risk backlog retains its own authorization/safety gates.
 
 ## 2. Prioritized queue

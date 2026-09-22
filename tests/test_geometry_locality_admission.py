@@ -12,8 +12,7 @@ Focused regression for the Geometry locality admission gate:
 
 TOSHI/XEC use exact 200-bar windows committed under
 tests/fixtures/geometry_locality/ (pivots verified identical to the Scanner
-reports of the 2026-09-21 17:46 pass). The AEVOUSDT fixture lives in the
-gitignored debug/ directory, so its test skips when absent.
+reports of the 2026-09-21 17:46 pass). AEVO reference revision is covered by the committed formation-fit fixture.
 """
 
 import json
@@ -27,7 +26,6 @@ from pivots import find_pivots
 from wedge.analyzer import _freshness_predicate
 
 from tests.test_geometry_candidate_selection_freshness import (
-    FIXTURE as AEVO_FIXTURE,
     _StubGeometry,
     _select,
 )
@@ -92,33 +90,8 @@ class RealWindowTest(unittest.TestCase):
         self.assertIsNone(_analyze(_window("1000XECUSDT")))
 
 
-class ConfirmedCaseUnchangedTest(unittest.TestCase):
-
-    @unittest.skipUnless(os.path.exists(AEVO_FIXTURE), "AEVOUSDT fixture not present")
-    def test_aevo_winner_is_unchanged(self):
-        with open(AEVO_FIXTURE, encoding="utf-8") as handle:
-            fixture = json.load(handle)
-
-        frame = pd.DataFrame(
-            [
-                {k: c[k] for k in ("time", "open", "high", "low", "close", "volume")}
-                for c in fixture["candles"]
-            ]
-        )
-        geometry = _analyze(frame)
-        expected = fixture["geometry"]
-
-        self.assertEqual(geometry.start_index, expected["start_index"])
-        self.assertEqual(geometry.end_index, expected["end_index"])
-        self.assertEqual(
-            geometry.upper_line["anchor_index"],
-            expected["upper_line"]["anchor_index"],
-        )
-        self.assertEqual(
-            geometry.lower_line["anchor_index"],
-            expected["lower_line"]["anchor_index"],
-        )
-        self.assertEqual(geometry.pair_metrics["geometry_mode"], "CANONICAL")
+# The old AEVO reference's lower-prefix defect and locality are exercised
+# together in tests.test_geometry_formation_fit using a committed fixture.
 
 
 class GateMechanicsTest(unittest.TestCase):
