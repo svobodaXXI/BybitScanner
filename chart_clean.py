@@ -153,7 +153,17 @@ def build_chart_title(symbol, result):
         "signed_percent"
     )
 
-    if signed_potential is None:
+    if potential.get("direction") == "SYMMETRIC":
+
+        symmetric_percent = potential.get("percent")
+
+        potential_name = (
+            f"±{symmetric_percent:.2f}%"
+            if symmetric_percent is not None
+            else 'РАСЧЁТ НЕДОСТУПЕН'
+        )
+
+    elif signed_potential is None:
 
         potential_name = (
             'РАСЧЁТ НЕДОСТУПЕН'
