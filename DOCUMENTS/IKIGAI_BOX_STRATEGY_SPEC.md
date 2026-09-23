@@ -177,33 +177,33 @@ the second attempt's first-order anchor remain **unresolved owner price/risk
 decisions**; do not invent them. Each grid totals at most 1 РО, without
 simultaneously active attempt grids.
 
-**Owner-confirmed STOP rule (2026-09-23; PAPER DESIGN ONLY):** no fixed
--1.5% default. For each actually filled exposure, prefer a valid structural
-STOP if it meets a minimum planned net reward/risk of 2:1 to the F(1.0)
-target. If the structural STOP is farther than the maximum risk allowed by
-that ratio, place the STOP at the maximum ratio-compliant risk distance
-instead; use the same risk-derived limit when no structural STOP exists.
-Account for actual fills, fees, tick rounding and all outstanding grid
-exposure. Do not treat a wider structural STOP as an automatic reason to
-reject an otherwise protectable entry. Do not submit an entry if the system
-cannot establish a valid protective STOP and the required ratio. A
-ratio-limited STOP may lie inside the original pattern structure.
+**Owner-confirmed fixed-price grid STOP (2026-09-23; PAPER DESIGN ONLY):**
+Before placing any of the four entry LIMITs, calculate the hypothetical
+fully-filled, equal-quantity grid average entry from their actual rounded
+order prices. Choose one STOP price beyond the fourth entry LIMIT in the
+adverse direction (SHORT: above P4; LONG: below P4). Prefer a structural
+level when it fits; otherwise cap its distance using the planned full-grid
+average entry, F(1.0) target and fee-aware reward/risk >= 2:1. No fixed
+-1.5% fallback. If there is no valid STOP beyond the entire grid meeting
+these constraints, do not place that grid; do not move the STOP inside it.
 
-**Owner clarification — staged STOP and slice TAKE (2026-09-23; DESIGN ONLY):**
-Each filled entry slice gets its own reduce-only TAKE LIMIT, sized no larger
-than that slice's confirmed outstanding quantity, including partial fills.
-The owner requests a temporary STOP covering the remaining open position
-once three of the four entry LIMITs have filled, then a common STOP after
-all four fill; all STOP levels remain subject to the fee-aware RR >= 2:1
-limit above. An earlier TAKE can reduce exposure before the fourth entry
-fills: coverage and full-grid status must use confirmed fills and remaining
-open quantities, not assume that three filled orders still imply 3/4 РО
-open. The first one or two fills can otherwise remain without STOP, with
-potential loss beyond the planned ratio if price reverses before the third
-fill. **This uncovered-exposure interval is an unresolved safety/risk decision,
-not authorization for Robot execution.** Do not wire staged protection or
-allow PAPER orders until that risk is explicitly resolved and the existing
-fail-closed protection requirements are satisfied.
+Fix this STOP **price** before any entry is submitted. The same price
+protects even the first filled slice and must NOT be moved as later LIMITs
+fill. Once the first fill is confirmed, create/activate protection promptly
+for the actual open quantity; adjust only protective **quantity** for later
+fills and TAKE closures, never the price. A position-free reduce-only STOP
+must not be assumed executable before the first fill. Each confirmed entry
+slice gets its own reduce-only TAKE LIMIT for no more than that slice's
+remaining open quantity, including partial fills.
+
+**Risk boundary:** the full-grid planned RR >= 2:1 does not imply the same
+RR for the first one or two fills. Calculate and expose the worst-case
+partial-fill loss and fee-aware RR at this fixed STOP; do not claim per-slice
+RR >= 2:1 or treat partial fills as a fully filled average. If the permitted
+partial-fill risk, order-reservation or protective-quantity rules cannot
+be satisfied, keep Robot execution blocked pending an explicit risk decision.
+The earlier proposal to wait for three filled LIMITs before any STOP is
+superseded; no filled exposure may remain intentionally unprotected.
 
 **Per-slice exit:** upon confirmed fill of P1 (including partial quantity),
 protect the actually filled exposure without delay and place a reduce-only
@@ -251,19 +251,17 @@ existing later Robot stage in `DOCUMENTS/BACKLOG.md`.
   placing the advance grid when the fallback STOP is available. Exact spacing,
   zone width and anchoring are **not yet specified**; never hard-code a price
   distance or assume all four orders are filled.
-- **STOP:** prefer the confirmed suitable reversal candlestick's protective
-  extreme: SHORT above the bearish engulfing/shooting-star high; LONG below the
-  bullish engulfing/hammer low. The extreme must produce a valid protective
-  level for the actual fill, with normal tick/fee/technical safety constraints.
-  Use a structural STOP only if the projected fee-aware reward/risk to F(1.0)
-  is at least 2:1; if it is farther away, cap its distance at the largest
-  fee-aware risk that meets 2:1. If no structural STOP is available, use the
-  same ratio-based risk limit, not a fixed-percentage fallback. Base the
-  calculation on actual fills and protect all filled exposure immediately,
-  including partial-grid fills. Require valid tick rounding and coverage
-  for outstanding grid exposure; otherwise block further entries.
-  Do not leave a filled position unprotected awaiting candlestick confirmation.
-  Exact additional buffer beyond an extreme remains **unspecified**.
+- **STOP:** compute and freeze a single price **before** placing the grid,
+  using the hypothetical fully filled, equal-quantity average and fee-aware
+  RR >= 2:1 to F(1.0). Prefer a valid structural STOP, otherwise the maximum
+  ratio-compliant risk distance; in either case it must be beyond P4 (SHORT
+  above, LONG below). If those requirements cannot coexist, reject the grid
+  instead of placing STOP inside it. Activate the frozen-price STOP upon the
+  first confirmed fill and update protective quantity as exposure changes,
+  including partial fills and per-slice TAKE closures; never reprice it during
+  the same attempt. Explicitly track partial-fill risk, which may have RR
+  below 2:1 despite the planned full-grid calculation. Apply the same
+  precomputed-price rule separately to any authorized second-attempt grid.
 - **Attempt 2 (only after stopped attempt 1):** after a **confirmed STOP close**
   of the first trade, **verified FLAT position**, no unresolved exit/protection
   obligation, and cancellation/terminal state of *all* unfilled limits from
