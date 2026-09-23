@@ -39,6 +39,47 @@ and its narrow changed-behavior checks during implementation; complete the
 mandatory full-universe Scanner acceptance pass below for every new pattern
 or Scanner correction, without redundant repeated passes.
 
+## Exclusive visual acceptance workflow — full real Scanner pass ONLY (OWNER OVERRIDE 2026-09-23)
+
+**The owner inspects and accepts ALL Scanner changes solely via ONE COMPLETE
+real Scanner pass across EVERY available eligible symbol, using normal
+configured Telegram signal delivery for ALL integrated patterns.** This applies
+to **every** new pattern, chart/caption/button/presentation adjustment,
+detector/geometry fix and Scanner behavior change, including a seemingly
+small Ikigai Box card change. Do not offer an isolated updated card, a
+single-symbol chart, a hand-picked example, a two-candidate demo, a cropped
+symbol set, a partial pass, a local PNG, a screenshot from a test, or a
+silent/offline replay **as the owner's visual review or as a preliminary
+visual acceptance step**. No substitute "quick look first" workflow.
+Focused technical/unit tests and local developer diagnostics may be used
+only to implement and check code, **not** to ask the owner to inspect an
+artifact or to declare visual acceptance. Do not commission extra test
+campaigns in place of the owner's visual process.
+
+**Mandatory instruction-construction guard:** before asking the owner or
+Codex to visually check a Scanner change, the assistant/agent must read
+this rule and ask for exactly one complete eligible-universe production-path
+Scanner pass with **ordinary real Telegram notifications and all integrated
+patterns enabled**; collect the completion count, per-interval/per-pattern
+signal totals, delivery failures and the charts actually received in Telegram.
+If the requested change has been merged but full-pass acceptance is pending,
+**the next visual step is the full pass, never an isolated proof image/card**.
+Do not describe a 302/777-style interrupted run or 5m-only subset as
+complete. When the required 5m→1m per-symbol workflow has been implemented,
+verify 5m then immediately 1m for each ticker; until then, report the
+current implementation truth rather than claiming dual-timeframe coverage.
+
+**Safety is not a substitute for acceptance:** before launching, establish
+the real entrypoint/side effects, process and Telegram-poller ownership,
+current Robot/position state, and fail-closed boundaries. A full Scanner
+pass does not authorize Robot/PAPER/LIVE trading, order placement, unsafe
+service restart or risk changes. If a safe full pass is blocked, report
+the *specific blocker and leave visual acceptance pending*; do not replace
+the full pass with a shorter run or request a manual single-card review.
+This rule is permanent and supersedes any conflicting older milestone,
+queue phrasing or assistant/Codex prompt unless the owner explicitly
+changes it.
+
 ## Telegram-first visual development for every new Scanner pattern — OWNER RULE (2026-09-23)
 
 **A newly developed pattern must reach the owner's ordinary Telegram signal
@@ -68,14 +109,12 @@ placement, admission, risk and deployment require their separate approved
 contracts. Before a real pass, check launcher side effects, duplicate workers
 and current Robot/position safety; do not bypass fail-closed protection.
 
-**Immediate unfinished milestone:** PR #197's L-shape integration is only an
-opt-in *local* observer (`BYBITSCANNER_L_SHAPE_OBSERVATIONS=1`), so no L-shape
-photos reach Telegram. Prioritize completing its actual normal Scanner →
-Telegram chart/caption/standard safe-button delivery **before requesting
-any more owner visual inspection or claiming integration acceptance**. Then
-run one complete real eligible-symbol pass for the owner's Telegram review.
-Existing local-only behavior is a defect against this workflow rule, not
-the accepted permanent architecture.
+**Current milestone:** PR #204 integrated L-shape Telegram photos into
+GitHub main. PR #205 simplified the Ikigai Box chart and Telegram card.
+Their owner visual acceptance remains **pending until the single complete
+real Scanner pass** specified above; do not offer either pattern or card
+as an isolated owner visual sample. The 5m→1m per-symbol Scanner extension
+is separately queued and not yet implemented.
 
 ## Permanent Scanner 5m → 1m per-symbol workflow — OWNER RULE (2026-09-23)
 
@@ -104,12 +143,12 @@ until trading behavior is separately approved.
 
 ## Current mandatory task sequence — OWNER UPDATE (2026-09-23)
 
-The user's current execution order is **(1) L-shape Telegram
-integration merged, full visual acceptance still pending → (2) finish
-Ikigai Box Telegram card simplification and make candles approximately
-40% narrower → (3) implement per-symbol 5m then 1m Scanner search and
-Telegram delivery for every integrated pattern → (4) fix queued Scanner
-geometry errors** (APTUSDT, B3USDT, DASHUSDT, ATHUSDT; preserve B2USDT
+The user's current execution order is **(1) L-shape Telegram integration
+merged → (2) Ikigai Box card simplification and approximately 40% narrower
+candles merged → (3) one complete real Scanner pass for owner visual review
+of both integrations, with no isolated card preview → (4) implement
+per-symbol 5m then 1m Scanner search and Telegram delivery for every
+integrated pattern → (5) fix queued Scanner geometry errors** (APTUSDT, B3USDT, DASHUSDT, ATHUSDT; preserve B2USDT
 as Box positive control). Follow
 the top **"Binding owner execution order"** section of
 `DOCUMENTS/BACKLOG.md` as the authoritative next-task index. Do **not**
