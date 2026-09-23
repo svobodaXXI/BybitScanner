@@ -75,6 +75,22 @@ job, Scanner worker, Telegram poller, Robot/backend and positions; never blindly
 stop trading infrastructure. The full eligible-universe Telegram acceptance
 requirement remains unchanged; an interrupted run remains unaccepted.
 
+## RPLUSDT 5m Ikigai Box — owner-corrected A/B reference (2026-09-23)
+
+The owner reports that the Scanner Box first-impulse anchors disagree with
+his corrected TradingView drawing: approximately F(0)=1.979,
+F(1)=1.998, F(2.618)=2.029 on a rising first leg, with a later visible
+reaction around 2.618. The earlier CPUSDT-derived near-single-colour
+impulse heuristic MUST NOT be promoted to an absolute first-leg anchor rule;
+retain CPUSDT as the contrasting case where sideways candles were wrongly
+included. Investigate both with frozen decision-time OHLC and local episode
+structure; do not select A/B retrospectively merely because 2.618 fits the
+later move or treat a wick as an actual Robot fill/exit. Detailed owning
+rule and precedence: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`,
+"RPLUSDT 5m — revised first-impulse anchor interpretation". This is part
+of the existing second-priority Box geometry task (after L-shape), not a
+new task or permission for an isolated owner visual-review pass.
+
 ## CPUSDT 5m Ikigai Box: first-impulse construction correction — QUEUED (2026-09-23)
 
 Owner's visual feedback: first impulse must begin at the actual local reversal
