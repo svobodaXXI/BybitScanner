@@ -102,7 +102,11 @@ def update_signal(signal):
     if timeframe is not None and not str(timeframe).strip():
         raise ValueError("signal timeframe must not be empty")
     # Preserve the previous 5m score when migrating the same pattern.
-    if key not in memory and str(timeframe).strip() == "5":
+    prior_scoped = any(
+        existing.startswith(f"scanner:{symbol}:5:{pattern}:")
+        for existing in memory
+    )
+    if key not in memory and str(timeframe).strip() == "5" and not prior_scoped:
         legacy = memory.get(symbol)
         if isinstance(legacy, dict) and legacy.get("pattern") == pattern:
             memory[key] = dict(legacy)
