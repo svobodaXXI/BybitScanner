@@ -5,6 +5,43 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## Owner manual Scanner run; agent quota protection — BINDING (2026-09-23)
+
+The owner, not Codex/Claude Code/ChatGPT, manually launches each real Scanner
+pass through a verified Scanner-only entrypoint. Agents must not start,
+restart, resume, supervise, poll or wait through a full Scanner/Telegram
+acceptance run: doing so wastes the owner's agent quotas. A bounded read-only
+host-state/preflight task must exit immediately after its concise report;
+subsequent manual Scanner execution does not require an active agent session.
+Before any instruction to stop a possibly running process, distinguish Codex
+job, Scanner worker, Telegram poller, Robot/backend and positions; never blindly
+stop trading infrastructure. The full eligible-universe Telegram acceptance
+requirement remains unchanged; an interrupted run remains unaccepted.
+
+## CPUSDT 5m Ikigai Box: first-impulse construction correction — QUEUED (2026-09-23)
+
+Owner's visual feedback: first impulse must begin at the actual local reversal
+extremum, not an arbitrary later candle, and terminate at the last candle of
+the initial directional move **before** subsequent consolidation/sideways
+movement. Predominantly same-colour candles: UP predominantly green, DOWN
+predominantly red. Only small opposite-colour candles that do not produce a
+zigzag/meaningful countertrend swing may occur inside that first impulse.
+Do not mechanically terminate on the first tiny opposite-colour candle, nor
+include later sideways candles in the first impulse or move frozen A/B to fit
+later prices. The first substantial opposite-direction candle/zigzag marks the
+end of the directional leg; use the source-time candles to determine its exact
+boundary and ensure terminal B is a candle of the impulse's own direction.
+For UP use reversal LOW→terminal HIGH; DOWN mirror HIGH→terminal LOW. Keep
+subsequent consolidation independent, regardless of its candle colours.
+At implementation, establish reproducible pattern-specific evidence for
+"small" and "non-zigzag" (no arbitrary one-example thresholds), repair the
+first-leg candidate construction rather than a chart/score/Telegram reject,
+and keep both CONFIRMED and WATCH consistent. This supersedes earlier
+opposite-colour-core/wick-path exceptions wherever they conflict; defer any
+financial Robot change. Preserve existing task order: manual full current-
+Scanner pass, 5m→1m integration/full acceptance, then authorized geometry
+fixes. No isolated screenshot/card visual acceptance.
+
 ## Permanent owner-only visual acceptance protocol — FULL PASS OR NO ACCEPTANCE (2026-09-23)
 
 For any Scanner change whatsoever, including a chart-only/caption/button
