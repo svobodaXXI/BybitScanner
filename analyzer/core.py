@@ -139,6 +139,7 @@ def analyze_symbol(symbol, *, timeframe=None):
         # at the same source-candle timestamp instead of pretending a 5m
         # geometry index is already a 1m index.
         result["timeframe"] = timeframe
+        result["scanner_observational_only"] = (timeframe == "1" and explicit_timeframe)
         result["scanner_source_timeframe"] = timeframe.strip()
         try:
             source_candle_time_ms = int(df.iloc[current_index]["time"])
