@@ -6,6 +6,58 @@ Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per
 single place where new ideas are parked until then.
 
 
+## CURRENT owner task / NEXT ACTION — 2026-09-24 (latest owner override)
+
+**In progress (WIP=1):** Ikigai Box → PAPER Robot. The owner explicitly
+prioritized this ahead of the pending full Scanner visual pass. This short
+entry is the operational current-task checkpoint; retain the detailed queue
+below as parked work, not as competing "immediate" instructions.
+
+**Done / verified:** Scanner per-symbol 5m→1m PR #216 merged in GitHub main
+(`77385a8`); owner full-universe Telegram acceptance of that version remains
+PENDING. Box first-attempt prices P1/P2/P3/P4 = 75/85/95/105% of the signed
+F(1.0)→F(1.618) distance, four equal 1/4 working-volume slices and common
+TAKE at 10% of that displacement are owner-approved and documented in
+`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`. Existing non-executing planner
+PR #215 (head `f33cb4c`) has 9/9 focused tests PASS on the owner's isolated
+`C:\\BybitScanner-box` checkout; PR is OPEN, NOT MERGED. An offline test
+does not authorize PAPER orders, LIVE trades or full Scanner acceptance.
+
+**NEXT physical action:** determine and verify the permissible worst-case
+partial-fill risk for the frozen first-attempt grid and fixed STOP, including
+the P1-only fill. Reuse PR #215 and the existing Robot durable order/protection
+mechanisms; no alternate trading engine. Owner's maximum permissible
+partial-fill risk is NOT YET DECIDED: record measured exposure and ask only
+for that risk decision when evidence is ready. Do not enable execution.
+
+**Done when:** separately approved PAPER Box lifecycle is verified for
+confirmed fills, reduce-only common-price TAKEs, immediate fixed-price STOP
+with actual protected quantity, duplicate-free recovery, and unchanged Wedge
+and LIVE behavior. PR merge and subsequent owner acceptance are separate gates.
+
+**Parked / next after this scope:** one owner-manual full real Scanner
+5m→1m all-symbol / all-pattern Telegram pass; remaining Scanner geometry,
+presentation and control follow-ups. Prioritize only on the owner's next
+explicit direction or a concrete critical safety issue. Earlier "immediate",
+"latest override", 5m→1m "not implemented" and planner "no PR" claims below
+are **historical**, not instructions to redo completed work.
+
+**Compact work-control rule (GTD + WIP limit):** Every new input is
+(a) a needed dependency of the active task, (b) a critical safety interruption,
+or (c) parked once in this existing backlog with its concrete next action.
+Keep at most one *primary* in-progress owner milestone; a safety fix may
+interrupt it, and an independent already-running task need not be destroyed.
+For the active task record only goal, next observable action, proven evidence,
+one actual blocker, done criterion, and PR/branch link. Keep strategy/approval
+decisions in the owning spec, code/diff/test history in GitHub; link, do not
+copy. Update this checkpoint only when one of those facts changes, at a
+meaningful handoff or at task closure — NOT after every message, test or
+commit. A new chat follows AGENTS.md staged entry, reads this checkpoint
+then the owning spec/PR only as needed; it does not request a user-authored
+handoff or run full Project Sync for ordinary continuation.
+
+---
+
 ## CURRENT owner work index — 2026-09-23 (supersedes stale next-step claims below)
 
 **Do not repeat completed work.** The 23 September owner-manual real Scanner
