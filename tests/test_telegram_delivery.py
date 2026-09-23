@@ -327,6 +327,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             chart.write_bytes(b"test-image")
             signal = self.signal()
             signal.update(timeframe="1", pattern="Triangle Compression")
+            (Path(directory) / "BTCUSDT_1_analysis.png").write_bytes(b"test-image-1m")
 
             with patch.object(
                 notification.config, "TELEGRAM_CHAT_IDS", ("owner",),
