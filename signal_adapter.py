@@ -24,6 +24,7 @@ def prepare_signal(
     return {
 
         "symbol": symbol,
+        **({"timeframe": str(result["timeframe"])} if result.get("timeframe") is not None else {}),
 
         "score":
             result.get(
