@@ -74,7 +74,8 @@ def save_report(
     )
 
 
-    filename = f"reports/{symbol}.txt"
+    filename = (f"reports/{symbol}.txt" if str(timeframe) == "5"
+                else f"reports/{symbol}_{timeframe}.txt")
 
 
     lines = []

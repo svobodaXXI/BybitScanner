@@ -51,7 +51,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             os.environ, {"BYBITSCANNER_IKIGAI_BOX_SIGNALS": "1"}
         ), patch.object(main, "get_symbols", return_value=["TESTUSDT"]), patch.object(
             main, "analyze_symbol",
-            return_value={"symbol": "TESTUSDT", "result": None, "data": source},
+            side_effect=lambda symbol, *, timeframe: {"symbol": symbol, "result": None, "data": source if timeframe == "5" else None},
         ) as scan, patch.object(
             main, "send_message", return_value=True,
         ), patch.object(
@@ -83,7 +83,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                 main.run_scan_pass()
                 main.run_scan_pass()
 
-        self.assertEqual(scan.call_count, 2)
+        self.assertEqual(scan.call_count, 4)
         self.assertEqual(photo.call_count, 1)
         text.assert_called_once()
         self.assertEqual(send_order, ["text", "photo"])
@@ -102,7 +102,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             text.call_args.args[2],
             f"📡 Сканер: TESTUSDT\n"
             f"↑ Коробка Икигаи (+{potential:.2f}%)\n"
-            f"{box.config.TIMEFRAME}м",
+            "5м",
         )
         self.assertEqual(photo.call_args.kwargs["caption"], "")
         buttons = [

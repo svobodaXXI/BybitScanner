@@ -166,7 +166,7 @@ class IkigaiBoxWatchStreamTests(unittest.TestCase):
             "BYBITSCANNER_IKIGAI_BOX_WATCH": "1",
         }), patch.object(main, "get_symbols", return_value=["HEIUSDT"]), patch.object(
             main, "analyze_symbol",
-            return_value={"symbol": "HEIUSDT", "result": None, "data": snapshot},
+            side_effect=lambda symbol, *, timeframe: {"symbol": symbol, "result": None, "data": snapshot if timeframe == "5" else None},
         ), patch.object(main, "send_message"), patch.object(
             stream, "process_ikigai_box_watches", return_value=True,
         ) as watch, patch(

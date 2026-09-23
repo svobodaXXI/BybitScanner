@@ -266,6 +266,27 @@ class AnalyzerRobotHandoffTests(unittest.TestCase):
         self.assertEqual(result["geometry"]["upper_line"]["slope"], -5.0)
 
 
+class TimeframeSignalMemoryTests(unittest.TestCase):
+    def test_interval_and_formation_identity_are_independent(self):
+        import signal_memory
+
+        history = {}
+        base = {
+            "symbol": "BTCUSDT", "pattern": "Falling Wedge",
+            "direction": "LONG", "score": 80,
+        }
+        with patch.object(signal_memory, "load_memory", side_effect=lambda: dict(history)), \
+                patch.object(signal_memory, "save_memory", side_effect=lambda value: history.update(value)):
+            five = {**base, "timeframe": "5", "formation_id": "100:200"}
+            one = {**base, "timeframe": "1", "formation_id": "100:200"}
+            next_five = {**five, "formation_id": "300:400"}
+            self.assertEqual(signal_memory.update_signal(five), "NEW")
+            self.assertEqual(signal_memory.update_signal(one), "NEW")
+            self.assertEqual(signal_memory.update_signal(five), "STABLE")
+            self.assertEqual(signal_memory.update_signal(next_five), "NEW")
+        self.assertEqual(len(history), 3)
+
+
 class MainAdmissionGateTests(unittest.TestCase):
     def run_main(self, approved, *, test_mode=False):
         analysis = {
@@ -325,9 +346,9 @@ class MainAdmissionGateTests(unittest.TestCase):
     def test_approved_signal_reaches_normal_persistence_and_notification(self):
         _, _, prepare_mock, update_mock, send_mock, _ = self.run_main(True)
 
-        prepare_mock.assert_called_once()
-        update_mock.assert_called_once()
-        send_mock.assert_called_once()
+        self.assertEqual(prepare_mock.call_count, 2)
+        self.assertEqual(update_mock.call_count, 2)
+        self.assertEqual(send_mock.call_count, 2)
         self.assertNotIn("test_mode", send_mock.call_args.kwargs)
 
     def test_rejected_signal_skips_normal_persistence_and_telegram(self):
@@ -345,13 +366,32 @@ class MainAdmissionGateTests(unittest.TestCase):
 
         prepare_mock.assert_not_called()
         update_mock.assert_not_called()
-        send_mock.assert_called_once()
-        self.assertTrue(send_mock.call_args.kwargs["test_mode"])
+        self.assertEqual(send_mock.call_count, 2)
+        self.assertTrue(all(call.kwargs["test_mode"] for call in send_mock.call_args_list))
         payload = send_mock.call_args.args[0]
         self.assertFalse(payload["signal"]["approved"])
 
+    def test_scanner_orders_both_intervals_per_symbol_and_continues_after_error(self):
+        observed = []
+
+        def analyze(symbol, *, timeframe):
+            observed.append((symbol, timeframe))
+            if (symbol, timeframe) == ("FIRST", "5"):
+                raise RuntimeError("5m data unavailable")
+            return {"result": None, "data": None}
+
+        with patch.object(main, "get_symbols", return_value=["FIRST", "SECOND"]), \
+                patch.object(main, "analyze_symbol", side_effect=analyze), \
+                patch.object(main, "send_message", return_value=True):
+            main.run_scan_pass()
+
+        self.assertEqual(observed, [
+            ("FIRST", "5"), ("FIRST", "1"),
+            ("SECOND", "5"), ("SECOND", "1"),
+        ])
+
     def test_scan_summary_counts_only_admission_approved_results(self):
-        def analysis_result(symbol):
+        def analysis_result(symbol, *, timeframe):
             return {
                 "result": {
                     "pattern": "Falling Wedge",
@@ -396,7 +436,7 @@ class MainAdmissionGateTests(unittest.TestCase):
         ), redirect_stdout(output):
             main.main()
 
-        summary = "Найдено паттернов: 1"
+        summary = "Найдено паттернов: 2"
         self.assertEqual(output.getvalue().count(summary), 1)
 
 

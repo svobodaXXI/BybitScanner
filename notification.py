@@ -431,7 +431,8 @@ def send_signal(
 
     chart_path = os.path.join(
         CHARTS_DIR,
-        f"{symbol}_analysis.png"
+        (f"{symbol}_analysis.png" if timeframe == "5"
+         else f"{symbol}_{timeframe}_analysis.png")
     )
 
     if not os.path.exists(
@@ -450,7 +451,7 @@ def send_signal(
     # complete signal payload first; a failed persistence simply withholds the
     # Robot button and does not break ordinary Scanner notification delivery.
     # Patterns without a Robot lifecycle get no candidate and no Robot button.
-    robot_handoff_ready = (
+    robot_handoff_ready = not result.get("scanner_observational_only", False) and (
         timeframe == "1"
         or result.get("robot_handoff_ready") is True
     ) and is_supported_pattern(result.get("pattern"))

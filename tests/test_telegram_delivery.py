@@ -327,6 +327,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             chart.write_bytes(b"test-image")
             signal = self.signal()
             signal.update(timeframe="1", pattern="Triangle Compression")
+            (Path(directory) / "BTCUSDT_1_analysis.png").write_bytes(b"test-image-1m")
 
             with patch.object(
                 notification.config, "TELEGRAM_CHAT_IDS", ("owner",),
@@ -350,6 +351,30 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
         self.assertNotIn(
             "🤖 Робот", [button["text"] for row in keyboard for button in row],
         )
+
+    def test_explicit_1m_wedge_is_observational_without_robot_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "BTCUSDT_1_analysis.png").write_bytes(b"1m chart")
+            signal = self.signal()
+            signal.update(
+                timeframe="1", pattern="Falling Wedge",
+                scanner_observational_only=True,
+                robot_handoff_ready=False,
+            )
+            with patch.object(notification.config, "TELEGRAM_CHAT_IDS", ("owner",)), \
+                    patch.object(notification.config, "TELEGRAM_CHAT_ID", "owner"), \
+                    patch.object(notification, "CHARTS_DIR", directory), \
+                    patch.object(notification, "send_message", return_value={"ok": True}), \
+                    patch.object(notification, "send_photo", return_value={"ok": True}) as photo, \
+                    patch.object(notification, "create_signal_snapshot") as candidate:
+                self.assertTrue(notification.send_signal(signal))
+            candidate.assert_not_called()
+            buttons = [
+                button["text"]
+                for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
+                for button in row
+            ]
+            self.assertNotIn("🤖 Робот", buttons)
 
     def test_two_non_owner_recipients_receive_only_tradingview(self):
         with tempfile.TemporaryDirectory() as directory:

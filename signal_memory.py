@@ -89,6 +89,27 @@ def update_signal(signal):
 
 
     symbol = signal["symbol"]
+    timeframe = signal.get("timeframe")
+    pattern = signal["pattern"]
+    formation_id = signal.get("formation_id")
+    # Existing callers retain their symbol-only memory until they explicitly
+    # opt into timeframe-scoped identities.
+    key = (
+        f"scanner:{symbol}:{str(timeframe).strip()}:{pattern}"
+        + (f":{formation_id}" if formation_id is not None else "")
+        if timeframe is not None else symbol
+    )
+    if timeframe is not None and not str(timeframe).strip():
+        raise ValueError("signal timeframe must not be empty")
+    # Preserve the previous 5m score when migrating the same pattern.
+    prior_scoped = any(
+        existing.startswith(f"scanner:{symbol}:5:{pattern}:")
+        for existing in memory
+    )
+    if key not in memory and str(timeframe).strip() == "5" and not prior_scoped:
+        legacy = memory.get(symbol)
+        if isinstance(legacy, dict) and legacy.get("pattern") == pattern:
+            memory[key] = dict(legacy)
 
 
     now = datetime.now().strftime(
@@ -97,10 +118,10 @@ def update_signal(signal):
 
 
 
-    if symbol not in memory:
+    if key not in memory:
 
 
-        memory[symbol] = {
+        memory[key] = {
 
             "first_seen": now,
 
@@ -124,7 +145,7 @@ def update_signal(signal):
     else:
 
 
-        old_score = memory[symbol].get(
+        old_score = memory[key].get(
             "current_score",
             0
         )
@@ -153,7 +174,7 @@ def update_signal(signal):
 
 
 
-        memory[symbol].update({
+        memory[key].update({
 
             "last_seen": now,
 
