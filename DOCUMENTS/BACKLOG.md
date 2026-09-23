@@ -234,6 +234,40 @@ except for their now-superseded scheduling claims. The HAEDALUSDT 75%-entry/
 partial-TP/re-arm proposal remains in the later, separately authorized PAPER
 Robot stage; the B2USDT L-shape is distinct from the B2USDT Ikigai Box.
 
+## L-shaped signal eligibility and protective STOP — OWNER DECISION 2026-09-23
+
+Applies to the currently open L-shape PR #208 and subsequent Scanner signal
+admission, **not** to the structural candidate generator or to Robot order
+placement. Construct the genuine HIGH → trough → breakout geometry first,
+with independently frozen anchors and target. A candidate with potential
+below **0.8%** from its breakout reference is not a deliverable L-shape
+signal. The expected target-distance / STOP-distance ratio must be **at
+least 2:1** using the *same* reference entry (the breakout level). Prefer
+the structural STOP beyond the trough's actual low for LONG, above the
+trough's actual high for SHORT, with the existing protective tick/buffer
+rules where applicable. If its distance would exceed one half of target
+distance, use the **default ratio-based STOP** at no more than half the
+measured target distance from the breakout reference, in the adverse
+direction. Do not artificially move the formation anchors/target or reject
+a structurally valid formation only because the structural STOP is far away;
+the trade-plan reference STOP is separate geometry. Do not assume that a
+2:1 mathematical STOP makes a trade safe or that a fallback STOP inside the
+trough is structurally protected. If a broker/tick/fee constraint renders
+such a STOP nonviable, do not label it executable; fail closed for actual
+trading until separately specified. In this stage use the STOP solely for
+Scanner-side indication/eligibility without activating L-shape Robot,
+creating orders, or changing any existing Robot/PAPER/LIVE risk controls.
+
+The previously valid METIS +0.06% and +0.47% geometries remain valid
+*structures*, but fail the **0.8% signal-delivery threshold** and must not
+be presented as new eligible trading signals. B2USDT +8.05% is above the
+potential floor, subject to its separately computed reference STOP. These
+thresholds are pattern-specific; do not retrofit to Box, wedge or triangle.
+Owner visual acceptance remains ONE complete owner-manual real all-symbol,
+all-pattern Telegram pass at the scheduled stage; no isolated picture or
+partial pass. Record the same decision in PR #208's owning task documentation
+when updating its branch, without overwriting user-owned work.
+
 ## METISUSDT 5m — missing independent L-shaped signal (owner feedback, 2026-09-23)
 
 During owner Telegram review a real Ikigai Box signal was delivered for
