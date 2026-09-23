@@ -35,29 +35,41 @@ Follow the currently authorized, task-specific route (the L-shaped detector
 is the active geometry implementation scope); this priority ordering is a
 decision guide, **not permission to switch tasks, restart services, start
 trading, or expand the current slice**. Prefer one evidence-backed micro-slice
-and its narrow changed-behavior check over repeated whole-Scanner runs.
+and its narrow changed-behavior checks during implementation; complete the
+mandatory full-universe Scanner acceptance pass below for every new pattern
+or Scanner correction, without redundant repeated passes.
 
 ## Scanner visual acceptance: full passes only — owner rule (2026-09-23)
 
-When the owner asks to **run the Scanner to inspect real formations/charts**,
-run a **complete normal Scanner pass across the entire available eligible
-symbol universe**, with its ordinary selection, reporting and configured
-delivery intact. Enable the requested pattern's observation/preview for that
-pass (currently `BYBITSCANNER_L_SHAPE_OBSERVATIONS=1`). Return the resulting
-charts/candidate records for the owner to review visually. **Never substitute**
-a short, sampled, `MAX_SYMBOLS`-limited, two-candidate, synthetic, offline-only
-or notification-suppressed *demonstration* for the requested full pass; do not
-present a limited run as acceptance. Do not unilaterally disable existing
-Telegram delivery just to make the run "quiet". If a real full pass cannot
-be run safely, report the concrete blocker rather than silently narrowing it.
+**Permanent, universal rule for ALL new Scanner patterns and ALL future
+Scanner corrections** (detector, geometry, candidate selection, signal/chart
+presentation and other scan-pass behavior): after implementation and focused
+code verification, perform **one complete real Scanner pass across the entire
+available eligible symbol universe** for the owner's visual/operational
+acceptance. This applies even when a small offline sample or focused tests
+already passed. Do not wait for the owner to reassert this rule per pattern,
+bugfix or session. For the currently integrated L-shaped observer, enable its
+opt-in observation/preview for the pass.
 
-**Full pass is a runtime acceptance scope, not an authorization to start or
-enable Robot/LIVE trading, modify risk or strategy, deploy, change credentials,
-or override existing protective controls.** Before invoking an existing
-launcher, establish which services, notifications and order actions it will
-actually trigger; keep current authorization and fail-closed boundaries.
-A full pass does not require full regression/test-suite runs: focused
-implementation tests still follow the scoped verification rules below.
+Use the normal Scanner flow, configured delivery, and actual production-path
+chart generation; collect the resulting pattern charts and per-symbol
+candidate/skip/error summary for owner review. **No truncated/sampled runs,
+`MAX_SYMBOLS` caps, two-candidate demos, synthetic/offline-only replays, or
+unilaterally notification-suppressed runs in place of full acceptance.**
+Do not silently disable existing Telegram delivery to make the pass "quiet".
+If no candidate is found, report zero honestly; do not invent one or claim
+visual acceptance. If market-data access or safe execution blocks the full
+pass, report the specific blocker and leave acceptance open, rather than
+substituting a short run.
+
+A full Scanner pass is **not** blanket authorization to enable Robot/LIVE
+trading, place orders, change risk/strategy, deploy, change credentials or
+override protective controls. Resolve the actual launcher dependency and
+side-effect chain before running; preserve existing approval and fail-closed
+boundaries. This rule governs **real Scanner acceptance**, not the scope of
+unit/regression suites: keep focused development tests proportionate, and
+avoid redundant full passes when neither implementation nor acceptance
+evidence changed.
 
 For routine work, start from the intended outcome. Do not require the user to provide recovery boilerplate, file lists, skills, Git commands, safety checklists, or test lists that the repository can infer.
 
