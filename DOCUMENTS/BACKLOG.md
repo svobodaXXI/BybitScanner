@@ -1,14 +1,105 @@
 # Backlog (working queue, priorities, rules)
 
 Status: WORKING BACKLOG (living document)
-Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their own dates)
+Last updated: 2026-09-23 (current owner work index; older entries retain historical dates)
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
 
+## CURRENT owner work index — 2026-09-23 (supersedes stale next-step claims below)
+
+**Do not repeat completed work.** The 23 September owner-manual real Scanner
+pass completed one universe traversal: 777 tickers, 65 detected patterns
+(including 6 Ikigai Boxes), 62 sent signals, duration 2h 42m 56s. The owner
+stopped the automatic next cycle. This is evidence for the version used in
+that pass, **not** visual acceptance of later code changes. Do not commission
+an additional run just to reconcile this document.
+
+**Scanner / Telegram delivered to GitHub main:** PR #210 (L-shape latest
+closed-candle breakout), #211 (Box potential), #212 (Wedge slope arrows and
+Box arrow/axis labels), #213 (Box separate text before captionless image and
+30%-narrower candles) are merged. #204 L-shape Telegram integration and
+#205 Box simplified presentation were also merged earlier. Do not reopen
+their implementation tasks; owner visual acceptance of the changed output
+is pending a subsequent **single complete manually started real pass** across
+all eligible symbols and integrated patterns, with ordinary Telegram delivery.
+The currently running/finished pass is not to be interrupted, restarted or
+assumed to contain changes merged afterward.
+
+**Immediate Scanner correction:** IOTXUSDT 5m Wedge status circle removal
+is in [PR #214](https://github.com/svobodaXXI/BybitScanner/pull/214),
+OPEN / NOT MERGED (head `0a0244c`). It changes only the shared
+`notification.format_signal` text; Box and L-shape already omit status
+circles. Its GitHub-only code edit has **no verified focused test result**;
+review the minimal changed formatting, perform only the required verification
+when the test environment is available, and do not claim visual acceptance.
+Do not duplicate the completed documentation capture or launch Codex to
+repeat the same source investigation. Once verified, merge through the normal
+approval flow and include it in the next full-pass acceptance. Its absence
+from current local acceptance checkout until explicitly synchronized is
+expected; never modify a running checkout.
+
+**Ikigai Box PAPER development — owner-authorized design/code, no trade
+activation:** the owner approved four equally spaced 1/4-РО LIMITs,
+P1 at 75% of F1→F1.618, P4 strictly beyond F1.618; the second,
+STOP-terminated attempt uses a comparable grid around F2.618 with final
+LIMIT beyond F2.618. A STOP price is computed **before orders** using the
+hypothetical fully filled average, must lie beyond P4 and meet fee-aware
+planned full-grid RR >= 2:1 to F1; freeze that price for the attempt,
+activate for the first confirmed fill, update only protected quantity as
+fills/individual reduce-only TAKE exits change exposure. This is an
+**experimental PAPER policy**, not a claim of partial-fill RR or permission
+to trade. A pure planner and seven focused tests were reported PASS by
+Codex in `C:\BybitScanner-main-acceptance` under
+`terminal/paper/ikigai_box_plan.py` and
+`tests/test_ikigai_box_plan.py`; **the planner is not present on GitHub
+main and no planner PR has been confirmed**. Its reported local receipt,
+branch, dirty state and any continuing owner Scanner process require a
+bounded host-local inspection **only before touching that checkout**.
+Preserve the original two files and receipt; publish only that completed
+delta to an isolated PR when safe, without repeating passed tests or
+starting/stopping any running service. Do not mistake the separate
+in-progress Codex status-circle task (interrupted by quota exhaustion)
+for completion of the planner publication.
+Open financial decisions for actual Box Robot execution: fourth-grid
+overshoot for both attempts, second-attempt P1 anchor, per-slice TAKE price
+and net-fee threshold, maximum partial-fill risk, re-arm/cancellation
+conditions and order/protection ownership. See
+`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`; no LIVE or autonomous PAPER
+orders are authorized by the planner.
+
+**L-shape PAPER Robot — design captured, not integrated:** inherit the
+existing Wedge Robot entry/retest, order, protection, closure and recovery
+lifecycle **except** pattern-specific L-shape geometry, 0.8% potential floor,
+RR >= 2:1 and trough-derived/ratio-limited STOP. Next bounded step is
+a read-only compatibility inspection if not already running; no separate
+trading-engine implementation or runtime/order activation. Keep Scanner
+and Robot worktrees and approval boundaries separate.
+
+**Geometry and Scanner follow-ups:** AEONUSDT 5m Box source-time candles
+were recovered; early A 14:30 UTC → B 15:10 UTC passes implemented
+first-leg gates. A later 16:00→16:10 UTC segment is too short, while
+16:00→16:35 UTC gives a valid first impulse and provisional consolidation
+but no confirmed second impulse through the recovered 18:45 UTC window.
+The original detection cutoff is absent from signal history: exact
+historical eligibility and selection precedence remain **unproven**; do
+not alter geometry based solely on this example. Separate queued
+RPLUSDT/CPUSDT Box anchor, APTUSDT/B3USDT/DASHUSDT wedge/triangle,
+ATHUSDT Box, and 5m→1m per-symbol integration remain NOT completed; follow
+the applicable geometry index and preserve the positive B2USDT control.
+Do not treat old generic priority/order paragraphs below as a fresh
+instruction to redo completed Telegram/card work.
+
+**Execution:** one bounded step → minimum mandatory verification → publish
+or report precise blocker. Only the owner manually launches the full real
+Scanner pass, through a verified Scanner-only entrypoint, and never via
+Codex/ChatGPT/Claude Code. No isolated owner chart previews or agent waiting
+during a pass. No unchecked local sync, global process stops or automatic
+PAPER/LIVE activation.
+
 ## Owner feedback register — real Scanner Telegram pass (2026-09-23)
 
-- **IOTXUSDT · 5м · Wedge — OPEN, Telegram status-circle feedback (owner screenshot, 2026-09-23).** Observed: ordinary Scanner text `📡 Сканер: IOTXUSDT 🟡` includes a yellow status circle. Required: remove all status circles, regardless of color, from every ordinary Scanner pattern signal; keep ticker, geometry arrow, pattern name, potential, timeframe and score unchanged. Implement and verify the shared signal formatter without running Scanner; owner visual acceptance remains the next full manual all-symbol Telegram pass. Codex's attempted correction was interrupted by quota exhaustion; no code fix or PR is confirmed.
+- **IOTXUSDT · 5м · Wedge — CODE FIX IN OPEN PR #214; targeted verification and owner visual acceptance PENDING.** Observed: ordinary Scanner text `📡 Сканер: IOTXUSDT 🟡`. Required: omit every status-circle color from every ordinary Scanner signal without changing direction arrow, pattern, potential, timeframe or score. GitHub-only shared-formatter correction at `0a0244c` is not merged; Codex's earlier attempt ended at quota exhaustion. Do not misstate the pending PR as an absent fix.
 
 
 **Permanent capture rule:** Immediately when the owner supplies a specific real
@@ -26,7 +117,7 @@ a trading change or a separate owner visual check.
   episodes against source-time closed candles; establish structural A/B and
   independent consolidation without hindsight-fitting Fibonacci. Keep the
   two possible formations distinct; do not modify Robot or trading rules.
-- **APRUSDT · 5м · Ikigai Box — OPEN, Telegram layout (owner screenshot,
+- **APRUSDT · 5м · Ikigai Box — CODE FIX MERGED PR #213, owner visual acceptance PENDING (owner screenshot,
   around 20:00 MSK).** Current: one Telegram photo with a repeated caption
   underneath, e.g. `APRUSDT · 5м · ↑ Коробка Икигаи (+2.25%)`.
   Required: **separate text message BEFORE the chart**, starting
@@ -55,14 +146,12 @@ a trading change or a separate owner visual check.
   axis-label text (not scale ticks); PR #212 implemented the presentation
   change.
 
-**Current open work is AEONUSDT first-impulse selection and APRUSDT
-Telegram message structure.** The already merged code changes above
-remain pending owner visual acceptance until a complete pass finishes.
+**Outstanding:** AEONUSDT historical selection cutoff remains unknown; APRUSDT and other merged presentation/delivery fixes await owner full-pass visual acceptance; IOTXUSDT removal awaits PR #214 verification/merge and then full-pass acceptance. See the CURRENT owner work index above.
 
 ## Unified Scanner Telegram signal caption — PERMANENT FORMAT RULE (2026-09-23)
 
 **Binding for every current and future pattern's ordinary Telegram signal
-caption** (the text posted before the chart). L-shape keeps its minimal
+caption** (the text posted before the chart). All status circles are removed in proposed PR #214, not yet merged. L-shape keeps its minimal
 photo caption; Ikigai Box uses a separate three-line text message before
 a captionless photo, without inventing a score or status circle. Both
 retain the approved arrow and parenthetical potential (see "conformance
@@ -70,13 +159,13 @@ check" below). Applies to the Wedge/Triangle Scanner caption
 (`notification.format_signal`), implemented 2026-09-23:
 
 ```
-📡 Сканер: <TICKER> <status circle>
+📡 Сканер: <TICKER>
 <arrow> <Pattern Name> (<potential>)
 <TF>
 Баллы: <score>
 ```
 
-Example: `📡 Сканер: 1000TURBOUSDT 🟡` / `↘ Клин (+4.78%)` / `5м` / `Баллы: 95`.
+Example (target format after PR #214): `📡 Сканер: 1000TURBOUSDT` / `↘ Клин (+4.78%)` / `5м` / `Баллы: 95`.
 
 - Direction is shown only as an arrow, never as a textual word ("LONG"/
   "SHORT", "Нисходящий"/"Восходящий"). The pattern name itself becomes
@@ -153,12 +242,12 @@ first). `ikigai_box_caption` now renders `... · ↑ Коробка Икигаи
 itself is unchanged.
 
 
-**Canonical notification examples after PR #211 (2026-09-23; current implemented formats):**
+**Canonical notification examples — target after pending PR #214 (current main still has Wedge/Triangle status circles):**
 
 ```text
 Wedge / Triangle — separate Telegram text before chart:
-📡 Сканер: 1000TURBOUSDT 🟡
-↓ Клин (+4.78%)
+📡 Сканер: 1000TURBOUSDT
+↘ Клин (+4.78%)
 5м
 Баллы: 95
 
@@ -175,8 +264,9 @@ TESTUSDT · 5м · ↑ Коробка Икигаи (+3.42%)
 ```
 
 Values above are **format examples, not live signals**. For Wedge/Triangle,
-`<status circle>` comes from the existing stage/quality classification and
-`<potential>` from the existing signed/symmetric potential; missing values
+status circles are omitted from Telegram presentation after #214; the existing
+stage/quality classification itself remains unchanged. `<potential>` comes
+from the existing signed/symmetric potential; missing values
 use `(РАСЧЁТ НЕДОСТУПЕН)`. The chart header keeps its existing directional
 pattern name, with `Потенциал: <value>` immediately below it and no final
 `Предшествующий импульс ...` line. L-shape and Box have no score/status
@@ -197,9 +287,11 @@ TAKE LIMIT slightly before F(1.0); after proven profitable closure, restore
 only freed quantity to its first-grid level if the same frozen formation is
 still eligible. No doubled exposure, duplicate orders or re-arming completed/
 STOP-terminated setups. The screenshot alone cannot establish same-candle
-fill/TP or profitable realized execution. The precise fourth grid price,
-TAKE offset/net-fee rule, partial-fill/STOP coordination and re-arm lifecycle
-remain open financial decisions; do not invent defaults or enable trading.
+fill/TP or profitable realized execution. The precise fourth grid price, second-attempt first-entry level,
+TAKE offset/net-fee rule, partial-fill exposure budget and re-arm lifecycle
+remain open financial decisions; the STOP price/activation policy was
+superseded by the frozen full-grid-average trial design in the owning spec.
+Do not invent defaults or enable trading.
 Owning detailed specification: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`,
 "Owner strategy amendment — advance 75% entry, slice TP and re-arm".
 Current acceptance → 5m/1m → source geometry → Box construction/lifecycle →
