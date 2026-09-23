@@ -37,6 +37,28 @@ decision guide, **not permission to switch tasks, restart services, start
 trading, or expand the current slice**. Prefer one evidence-backed micro-slice
 and its narrow changed-behavior check over repeated whole-Scanner runs.
 
+## Scanner visual acceptance: full passes only — owner rule (2026-09-23)
+
+When the owner asks to **run the Scanner to inspect real formations/charts**,
+run a **complete normal Scanner pass across the entire available eligible
+symbol universe**, with its ordinary selection, reporting and configured
+delivery intact. Enable the requested pattern's observation/preview for that
+pass (currently `BYBITSCANNER_L_SHAPE_OBSERVATIONS=1`). Return the resulting
+charts/candidate records for the owner to review visually. **Never substitute**
+a short, sampled, `MAX_SYMBOLS`-limited, two-candidate, synthetic, offline-only
+or notification-suppressed *demonstration* for the requested full pass; do not
+present a limited run as acceptance. Do not unilaterally disable existing
+Telegram delivery just to make the run "quiet". If a real full pass cannot
+be run safely, report the concrete blocker rather than silently narrowing it.
+
+**Full pass is a runtime acceptance scope, not an authorization to start or
+enable Robot/LIVE trading, modify risk or strategy, deploy, change credentials,
+or override existing protective controls.** Before invoking an existing
+launcher, establish which services, notifications and order actions it will
+actually trigger; keep current authorization and fail-closed boundaries.
+A full pass does not require full regression/test-suite runs: focused
+implementation tests still follow the scoped verification rules below.
+
 For routine work, start from the intended outcome. Do not require the user to provide recovery boilerplate, file lists, skills, Git commands, safety checklists, or test lists that the repository can infer.
 
 Recovery is staged and stops as soon as the task is safe to execute:
