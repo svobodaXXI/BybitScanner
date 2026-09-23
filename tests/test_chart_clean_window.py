@@ -132,8 +132,14 @@ class ChartWindowTests(unittest.TestCase):
                         self.assertEqual(starts[0].get_position()[0], lower - offset)
                     else:
                         self.assertEqual(starts, [])  # Never relabel left edge as START.
-                    if warning:
+                    # Owner format 2026-09-23: the chart header stays minimal;
+                    # the incomplete-impulse note is no longer shown there,
+                    # even though _chart_window still reports it (asserted
+                    # by the dedicated _chart_window tests below).
+                    if warning and warning != "Предшествующий импульс показан не полностью":
                         self.assertIn(warning, ax.get_title())
+                    elif warning:
+                        self.assertNotIn(warning, ax.get_title())
                     self.assertEqual(result, original_result)
                     pd.testing.assert_frame_equal(df, original_df)
 

@@ -183,13 +183,10 @@ def build_chart_title(symbol, result):
         else symbol
     )
 
-    lines = [title_symbol_line, structure_name]
+    lines = [title_symbol_line, structure_name, f"Потенциал: {potential_name}"]
     if pattern in ("Falling Wedge", "Rising Wedge"):
         lines.append("Тип клина: не определено")
-    lines.extend((
-        f"КАЧЕСТВО СТРУКТУРЫ: {score}/100",
-        f"ПОТЕНЦИАЛ ДВИЖЕНИЯ: {potential_name}",
-    ))
+    lines.append(f"КАЧЕСТВО СТРУКТУРЫ: {score}/100")
     return "\n".join(lines)
 
 
@@ -710,7 +707,10 @@ def draw_chart(
     # =====================================
 
     title = build_chart_title(symbol, result)
-    if history_warning:
+    # Owner format 2026-09-23: the chart header stays minimal. The
+    # incomplete-impulse note is presentation-only and no longer shown;
+    # _chart_window's own return value (used by callers/tests) is unchanged.
+    if history_warning and history_warning != "Предшествующий импульс показан не полностью":
         title += f"\n{history_warning}"
 
 

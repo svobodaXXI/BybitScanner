@@ -5,6 +5,48 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## Unified Scanner Telegram signal caption — PERMANENT FORMAT RULE (2026-09-23)
+
+**Binding for every current and future pattern's ordinary Telegram signal
+caption** (the text posted before the chart), except a pattern with its own
+separately specified minimal caption (L-shape, Ikigai Box — unchanged by
+this rule, already minimal). Applies to the Wedge/Triangle Scanner caption
+(`notification.format_signal`), implemented 2026-09-23:
+
+```
+📡 Сканер: <TICKER> <status circle>
+<arrow> <Pattern Name> (<potential>)
+<TF>
+Баллы: <score>
+```
+
+Example: `📡 Сканер: 1000TURBOUSDT 🟡` / `↓ Клин (+4.78%)` / `5м` / `Баллы: 95`.
+
+- Direction is shown only as `↑`/`↓` (from the existing confirmation/
+  breakout direction), never as a textual word ("LONG"/"SHORT",
+  "Нисходящий"/"Восходящий"). The pattern name itself becomes
+  non-directional where it previously encoded direction (Falling/Rising
+  Wedge → `Клин`); a pattern whose name is already non-directional
+  (Triangle Compression) keeps its name and still gets the arrow.
+- Potential is `(<signed_percent>%)`, or `(±<percent>%)` for a symmetric
+  potential, or `(РАСЧЁТ НЕДОСТУПЕН)` when unavailable — reusing the exact
+  formatting already used by the chart header, not a new convention.
+- No word "Таймфрейм"; only the compact value (e.g. `5м`).
+- No blank line before `Баллы:`.
+
+**Chart header** (`chart_clean.build_chart_title`), same date: the line
+`ПОТЕНЦИАЛ ДВИЖЕНИЯ: <value>` is renamed `Потенциал: <value>` and moved
+immediately after the pattern name (before `Тип клина`/`КАЧЕСТВО
+СТРУКТУРЫ`). The chart header's own pattern name keeps its existing
+directional wording (unlike the Telegram caption); only the label and its
+position changed. The final diagnostic line "Предшествующий импульс
+показан не полностью" is no longer shown in the chart title (presentation
+only — `chart_clean._chart_window`'s own returned warning value is
+unchanged, so nothing that reads it directly is affected).
+
+Detection, scoring, confirmation/breakout logic, and Robot behavior are
+unchanged by this presentation-only rule.
+
 ## HAEDALUSDT 5m — Box early-grid/slice TP/re-arm strategy feedback (2026-09-23)
 
 Queued **only in the existing later Ikigai Box PAPER Robot lifecycle stage**;
