@@ -164,7 +164,7 @@ numbered order and any contrary "next/immediate" wording elsewhere in this
 backlog or geometry index. Preserve task content, but execute in this order:
 
 1. **Former #5 — L-shaped geometry and Telegram card.** Implement the B2USDT
-   5m owner definition: local HIGH → trough → HIGH breakout, without a
+   5m owner definition and the METISUSDT 5m possible missed independent\n   L-shape alongside a delivered Box: local HIGH → trough → HIGH breakout, without a
    mandatory shelf; source-time upper edge of trough candles determines
    depth. Draw only rightward breakout HIGH ray and horizontal target with
    potential measured from HIGH; minimal ticker/timeframe/direction-arrow-
@@ -216,6 +216,32 @@ in this backlog and `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md` remain in force
 except for their now-superseded scheduling claims. The HAEDALUSDT 75%-entry/
 partial-TP/re-arm proposal remains in the later, separately authorized PAPER
 Robot stage; the B2USDT L-shape is distinct from the B2USDT Ikigai Box.
+
+## METISUSDT 5m — missing independent L-shaped signal (owner feedback, 2026-09-23)
+
+During owner Telegram review a real Ikigai Box signal was delivered for
+METISUSDT 5m. The owner also identifies an apparent L-shaped structure on
+the same candles and expects a **separate normal Telegram L-shape signal**
+when its independently evaluated geometry is valid. The Box notification
+must not consume a per-symbol slot or otherwise suppress the L-shape, and
+vice versa. This is a candidate missed-pattern reference for the **current
+first-priority L-shaped geometry task**, not proof of a confirmed detection
+from a screenshot alone.
+
+At the task's implementation stage, recover the source-time closed candles,
+actual L-shape detector candidate/rejection and Scanner notification path
+for METISUSDT 5m. Distinguish absence of a structurally valid candidate from
+signal-memory/dedup/delivery suppression; fix the first demonstrated cause
+at its owning stage. Assess alongside B2USDT's HIGH→trough→breakout owner
+rule; do not force a positive by coin-specific exceptions, relaxing gates,
+retroactive anchors or chart-only adjustments. Valid coexisting Box/L-shape
+must each have distinct (symbol,timeframe,pattern,formation) identities,
+real charts and ordinary owner buttons; no L-shape Robot admission.
+
+No isolated chart/selected-ticker owner review. After the scheduled changes,
+acceptance remains one complete manually started eligible-universe Scanner
+pass with all integrated patterns and ordinary Telegram delivery, per the
+latest binding execution order. No extra scan now just for this observation.
 
 ## L-shaped formation: owner correction from B2USDT 5m chart — QUEUED (2026-09-23)
 
