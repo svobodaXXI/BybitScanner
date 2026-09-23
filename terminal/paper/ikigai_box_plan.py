@@ -54,6 +54,42 @@ def _fee(value: Decimal, name: str) -> Decimal:
     return value
 
 
+
+def approved_first_grid(
+    *, direction: str, frozen_f1: Decimal, frozen_f1618: Decimal,
+    tick_size: Decimal,
+) -> tuple[tuple[Decimal, ...], Decimal]:
+    """Owner-approved equal-step first grid and one common TAKE; no orders.
+
+    Reject levels that cannot be represented exactly on the instrument tick
+    grid rather than silently breaking equal spacing or midpoint geometry.
+    """
+    if direction not in ("LONG", "SHORT"):
+        raise ValueError("direction must be LONG or SHORT")
+    for name, value in (
+        ("F(1.0)", frozen_f1),
+        ("F(1.618)", frozen_f1618),
+        ("tick size", tick_size),
+    ):
+        require_positive_decimal(value, name)
+    displacement = frozen_f1618 - frozen_f1
+    if (direction == "LONG" and displacement >= 0) or (
+        direction == "SHORT" and displacement <= 0
+    ):
+        raise ValueError("frozen Fibonacci levels contradict the trade direction")
+    prices = tuple(
+        frozen_f1 + fraction * displacement
+        for fraction in (
+            Decimal("0.75"), Decimal("0.85"),
+            Decimal("0.95"), Decimal("1.05"),
+        )
+    )
+    take = frozen_f1 + Decimal("0.10") * displacement
+    if any(value <= 0 or value % tick_size != 0 for value in (*prices, take)):
+        raise ValueError("approved first grid/TAKE is not exactly tick-aligned")
+    return prices, take
+
+
 def plan_ikigai_box(
     *,
     direction: str,
