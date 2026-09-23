@@ -530,7 +530,8 @@ def draw_chart(
 
     filename = os.path.join(
         CHARTS_DIR,
-        f"{symbol}_analysis.png"
+        (f"{symbol}_analysis.png" if str(result.get("timeframe", "5")) == "5"
+         else f"{symbol}_{result['timeframe']}_analysis.png")
     )
 
 
