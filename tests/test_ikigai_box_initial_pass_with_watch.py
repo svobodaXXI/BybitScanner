@@ -52,6 +52,7 @@ class IkigaiBoxInitialPassWithWatchTests(unittest.TestCase):
         stream._WATCH_CURSORS.clear()
         self.history = {}
         self.photos = []
+        self.messages = []
         self.snapshot = None
 
     def tearDown(self):
@@ -63,6 +64,10 @@ class IkigaiBoxInitialPassWithWatchTests(unittest.TestCase):
         def render(frame, formation, path, **kwargs):
             # Recorded only; nothing is written under the repository charts/.
             return path
+
+        def message(token, chat_id, text):
+            self.messages.append(text)
+            return {"ok": True}
 
         def photo(token, chat_id, path, caption=None, reply_markup=None):
             self.photos.append({"path": path, "caption": caption})
@@ -83,6 +88,7 @@ class IkigaiBoxInitialPassWithWatchTests(unittest.TestCase):
             ))
             enter(patch.object(main, "send_message", return_value=True))
             enter(patch.object(box, "render_ikigai_box_chart", side_effect=render))
+            enter(patch.object(box, "send_message", side_effect=message))
             enter(patch.object(box, "send_photo", side_effect=photo))
             enter(patch.object(
                 box, "load_memory", side_effect=lambda: dict(self.history),
@@ -97,12 +103,6 @@ class IkigaiBoxInitialPassWithWatchTests(unittest.TestCase):
             robot = enter(patch("notification.create_signal_snapshot"))
             yield robot
 
-    def _captions(self, marker):
-        return [
-            item["caption"] for item in self.photos
-            if item["caption"].startswith(marker)
-        ]
-
     def test_initial_pass_sends_existing_formation_while_watch_bootstraps(self):
         frame, _, _ = _two_impulses(second_steps=7)
         self.snapshot = _snapshot(_timed(frame))
@@ -112,8 +112,10 @@ class IkigaiBoxInitialPassWithWatchTests(unittest.TestCase):
         # The defect under repair: with WATCH on, this first pass used to
         # emit nothing at all, because only the bootstrapping cursor ran.
         self.assertEqual(len(self.photos), 1)
-        self.assertEqual(len(self._captions("📦 TESTUSDT · Коробка Икигаи")), 1)
-        self.assertEqual(self._captions("📦 WATCH"), [])
+        self.assertEqual(len(self.messages), 1)
+        self.assertTrue(self.messages[0].startswith("📡 Сканер: TESTUSDT\n"))
+        self.assertEqual(self.photos[0]["caption"], "")
+        self.assertNotIn("_WATCH_", self.photos[0]["path"])
         # WATCH still bootstrapped silently instead of flooding history.
         self.assertIn(_CURSOR_KEY, stream._WATCH_CURSORS)
         self.assertIsNone(stream._WATCH_CURSORS[_CURSOR_KEY]["pending"])
@@ -142,7 +144,9 @@ class IkigaiBoxInitialPassWithWatchTests(unittest.TestCase):
                 self.snapshot = _snapshot(frame, closed_end)
                 main.run_scan_pass()
 
-        self.assertTrue(self._captions("📦 WATCH"))
+        self.assertTrue(any("_WATCH_" in item["path"] for item in self.photos))
+        self.assertEqual(len(self.messages), len(self.photos))
+        self.assertTrue(all(item["caption"] == "" for item in self.photos))
         robot.assert_not_called()
 
     def test_watch_card_is_suppressed_after_the_confirmed_card_for_same_anchors(self):

@@ -59,11 +59,11 @@ remain pending owner visual acceptance until a complete pass finishes.
 ## Unified Scanner Telegram signal caption — PERMANENT FORMAT RULE (2026-09-23)
 
 **Binding for every current and future pattern's ordinary Telegram signal
-caption** (the text posted before the chart), except a pattern with its own
-separately specified minimal caption and no score (L-shape, Ikigai Box —
-keep their own single-line layout, but conform their sub-elements: arrow
-only for direction, potential in parentheses; see "conformance check"
-below). Applies to the Wedge/Triangle Scanner caption
+caption** (the text posted before the chart). L-shape keeps its minimal
+photo caption; Ikigai Box uses a separate three-line text message before
+a captionless photo, without inventing a score or status circle. Both
+retain the approved arrow and parenthetical potential (see "conformance
+check" below). Applies to the Wedge/Triangle Scanner caption
 (`notification.format_signal`), implemented 2026-09-23:
 
 ```
@@ -123,8 +123,9 @@ unchanged by this presentation-only rule.
 **L-shape/Ikigai Box conformance check (2026-09-23):** neither pattern has a
 score/`confirmation` breakout-stage field, so the full `Сканер:`/`Баллы:`
 template does not apply to them without inventing data (out of scope; this
-rule stays presentation-only). One real difference was found and fixed:
-L-shape's potential was a trailing `· +8.05%`, not in parentheses after the
+rule stays presentation-only). Box now follows the owner's APRUSDT override:
+a separate Scanner text message before the photo, with no repeated photo
+caption. L-shape's potential was a trailing `· +8.05%`, not in parentheses after the
 pattern name; `geometry.l_shape_preview.l_shape_caption` now renders
 `... ↑ Г-образная (+8.05%)`, matching the parenthetical sub-rule above while
 keeping its own single-line ticker/timeframe layout.
@@ -136,10 +137,10 @@ used for the chart/target. Reusing them, not recalculating anchors:
 `potential_pct = abs(F1.618 - F1) / F1 * 100`, shown in parentheses right
 after "Коробка Икигаи", sign `+` for an UP first impulse (arrow `↑`) and
 `-` for DOWN (arrow `↓`) — the same UP/DOWN test the arrow already uses.
-`geometry.ikigai_box_chart.ikigai_box_caption` now renders
-`... · Коробка Икигаи (+X.XX%) · ↑`. Shared by CONFIRMED and WATCH
-(`IkigaiBoxWatch` carries the same two fields) and by both the chart title
-and the Telegram caption, since both already call this one function.
+The frozen values are shared by CONFIRMED and WATCH
+(`IkigaiBoxWatch` carries the same two fields). The chart title keeps
+`symbol · timeframe · arrow pattern (potential)`; Telegram uses those
+same values in its separate Scanner text before a captionless chart.
 Detection, targets, scoring, and Robot are unchanged.
 
 **Arrow position (2026-09-23, owner correction):** the arrow moved before
@@ -161,8 +162,13 @@ Wedge / Triangle — separate Telegram text before chart:
 L-shape — shared Telegram caption and chart title:
 TESTUSDT · 5м · ↑ Г-образная (+8.05%)
 
-Ikigai Box CONFIRMED / WATCH — shared Telegram caption and chart title:
-TESTUSDT · 5м · Коробка Икигаи (+3.42%) · ↑
+Ikigai Box CONFIRMED / WATCH — separate Telegram text before captionless photo:
+📡 Сканер: TESTUSDT
+↑ Коробка Икигаи (+3.42%)
+5м
+
+Ikigai Box chart title:
+TESTUSDT · 5м · ↑ Коробка Икигаи (+3.42%)
 ```
 
 Values above are **format examples, not live signals**. For Wedge/Triangle,
@@ -171,10 +177,9 @@ Values above are **format examples, not live signals**. For Wedge/Triangle,
 use `(РАСЧЁТ НЕДОСТУПЕН)`. The chart header keeps its existing directional
 pattern name, with `Потенциал: <value>` immediately below it and no final
 `Предшествующий импульс ...` line. L-shape and Box have no score/status
-circle, so their existing compact one-line captions do **not** acquire
-invented `Баллы` or status values. Box arrow describes the **first impulse
-A→B**, and its signed potential uses frozen F(1.0)→F(1.618), including WATCH;
-its existing arrow position after the percentage is preserved. These are
+circle, so neither acquires invented `Баллы` or status values. Box arrow
+describes the **first impulse A→B**, and its signed potential uses frozen
+F(1.0)→F(1.618), including WATCH; it appears before the pattern name. These are
 presentation contracts only: no new detector, score, target, or trading rule.
 
 ## HAEDALUSDT 5m — Box early-grid/slice TP/re-arm strategy feedback (2026-09-23)
@@ -557,12 +562,14 @@ remains unauthorized.
 
 ## Box presentation implementation — 2026-09-23
 
-The Box chart header and Telegram caption share only ticker, formatted timeframe,
-pattern name and the first-impulse A→B arrow (not the opposite trade direction).
+The Box chart header and separate Telegram text share only ticker, formatted
+timeframe, pattern name and the first-impulse A→B arrow (not the opposite
+trade direction). The text precedes a captionless chart photo.
 No A/B/START, status, zone/STOP captions or planned limit-grid overlay appear.
 Frozen Fibonacci prices/bands and source-time candle/anchor selection remain unchanged.
-The canvas width is 7.2 inches instead of 12 at the same 125 DPI and height:
-candle bodies and horizontal spacing are 60% of their previous pixel width.
+The canvas width is now 5.04 inches instead of 7.2 at the same 125 DPI and
+height: candle bodies and visible gaps are about 30% narrower than the previous
+Box chart. Time/price scales and formation coordinates are unchanged.
 Use the shared TradingView keyboard with review buttons for the owner only;
 no Robot button or candidate is supported. This minimal identity and applicable
 safe shared buttons are the presentation reference for future new patterns.

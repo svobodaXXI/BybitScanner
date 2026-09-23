@@ -9,11 +9,12 @@ import os
 import re
 
 from geometry.ikigai_box import IkigaiBoxWatch, detect_ikigai_box
-from geometry.ikigai_box_chart import ikigai_box_caption, render_ikigai_box_chart
+from geometry.ikigai_box_chart import ikigai_box_signal_text, render_ikigai_box_chart
 from notification import (
     build_tradingview_keyboard,
     get_telegram_chat_ids,
     get_telegram_owner_chat_id,
+    send_message,
     send_photo,
 )
 from signal_memory import load_memory, save_memory
@@ -27,9 +28,9 @@ _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]+$")
 def send_ikigai_box_observation(
     symbol, candles, *, timeframe, test_mode=False, chart_dir="charts"
 ):
-    """Deliver one *observational* photo per frozen first-impulse anchor pair.
+    """Deliver observational text then photo per frozen first-impulse pair.
 
-    Returns True only if every configured recipient received the photo.
+    Returns True only if every configured recipient received both parts.
     Never posts a Telegram text card pointing at a stale wedge image.
     """
     if not getattr(config, "TELEGRAM_ENABLED", False) or candles is None:
@@ -67,7 +68,7 @@ def send_ikigai_box_observation(
     render_ikigai_box_chart(
         closed, formation, chart_path, symbol=symbol, timeframe=timeframe
     )
-    caption = ikigai_box_caption(symbol, timeframe, formation)
+    message = ikigai_box_signal_text(symbol, timeframe, formation)
     owner_chat_id = get_telegram_owner_chat_id()
     delivered = True
     for chat_id in recipients:
@@ -77,11 +78,15 @@ def send_ikigai_box_observation(
             robot_candidate_id=None,
         )
         try:
+            text_response = send_message(config.TELEGRAM_TOKEN, chat_id, message)
+            if not isinstance(text_response, dict) or not text_response.get("ok"):
+                delivered = False
+                continue
             response = send_photo(
                 config.TELEGRAM_TOKEN,
                 chat_id,
                 chart_path,
-                caption=caption,
+                caption="",
                 reply_markup=markup,
             )
             if not isinstance(response, dict) or not response.get("ok"):
@@ -180,7 +185,7 @@ def send_ikigai_box_watch_observation(
     render_ikigai_box_chart(
         closed, watch, chart_path, symbol=symbol, timeframe=timeframe,
     )
-    caption = ikigai_box_caption(symbol, timeframe, watch)
+    message = ikigai_box_signal_text(symbol, timeframe, watch)
     owner_chat_id = get_telegram_owner_chat_id()
     delivered = True
     for recipient in recipients:
@@ -190,9 +195,13 @@ def send_ikigai_box_watch_observation(
             robot_candidate_id=None,
         )
         try:
+            text_response = send_message(config.TELEGRAM_TOKEN, recipient, message)
+            if not isinstance(text_response, dict) or not text_response.get("ok"):
+                delivered = False
+                continue
             response = send_photo(
                 config.TELEGRAM_TOKEN, recipient, chart_path,
-                caption=caption, reply_markup=markup,
+                caption="", reply_markup=markup,
             )
             if not isinstance(response, dict) or not response.get("ok"):
                 delivered = False
