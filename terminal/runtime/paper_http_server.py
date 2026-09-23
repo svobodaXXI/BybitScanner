@@ -70,7 +70,9 @@ from terminal.market_data.workspace_errors import (
     UpstreamWorkspaceMarketDataFailure,
 )
 from terminal.application.robot_breakout_monitor import DEFAULT_TICK_INTERVAL_S as DEFAULT_ROBOT_TICK_INTERVAL_S
-from terminal.runtime.paper_runtime import PaperRuntime, ScannerControlRuntimeError
+from terminal.runtime.paper_runtime import (
+    CONTINUITY_ENTRY_ONLY_TERMINALIZED, PaperRuntime, ScannerControlRuntimeError,
+)
 from terminal.exchange.bybit_account_validation import AccountValidationError, BybitAccountValidator
 from terminal.exchange.bybit_v5_mutation_adapter import BybitV5MutationAdapter
 from terminal.persistence.credential_store import (
@@ -1872,7 +1874,7 @@ class RobotProtectionCoverageManager:
             unhealthy = dict(self._unhealthy)
         for symbol, reason in unhealthy.items():
             if symbol in wanted:
-                self._enqueue_runtime_fence(symbol, reason)
+                self._enqueue_continuity_resolution(symbol, reason)
                 self._recover_unhealthy_symbol(symbol, reason)
         for symbol in sorted(to_add):
             try:
@@ -2078,16 +2080,27 @@ class RobotProtectionCoverageManager:
                 symbol, book_update_id,
             )
             return
-    def _enqueue_runtime_fence(self, symbol: str, reason: str) -> None:
+    def _enqueue_continuity_resolution(self, symbol: str, reason: str) -> None:
+        """Resolve the loss on the owner thread: entry-only terminalization or fence.
+
+        The decision is made by the PAPER owner from durable post-queue evidence
+        (CR-PAPER-PROTECTION-LIFECYCLE-001.md section 22.4 slice C); this manager
+        never uses its cached coverage role as proof. The symbol stays unhealthy
+        until the owner reports a proven entry-only terminalization, and any
+        uncertain or exposed shape keeps the existing account-wide fence.
+        """
+
+        def _resolve(runtime):
+            outcome = runtime.resolve_robot_protection_continuity_loss(symbol, reason)
+            if outcome == CONTINUITY_ENTRY_ONLY_TERMINALIZED:
+                self._mark_healthy(symbol)
+            return outcome
+
         try:
-            self._runtime.enqueue(
-                lambda runtime: runtime.fence_robot_protection_continuity_loss(
-                    symbol, reason,
-                )
-            )
+            self._runtime.enqueue(_resolve)
         except Exception:
             LOGGER.exception(
-                "Robot protection coverage could not durably fence admission; "
+                "Robot protection coverage could not durably resolve continuity loss; "
                 "will retry; symbol=%s reason=%s",
                 symbol, reason,
             )
@@ -2095,7 +2108,7 @@ class RobotProtectionCoverageManager:
     def _mark_unhealthy(self, symbol: str, reason: str) -> None:
         with self._lock:
             self._unhealthy[symbol] = reason
-        self._enqueue_runtime_fence(symbol, reason)
+        self._enqueue_continuity_resolution(symbol, reason)
 
     def _mark_healthy(self, symbol: str) -> None:
         with self._lock:

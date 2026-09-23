@@ -73,8 +73,8 @@ from terminal.market_data.book_provider import MarketBookProvider
 from terminal.market_data.models import NormalizedOrderBook
 from terminal.paper.executor import PaperLimitExecutor, PaperMarketExecutor
 from terminal.persistence.sqlite_store import (
-    ExecutionApplyResult, PaperProtectionObligationRecord, RobotTradeRecord,
-    ScannerRuntimeStateRecord, SQLiteStore,
+    ConcurrentUpdate, ExecutionApplyResult, PaperProtectionObligationRecord,
+    RobotTradeRecord, ScannerRuntimeStateRecord, SQLiteStore,
 )
 from terminal.persistence.credential_store import CredentialStore, StoredBybitAccount
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
@@ -167,6 +167,19 @@ class _LiveOperationScopeProbe:
 
     def full_close(self, _request):
         return "full_close"
+
+
+CONTINUITY_FENCED = "FENCED"
+CONTINUITY_ENTRY_ONLY_TERMINALIZED = "ENTRY_ONLY_TERMINALIZED"
+
+# Only a saturated protection ingress is eligible for lifecycle-scoped handling
+# (CR-PAPER-PROTECTION-LIFECYCLE-001.md section 22.4 slice C). Every other
+# continuity-loss reason keeps the existing account-wide fail-closed fence.
+ENTRY_ONLY_CONTINUITY_REASONS = frozenset({"ingress_overflow"})
+
+ROBOT_ENTRY_ONLY_TERMINALIZATION_REASON = (
+    "robot_protection_entry_only_continuity_loss"
+)
 
 
 class RobotPaperActionExecutor:
@@ -1232,6 +1245,159 @@ class PaperRuntime:
             normalized.value, book, event_id=event_id, received_at_ms=received_at_ms,
         )
         return finalized, obligation
+
+    def resolve_robot_protection_continuity_loss(
+        self, symbol: str, reason: str,
+    ) -> str:
+        """Scope a protection continuity loss to the lifecycle it can actually harm.
+
+        Runs on the serialized PAPER owner, so every market event and fill queued
+        before it has already been applied: the evidence below is the authoritative
+        post-queue state, never a cached coverage role.
+
+        Returns ``CONTINUITY_ENTRY_ONLY_TERMINALIZED`` only when this symbol's sole
+        Robot lifecycle is one APPROVED pre-entry LIMIT with independently proven
+        zero exposure, that LIMIT was cancelled with zero filled quantity, and the
+        candidate was terminalized under its own expected revision. Everything else
+        -- any fill, Robot trade (including ambiguous multiples), unresolved
+        obligation, non-flat position, second lifecycle, failed cancellation, lost
+        revision race, or any other continuity reason -- returns
+        ``CONTINUITY_FENCED`` after applying the existing account-wide fence.
+
+        The cancel and the candidate terminalization are two durable writes, not one
+        transaction: the store offers no cross-aggregate transaction and none is
+        invented here. They are ordered risk-first (cancel, then terminalize) and any
+        failure after the cancel still falls back to the global fence, so nothing is
+        left silently unresolved.
+        """
+        normalized = symbol.strip().upper()
+        if not normalized:
+            raise ValueError("Robot protection coverage symbol is required")
+
+        if reason.strip() not in ENTRY_ONLY_CONTINUITY_REASONS:
+            self.fence_robot_protection_continuity_loss(normalized, reason)
+            return CONTINUITY_FENCED
+
+        candidate = self._proven_entry_only_candidate(normalized)
+        if candidate is None:
+            self.fence_robot_protection_continuity_loss(normalized, reason)
+            return CONTINUITY_FENCED
+
+        order_id = str(
+            ((candidate.robot_state or {}).get("execution") or {})["limit_order_id"]
+        )
+        digest = hashlib.sha256(
+            (candidate.candidate_id + "\0entry-only-continuity-loss").encode("utf-8")
+        ).hexdigest()[:32]
+        cancelled = self._robot_cancel_limit(PaperLimitCancelRequest(
+            ClientActionId("robot-entry-only-" + digest),
+            normalized,
+            order_id,
+        ))
+        if cancelled.status != CommandResultStatus.COMPLETED:
+            self.fence_robot_protection_continuity_loss(normalized, reason)
+            return CONTINUITY_FENCED
+
+        order = self.store.get_paper_limit(order_id, self._paper_account_id)
+        if (
+            order is None
+            or order.status not in INACTIVE_LIMIT_STATUSES
+            or order.filled_quantity > 0
+            or not self._robot_symbol_has_no_exposure(normalized)
+        ):
+            self.fence_robot_protection_continuity_loss(normalized, reason)
+            return CONTINUITY_FENCED
+
+        current = self.store.get_robot_candidate(candidate.candidate_id)
+        if (
+            current is None
+            or current.status != "APPROVED"
+            or current.state_revision != candidate.state_revision
+        ):
+            self.fence_robot_protection_continuity_loss(normalized, reason)
+            return CONTINUITY_FENCED
+
+        now_ms = int(time.time() * 1000)
+        robot_state = dict(current.robot_state or {})
+        execution = dict(robot_state.get("execution") or {})
+        execution["stopped_without_entry_at_ms"] = now_ms
+        execution["stopped_without_entry_reason"] = (
+            ROBOT_ENTRY_ONLY_TERMINALIZATION_REASON
+        )
+        execution["continuity_loss_reason"] = reason.strip()
+        robot_state["execution"] = execution
+        try:
+            self.store.save_robot_candidate_state(
+                candidate.candidate_id,
+                status="INVALIDATED",
+                robot_state=robot_state,
+                expected_revision=current.state_revision,
+                updated_at_ms=now_ms,
+            )
+        except ConcurrentUpdate:
+            self.fence_robot_protection_continuity_loss(normalized, reason)
+            return CONTINUITY_FENCED
+        return CONTINUITY_ENTRY_ONLY_TERMINALIZED
+
+    def _proven_entry_only_candidate(self, symbol: str):
+        """The single APPROVED pre-entry candidate with proven zero exposure."""
+        target = Symbol(symbol)
+        candidates = self.store.load_robot_candidates_for_symbol(
+            self._paper_account_id, target,
+        )
+        pending = [item for item in candidates if item.status == "APPROVED"]
+        other_live = [item for item in candidates if item.status == "OPEN"]
+        if len(pending) != 1 or other_live:
+            return None
+
+        candidate = pending[0]
+        raw_order_id = ((candidate.robot_state or {}).get("execution") or {}).get(
+            "limit_order_id"
+        )
+        if not isinstance(raw_order_id, str) or not raw_order_id.strip():
+            return None
+        order = self.store.get_paper_limit(raw_order_id, self._paper_account_id)
+        if (
+            order is None
+            or order.symbol != target
+            or order.status in INACTIVE_LIMIT_STATUSES
+            or order.filled_quantity > 0
+        ):
+            return None
+        if not self._robot_symbol_has_no_exposure(symbol):
+            return None
+        return candidate
+
+    def _robot_symbol_has_no_exposure(self, symbol: str) -> bool:
+        """Zero Robot trades, zero unresolved obligations and a flat position.
+
+        ``get_open_robot_trade_for_symbol()`` returns None both for no trade and
+        for ambiguous multiples, so trade evidence is counted explicitly here.
+        """
+        target = Symbol(symbol)
+        open_trades = [
+            trade
+            for trade in self.store.load_open_robot_trades(self._paper_account_id)
+            if trade.symbol == target
+        ]
+        if open_trades:
+            return False
+
+        for obligation in self.store.load_unresolved_paper_protection_obligations(
+            self._paper_account_id
+        ):
+            trade = self.store.get_robot_trade(obligation.trade_id)
+            if trade is None or trade.symbol == target:
+                return False
+
+        position = self.store.get_position_projection(PositionKey(
+            self._paper_account_id, Category.LINEAR, target, 0,
+        ))
+        return (
+            position is None
+            or position.side is PositionSide.FLAT
+            or position.quantity.value == 0
+        )
 
     def fence_robot_protection_continuity_loss(
         self, symbol: str, reason: str,

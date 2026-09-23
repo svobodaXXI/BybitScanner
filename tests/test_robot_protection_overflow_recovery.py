@@ -58,6 +58,11 @@ class _Owner:
         self.fences.append((symbol, reason))
         return True
 
+    def resolve_robot_protection_continuity_loss(self, symbol, reason):
+        # This double owns exposure, so the owner keeps the global fence.
+        self.fence_robot_protection_continuity_loss(symbol, reason)
+        return "FENCED"
+
     def recover_robot_protection_continuity_loss(
         self, symbol, book, *, event_id, received_at_ms, reason,
     ):
