@@ -77,6 +77,22 @@ run one complete real eligible-symbol pass for the owner's Telegram review.
 Existing local-only behavior is a defect against this workflow rule, not
 the accepted permanent architecture.
 
+## Current mandatory task sequence — OWNER UPDATE (2026-09-23)
+
+The user's execution order is **(1) L-shape visible in ordinary Telegram
+signals → (2) simplify the Ikigai Box chart/card and unify its Telegram
+caption/buttons → (3) fix the queued Scanner geometry errors** (APTUSDT,
+B3USDT, DASHUSDT, ATHUSDT; preserve B2USDT as Box positive control). Follow
+the top **"Binding owner execution order"** section of
+`DOCUMENTS/BACKLOG.md` as the authoritative next-task index. Do **not**
+advance geometry tasks ahead of Telegram integration or Box presentation by
+reading generic priority labels or stale next-step statements elsewhere.
+Correct candidate construction remains the mandatory end-state for all
+patterns; this owner order governs **when** its work is resumed. Each changed
+Scanner behavior still requires one complete real eligible-universe run for
+the owner's Telegram visual acceptance. No automatic Robot/PAPER/LIVE
+activation or risk changes.
+
 ## Active feedback queue and resumption
 
 For the current owner-prioritized Scanner geometry → Box setup lifecycle →

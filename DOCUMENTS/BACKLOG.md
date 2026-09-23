@@ -5,6 +5,42 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## Binding owner execution order — 2026-09-23 (READ FIRST)
+
+**Execute strictly in this order; do not switch to geometry work early:**
+
+1. **L-shape → Telegram.** Finish the missing real Scanner → Telegram photo,
+   unified caption and applicable safe buttons for the already-implemented
+   G-shaped/L-shaped pattern. Preserve source-time geometry and dedup/retry;
+   no unsupported Robot controls or PAPER/LIVE orders. Verify the actual
+   delivered notifications during one complete eligible-universe Scanner
+   pass and obtain owner visual feedback. Current local-only observer and its
+   interrupted 302/777-symbol run are **not** acceptance.
+2. **Simplify Ikigai Box Telegram chart/card.** Finish the previously
+   interrupted task: only ticker, timeframe, pattern name and the first-
+   impulse direction arrow in the chart header and post caption; remove
+   distracting chart labels/overlays such as planned limit grid, zone,
+   STOP, status, A/B and START. Reuse the ordinary signal layout and
+   applicable functioning owner buttons. Do not change Box geometry or
+   trading policy as a side effect. Confirm through the mandated complete
+   real Scanner pass and owner Telegram review.
+3. **Geometry corrections.** Resume the recorded P0 geometry-construction
+   cases **APTUSDT wedge, B3USDT triangle, DASHUSDT wedge** and the
+   **ATHUSDT Box first-impulse** defect, using **B2USDT Box** as a positive
+   control. Find and repair the earliest wrong candidate-generation/
+   episode/anchor stage, not a downstream score/notification filter or
+   a visual START move. Preserve the owner-approved pattern-specific rules.
+   After each material Scanner correction, perform the mandatory full-universe
+   owner-visible acceptance pass; focused tests during implementation do
+   not replace it.
+
+This **owner-selected execution order supersedes priority labels, "next
+task" statements and previous geometry-first sequencing elsewhere in this
+backlog or derived status summaries**. Work on one dependent task at a time.
+Do not confuse the final invariant (correct geometry at candidate construction)
+with the **immediate implementation order**. Trading execution and LIVE
+authorization remain separate and unchanged.
+
 ## IMMEDIATE owner-visible milestone — L-shape Telegram (2026-09-23)
 
 **Owner correction, superseding the older queue's deferral of L-shape delivery:**
