@@ -48,15 +48,25 @@ queue ordering when tasks conflict; it does **not** claim that the defects are
 already fixed or that a screenshot proves the exact code-level cause.
 
 **P0 — source-time geometry construction (one dependent fix at a time).**
-- **Wedge/Triangle:** use the owner's APTUSDT 5m wedge and B3USDT 5m
-  triangle charts as reported false-geometry cases. Find the exact saved
-  as-of candles/candidate; trace impulse episode, START/anchors, generation,
-  line selection and display to the *first* divergence from the pattern
-  contract. Fix generation/anchor selection, **not** score, chart window or
-  Telegram filtering. For wedges retain the owner's universal A/B/C rule;
-  triangle constraints are pattern-specific. If an original frozen snapshot
-  is absent, state the missing provenance and collect a reproducible source-
-  time case from the next complete pass rather than assert a guessed cause.
+- **Wedge/Triangle:** use the owner's APTUSDT 5m wedge, B3USDT 5m
+  triangle and **DASHUSDT 5m falling-wedge** charts as reported
+  false-geometry cases. DASHUSDT has two same-period visual references:
+  the Scanner's selected wedge (START and both boundaries around the later
+  local segment) and the owner's TradingView drawing showing a different,
+  broader descending channel/wedge with boundaries starting from earlier
+  local extremes. Treat the owner drawing as the intended geometry to test,
+  **not** as proof that the broader figure already meets every confirmed
+  pivot, A/B/C or source-time rule. Recover the matching closed-candle
+  decision cutoff and candidate provenance; trace impulse episode,
+  chronological A/B/C, START, candidate generation, boundary selection
+  and display to the *first* divergence from the pattern contract.
+  Compare the selected Scanner geometry to the owner's drawing using the
+  same source-time candles. Fix generation/anchor selection, **not** score,
+  chart window or Telegram filtering. For wedges retain the owner's
+  universal A/B/C rule; triangle constraints are pattern-specific. If an
+  original frozen snapshot is absent, state the missing provenance and
+  collect a reproducible source-time case from the next complete pass
+  rather than assert a guessed cause.
 - **Ikigai Box:** ATHUSDT 5m: the owner rejects an opposite-colour candle
   within the *core* of the first impulse. Resolve the precise directional/
   boundary-candle rule in `IKIGAI_BOX_STRATEGY_SPEC.md` before editing the

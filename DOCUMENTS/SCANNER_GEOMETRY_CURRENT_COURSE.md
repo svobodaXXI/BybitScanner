@@ -53,7 +53,13 @@ starts from the preceding rally while the displayed START and upper boundary
 belong to the later local consolidation; this is an observed mismatch, not
 a verified root-cause diagnosis without the exact frozen source candles.
 APTUSDT wedge and ATHUSDT Box screenshots likewise require source-time
-construction tracing. Pattern-specific candle-colour and setup-completion
+construction tracing. **DASHUSDT 5m falling wedge:** the owner supplied both
+the Scanner rendering and a TradingView drawing with earlier/broader intended
+boundary anchors; compare them at the exact original decision cutoff and
+trace the first generator/anchor-selection divergence in the same P0 geometry
+queue as APTUSDT and B3USDT, without moving START for presentation or
+assuming the hand-drawn structure passes the confirmed-pivot/A/B/C contract.
+Pattern-specific candle-colour and setup-completion
 rules belong to the owning specification; do not extrapolate one pattern's
 constraints to another. A Robot trade's actual exit requires execution
 evidence, not only an observed price touch.
