@@ -159,28 +159,33 @@ def analyze_symbol(symbol, *, timeframe=None):
             # Unknown identity cannot be used to create a new dedup namespace.
             result["scanner_formation_id"] = None
 
-        try:
-            source_candle_time_ms = int(df.iloc[current_index]["time"])
-            result["scanner_source_candle_time_ms"] = source_candle_time_ms
-            result["robot_geometry"] = project_frozen_geometry_to_robot_1m(
-                result["geometry"],
-                source_timeframe=timeframe,
-            )
-            result["scanner_geometry_cursor"] = build_scanner_geometry_cursor_anchor(
-                geometry_index=current_index,
-                source_candle_time_ms=source_candle_time_ms,
-                timeframe="1",
-            )
-            # Explicit 1m Scanner analysis is observational, not Robot admission.
-            result["robot_handoff_ready"] = not (
-                timeframe == "1" and explicit_timeframe
-            )
-        except (ScannerGeometryCursorError, KeyError, TypeError, ValueError, OverflowError) as exc:
-            # Scanner notification remains available, but Robot handoff must
-            # fail closed when its frozen 1m execution coordinate cannot be
-            # proven from the Scanner source evidence.
+        if result["scanner_observational_only"]:
+            # Observational 1m scanner results never build a Robot execution
+            # geometry/cursor; normal Scanner charting and Telegram still run.
             result["robot_handoff_ready"] = False
-            result["robot_handoff_error"] = str(exc)
+        else:
+            try:
+                source_candle_time_ms = int(df.iloc[current_index]["time"])
+                result["scanner_source_candle_time_ms"] = source_candle_time_ms
+                result["robot_geometry"] = project_frozen_geometry_to_robot_1m(
+                    result["geometry"],
+                    source_timeframe=timeframe,
+                )
+                result["scanner_geometry_cursor"] = build_scanner_geometry_cursor_anchor(
+                    geometry_index=current_index,
+                    source_candle_time_ms=source_candle_time_ms,
+                    timeframe="1",
+                )
+                # Explicit 1m Scanner analysis is observational, not Robot admission.
+                result["robot_handoff_ready"] = not (
+                    timeframe == "1" and explicit_timeframe
+                )
+            except (ScannerGeometryCursorError, KeyError, TypeError, ValueError, OverflowError) as exc:
+                # Scanner notification remains available, but Robot handoff must
+                # fail closed when its frozen 1m execution coordinate cannot be
+                # proven from the Scanner source evidence.
+                result["robot_handoff_ready"] = False
+                result["robot_handoff_error"] = str(exc)
 
         # =========================
         # Confirmation
