@@ -266,6 +266,27 @@ class AnalyzerRobotHandoffTests(unittest.TestCase):
         self.assertEqual(result["geometry"]["upper_line"]["slope"], -5.0)
 
 
+class TimeframeSignalMemoryTests(unittest.TestCase):
+    def test_interval_and_formation_identity_are_independent(self):
+        import signal_memory
+
+        history = {}
+        base = {
+            "symbol": "BTCUSDT", "pattern": "Falling Wedge",
+            "direction": "LONG", "score": 80,
+        }
+        with patch.object(signal_memory, "load_memory", side_effect=lambda: dict(history)), \
+                patch.object(signal_memory, "save_memory", side_effect=lambda value: history.update(value)):
+            five = {**base, "timeframe": "5", "formation_id": "100:200"}
+            one = {**base, "timeframe": "1", "formation_id": "100:200"}
+            next_five = {**five, "formation_id": "300:400"}
+            self.assertEqual(signal_memory.update_signal(five), "NEW")
+            self.assertEqual(signal_memory.update_signal(one), "NEW")
+            self.assertEqual(signal_memory.update_signal(five), "STABLE")
+            self.assertEqual(signal_memory.update_signal(next_five), "NEW")
+        self.assertEqual(len(history), 3)
+
+
 class MainAdmissionGateTests(unittest.TestCase):
     def run_main(self, approved, *, test_mode=False):
         analysis = {
