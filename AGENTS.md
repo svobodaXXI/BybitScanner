@@ -39,6 +39,23 @@ and its narrow changed-behavior checks during implementation; complete the
 mandatory full-universe Scanner acceptance pass below for every new pattern
 or Scanner correction, without redundant repeated passes.
 
+## Scanner runtime ownership — MANUAL ONLY (OWNER RULE 2026-09-23)
+
+**Only the owner manually starts the real Scanner through the verified existing
+Scanner-only control surface.** ChatGPT, Codex, Claude Code and delegated agents
+must not launch, resume, restart, schedule, or keep a full Scanner pass running
+inside an agent session, including acceptance passes. No automatic/manual-via-
+agent handoff that leaves the agent consuming quota while the Scanner runs.
+Codex may perform a bounded read-only preflight and necessary focused developer
+checks, then MUST terminate its task and hand back a concise result. The owner
+separately decides when to launch the one complete real Scanner/Telegram pass.
+A full-pass acceptance requirement does NOT authorize agents to execute it.
+Do not stop an existing process blindly: identify ownership and impact on
+Robot/positions first; if a possibly active agent-run Scanner is reported,
+prioritize a safe owner-controlled stop of that specific process, not a broad
+shutdown. Do not repeatedly poll/wait for a long run inside Codex. See
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` and `DOCUMENTS/BACKLOG.md`.
+
 ## Exclusive visual acceptance workflow — full real Scanner pass ONLY (OWNER OVERRIDE 2026-09-23)
 
 **The owner inspects and accepts ALL Scanner changes solely via ONE COMPLETE
