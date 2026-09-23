@@ -94,9 +94,22 @@ def _draw_terminal_levels(ax, levels, key_levels, x_left, x_right):
 
 
 def ikigai_box_caption(symbol, timeframe, formation):
-    """Shared chart/Telegram identity; arrow follows A -> B, not trade side."""
-    arrow = "↑" if formation.anchor_end_price > formation.anchor_start_price else "↓"
-    return f"{symbol} · {format_timeframe_ru(timeframe)} · Коробка Икигаи · {arrow}"
+    """Shared chart/Telegram identity; arrow follows A -> B, not trade side.
+
+    Potential is not a new target/detection value: it reads the existing
+    frozen F(1.0) and F(1.618) levels already stored on the formation/watch,
+    unified-caption format (PR #211/BACKLOG.md)."""
+    up = formation.anchor_end_price > formation.anchor_start_price
+    arrow = "↑" if up else "↓"
+    potential_pct = (
+        abs(formation.fibonacci_1_618 - formation.fibonacci_1_0)
+        / formation.fibonacci_1_0 * 100
+    )
+    sign = "+" if up else "-"
+    return (
+        f"{symbol} · {format_timeframe_ru(timeframe)} · "
+        f"Коробка Икигаи ({sign}{potential_pct:.2f}%) · {arrow}"
+    )
 
 
 def render_ikigai_box_chart(

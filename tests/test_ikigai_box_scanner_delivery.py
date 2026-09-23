@@ -13,7 +13,8 @@ import tests.test_telegram_delivery  # noqa: F401
 import main
 import ikigai_box_scanner as box
 from tests.test_ikigai_box_detector import _two_impulses, _terminal_wick_two_impulses
-from geometry.ikigai_box import detect_ikigai_box_watches
+from geometry.ikigai_box import detect_ikigai_box, detect_ikigai_box_watches
+from geometry.ikigai_box_chart import ikigai_box_caption
 
 
 def _candles():
@@ -85,7 +86,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         self.assertIn("ikigai_box", path)
         self.assertEqual(formation.direction, "SHORT")
         self.assertEqual(photo.call_args.kwargs["caption"],
-                         f"TESTUSDT · {box.config.TIMEFRAME}м · Коробка Икигаи · ↑")
+                         ikigai_box_caption("TESTUSDT", box.config.TIMEFRAME, formation))
         buttons = [
             button["text"]
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
@@ -132,7 +133,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         photo.assert_called_once()
         sent = photo.call_args
         self.assertEqual(sent.kwargs["caption"],
-                         "HEIUSDT · 60м · Коробка Икигаи · ↑")
+                         ikigai_box_caption("HEIUSDT", "60", watch))
         self.assertNotIn("_analysis.png", sent.args[2])
         self.assertIn("_WATCH_", sent.args[2])
         self.assertEqual(len(history), 1)
@@ -200,8 +201,12 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                     result = box.send_ikigai_box_observation(
                         "TESTUSDT", _candles(), timeframe="5", test_mode=True)
                 self.assertTrue(result)
+                expected_caption = ikigai_box_caption(
+                    "TESTUSDT", "5",
+                    watch if early else detect_ikigai_box(_candles().iloc[:-1]),
+                )
                 for index, call in enumerate(photo.call_args_list):
-                    self.assertEqual(call.kwargs["caption"], "TESTUSDT · 5м · Коробка Икигаи · ↑")
+                    self.assertEqual(call.kwargs["caption"], expected_caption)
                     buttons = [b for row in call.kwargs["reply_markup"]["inline_keyboard"] for b in row]
                     callbacks = [b["callback_data"] for b in buttons if "callback_data" in b]
                     self.assertEqual(callbacks, [f"review:{action}:TESTUSDT:5" for action in

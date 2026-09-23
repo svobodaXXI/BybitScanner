@@ -9,8 +9,10 @@ single place where new ideas are parked until then.
 
 **Binding for every current and future pattern's ordinary Telegram signal
 caption** (the text posted before the chart), except a pattern with its own
-separately specified minimal caption (L-shape, Ikigai Box — unchanged by
-this rule, already minimal). Applies to the Wedge/Triangle Scanner caption
+separately specified minimal caption and no score (L-shape, Ikigai Box —
+keep their own single-line layout, but conform their sub-elements: arrow
+only for direction, potential in parentheses; see "conformance check"
+below). Applies to the Wedge/Triangle Scanner caption
 (`notification.format_signal`), implemented 2026-09-23:
 
 ```
@@ -54,11 +56,20 @@ rule stays presentation-only). One real difference was found and fixed:
 L-shape's potential was a trailing `· +8.05%`, not in parentheses after the
 pattern name; `geometry.l_shape_preview.l_shape_caption` now renders
 `... ↑ Г-образная (+8.05%)`, matching the parenthetical sub-rule above while
-keeping its own single-line ticker/timeframe layout. Ikigai Box has no
-potential/target-percent field in `IkigaiBoxFormation` at all (its targets
-are Fibonacci zones, not one percentage) — computing one would be a
-detection/definition decision, not presentation, so its caption
-(`... · Коробка Икигаи · {arrow}`) is unchanged.
+keeping its own single-line ticker/timeframe layout.
+
+**Ikigai Box potential (2026-09-23, owner follow-up):** `IkigaiBoxFormation`
+has no dedicated potential field, but does carry the frozen `fibonacci_1_0`
+(F1, the first impulse's terminal B) and `fibonacci_1_618` levels already
+used for the chart/target. Reusing them, not recalculating anchors:
+`potential_pct = abs(F1.618 - F1) / F1 * 100`, shown in parentheses right
+after "Коробка Икигаи", sign `+` for an UP first impulse (arrow `↑`) and
+`-` for DOWN (arrow `↓`) — the same UP/DOWN test the arrow already uses.
+`geometry.ikigai_box_chart.ikigai_box_caption` now renders
+`... · Коробка Икигаи (+X.XX%) · ↑`. Shared by CONFIRMED and WATCH
+(`IkigaiBoxWatch` carries the same two fields) and by both the chart title
+and the Telegram caption, since both already call this one function.
+Detection, targets, scoring, and Robot are unchanged.
 
 ## HAEDALUSDT 5m — Box early-grid/slice TP/re-arm strategy feedback (2026-09-23)
 
