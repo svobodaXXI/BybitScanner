@@ -5,6 +5,7 @@ database. Synthetic candles keep every threshold explicit and ticker-neutral;
 one real B2USDT 5m excerpt pins the owner's reference geometry.
 """
 
+import dataclasses
 import inspect
 
 import pandas as pd
@@ -15,8 +16,11 @@ from geometry.l_shape import (
     DIRECTION_LONG,
     DIRECTION_SHORT,
     LShapeParameters,
+    STOP_RATIO_FALLBACK,
+    STOP_STRUCTURAL,
     detect_l_shape,
     find_latest_l_shape,
+    l_shape_signal_plan,
 )
 
 STEP_MS = 300_000
@@ -329,3 +333,64 @@ def test_thresholds_are_named_parameters_not_hidden_constants():
 
 def test_no_shelf_condition_or_terminology_remains():
     assert "shelf" not in inspect.getsource(detector_module).lower()
+
+
+# --- Scanner signal eligibility (owner decision 2026-09-23) -----------------
+
+
+def test_b2usdt_is_eligible_with_the_half_target_fallback_stop():
+    formation = find_latest_l_shape(_b2usdt())
+    plan = l_shape_signal_plan(formation)
+
+    assert plan.eligible and plan.rejection is None
+    assert plan.reference == formation.breakout_level == 0.5168
+    assert plan.target == formation.target_level
+    # Structural STOP at the trough low 0.4388 is 0.078 away, more than half
+    # the 0.0416 target distance, so the ratio-based STOP applies.
+    assert plan.structural_stop == 0.4388
+    assert plan.stop_kind == STOP_RATIO_FALLBACK
+    assert abs(plan.stop - (0.5168 - 0.0416 / 2)) < 1e-9
+    assert plan.reward_risk == 2.0
+    assert round(formation.potential_percent, 2) == 8.05
+
+
+def test_metisusdt_structures_stay_valid_but_are_not_signals():
+    candles = _metisusdt()
+    breakout_1255 = int(candles.index[candles["time"] == 1790157300000][0])
+    for formation in (
+        find_latest_l_shape(candles),                                  # +0.47%
+        detect_l_shape(candles, as_of_index=breakout_1255),            # +0.06%
+    ):
+        plan = l_shape_signal_plan(formation)
+        assert formation is not None
+        assert formation.potential_percent < 0.8
+        assert not plan.eligible
+        assert plan.rejection == "potential_below_minimum"
+
+
+def test_structural_stop_is_preferred_when_within_half_the_target():
+    formation = dataclasses.replace(detect_l_shape(_long_shape()), trough_extreme=108.8)
+    plan = l_shape_signal_plan(formation)
+
+    assert plan.stop_kind == STOP_STRUCTURAL
+    assert plan.stop == 108.8
+    assert plan.reward_risk >= 2.0 and plan.eligible
+
+
+def test_short_stop_is_on_the_adverse_side_of_the_breakout():
+    formation = detect_l_shape(_short_shape())
+    plan = l_shape_signal_plan(formation)
+
+    assert plan.eligible
+    assert plan.stop > plan.reference > plan.target
+    assert plan.reward_risk == 2.0
+
+
+def test_signal_plan_never_changes_the_formation():
+    formation = detect_l_shape(_long_shape())
+    before = dataclasses.asdict(formation)
+
+    l_shape_signal_plan(dataclasses.replace(formation, potential_percent=0.1))
+    l_shape_signal_plan(formation)
+
+    assert dataclasses.asdict(formation) == before

@@ -329,6 +329,21 @@ reproduces H 0.5168 (11:30), U 0.4752 (11:35), breakout 12:25, T 0.5584,
 `Цель` level only. Owner visual acceptance remains pending on the next
 complete owner-started Scanner pass.
 
+**Signal eligibility implemented (PR #208, owner decision above):**
+`l_shape_signal_plan` in `geometry/l_shape.py` is separate from detection and
+never moves anchors/target. Reference = breakout level for both target and
+STOP. Structural STOP = the trough's actual low (LONG) / high (SHORT); no
+Scanner-side tick/fee buffer exists, so it is an indication only, never an
+executable order. If its distance exceeds half the target distance, the
+default STOP sits at exactly half the target distance, adverse side.
+Eligible only with potential ≥ 0.8% and reward/risk ≥ 2:1. The Scanner sends
+the newest *eligible* formation; a newer ineligible structure is logged
+(`L-SHAPE structure not signalled … reason=…`) and cannot hide it. Results:
+B2USDT eligible, STOP 0.4960 (ratio fallback; structural 0.4388 is 0.078
+away), 2:1, +8.05%. METISUSDT +0.47% and +0.06% remain detected structures
+but are not signalled (`potential_below_minimum`). Chart and caption are
+unchanged (no STOP drawn); no Robot, Box, Wedge or Triangle change.
+
 **Original status: specification feedback only.**
 The owner rejects the current mandatory post-impulse narrow "shelf" model and
 its shelf box/labels for this example. The intended search structure is a

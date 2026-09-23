@@ -23,10 +23,13 @@ potential = 100 * (T / H - 1). SHORT mirrors it with the body bottom of the
 trough candle with the highest high and T = L - D.
 
 Responsibility:
-- read already loaded closed candles and report one formation or nothing.
+- read already loaded closed candles and report one formation or nothing;
+- Scanner signal eligibility for a detected formation: potential of at least
+  0.8% from the breakout level and a reference STOP with reward/risk of at
+  least 2:1 (``l_shape_signal_plan``), separate from the geometry.
 
 Not responsible for:
-- trading decisions, Robot admission, STOP/TAKE, Telegram, Scanner wiring;
+- trading decisions, Robot admission, orders, Telegram, Scanner wiring;
 - a generic pattern engine, ranking or scoring.
 
 Only candles up to ``as_of_index`` (the breakout candle) are read, so a later
@@ -95,6 +98,7 @@ class LShapeFormation:
     breakout_index: int
     breakout_level: float         # H (LONG) / L (SHORT)
     trough_edge: float            # U
+    trough_extreme: float         # the trough's actual low (LONG) / high (SHORT)
     depth: float                  # D = |H - U|
     target_level: float           # T = H + D (LONG) / L - D (SHORT)
     potential_percent: float      # measured from the breakout level
@@ -181,17 +185,102 @@ def find_latest_l_shape(
     at that breakout candle, so a later bar never alters it; a breakout a few
     candles before the scan is therefore not missed.
     """
+    return next(iter_l_shapes(candles, parameters=parameters), None)
+
+
+def iter_l_shapes(
+    candles,
+    *,
+    parameters: LShapeParameters = DEFAULT_PARAMETERS,
+):
+    """Yield every formation in ``candles``, most recent breakout first.
+
+    Structural detection only; signal admission is ``l_shape_signal_plan``.
+    """
     rows = _series(candles)
     if rows is None:
-        return None
+        return
     atr_values = _atr_values(candles, parameters.atr_period)
     if atr_values is None:
-        return None
+        return
     for as_of in range(len(rows) - 1, -1, -1):
         formation = _detect_at(rows, atr_values, as_of, parameters)
         if formation is not None:
-            return formation
-    return None
+            yield formation
+
+
+# --- Scanner signal eligibility (owner decision 2026-09-23) -----------------
+# Separate trade-plan geometry: it never moves the formation anchors or target
+# and never rejects a structure; it only decides whether a detected formation
+# is a deliverable Scanner signal. L-shape only; no Robot/order semantics.
+
+SIGNAL_MIN_POTENTIAL_PERCENT = 0.8
+SIGNAL_MIN_REWARD_RISK = 2.0
+
+STOP_STRUCTURAL = "STRUCTURAL"
+STOP_RATIO_FALLBACK = "RATIO_FALLBACK"
+
+
+@dataclass(frozen=True)
+class LShapeSignalPlan:
+    """Reference STOP and admission verdict for one formation.
+
+    ``reference`` is the breakout level H (L for SHORT) for both target and
+    STOP distances. The structural STOP sits at the trough's actual extreme;
+    no tick/fee buffer is known on the Scanner side, so this plan is an
+    indication only and never an executable order.
+    """
+
+    reference: float
+    target: float
+    stop: float
+    stop_kind: str
+    structural_stop: float
+    reward: float
+    risk: float
+    reward_risk: float
+    potential_percent: float
+    eligible: bool
+    rejection: str | None
+
+
+def l_shape_signal_plan(formation):
+    """Compute the reference STOP and whether the formation may be signalled."""
+    reference = formation.breakout_level
+    target = formation.target_level
+    structural_stop = formation.trough_extreme
+    reward = abs(target - reference)
+    structural_risk = abs(reference - structural_stop)
+    adverse = -1.0 if formation.direction == DIRECTION_LONG else 1.0
+    if 0 < structural_risk <= reward / 2:
+        stop, stop_kind, risk = structural_stop, STOP_STRUCTURAL, structural_risk
+    else:
+        # Default ratio-based STOP: half the target distance, adverse side.
+        risk = reward / 2
+        stop, stop_kind = reference + adverse * risk, STOP_RATIO_FALLBACK
+    reward_risk = reward / risk if risk > 0 else 0.0
+    potential = abs(formation.potential_percent)
+
+    rejection = None
+    if potential < SIGNAL_MIN_POTENTIAL_PERCENT:
+        rejection = "potential_below_minimum"
+    elif risk <= 0 or stop <= 0:
+        rejection = "stop_not_viable"
+    elif reward_risk < SIGNAL_MIN_REWARD_RISK:
+        rejection = "reward_risk_below_minimum"
+    return LShapeSignalPlan(
+        reference=reference,
+        target=target,
+        stop=stop,
+        stop_kind=stop_kind,
+        structural_stop=structural_stop,
+        reward=reward,
+        risk=risk,
+        reward_risk=reward_risk,
+        potential_percent=potential,
+        eligible=rejection is None,
+        rejection=rejection,
+    )
 
 
 def _detect_at(rows, atr_values, breakout, parameters):
@@ -307,6 +396,7 @@ def _qualify(rows, atr, parameters, direction, extreme, breakout):
         breakout_index=breakout,
         breakout_level=level,
         trough_edge=trough_edge,
+        trough_extreme=lows[trough_index] if long_side else highs[trough_index],
         depth=depth,
         target_level=target,
         potential_percent=100.0 * (target / level - 1.0),
