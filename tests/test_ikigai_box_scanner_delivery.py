@@ -102,7 +102,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             text.call_args.args[2],
             f"📡 Сканер: TESTUSDT\n"
             f"↑ Коробка Икигаи (+{potential:.2f}%)\n"
-            f"{box.config.TIMEFRAME}м",
+            "5м",
         )
         self.assertEqual(photo.call_args.kwargs["caption"], "")
         buttons = [
