@@ -82,8 +82,9 @@ class IkigaiBoxInitialPassWithWatchTests(unittest.TestCase):
             enter(patch.object(main, "get_symbols", return_value=[_SYMBOL]))
             enter(patch.object(
                 main, "analyze_symbol",
-                side_effect=lambda symbol: {
-                    "symbol": symbol, "result": None, "data": self.snapshot,
+                side_effect=lambda symbol, *, timeframe: {
+                    "symbol": symbol, "result": None,
+                    "data": self.snapshot if timeframe == str(config.TIMEFRAME) else None,
                 },
             ))
             enter(patch.object(main, "send_message", return_value=True))
