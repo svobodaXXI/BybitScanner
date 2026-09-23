@@ -39,6 +39,17 @@ and its narrow changed-behavior checks during implementation; complete the
 mandatory full-universe Scanner acceptance pass below for every new pattern
 or Scanner correction, without redundant repeated passes.
 
+## Delegated prompt budget — NO REDUNDANT TEST/ITERATION LOOPS (OWNER RULE 2026-09-23)
+
+For EVERY subsequent Codex/Claude Code prompt, apply
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` §3.2.1a: one short bounded task, reuse
+existing evidence, run only the minimum necessary focused check once for the
+changed behavior, then STOP and report. Do not request repeated tests,
+automatic test/fix loops, broad exploratory rechecks, full campaigns or
+polling/waiting to burn agent quotas. Retry a failed check only after a
+specific fix; retain genuinely mandatory safety/contract/final gates without
+adding duplicate verification. Never delegate a real Scanner pass to an agent.
+
 ## Scanner runtime ownership — MANUAL ONLY (OWNER RULE 2026-09-23)
 
 **Only the owner manually starts the real Scanner through the verified existing
