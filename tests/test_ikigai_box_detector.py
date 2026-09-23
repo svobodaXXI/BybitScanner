@@ -7,6 +7,7 @@ import pandas as pd
 
 from geometry.ikigai_box import (
     IkigaiBoxParameters,
+    _is_reversal_origin,
     _qualified_first_impulse_and_box,
     detect_ikigai_box,
     detect_ikigai_box_watches,
@@ -25,7 +26,9 @@ def _bar(start, finish):
 def _two_impulses(direction=1, *, second_steps=6):
     """Twenty calm bars, a directional leg, a shelf, and a SAME-direction leg."""
     start = 200.0 if direction < 0 else 100.0
-    candles = [_bar(start, start) for _ in range(20)]
+    # The calm base sits just inside A, so A is a strict reversal extreme.
+    calm = start + direction * 0.05
+    candles = [_bar(calm, calm) for _ in range(20)]
     price = start
     for _ in range(8):
         nxt = price + direction
@@ -540,6 +543,80 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             detect_ikigai_box(
                 frame, parameters=IkigaiBoxParameters(box_min_bars=0)
             )
+
+
+# Real Bybit CPUSDT 5m closed candles 10:40-13:20 MSK 2026-09-23 (the Scanner
+# decision candle of the delivered Box): (open time ms, open, high, low, close).
+_CPUSDT_5M = [
+    (1790149200000, 0.01387, 0.01389, 0.01383, 0.01384),
+    (1790149500000, 0.01384, 0.01387, 0.01383, 0.01384),
+    (1790149800000, 0.01384, 0.01387, 0.01384, 0.01386),
+    (1790150100000, 0.01386, 0.0139, 0.01386, 0.0139),
+    (1790150400000, 0.0139, 0.01391, 0.01385, 0.01385),
+    (1790150700000, 0.01385, 0.01387, 0.01371, 0.01385),
+    (1790151000000, 0.01385, 0.0139, 0.01384, 0.01388),
+    (1790151300000, 0.01388, 0.01401, 0.01388, 0.01401),
+    (1790151600000, 0.01401, 0.01405, 0.01397, 0.01402),
+    (1790151900000, 0.01402, 0.01402, 0.01399, 0.01401),
+    (1790152200000, 0.01401, 0.01403, 0.01399, 0.01403),
+    (1790152500000, 0.01403, 0.01405, 0.01401, 0.01402),
+    (1790152800000, 0.01402, 0.01403, 0.01401, 0.01401),
+    (1790153100000, 0.01401, 0.01401, 0.01385, 0.01386),
+    (1790153400000, 0.01386, 0.01388, 0.01375, 0.01376),
+    (1790153700000, 0.01376, 0.01384, 0.01376, 0.01383),
+    (1790154000000, 0.01383, 0.01389, 0.01383, 0.01387),
+    (1790154300000, 0.01387, 0.01399, 0.01385, 0.01396),
+    (1790154600000, 0.01396, 0.01401, 0.01395, 0.01401),
+    (1790154900000, 0.01401, 0.01402, 0.01397, 0.01402),
+    (1790155200000, 0.01402, 0.01408, 0.01402, 0.01408),
+    (1790155500000, 0.01408, 0.0141, 0.01405, 0.01406),
+    (1790155800000, 0.01406, 0.0141, 0.01405, 0.01406),
+    (1790156100000, 0.01406, 0.01411, 0.01405, 0.01408),
+    (1790156400000, 0.01408, 0.01411, 0.01406, 0.01407),
+    (1790156700000, 0.01407, 0.01407, 0.01402, 0.01404),
+    (1790157000000, 0.01404, 0.01407, 0.014, 0.01405),
+    (1790157300000, 0.01405, 0.01407, 0.01404, 0.01407),
+    (1790157600000, 0.01407, 0.01416, 0.01402, 0.01415),
+    (1790157900000, 0.01415, 0.01415, 0.01406, 0.0141),
+    (1790158200000, 0.0141, 0.0141, 0.01404, 0.0141),
+    (1790158500000, 0.0141, 0.01425, 0.0141, 0.01423),
+    (1790158800000, 0.01423, 0.01424, 0.01414, 0.01422),
+]
+
+
+class ReversalOriginTests(unittest.TestCase):
+    def test_cpusdt_first_impulse_starts_at_the_reversal_low(self):
+        """Previously A 12:05 (mid-rise) -> B 12:25 won on extension fit; with
+        A required to be a confirmed reversal low it is 11:50 -> 12:20."""
+        candles = pd.DataFrame(
+            _CPUSDT_5M, columns=["time", "open", "high", "low", "close"]
+        )
+        formation = detect_ikigai_box(candles)
+        self.assertIsNotNone(formation)
+        self.assertEqual(formation.direction, "SHORT")
+        time = candles["time"]
+        self.assertEqual(int(time[formation.anchor_start_index]), 1790153400000)  # 11:50
+        self.assertEqual(int(time[formation.anchor_end_index]), 1790155200000)  # 12:20
+        self.assertEqual(formation.anchor_start_price, 0.01375)
+        self.assertEqual(formation.anchor_end_price, 0.01408)
+        for watch in detect_ikigai_box_watches(candles):
+            self.assertTrue(_is_reversal_origin(
+                list(candles[["open", "high", "low", "close"]].itertuples(index=False, name=None)),
+                watch.anchor_start_index, 1 if watch.direction == "SHORT" else -1,
+            ))
+
+    def test_reversal_rule_is_strict_and_mirrored(self):
+        lows = [5, 4, 3, 1, 2, 3, 4]
+        up = [(9, 9, low, 9) for low in lows]
+        down = [(0, 10 - low, 0.5, 0) for low in lows]
+        self.assertTrue(_is_reversal_origin(up, 3, 1))
+        self.assertTrue(_is_reversal_origin(down, 3, -1))
+        self.assertFalse(_is_reversal_origin(up, 4, 1))       # lower low before it
+        equal = list(up)
+        equal[5] = (9, 9, 1, 9)                                # equal low after it
+        self.assertFalse(_is_reversal_origin(equal, 3, 1))
+        self.assertFalse(_is_reversal_origin(up[:6], 3, 1))   # not yet confirmed
+        self.assertFalse(_is_reversal_origin(up, 2, 1))       # too few candles before
 
 
 if __name__ == "__main__":
