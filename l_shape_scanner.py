@@ -100,6 +100,7 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
         caption += "\n🧪 TEST MODE"
 
     all_delivered = True
+    sent_new = False
     for chat_id in recipients:
         if chat_id in already_sent:
             continue
@@ -119,6 +120,7 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
             if not isinstance(response, dict) or not response.get("ok"):
                 all_delivered = False
                 continue
+            sent_new = True
             if not test_mode:
                 already_sent.add(chat_id)
                 memory[memory_key] = {
@@ -129,4 +131,4 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
         except Exception as error:
             all_delivered = False
             print(f"[L-SHAPE TELEGRAM] {symbol} chat_id={chat_id}: {error}")
-    return all_delivered and bool(recipients)
+    return all_delivered and sent_new
