@@ -156,107 +156,66 @@ acceptance rule when the owner authorizes the actual run. The user judges
 the charts visually; developer verification stays limited to necessary
 technical checks, not extra test campaigns.
 
-## Binding owner execution order — 2026-09-23 (READ FIRST; consolidated owner plan)
+## Binding owner execution order — 2026-09-23 (LATEST OWNER OVERRIDE; READ FIRST)
 
-**Current evidence/status:** #204 (L-shape Telegram), #205 (Box card) and
-#207 (full-pass acceptance rule) are merged. Owner supplied real Telegram
-charts during an observed 302/777+ pass; later reported stopping the Scanner.
-No verified final 777/777 summary, delivery/error totals, or confirmation of
-a completed full pass is available here. The existing visual acceptance is
-**PENDING**; do not assume the host/Scanner is stopped or declare acceptance
-from periodic Codex log excerpts. If full-pass evidence is later recovered,
-record it once and do not repeat a successfully completed pass merely for
-bookkeeping. Current GitHub/main documentation is not proof that the active
-Windows/VPS processes were synchronized.
+The owner explicitly changed the priority to **former tasks 5 → 4 → 2 → 6;
+all remaining tasks afterwards**. This section supersedes the previous
+numbered order and any contrary "next/immediate" wording elsewhere in this
+backlog or geometry index. Preserve task content, but execute in this order:
 
-**Sequential dependent work; never advance or reorder without owner direction:**
+1. **Former #5 — L-shaped geometry and Telegram card.** Implement the B2USDT
+   5m owner definition: local HIGH → trough → HIGH breakout, without a
+   mandatory shelf; source-time upper edge of trough candles determines
+   depth. Draw only rightward breakout HIGH ray and horizontal target with
+   potential measured from HIGH; minimal ticker/timeframe/direction-arrow-
+   before-pattern/potential caption. Remove diagonal, START, shelf box/text,
+   green formula and other annotations. Do not activate L-shape Robot.
+2. **Former #4 — Ikigai Box first-impulse and missed-pattern geometry.** Apply
+   the CPUSDT 5m reversal-origin, predominantly single-colour non-zigzag
+   first-impulse rule; freeze first-leg A/B before the independent sideways
+   consolidation, for CONFIRMED and WATCH. Diagnose INTUUSDT 5m possible
+   missed downward Box independently of the L-shape, using historical
+   decision-time candles and the detector's decision/rejection path. Preserve
+   historical completion vs actionable setup vs actual Robot execution;
+   never fabricate a Box just because its screenshot looks plausible.
+3. **Former #2 — Per-symbol Scanner 5m → immediately 1m**, all integrated
+   patterns and ordinary separate Telegram notifications; independent
+   candles, anchor/formation identities, state and dedup per timeframe.
+   Robot/PAPER/LIVE stays on its separately authorized trading scope.
+4. **Former #6 — Telegram Scanner-menu owner control.** Discover actual
+   reachable host/worker, safe symbol-boundary pause, durable resume of the
+   same pass and manual owner-tap start through the verified existing
+   launcher/control mechanism. No autonomous Codex run, duplicate workers/
+   Telegram pollers, blind PC wakeup/VPS switch, Robot enablement or unsafe
+   backend restart. Fail closed on unavailable host/ambiguous ownership.
+5. **Only afterwards — former #1, #3, #7 and all other queued work.** Resolve
+   outstanding acceptance of the earlier #204/#205 changes and any newly
+   implemented Scanner changes using the owner's mandatory ONE COMPLETE
+   eligible-universe, ALL-pattern, ordinary-Telegram visual pass; the earlier
+   interrupted 302/777 pass is not accepted. Then resume APTUSDT/B3USDT/
+   DASHUSDT/ATHUSDT source-geometry defects (B2USDT Box positive control),
+   remaining Ikigai setup lifecycle and separately authorized PAPER Robot
+   work according to dependencies. Record existing valid complete-pass
+   evidence, if recovered, instead of commissioning a redundant pass.
 
-1. **Complete the current-version acceptance:** bounded read-only inspection
-   of existing host/runtime evidence and verified Scanner-only entrypoint,
-   independent of Codex's prior long-running job. Ensure no duplicate
-   Scanner/Telegram poller, inspect Robot/open positions and real enabled
-   patterns, ordinary Telegram delivery and uncapped eligible universe.
-   The owner alone manually starts one COMPLETE pass; agents must exit after
-   preflight, never run, poll or supervise the pass. If the interrupted
-   302/777 pass cannot demonstrably resume with full coverage and correct
-   signal delivery, it is NOT accepted; perform one new full eligible-universe
-   pass when safe rather than calling the partial pass complete or offering
-   a short alternative. Owner reviews only actual Telegram signals.
-2. **Implement per-symbol 5m → immediately 1m → next symbol** for every
-   integrated pattern and ordinary separate Telegram signals. Keep OHLC,
-   anchors, source-time identity, state and dedup independent per timeframe.
-   Preserve Robot 5m execution scope and existing trading authorization.
-   Verify with necessary focused technical checks, then owner-manual ONE
-   full real eligible-universe Telegram pass for visual acceptance.
-3. **Repair false constructed geometry at its source:** APTUSDT wedge,
-   B3USDT triangle, DASHUSDT wedge, ATHUSDT Ikigai Box; B2USDT Box is the
-   positive control. Fix local episode/impulse/anchors at candidate
-   construction; never conceal invalid candidates via ranking, scores,
-   chart window or Telegram/Robot suppression. Address one supported
-   causative defect at a time; after changed Scanner behavior, acceptance is
-   exclusively an owner-manual full-universe Telegram pass, not a selected
-   chart or partial scan.
-4. **Ikigai Box first-impulse/lifecycle and missed-pattern evidence:** apply
-   the CPUSDT 5m directional first-impulse and consolidation rule recorded
-   below and in `IKIGAI_BOX_STRATEGY_SPEC.md` at candidate construction,
-   for both CONFIRMED and WATCH. Independently investigate INTUUSDT 5m as
-   an owner-reported **possible missed DOWN Ikigai Box** on the same candles
-   where a rising L-shape was emitted. Recover the original decision-time
-   OHLC, detector candidates/rejection trail, both impulse episodes,
-   consolidation and price extensions. Determine whether a valid historical
-   Box completed before scan time, whether current-close/freshness or
-   same-symbol/pattern dedup prevented emission, or whether the structure
-   did not satisfy the approved Box definition. A screenshot is evidence
-   for diagnosis, NOT proof of a confirmed Box. L-shape detection must not
-   mutually exclude independent Box detection on the same symbol/timeframe.
-   Correct earliest evidenced causative stage without lowering downstream
-   notification/Robot gates to manufacture signals. Preserve historical
-   formation vs current actionable setup vs proven trade-execution states.
-   Keep previously agreed ATH/B2 Box completion/second-attempt constraints.
-5. **L-shaped geometry and Telegram card correction:** implement the queued
-   B2USDT 5m owner definition (local HIGH → trough → HIGH breakout, no
-   mandatory shelf), reproducible upper-edge trough measurement, rightward
-   HIGH breakout ray, target level and percentage from HIGH; minimal
-   arrow-before-pattern caption, no diagonal/START/shelf/T=2H-L label.
-   Treat INTUUSDT L-shape output as additional independent input for this
-   pattern's geometry, not a substitute for the missed Box investigation.
-   Distinguish this B2 L-shape example from the B2 Ikigai Box positive
-   control. Do not wire L-shape to Robot without separately approved trade
-   rules. Full real Telegram pass is the only owner visual acceptance.
-6. **Telegram Scanner-menu runtime control (separate bounded operational
-   task):** implement owner-tap discovery of the actual reachable Scanner
-   host, safe pause at a symbol boundary, durable resume of the same pass,
-   and start only on an available authorized host by reusing the verified
-   existing batch-file/control mechanism. No agent-run Scanner, duplicate
-   poller or blind multi-service launch; never enable Robot/trading or
-   disrupt open positions. If host/ownership is ambiguous or an off PC
-   cannot be reached, fail closed with status. Review the relevant callback,
-   ScannerControlRuntime and real launcher side effects before implementation.
-   Existing batch-file manual start remains the fallback until the Telegram
-   control is implemented and verified. This feature is queued, NOT already
-   present merely because its requirement is written here.
-7. **Remaining Ikigai Box setup lifecycle and reliable PAPER Robot v0.1**
-   follow existing authorized queue, with separate financial/risk decisions,
-   fail-closed recovery, protective orders, and no automatic LIVE or 1m
-   trading. Do not bundle Robot functionality into observational geometry or
-   Telegram-menu work.
+**Acceptance scheduling:** focused developer checks during each implementation
+are permitted, but the owner never reviews selected cards, local PNGs or
+partial scans. Do not insert a new full runtime pass ahead of the owner’s
+newly prioritized development tasks merely to satisfy the OLD ordering.
+Before claiming visual acceptance of any delivered Scanner changes, require
+one complete real pass under the then-current implementation with all
+integrated patterns and ordinary Telegram delivery, started **manually by
+the owner**. An interrupted/unsafe pass remains unaccepted. Agents never
+launch or supervise Scanner runtime and do not wait/poll in Codex.
 
-**Cross-cutting rules for EVERY stage:** no new Scanner runtime launch from
-ChatGPT/Codex/Claude Code; no idle Codex waiting/polling or extra long test
-campaigns; the owner alone starts a complete real pass manually (including
-an explicit owner tap once the Telegram control exists). Focused developer
-checks are allowed but never offered as owner visual review. Preserve dirty
-user-owned checkout and unfinished work; use safe isolated worktree for
-local implementation. One dependent bounded change at a time, reuse existing
-mechanisms, maintain GitHub/main + local host synchronization explicitly.
-A stopped or incomplete run stays unaccepted. A completed, unchanged pass
-must not be repeated solely because the next task is documentation.
-
-This consolidated owner order supersedes older conflicting priority,
-"immediate next step", single-pattern preview and agent-start wording in
-this backlog and other non-authoritative historical notes. Pattern-specific
-approved strategy remains in its owning spec; the order alone does not
-change Scanner code, deployed services or Robot/PAPER/LIVE authorization.
+**Implementation boundaries:** handle one dependent micro-slice at a time;
+preserve dirty user-owned local work and use an isolated worktree for local
+edits. No Robot/financial/risk activation, LIVE trading, or service/process
+mutation is authorized by this plan. Existing detailed task specifications
+in this backlog and `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md` remain in force
+except for their now-superseded scheduling claims. The HAEDALUSDT 75%-entry/
+partial-TP/re-arm proposal remains in the later, separately authorized PAPER
+Robot stage; the B2USDT L-shape is distinct from the B2USDT Ikigai Box.
 
 ## L-shaped formation: owner correction from B2USDT 5m chart — QUEUED (2026-09-23)
 
