@@ -373,3 +373,45 @@ visualisation placeholder, `GRID_STEP_FRACTION`), partial-take trigger/fraction,
 fee-aware breakeven stop, attempt 2 at `F(2.618)`, any order execution, and the
 Scanner caption text. `build_entry_grid(anchor_level=...)` is reusable for the
 2.618 grid but no second-attempt logic exists.
+
+## Owner-approved implementation approach — PAPER Box (2026-09-24)
+
+Reuse the existing Robot durable candidate/store, PAPER execution, ownership,
+protection and recovery mechanisms; implement a separate Box lifecycle rather
+than treating Box as a wedge breakout/retest or adding a second order system.
+This adopts applicable order-management practices from mature trading systems
+without adopting their trading strategies or inventing new Box geometry.
+
+1. Freeze one first-attempt plan per formation: frozen source-time A/B and
+   Fibonacci levels, four approved equal-gap LIMIT prices (75/85/95/105%),
+   quantities of 1/4 working volume, one common TAKE at 10% of the signed
+   F(1.0)→F(1.618) displacement, one STOP beyond P4, and durable order IDs.
+   Restore that plan after restart; never reconstruct a new one from later
+   candles or repeat an already recorded submission.
+2. Use the **actual common TAKE** (not F(1.0)) in all fee-aware profit, full-grid
+   RR >= 2:1 and STOP calculations. Account for instrument tick/quantity
+   rounding and reject a grid whose equal spacing, midpoint, nonzero slice
+   size, valid STOP, or positive net slice TAKE profit cannot be represented.
+3. Treat planned LIMIT quantities as reservations, not position fills. For each
+   broker-confirmed partial/full entry fill, reconcile actual open quantity,
+   activate/synchronize the precomputed-price STOP immediately, and create a
+   reduce-only TAKE at the common frozen price for no more than that slice's
+   confirmed still-open quantity. No unprotected deliberate exposure, phantom
+   candle-wick fills, duplicate entry ownership, or close over-reservation.
+   On uncertain fills, missing protection, or ambiguous order ownership, fail
+   closed and use the existing Robot emergency/reconciliation path.
+4. Create/amend/cancel only in response to authoritative order/fill/position
+   state transitions, not on every Scanner/Robot loop. On restart reconcile
+   persisted entry, protective and TAKE obligations before admitting new risk.
+5. Preserve wedge execution and all LIVE behavior. PAPER order activation
+   remains blocked until the owner sets an acceptable partial-fill risk budget
+   and remaining exit/re-arm and second-attempt policy is resolved, followed
+   by focused proof of fills, stop/TAKE synchronization and recovery. The
+   already-approved static grid/TAKE arithmetic may be implemented and tested
+   now with execution_authorized=False.
+
+Implementation order: (a) align existing PR #215 pure planner/tests with the
+approved formulas and actual TAKE-based fee-aware RR; (b) wire a separate
+fail-closed Box PAPER lifecycle through existing durable execution; (c) verify
+partial fills, protection, close reservations and restart. No new order
+infrastructure, broad refactor, unattended full Scanner run, or LIVE enablement.
