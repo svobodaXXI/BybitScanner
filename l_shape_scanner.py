@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 
 import config
-from geometry.l_shape import iter_l_shapes, l_shape_signal_plan
+from geometry.l_shape import detect_l_shape, l_shape_signal_plan
 from geometry.l_shape_preview import l_shape_caption, render_l_shape_preview
 from notification import (
     build_tradingview_keyboard,
@@ -23,13 +23,13 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
     """Report and render a candidate using only the snapshot's closed prefix.
 
     Scanner's Bybit snapshot includes the newest possibly open candle; exclude
-    it before detection and rendering. The most recent HIGH -> trough ->
-    breakout in the closed candles that passes L-shape signal eligibility
-    (potential >= 0.8%, reference STOP with reward/risk >= 2:1) is reported,
-    so a breakout a few candles before the scan is not missed. Newer
-    structurally valid but ineligible formations are only logged. The
-    filename preserves the local HIGH/LOW and the breakout (decision) candle,
-    independently of other pattern charts.
+    it before detection and rendering. Only a HIGH -> trough -> breakout whose
+    breakout IS the latest closed candle is a current signal, and only if it
+    passes L-shape signal eligibility (potential >= 0.8%, reference STOP with
+    reward/risk >= 2:1). There is never a fallback to an older breakout: that
+    formation is history, not a signal (CAKEUSDT 5m sent 108 candles late).
+    The filename preserves the local HIGH/LOW and the breakout (decision)
+    candle, independently of other pattern charts.
     """
     if candles is None or len(candles) < 2:
         return None
@@ -37,21 +37,17 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
     if not re.fullmatch(r"[A-Z0-9]+", symbol) or not timeframe.isdecimal():
         raise ValueError("invalid L-shape symbol or timeframe")
     closed = candles.iloc[:-1].copy().reset_index(drop=True)
-    formation = plan = None
-    for position, candidate in enumerate(iter_l_shapes(closed)):
-        candidate_plan = l_shape_signal_plan(candidate)
-        if candidate_plan.eligible:
-            formation, plan = candidate, candidate_plan
-            break
-        if position:  # log only the newest ineligible structure
-            continue
-        print(
-            f"{symbol:<15} L-SHAPE structure not signalled {candidate.direction} "
-            f"source_candle_time_ms={int(closed.iloc[candidate.as_of_index]['time'])} "
-            f"potential={candidate_plan.potential_percent:.2f}% "
-            f"reason={candidate_plan.rejection}"
-        )
+    formation = detect_l_shape(closed)       # breakout == latest closed candle
     if formation is None:
+        return None
+    plan = l_shape_signal_plan(formation)
+    if not plan.eligible:
+        print(
+            f"{symbol:<15} L-SHAPE structure not signalled {formation.direction} "
+            f"source_candle_time_ms={int(closed.iloc[formation.as_of_index]['time'])} "
+            f"potential={plan.potential_percent:.2f}% "
+            f"reason={plan.rejection}"
+        )
         return None
     source_time = int(closed.iloc[formation.as_of_index]["time"])
     extreme_time = int(closed.iloc[formation.extreme_index]["time"])
