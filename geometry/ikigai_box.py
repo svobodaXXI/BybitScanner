@@ -136,6 +136,31 @@ def _validate_parameters(p):
     ):
         raise ValueError("Invalid Ikigai Box geometry thresholds")
 
+# Same strict pivot rule and default window as pivots.find_pivots(left=3,
+# right=3): A must be a confirmed local reversal extreme, not a mid-leg candle.
+REVERSAL_LEFT_BARS = 3
+REVERSAL_RIGHT_BARS = 3
+
+
+def _is_reversal_origin(rows, index, sign):
+    """UP: A's low is strictly below the lows of the 3 candles before and after
+    it; DOWN mirrors with highs. ``rows`` is the closed decision-time prefix,
+    so the confirming candles are never read from the future."""
+    before = rows[index - REVERSAL_LEFT_BARS : index]
+    after = rows[index + 1 : index + 1 + REVERSAL_RIGHT_BARS]
+    if (
+        index < REVERSAL_LEFT_BARS
+        or len(before) < REVERSAL_LEFT_BARS
+        or len(after) < REVERSAL_RIGHT_BARS
+    ):
+        return False
+    if sign == 1:
+        low = rows[index][2]
+        return all(low < row[2] for row in before + after)
+    high = rows[index][1]
+    return all(high > row[1] for row in before + after)
+
+
 def _qualified_first_impulse_and_box(
     rows, first_start, first_end, box_low, box_high, sign, p,
 ):
@@ -156,6 +181,8 @@ def _qualified_first_impulse_and_box(
     b = rows[first_end][1 if sign == 1 else 2]
     span = sign * (b - a)
     if span <= 0 or a <= 0:
+        return None
+    if not _is_reversal_origin(rows, first_start, sign):
         return None
     atr = _pre_impulse_atr(rows, first_start)
     if not atr or span < max(
