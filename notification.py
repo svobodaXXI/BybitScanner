@@ -431,7 +431,8 @@ def send_signal(
 
     chart_path = os.path.join(
         CHARTS_DIR,
-        f"{symbol}_analysis.png"
+        (f"{symbol}_analysis.png" if timeframe == "5"
+         else f"{symbol}_{timeframe}_analysis.png")
     )
 
     if not os.path.exists(
