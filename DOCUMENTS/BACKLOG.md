@@ -8,6 +8,9 @@ single place where new ideas are parked until then.
 
 ## Owner feedback register — real Scanner Telegram pass (2026-09-23)
 
+- **IOTXUSDT · 5м · Wedge — OPEN, Telegram status-circle feedback (owner screenshot, 2026-09-23).** Observed: ordinary Scanner text `📡 Сканер: IOTXUSDT 🟡` includes a yellow status circle. Required: remove all status circles, regardless of color, from every ordinary Scanner pattern signal; keep ticker, geometry arrow, pattern name, potential, timeframe and score unchanged. Implement and verify the shared signal formatter without running Scanner; owner visual acceptance remains the next full manual all-symbol Telegram pass. Codex's attempted correction was interrupted by quota exhaustion; no code fix or PR is confirmed.
+
+
 **Permanent capture rule:** Immediately when the owner supplies a specific real
 Telegram chart/screenshot and a correction, append a separate item here
 (symbol, timeframe, pattern, observed vs wanted, status), using available
