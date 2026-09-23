@@ -164,7 +164,8 @@ numbered order and any contrary "next/immediate" wording elsewhere in this
 backlog or geometry index. Preserve task content, but execute in this order:
 
 1. **Former #5 — L-shaped geometry and Telegram card.** Implement the B2USDT
-   5m owner definition and the METISUSDT 5m possible missed independent\n   L-shape alongside a delivered Box: local HIGH → trough → HIGH breakout, without a
+   5m owner definition and the METISUSDT 5m possible missed independent
+   L-shape alongside a delivered Box: local HIGH → trough → HIGH breakout, without a
    mandatory shelf; source-time upper edge of trough candles determines
    depth. Draw only rightward breakout HIGH ray and horizontal target with
    potential measured from HIGH; minimal ticker/timeframe/direction-arrow-
