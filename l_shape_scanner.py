@@ -8,8 +8,8 @@ from pathlib import Path
 import re
 
 import config
-from geometry.l_shape import detect_l_shape
-from geometry.l_shape_preview import render_l_shape_preview
+from geometry.l_shape import iter_l_shapes, l_shape_signal_plan
+from geometry.l_shape_preview import l_shape_caption, render_l_shape_preview
 from notification import (
     build_tradingview_keyboard,
     get_telegram_chat_ids,
@@ -17,16 +17,19 @@ from notification import (
     send_photo,
 )
 from signal_memory import load_memory, save_memory
-from telegram_labels import SCANNER_EMOJI
-from timeframe_format import format_timeframe_ru
 
 
 def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
     """Report and render a candidate using only the snapshot's closed prefix.
 
     Scanner's Bybit snapshot includes the newest possibly open candle; exclude
-    it before detection and rendering. The filename preserves the decision bar
-    and impulse origin, independently of existing pattern chart paths.
+    it before detection and rendering. The most recent HIGH -> trough ->
+    breakout in the closed candles that passes L-shape signal eligibility
+    (potential >= 0.8%, reference STOP with reward/risk >= 2:1) is reported,
+    so a breakout a few candles before the scan is not missed. Newer
+    structurally valid but ineligible formations are only logged. The
+    filename preserves the local HIGH/LOW and the breakout (decision) candle,
+    independently of other pattern charts.
     """
     if candles is None or len(candles) < 2:
         return None
@@ -34,18 +37,33 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
     if not re.fullmatch(r"[A-Z0-9]+", symbol) or not timeframe.isdecimal():
         raise ValueError("invalid L-shape symbol or timeframe")
     closed = candles.iloc[:-1].copy().reset_index(drop=True)
-    formation = detect_l_shape(closed)
+    formation = plan = None
+    for position, candidate in enumerate(iter_l_shapes(closed)):
+        candidate_plan = l_shape_signal_plan(candidate)
+        if candidate_plan.eligible:
+            formation, plan = candidate, candidate_plan
+            break
+        if position:  # log only the newest ineligible structure
+            continue
+        print(
+            f"{symbol:<15} L-SHAPE structure not signalled {candidate.direction} "
+            f"source_candle_time_ms={int(closed.iloc[candidate.as_of_index]['time'])} "
+            f"potential={candidate_plan.potential_percent:.2f}% "
+            f"reason={candidate_plan.rejection}"
+        )
     if formation is None:
         return None
     source_time = int(closed.iloc[formation.as_of_index]["time"])
-    origin_time = int(closed.iloc[formation.start_index]["time"])
+    extreme_time = int(closed.iloc[formation.extreme_index]["time"])
     chart = Path(chart_dir) / "l_shape" / (
-        f"{symbol}_{timeframe}_{formation.direction}_{origin_time}_{source_time}.png"
+        f"{symbol}_{timeframe}_{formation.direction}_{extreme_time}_{source_time}.png"
     )
     # Report the candidate even if the subsequent renderer fails.
     print(
         f"{symbol:<15} L-SHAPE candidate {formation.direction} "
-        f"source_candle_time_ms={source_time} start_time_ms={origin_time}"
+        f"source_candle_time_ms={source_time} extreme_time_ms={extreme_time} "
+        f"breakout={formation.breakout_level} target={formation.target_level} "
+        f"stop={plan.stop} stop_kind={plan.stop_kind} rr={plan.reward_risk:.2f}"
     )
     chart.parent.mkdir(parents=True, exist_ok=True)
     render_l_shape_preview(
@@ -54,9 +72,9 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
     print(f"{symbol:<15} L-SHAPE preview {chart}")
     return {
         "formation": formation,
-        "origin_time_ms": origin_time,
+        "signal_plan": plan,
+        "extreme_time_ms": extreme_time,
         "source_candle_time_ms": source_time,
-        "impulse_end_time_ms": int(closed.iloc[formation.impulse_end_index]["time"]),
         "chart_path": str(chart),
     }
 
@@ -64,8 +82,8 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
 def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False):
     """Send a candidate preview to the normal Telegram feed, without Robot.
 
-    Deduplicate by the frozen impulse origin + endpoint, not by a changing
-    shelf/as-of candle. Persist per-recipient success so retries do not resend
+    Deduplicate by the frozen local HIGH/LOW + breakout candle, which never
+    change once the breakout candle has closed. Persist per-recipient success so retries do not resend
     a successful photo to other recipients when only one delivery failed.
     """
     if not getattr(config, "TELEGRAM_ENABLED", False) or not observation:
@@ -76,26 +94,24 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
     formation = observation["formation"]
     if formation.direction not in ("LONG", "SHORT"):
         raise ValueError("invalid L-shape direction")
+    plan = observation.get("signal_plan")
+    if plan is None or not plan.eligible:
+        return False
 
     recipients = get_telegram_chat_ids()
     if not recipients:
         return False
-    origin_time = int(observation["origin_time_ms"])
-    terminal_time = int(observation["impulse_end_time_ms"])
+    extreme_time = int(observation["extreme_time_ms"])
+    breakout_time = int(observation["source_candle_time_ms"])
     memory_key = (
         f"l_shape:{symbol}:{timeframe}:{formation.direction}:"
-        f"{origin_time}:{terminal_time}"
+        f"{extreme_time}:{breakout_time}"
     )
     memory = load_memory()
     seen = memory.get(memory_key, {})
     already_sent = set(seen.get("delivered_to", ())) if not test_mode else set()
     owner_chat_id = get_telegram_owner_chat_id()
-    direction_arrow = "↑" if formation.direction == "LONG" else "↓"
-    caption = (
-        f"{SCANNER_EMOJI} Сканер: {symbol}\n"
-        f"Г-образная · {direction_arrow}\n"
-        f"Таймфрейм: {format_timeframe_ru(timeframe)}"
-    )
+    caption = l_shape_caption(symbol, timeframe, formation)
     if test_mode:
         caption += "\n🧪 TEST MODE"
 

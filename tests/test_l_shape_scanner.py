@@ -1,5 +1,6 @@
 """Offline observer integration checks; all Scanner external effects mocked."""
 import contextlib
+import dataclasses
 import io
 import os
 from pathlib import Path
@@ -14,8 +15,8 @@ from pandas.testing import assert_frame_equal
 import tests.test_telegram_delivery  # existing offline config/API stubs
 import main
 import l_shape_scanner as observer
-from geometry.l_shape import detect_l_shape
-from tests.test_l_shape_detector import _long_shape, _short_shape, _frame, _flat
+from geometry.l_shape import detect_l_shape, find_latest_l_shape, l_shape_signal_plan
+from tests.test_l_shape_detector import STEP_MS, _long_shape, _short_shape, _frame, _flat
 
 
 def snapshot(closed):
@@ -35,11 +36,41 @@ class LShapeObserverTests(unittest.TestCase):
                     result = observer.observe_l_shape("TESTUSDT", candles, timeframe="5", chart_dir=directory)
                     self.assertEqual(result["formation"], detect_l_shape(closed))
                     self.assertEqual(result["source_candle_time_ms"], int(closed.time.iloc[-1]))
+                    self.assertEqual(
+                        result["extreme_time_ms"],
+                        int(closed.time.iloc[result["formation"].extreme_index]),
+                    )
                     chart = Path(result["chart_path"])
                     self.assertEqual(chart.parent, Path(directory) / "l_shape")
                     self.assertEqual(chart.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
                     self.assertIn("L-SHAPE candidate", output.getvalue())
                 assert_frame_equal(candles, before)
+
+    def test_breakout_before_the_latest_closed_candle_is_still_reported(self):
+        base = _long_shape()
+        after = _frame([(110.6, 109.9, 110.3)] * 3,
+                       start_ms=int(base.time.iloc[-1]) + STEP_MS)
+        closed = pd.concat([base, after], ignore_index=True)
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            result = observer.observe_l_shape("TESTUSDT", snapshot(closed), timeframe="5", chart_dir=directory)
+        self.assertEqual(result["formation"], find_latest_l_shape(closed))
+        self.assertEqual(result["formation"], detect_l_shape(base))
+        self.assertEqual(result["source_candle_time_ms"], int(base.time.iloc[-1]))
+
+    def test_newer_ineligible_structure_does_not_hide_an_eligible_one(self):
+        eligible = detect_l_shape(_long_shape())
+        tiny = dataclasses.replace(eligible, potential_percent=0.47)
+        with tempfile.TemporaryDirectory() as directory,                 patch.object(observer, "iter_l_shapes", return_value=iter([tiny, eligible])),                 contextlib.redirect_stdout(io.StringIO()) as output:
+            result = observer.observe_l_shape("TESTUSDT", snapshot(_long_shape()), timeframe="5", chart_dir=directory)
+        self.assertIs(result["formation"], eligible)
+        self.assertTrue(result["signal_plan"].eligible)
+        self.assertIn("reason=potential_below_minimum", output.getvalue())
+
+    def test_only_ineligible_structures_create_no_chart(self):
+        tiny = dataclasses.replace(detect_l_shape(_long_shape()), potential_percent=0.06)
+        with patch.object(observer, "iter_l_shapes", return_value=iter([tiny])),                 patch.object(observer, "render_l_shape_preview") as render,                 contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(observer.observe_l_shape("TESTUSDT", snapshot(_long_shape()), timeframe="5"))
+        render.assert_not_called()
 
     def test_no_candidate_creates_no_chart(self):
         with patch.object(observer, "render_l_shape_preview") as render:
@@ -119,9 +150,9 @@ class LShapeObserverTests(unittest.TestCase):
 class LShapeTelegramTests(unittest.TestCase):
     def candidate(self):
         return {
-            "formation": SimpleNamespace(direction="LONG"),
-            "origin_time_ms": 1700000000000,
-            "impulse_end_time_ms": 1700000300000,
+            "formation": SimpleNamespace(direction="LONG", potential_percent=8.0495),
+            "signal_plan": SimpleNamespace(eligible=True),
+            "extreme_time_ms": 1700000300000,
             "source_candle_time_ms": 1700000600000,
             "chart_path": "charts/l_shape/TESTUSDT.png",
         }
@@ -145,9 +176,8 @@ class LShapeTelegramTests(unittest.TestCase):
         self.assertEqual(owner.args[1], "owner")
         self.assertEqual(friend.args[1], "friend")
         self.assertEqual(owner.args[2], candidate["chart_path"])
-        self.assertIn("TESTUSDT", owner.kwargs["caption"])
-        self.assertIn("Г-образная · ↑", owner.kwargs["caption"])
-        self.assertIn("Таймфрейм: 5м", owner.kwargs["caption"])
+        self.assertEqual(owner.kwargs["caption"], "TESTUSDT · 5м · ↑ Г-образная · +8.05%")
+        self.assertIn("l_shape:TESTUSDT:5:LONG:1700000300000:1700000600000", memory)
         owner_buttons = [b["text"] for row in owner.kwargs["reply_markup"]["inline_keyboard"] for b in row]
         self.assertIn("✅ Хороший", owner_buttons)
         self.assertIn("❌ Геометрия", owner_buttons)
@@ -169,6 +199,14 @@ class LShapeTelegramTests(unittest.TestCase):
             self.assertTrue(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
             self.assertFalse(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
         self.assertEqual([call.args[1] for call in photo.call_args_list], ["owner", "friend", "friend"])
+
+    def test_ineligible_plan_is_never_sent(self):
+        candidate = {**self.candidate(), "signal_plan": SimpleNamespace(eligible=False)}
+        with patch.object(observer.config, "TELEGRAM_ENABLED", True),                 patch.object(observer, "get_telegram_chat_ids", return_value=("owner",)),                 patch.object(observer, "send_photo") as photo:
+            self.assertFalse(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
+            self.assertFalse(observer.send_l_shape_observation(
+                "TESTUSDT", {k: v for k, v in candidate.items() if k != "signal_plan"}, timeframe="5"))
+        photo.assert_not_called()
 
     def test_test_mode_never_persists_signal_or_robot_candidate(self):
         with patch.object(observer.config, "TELEGRAM_ENABLED", True), \
