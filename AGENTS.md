@@ -39,6 +39,16 @@ and its narrow changed-behavior checks during implementation; complete the
 mandatory full-universe Scanner acceptance pass below for every new pattern
 or Scanner correction, without redundant repeated passes.
 
+## Active feedback queue and resumption
+
+For the current owner-prioritized Scanner geometry → Box setup lifecycle →
+PAPER execution → unified Telegram work, open the **first section** of
+`DOCUMENTS/BACKLOG.md` ("ACTIVE owner-feedback action plan — 2026-09-23")
+before selecting the next slice. It records APTUSDT/B3USDT false construction,
+ATHUSDT Box impulse/completion, B2USDT positive control and the still
+**local-only** L-shape observer. Do not infer that a pattern's local PNG
+observer sends Telegram notifications or enables Robot execution.
+
 ## Geometry construction first — owner-defined search-system outcome (2026-09-23)
 
 **Invalid geometry must never be constructed as a search candidate.** This is
