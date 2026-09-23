@@ -5,6 +5,27 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## HAEDALUSDT 5m — Box early-grid/slice TP/re-arm strategy feedback (2026-09-23)
+
+Queued **only in the existing later Ikigai Box PAPER Robot lifecycle stage**;
+not a Scanner acceptance blocker and not executable trading authorization.
+The owner requires the first 1/4 РО advance LIMIT at F(1.0) + 0.75 ×
+(F(1.618) − F(1.0)), three further equally spaced 1/4 РО LIMITs in the
+second-impulse direction, and the furthest beyond F(1.618). A confirmed
+partial fill requires immediate protection and a matching-quantity opposite
+TAKE LIMIT slightly before F(1.0); after proven profitable closure, restore
+only freed quantity to its first-grid level if the same frozen formation is
+still eligible. No doubled exposure, duplicate orders or re-arming completed/
+STOP-terminated setups. The screenshot alone cannot establish same-candle
+fill/TP or profitable realized execution. The precise fourth grid price,
+TAKE offset/net-fee rule, partial-fill/STOP coordination and re-arm lifecycle
+remain open financial decisions; do not invent defaults or enable trading.
+Owning detailed specification: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`,
+"Owner strategy amendment — advance 75% entry, slice TP and re-arm".
+Current acceptance → 5m/1m → source geometry → Box construction/lifecycle →
+L-shape → Telegram control → separately authorized PAPER Robot order remains
+unchanged. No additional full scan is triggered by this documentation alone.
+
 ## Telegram Scanner menu: owner-controlled discovery, pause/resume and safe start — QUEUED (2026-09-23)
 
 Owner request after stopping an incomplete 302/777 pass: make the existing
