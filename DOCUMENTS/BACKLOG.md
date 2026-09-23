@@ -5,6 +5,42 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## Telegram Scanner menu: owner-controlled discovery, pause/resume and safe start — QUEUED (2026-09-23)
+
+Owner request after stopping an incomplete 302/777 pass: make the existing
+Telegram Scanner menu button the **manual owner control** for the Scanner,
+regardless of whether its worker is running on the PC or VPS. On owner tap,
+discover the actual live owner/host and current pass state instead of assuming
+a host from stale DB state. If running, pause the current pass durably at a
+safe symbol boundary, without killing Telegram pollers, Robot, backend, or
+open positions; on the next tap resume the **same** pass from its persisted
+cursor, without rescanning already completed symbols or duplicating sent
+signals. If no Scanner worker is running, the owner tap requests a safe start
+of the required components from an **available, verified host**, equivalent
+to the owner's existing batch-file workflow, but only after tracing which
+components the batch file actually starts and checking live host reachability,
+process/poller ownership and Robot/position safety. Do NOT infer that a
+Telegram callback can wake a powered-off PC; if no existing reachable and
+authorized remote launcher is available, report the specific unavailable
+host/dependency rather than pretending to start it. Never spawn a duplicate
+poller or Scanner, enable Robot/trading, restart unsafe infrastructure, or
+silently switch PC/VPS runtime and account. Ambiguous ownership or missing
+reachable host => fail closed and show status, not a blind launch.
+
+Manual owner menu taps (unlike autonomous agent action) satisfy the manual-
+start-only rule. Codex must not run the Scanner or stay active to supervise
+it. Distinguish PAUSED vs STOPPED: a paused pass retains its frozen eligible
+universe/cursor; a stopped/interrupted 302/777 pass is not complete acceptance
+and must never be reported as 777/777. The first actual implementation slice
+must inspect existing Telegram callback, ScannerControlRuntime, host control
+surface and batch-file dependency/side-effect chain; reuse them instead of
+building an additional remote process manager. Reconcile the button's
+availability, auth and deployment before enabling start. Implement only at
+the authorized turn in the established task sequence; no runtime start or
+process termination is authorized by this backlog entry. Owner visual
+acceptance for Scanner changes remains a complete real eligible-universe
+Telegram pass, not a partial/selected preview.
+
 ## Owner manual Scanner run; agent quota protection — BINDING (2026-09-23)
 
 The owner, not Codex/Claude Code/ChatGPT, manually launches each real Scanner
