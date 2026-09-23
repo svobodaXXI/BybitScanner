@@ -5,6 +5,38 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## IMMEDIATE owner-visible milestone — L-shape Telegram (2026-09-23)
+
+**Owner correction, superseding the older queue's deferral of L-shape delivery:**
+All newly developed Scanner patterns must appear as **normal Telegram chart
+signals with the common caption and applicable existing safe buttons during
+their initial integration**. The owner evaluates the real delivered charts
+visually. A local-only detector/observer or private `charts/` PNG is developer
+diagnosis, **not** completed integration, user-visible acceptance, or a valid
+substitute for Telegram delivery. Do not send the owner into a local filesystem
+to review a new pattern and do not silently disable configured notifications.
+
+**Next single dependent implementation:** finish the already merged L-shape
+detector's Scanner → Telegram photo/caption/standard applicable buttons
+delivery, preserving frozen source-time geometry, stable per-formation identity,
+dedup/retry and failure isolation from existing Scanner patterns. Keep Robot
+candidate/admission/orders OFF for this pattern; do not expose a Robot
+approval action that is unsupported. No new thresholds or unrelated wedge/Box
+changes to implement Telegram wiring. Record the exact changed-path evidence,
+then run one COMPLETE real pass on all eligible symbols with ordinary Telegram
+delivery and have the owner visually review actual L-shape notifications;
+zero genuinely detected formations is a valid zero result, not permission to
+fabricate or refetch a conveniently successful candidate.
+
+**Workflow for every future new pattern:** implement valid pattern-specific
+candidate construction and its ordinary Telegram visualization/delivery
+together as the initial user-visible Scanner milestone. Focused offline
+tests help coding only; a hidden observer is never offered as the final
+visual acceptance path. A full-pass acceptance must display actual charts
+to the owner in Telegram. Scanner signal presentation does NOT authorize
+PAPER/LIVE orders or bypass independent Robot safeguards. See `AGENTS.md`
+"Telegram-first visual development" and its full-pass rule.
+
 ## ACTIVE owner-feedback action plan — 2026-09-23 (read this first)
 
 **Outcome, not downstream suppression:** each pattern's search/generation stage
@@ -67,17 +99,17 @@ user-facing Box presentation without changing frozen source geometry or
 entry policy. Existing Box sender presently uses a separate photo/caption
 path and does not give every normal owner button; this is pending.
 
-**P1 delivery gap — L-shape is NOT a Telegram signal yet.**
+**P0 immediate delivery gap — L-shape is NOT a Telegram signal yet.**
 PR #197 added only an opt-in local observer. In `main.py`, the flag
 `BYBITSCANNER_L_SHAPE_OBSERVATIONS=1` calls `observe_l_shape`; that function
 logs candidates and saves local PNGs to `charts/l_shape` only. It never calls
 Telegram/photo delivery, `signal_memory` or Robot admission. No flag can
-turn the current observer into a Telegram sender. First finish source-time
-geometry/visual acceptance, then wire a separately approved Scanner-to-
-Telegram *observational* L-shape card through the shared presentation/buttons
-with stable candidate identity and no Robot order path. Do not describe its
-absence from Telegram as a detector failure or assume current local flag/
-deployment state without observing the actual host.
+turn the current observer into a Telegram sender. **Finish normal Telegram
+chart delivery now, before any further owner-facing full-pass acceptance**
+and without waiting for all older wedge/Box geometry tasks to finish.
+Reuse the common caption/applicable safe buttons, dedup and retries; do not
+activate Robot for L-shapes. Do not describe missing Telegram notifications
+as detector failure or guess the host's current flag/deployment state.
 
 **Mandatory acceptance for each changed Scanner pattern/geometry path:**
 focused proof during implementation, then **one complete real Scanner pass
@@ -88,12 +120,12 @@ Do not replace it with short/sampled/offline-only runs; do not start Robot,
 LIVE, deploy or restart multi-service launchers without separate safety checks
 and authorization. See `AGENTS.md` for the binding rule.
 
-**Next dependent task:** recover exact APTUSDT/B3USDT source-time evidence and
-fix the earliest demonstrated candidate-construction error; if their original
-snapshots are unavailable, report that fact and capture the next actual
-full-pass evidence, without reconstructing a convenient different cutoff.
-Keep ATH/B2 Box and L-shape delivery as the next scoped tasks above, not
-parallel implementation campaigns.
+**Next dependent task (owner override 2026-09-23):** first deliver
+L-shape candidate charts in the ordinary Telegram signal feed, without Robot
+execution; then perform one complete real Scanner pass and obtain owner visual
+feedback from its Telegram posts. After that, resume the geometry-construction
+queue using APTUSDT/B3USDT source-time evidence. Keep ATH/B2 Box and PAPER
+work as later scoped tasks, not parallel implementation campaigns.
 
 ## 0. Rules to avoid loose ends
 
