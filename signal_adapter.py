@@ -24,6 +24,7 @@ def prepare_signal(
     return {
 
         "symbol": symbol,
+        **({"formation_id": result["scanner_formation_id"]} if result.get("scanner_formation_id") else {}),
         **({"timeframe": str(result["timeframe"])} if result.get("timeframe") is not None else {}),
 
         "score":
