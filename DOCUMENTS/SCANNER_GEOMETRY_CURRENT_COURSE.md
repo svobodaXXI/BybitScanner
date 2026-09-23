@@ -13,6 +13,26 @@ before claiming owner visual acceptance. Short/sampled/offline checks may aid
 development but never replace the full pass. Follow the safety and ordinary
 delivery boundaries in [AGENTS.md](../AGENTS.md#scanner-visual-acceptance-full-passes-only--owner-rule-2026-09-23).
 
+## New-pattern acceptance: Telegram-visible from first integration — OWNER RULE
+
+New Scanner patterns are evaluated by the owner **through the actual normal
+Telegram signal feed with their charts**, not through a silent local observer,
+private PNGs or offline screenshots. The initial pattern integration must
+include the normal Telegram photo/caption and applicable existing safe buttons,
+and its visual acceptance is one full real eligible-symbol Scanner pass with
+configured delivery. Do not represent local-only observations as completed
+Scanner signal integration. Robot/PAPER/LIVE order admission remains separately
+authorized; do not present unsupported trading buttons. Refer to the prominent
+[AGENTS.md Telegram-first rule](../AGENTS.md#telegram-first-visual-development-for-every-new-scanner-pattern--owner-rule-2026-09-23).
+
+**Immediate L-shape task:** PR #197 only reports and renders local candidates
+under `charts/l_shape`; its observer has NO Telegram/photo delivery. Finish
+the L-shape Scanner-to-Telegram signal/chart/caption/applicable-buttons path
+before asking the owner to review another full-pass result; then do the full
+universe pass and owner review in Telegram. The earlier unstarted impulse-
+versus-countertrend gate remains a separately evidenced geometry task, not a
+reason to defer the now-required user-visible signal path.
+
 ## Universal geometry-search invariant — OWNER AUTHORITY (2026-09-23)
 
 **The search system must not generate geometry that violates the owner's
@@ -156,7 +176,7 @@ impulse rather than an ordinary countertrend swing, the way #191 proves it
 for the wedge A anchor. `LShapeFormation.start_index` is therefore not yet a
 validated impulse origin.
 
-**Next development step (unstarted):** add that preceding-impulse validation
+**Deferred geometry step (unstarted; after owner-visible Telegram integration):** add that preceding-impulse validation
 inside the L-shaped detector, reusing already-available confirmed pivots and
 candles exactly as #191 did for the wedge A/B/C rule, without importing or
 altering the wedge's own A/B/C admission gate and without a new numeric
