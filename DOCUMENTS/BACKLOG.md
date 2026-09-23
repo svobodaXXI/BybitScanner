@@ -312,9 +312,8 @@ fallback, unchanged impulse gates, no minimum target. METISUSDT now yields
 12:40 LOW (3.593) → 13:05 HIGH (3.647) → trough 13:10–13:35 → 13:40
 breakout, U 3.630 (13:20), T 3.664, +0.47% (3.7 ATR, 0.62 ATR/bar). The
 earlier 11:50 → 12:25 → 12:55 structure still qualifies independently.
-The Scanner sends only the most recent formation per pass, so a single
-pass at 13:45 sends the 13:40 one; the 12:55 one only on a pass before
-13:40. B2USDT is unchanged (origin 11:10, +8.05%).
+A pass sends a formation only if its breakout is the latest closed
+candle at that symbol's evaluation (see the stale-signal fix below). B2USDT is unchanged (origin 11:10, +8.05%).
 
 ## L-shaped formation: owner correction from B2USDT 5m chart — IMPLEMENTED, ACCEPTANCE PENDING (2026-09-23)
 
@@ -336,9 +335,13 @@ STOP. Structural STOP = the trough's actual low (LONG) / high (SHORT); no
 Scanner-side tick/fee buffer exists, so it is an indication only, never an
 executable order. If its distance exceeds half the target distance, the
 default STOP sits at exactly half the target distance, adverse side.
-Eligible only with potential ≥ 0.8% and reward/risk ≥ 2:1. The Scanner sends
-the newest *eligible* formation; a newer ineligible structure is logged
-(`L-SHAPE structure not signalled … reason=…`) and cannot hide it. Results:
+Eligible only with potential ≥ 0.8% and reward/risk ≥ 2:1. **Stale-signal fix
+(2026-09-23):** the Scanner emits an L-shape only when its breakout is the
+latest closed candle at that symbol's evaluation, with no fallback to an older
+eligible breakout. The earlier fallback sent CAKEUSDT 5m's 06:40 breakout at
+15:47 (108 candles late) and 105 of 113 acceptance-pass L-shapes older than
+1 hour. An ineligible latest breakout is logged
+(`L-SHAPE structure not signalled … reason=…`). Results:
 B2USDT eligible, STOP 0.4960 (ratio fallback; structural 0.4388 is 0.078
 away), 2:1, +8.05%. METISUSDT +0.47% and +0.06% remain detected structures
 but are not signalled (`potential_below_minimum`). Chart and caption are

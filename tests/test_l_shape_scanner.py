@@ -2,6 +2,7 @@
 import contextlib
 import dataclasses
 import io
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -15,7 +16,7 @@ from pandas.testing import assert_frame_equal
 import tests.test_telegram_delivery  # existing offline config/API stubs
 import main
 import l_shape_scanner as observer
-from geometry.l_shape import detect_l_shape, find_latest_l_shape, l_shape_signal_plan
+from geometry.l_shape import detect_l_shape, iter_l_shapes, l_shape_signal_plan
 from tests.test_l_shape_detector import STEP_MS, _long_shape, _short_shape, _frame, _flat
 
 
@@ -46,31 +47,43 @@ class LShapeObserverTests(unittest.TestCase):
                     self.assertIn("L-SHAPE candidate", output.getvalue())
                 assert_frame_equal(candles, before)
 
-    def test_breakout_before_the_latest_closed_candle_is_still_reported(self):
+    def test_stale_cakeusdt_breakout_is_not_emitted_but_latest_one_is(self):
+        """CAKEUSDT 5m, 2026-09-23: at the 15:40 decision candle the newest
+        eligible L-shape broke out at 06:40 (108 candles earlier) and was sent
+        as current. Only a breakout on the latest closed candle is a signal."""
+        path = Path(__file__).parent / "fixtures" / "l_shape_currency" / "CAKEUSDT_5m_window.json"
+        cake = pd.DataFrame(json.loads(path.read_text(encoding="utf-8"))["candles"])
+        # What the old fallback sent: the newest ELIGIBLE formation in history.
+        stale = next(f for f in iter_l_shapes(cake) if l_shape_signal_plan(f).eligible)
+        self.assertEqual(int(cake.time[stale.breakout_index]), 1790134800000)     # 06:40
+        self.assertTrue(l_shape_signal_plan(stale).eligible)                        # history is intact
+        self.assertEqual(len(cake) - 1 - stale.breakout_index, 108)
+        with patch.object(observer, "render_l_shape_preview") as render,                 contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(observer.observe_l_shape("CAKEUSDT", snapshot(cake), timeframe="5"))
+        render.assert_not_called()
+
+        latest = _long_shape()                     # breakout on its last closed candle
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            result = observer.observe_l_shape("TESTUSDT", snapshot(latest), timeframe="5", chart_dir=directory)
+        self.assertEqual(result["formation"], detect_l_shape(latest))
+        self.assertTrue(result["signal_plan"].eligible)
+        self.assertEqual(result["source_candle_time_ms"], int(latest.time.iloc[-1]))
+
+    def test_breakout_a_few_candles_old_is_never_a_fallback(self):
         base = _long_shape()
         after = _frame([(110.6, 109.9, 110.3)] * 3,
                        start_ms=int(base.time.iloc[-1]) + STEP_MS)
         closed = pd.concat([base, after], ignore_index=True)
-        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
-            result = observer.observe_l_shape("TESTUSDT", snapshot(closed), timeframe="5", chart_dir=directory)
-        self.assertEqual(result["formation"], find_latest_l_shape(closed))
-        self.assertEqual(result["formation"], detect_l_shape(base))
-        self.assertEqual(result["source_candle_time_ms"], int(base.time.iloc[-1]))
+        with patch.object(observer, "render_l_shape_preview") as render,                 contextlib.redirect_stdout(io.StringIO()):
+            self.assertIsNone(observer.observe_l_shape("TESTUSDT", snapshot(closed), timeframe="5"))
+        render.assert_not_called()
 
-    def test_newer_ineligible_structure_does_not_hide_an_eligible_one(self):
-        eligible = detect_l_shape(_long_shape())
-        tiny = dataclasses.replace(eligible, potential_percent=0.47)
-        with tempfile.TemporaryDirectory() as directory,                 patch.object(observer, "iter_l_shapes", return_value=iter([tiny, eligible])),                 contextlib.redirect_stdout(io.StringIO()) as output:
-            result = observer.observe_l_shape("TESTUSDT", snapshot(_long_shape()), timeframe="5", chart_dir=directory)
-        self.assertIs(result["formation"], eligible)
-        self.assertTrue(result["signal_plan"].eligible)
-        self.assertIn("reason=potential_below_minimum", output.getvalue())
-
-    def test_only_ineligible_structures_create_no_chart(self):
+    def test_ineligible_latest_breakout_creates_no_chart(self):
         tiny = dataclasses.replace(detect_l_shape(_long_shape()), potential_percent=0.06)
-        with patch.object(observer, "iter_l_shapes", return_value=iter([tiny])),                 patch.object(observer, "render_l_shape_preview") as render,                 contextlib.redirect_stdout(io.StringIO()):
+        with patch.object(observer, "detect_l_shape", return_value=tiny),                 patch.object(observer, "render_l_shape_preview") as render,                 contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertIsNone(observer.observe_l_shape("TESTUSDT", snapshot(_long_shape()), timeframe="5"))
         render.assert_not_called()
+        self.assertIn("reason=potential_below_minimum", output.getvalue())
 
     def test_no_candidate_creates_no_chart(self):
         with patch.object(observer, "render_l_shape_preview") as render:
