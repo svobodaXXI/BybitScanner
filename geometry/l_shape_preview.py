@@ -50,9 +50,14 @@ def format_potential(formation):
 
 
 def l_shape_caption(symbol, timeframe, formation):
-    """Shared chart/Telegram identity: ticker, timeframe, arrow, name, potential."""
+    """Shared chart/Telegram identity: ticker, timeframe, arrow, name, potential.
+
+    Potential is in parentheses immediately after the pattern name (unified
+    Scanner caption format, PR #211/BACKLOG.md); this pattern keeps its own
+    single-line ticker/timeframe layout, which predates and is unaffected by
+    that rule's "Сканер:"/"Баллы:" template (this pattern has no score)."""
     arrow = "↑" if formation.direction == "LONG" else "↓"
-    return "{} · {} · {} {} · {}".format(
+    return "{} · {} · {} {} ({})".format(
         symbol, format_timeframe_ru(timeframe), arrow, PATTERN_NAME,
         format_potential(formation),
     )

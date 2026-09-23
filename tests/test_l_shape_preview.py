@@ -55,11 +55,11 @@ def test_caption_is_ticker_timeframe_arrow_name_potential():
     short_formation = detect_l_shape(_short_shape())
 
     assert l_shape_caption("TESTUSDT", "5", long_formation) == (
-        "TESTUSDT · 5м · ↑ Г-образная · +{:.2f}%".format(
+        "TESTUSDT · 5м · ↑ Г-образная (+{:.2f}%)".format(
             long_formation.potential_percent)
     )
     assert l_shape_caption("TESTUSDT", "5", short_formation).startswith(
-        "TESTUSDT · 5м · ↓ Г-образная · -"
+        "TESTUSDT · 5м · ↓ Г-образная (-"
     )
 
 

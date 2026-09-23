@@ -189,7 +189,7 @@ class LShapeTelegramTests(unittest.TestCase):
         self.assertEqual(owner.args[1], "owner")
         self.assertEqual(friend.args[1], "friend")
         self.assertEqual(owner.args[2], candidate["chart_path"])
-        self.assertEqual(owner.kwargs["caption"], "TESTUSDT · 5м · ↑ Г-образная · +8.05%")
+        self.assertEqual(owner.kwargs["caption"], "TESTUSDT · 5м · ↑ Г-образная (+8.05%)")
         self.assertIn("l_shape:TESTUSDT:5:LONG:1700000300000:1700000600000", memory)
         owner_buttons = [b["text"] for row in owner.kwargs["reply_markup"]["inline_keyboard"] for b in row]
         self.assertIn("✅ Хороший", owner_buttons)

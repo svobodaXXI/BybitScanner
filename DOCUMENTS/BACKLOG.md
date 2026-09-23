@@ -47,6 +47,19 @@ unchanged, so nothing that reads it directly is affected).
 Detection, scoring, confirmation/breakout logic, and Robot behavior are
 unchanged by this presentation-only rule.
 
+**L-shape/Ikigai Box conformance check (2026-09-23):** neither pattern has a
+score/`confirmation` breakout-stage field, so the full `Сканер:`/`Баллы:`
+template does not apply to them without inventing data (out of scope; this
+rule stays presentation-only). One real difference was found and fixed:
+L-shape's potential was a trailing `· +8.05%`, not in parentheses after the
+pattern name; `geometry.l_shape_preview.l_shape_caption` now renders
+`... ↑ Г-образная (+8.05%)`, matching the parenthetical sub-rule above while
+keeping its own single-line ticker/timeframe layout. Ikigai Box has no
+potential/target-percent field in `IkigaiBoxFormation` at all (its targets
+are Fibonacci zones, not one percentage) — computing one would be a
+detection/definition decision, not presentation, so its caption
+(`... · Коробка Икигаи · {arrow}`) is unchanged.
+
 ## HAEDALUSDT 5m — Box early-grid/slice TP/re-arm strategy feedback (2026-09-23)
 
 Queued **only in the existing later Ikigai Box PAPER Robot lifecycle stage**;
