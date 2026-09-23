@@ -84,8 +84,8 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         self.assertNotIn("_analysis.png", path)
         self.assertIn("ikigai_box", path)
         self.assertEqual(formation.direction, "SHORT")
-        self.assertIn("1.618", photo.call_args.kwargs["caption"])
-        self.assertIn("Наблюдение", photo.call_args.kwargs["caption"])
+        self.assertEqual(photo.call_args.kwargs["caption"],
+                         f"TESTUSDT · {box.config.TIMEFRAME}м · Коробка Икигаи · ↑")
         buttons = [
             button["text"]
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
@@ -131,9 +131,8 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             ))
         photo.assert_called_once()
         sent = photo.call_args
-        self.assertIn("WATCH", sent.kwargs["caption"])
-        self.assertIn("второй импульс НЕ подтверждён", sent.kwargs["caption"])
-        self.assertIn("0.16611366", sent.kwargs["caption"])
+        self.assertEqual(sent.kwargs["caption"],
+                         "HEIUSDT · 60м · Коробка Икигаи · ↑")
         self.assertNotIn("_analysis.png", sent.args[2])
         self.assertIn("_WATCH_", sent.args[2])
         self.assertEqual(len(history), 1)
@@ -177,6 +176,39 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             ))
         photo.assert_not_called()
         render.assert_not_called()
+
+    def test_shared_review_buttons_are_owner_only_for_confirmed_and_watch(self):
+        from contextlib import ExitStack
+        frames, _ = _terminal_wick_two_impulses(second=False)
+        frames["time"] = [1_790_000_000_000 + i * 300_000 for i in range(len(frames))]
+        watch = next(w for w in detect_ikigai_box_watches(frames)
+                     if w.anchor_identity == ("SHORT", 20, 23))
+        live = pd.concat([frames, frames.iloc[[-1]]], ignore_index=True)
+        for early in (False, True):
+            with self.subTest(watch=early), ExitStack() as stack:
+                stack.enter_context(patch.object(box, "get_telegram_chat_ids", return_value=("owner", "guest")))
+                stack.enter_context(patch.object(box, "get_telegram_owner_chat_id", return_value="owner"))
+                stack.enter_context(patch.object(box, "load_memory", return_value={}))
+                saved = stack.enter_context(patch.object(box, "save_memory"))
+                stack.enter_context(patch.object(box, "render_ikigai_box_chart"))
+                photo = stack.enter_context(patch.object(box, "send_photo", return_value={"ok": True}))
+                robot = stack.enter_context(patch("notification.create_signal_snapshot"))
+                if early:
+                    result = box.send_ikigai_box_watch_observation(
+                        "TESTUSDT", live, watch, timeframe="5", test_mode=True)
+                else:
+                    result = box.send_ikigai_box_observation(
+                        "TESTUSDT", _candles(), timeframe="5", test_mode=True)
+                self.assertTrue(result)
+                for index, call in enumerate(photo.call_args_list):
+                    self.assertEqual(call.kwargs["caption"], "TESTUSDT · 5м · Коробка Икигаи · ↑")
+                    buttons = [b for row in call.kwargs["reply_markup"]["inline_keyboard"] for b in row]
+                    callbacks = [b["callback_data"] for b in buttons if "callback_data" in b]
+                    self.assertEqual(callbacks, [f"review:{action}:TESTUSDT:5" for action in
+                                               ("queue", "good", "geometry", "anchor")] if index == 0 else [])
+                    self.assertTrue(any("url" in b for b in buttons))
+                saved.assert_not_called()
+                robot.assert_not_called()
 
     def test_opt_in_off_preserves_old_scanner_behavior(self):
         with patch.dict(os.environ, {"BYBITSCANNER_IKIGAI_BOX_SIGNALS": "0"}), patch.object(
