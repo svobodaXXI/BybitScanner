@@ -189,6 +189,22 @@ reject an otherwise protectable entry. Do not submit an entry if the system
 cannot establish a valid protective STOP and the required ratio. A
 ratio-limited STOP may lie inside the original pattern structure.
 
+**Owner clarification — staged STOP and slice TAKE (2026-09-23; DESIGN ONLY):**
+Each filled entry slice gets its own reduce-only TAKE LIMIT, sized no larger
+than that slice's confirmed outstanding quantity, including partial fills.
+The owner requests a temporary STOP covering the remaining open position
+once three of the four entry LIMITs have filled, then a common STOP after
+all four fill; all STOP levels remain subject to the fee-aware RR >= 2:1
+limit above. An earlier TAKE can reduce exposure before the fourth entry
+fills: coverage and full-grid status must use confirmed fills and remaining
+open quantities, not assume that three filled orders still imply 3/4 РО
+open. The first one or two fills can otherwise remain without STOP, with
+potential loss beyond the planned ratio if price reverses before the third
+fill. **This uncovered-exposure interval is an unresolved safety/risk decision,
+not authorization for Robot execution.** Do not wire staged protection or
+allow PAPER orders until that risk is explicitly resolved and the existing
+fail-closed protection requirements are satisfied.
+
 **Per-slice exit:** upon confirmed fill of P1 (including partial quantity),
 protect the actually filled exposure without delay and place a reduce-only
 opposite-side TAKE LIMIT for **no more than the confirmed filled quantity**
