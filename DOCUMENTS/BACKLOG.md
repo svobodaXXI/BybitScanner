@@ -411,6 +411,21 @@ except for their now-superseded scheduling claims. The HAEDALUSDT 75%-entry/
 partial-TP/re-arm proposal remains in the later, separately authorized PAPER
 Robot stage; the B2USDT L-shape is distinct from the B2USDT Ikigai Box.
 
+## L-shaped PAPER Robot strategy — owner decision (2026-09-23; DESIGN ONLY)
+
+Reuse the existing Wedge PAPER Robot entry, breakout/retest, order,
+position-management, protection, closure and recovery lifecycle wherever
+compatible with L-shaped geometry. **L-shape-specific rules take precedence**:
+its own confirmed breakout level, frozen target, trough-derived structural
+STOP (or ratio-limited fallback), minimum signal potential 0.8%, and
+minimum planned reward/risk 2:1. Do not apply Wedge boundary/apex geometry
+or silently override L-shape thresholds with Wedge defaults. The Scanner
+signal's reference entry/RR is not proof of an executable post-retest fill:
+check actual planned entry, fees, tick/quantity constraints and protection
+before admitting PAPER orders. Existing Scanner visual acceptance and
+Robot activation are separate; no LIVE admission, runtime launch or order
+activation is authorized by this design note.
+
 ## L-shaped signal eligibility and protective STOP — OWNER DECISION 2026-09-23
 
 Applies to the currently open L-shape PR #208 and subsequent Scanner signal
