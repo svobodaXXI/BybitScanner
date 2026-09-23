@@ -78,6 +78,27 @@ discipline, or productivity.
 Priority: saving the user's time and manual effort outranks the assistant's response brevity. The assistant prepares
 the commands and prompts itself; it does not shorten a response by moving work onto the user (see `2.2.2` and `8.11`).
 
+### Scanner runtime is owner-manual, never an agent job — OWNER RULE 2026-09-23
+
+A real Scanner pass, especially the full eligible-universe Telegram acceptance
+pass, is started **only manually by the owner**, through the verified existing
+Scanner-only control path. ChatGPT/Codex/Claude Code must never start, resume,
+restart, schedule or supervise the Scanner as a long-running agent task, nor
+stay active waiting for the scan to finish. The user authorization to prepare
+or accept a complete pass is not permission for an agent to launch it.
+
+When a preflight needs host-local state, delegate a single bounded, read-only
+inspection to Codex; require it to finish and return immediately with a short
+report. Do not have Codex run the scan, continuously poll it, hold a terminal
+open for it, or consume quotas during the user's manual run. After verified
+preflight and safe entrypoint trace, provide the owner the minimal exact manual
+launch step, only when they choose to launch. If an agent task may currently
+be running, do not assume the agent process is the Scanner process or claim
+that either has stopped. Identify the separate owners and any Robot/position
+side effects before advising how to terminate the Scanner. No blind stop or
+multi-service restart. This ownership restriction overrides any generic
+"delegate actions to Codex" wording in this protocol.
+
 ## 2.1 USER_ACTION_EXPLICITNESS_RULE
 
 If work cannot continue without a user action, introduce it exactly with:
