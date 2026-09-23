@@ -31,6 +31,28 @@ explicit trading decisions in the current conversation take precedence over the 
   user-defined Ikigai Box advance-limit entry plan. Neither constitutes evidence
   of profitability; actual PAPER fills, stop risk and execution costs require validation.
 
+## Owner clarification: first-impulse reversal, candle colour and consolidation (2026-09-23)
+
+For CPUSDT 5m and both directions generally, the first impulse A starts at
+the **actual local reversal extreme**, not a later convenient candle. It is
+an initially directional, predominantly single-colour candle sequence: green
+for UP and red for DOWN. Small opposite-colour candles are allowed only while
+they do not create zigzag price action or a material countertrend swing. Do
+not apply an absolute "first opposite colour ends the impulse" rule. The
+first substantial opposite-direction/zigzag move terminates the initial leg;
+B must remain at the last valid impulse-direction candle/extremum, before the
+independent consolidation. After B, consolidation may alternate colours in
+any order and must never be merged into impulse 1 or used to relocate A/B.
+Apply to upward and downward cases and both CONFIRMED and WATCH at initial
+candidate construction, using decision-time closed candles. "Small" and
+"zigzag" need reproducible source-time criteria validated against actual
+reference windows before coding; do not silently invent a numeric threshold.
+This rule supersedes older first-leg candle-colour/wick exceptions insofar
+as they allow materially zigzag/mixed first impulses or consolidation candles
+to be included in A→B. It does not change Fibonacci arithmetic, second-leg
+rules, risk or Robot trading authorization. Implementation and full owner
+Telegram acceptance remain queued under `DOCUMENTS/BACKLOG.md`.
+
 ## 2. Structure, anchors and Fibonacci math
 
 **SHORT / upward mirror:**
