@@ -141,6 +141,24 @@ def analyze_symbol(symbol, *, timeframe=None):
         result["timeframe"] = timeframe
         result["scanner_observational_only"] = (timeframe == "1" and explicit_timeframe)
         result["scanner_source_timeframe"] = timeframe.strip()
+        # Identify a frozen formation by source-candle anchor timestamps,
+        # not moving dataframe indices or the current scan candle.
+        try:
+            geometry = result["geometry"]
+            anchor_indices = (
+                int(geometry[name]["anchor_index"])
+                for name in ("upper_line", "lower_line")
+            )
+            upper, lower = anchor_indices
+            if any(index < 0 or index >= len(df) for index in (upper, lower)):
+                raise ValueError("formation anchor outside source candles")
+            result["scanner_formation_id"] = (
+                f"{int(df.iloc[upper]['time'])}:{int(df.iloc[lower]['time'])}"
+            )
+        except (KeyError, TypeError, ValueError, OverflowError):
+            # Unknown identity cannot be used to create a new dedup namespace.
+            result["scanner_formation_id"] = None
+
         try:
             source_candle_time_ms = int(df.iloc[current_index]["time"])
             result["scanner_source_candle_time_ms"] = source_candle_time_ms
