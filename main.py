@@ -126,18 +126,24 @@ def run_scan_pass():
                 print(f"{symbol:<15} NO RESULT")
                 continue
 
-            # Local-only research observer: reuse OHLC even without a wedge.
-            # Never let detection/render failures suppress existing delivery.
-            if (
-                os.environ.get("BYBITSCANNER_L_SHAPE_OBSERVATIONS") == "1"
-                and analysis_result.get("data") is not None
-            ):
+            # L-shape is a normal owner-visible Telegram signal, even when
+            # no Wedge exists. Its failure must not affect existing delivery.
+            if analysis_result.get("data") is not None:
                 try:
-                    from l_shape_scanner import observe_l_shape
+                    from l_shape_scanner import (
+                        observe_l_shape,
+                        send_l_shape_observation,
+                    )
 
-                    observe_l_shape(
+                    l_shape = observe_l_shape(
                         symbol, analysis_result["data"], timeframe=config.TIMEFRAME,
                     )
+                    if l_shape and send_l_shape_observation(
+                        symbol, l_shape, timeframe=config.TIMEFRAME,
+                        test_mode=config.TELEGRAM_TEST_MODE,
+                    ):
+                        sent_to_telegram_count += 1
+                        print(f"{symbol:<15} L-SHAPE observation SENT")
                 except Exception as observation_error:
                     print(f"{symbol:<15} L-SHAPE ERROR: {observation_error}")
 
