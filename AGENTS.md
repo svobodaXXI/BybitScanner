@@ -4,6 +4,13 @@ Compact mandatory entry point for coding agents. It routes to project authority;
 
 ## Fast task entry
 
+Follow the user's **latest explicit task choice** first. For `э` or
+unscoped continuation, read the topmost `CURRENT owner task / NEXT ACTION`
+in `DOCUMENTS/BACKLOG.md`, then only the applicable owning spec/PR and
+host-local evidence needed for the next safe step. Older dated task
+priorities do not override the current request. Do not run routine
+Project Sync or start Scanner/Robot as a bootstrap action.
+
 ## Outcome-first Scanner / PAPER Robot priorities — owner direction
 
 **Business goal:** a Scanner that shows faithful, independently checkable
@@ -179,9 +186,9 @@ the full owner-manual Scanner acceptance is parked, not waived.
 Use the existing backlog as the only work queue / short current checkpoint,
 the owning strategy spec for trading decisions, and GitHub PRs for code
 and verification. Do not create another task tracker, status document,
-session-handoff requirement or automatic recurring audit. Limit one primary owner-selected milestone per workstream, without
-blocking direct owner requests, independently authorized parallel work or
-critical safety interruptions. Update the checkpoint only upon a material
+session-handoff requirement or automatic recurring audit. Limit one primary owner-selected milestone in the current workflow; this
+never blocks a direct owner request, independently authorized parallel work
+or a critical safety interruption. Update the checkpoint only upon a material
 change of next action, decision, verified status or handoff. All safety, trading approval and real-Scanner
 owner-only rules elsewhere in this guide remain binding.
 
