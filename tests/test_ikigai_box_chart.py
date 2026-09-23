@@ -125,7 +125,14 @@ class IkigaiBoxChartTests(unittest.TestCase):
                             symbol="TESTUSDT", timeframe="5",
                         )
                 ax, old_ax = observed["axis"], observed["old_axis"]
-                self.assertEqual(ax.get_title(), f"TESTUSDT · 5м · Коробка Икигаи · {arrow}")
+                sign = "+" if direction == 1 else "-"
+                potential = abs(
+                    setup.fibonacci_1_618 - setup.fibonacci_1_0
+                ) / setup.fibonacci_1_0 * 100
+                self.assertEqual(
+                    ax.get_title(),
+                    f"TESTUSDT · 5м · Коробка Икигаи ({sign}{potential:.2f}%) · {arrow}",
+                )
                 self.assertEqual(list(ax.texts), [])
                 # Compare actual rendered candle polygons, not just plot options.
                 old_ax.set_xlim(ax.get_xlim())

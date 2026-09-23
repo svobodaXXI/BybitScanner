@@ -61,17 +61,21 @@ class TelegramSignalFormattingTests(unittest.TestCase):
 
     def test_full_card_matches_the_approved_target_example(self):
         message = notification.format_signal(self._result(
-            confirmation={"breakout": True, "retest": False},
+            symbol="1000TURBOUSDT",
+            pattern="Falling Wedge",
+            final_score=95,
+            timeframe="5",
+            confirmation={"breakout": True, "retest": False, "direction": "SHORT"},
             quality={"quality": "A Setup"},
+            potential={"signed_percent": 4.78},
         ))
 
         self.assertEqual(
             message,
-            "📡 Сканер: 1000NEIROCTOUSDT 🟠\n"
-            "Нисходящий клин\n"
-            "Таймфрейм: 1м\n"
-            "\n"
-            "Баллы: 78",
+            "📡 Сканер: 1000TURBOUSDT 🟠\n"
+            "↓ Клин (+4.78%)\n"
+            "5м\n"
+            "Баллы: 95",
         )
 
     def test_no_separate_signal_type_line(self):
@@ -89,10 +93,25 @@ class TelegramSignalFormattingTests(unittest.TestCase):
         self.assertNotIn("Направление", message)
         self.assertNotIn("LONG", message)
 
+    def test_direction_is_shown_only_as_an_arrow(self):
+        long_message = notification.format_signal(self._result(
+            confirmation={"breakout": True, "retest": False, "direction": "LONG"},
+        ))
+        short_message = notification.format_signal(self._result(
+            confirmation={"breakout": True, "retest": False, "direction": "SHORT"},
+        ))
+        no_direction_message = notification.format_signal(self._result())
+
+        self.assertIn("↑", long_message.splitlines()[1])
+        self.assertIn("↓", short_message.splitlines()[1])
+        self.assertNotIn("↑", no_direction_message)
+        self.assertNotIn("↓", no_direction_message)
+
     def test_timeframe_line_uses_russian_compact_rendering(self):
         message = notification.format_signal(self._result(timeframe="5"))
 
-        self.assertIn("Таймфрейм: 5м", message)
+        self.assertIn("5м", message)
+        self.assertNotIn("Таймфрейм", message)
 
     def test_score_is_the_last_line(self):
         message = notification.format_signal(self._result(final_score=91))

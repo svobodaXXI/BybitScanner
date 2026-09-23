@@ -52,9 +52,9 @@ class ChartTitleTests(unittest.TestCase):
                 self.assertEqual(title.splitlines(), [
                     "BTCUSDT · 5м",
                     name,
+                    "Потенциал: -2.69%",
                     "Тип клина: не определено",
                     "КАЧЕСТВО СТРУКТУРЫ: 82/100",
-                    "ПОТЕНЦИАЛ ДВИЖЕНИЯ: -2.69%",
                 ])
 
     def test_triangle_has_no_wedge_type_line(self):
@@ -64,8 +64,8 @@ class ChartTitleTests(unittest.TestCase):
         self.assertEqual(title.splitlines(), [
             "BTCUSDT · 5м",
             "Сжимающийся треугольник",
+            "Потенциал: РАСЧЁТ НЕДОСТУПЕН",
             "КАЧЕСТВО СТРУКТУРЫ: 82/100",
-            "ПОТЕНЦИАЛ ДВИЖЕНИЯ: РАСЧЁТ НЕДОСТУПЕН",
         ])
 
     def test_triangle_potential_renders_as_symmetric_percent(self):
@@ -85,8 +85,8 @@ class ChartTitleTests(unittest.TestCase):
         self.assertEqual(title.splitlines(), [
             "BTCUSDT · 5м",
             "Сжимающийся треугольник",
+            "Потенциал: ±4.28%",
             "КАЧЕСТВО СТРУКТУРЫ: 82/100",
-            "ПОТЕНЦИАЛ ДВИЖЕНИЯ: ±4.28%",
         ])
 
 

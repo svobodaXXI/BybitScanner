@@ -5,6 +5,72 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## Unified Scanner Telegram signal caption — PERMANENT FORMAT RULE (2026-09-23)
+
+**Binding for every current and future pattern's ordinary Telegram signal
+caption** (the text posted before the chart), except a pattern with its own
+separately specified minimal caption and no score (L-shape, Ikigai Box —
+keep their own single-line layout, but conform their sub-elements: arrow
+only for direction, potential in parentheses; see "conformance check"
+below). Applies to the Wedge/Triangle Scanner caption
+(`notification.format_signal`), implemented 2026-09-23:
+
+```
+📡 Сканер: <TICKER> <status circle>
+<arrow> <Pattern Name> (<potential>)
+<TF>
+Баллы: <score>
+```
+
+Example: `📡 Сканер: 1000TURBOUSDT 🟡` / `↓ Клин (+4.78%)` / `5м` / `Баллы: 95`.
+
+- Direction is shown only as `↑`/`↓` (from the existing confirmation/
+  breakout direction), never as a textual word ("LONG"/"SHORT",
+  "Нисходящий"/"Восходящий"). The pattern name itself becomes
+  non-directional where it previously encoded direction (Falling/Rising
+  Wedge → `Клин`); a pattern whose name is already non-directional
+  (Triangle Compression) keeps its name and still gets the arrow.
+- Potential is `(<signed_percent>%)`, or `(±<percent>%)` for a symmetric
+  potential, or `(РАСЧЁТ НЕДОСТУПЕН)` when unavailable — reusing the exact
+  formatting already used by the chart header, not a new convention.
+- No word "Таймфрейм"; only the compact value (e.g. `5м`).
+- No blank line before `Баллы:`.
+
+**Chart header** (`chart_clean.build_chart_title`), same date: the line
+`ПОТЕНЦИАЛ ДВИЖЕНИЯ: <value>` is renamed `Потенциал: <value>` and moved
+immediately after the pattern name (before `Тип клина`/`КАЧЕСТВО
+СТРУКТУРЫ`). The chart header's own pattern name keeps its existing
+directional wording (unlike the Telegram caption); only the label and its
+position changed. The final diagnostic line "Предшествующий импульс
+показан не полностью" is no longer shown in the chart title (presentation
+only — `chart_clean._chart_window`'s own returned warning value is
+unchanged, so nothing that reads it directly is affected).
+
+Detection, scoring, confirmation/breakout logic, and Robot behavior are
+unchanged by this presentation-only rule.
+
+**L-shape/Ikigai Box conformance check (2026-09-23):** neither pattern has a
+score/`confirmation` breakout-stage field, so the full `Сканер:`/`Баллы:`
+template does not apply to them without inventing data (out of scope; this
+rule stays presentation-only). One real difference was found and fixed:
+L-shape's potential was a trailing `· +8.05%`, not in parentheses after the
+pattern name; `geometry.l_shape_preview.l_shape_caption` now renders
+`... ↑ Г-образная (+8.05%)`, matching the parenthetical sub-rule above while
+keeping its own single-line ticker/timeframe layout.
+
+**Ikigai Box potential (2026-09-23, owner follow-up):** `IkigaiBoxFormation`
+has no dedicated potential field, but does carry the frozen `fibonacci_1_0`
+(F1, the first impulse's terminal B) and `fibonacci_1_618` levels already
+used for the chart/target. Reusing them, not recalculating anchors:
+`potential_pct = abs(F1.618 - F1) / F1 * 100`, shown in parentheses right
+after "Коробка Икигаи", sign `+` for an UP first impulse (arrow `↑`) and
+`-` for DOWN (arrow `↓`) — the same UP/DOWN test the arrow already uses.
+`geometry.ikigai_box_chart.ikigai_box_caption` now renders
+`... · Коробка Икигаи (+X.XX%) · ↑`. Shared by CONFIRMED and WATCH
+(`IkigaiBoxWatch` carries the same two fields) and by both the chart title
+and the Telegram caption, since both already call this one function.
+Detection, targets, scoring, and Robot are unchanged.
+
 ## HAEDALUSDT 5m — Box early-grid/slice TP/re-arm strategy feedback (2026-09-23)
 
 Queued **only in the existing later Ikigai Box PAPER Robot lifecycle stage**;

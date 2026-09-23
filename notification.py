@@ -40,16 +40,42 @@ import config
 from telegram_labels import SCANNER_EMOJI
 
 
-# Presentation-only Russian pattern labels, mirrored from chart_clean.py's
-# chart-title pattern_names mapping (kept as a separate copy since the two
-# modules must not import each other).
+# Presentation-only Russian pattern labels for the unified Scanner caption
+# (owner format, 2026-09-23): direction is carried by the arrow, not the
+# name, so Falling/Rising Wedge share one non-directional label. Mirrored
+# from chart_clean.py's chart-title pattern_names mapping, which keeps its
+# own directional wording (kept as a separate copy since the two modules
+# must not import each other).
 PATTERN_LABELS_RU = {
-    "Falling Wedge": "Нисходящий клин",
-    "Rising Wedge": "Восходящий клин",
+    "Falling Wedge": "Клин",
+    "Rising Wedge": "Клин",
     "Triangle Compression": "Сжимающийся треугольник",
     "No wedge": "Клин не найден",
     "Unknown": "Неизвестная структура",
 }
+
+# Owner format 2026-09-23: arrow instead of a textual direction word.
+DIRECTION_ARROWS = {"LONG": "↑", "SHORT": "↓"}
+
+POTENTIAL_UNAVAILABLE_RU = "РАСЧЁТ НЕДОСТУПЕН"
+
+
+def format_potential_percent(potential):
+    """Presentation-only percent text; mirrors chart_clean.py's
+    build_chart_title potential formatting (kept as a separate copy since
+    the two modules must not import each other)."""
+    potential = potential or {}
+    signed_potential = potential.get("signed_percent")
+    if potential.get("direction") == "SYMMETRIC":
+        symmetric_percent = potential.get("percent")
+        return (
+            f"±{symmetric_percent:.2f}%"
+            if symmetric_percent is not None
+            else POTENTIAL_UNAVAILABLE_RU
+        )
+    if signed_potential is None:
+        return POTENTIAL_UNAVAILABLE_RU
+    return f"{signed_potential:+.2f}%"
 
 # Presentation-only stage -> status-circle mapping, derived entirely from the
 # existing Scanner confirmation/quality classification (confirmation.py's
@@ -238,6 +264,11 @@ def format_signal(
         )
     )
 
+    confirmation = result.get("confirmation") or {}
+    arrow = DIRECTION_ARROWS.get(confirmation.get("direction"), "")
+    potential_text = format_potential_percent(result.get("potential"))
+    pattern_line = f"{arrow} {pattern_label} ({potential_text})".strip()
+
     test_marker = (
         "\n🧪 TEST MODE"
         if test_mode
@@ -246,9 +277,8 @@ def format_signal(
 
     message = f"""
 {SCANNER_EMOJI} Сканер: {symbol} {circle}
-{pattern_label}
-Таймфрейм: {timeframe_label}{test_marker}
-
+{pattern_line}
+{timeframe_label}{test_marker}
 Баллы: {score}
 """
 
