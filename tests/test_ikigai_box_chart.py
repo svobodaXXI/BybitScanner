@@ -131,7 +131,7 @@ class IkigaiBoxChartTests(unittest.TestCase):
                 ) / setup.fibonacci_1_0 * 100
                 self.assertEqual(
                     ax.get_title(),
-                    f"TESTUSDT · 5м · Коробка Икигаи ({sign}{potential:.2f}%) · {arrow}",
+                    f"TESTUSDT · 5м · {arrow} Коробка Икигаи ({sign}{potential:.2f}%)",
                 )
                 self.assertEqual(list(ax.texts), [])
                 # Compare actual rendered candle polygons, not just plot options.

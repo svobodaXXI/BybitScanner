@@ -57,6 +57,13 @@ PATTERN_LABELS_RU = {
 # Owner format 2026-09-23: arrow instead of a textual direction word.
 DIRECTION_ARROWS = {"LONG": "↑", "SHORT": "↓"}
 
+# Owner format 2026-09-23: a wedge's arrow describes its geometry (the slope
+# of its two trendlines) and never changes after breakout, unlike
+# DIRECTION_ARROWS above, which follows the breakout direction. Mirrored
+# from chart_clean.py's copy (kept separate since the two modules must not
+# import each other).
+WEDGE_GEOMETRY_ARROWS = {"Falling Wedge": "↘", "Rising Wedge": "↗"}
+
 POTENTIAL_UNAVAILABLE_RU = "РАСЧЁТ НЕДОСТУПЕН"
 
 
@@ -264,8 +271,13 @@ def format_signal(
         )
     )
 
-    confirmation = result.get("confirmation") or {}
-    arrow = DIRECTION_ARROWS.get(confirmation.get("direction"), "")
+    if pattern in WEDGE_GEOMETRY_ARROWS:
+        # A wedge's own slope, not the (possibly not-yet-happened) breakout
+        # direction: fixed for the pattern and never changes after breakout.
+        arrow = WEDGE_GEOMETRY_ARROWS[pattern]
+    else:
+        confirmation = result.get("confirmation") or {}
+        arrow = DIRECTION_ARROWS.get(confirmation.get("direction"), "")
     potential_text = format_potential_percent(result.get("potential"))
     pattern_line = f"{arrow} {pattern_label} ({potential_text})".strip()
 

@@ -22,14 +22,24 @@ below). Applies to the Wedge/Triangle Scanner caption
 Баллы: <score>
 ```
 
-Example: `📡 Сканер: 1000TURBOUSDT 🟡` / `↓ Клин (+4.78%)` / `5м` / `Баллы: 95`.
+Example: `📡 Сканер: 1000TURBOUSDT 🟡` / `↘ Клин (+4.78%)` / `5м` / `Баллы: 95`.
 
-- Direction is shown only as `↑`/`↓` (from the existing confirmation/
-  breakout direction), never as a textual word ("LONG"/"SHORT",
-  "Нисходящий"/"Восходящий"). The pattern name itself becomes
+- Direction is shown only as an arrow, never as a textual word ("LONG"/
+  "SHORT", "Нисходящий"/"Восходящий"). The pattern name itself becomes
   non-directional where it previously encoded direction (Falling/Rising
   Wedge → `Клин`); a pattern whose name is already non-directional
-  (Triangle Compression) keeps its name and still gets the arrow.
+  (Triangle Compression) keeps its name and still gets an arrow.
+- **Wedge geometry arrow (2026-09-23, owner correction):** Falling Wedge is
+  always `↘` and Rising Wedge always `↗` — the wedge's own slope, fixed for
+  the pattern and never changing after breakout. This replaced an earlier,
+  wrong version of this rule that used the breakout direction (`↑`/`↓`) for
+  wedges too, which could show a wedge sloping one way with an arrow
+  pointing the other. Only Falling/Rising Wedge use the geometry arrow;
+  every other pattern (Triangle Compression, and L-shape/Box below) still
+  uses `↑`/`↓` from its own actual direction (breakout, or first-impulse
+  A→B). `notification.WEDGE_GEOMETRY_ARROWS` /
+  `chart_clean.WEDGE_GEOMETRY_ARROWS` (mirrored copies, same convention as
+  the pattern-label dicts).
 - Potential is `(<signed_percent>%)`, or `(±<percent>%)` for a symmetric
   potential, or `(РАСЧЁТ НЕДОСТУПЕН)` when unavailable — reusing the exact
   formatting already used by the chart header, not a new convention.
@@ -44,7 +54,17 @@ directional wording (unlike the Telegram caption); only the label and its
 position changed. The final diagnostic line "Предшествующий импульс
 показан не полностью" is no longer shown in the chart title (presentation
 only — `chart_clean._chart_window`'s own returned warning value is
-unchanged, so nothing that reads it directly is affected).
+unchanged, so nothing that reads it directly is affected). The wedge
+geometry arrow above is also shown here, before the pattern name (e.g.
+`↘ Нисходящий клин`).
+
+**Axis-label text (2026-09-23):** the "МСК" x-axis label and mplfinance's
+default "Price" y-axis label are removed from the Wedge/Triangle chart
+(`chart_clean.draw_chart`), the L-shape chart
+(`geometry.l_shape_preview.render_l_shape_preview`) and the Ikigai Box
+chart (`geometry.ikigai_box_chart.render_ikigai_box_chart`) — `ylabel=""`
+passed to `mpf.plot()`, `ax.set_xlabel("")` instead of the label text. Tick
+values and the time/price scales are unchanged.
 
 Detection, scoring, confirmation/breakout logic, and Robot behavior are
 unchanged by this presentation-only rule.
@@ -70,6 +90,12 @@ after "Коробка Икигаи", sign `+` for an UP first impulse (arrow `�
 (`IkigaiBoxWatch` carries the same two fields) and by both the chart title
 and the Telegram caption, since both already call this one function.
 Detection, targets, scoring, and Robot are unchanged.
+
+**Arrow position (2026-09-23, owner correction):** the arrow moved before
+the pattern name, matching the Wedge/Triangle/L-shape convention (arrow
+first). `ikigai_box_caption` now renders `... · ↑ Коробка Икигаи
+(+X.XX%)`, not `... · Коробка Икигаи (+X.XX%) · ↑`. The potential text
+itself is unchanged.
 
 
 **Canonical notification examples after PR #211 (2026-09-23; current implemented formats):**

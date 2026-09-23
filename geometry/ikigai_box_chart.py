@@ -108,7 +108,7 @@ def ikigai_box_caption(symbol, timeframe, formation):
     sign = "+" if up else "-"
     return (
         f"{symbol} · {format_timeframe_ru(timeframe)} · "
-        f"Коробка Икигаи ({sign}{potential_pct:.2f}%) · {arrow}"
+        f"{arrow} Коробка Икигаи ({sign}{potential_pct:.2f}%)"
     )
 
 
@@ -208,6 +208,7 @@ def render_ikigai_box_chart(
             # Compress candle bodies AND spacing by 40% at the same DPI.
             figsize=(7.2, 7),
             datetime_format="%H:%M",
+            ylabel="",
             returnfig=True,
         )
         ax = axes[0]
@@ -233,7 +234,9 @@ def render_ikigai_box_chart(
         _draw_terminal_levels(
             ax, terminal_levels, {level for level, _ in levels}, start, last
         )
-        ax.set_xlabel("МСК")
+        # Owner format 2026-09-23: axis-label text removed; tick values and
+        # the time/price scales are unaffected.
+        ax.set_xlabel("")
         ax.set_title(ikigai_box_caption(symbol, timeframe, formation), fontsize=12)
         fig.savefig(target, dpi=125, bbox_inches="tight")
     finally:
