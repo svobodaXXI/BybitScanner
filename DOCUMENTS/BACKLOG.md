@@ -56,6 +56,20 @@ geometry at construction, Telegram-visible pattern integration and full
 real-universe visual acceptance remain in force. No trading/runtime launch
 authorization is implied.
 
+## Box presentation implementation — 2026-09-23
+
+The Box chart header and Telegram caption share only ticker, formatted timeframe,
+pattern name and the first-impulse A→B arrow (not the opposite trade direction).
+No A/B/START, status, zone/STOP captions or planned limit-grid overlay appear.
+Frozen Fibonacci prices/bands and source-time candle/anchor selection remain unchanged.
+The canvas width is 7.2 inches instead of 12 at the same 125 DPI and height:
+candle bodies and horizontal spacing are 60% of their previous pixel width.
+Use the shared TradingView keyboard with review buttons for the owner only;
+no Robot button or candidate is supported. This minimal identity and applicable
+safe shared buttons are the presentation reference for future new patterns.
+This slice receives focused offline checks only at the owner's explicit request;
+full Scanner/Telegram visual acceptance remains pending and is not claimed here.
+
 ## IMMEDIATE owner-visible milestone — L-shape Telegram (2026-09-23)
 
 **Owner correction, superseding the older queue's deferral of L-shape delivery:**

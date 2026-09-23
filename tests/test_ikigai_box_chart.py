@@ -99,12 +99,12 @@ class IkigaiBoxChartTests(unittest.TestCase):
                 )
         pd.testing.assert_frame_equal(candles, original)
 
-    def test_anchor_and_target_labels_stay_clear_of_candle_area(self):
-        # Regression for A / 0 on the next impulse candle and F(1.0)
-        # overlapping B and the final box wicks in the FLOCK WATCH PNG.
+    def test_minimal_card_and_candles_are_forty_percent_narrower(self):
         import mplfinance as mpf
+        from matplotlib.collections import PolyCollection
+        import matplotlib.pyplot as plt
 
-        for direction in (-1, 1):
+        for direction, arrow in ((-1, "↓"), (1, "↑")):
             with self.subTest(direction=direction):
                 candles, setup = _sample(direction)
                 actual_plot = mpf.plot
@@ -112,50 +112,31 @@ class IkigaiBoxChartTests(unittest.TestCase):
 
                 def capture(frame, **options):
                     fig, axes = actual_plot(frame, **options)
-                    observed["axis"] = axes[0]
+                    old_options = dict(options, figsize=(12, 7))
+                    old_fig, old_axes = actual_plot(frame, **old_options)
+                    observed.update(fig=fig, axis=axes[0], old_fig=old_fig,
+                                    old_axis=old_axes[0])
                     return fig, axes
 
                 with tempfile.TemporaryDirectory() as directory:
-                    with patch(
-                        "geometry.ikigai_box_chart.mpf.plot",
-                        side_effect=capture,
-                    ):
+                    with patch("geometry.ikigai_box_chart.mpf.plot", side_effect=capture):
                         render_ikigai_box_chart(
-                            candles, setup, Path(directory) / "labels.png",
+                            candles, setup, Path(directory) / "minimal.png",
                             symbol="TESTUSDT", timeframe="5",
                         )
-                ax = observed["axis"]
-                a = [t for t in ax.texts if t.get_text() == "A / 0"]
-                b = [t for t in ax.texts if t.get_text() == "B / 1"]
-                target = [
-                    t for t in ax.texts
-                    if t.get_text().startswith("1.000 · цель")
-                ]
-                self.assertEqual((len(a), len(b), len(target)), (1, 1, 1))
-                # Anchor captions are on the preceding-bar side, with a
-                # positive y offset for the high and negative for the low.
-                self.assertLess(a[0].get_position()[0], 0)
-                self.assertLess(b[0].get_position()[0], 0)
-                self.assertLess(
-                    a[0].get_position()[1] if direction == 1
-                    else b[0].get_position()[1], 0
-                )
-                self.assertGreater(
-                    b[0].get_position()[1] if direction == 1
-                    else a[0].get_position()[1], 0
-                )
-                # The single F(1.0) numeric caption is outside the plot;
-                # do not overlay another TP-plan caption at the same y.
-                self.assertGreater(target[0].get_position()[0], 1.0)
-                self.assertEqual(
-                    target[0].get_transform(), ax.get_yaxis_transform()
-                )
-                self.assertAlmostEqual(
-                    target[0].get_position()[1], setup.fibonacci_1_0
-                )
-                self.assertFalse(
-                    any(t.get_text() == "TP план · цель" for t in ax.texts)
-                )
+                ax, old_ax = observed["axis"], observed["old_axis"]
+                self.assertEqual(ax.get_title(), f"TESTUSDT · 5м · Коробка Икигаи · {arrow}")
+                self.assertEqual(list(ax.texts), [])
+                # Compare actual rendered candle polygons, not just plot options.
+                old_ax.set_xlim(ax.get_xlim())
+                old_ax.set_ylim(ax.get_ylim())
+                def body_width(axis):
+                    body = next(c for c in axis.collections if isinstance(c, PolyCollection))
+                    vertices = axis.transData.transform(body.get_paths()[0].vertices)
+                    return vertices[:, 0].max() - vertices[:, 0].min()
+                self.assertAlmostEqual(body_width(ax) / body_width(old_ax), 0.6)
+                self.assertEqual(tuple(observed["fig"].get_size_inches()), (7.2, 7.0))
+                plt.close(observed["old_fig"])
 
     def test_fibonacci_bands_mirror_the_terminal_tool(self):
         """Levels, prices, adjacent bands and palette follow drawingModel.ts."""

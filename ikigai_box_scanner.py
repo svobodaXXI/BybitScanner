@@ -9,10 +9,11 @@ import os
 import re
 
 from geometry.ikigai_box import IkigaiBoxWatch, detect_ikigai_box
-from geometry.ikigai_box_chart import render_ikigai_box_chart
+from geometry.ikigai_box_chart import ikigai_box_caption, render_ikigai_box_chart
 from notification import (
     build_tradingview_keyboard,
     get_telegram_chat_ids,
+    get_telegram_owner_chat_id,
     send_photo,
 )
 from signal_memory import load_memory, save_memory
@@ -66,22 +67,15 @@ def send_ikigai_box_observation(
     render_ikigai_box_chart(
         closed, formation, chart_path, symbol=symbol, timeframe=timeframe
     )
-    caption = (
-        f"📦 {symbol} · Коробка Икигаи · {formation.direction}\n"
-        f"Фибо первого импульса: 1.0 = {formation.fibonacci_1_0:.8g}; "
-        f"1.618 = {formation.fibonacci_1_618:.8g}; "
-        f"2.618 = {formation.fibonacci_2_618:.8g}\n"
-        "Наблюдение сканера; зоны входа плановые. "
-        "Робот ордера не выставлял."
-    )
-    if test_mode:
-        caption += "\n🧪 TEST MODE"
-    markup = build_tradingview_keyboard(
-        symbol, timeframe,
-        include_review_actions=False, robot_candidate_id=None,
-    )
+    caption = ikigai_box_caption(symbol, timeframe, formation)
+    owner_chat_id = get_telegram_owner_chat_id()
     delivered = True
     for chat_id in recipients:
+        markup = build_tradingview_keyboard(
+            symbol, timeframe,
+            include_review_actions=(chat_id == owner_chat_id and bool(owner_chat_id)),
+            robot_candidate_id=None,
+        )
         try:
             response = send_photo(
                 config.TELEGRAM_TOKEN,
@@ -186,23 +180,15 @@ def send_ikigai_box_watch_observation(
     render_ikigai_box_chart(
         closed, watch, chart_path, symbol=symbol, timeframe=timeframe,
     )
-    caption = (
-        f"📦 WATCH · {symbol} · {watch.direction} · {watch.phase}\n"
-        f"Фибо: 1.0 = {watch.fibonacci_1_0:.8g}; "
-        f"1.618 = {watch.fibonacci_1_618:.8g}; "
-        f"2.618 = {watch.fibonacci_2_618:.8g}\n"
-        "Наблюдение: второй импульс НЕ подтверждён. "
-        "Уровни — план, НЕ выставленные ордера. "
-        "Робот к этой карточке не подключён."
-    )
-    if test_mode:
-        caption += "\n🧪 TEST MODE"
-    markup = build_tradingview_keyboard(
-        symbol, timeframe,
-        include_review_actions=False, robot_candidate_id=None,
-    )
+    caption = ikigai_box_caption(symbol, timeframe, watch)
+    owner_chat_id = get_telegram_owner_chat_id()
     delivered = True
     for recipient in recipients:
+        markup = build_tradingview_keyboard(
+            symbol, timeframe,
+            include_review_actions=(recipient == owner_chat_id and bool(owner_chat_id)),
+            robot_candidate_id=None,
+        )
         try:
             response = send_photo(
                 config.TELEGRAM_TOKEN, recipient, chart_path,

@@ -13,7 +13,7 @@ import pandas as pd
 from matplotlib.collections import LineCollection
 
 from geometry.ikigai_box import detect_ikigai_box, detect_ikigai_box_watches
-from geometry.ikigai_box_chart import _stage_caption, render_ikigai_box_chart
+from geometry.ikigai_box_chart import render_ikigai_box_chart
 from geometry.ikigai_box_overlay import (
     FALLBACK_STOP_FRACTION,
     GRID_ORDERS,
@@ -61,7 +61,6 @@ class IkigaiBoxOverlayTests(unittest.TestCase):
         self.assertIsNone(overlay.grid)
         self.assertIsNone(overlay.stop)
         self.assertEqual(overlay.target_price, watch.fibonacci_1_0)
-        self.assertIn("НЕ достигнут", _stage_caption(overlay))
 
     def test_reached_1_618_builds_four_quarter_limits_beyond_the_level(self):
         for direction, side, sign in ((1, "SHORT", 1), (-1, "LONG", -1)):
@@ -110,8 +109,6 @@ class IkigaiBoxOverlayTests(unittest.TestCase):
                 self.assertLess(
                     (grid.prices[-1] - setup.fibonacci_2_618) * sign, 0
                 )
-                self.assertIn("ДОСТИГНУТ", _stage_caption(overlay))
-                self.assertIn("НЕ сигнал входа", _stage_caption(overlay))
 
     def test_grid_structure_is_reusable_for_the_2_618_zone_later(self):
         _, setup = _confirmed(-1, 6)
@@ -217,16 +214,7 @@ class IkigaiBoxOverlayChartTests(unittest.TestCase):
                 )
             self.assertGreater(path.stat().st_size, 10_000)
         axes = observed["axes"][0]
-        if build_trade_overlay(candles, setup).grid is not None:
-            labels = [
-                item for item in axes.texts
-                if item.get_text().startswith("Схема сетки")
-            ]
-            self.assertEqual(len(labels), 1)
-            # The four-order illustration must be outside the candle plot,
-            # not obscuring the latest post-1.618 bars.
-            self.assertGreater(labels[0].get_position()[0], 1.0)
-            self.assertIs(labels[0].get_transform(), axes.get_yaxis_transform())
+        self.assertEqual(list(axes.texts), [])
         return [
             segment
             for collection in axes.collections
@@ -240,7 +228,7 @@ class IkigaiBoxOverlayChartTests(unittest.TestCase):
             for a, b in segments
         )
 
-    def test_reached_chart_draws_grid_stop_and_target_lines(self):
+    def test_reached_chart_omits_grid_and_stop_but_preserves_target(self):
         for direction in (1, -1):
             with self.subTest(direction=direction):
                 candles, setup = _confirmed(direction, 6)
@@ -248,8 +236,8 @@ class IkigaiBoxOverlayChartTests(unittest.TestCase):
                 segments = self._segments((candles, setup))
 
                 for price in overlay.grid.prices:
-                    self.assertTrue(self._has_line(segments, price), price)
-                self.assertTrue(self._has_line(segments, overlay.stop.price))
+                    self.assertFalse(self._has_line(segments, price), price)
+                self.assertFalse(self._has_line(segments, overlay.stop.price))
                 self.assertTrue(self._has_line(segments, overlay.target_price))
 
     def test_observation_chart_has_no_grid_or_stop_lines(self):
