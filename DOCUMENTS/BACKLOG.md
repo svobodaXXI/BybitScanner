@@ -1,17 +1,17 @@
 # Backlog (working queue, priorities, rules)
 
 Status: WORKING BACKLOG (living document)
-Last updated: 2026-09-23 (current owner work index; older entries retain historical dates)
-Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
-single place where new ideas are parked until then.
+Last updated: 2026-09-24 (topmost active owner checkpoint; dated sections below are historical unless expressly reactivated)
+Owner: user. This is the existing work queue, not a substitute for applicable approved Task/Spec/ChangeRequest authority. Capture distinct new work once and link to its owning record; do not open a ChangeRequest for every small idea.
 
 
-## CURRENT owner task / NEXT ACTION — 2026-09-24 (latest owner override)
+## CURRENT owner task / NEXT ACTION — 2026-09-24 (continuation default; explicit new owner request takes precedence)
 
-**In progress (WIP=1):** Ikigai Box → PAPER Robot. The owner explicitly
-prioritized this ahead of the pending full Scanner visual pass. This short
-entry is the operational current-task checkpoint; retain the detailed queue
-below as parked work, not as competing "immediate" instructions.
+**Primary owner milestone (one per workstream):** Ikigai Box → PAPER Robot.
+The owner selected it ahead of the pending full Scanner visual pass. This
+checkpoint governs continuation when the owner gives no new task choice;
+a newer explicit owner request takes precedence. Independently authorized
+parallel work and critical safety response are not stopped by this limit.
 
 **Done / verified:** Scanner per-symbol 5m→1m PR #216 merged in GitHub main
 (`77385a8`); owner full-universe Telegram acceptance of that version remains
@@ -20,45 +20,37 @@ F(1.0)→F(1.618) distance, four equal 1/4 working-volume slices and common
 TAKE at 10% of that displacement are owner-approved and documented in
 `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`. Existing non-executing planner
 PR #215 (head `f33cb4c`) has 9/9 focused tests PASS on the owner's isolated
-`C:\\BybitScanner-box` checkout; PR is OPEN, NOT MERGED. An offline test
+`C:\BybitScanner-box` checkout; PR is OPEN, NOT MERGED. An offline test
 does not authorize PAPER orders, LIVE trades or full Scanner acceptance.
 
-**NEXT physical action:** determine and verify the permissible worst-case
-partial-fill risk for the frozen first-attempt grid and fixed STOP, including
-the P1-only fill. Reuse PR #215 and the existing Robot durable order/protection
-mechanisms; no alternate trading engine. Owner's maximum permissible
-partial-fill risk is NOT YET DECIDED: record measured exposure and ask only
-for that risk decision when evidence is ready. Do not enable execution.
+**NEXT concrete action:** calculate and report fee-aware loss and RR for
+P1-only and other partial-fill states using PR #215's fixed common TAKE and
+frozen STOP, then compare exposure with the existing Robot risk limits.
+Re-use current planner/tests and durable protection; do not start an alternate
+trading engine. **Decision pending:** the owner has not approved a maximum
+partial-fill risk budget. Present the measured exposure before requesting
+that decision. No PAPER order submission or LIVE activation.
 
 **Done when:** separately approved PAPER Box lifecycle is verified for
 confirmed fills, reduce-only common-price TAKEs, immediate fixed-price STOP
 with actual protected quantity, duplicate-free recovery, and unchanged Wedge
 and LIVE behavior. PR merge and subsequent owner acceptance are separate gates.
 
-**Parked / next after this scope:** one owner-manual full real Scanner
-5m→1m all-symbol / all-pattern Telegram pass; remaining Scanner geometry,
-presentation and control follow-ups. Prioritize only on the owner's next
-explicit direction or a concrete critical safety issue. Earlier "immediate",
-"latest override", 5m→1m "not implemented" and planner "no PR" claims below
-are **historical**, not instructions to redo completed work.
+**Parked, not cancelled:** owner-manual full real Scanner 5m→1m all-symbol,
+all-pattern Telegram acceptance; remaining Scanner geometry, presentation
+and control work. See the dated sections below for detail, not for current
+scheduling. A new explicit owner request or critical safety issue may change
+this order without first finishing the Box milestone.
 
-**Compact work-control rule (GTD + WIP limit):** Every new input is
-(a) a needed dependency of the active task, (b) a critical safety interruption,
-or (c) parked once in this existing backlog with its concrete next action.
-Keep at most one *primary* in-progress owner milestone; a safety fix may
-interrupt it, and an independent already-running task need not be destroyed.
-For the active task record only goal, next observable action, proven evidence,
-one actual blocker, done criterion, and PR/branch link. Keep strategy/approval
-decisions in the owning spec, code/diff/test history in GitHub; link, do not
-copy. Update this checkpoint only when one of those facts changes, at a
-meaningful handoff or at task closure — NOT after every message, test or
-commit. A new chat follows AGENTS.md staged entry, reads this checkpoint
-then the owning spec/PR only as needed; it does not request a user-authored
-handoff or run full Project Sync for ordinary continuation.
+**Work-control rule:** classify and deduplicate new work using
+`DOCUMENTS/ASSISTANT_PROTOCOL.md` §3.2.2. This entry holds only the current
+operational facts and links; strategy decisions remain in their owning spec,
+and code/test history in GitHub. Update this entry only on a material status,
+priority, blocker or handoff change, not on every message or test.
 
 ---
 
-## CURRENT owner work index — 2026-09-23 (supersedes stale next-step claims below)
+## HISTORICAL owner work index — 2026-09-23 (superseded by topmost current-task checkpoint)
 
 **Do not repeat completed work.** The 23 September owner-manual real Scanner
 pass completed one universe traversal: 777 tickers, 65 detected patterns
@@ -496,7 +488,7 @@ acceptance rule when the owner authorizes the actual run. The user judges
 the charts visually; developer verification stays limited to necessary
 technical checks, not extra test campaigns.
 
-## Binding owner execution order — 2026-09-23 (LATEST OWNER OVERRIDE; READ FIRST)
+## HISTORICAL owner execution order — 2026-09-23 (not current scheduling authority)
 
 The owner explicitly changed the priority to **former tasks 5 → 4 → 2 → 6;
 all remaining tasks afterwards**. This section supersedes the previous
