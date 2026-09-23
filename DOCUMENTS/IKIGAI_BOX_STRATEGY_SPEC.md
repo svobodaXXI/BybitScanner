@@ -31,6 +31,47 @@ explicit trading decisions in the current conversation take precedence over the 
   user-defined Ikigai Box advance-limit entry plan. Neither constitutes evidence
   of profitability; actual PAPER fills, stop risk and execution costs require validation.
 
+## RPLUSDT 5m — revised first-impulse anchor interpretation (owner correction, 2026-09-23)
+
+The owner's TradingView drawing of RPLUSDT 5m is a **reference for an
+alternative first-leg A/B selection** to the Scanner's Telegram Box chart.
+The owner marks the rising first-leg Fibonacci approximately F(0)=1.979,
+F(1)=1.998 and its extension F(2.618)≈2.029, around which the later rally
+visibly reacts. These are visually read, approximate chart levels, **not**
+verified source-time prices or proof of a profitable trade. The older
+Scanner-proposed first-leg anchor/extent must not be considered correct just
+because it yielded a structurally admissible Box.
+
+**This observation invalidates an overly literal application of the earlier
+"first impulse = uninterrupted, essentially same-colour bar run until the
+first substantial opposite candle" rule as the universal anchor selector.**
+Candle colour and absence of a large intraleg zigzag remain useful evidence
+for detecting a genuinely directional move, but must not by themselves fix
+A/B or exclude the owner's wider local swing/episode visible in RPLUSDT.
+Choose A at the local reversal extreme that starts the relevant first
+market leg and B at its actual terminal extremum before the independent
+consolidation; inspect intermediate confirmed swings, directional progress
+and episode boundaries using **only candles available at the original
+historical decision time**. The following consolidation is independent and
+cannot be appended to the first impulse simply to make the Fibonacci
+extension fit later prices. The later reaction around 2.618 is a diagnostic
+cross-check, NOT an admissible retrospective anchor-selection criterion,
+confirmation of an entry, or permission to overfit this one ticker.
+
+**Specification precedence:** this RPLUSDT correction supersedes the prior
+CPUSDT single-colour/first-opposite-candle wording *where it would force an
+anchor pair inconsistent with the demonstrated larger directional episode*.
+Keep CPUSDT as a counterexample of wrongly absorbing sideways movement;
+resolve both examples with a common reproducible first-leg construction
+rule rather than choosing one screenshot as a universal threshold. Before
+code changes, recover source-time OHLC for RPLUSDT and CPUSDT, compare
+Scanner/owner A/B and competing local episodes, and identify which earlier
+construction decision diverges. Preserve frozen A/B once a setup was
+emitted, separate historical validity from current admission, and do not
+modify Robot trade execution or Fibonacci arithmetic under this geometry
+correction. The owning task is the existing Box stage in BACKLOG; user
+visual acceptance remains a complete manual all-symbol Telegram pass only.
+
 ## Owner clarification: first-impulse reversal, candle colour and consolidation (2026-09-23)
 
 For CPUSDT 5m and both directions generally, the first impulse A starts at
