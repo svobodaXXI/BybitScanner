@@ -99,7 +99,7 @@ class IkigaiBoxChartTests(unittest.TestCase):
                 )
         pd.testing.assert_frame_equal(candles, original)
 
-    def test_minimal_card_and_candles_are_forty_percent_narrower(self):
+    def test_minimal_card_and_candles_are_thirty_percent_narrower(self):
         import mplfinance as mpf
         from matplotlib.collections import PolyCollection
         import matplotlib.pyplot as plt
@@ -112,7 +112,7 @@ class IkigaiBoxChartTests(unittest.TestCase):
 
                 def capture(frame, **options):
                     fig, axes = actual_plot(frame, **options)
-                    old_options = dict(options, figsize=(12, 7))
+                    old_options = dict(options, figsize=(7.2, 7))
                     old_fig, old_axes = actual_plot(frame, **old_options)
                     observed.update(fig=fig, axis=axes[0], old_fig=old_fig,
                                     old_axis=old_axes[0])
@@ -137,12 +137,24 @@ class IkigaiBoxChartTests(unittest.TestCase):
                 # Compare actual rendered candle polygons, not just plot options.
                 old_ax.set_xlim(ax.get_xlim())
                 old_ax.set_ylim(ax.get_ylim())
-                def body_width(axis):
+                def body_and_gap(axis):
                     body = next(c for c in axis.collections if isinstance(c, PolyCollection))
-                    vertices = axis.transData.transform(body.get_paths()[0].vertices)
-                    return vertices[:, 0].max() - vertices[:, 0].min()
-                self.assertAlmostEqual(body_width(ax) / body_width(old_ax), 0.6)
-                self.assertEqual(tuple(observed["fig"].get_size_inches()), (7.2, 7.0))
+                    polygons = [
+                        axis.transData.transform(path.vertices)
+                        for path in body.get_paths()[:2]
+                    ]
+                    left, right = [
+                        (polygon[:, 0].min(), polygon[:, 0].max())
+                        for polygon in polygons
+                    ]
+                    width = left[1] - left[0]
+                    center_distance = (right[0] + right[1] - left[0] - left[1]) / 2
+                    return width, center_distance - width
+                width, gap = body_and_gap(ax)
+                old_width, old_gap = body_and_gap(old_ax)
+                self.assertAlmostEqual(width / old_width, 0.7)
+                self.assertAlmostEqual(gap / old_gap, 0.7)
+                self.assertEqual(tuple(observed["fig"].get_size_inches()), (5.04, 7.0))
                 plt.close(observed["old_fig"])
 
     def test_fibonacci_bands_mirror_the_terminal_tool(self):

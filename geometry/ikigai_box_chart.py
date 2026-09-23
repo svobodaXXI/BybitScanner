@@ -93,12 +93,8 @@ def _draw_terminal_levels(ax, levels, key_levels, x_left, x_right):
                   linewidth=TERMINAL_LINE_WIDTH, alpha=0.9)
 
 
-def ikigai_box_caption(symbol, timeframe, formation):
-    """Shared chart/Telegram identity; arrow follows A -> B, not trade side.
-
-    Potential is not a new target/detection value: it reads the existing
-    frozen F(1.0) and F(1.618) levels already stored on the formation/watch,
-    unified-caption format (PR #211/BACKLOG.md)."""
+def _ikigai_box_pattern(formation):
+    """Frozen first-impulse direction and F(1.0) -> F(1.618) potential."""
     up = formation.anchor_end_price > formation.anchor_start_price
     arrow = "↑" if up else "↓"
     potential_pct = (
@@ -106,9 +102,23 @@ def ikigai_box_caption(symbol, timeframe, formation):
         / formation.fibonacci_1_0 * 100
     )
     sign = "+" if up else "-"
+    return f"{arrow} Коробка Икигаи ({sign}{potential_pct:.2f}%)"
+
+
+def ikigai_box_caption(symbol, timeframe, formation):
+    """Compact chart title using the frozen Box presentation values."""
     return (
         f"{symbol} · {format_timeframe_ru(timeframe)} · "
-        f"{arrow} Коробка Икигаи ({sign}{potential_pct:.2f}%)"
+        f"{_ikigai_box_pattern(formation)}"
+    )
+
+
+def ikigai_box_signal_text(symbol, timeframe, formation):
+    """Telegram text before the photo; Box has no score or stage circle."""
+    return (
+        f"📡 Сканер: {symbol}\n"
+        f"{_ikigai_box_pattern(formation)}\n"
+        f"{format_timeframe_ru(timeframe)}"
     )
 
 
@@ -205,8 +215,9 @@ def render_ikigai_box_chart(
             type="candle",
             style="charles",
             volume=False,
-            # Compress candle bodies AND spacing by 40% at the same DPI.
-            figsize=(7.2, 7),
+            # A further 30% narrower than the accepted 7.2-inch canvas;
+            # both bodies and visible gaps shrink at the same fixed DPI.
+            figsize=(5.04, 7),
             datetime_format="%H:%M",
             ylabel="",
             returnfig=True,

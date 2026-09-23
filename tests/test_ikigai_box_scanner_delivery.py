@@ -14,7 +14,7 @@ import main
 import ikigai_box_scanner as box
 from tests.test_ikigai_box_detector import _two_impulses, _terminal_wick_two_impulses
 from geometry.ikigai_box import detect_ikigai_box, detect_ikigai_box_watches
-from geometry.ikigai_box_chart import ikigai_box_caption
+from geometry.ikigai_box_chart import ikigai_box_signal_text
 
 
 def _candles():
@@ -37,6 +37,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         original = source.copy(deep=True)
         history = {}
         plotted = []
+        send_order = []
 
         def fake_render(frame, formation, path, **kwargs):
             plotted.append((frame.copy(), formation, path))
@@ -56,7 +57,13 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         ), patch.object(
             box, "render_ikigai_box_chart", side_effect=fake_render,
         ), patch.object(
-            box, "send_photo", return_value={"ok": True},
+            box, "send_message",
+            side_effect=lambda *args: (send_order.append("text"), {"ok": True})[1],
+        ) as text, patch.object(
+            box, "send_photo",
+            side_effect=lambda *args, **kwargs: (
+                send_order.append("photo"), {"ok": True}
+            )[1],
         ) as photo, patch.object(
             box, "load_memory", side_effect=lambda: dict(history),
         ), patch.object(
@@ -78,6 +85,8 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
 
         self.assertEqual(scan.call_count, 2)
         self.assertEqual(photo.call_count, 1)
+        text.assert_called_once()
+        self.assertEqual(send_order, ["text", "photo"])
         self.assertEqual(len(plotted), 1)
         received_frame, formation, path = plotted[0]
         self.assertEqual(len(received_frame), len(source) - 1)
@@ -85,8 +94,17 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         self.assertNotIn("_analysis.png", path)
         self.assertIn("ikigai_box", path)
         self.assertEqual(formation.direction, "SHORT")
-        self.assertEqual(photo.call_args.kwargs["caption"],
-                         ikigai_box_caption("TESTUSDT", box.config.TIMEFRAME, formation))
+        potential = (
+            abs(formation.fibonacci_1_618 - formation.fibonacci_1_0)
+            / formation.fibonacci_1_0 * 100
+        )
+        self.assertEqual(
+            text.call_args.args[2],
+            f"📡 Сканер: TESTUSDT\n"
+            f"↑ Коробка Икигаи (+{potential:.2f}%)\n"
+            f"{box.config.TIMEFRAME}м",
+        )
+        self.assertEqual(photo.call_args.kwargs["caption"], "")
         buttons = [
             button["text"]
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
@@ -118,6 +136,8 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, patch.object(
             box, "get_telegram_chat_ids", return_value=("owner",),
         ), patch.object(
+            box, "send_message", return_value={"ok": True},
+        ) as text, patch.object(
             box, "send_photo", return_value={"ok": True},
         ) as photo, patch.object(
             box, "load_memory", side_effect=lambda: dict(history),
@@ -132,8 +152,12 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             ))
         photo.assert_called_once()
         sent = photo.call_args
-        self.assertEqual(sent.kwargs["caption"],
-                         ikigai_box_caption("HEIUSDT", "60", watch))
+        text.assert_called_once()
+        self.assertEqual(
+            text.call_args.args[2],
+            ikigai_box_signal_text("HEIUSDT", "60", watch),
+        )
+        self.assertEqual(sent.kwargs["caption"], "")
         self.assertNotIn("_analysis.png", sent.args[2])
         self.assertIn("_WATCH_", sent.args[2])
         self.assertEqual(len(history), 1)
@@ -192,6 +216,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                 stack.enter_context(patch.object(box, "load_memory", return_value={}))
                 saved = stack.enter_context(patch.object(box, "save_memory"))
                 stack.enter_context(patch.object(box, "render_ikigai_box_chart"))
+                text = stack.enter_context(patch.object(box, "send_message", return_value={"ok": True}))
                 photo = stack.enter_context(patch.object(box, "send_photo", return_value={"ok": True}))
                 robot = stack.enter_context(patch("notification.create_signal_snapshot"))
                 if early:
@@ -201,12 +226,14 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                     result = box.send_ikigai_box_observation(
                         "TESTUSDT", _candles(), timeframe="5", test_mode=True)
                 self.assertTrue(result)
-                expected_caption = ikigai_box_caption(
+                expected_text = ikigai_box_signal_text(
                     "TESTUSDT", "5",
                     watch if early else detect_ikigai_box(_candles().iloc[:-1]),
                 )
+                self.assertEqual(text.call_count, 2)
                 for index, call in enumerate(photo.call_args_list):
-                    self.assertEqual(call.kwargs["caption"], expected_caption)
+                    self.assertEqual(text.call_args_list[index].args[2], expected_text)
+                    self.assertEqual(call.kwargs["caption"], "")
                     buttons = [b for row in call.kwargs["reply_markup"]["inline_keyboard"] for b in row]
                     callbacks = [b["callback_data"] for b in buttons if "callback_data" in b]
                     self.assertEqual(callbacks, [f"review:{action}:TESTUSDT:5" for action in
@@ -244,6 +271,25 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         photo.assert_not_called()
         save.assert_not_called()
 
+    def test_failed_text_does_not_send_photo_or_mark_delivery(self):
+        with patch.object(box, "render_ikigai_box_chart"), patch.object(
+            box, "get_telegram_chat_ids", return_value=("owner",),
+        ), patch.object(
+            box, "send_message", return_value={"ok": False},
+        ) as text, patch.object(
+            box, "send_photo",
+        ) as photo, patch.object(
+            box, "load_memory", return_value={},
+        ), patch.object(
+            box, "save_memory",
+        ) as save:
+            self.assertFalse(box.send_ikigai_box_observation(
+                "TESTUSDT", _candles(), timeframe="5",
+            ))
+        text.assert_called_once()
+        photo.assert_not_called()
+        save.assert_not_called()
+
     def test_failed_delivery_does_not_mark_candidate_as_delivered(self):
         source = _candles()
         seen = {}
@@ -256,6 +302,8 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.object(
             box, "render_ikigai_box_chart", side_effect=fake_render,
         ), patch.object(box, "get_telegram_chat_ids", return_value=("owner",)), patch.object(
+            box, "send_message", return_value={"ok": True},
+        ) as text, patch.object(
             box, "send_photo", side_effect=[{"ok": False}, {"ok": True}],
         ) as photo, patch.object(box, "load_memory",
                                side_effect=lambda: dict(seen)), patch.object(
@@ -269,6 +317,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                 self.assertEqual(result, expected)
                 self.assertEqual(bool(seen), expected)
         self.assertEqual(photo.call_count, 2)
+        self.assertEqual(text.call_count, 2)
         self.assertEqual(
             photo.call_args_list[0].args[2],
             photo.call_args_list[1].args[2],
