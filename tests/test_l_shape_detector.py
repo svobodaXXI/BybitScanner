@@ -66,8 +66,9 @@ _BREAKOUT = (108.4, 110.5, 108.3, 110.2)
 
 
 def _long_bars():
-    """14 flat seed bars, a 6-bar rise to H, a 5-bar trough, the breakout."""
-    return _flat(14, 100.0) + _rising(6, 100.0, 1.5) + _TROUGH + [_BREAKOUT]
+    """14 flat seed bars, a 6-bar rise to H from a reversal low (99.8, below
+    the seed lows), a 5-bar trough, the breakout."""
+    return _flat(14, 100.4) + _rising(6, 100.0, 1.5) + _TROUGH + [_BREAKOUT]
 
 
 def _mirror(bars, axis=200.0):
@@ -181,6 +182,96 @@ def test_b2usdt_5m_owner_reference_geometry():
     assert formation.trough_edge == 0.4752
     assert abs(formation.target_level - 0.5584) < 1e-9
     assert round(formation.potential_percent, 2) == 8.05
+
+
+# Real Bybit METISUSDT 5m closed candles, 10:50-13:45 MSK 2026-09-23 (the
+# last closed candle of the scan that delivered the METISUSDT Ikigai Box).
+_METISUSDT_5M = [
+    (1790149800000, 3.583, 3.589, 3.578, 3.578),
+    (1790150100000, 3.578, 3.581, 3.577, 3.581),
+    (1790150400000, 3.581, 3.597, 3.578, 3.585),
+    (1790150700000, 3.585, 3.587, 3.562, 3.587),
+    (1790151000000, 3.587, 3.594, 3.584, 3.591),
+    (1790151300000, 3.591, 3.624, 3.591, 3.619),
+    (1790151600000, 3.619, 3.623, 3.605, 3.607),
+    (1790151900000, 3.607, 3.612, 3.605, 3.607),
+    (1790152200000, 3.607, 3.621, 3.601, 3.621),
+    (1790152500000, 3.621, 3.625, 3.621, 3.625),
+    (1790152800000, 3.625, 3.625, 3.616, 3.616),
+    (1790153100000, 3.616, 3.616, 3.579, 3.579),
+    (1790153400000, 3.579, 3.579, 3.558, 3.563),
+    (1790153700000, 3.563, 3.579, 3.561, 3.575),
+    (1790154000000, 3.575, 3.588, 3.575, 3.588),
+    (1790154300000, 3.588, 3.591, 3.576, 3.591),
+    (1790154600000, 3.591, 3.598, 3.59, 3.59),
+    (1790154900000, 3.59, 3.599, 3.59, 3.591),
+    (1790155200000, 3.591, 3.602, 3.591, 3.602),
+    (1790155500000, 3.602, 3.613, 3.602, 3.603),
+    (1790155800000, 3.603, 3.607, 3.603, 3.607),
+    (1790156100000, 3.607, 3.607, 3.607, 3.607),
+    (1790156400000, 3.607, 3.611, 3.593, 3.611),
+    (1790156700000, 3.611, 3.611, 3.599, 3.607),
+    (1790157000000, 3.607, 3.612, 3.603, 3.609),
+    (1790157300000, 3.609, 3.616, 3.609, 3.613),
+    (1790157600000, 3.613, 3.643, 3.607, 3.643),
+    (1790157900000, 3.643, 3.647, 3.634, 3.638),
+    (1790158200000, 3.638, 3.638, 3.617, 3.617),
+    (1790158500000, 3.617, 3.63, 3.617, 3.63),
+    (1790158800000, 3.63, 3.63, 3.608, 3.613),
+    (1790159100000, 3.613, 3.625, 3.611, 3.625),
+    (1790159400000, 3.625, 3.629, 3.621, 3.621),
+    (1790159700000, 3.621, 3.638, 3.621, 3.638),
+    (1790160000000, 3.638, 3.652, 3.638, 3.641),
+    (1790160300000, 3.641, 3.646, 3.633, 3.641),
+]
+
+
+def _metisusdt():
+    return pd.DataFrame(
+        _METISUSDT_5M, columns=["time", "open", "high", "low", "close"]
+    )
+
+
+def test_metisusdt_5m_impulse_starts_at_the_nearest_reversal_low():
+    """12:40 reversal LOW -> 13:05 HIGH -> trough 13:10-13:35 -> 13:40 breakout.
+    The 11:50 window minimum is not the origin of this impulse."""
+    candles = _metisusdt()
+    formation = find_latest_l_shape(candles)
+
+    assert formation is not None
+    assert formation.direction == DIRECTION_LONG
+    time = candles["time"]
+    assert int(time[formation.start_index]) == 1790156400000        # 12:40
+    assert int(time[formation.extreme_index]) == 1790157900000      # 13:05
+    assert int(time[formation.trough_index]) == 1790158800000       # 13:20
+    assert int(time[formation.breakout_index]) == 1790160000000     # 13:40
+    assert formation.breakout_level == 3.647
+    assert formation.trough_edge == 3.63
+    assert abs(formation.target_level - 3.664) < 1e-9
+    assert formation.impulse_atr_multiple >= DEFAULT_PARAMETERS.impulse_min_atr_multiple
+    assert (formation.impulse_bar_progress_atr_multiple
+            >= DEFAULT_PARAMETERS.impulse_min_bar_progress_atr)
+
+
+def test_metisusdt_5m_earlier_structure_still_qualifies_independently():
+    """11:50 reversal LOW -> 12:25 HIGH -> trough 12:30-12:50 -> 12:55."""
+    candles = _metisusdt()
+    breakout = int(candles.index[candles["time"] == 1790157300000][0])
+    formation = detect_l_shape(candles, as_of_index=breakout)
+
+    assert formation is not None
+    time = candles["time"]
+    assert int(time[formation.start_index]) == 1790153400000        # 11:50
+    assert int(time[formation.extreme_index]) == 1790155500000      # 12:25
+    assert formation.breakout_level == 3.613
+    assert formation.trough_edge == 3.611
+
+
+def test_no_reversal_low_means_no_impulse_origin():
+    """A rise out of a flat, equal-low base has no strictly lower pivot."""
+    bars = _flat(14, 100.0) + [(101.7, 99.8, 101.5)] + _long_bars()[15:]
+
+    assert detect_l_shape(_frame(bars)) is None
 
 
 def test_plain_range_without_an_impulse_is_not_an_l_shape():

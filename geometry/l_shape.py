@@ -11,6 +11,9 @@ LONG  : a rising impulse prints the local HIGH H; the following trough candles
         breakout and the decision candle.
 SHORT : the exact mirror around a local LOW.
 
+The impulse starts at the nearest confirmed reversal LOW before H (the
+nearest reversal HIGH for SHORT), never at a mere window minimum.
+
 There is no narrow-consolidation condition: the trough may be any shape as
 long as it stays strictly below H (LONG) and above the impulse origin.
 
@@ -49,6 +52,10 @@ class LShapeParameters:
         Period of the existing project ATR (``confirmation.calculate_atr``).
     impulse_min_bars / impulse_max_bars
         Bounded search window for the impulse leg into the local extreme.
+    pivot_left_bars / pivot_right_bars
+        The impulse origin is the nearest reversal LOW (HIGH for SHORT) before
+        the extreme, strictly beyond this many candles on each side: the same
+        rule and defaults as ``pivots.find_pivots``.
     impulse_min_atr_multiple
         The impulse range (origin extreme to local HIGH/LOW) must be at least
         this many ATR: the vertical stroke of the L.
@@ -65,6 +72,8 @@ class LShapeParameters:
     impulse_max_bars: int = 30
     impulse_min_atr_multiple: float = 3.0
     impulse_min_bar_progress_atr: float = 0.5
+    pivot_left_bars: int = 3
+    pivot_right_bars: int = 3
     trough_min_bars: int = 3
     trough_max_bars: int = 30
 
@@ -237,16 +246,18 @@ def _qualify(rows, atr, parameters, direction, extreme, breakout):
     lows = [row[2] for row in rows]
     closes = [row[3] for row in rows]
 
-    window_start = max(0, extreme - parameters.impulse_max_bars + 1)
+    origin = _reversal_origin(
+        lows if long_side else [-value for value in highs], extreme, parameters,
+    )
+    if origin is None:
+        return None
     if long_side:
-        origin = _last_index_of_min(lows, window_start, extreme)
         level = highs[extreme]
         origin_price = lows[origin]
         # The local HIGH must be the impulse extreme, printed at its end.
         if _last_index_of_max(highs, origin, extreme) != extreme:
             return None
     else:
-        origin = _last_index_of_max(highs, window_start, extreme)
         level = lows[extreme]
         origin_price = highs[origin]
         if _last_index_of_min(lows, origin, extreme) != extreme:
@@ -306,6 +317,28 @@ def _qualify(rows, atr, parameters, direction, extreme, breakout):
         impulse_bar_progress_atr_multiple=bar_progress / atr,
         as_of_index=breakout,
     )
+
+
+def _reversal_origin(lows, extreme, parameters):
+    """Nearest confirmed reversal LOW before the extreme, or None.
+
+    Same pivot rule as ``pivots.find_pivots``: the low is strictly below the
+    ``pivot_left_bars`` lows before it and the ``pivot_right_bars`` lows after
+    it, all confirmed no later than the extreme. It must also stay the lowest
+    low up to the extreme, so the rise into the HIGH starts there. SHORT
+    passes negated highs. There is no fallback to a window minimum.
+    """
+    left = parameters.pivot_left_bars
+    right = parameters.pivot_right_bars
+    first = max(left, extreme - parameters.impulse_max_bars + 1)
+    for origin in range(extreme - right, first - 1, -1):
+        low = lows[origin]
+        if (
+            low < min(lows[origin - left:origin])
+            and low < min(lows[origin + 1:extreme + 1])
+        ):
+            return origin
+    return None
 
 
 def _last_index_of_min(values, start, end):

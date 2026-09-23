@@ -252,11 +252,19 @@ no candidate for METISUSDT at any bar (and only evaluated a shelf ending on
 the latest closed candle). With the HIGH → trough → breakout detector and
 latest-breakout reporting, the closed candles up to the scan (13:45 MSK)
 yield LONG HIGH 12:25 (3.613) → trough 12:30–12:50 → breakout 12:55, U =
-3.611 (12:40 body top), target +0.06%. The later structure HIGH 13:05
-(3.647) → trough 13:10–13:35 → breakout 13:40 is rejected by the retained
-impulse-pace gate (impulse origin is the 11:50 low, 16 bars; 0.38 < 0.5 ATR
-per bar). Gates were not relaxed; whether that later structure should
-qualify (e.g. a more local impulse origin) is an owner decision.
+3.611 (12:40 body top), target +0.06%.
+
+**Owner decision applied (PR #208):** the impulse origin is the nearest
+structurally valid reversal LOW before the HIGH (the `pivots.find_pivots`
+rule: strictly below 3 candles on each side, confirmed by the HIGH, and
+still the lowest low up to it), never the 30-candle window minimum; no
+fallback, unchanged impulse gates, no minimum target. METISUSDT now yields
+12:40 LOW (3.593) → 13:05 HIGH (3.647) → trough 13:10–13:35 → 13:40
+breakout, U 3.630 (13:20), T 3.664, +0.47% (3.7 ATR, 0.62 ATR/bar). The
+earlier 11:50 → 12:25 → 12:55 structure still qualifies independently.
+The Scanner sends only the most recent formation per pass, so a single
+pass at 13:45 sends the 13:40 one; the 12:55 one only on a pass before
+13:40. B2USDT is unchanged (origin 11:10, +8.05%).
 
 ## L-shaped formation: owner correction from B2USDT 5m chart — IMPLEMENTED, ACCEPTANCE PENDING (2026-09-23)
 
