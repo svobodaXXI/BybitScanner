@@ -25,13 +25,7 @@ Scanner signal integration. Robot/PAPER/LIVE order admission remains separately
 authorized; do not present unsupported trading buttons. Refer to the prominent
 [AGENTS.md Telegram-first rule](../AGENTS.md#telegram-first-visual-development-for-every-new-scanner-pattern--owner-rule-2026-09-23).
 
-**Immediate L-shape task:** PR #197 only reports and renders local candidates
-under `charts/l_shape`; its observer has NO Telegram/photo delivery. Finish
-the L-shape Scanner-to-Telegram signal/chart/caption/applicable-buttons path
-before asking the owner to review another full-pass result; then do the full
-universe pass and owner review in Telegram. The earlier unstarted impulse-
-versus-countertrend gate remains a separately evidenced geometry task, not a
-reason to defer the now-required user-visible signal path.
+**Current L-shape integration status (2026-09-23):** PR #197 was a local-only historical stage; PR #204 subsequently integrated ordinary Telegram signals/photos and #210 restricted delivery to latest-closed-candle breakout. These implementation tasks are complete on main. The owner completed a full pass on 2026-09-23, but later merged Scanner presentation changes and pending PR #214 still require one subsequent complete owner-manual Telegram pass before their visual acceptance. Do not reopen PR #197's delivery work or request an isolated L-shape preview. L-shape PAPER Robot execution is a separate design-only task indexed in BACKLOG.md.
 
 ## Universal geometry-search invariant — OWNER AUTHORITY (2026-09-23)
 
@@ -98,6 +92,14 @@ historical examples, not an alternative selection contract. Do not ask the
 owner to restate this rule.
 
 ## Current state and next one bounded slice
+
+**Current routing (2026-09-23):** the owner selected Scanner Telegram
+status-circle correction (open PR #214) and bounded PAPER pattern strategy
+development; see the top CURRENT owner work index in BACKLOG.md. The #191
+wedge state and earlier L-shape geometry drafts below are historical evidence,
+not a command to repeat accepted implementation. No geometry correction or
+new full-pass run is authorized merely by reading this index.
+
 
 ## Current state — after PR #191
 
