@@ -73,7 +73,7 @@ class TelegramSignalFormattingTests(unittest.TestCase):
         self.assertEqual(
             message,
             "📡 Сканер: 1000TURBOUSDT 🟠\n"
-            "↓ Клин (+4.78%)\n"
+            "↘ Клин (+4.78%)\n"
             "5м\n"
             "Баллы: 95",
         )
@@ -94,18 +94,38 @@ class TelegramSignalFormattingTests(unittest.TestCase):
         self.assertNotIn("LONG", message)
 
     def test_direction_is_shown_only_as_an_arrow(self):
+        """Triangle Compression has no fixed geometry direction, so its arrow
+        still follows the breakout direction (unlike a wedge, see below)."""
         long_message = notification.format_signal(self._result(
+            pattern="Triangle Compression",
             confirmation={"breakout": True, "retest": False, "direction": "LONG"},
         ))
         short_message = notification.format_signal(self._result(
+            pattern="Triangle Compression",
             confirmation={"breakout": True, "retest": False, "direction": "SHORT"},
         ))
-        no_direction_message = notification.format_signal(self._result())
+        no_direction_message = notification.format_signal(
+            self._result(pattern="Triangle Compression"),
+        )
 
         self.assertIn("↑", long_message.splitlines()[1])
         self.assertIn("↓", short_message.splitlines()[1])
         self.assertNotIn("↑", no_direction_message)
         self.assertNotIn("↓", no_direction_message)
+
+    def test_wedge_arrow_describes_geometry_not_breakout_direction(self):
+        """A Falling Wedge is always ↘ / Rising Wedge always ↗, regardless
+        of the breakout direction (owner format 2026-09-23)."""
+        for pattern, arrow in (("Falling Wedge", "↘"), ("Rising Wedge", "↗")):
+            for direction in ("LONG", "SHORT", None):
+                confirmation = {"breakout": bool(direction), "retest": False}
+                if direction:
+                    confirmation["direction"] = direction
+                with self.subTest(pattern=pattern, direction=direction):
+                    message = notification.format_signal(self._result(
+                        pattern=pattern, confirmation=confirmation,
+                    ))
+                    self.assertTrue(message.splitlines()[1].startswith(arrow))
 
     def test_timeframe_line_uses_russian_compact_rendering(self):
         message = notification.format_signal(self._result(timeframe="5"))

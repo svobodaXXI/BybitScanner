@@ -53,6 +53,12 @@ import mplfinance as mpf
 
 from timeframe_format import format_timeframe_ru
 
+# Owner format 2026-09-23: a wedge's arrow describes its own geometry (the
+# slope of its two trendlines) and never changes after breakout, unlike a
+# breakout-direction arrow. Mirrored from notification.py's copy (kept
+# separate since the two modules must not import each other).
+WEDGE_GEOMETRY_ARROWS = {"Falling Wedge": "↘", "Rising Wedge": "↗"}
+
 # Cyrillic-capable font for Russian signal interface.
 mpl.rcParams["font.family"] = "DejaVu Sans"
 mpl.rcParams["axes.unicode_minus"] = False
@@ -183,7 +189,9 @@ def build_chart_title(symbol, result):
         else symbol
     )
 
-    lines = [title_symbol_line, structure_name, f"Потенциал: {potential_name}"]
+    arrow = WEDGE_GEOMETRY_ARROWS.get(pattern, "")
+    structure_line = f"{arrow} {structure_name}".strip()
+    lines = [title_symbol_line, structure_line, f"Потенциал: {potential_name}"]
     if pattern in ("Falling Wedge", "Rising Wedge"):
         lines.append("Тип клина: не определено")
     lines.append(f"КАЧЕСТВО СТРУКТУРЫ: {score}/100")
@@ -542,6 +550,7 @@ def draw_chart(
         figsize=(12,7),
 
         datetime_format="%H:%M",
+        ylabel="",
         returnfig=True
 
     )
@@ -549,7 +558,10 @@ def draw_chart(
 
     ax = axes[0]
 
-    ax.set_xlabel('МСК')
+    # Owner format 2026-09-23: axis-label text removed; tick values and the
+    # time/price scales are unaffected (mplfinance's default y-axis label
+    # is "Price", set at plot() time via ylabel="" a few lines above).
+    ax.set_xlabel("")
 
 
 

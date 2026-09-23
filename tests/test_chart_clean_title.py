@@ -40,8 +40,8 @@ class ChartTitleTests(unittest.TestCase):
 
     def test_wedge_header_uses_approved_format(self):
         for pattern, name in (
-            ("Falling Wedge", "Нисходящий клин"),
-            ("Rising Wedge", "Восходящий клин"),
+            ("Falling Wedge", "↘ Нисходящий клин"),
+            ("Rising Wedge", "↗ Восходящий клин"),
         ):
             with self.subTest(pattern=pattern):
                 title = build_chart_title(
@@ -56,6 +56,16 @@ class ChartTitleTests(unittest.TestCase):
                     "Тип клина: не определено",
                     "КАЧЕСТВО СТРУКТУРЫ: 82/100",
                 ])
+
+    def test_wedge_arrow_describes_geometry_not_breakout_direction(self):
+        """A Falling Wedge is always ↘ / Rising Wedge always ↗, regardless
+        of which way it eventually breaks out (owner format 2026-09-23)."""
+        for pattern, arrow in (("Falling Wedge", "↘"), ("Rising Wedge", "↗")):
+            with self.subTest(pattern=pattern):
+                title = build_chart_title(
+                    "BTCUSDT", self._result(pattern=pattern),
+                )
+                self.assertTrue(title.splitlines()[1].startswith(arrow))
 
     def test_triangle_has_no_wedge_type_line(self):
         title = build_chart_title(

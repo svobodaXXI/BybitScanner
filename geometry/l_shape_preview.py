@@ -106,10 +106,13 @@ def render_l_shape_preview(
         volume=False,
         figsize=(7.2, 7),
         datetime_format="%H:%M",
+        ylabel="",
         returnfig=True,
     )
     ax = axes[0]
-    ax.set_xlabel("МСК")
+    # Owner format 2026-09-23: axis-label text removed; tick values and the
+    # time/price scales are unaffected.
+    ax.set_xlabel("")
 
     ray_left = x(formation.extreme_index)
     ray_right = x(formation.breakout_index) + projection_bars
