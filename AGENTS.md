@@ -137,12 +137,11 @@ placement, admission, risk and deployment require their separate approved
 contracts. Before a real pass, check launcher side effects, duplicate workers
 and current Robot/position safety; do not bypass fail-closed protection.
 
-**Current milestone:** PR #204 integrated L-shape Telegram photos into
-GitHub main. PR #205 simplified the Ikigai Box chart and Telegram card.
-Their owner visual acceptance remains **pending until the single complete
-real Scanner pass** specified above; do not offer either pattern or card
-as an isolated owner visual sample. The 5m→1m per-symbol Scanner extension
-is separately queued and not yet implemented.
+**Implementation status:** PR #204 (L-shape Telegram), #205 (Box card),
+and #216 (per-symbol 5m→1m Scanner) are merged in GitHub main. Their
+owner-visible acceptance after those changes remains pending the single
+complete real Scanner pass described above; do not offer isolated previews.
+Use the topmost backlog checkpoint for the current owner-selected task.
 
 ## Permanent Scanner 5m → 1m per-symbol workflow — OWNER RULE (2026-09-23)
 
@@ -158,34 +157,32 @@ notifications and charts: a 1m result must not overwrite/suppress a 5m
 result or vice versa. If one interval fails, record it and continue to the
 other and the next symbol without fabricating a signal.
 
-This is a **permanent desired Scanner behavior**, not a claim that the
-current runtime already does it. Its implementation belongs **after the
-ongoing Ikigai Box card simplification (including approximately 40% narrower
-candlesticks) and before the queued geometry repairs**. Do not interrupt
-that card task or start the full Scanner pass merely to document the rule.
-After implementation, owner acceptance requires one full real eligible-symbol
-Scanner pass showing the ordered 5m→1m coverage and Telegram charts for all
-integrated patterns. Keep the existing 5m Robot/PAPER/LIVE admission, orders,
-risk and protective state unchanged: 1m Scanner signals are observational
-until trading behavior is separately approved.
+This permanent requirement is implemented in GitHub main by PR #216,
+but owner acceptance of that version is still pending one full real
+eligible-symbol pass showing ordered 5m→1m coverage and Telegram charts
+for all integrated patterns. Do not start that pass automatically or
+substitute isolated card previews. Preserve existing 5m Robot/PAPER/LIVE
+admission, orders, risk and protective state: 1m Scanner signals remain
+observational until trading behavior is separately approved.
 
 ## Current owner task routing — latest checkpoint
 
-For the next owner-selected primary milestone and its one concrete next
-action, read the **topmost CURRENT owner task / NEXT ACTION** checkpoint in
-`DOCUMENTS/BACKLOG.md`. It supersedes historical "immediate" labels and
-older owner execution orders below it, including the prior 2026-09-23
-Scanner sequence in this file. The current milestone is Ikigai Box PAPER
-Robot planning; the subsequent complete owner-manual Scanner 5m→1m
-Telegram acceptance remains parked until the owner resumes it.
+For continuation without a new explicit owner request, read the
+**topmost CURRENT owner task / NEXT ACTION** checkpoint in
+`DOCUMENTS/BACKLOG.md`. The owner's newest explicit task choice takes
+precedence and is reflected there at the next meaningful update; never
+use the checkpoint to override the current request. Historical "immediate"
+labels and older 2026-09-23 schedules are not current instructions.
+The currently selected milestone is Ikigai Box PAPER Robot planning;
+the full owner-manual Scanner acceptance is parked, not waived.
 
 Use the existing backlog as the only work queue / short current checkpoint,
 the owning strategy spec for trading decisions, and GitHub PRs for code
 and verification. Do not create another task tracker, status document,
-session-handoff requirement or automatic recurring audit. Keep one primary
-owner milestone in progress, admit safety-critical interruptions, and update
-the checkpoint only upon a material change of next action, decision,
-verified status or handoff. All safety, trading approval and real-Scanner
+session-handoff requirement or automatic recurring audit. Limit one primary owner-selected milestone per workstream, without
+blocking direct owner requests, independently authorized parallel work or
+critical safety interruptions. Update the checkpoint only upon a material
+change of next action, decision, verified status or handoff. All safety, trading approval and real-Scanner
 owner-only rules elsewhere in this guide remain binding.
 
 ## Geometry construction first — owner-defined search-system outcome (2026-09-23)
