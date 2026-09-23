@@ -5,6 +5,57 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+
+## Owner feedback register — real Scanner Telegram pass (2026-09-23)
+
+**Permanent capture rule:** Immediately when the owner supplies a specific real
+Telegram chart/screenshot and a correction, append a separate item here
+(symbol, timeframe, pattern, observed vs wanted, status), using available
+GitHub tools without requesting a Codex relay. Do not silently mark feedback
+accepted, infer missing candle anchors, or replace the owner's examples with
+one generic issue. Documentation alone does not authorize a Scanner restart,
+a trading change or a separate owner visual check.
+
+- **AEONUSDT · 5м · Ikigai Box — OPEN, geometry feedback (owner screenshots,
+  signal around 19:58 MSK).** The emitted Box takes an earlier, extended/
+  low-momentum first-impulse segment; the owner instead points to the later,
+  sharp upward impulse on the current TradingView chart. Compare both local
+  episodes against source-time closed candles; establish structural A/B and
+  independent consolidation without hindsight-fitting Fibonacci. Keep the
+  two possible formations distinct; do not modify Robot or trading rules.
+- **APRUSDT · 5м · Ikigai Box — OPEN, Telegram layout (owner screenshot,
+  around 20:00 MSK).** Current: one Telegram photo with a repeated caption
+  underneath, e.g. `APRUSDT · 5м · ↑ Коробка Икигаи (+2.25%)`.
+  Required: **separate text message BEFORE the chart**, starting
+  `📡 Сканер: APRUSDT`, with `↑ Коробка Икигаи (+2.25%)` and `5м`
+  in the established Scanner style. Send the chart as a separate photo
+  **without duplicating that caption beneath it**. Do not fabricate
+  `Баллы` or a stage/status circle when no such field exists.
+  This is an owner override of the older L-shape/Box one-line exception
+  stated below; update the owning notification format when implementing.
+- **AVAXUSDT · 5м · Ikigai Box — OPEN, acceptance not verified.** Owner
+  observed a Box chart title with no potential. PR #211 introduced the
+  frozen F(1.0)→F(1.618) percentage; verify in a complete owner-run pass,
+  not via an isolated owner preview.
+- **CAKEUSDT · 5м · L-shape — CODE FIX MERGED, visual acceptance pending.**
+  Owner identified a chart sent at ~15:47 MSK despite a ~06:40 breakout,
+  when current price had long since moved on. PR #210 limits sending to
+  the latest closed breakout candle at each symbol evaluation; review in
+  the owner-run full pass.
+- **1000TURBOUSDT · 5м · Falling Wedge — CODE FIX MERGED, visual acceptance
+  pending.** Owner's initial Telegram text had no direction arrow.
+  Owner specified the immutable geometry arrow `↘` for falling and `↗`
+  for rising wedges, including after breakout; PR #212 implemented it.
+- **1000XECUSDT · 5м · Ikigai Box — CODE FIX MERGED, visual acceptance
+  pending.** Owner requested its arrow BEFORE pattern name on both
+  chart header and Telegram caption, plus removal of `МСК` / `Price`
+  axis-label text (not scale ticks); PR #212 implemented the presentation
+  change.
+
+**Current open work is AEONUSDT first-impulse selection and APRUSDT
+Telegram message structure.** The already merged code changes above
+remain pending owner visual acceptance until a complete pass finishes.
+
 ## Unified Scanner Telegram signal caption — PERMANENT FORMAT RULE (2026-09-23)
 
 **Binding for every current and future pattern's ordinary Telegram signal
