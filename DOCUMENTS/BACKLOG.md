@@ -71,6 +71,35 @@ after "Коробка Икигаи", sign `+` for an UP first impulse (arrow `�
 and the Telegram caption, since both already call this one function.
 Detection, targets, scoring, and Robot are unchanged.
 
+
+**Canonical notification examples after PR #211 (2026-09-23; current implemented formats):**
+
+```text
+Wedge / Triangle — separate Telegram text before chart:
+📡 Сканер: 1000TURBOUSDT 🟡
+↓ Клин (+4.78%)
+5м
+Баллы: 95
+
+L-shape — shared Telegram caption and chart title:
+TESTUSDT · 5м · ↑ Г-образная (+8.05%)
+
+Ikigai Box CONFIRMED / WATCH — shared Telegram caption and chart title:
+TESTUSDT · 5м · Коробка Икигаи (+3.42%) · ↑
+```
+
+Values above are **format examples, not live signals**. For Wedge/Triangle,
+`<status circle>` comes from the existing stage/quality classification and
+`<potential>` from the existing signed/symmetric potential; missing values
+use `(РАСЧЁТ НЕДОСТУПЕН)`. The chart header keeps its existing directional
+pattern name, with `Потенциал: <value>` immediately below it and no final
+`Предшествующий импульс ...` line. L-shape and Box have no score/status
+circle, so their existing compact one-line captions do **not** acquire
+invented `Баллы` or status values. Box arrow describes the **first impulse
+A→B**, and its signed potential uses frozen F(1.0)→F(1.618), including WATCH;
+its existing arrow position after the percentage is preserved. These are
+presentation contracts only: no new detector, score, target, or trading rule.
+
 ## HAEDALUSDT 5m — Box early-grid/slice TP/re-arm strategy feedback (2026-09-23)
 
 Queued **only in the existing later Ikigai Box PAPER Robot lifecycle stage**;
