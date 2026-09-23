@@ -126,6 +126,21 @@ def run_scan_pass():
                 print(f"{symbol:<15} NO RESULT")
                 continue
 
+            # Local-only research observer: reuse OHLC even without a wedge.
+            # Never let detection/render failures suppress existing delivery.
+            if (
+                os.environ.get("BYBITSCANNER_L_SHAPE_OBSERVATIONS") == "1"
+                and analysis_result.get("data") is not None
+            ):
+                try:
+                    from l_shape_scanner import observe_l_shape
+
+                    observe_l_shape(
+                        symbol, analysis_result["data"], timeframe=config.TIMEFRAME,
+                    )
+                except Exception as observation_error:
+                    print(f"{symbol:<15} L-SHAPE ERROR: {observation_error}")
+
             # Experimental Box observations are explicitly opt-in and use
             # the same fetched OHLC snapshot even when no Wedge exists.
             # A Box photo never enters the Wedge quality/Robot admission path.
