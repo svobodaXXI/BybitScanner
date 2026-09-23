@@ -39,15 +39,55 @@ and its narrow changed-behavior checks during implementation; complete the
 mandatory full-universe Scanner acceptance pass below for every new pattern
 or Scanner correction, without redundant repeated passes.
 
+## Telegram-first visual development for every new Scanner pattern — OWNER RULE (2026-09-23)
+
+**A newly developed pattern must reach the owner's ordinary Telegram signal
+feed with its actual chart as part of its first Scanner integration.** The
+owner visually tests formations **in Telegram**, not by inspecting hidden
+local observer logs or `charts/` directories. Do not call a pattern integrated,
+ready for owner acceptance or finished if it only prints local candidates,
+saves local PNGs, or requires the owner to request notification wiring later.
+When implementing a new pattern, include source-time detection → real Scanner
+candidate → current shared Telegram presentation/photo and applicable
+standard owner buttons → full-universe Scanner pass → owner visual feedback
+in the same user-visible delivery milestone. Do not defer Telegram delivery
+behind a separate silent-observer acceptance stage.
+
+Local/offline/shadow runs are permitted **only for developer diagnosis and
+focused regression**, never as a substitute for owner-visible Telegram
+delivery or the mandated complete real Scanner pass. Deliver normal configured
+notifications; do not unilaterally silence them or demand that the owner
+search the filesystem for charts. Each emitted formation must have valid
+owner-defined geometry at candidate construction; Telegram visibility is not
+permission to distribute known malformed formations.
+
+**Telegram visual signal != trading authorization.** Reuse the common chart/
+caption/button layout; expose only actions that are supported and safe for
+that pattern, never a nonfunctional Robot approval button. PAPER/LIVE order
+placement, admission, risk and deployment require their separate approved
+contracts. Before a real pass, check launcher side effects, duplicate workers
+and current Robot/position safety; do not bypass fail-closed protection.
+
+**Immediate unfinished milestone:** PR #197's L-shape integration is only an
+opt-in *local* observer (`BYBITSCANNER_L_SHAPE_OBSERVATIONS=1`), so no L-shape
+photos reach Telegram. Prioritize completing its actual normal Scanner →
+Telegram chart/caption/standard safe-button delivery **before requesting
+any more owner visual inspection or claiming integration acceptance**. Then
+run one complete real eligible-symbol pass for the owner's Telegram review.
+Existing local-only behavior is a defect against this workflow rule, not
+the accepted permanent architecture.
+
 ## Active feedback queue and resumption
 
 For the current owner-prioritized Scanner geometry → Box setup lifecycle →
 PAPER execution → unified Telegram work, open the **first section** of
 `DOCUMENTS/BACKLOG.md` ("ACTIVE owner-feedback action plan — 2026-09-23")
 before selecting the next slice. It records APTUSDT/B3USDT false construction,
-ATHUSDT Box impulse/completion, B2USDT positive control and the still
-**local-only** L-shape observer. Do not infer that a pattern's local PNG
-observer sends Telegram notifications or enables Robot execution.
+ATHUSDT Box impulse/completion and B2USDT positive control. **The immediate
+user-visible blocker is L-shape Telegram delivery**: PR #197's local-only
+observer is not the owner-accepted integration. Complete its ordinary
+Telegram photo/caption/buttons path first, while keeping Robot execution
+separately unauthorized.
 
 ## Geometry construction first — owner-defined search-system outcome (2026-09-23)
 
