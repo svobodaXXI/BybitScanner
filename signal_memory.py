@@ -91,10 +91,12 @@ def update_signal(signal):
     symbol = signal["symbol"]
     timeframe = signal.get("timeframe")
     pattern = signal["pattern"]
+    formation_id = signal.get("formation_id")
     # Existing callers retain their symbol-only memory until they explicitly
     # opt into timeframe-scoped identities.
     key = (
         f"scanner:{symbol}:{str(timeframe).strip()}:{pattern}"
+        + (f":{formation_id}" if formation_id is not None else "")
         if timeframe is not None else symbol
     )
     if timeframe is not None and not str(timeframe).strip():
