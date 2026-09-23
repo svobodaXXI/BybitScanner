@@ -14,8 +14,8 @@ from pandas.testing import assert_frame_equal
 import tests.test_telegram_delivery  # existing offline config/API stubs
 import main
 import l_shape_scanner as observer
-from geometry.l_shape import detect_l_shape
-from tests.test_l_shape_detector import _long_shape, _short_shape, _frame, _flat
+from geometry.l_shape import detect_l_shape, find_latest_l_shape
+from tests.test_l_shape_detector import STEP_MS, _long_shape, _short_shape, _frame, _flat
 
 
 def snapshot(closed):
@@ -35,11 +35,26 @@ class LShapeObserverTests(unittest.TestCase):
                     result = observer.observe_l_shape("TESTUSDT", candles, timeframe="5", chart_dir=directory)
                     self.assertEqual(result["formation"], detect_l_shape(closed))
                     self.assertEqual(result["source_candle_time_ms"], int(closed.time.iloc[-1]))
+                    self.assertEqual(
+                        result["extreme_time_ms"],
+                        int(closed.time.iloc[result["formation"].extreme_index]),
+                    )
                     chart = Path(result["chart_path"])
                     self.assertEqual(chart.parent, Path(directory) / "l_shape")
                     self.assertEqual(chart.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
                     self.assertIn("L-SHAPE candidate", output.getvalue())
                 assert_frame_equal(candles, before)
+
+    def test_breakout_before_the_latest_closed_candle_is_still_reported(self):
+        base = _long_shape()
+        after = _frame([(110.6, 109.9, 110.3)] * 3,
+                       start_ms=int(base.time.iloc[-1]) + STEP_MS)
+        closed = pd.concat([base, after], ignore_index=True)
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            result = observer.observe_l_shape("TESTUSDT", snapshot(closed), timeframe="5", chart_dir=directory)
+        self.assertEqual(result["formation"], find_latest_l_shape(closed))
+        self.assertEqual(result["formation"], detect_l_shape(base))
+        self.assertEqual(result["source_candle_time_ms"], int(base.time.iloc[-1]))
 
     def test_no_candidate_creates_no_chart(self):
         with patch.object(observer, "render_l_shape_preview") as render:
@@ -119,9 +134,8 @@ class LShapeObserverTests(unittest.TestCase):
 class LShapeTelegramTests(unittest.TestCase):
     def candidate(self):
         return {
-            "formation": SimpleNamespace(direction="LONG"),
-            "origin_time_ms": 1700000000000,
-            "impulse_end_time_ms": 1700000300000,
+            "formation": SimpleNamespace(direction="LONG", potential_percent=8.0495),
+            "extreme_time_ms": 1700000300000,
             "source_candle_time_ms": 1700000600000,
             "chart_path": "charts/l_shape/TESTUSDT.png",
         }
@@ -145,9 +159,8 @@ class LShapeTelegramTests(unittest.TestCase):
         self.assertEqual(owner.args[1], "owner")
         self.assertEqual(friend.args[1], "friend")
         self.assertEqual(owner.args[2], candidate["chart_path"])
-        self.assertIn("TESTUSDT", owner.kwargs["caption"])
-        self.assertIn("Г-образная · ↑", owner.kwargs["caption"])
-        self.assertIn("Таймфрейм: 5м", owner.kwargs["caption"])
+        self.assertEqual(owner.kwargs["caption"], "TESTUSDT · 5м · ↑ Г-образная · +8.05%")
+        self.assertIn("l_shape:TESTUSDT:5:LONG:1700000300000:1700000600000", memory)
         owner_buttons = [b["text"] for row in owner.kwargs["reply_markup"]["inline_keyboard"] for b in row]
         self.assertIn("✅ Хороший", owner_buttons)
         self.assertIn("❌ Геометрия", owner_buttons)

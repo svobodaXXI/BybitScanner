@@ -1,17 +1,21 @@
 """
 geometry.l_shape_preview
 
-Small independent preview renderer for an already detected L-shaped formation
+Small independent chart renderer for an already detected L-shaped formation
 (``geometry.l_shape.LShapeFormation``).
 
 It deliberately does NOT detect anything: the formation is passed in, so the
-picture can never disagree with the detector that produced it. Wedge rendering
-in ``chart_clean.py`` is untouched and nothing here is wired into Scanner,
-Telegram, Robot or any trading path.
+picture can never disagree with the detector that produced it.
 
-Source candle indices stay authoritative: the window is cropped for context and
-every drawn coordinate is translated by the same single offset, so START, the
-impulse span and the shelf boundaries cannot drift by one bar.
+Owner presentation (B2USDT 5m, 2026-09-23): only the candles, one rightward
+ray at the breakout level H from the local HIGH/LOW candle, one horizontal
+target level labelled ``Цель`` with its potential, and a header with ticker,
+timeframe, direction arrow before the pattern name and potential. No impulse
+diagonal, origin marker, trough outline or formula text.
+
+Source candle indices stay authoritative: only candles through the breakout
+(decision) candle are drawn and every coordinate is translated by the same
+single offset.
 """
 
 from __future__ import annotations
@@ -24,13 +28,11 @@ import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
 
-CAPTION = "Г-образная формация"
-DIRECTION_LABELS = {"LONG": "LONG (импульс вверх, полка у максимума)",
-                    "SHORT": "SHORT (импульс вниз, полка у минимума)"}
+from timeframe_format import format_timeframe_ru
 
-IMPULSE_COLOR = "#1f77b4"
-SHELF_COLOR = "#d62728"
-START_COLOR = "#ff7f0e"
+PATTERN_NAME = "Г-образная"
+
+BREAKOUT_COLOR = "#1f77b4"
 TARGET_COLOR = "#2ca02c"
 
 
@@ -40,6 +42,19 @@ def _moscow_index(frame):
         pd.to_datetime(frame["time"].astype("int64"), unit="ms", utc=True)
         .dt.tz_convert("Europe/Moscow")
         .dt.tz_localize(None)
+    )
+
+
+def format_potential(formation):
+    return "{:+.2f}%".format(formation.potential_percent)
+
+
+def l_shape_caption(symbol, timeframe, formation):
+    """Shared chart/Telegram identity: ticker, timeframe, arrow, name, potential."""
+    arrow = "↑" if formation.direction == "LONG" else "↓"
+    return "{} · {} · {} {} · {}".format(
+        symbol, format_timeframe_ru(timeframe), arrow, PATTERN_NAME,
+        format_potential(formation),
     )
 
 
@@ -67,11 +82,11 @@ def render_l_shape_preview(
         raise ValueError("projection_bars must not be negative")
 
     total = len(candles)
-    if formation.shelf_end_index >= total or formation.start_index < 0:
+    if formation.breakout_index >= total or formation.start_index < 0:
         raise ValueError("formation indices are outside the supplied candles")
 
     window_start = max(0, formation.start_index - context_bars)
-    window_end = formation.shelf_end_index
+    window_end = formation.breakout_index
     frame = candles.iloc[window_start:window_end + 1].copy()
     frame.index = _moscow_index(frame)
     frame = frame[["open", "high", "low", "close"]].astype(float)
@@ -84,113 +99,43 @@ def render_l_shape_preview(
         type="candle",
         style="charles",
         volume=False,
-        figsize=(12, 7),
+        figsize=(7.2, 7),
         datetime_format="%H:%M",
         returnfig=True,
     )
     ax = axes[0]
     ax.set_xlabel("МСК")
 
-    long_side = formation.direction == "LONG"
-
-    # --- the whole impulse, start to end -------------------------------------
-    ax.axvspan(
-        x(formation.impulse_start_index) - 0.5,
-        x(formation.impulse_end_index) + 0.5,
-        color=IMPULSE_COLOR, alpha=0.08, zorder=0,
+    ray_left = x(formation.extreme_index)
+    ray_right = x(formation.breakout_index) + projection_bars
+    ax.hlines(
+        formation.breakout_level, ray_left, ray_right,
+        color=BREAKOUT_COLOR, linewidth=1.6, zorder=4,
     )
-    ax.plot(
-        [x(formation.impulse_start_index), x(formation.impulse_extreme_index)],
-        [
-            formation.impulse_low if long_side else formation.impulse_high,
-            formation.impulse_high if long_side else formation.impulse_low,
-        ],
-        color=IMPULSE_COLOR, linewidth=2.0, zorder=3,
-    )
-
-    # --- shelf boundaries, only over the shelf span --------------------------
-    shelf_left = x(formation.shelf_start_index)
-    shelf_right = x(formation.shelf_end_index)
-    for level in (formation.shelf_high, formation.shelf_low):
-        ax.hlines(
-            level, shelf_left - 0.5, shelf_right + 0.5,
-            color=SHELF_COLOR, linewidth=1.8, zorder=4,
-        )
-    ax.fill_between(
-        [shelf_left - 0.5, shelf_right + 0.5],
-        formation.shelf_low, formation.shelf_high,
-        color=SHELF_COLOR, alpha=0.10, zorder=1,
+    target_left = x(formation.breakout_index)
+    ax.hlines(
+        formation.target_level, target_left, ray_right,
+        color=TARGET_COLOR, linewidth=1.8, zorder=4,
     )
     ax.text(
-        shelf_right, formation.shelf_high, " полка",
-        color=SHELF_COLOR, fontsize=9, va="bottom", ha="left", zorder=5,
+        ray_right, formation.target_level,
+        "Цель {}".format(format_potential(formation)),
+        color=TARGET_COLOR, fontsize=10, fontweight="bold",
+        va="bottom" if formation.direction == "LONG" else "top",
+        ha="right", zorder=5,
     )
 
-    # --- START at the beginning of the impulse -------------------------------
-    start_price = (
-        formation.impulse_low if long_side else formation.impulse_high
-    )
-    ax.scatter(
-        [x(formation.start_index)], [start_price],
-        color=START_COLOR, s=90, zorder=6,
-    )
-    ax.text(
-        x(formation.start_index), start_price, " START",
-        color=START_COLOR, fontsize=10, fontweight="bold",
-        va="top" if long_side else "bottom", ha="left", zorder=6,
-    )
+    visible = [
+        float(frame["low"].min()), float(frame["high"].max()),
+        formation.breakout_level, formation.target_level,
+    ]
+    pad = (max(visible) - min(visible)) * 0.05
+    ax.set_ylim(min(visible) - pad, max(visible) + pad)
+    ax.set_xlim(-1, ray_right + 0.5)
 
-    # --- HIGH-first target projection (LONG only) ----------------------------
-    # H = the confirmed impulse HIGH; L = formation.shelf_low, the confirmed
-    # post-HIGH trough already known at as_of_index (the shelf is read only up
-    # to shelf_end == as_of_index, so this is never inferred from a later bar).
-    # T = 2*H - L projects the same distance above H that the shelf retraced
-    # below it. No SHORT/LOW-first mirror is drawn: that target formula was
-    # not specified for this slice.
-    target_high = None
-    target_trough = None
-    target_level = None
-    if long_side:
-        target_high = formation.impulse_high
-        target_trough = formation.shelf_low
-        target_level = 2 * target_high - target_trough
+    ax.set_title(l_shape_caption(symbol, timeframe, formation), fontsize=12)
 
-        ray_right = x(formation.shelf_end_index) + projection_bars
-        ax.hlines(
-            target_high,
-            x(formation.impulse_extreme_index), ray_right,
-            color=IMPULSE_COLOR, linewidth=1.5, linestyle="--", zorder=4,
-        )
-        ax.text(
-            ray_right, target_high, " H", color=IMPULSE_COLOR,
-            fontsize=9, va="bottom", ha="right", zorder=5,
-        )
-        ax.hlines(
-            target_level,
-            x(formation.shelf_end_index), ray_right,
-            color=TARGET_COLOR, linewidth=1.8, zorder=4,
-        )
-        ax.text(
-            ray_right, target_level, " T = 2H-L", color=TARGET_COLOR,
-            fontsize=9, fontweight="bold", va="bottom", ha="right", zorder=5,
-        )
-
-    header = CAPTION
-    if symbol:
-        header = "{} · {}".format(symbol, header)
-    if timeframe:
-        header = "{} · {}м".format(header, timeframe)
-    ax.set_title(
-        "{}\n{}\nимпульс {} ATR · полка {} баров · откат {:.0%} размаха".format(
-            header,
-            DIRECTION_LABELS.get(formation.direction, formation.direction),
-            round(formation.impulse_atr_multiple, 1),
-            formation.shelf_end_index - formation.shelf_start_index + 1,
-            formation.shelf_retrace_fraction,
-        )
-    )
-
-    fig.savefig(output_path, bbox_inches="tight")
+    fig.savefig(output_path, dpi=125, bbox_inches="tight")
     plt.close(fig)
 
     return {
@@ -199,12 +144,10 @@ def render_l_shape_preview(
         "window_end": window_end,
         "context_bars_before_start": formation.start_index - window_start,
         "start_x": x(formation.start_index),
-        "impulse_x": (x(formation.impulse_start_index), x(formation.impulse_end_index)),
-        "shelf_x": (shelf_left, shelf_right),
-        "shelf_high": formation.shelf_high,
-        "shelf_low": formation.shelf_low,
+        "extreme_x": ray_left,
+        "breakout_x": target_left,
+        "ray_right_x": ray_right,
         "direction": formation.direction,
-        "target_high": target_high,
-        "target_trough": target_trough,
-        "target_level": target_level,
+        "breakout_level": formation.breakout_level,
+        "target_level": formation.target_level,
     }

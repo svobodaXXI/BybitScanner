@@ -244,9 +244,34 @@ acceptance remains one complete manually started eligible-universe Scanner
 pass with all integrated patterns and ordinary Telegram delivery, per the
 latest binding execution order. No extra scan now just for this observation.
 
-## L-shaped formation: owner correction from B2USDT 5m chart — QUEUED (2026-09-23)
+**Investigation result (2026-09-23, source-time Bybit 5m candles).** The Box
+and L-shape paths are independent in `main.py` and use distinct memory keys
+(`ikigai_box:*` vs `l_shape:*`), so no slot/dedup/delivery suppression was
+involved. The earliest cause was the detector: the old shelf model returned
+no candidate for METISUSDT at any bar (and only evaluated a shelf ending on
+the latest closed candle). With the HIGH → trough → breakout detector and
+latest-breakout reporting, the closed candles up to the scan (13:45 MSK)
+yield LONG HIGH 12:25 (3.613) → trough 12:30–12:50 → breakout 12:55, U =
+3.611 (12:40 body top), target +0.06%. The later structure HIGH 13:05
+(3.647) → trough 13:10–13:35 → breakout 13:40 is rejected by the retained
+impulse-pace gate (impulse origin is the 11:50 low, 16 bars; 0.38 < 0.5 ATR
+per bar). Gates were not relaxed; whether that later structure should
+qualify (e.g. a more local impulse origin) is an owner decision.
 
-**Status: specification feedback only; NOT implemented or visually accepted.**
+## L-shaped formation: owner correction from B2USDT 5m chart — IMPLEMENTED, ACCEPTANCE PENDING (2026-09-23)
+
+**Implementation (2026-09-23):** `geometry/l_shape.py` now detects impulse →
+local HIGH → trough → first closed candle whose high exceeds H (SHORT is the
+mirror). No shelf condition remains. Owner decision on U: body top
+max(open, close) of the trough candle with the lowest low (earliest on a
+tie); T = H + (H − U). Scanner reports the most recent breakout in the
+closed candles, deduplicated by HIGH + breakout candle times. B2USDT 5m
+reproduces H 0.5168 (11:30), U 0.4752 (11:35), breakout 12:25, T 0.5584,
++8.05%. Chart/caption: `B2USDT · 5м · ↑ Г-образная · +8.05%`, breakout ray and
+`Цель` level only. Owner visual acceptance remains pending on the next
+complete owner-started Scanner pass.
+
+**Original status: specification feedback only.**
 The owner rejects the current mandatory post-impulse narrow "shelf" model and
 its shelf box/labels for this example. The intended search structure is a
 local HIGH, a subsequent trough/pullback ("впадина"), then a breakout of
