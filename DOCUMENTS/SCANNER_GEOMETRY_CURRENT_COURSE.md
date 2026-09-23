@@ -6,6 +6,13 @@ Scope: 5m Scanner wedge geometry and development of the separate L-shaped patter
 This is a navigation/working index, not approval to change strategy, risk,
 Robot/LIVE execution or running services.
 
+**Owner's universal Scanner acceptance rule (2026-09-23):** for this L-shaped
+pattern, every other new pattern, and every future Scanner correction, perform
+a complete real Scanner pass on the entire available eligible symbol universe
+before claiming owner visual acceptance. Short/sampled/offline checks may aid
+development but never replace the full pass. Follow the safety and ordinary
+delivery boundaries in [AGENTS.md](../AGENTS.md#scanner-visual-acceptance-full-passes-only--owner-rule-2026-09-23).
+
 ## Universal wedge anchor rule — OWNER AUTHORITY
 
 **For EVERY wedge:** preceding directional impulse → **first anchor is the
