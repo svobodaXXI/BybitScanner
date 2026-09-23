@@ -325,9 +325,9 @@ class MainAdmissionGateTests(unittest.TestCase):
     def test_approved_signal_reaches_normal_persistence_and_notification(self):
         _, _, prepare_mock, update_mock, send_mock, _ = self.run_main(True)
 
-        prepare_mock.assert_called_once()
-        update_mock.assert_called_once()
-        send_mock.assert_called_once()
+        self.assertEqual(prepare_mock.call_count, 2)
+        self.assertEqual(update_mock.call_count, 2)
+        self.assertEqual(send_mock.call_count, 2)
         self.assertNotIn("test_mode", send_mock.call_args.kwargs)
 
     def test_rejected_signal_skips_normal_persistence_and_telegram(self):
@@ -345,13 +345,13 @@ class MainAdmissionGateTests(unittest.TestCase):
 
         prepare_mock.assert_not_called()
         update_mock.assert_not_called()
-        send_mock.assert_called_once()
-        self.assertTrue(send_mock.call_args.kwargs["test_mode"])
+        self.assertEqual(send_mock.call_count, 2)
+        self.assertTrue(all(call.kwargs["test_mode"] for call in send_mock.call_args_list))
         payload = send_mock.call_args.args[0]
         self.assertFalse(payload["signal"]["approved"])
 
     def test_scan_summary_counts_only_admission_approved_results(self):
-        def analysis_result(symbol):
+        def analysis_result(symbol, *, timeframe):
             return {
                 "result": {
                     "pattern": "Falling Wedge",
@@ -396,7 +396,7 @@ class MainAdmissionGateTests(unittest.TestCase):
         ), redirect_stdout(output):
             main.main()
 
-        summary = "Найдено паттернов: 1"
+        summary = "Найдено паттернов: 2"
         self.assertEqual(output.getvalue().count(summary), 1)
 
 
