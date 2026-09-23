@@ -354,10 +354,13 @@ the missing decision that blocks one. Check whether the item already
 exists before adding it. A distinct non-critical request explicitly
 selected by the owner may replace the current milestone immediately.
 
-The WIP limit means **one primary owner-selected milestone per workstream**;
-it does not prohibit independently authorized work in other chats,
-ongoing processes, safety responses, or a newly requested task switch.
-Do not automatically stop running work or modify hosts to enforce WIP.
+The WIP limit means **one primary owner-selected milestone in the
+current workflow**. It does not prohibit independently authorized work
+in other chats, ongoing processes, safety responses, or a newly requested
+task switch. Do not automatically stop running work, revoke another task's
+authorization or modify hosts to enforce WIP. If a task is waiting for a
+real owner decision, record that blocker and do not invent an approval;
+continue only independently safe work the owner has authorized.
 On `э`, resume the next bounded, dependent step from the current
 request and this checkpoint, not a status recap.
 
