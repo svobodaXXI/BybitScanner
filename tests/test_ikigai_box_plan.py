@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 from decimal import Decimal as D
 import unittest
 
-from terminal.paper.ikigai_box_plan import plan_ikigai_box
+from terminal.paper.ikigai_box_plan import plan_ikigai_box, plan_approved_first_ikigai_box
 
 
 def inputs(direction="LONG"):
@@ -20,6 +20,36 @@ def inputs(direction="LONG"):
 
 
 class IkigaiBoxPaperPlanTests(unittest.TestCase):
+    def test_approved_first_grid_equal_spacing_and_common_take_risk(self):
+        for direction, levels, take, stop in (
+            ("LONG", ("94", "93.2", "92.4", "91.6"), "99.2", "89.6"),
+            ("SHORT", ("106", "106.8", "107.6", "108.4"), "100.8", "110.4"),
+        ):
+            with self.subTest(direction=direction):
+                args = inputs(direction)
+                args.pop("limit_prices")
+                args.pop("limit_quantities")
+                plan = plan_approved_first_ikigai_box(**args)
+                self.assertEqual(plan.limit_prices, tuple(map(D, levels)))
+                self.assertEqual(plan.take_price, D(take))
+                self.assertEqual(plan.grid_spacing, D("0.8"))
+                self.assertEqual(plan.stop_price, D(stop))
+                self.assertEqual(plan.full_position.reward_risk, D("2"))
+                self.assertEqual(plan.limit_quantities, (D("2"),) * 4)
+                self.assertFalse(plan.execution_authorized)
+                self.assertEqual(
+                    (plan.limit_prices[2] + plan.limit_prices[3]) / 2,
+                    args["frozen_f1618"],
+                )
+
+    def test_approved_first_grid_fails_closed_if_tick_breaks_spacing(self):
+        args = inputs()
+        args.pop("limit_prices")
+        args.pop("limit_quantities")
+        args["tick_size"] = D("1")
+        with self.assertRaisesRegex(ValueError, "tick-aligned"):
+            plan_approved_first_ikigai_box(**args)
+
     def test_mirrored_full_grid_average_and_exact_two_to_one_stop(self):
         for direction, average, stop in (("LONG", "92.5", "88.75"),
                                          ("SHORT", "107.5", "111.25")):
