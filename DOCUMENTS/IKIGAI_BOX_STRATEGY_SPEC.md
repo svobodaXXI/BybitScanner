@@ -108,6 +108,64 @@ known at signal time; label entry/STOP/TP as planned rather than filled or
 guaranteed. This is a *different* Fibonacci convention and trading lifecycle from
 the separate L-shape impulse-retracement preview.
 
+## Owner strategy amendment — advance 75% entry, slice TP and re-arm (2026-09-23; PAPER DESIGN ONLY)
+
+**Reference:** HAEDALUSDT 5m owner-supplied Telegram Box chart. The screenshot
+suggests that a wick may touch an advance limit and rebound in one candle;
+it does **not** prove exchange-order fill, intra-candle event ordering,
+realized profit or that an executable TP could have filled. Verify on
+source-time lower-resolution/trade-level evidence before claiming such results.
+
+**First 1.618-area grid, owner intent:** the first of four advance LIMITs,
+each sized at 1/4 working volume (РО), is at 75% of the distance from frozen
+F(1.0) toward frozen F(1.618):
+`P1 = F(1.0) + 0.75 * (F(1.618) - F(1.0))`.
+For a DOWN first impulse this is a BUY/LONG limit below F(1.0); for an UP
+first impulse it is a SELL/SHORT limit above F(1.0). Place it as an advance
+resting order before the second impulse touches it, subject to ordinary
+ownership, sizing and protection gates. The other three LIMITs, each 1/4 РО,
+are evenly spaced further **in the impulse direction**, with the fourth
+strictly past F(1.618), retaining the original beyond-1.618 requirement.
+The exact fourth-level overshoot/step (and therefore P2/P3/P4) remains an
+explicit **unresolved owner risk/price decision**: the 75% anchor alone does
+not determine unique prices. Do not silently select a fourth price or
+interpret this as permission to enlarge total outstanding risk.
+
+**Per-slice exit:** upon confirmed fill of P1 (including partial quantity),
+protect the actually filled exposure without delay and place a reduce-only
+opposite-side TAKE LIMIT for **no more than the confirmed filled quantity**
+at an owner-approved price on the profitable side of entry, a little before
+F(1.0) (SHORT: above F(1.0) while below its entry; LONG: below F(1.0)
+while above its entry). Exact offset, minimum net-profit after entry/exit
+fees and tick rounding are pending. A bar wick alone never proves fill or
+exit; do not assume a pending TP/STOP executed within the same candle from
+OHLC alone. Partial fills, reserved close quantity, other protective orders
+and live exchange/broker events must be reconciled to prevent over-closure.
+
+**Re-arm only after a proven profitable slice close:** if a P1 slice has
+confirmed TAKE fill, verified reduced position and settled/cancelled
+associated exit obligations, and the frozen pattern is still eligible and
+not completed/expired/stopped, replenish **only the released quantity** as a
+new P1 resting limit within the original 1 РО exposure/risk ceiling, with
+no duplicate orders or overlapping ownership. The owner requested that this
+repeat while the pattern remains valid. Define exact lifecycle completion,
+re-arm count/cooldown (or explicitly unlimited), price re-entry condition
+and interaction with the existing maximum two **STOP-terminated** attempts
+before execution. Never restart an already completed Box, re-arm after STOP
+or reconstruct a fresh frozen setup merely to bypass the two-attempt gate.
+Do not use realized profit to increase the grid allocation (no martingale).
+
+**Implementation boundary:** this amends the intended first-grid placement
+and introduces a proposed slice-exit/replenishment lifecycle; it does not
+change the 2.618 second-attempt gate, F(1.0) principal target, current
+Scanner/Telegram behavior, running services or live trading. The existing
+§3 wording "exact spacing unspecified" and later historical grid notes
+remain valid only for still-unresolved parameters; the P1 75% anchor here
+supersedes any older first-entry placement. Robot/PAPER wiring is **NOT
+AUTHORIZED FOR EXECUTION** until pending price/risk/lifecycle decisions
+are resolved and fail-closed implementation has been verified at the
+existing later Robot stage in `DOCUMENTS/BACKLOG.md`.
+
 ## 3. Entry and position management — user-approved intent, NOT wired to Robot
 
 - **Attempt 1:** four approximately equally spaced price LIMITs in the zone of
