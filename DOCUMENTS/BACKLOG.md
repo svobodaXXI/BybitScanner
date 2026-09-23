@@ -5,6 +5,39 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## Permanent owner-only visual acceptance protocol — FULL PASS OR NO ACCEPTANCE (2026-09-23)
+
+For any Scanner change whatsoever, including a chart-only/caption/button
+change, **owner visual review happens only from the normal Telegram signal
+feed produced by one COMPLETE real Scanner pass over EVERY available eligible
+ticker and ALL integrated patterns**. Do not offer a separate "updated Box
+card", one-off chart, selected symbol, local PNG, offline replay, partial
+302/777 run, or short demonstration *before or instead of* the full pass.
+Agent and Codex prompts must request the full pass as the ONLY visual-review
+route, after minimal necessary developer-side technical verification. The
+owner judges the resulting live Telegram charts, not developer-generated
+examples. An interrupted or unsafe run leaves acceptance **PENDING**.
+
+**Anti-regression check for every next-step prompt:** (1) Is this a request
+for owner visual inspection? If yes, prescribe exactly the complete
+real eligible-universe Scanner pass with ordinary Telegram delivery of every
+integrated pattern; never a single-chart preview. (2) Is a complete safe pass
+currently possible? Check the actual launcher, process/poller ownership and
+Robot/position fail-closed conditions; if blocked, name the concrete blocker
+and do not offer a smaller substitute. (3) Did the pass complete? Report
+eligible/included/error counts, signal delivery and actual Telegram charts;
+otherwise do not mark visual acceptance complete. When the future 5m→1m
+per-symbol implementation is complete, include both intervals in the
+full pass; before it, do not claim they were scanned.
+
+**Current queue correction:** PR #204 (L-shape Telegram) and PR #205 (Box
+card and 40% narrower chart) are both MERGED, but no complete owner-visible
+full pass for the current implementations is confirmed. The next visual
+acceptance action is ONE complete safe full pass displaying both patterns
+through ordinary Telegram delivery, not an isolated Box card review. After
+that proceed to the queued 5m→1m per-symbol Scanner integration and the
+geometry corrections. No Robot/PAPER/LIVE activation is authorized.
+
 ## Permanent Scanner scan cadence and current task placement — OWNER RULE (2026-09-23)
 
 **Every symbol: 5m first → immediately 1m → next symbol.** Evaluate all
@@ -31,30 +64,23 @@ technical checks, not extra test campaigns.
 
 ## Binding owner execution order — 2026-09-23 (READ FIRST)
 
-**Execute one dependent task at a time, in this owner-selected order:**
+1. **Already merged:** L-shape Telegram PR #204 and Ikigai Box card /
+   40%-narrower candle chart PR #205. These are code milestones, NOT
+   completed owner visual acceptance.
+2. **Next:** ONE complete safe real Scanner pass across every eligible
+   ticker, all integrated patterns, ordinary Telegram delivery, to let
+   the owner visually inspect the resulting L-shape and Box signals.
+   No isolated-card preview, sampled scan or additional visual-review stage.
+3. Implement each-ticker 5m immediately followed by 1m for every integrated
+   pattern, with separate per-timeframe signals; then complete its mandatory
+   real full-universe Telegram visual acceptance.
+4. Fix the queued APTUSDT/B3USDT/DASHUSDT/ATHUSDT geometry-construction
+   defects, retaining B2USDT as the Box positive control; use the same
+   full-pass-only owner visual acceptance workflow for each Scanner change.
 
-1. **L-shape → Telegram:** PR #204 has been merged, but the owner has
-   deferred the full Telegram visual acceptance scan. Do not mistake a
-   partial 302/777-symbol local observer run for acceptance.
-2. **Ikigai Box Telegram card:** finish simplified chart header/caption
-   and shared applicable buttons, remove unneeded annotation/plan labels,
-   and reduce candle visual width by approximately **40%**. Preserve
-   candle prices and frozen Box geometry; do not alter trading strategy.
-3. **Universal 5m→1m Scanner:** for each eligible ticker analyze 5m,
-   immediately analyze 1m, run every integrated pattern on both, and
-   deliver separately labeled Telegram charts. Isolate each interval's
-   candidate identity, history and outputs; no 1m Robot trading.
-4. **Geometry corrections:** resolve APTUSDT wedge, B3USDT triangle,
-   DASHUSDT wedge and ATHUSDT Box source-time candidate-construction
-   defects; keep B2USDT Box as positive control. Fix the earliest wrong
-   generator/anchor stage, never hide malformed formations downstream.
-
-The previous "geometry before other features", "full L-shape pass immediately",
-and other stale priority/next-step statements below are superseded **only
-for scheduling** by this section. The permanent requirements of correct
-geometry at construction, Telegram-visible pattern integration and full
-real-universe visual acceptance remain in force. No trading/runtime launch
-authorization is implied.
+This is the current owner order and supersedes older milestone and priority
+text below. The permanent correct-geometry, process-safety and separate
+Robot/PAPER/LIVE trading boundaries remain binding.
 
 ## Box presentation implementation — 2026-09-23
 
@@ -67,8 +93,10 @@ candle bodies and horizontal spacing are 60% of their previous pixel width.
 Use the shared TradingView keyboard with review buttons for the owner only;
 no Robot button or candidate is supported. This minimal identity and applicable
 safe shared buttons are the presentation reference for future new patterns.
-This slice receives focused offline checks only at the owner's explicit request;
-full Scanner/Telegram visual acceptance remains pending and is not claimed here.
+The implementation has been merged as PR #205; full Scanner/Telegram
+visual acceptance is pending. Do not offer a single Box card for owner review:
+the owner inspects this and all other Scanner changes only during the
+complete real eligible-universe Scanner pass above.
 
 ## IMMEDIATE owner-visible milestone — L-shape Telegram (2026-09-23)
 
@@ -81,17 +109,13 @@ diagnosis, **not** completed integration, user-visible acceptance, or a valid
 substitute for Telegram delivery. Do not send the owner into a local filesystem
 to review a new pattern and do not silently disable configured notifications.
 
-**Next single dependent implementation:** finish the already merged L-shape
-detector's Scanner → Telegram photo/caption/standard applicable buttons
-delivery, preserving frozen source-time geometry, stable per-formation identity,
-dedup/retry and failure isolation from existing Scanner patterns. Keep Robot
-candidate/admission/orders OFF for this pattern; do not expose a Robot
-approval action that is unsupported. No new thresholds or unrelated wedge/Box
-changes to implement Telegram wiring. Record the exact changed-path evidence,
-then run one COMPLETE real pass on all eligible symbols with ordinary Telegram
-delivery and have the owner visually review actual L-shape notifications;
-zero genuinely detected formations is a valid zero result, not permission to
-fabricate or refetch a conveniently successful candidate.
+**Implementation update:** L-shape Telegram delivery merged as PR #204,
+and Ikigai Box card simplification merged as PR #205. The remaining
+user-visible step is ONE complete real eligible-universe Scanner pass with
+ordinary Telegram notification delivery for ALL integrated patterns. Owner
+visual acceptance is pending; no isolated L-shape/Box chart inspection,
+short run or local-PNG substitute. Robot admission/orders stay OFF for
+L-shape until independently authorized.
 
 **Workflow for every future new pattern:** implement valid pattern-specific
 candidate construction and its ordinary Telegram visualization/delivery
