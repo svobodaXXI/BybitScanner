@@ -655,29 +655,19 @@ ACTIVE
 
 ---
 
-# CURRENT_OWNER_WORK_CONTROL — 2026-09-23
+# CURRENT_OWNER_WORK_CONTROL — 2026-09-24
 
-Scope: owner's latest explicitly selected Scanner feedback and PAPER
-pattern-strategy design. **Current task index and completion/acceptance
-ledger:** `DOCUMENTS/BACKLOG.md#current-owner-work-index--2026-09-23-supersedes-stale-next-step-claims-below`.
-Consult that short index first for this owner-requested work; older
-priority labels and next-step claims below are historical subsystem
-snapshots, not instructions to redo finished Scanner integrations or to
-launch Robot/Scanner.
+**Current owner-selected milestone, verified state, next action and queue:**
+`DOCUMENTS/BACKLOG.md`, topmost `CURRENT owner task / NEXT ACTION`
+section. Follow the user's newest explicit request if it supersedes the
+recorded continuation default; update the checkpoint at the next meaningful
+handoff. Do not duplicate its mutable PR, SHA, test or scheduling facts here.
 
-- Complete manual Scanner pass on 2026-09-23: 777 tickers / 65 found /
-  62 sent; this precedes PR #213 and the pending #214 fix. Subsequent
-  Telegram visual acceptance remains pending, not implied by that pass.
-- Telegram status-circle removal: PR #214 OPEN, implementation proposed
-  but not merged or technically/visually accepted.
-- Ikigai Box pure PAPER grid/STOP planner: Codex reports local PASS,
-  not published to GitHub main and not execution-enabled. The owner has
-  approved only bounded PAPER development, not automatic orders.
-- L-shape Robot: owner-approved strategy reuse of Wedge lifecycle with
-  pattern-specific thresholds/geometry; design only, no admission.
-- The earlier PAPER protection-ingress evidence below remains a historical
-  safety risk requiring fresh operational evidence before any live PAPER
-  Robot activation; no claim of resolution or current runtime status.
+Owner-approved financial/strategy decisions remain in their owning spec;
+GitHub holds implementation and verification evidence. The historical work
+control records below are retained for context, not current task routing.
+No PAPER/LIVE execution permission, Scanner start or host/runtime sync is
+implied by a documentation checkpoint.
 
 ---
 # HISTORICAL_WORK_CONTROL — 2026-09-18 (not current owner-task routing)
