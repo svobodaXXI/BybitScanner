@@ -58,7 +58,8 @@ class LShapeObserverTests(unittest.TestCase):
             stack.enter_context(patch.object(main.config, "TELEGRAM_TEST_MODE", False))
             stack.enter_context(patch.object(main, "get_symbols", return_value=["TESTUSDT"]))
             stack.enter_context(patch.object(main, "analyze_symbol", return_value={"result": analysis, "data": candles}))
-            observe = stack.enter_context(patch.object(observer, "observe_l_shape", side_effect=failure))
+            observe = stack.enter_context(patch.object(observer, "observe_l_shape", side_effect=failure, return_value=None))
+            lshape_send = stack.enter_context(patch.object(observer, "send_l_shape_observation", return_value=True))
             send = stack.enter_context(patch.object(main, "send_signal", return_value=True))
             stack.enter_context(patch.object(main, "send_message"))
             prepare = stack.enter_context(patch.object(main, "prepare_signal", return_value={"score": 90}))
@@ -68,27 +69,117 @@ class LShapeObserverTests(unittest.TestCase):
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             main.run_scan_pass()
             robot.assert_not_called()
-        return observe, send, prepare, update, candles
+        return observe, lshape_send, send, prepare, update, candles
 
-    def test_observer_runs_without_wedge_and_never_delivers_a_signal(self):
-        observe, send, prepare, update, candles = self.run_mock_pass(enabled=True, analysis=None)
+    def test_observer_runs_without_wedge_but_does_not_send_without_candidate(self):
+        observe, lshape_send, send, prepare, update, candles = self.run_mock_pass(enabled=True, analysis=None)
         observe.assert_called_once_with("TESTUSDT", candles, timeframe=main.config.TIMEFRAME)
+        lshape_send.assert_not_called()
         send.assert_not_called()
         prepare.assert_not_called()
         update.assert_not_called()
 
-    def test_disabled_observer_is_not_called(self):
-        observe, send, _, _, _ = self.run_mock_pass(enabled=False, analysis=None)
-        observe.assert_not_called()
+    def test_old_observer_flag_no_longer_hides_the_pattern(self):
+        observe, lshape_send, send, _, _, _ = self.run_mock_pass(enabled=False, analysis=None)
+        observe.assert_called_once()
+        lshape_send.assert_not_called()
         send.assert_not_called()
 
     def test_observer_failure_preserves_existing_selection_and_delivery(self):
         analysis = {"pattern": "Falling Wedge", "final_score": 90, "signal": {"approved": True}}
-        observe, send, prepare, update, _ = self.run_mock_pass(enabled=True, analysis=analysis, failure=RuntimeError("render failed"))
+        observe, lshape_send, send, prepare, update, _ = self.run_mock_pass(enabled=True, analysis=analysis, failure=RuntimeError("render failed"))
         observe.assert_called_once()
+        lshape_send.assert_not_called()
         prepare.assert_called_once_with("TESTUSDT", analysis)
         update.assert_called_once_with({"score": 90})
         send.assert_called_once_with({**analysis, "symbol": "TESTUSDT"})
+
+    def test_l_shape_candidate_sends_even_when_there_is_no_wedge(self):
+        candles = snapshot(_long_shape())
+        candidate = {"formation": SimpleNamespace(direction="LONG"), "chart_path": "chart.png"}
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ, {"BYBITSCANNER_L_SHAPE_OBSERVATIONS": "0", "BYBITSCANNER_IKIGAI_BOX_SIGNALS": "0"}))
+            stack.enter_context(patch.object(main, "MAX_SYMBOLS", None))
+            stack.enter_context(patch.object(main.config, "TELEGRAM_TEST_MODE", False))
+            stack.enter_context(patch.object(main, "get_symbols", return_value=["TESTUSDT"]))
+            stack.enter_context(patch.object(main, "analyze_symbol", return_value={"result": None, "data": candles}))
+            stack.enter_context(patch.object(observer, "observe_l_shape", return_value=candidate))
+            deliver = stack.enter_context(patch.object(observer, "send_l_shape_observation", return_value=True))
+            send_wedge = stack.enter_context(patch.object(main, "send_signal"))
+            stack.enter_context(patch.object(main, "send_message"))
+            robot = stack.enter_context(patch("notification.create_signal_snapshot"))
+            stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            main.run_scan_pass()
+        deliver.assert_called_once_with("TESTUSDT", candidate, timeframe=main.config.TIMEFRAME, test_mode=False)
+        send_wedge.assert_not_called()
+        robot.assert_not_called()
+
+
+
+class LShapeTelegramTests(unittest.TestCase):
+    def candidate(self):
+        return {
+            "formation": SimpleNamespace(direction="LONG"),
+            "origin_time_ms": 1700000000000,
+            "impulse_end_time_ms": 1700000300000,
+            "source_candle_time_ms": 1700000600000,
+            "chart_path": "charts/l_shape/TESTUSDT.png",
+        }
+
+    def test_normal_photo_owner_review_buttons_no_robot_and_dedup(self):
+        memory = {}
+        candidate = self.candidate()
+        with patch.object(observer.config, "TELEGRAM_ENABLED", True), \
+                patch.object(observer, "get_telegram_chat_ids", return_value=("owner", "friend")), \
+                patch.object(observer, "get_telegram_owner_chat_id", return_value="owner"), \
+                patch.object(observer, "load_memory", return_value=memory), \
+                patch.object(observer, "save_memory") as save, \
+                patch.object(observer, "send_photo", return_value={"ok": True}) as photo, \
+                patch("notification.create_signal_snapshot") as robot:
+            self.assertTrue(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
+            self.assertFalse(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
+        self.assertEqual(photo.call_count, 2)
+        self.assertEqual(save.call_count, 2)
+        robot.assert_not_called()
+        owner, friend = photo.call_args_list
+        self.assertEqual(owner.args[1], "owner")
+        self.assertEqual(friend.args[1], "friend")
+        self.assertEqual(owner.args[2], candidate["chart_path"])
+        self.assertIn("TESTUSDT", owner.kwargs["caption"])
+        self.assertIn("Г-образная · ↑", owner.kwargs["caption"])
+        self.assertIn("Таймфрейм: 5м", owner.kwargs["caption"])
+        owner_buttons = [b["text"] for row in owner.kwargs["reply_markup"]["inline_keyboard"] for b in row]
+        self.assertIn("✅ Хороший", owner_buttons)
+        self.assertIn("❌ Геометрия", owner_buttons)
+        self.assertNotIn("🤖 Робот", owner_buttons)
+        self.assertEqual(len(friend.kwargs["reply_markup"]["inline_keyboard"]), 1)
+
+    def test_partial_delivery_retry_only_failed_recipient(self):
+        memory = {}
+        candidate = self.candidate()
+        with patch.object(observer.config, "TELEGRAM_ENABLED", True), \
+                patch.object(observer, "get_telegram_chat_ids", return_value=("owner", "friend")), \
+                patch.object(observer, "get_telegram_owner_chat_id", return_value="owner"), \
+                patch.object(observer, "load_memory", return_value=memory), \
+                patch.object(observer, "save_memory"), \
+                patch.object(observer, "send_photo", side_effect=[
+                    {"ok": True}, {"ok": False}, {"ok": True},
+                ]) as photo:
+            self.assertFalse(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
+            self.assertTrue(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
+            self.assertFalse(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
+        self.assertEqual([call.args[1] for call in photo.call_args_list], ["owner", "friend", "friend"])
+
+    def test_test_mode_never_persists_signal_or_robot_candidate(self):
+        with patch.object(observer.config, "TELEGRAM_ENABLED", True), \
+                patch.object(observer, "get_telegram_chat_ids", return_value=("owner",)), \
+                patch.object(observer, "get_telegram_owner_chat_id", return_value="owner"), \
+                patch.object(observer, "load_memory", return_value={}), \
+                patch.object(observer, "save_memory") as saved, \
+                patch.object(observer, "send_photo", return_value={"ok": True}) as photo:
+            self.assertTrue(observer.send_l_shape_observation("TESTUSDT", self.candidate(), timeframe="5", test_mode=True))
+        saved.assert_not_called()
+        self.assertIn("TEST MODE", photo.call_args.kwargs["caption"])
 
 
 if __name__ == "__main__":
