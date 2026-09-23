@@ -47,12 +47,16 @@ from .charts import create_chart
 from .reports import create_report
 
 
-def analyze_symbol(symbol):
+def analyze_symbol(symbol, *, timeframe=None):
     """
     Анализ одной торговой пары.
     """
 
-    print(f"[DEBUG] analyze_symbol() -> {symbol}")
+    explicit_timeframe = timeframe is not None
+    timeframe = str(TIMEFRAME if timeframe is None else timeframe).strip()
+    if timeframe not in ("1", "5"):
+        raise ValueError("Scanner timeframe must be 1 or 5")
+    print(f"[DEBUG] analyze_symbol() -> {symbol} {timeframe}m")
 
     try:
 
@@ -62,7 +66,7 @@ def analyze_symbol(symbol):
 
         df = load_candles(
             symbol,
-            TIMEFRAME,
+            timeframe,
             CANDLE_LIMIT
         )
 
@@ -134,21 +138,24 @@ def analyze_symbol(symbol):
         # on closed 1m candles. Build an exact affine 1m coordinate projection
         # at the same source-candle timestamp instead of pretending a 5m
         # geometry index is already a 1m index.
-        result["timeframe"] = str(TIMEFRAME)
-        result["scanner_source_timeframe"] = str(TIMEFRAME).strip()
+        result["timeframe"] = timeframe
+        result["scanner_source_timeframe"] = timeframe.strip()
         try:
             source_candle_time_ms = int(df.iloc[current_index]["time"])
             result["scanner_source_candle_time_ms"] = source_candle_time_ms
             result["robot_geometry"] = project_frozen_geometry_to_robot_1m(
                 result["geometry"],
-                source_timeframe=str(TIMEFRAME),
+                source_timeframe=timeframe,
             )
             result["scanner_geometry_cursor"] = build_scanner_geometry_cursor_anchor(
                 geometry_index=current_index,
                 source_candle_time_ms=source_candle_time_ms,
                 timeframe="1",
             )
-            result["robot_handoff_ready"] = True
+            # Explicit 1m Scanner analysis is observational, not Robot admission.
+            result["robot_handoff_ready"] = not (
+                timeframe == "1" and explicit_timeframe
+            )
         except (ScannerGeometryCursorError, KeyError, TypeError, ValueError, OverflowError) as exc:
             # Scanner notification remains available, but Robot handoff must
             # fail closed when its frozen 1m execution coordinate cannot be
@@ -226,7 +233,7 @@ def analyze_symbol(symbol):
 
         result["tradingview"] = create_signal_payload(
             symbol,
-            TIMEFRAME,
+            timeframe,
             result
         )
 
@@ -248,7 +255,7 @@ def analyze_symbol(symbol):
 
         create_report(
             symbol,
-            TIMEFRAME,
+            timeframe,
             result,
             highs,
             lows
