@@ -82,6 +82,44 @@ This is the current owner order and supersedes older milestone and priority
 text below. The permanent correct-geometry, process-safety and separate
 Robot/PAPER/LIVE trading boundaries remain binding.
 
+## L-shaped formation: owner correction from B2USDT 5m chart — QUEUED (2026-09-23)
+
+**Status: specification feedback only; NOT implemented or visually accepted.**
+The owner rejects the current mandatory post-impulse narrow "shelf" model and
+its shelf box/labels for this example. The intended search structure is a
+local HIGH, a subsequent trough/pullback ("впадина"), then a breakout of
+that local HIGH. Construct the correct local episode, HIGH and trough from
+closed decision-time candles at the detector/candidate stage; do not merely
+redraw a shelf-based or otherwise invalid candidate. The owner measures
+trough depth from the local HIGH **to the upper edge of the trough candles**
+(as indicated by the owner's black arrow), not automatically to the trough's
+lowest wick. Before coding, resolve the exact reproducible candle/price
+selection for that upper edge from source-time evidence; do not silently
+reuse the previous `shelf_low` as this price or invent a numeric threshold.
+
+For this HIGH-breakout / LONG example, draw a horizontal rightward signal
+ray at the local HIGH breakout level H. Let U be the agreed upper-edge price
+of the trough candles and D = H - U; project D upwards from H to obtain the
+target T = H + D, with potential 100*(T/H - 1)% from the **breakout level**.
+Draw one horizontal target level labelled `Цель` and its potential percentage.
+Chart/card caption: only ticker, timeframe, upward direction arrow directly
+before the pattern name, and potential to target. Remove the blue diagonal
+impulse ray and its labels, the shelf outline and caption, green `T = 2H-L`
+text, START and other nonessential annotations. No shelf condition or shelf
+terminology is to be retained in the intended detector or owner-facing card.
+This screenshot's B2USDT **L-shape** example is distinct from the B2USDT
+**Ikigai Box** positive control elsewhere in this backlog.
+
+**Execution order unchanged:** first complete the currently queued safe full
+real Scanner/Telegram pass, then per-symbol 5m→1m integration and its full
+pass, then the queued APT/B3/DASH/ATH geometry work. Take this L-shape
+correction only at its authorized turn; do not modify the current running
+Scanner or Robot in response to this documentation. After implementation,
+owner visual acceptance is ONLY one complete real pass over every eligible
+ticker and all integrated patterns via ordinary Telegram notifications;
+no isolated image/card or shortened-pass substitute. L-shape Robot trading
+remains unauthorized.
+
 ## Box presentation implementation — 2026-09-23
 
 The Box chart header and Telegram caption share only ticker, formatted timeframe,
