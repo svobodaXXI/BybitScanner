@@ -350,6 +350,25 @@ class MainAdmissionGateTests(unittest.TestCase):
         payload = send_mock.call_args.args[0]
         self.assertFalse(payload["signal"]["approved"])
 
+    def test_scanner_orders_both_intervals_per_symbol_and_continues_after_error(self):
+        observed = []
+
+        def analyze(symbol, *, timeframe):
+            observed.append((symbol, timeframe))
+            if (symbol, timeframe) == ("FIRST", "5"):
+                raise RuntimeError("5m data unavailable")
+            return {"result": None, "data": None}
+
+        with patch.object(main, "get_symbols", return_value=["FIRST", "SECOND"]), \
+                patch.object(main, "analyze_symbol", side_effect=analyze), \
+                patch.object(main, "send_message", return_value=True):
+            main.run_scan_pass()
+
+        self.assertEqual(observed, [
+            ("FIRST", "5"), ("FIRST", "1"),
+            ("SECOND", "5"), ("SECOND", "1"),
+        ])
+
     def test_scan_summary_counts_only_admission_approved_results(self):
         def analysis_result(symbol, *, timeframe):
             return {
