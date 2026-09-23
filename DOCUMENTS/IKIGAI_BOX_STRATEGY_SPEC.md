@@ -167,10 +167,27 @@ resting order before the second impulse touches it, subject to ordinary
 ownership, sizing and protection gates. The other three LIMITs, each 1/4 РО,
 are evenly spaced further **in the impulse direction**, with the fourth
 strictly past F(1.618), retaining the original beyond-1.618 requirement.
-The exact fourth-level overshoot/step (and therefore P2/P3/P4) remains an
-explicit **unresolved owner risk/price decision**: the 75% anchor alone does
-not determine unique prices. Do not silently select a fourth price or
-interpret this as permission to enlarge total outstanding risk.
+Owner-confirmed grid rule (2026-09-23): choose P4 strictly beyond F(1.618)
+in the first impulse's direction; P2 and P3 divide P1→P4 into three equal
+price intervals (`step = (P4-P1)/3`; `P2=P1+step`, `P3=P1+2*step`).
+For a STOP-terminated second attempt, use the same four-order, equal-interval
+layout around F(2.618), with its final order strictly beyond F(2.618) in
+the first impulse's direction. The exact P4 overshoot in either attempt and
+the second attempt's first-order anchor remain **unresolved owner price/risk
+decisions**; do not invent them. Each grid totals at most 1 РО, without
+simultaneously active attempt grids.
+
+**Owner-confirmed STOP rule (2026-09-23; PAPER DESIGN ONLY):** no fixed
+-1.5% default. For each actually filled exposure, prefer a valid structural
+STOP if it meets a minimum planned net reward/risk of 2:1 to the F(1.0)
+target. If the structural STOP is farther than the maximum risk allowed by
+that ratio, place the STOP at the maximum ratio-compliant risk distance
+instead; use the same risk-derived limit when no structural STOP exists.
+Account for actual fills, fees, tick rounding and all outstanding grid
+exposure. Do not treat a wider structural STOP as an automatic reason to
+reject an otherwise protectable entry. Do not submit an entry if the system
+cannot establish a valid protective STOP and the required ratio. A
+ratio-limited STOP may lie inside the original pattern structure.
 
 **Per-slice exit:** upon confirmed fill of P1 (including partial quantity),
 protect the actually filled exposure without delay and place a reduce-only
@@ -222,11 +239,13 @@ existing later Robot stage in `DOCUMENTS/BACKLOG.md`.
   extreme: SHORT above the bearish engulfing/shooting-star high; LONG below the
   bullish engulfing/hammer low. The extreme must produce a valid protective
   level for the actual fill, with normal tick/fee/technical safety constraints.
-  If no suitable *confirmed* candle is available, or no valid structural STOP
-  can be constructed, fallback is **-1.5% from actual quantity-weighted entry**:
-  LONG `average_entry * 0.985`; SHORT `average_entry * 1.015`, subject to
-  proper tick rounding in the protective direction. All actually filled
-  exposure needs protection immediately, including partial-grid fills.
+  Use a structural STOP only if the projected fee-aware reward/risk to F(1.0)
+  is at least 2:1; if it is farther away, cap its distance at the largest
+  fee-aware risk that meets 2:1. If no structural STOP is available, use the
+  same ratio-based risk limit, not a fixed-percentage fallback. Base the
+  calculation on actual fills and protect all filled exposure immediately,
+  including partial-grid fills. Require valid tick rounding and coverage
+  for outstanding grid exposure; otherwise block further entries.
   Do not leave a filled position unprotected awaiting candlestick confirmation.
   Exact additional buffer beyond an extreme remains **unspecified**.
 - **Attempt 2 (only after stopped attempt 1):** after a **confirmed STOP close**
@@ -234,7 +253,9 @@ existing later Robot stage in `DOCUMENTS/BACKLOG.md`.
   obligation, and cancellation/terminal state of *all* unfilled limits from
   the first grid, wait for the second impulse's continuation toward `F(2.618)`.
   Only then allow a **new** four-limit grid, each **1/4 РО**, around 2.618,
-  with the furthest limit beyond 2.618 in impulse direction. Use the same STOP,
+  with the furthest limit beyond 2.618 in impulse direction. Distribute all
+  four orders at equal price intervals; the exact first-order anchor and
+  last-order overshoot for this second attempt are still unspecified. Use the same STOP,
   early partial exit and 1.0-target policy. An ambiguous STOP reason, unresolved
   partial position, uncertain ownership or still-active earlier LIMIT blocks
   attempt 2. **At most two sequential attempts per frozen formation**, no
@@ -299,8 +320,9 @@ admission, order placement and candidate creation are untouched.
   about spacing or the split was copied from it.
 - STOP: extreme of the latest closed reversal candle (bearish engulfing /
   shooting star for SHORT; bullish engulfing / hammer for LONG) when it
-  protects the planned entry; otherwise fallback -1.5% from the planned equal-
-  weight average entry (LONG below, SHORT above).
+  protects the planned entry and meets net reward/risk >= 2:1; otherwise use
+  the maximum fee-aware ratio-compliant STOP distance (LONG below, SHORT above).
+  This overlay is illustrative only; actual protection uses confirmed fills.
 - Target: `F(1.0)`, with only a text note that partial profit-taking starts
   before it.
 
