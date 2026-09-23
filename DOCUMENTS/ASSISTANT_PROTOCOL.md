@@ -337,21 +337,40 @@ work, excessive test campaigns or unbounded autonomous cycles. If a task
 cannot safely complete with the minimum checks, state the concrete mandatory
 exception rather than silently expanding the prompt.
 
-### 3.2.2 DEFERRED: chat-independent task continuation (idea, NOT an active migration)
+### 3.2.2 ACTIVE: compact task continuation in existing backlog (owner 2026-09-24)
 
-Problem: repeated new-chat handoffs have accumulated overlapping summaries, indexes,
-sync procedures and re-reading. Future simplification, **only when the owner
-returns to this task**: let the repository own a single concise current-task
-checkpoint (goal, binding decision, verified state, next action, done criterion).
-A new chat follows the existing `AGENTS.md` staged entry to that checkpoint,
-reads only necessary code/evidence and continues; ordinary chat changes must
-not trigger full Project Sync, ContextDump, document audit, repeat diagnostics,
-or a user-authored handoff. Prefer reusing the existing task/state location
-and replacing duplicate text with links; create no new subsystem or protocol.
-Trial on one active task, retain required safety and local dirty-work checks,
-and stop if the short entry is sufficient. **No implementation or workflow
-migration is authorized by this note; the owner is working on other tasks now.**
+Use `DOCUMENTS/BACKLOG.md`'s topmost `CURRENT owner task / NEXT ACTION`
+entry as the sole short operational checkpoint for the owner's primary
+in-progress milestone. This activates the previously deferred continuation
+idea without a new file, dashboard, issue mirror, sync stage or ritual.
 
+The checkpoint states only: outcome, next observable action, current proven
+evidence with PR/branch link, actual blocker/needed owner decision, and done
+criterion. If another owner-selected milestone supersedes it, move the old
+task to the backlog without discarding decisions or in-flight artifacts.
+Allow a safety-critical interruption; WIP=1 limits primary owner milestones,
+not independent in-progress processes or prerequisite safety work.
+
+Capture new work in the existing backlog only if not already represented:
+classify it as an active-task dependency, critical safety interruption, or
+parked work. Do not reopen parked items merely because their historical
+priority says "immediate". Continue with one bounded dependent step per
+`э`; do not respond with repetitive status recaps. Update the checkpoint
+only when a milestone, next action, blocking decision, verified status, or
+handoff actually changes, not for every chat, commit or passing test.
+
+Current repository authority stays split: backlog owns current work/queue,
+strategy specifications own owner-approved trading decisions, GitHub PR and
+code own implementation/diff and test evidence, and PROJECT_STATE.md points
+to the work index. Resolve stale text by marking it historical or correcting
+the owning entry; never copy a second full status ledger into another file.
+
+For a new chat, follow `AGENTS.md` staged bootstrap and read this short
+checkpoint first, then the owning spec/PR and host-local status only when
+needed. No user-authored handoff, routine ContextDump, deep document audit,
+Project Sync, or automatic background operation is required. Normal protected
+task, financial approval, GitHub-first, owner-manual Scanner and required
+verification rules remain unchanged.
 ---
 
 # 4. LOCAL REALITY AND USER-OWNED WORK
