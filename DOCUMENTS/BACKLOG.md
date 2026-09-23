@@ -5,6 +5,96 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## ACTIVE owner-feedback action plan — 2026-09-23 (read this first)
+
+**Outcome, not downstream suppression:** each pattern's search/generation stage
+must construct only geometry consistent with the owner's pattern definition.
+Never generate malformed geometry and conceal it later through scoring,
+Telegram delivery or Robot admission. Preserve original source-time candles
+and candidate identity when diagnosing examples. This plan supersedes older
+queue ordering when tasks conflict; it does **not** claim that the defects are
+already fixed or that a screenshot proves the exact code-level cause.
+
+**P0 — source-time geometry construction (one dependent fix at a time).**
+- **Wedge/Triangle:** use the owner's APTUSDT 5m wedge and B3USDT 5m
+  triangle charts as reported false-geometry cases. Find the exact saved
+  as-of candles/candidate; trace impulse episode, START/anchors, generation,
+  line selection and display to the *first* divergence from the pattern
+  contract. Fix generation/anchor selection, **not** score, chart window or
+  Telegram filtering. For wedges retain the owner's universal A/B/C rule;
+  triangle constraints are pattern-specific. If an original frozen snapshot
+  is absent, state the missing provenance and collect a reproducible source-
+  time case from the next complete pass rather than assert a guessed cause.
+- **Ikigai Box:** ATHUSDT 5m: the owner rejects an opposite-colour candle
+  within the *core* of the first impulse. Resolve the precise directional/
+  boundary-candle rule in `IKIGAI_BOX_STRATEGY_SPEC.md` before editing the
+  shared construction gate; the existing red-body-core exception applies only
+  to DOWN impulses, and the UP path still admits mixed colour. Enforce the
+  approved rule at first-leg construction for CONFIRMED and WATCH, not with a
+  downstream reject. Preserve B2USDT 5m as a visually valid LONG control
+  showing a move from the 2.618 area back toward/through 1.0.
+- **Scope:** these cases are distinct; address one causative defect at a
+  time. Do not convert a single chart observation into a universal numeric
+  threshold, retrofit wedge rules onto Box, or merge all patterns into one
+  large unverified rewrite.
+
+**P1 — market setup lifecycle, independently of trade execution.**
+- ATHUSDT is the owner's example of price reaching the first 1.618 entry
+  region and then returning to the frozen 1.0 target: the original Box setup
+  must become completed/historical and must not be reconstructed or offered
+  again as an actionable entry for the same frozen A/B episode. Determine
+  the exact closed-candle touch/return sequence from saved evidence; retain
+  distinct attempted-entry and completion status and source-time provenance.
+- The B2USDT move around 2.618 is a reference for evaluating the *second
+  attempt*, not permission to open it merely because price reached 2.618.
+  The strategy permits attempt two only after a verified STOP closure of
+  attempt one, verified FLAT and no unresolved limits/protection obligation.
+
+**P2 — reliable PAPER lifecycle, separately authorized.**
+Implement only after the geometry and setup lifecycle are credible: approved
+Box entry grid, partial fills, immediate protection, confirmed STOP/TAKE,
+fee-aware profit-taking/flat closure, cancellation, durable restart-safe
+ownership. Resolve still-unspecified grid spacing and partial-exit/BE policy
+with the owner before placing orders. Historical chart price action cannot
+prove an executed profitable trade; do not enable LIVE or alter risk.
+
+**P3 — consistent Telegram presentation for every new pattern.**
+For Box and then new patterns reuse the common notification/card button
+model. The chart and caption show only ticker, timeframe, pattern name and
+impulse-direction arrow; remove service-status/limit-grid/Fibo labels,
+A/B/START, planned STOP/zone and other unwanted overlay text from the
+user-facing Box presentation without changing frozen source geometry or
+entry policy. Existing Box sender presently uses a separate photo/caption
+path and does not give every normal owner button; this is pending.
+
+**P1 delivery gap — L-shape is NOT a Telegram signal yet.**
+PR #197 added only an opt-in local observer. In `main.py`, the flag
+`BYBITSCANNER_L_SHAPE_OBSERVATIONS=1` calls `observe_l_shape`; that function
+logs candidates and saves local PNGs to `charts/l_shape` only. It never calls
+Telegram/photo delivery, `signal_memory` or Robot admission. No flag can
+turn the current observer into a Telegram sender. First finish source-time
+geometry/visual acceptance, then wire a separately approved Scanner-to-
+Telegram *observational* L-shape card through the shared presentation/buttons
+with stable candidate identity and no Robot order path. Do not describe its
+absence from Telegram as a detector failure or assume current local flag/
+deployment state without observing the actual host.
+
+**Mandatory acceptance for each changed Scanner pattern/geometry path:**
+focused proof during implementation, then **one complete real Scanner pass
+through every available eligible instrument**, with ordinary configured
+delivery and the intended pattern integration enabled. Return all candidate
+charts and a full pass count/error summary for the owner's visual acceptance.
+Do not replace it with short/sampled/offline-only runs; do not start Robot,
+LIVE, deploy or restart multi-service launchers without separate safety checks
+and authorization. See `AGENTS.md` for the binding rule.
+
+**Next dependent task:** recover exact APTUSDT/B3USDT source-time evidence and
+fix the earliest demonstrated candidate-construction error; if their original
+snapshots are unavailable, report that fact and capture the next actual
+full-pass evidence, without reconstructing a convenient different cutoff.
+Keep ATH/B2 Box and L-shape delivery as the next scoped tasks above, not
+parallel implementation campaigns.
+
 ## 0. Rules to avoid loose ends
 
 1. WIP limit: one active task plus at most one background task that is only waiting (CI, review, deploy, live check).
