@@ -39,6 +39,35 @@ and its narrow changed-behavior checks during implementation; complete the
 mandatory full-universe Scanner acceptance pass below for every new pattern
 or Scanner correction, without redundant repeated passes.
 
+## Geometry construction first — owner-defined search-system outcome (2026-09-23)
+
+**Invalid geometry must never be constructed as a search candidate.** This is
+the required end state for **every pattern**, not a notification/admission
+filtering task. Search begins with the owner's pattern-specific structural
+definition: identify the real local episode, directional impulse, chronologically
+valid anchors and START, and all required legs/shelf using evidence available
+at the original decision candle. Only **structurally valid formations** may
+proceed to line fitting, ranking, quality scores, presentation, Telegram or
+Robot. No valid construction means **no formation candidate** for that
+episode, not a false candidate subsequently hidden by score, freshness,
+delivery, or Robot filters.
+
+For an observed false formation, trace the actual selected candidate backward
+through generation, episode/anchor selection and geometry construction;
+fix the **earliest causative stage** and the general pattern rule, not the
+display, score threshold or signal-delivery gate. Never rescue an invalid
+construction by moving START, fitting visually convenient boundaries,
+enlarging the chart or adding downstream suppression. Preserve source-time
+reproducibility; do not invent a universal rule from a single screenshot.
+The owner reviews the output of a correctly constructed search system, not
+a stream of malformed proposals requiring manual rejection.
+
+Pattern rules stay distinct: Ikigai first-impulse candle-colour constraints
+must be resolved in its owning strategy specification and enforced at its
+first-leg construction stage, not copied to wedges, triangles or L-shapes.
+A formation's historical market completion and a Robot trade's proven fill/
+exit lifecycle are separate states; do not infer execution from a chart.
+
 ## Scanner visual acceptance: full passes only — owner rule (2026-09-23)
 
 **Permanent, universal rule for ALL new Scanner patterns and ALL future
