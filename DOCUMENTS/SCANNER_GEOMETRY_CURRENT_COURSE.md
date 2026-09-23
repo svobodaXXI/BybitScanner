@@ -13,6 +13,31 @@ before claiming owner visual acceptance. Short/sampled/offline checks may aid
 development but never replace the full pass. Follow the safety and ordinary
 delivery boundaries in [AGENTS.md](../AGENTS.md#scanner-visual-acceptance-full-passes-only--owner-rule-2026-09-23).
 
+## Universal geometry-search invariant — OWNER AUTHORITY (2026-09-23)
+
+**The search system must not generate geometry that violates the owner's
+pattern definition.** Establish the correct local episode, impulse, START,
+anchor chronology and pattern-specific structural conditions **during
+candidate construction**, before line fitting, ranking or signal admission.
+When that construction is not supported by source-time candles, emit no
+candidate for the proposed episode; never build a malformed figure and then
+mask it with score, Telegram or Robot filters. Fix reported false figures at
+their earliest causative generation/anchor/geometry stage, not by moving
+START or adjusting rendering, scores or chart windows. This is the
+owner-expected end state for wedges, triangles, Ikigai Box, L-shapes and
+every subsequent Scanner pattern. Refer to the prominent
+[AGENTS.md rule](../AGENTS.md#geometry-construction-first--owner-defined-search-system-outcome-2026-09-23).
+
+**Observed failure example:** B3USDT 5m triangle screenshot: a lower boundary
+starts from the preceding rally while the displayed START and upper boundary
+belong to the later local consolidation; this is an observed mismatch, not
+a verified root-cause diagnosis without the exact frozen source candles.
+APTUSDT wedge and ATHUSDT Box screenshots likewise require source-time
+construction tracing. Pattern-specific candle-colour and setup-completion
+rules belong to the owning specification; do not extrapolate one pattern's
+constraints to another. A Robot trade's actual exit requires execution
+evidence, not only an observed price touch.
+
 ## Universal wedge anchor rule — OWNER AUTHORITY
 
 **For EVERY wedge:** preceding directional impulse → **first anchor is the
