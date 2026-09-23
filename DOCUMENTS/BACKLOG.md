@@ -5,41 +5,56 @@ Last updated: 2026-09-22 (Scanner acceptance queue; older entries retain their o
 Owner: user. When a task starts, Claude Code registers it as a ChangeRequest per the project rules; this file is the
 single place where new ideas are parked until then.
 
+## Permanent Scanner scan cadence and current task placement — OWNER RULE (2026-09-23)
+
+**Every symbol: 5m first → immediately 1m → next symbol.** Evaluate all
+integrated patterns independently on both intervals; send their real charts
+to Telegram with the correct interval and pattern. Preserve separate
+(symbol, timeframe, pattern, formation) anchors, candle data, identity,
+state, deduplication and chart paths; a failure on one interval does not
+block or falsify the other. Do not replace this with a full-universe 5m
+pass followed by a full-universe 1m pass, or silently leave 1m patterns
+unwired. Do not automatically extend Robot/PAPER/LIVE trading to 1m.
+
+**Execution queue update:** the L-shape Telegram integration is merged
+(PR #204), but full user-visible acceptance has not been reported. The
+owner has explicitly moved the full scan later. First finish the ongoing
+Ikigai Box Telegram/chart simplification, including **candles about 40%
+narrower** (presentation only), without interrupting it. **Next** implement
+the universal per-symbol 5m→1m Scanner/Telegram path; **then** tackle the
+existing geometry-construction cases APTUSDT, B3USDT, DASHUSDT, ATHUSDT
+(with B2USDT Box positive control). For each completed Scanner correction,
+follow the owner's mandatory full eligible-universe Telegram visual
+acceptance rule when the owner authorizes the actual run. The user judges
+the charts visually; developer verification stays limited to necessary
+technical checks, not extra test campaigns.
+
 ## Binding owner execution order — 2026-09-23 (READ FIRST)
 
-**Execute strictly in this order; do not switch to geometry work early:**
+**Execute one dependent task at a time, in this owner-selected order:**
 
-1. **L-shape → Telegram.** Finish the missing real Scanner → Telegram photo,
-   unified caption and applicable safe buttons for the already-implemented
-   G-shaped/L-shaped pattern. Preserve source-time geometry and dedup/retry;
-   no unsupported Robot controls or PAPER/LIVE orders. Verify the actual
-   delivered notifications during one complete eligible-universe Scanner
-   pass and obtain owner visual feedback. Current local-only observer and its
-   interrupted 302/777-symbol run are **not** acceptance.
-2. **Simplify Ikigai Box Telegram chart/card.** Finish the previously
-   interrupted task: only ticker, timeframe, pattern name and the first-
-   impulse direction arrow in the chart header and post caption; remove
-   distracting chart labels/overlays such as planned limit grid, zone,
-   STOP, status, A/B and START. Reuse the ordinary signal layout and
-   applicable functioning owner buttons. Do not change Box geometry or
-   trading policy as a side effect. Confirm through the mandated complete
-   real Scanner pass and owner Telegram review.
-3. **Geometry corrections.** Resume the recorded P0 geometry-construction
-   cases **APTUSDT wedge, B3USDT triangle, DASHUSDT wedge** and the
-   **ATHUSDT Box first-impulse** defect, using **B2USDT Box** as a positive
-   control. Find and repair the earliest wrong candidate-generation/
-   episode/anchor stage, not a downstream score/notification filter or
-   a visual START move. Preserve the owner-approved pattern-specific rules.
-   After each material Scanner correction, perform the mandatory full-universe
-   owner-visible acceptance pass; focused tests during implementation do
-   not replace it.
+1. **L-shape → Telegram:** PR #204 has been merged, but the owner has
+   deferred the full Telegram visual acceptance scan. Do not mistake a
+   partial 302/777-symbol local observer run for acceptance.
+2. **Ikigai Box Telegram card:** finish simplified chart header/caption
+   and shared applicable buttons, remove unneeded annotation/plan labels,
+   and reduce candle visual width by approximately **40%**. Preserve
+   candle prices and frozen Box geometry; do not alter trading strategy.
+3. **Universal 5m→1m Scanner:** for each eligible ticker analyze 5m,
+   immediately analyze 1m, run every integrated pattern on both, and
+   deliver separately labeled Telegram charts. Isolate each interval's
+   candidate identity, history and outputs; no 1m Robot trading.
+4. **Geometry corrections:** resolve APTUSDT wedge, B3USDT triangle,
+   DASHUSDT wedge and ATHUSDT Box source-time candidate-construction
+   defects; keep B2USDT Box as positive control. Fix the earliest wrong
+   generator/anchor stage, never hide malformed formations downstream.
 
-This **owner-selected execution order supersedes priority labels, "next
-task" statements and previous geometry-first sequencing elsewhere in this
-backlog or derived status summaries**. Work on one dependent task at a time.
-Do not confuse the final invariant (correct geometry at candidate construction)
-with the **immediate implementation order**. Trading execution and LIVE
-authorization remain separate and unchanged.
+The previous "geometry before other features", "full L-shape pass immediately",
+and other stale priority/next-step statements below are superseded **only
+for scheduling** by this section. The permanent requirements of correct
+geometry at construction, Telegram-visible pattern integration and full
+real-universe visual acceptance remain in force. No trading/runtime launch
+authorization is implied.
 
 ## IMMEDIATE owner-visible milestone — L-shape Telegram (2026-09-23)
 

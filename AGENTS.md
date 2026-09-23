@@ -77,12 +77,40 @@ run one complete real eligible-symbol pass for the owner's Telegram review.
 Existing local-only behavior is a defect against this workflow rule, not
 the accepted permanent architecture.
 
+## Permanent Scanner 5m → 1m per-symbol workflow — OWNER RULE (2026-09-23)
+
+For **each eligible symbol**, the Scanner must process its **5-minute candles
+first, then immediately its 1-minute candles**, before moving to the next
+symbol. Run **every integrated Scanner pattern** on both intervals and deliver
+each genuinely constructed formation in the ordinary Telegram signal feed
+with its actual chart, clearly labeled `5м` or `1м`. A pattern must not be
+silently excluded on 1m because its old path assumed 5m. Keep each
+(symbol, timeframe, pattern, formation identity) independent in candidate
+selection, closed-candle source-time anchors, signal memory, deduplication,
+notifications and charts: a 1m result must not overwrite/suppress a 5m
+result or vice versa. If one interval fails, record it and continue to the
+other and the next symbol without fabricating a signal.
+
+This is a **permanent desired Scanner behavior**, not a claim that the
+current runtime already does it. Its implementation belongs **after the
+ongoing Ikigai Box card simplification (including approximately 40% narrower
+candlesticks) and before the queued geometry repairs**. Do not interrupt
+that card task or start the full Scanner pass merely to document the rule.
+After implementation, owner acceptance requires one full real eligible-symbol
+Scanner pass showing the ordered 5m→1m coverage and Telegram charts for all
+integrated patterns. Keep the existing 5m Robot/PAPER/LIVE admission, orders,
+risk and protective state unchanged: 1m Scanner signals are observational
+until trading behavior is separately approved.
+
 ## Current mandatory task sequence — OWNER UPDATE (2026-09-23)
 
-The user's execution order is **(1) L-shape visible in ordinary Telegram
-signals → (2) simplify the Ikigai Box chart/card and unify its Telegram
-caption/buttons → (3) fix the queued Scanner geometry errors** (APTUSDT,
-B3USDT, DASHUSDT, ATHUSDT; preserve B2USDT as Box positive control). Follow
+The user's current execution order is **(1) L-shape Telegram
+integration merged, full visual acceptance still pending → (2) finish
+Ikigai Box Telegram card simplification and make candles approximately
+40% narrower → (3) implement per-symbol 5m then 1m Scanner search and
+Telegram delivery for every integrated pattern → (4) fix queued Scanner
+geometry errors** (APTUSDT, B3USDT, DASHUSDT, ATHUSDT; preserve B2USDT
+as Box positive control). Follow
 the top **"Binding owner execution order"** section of
 `DOCUMENTS/BACKLOG.md` as the authoritative next-task index. Do **not**
 advance geometry tasks ahead of Telegram integration or Box presentation by
