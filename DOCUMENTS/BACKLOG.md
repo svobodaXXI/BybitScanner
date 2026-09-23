@@ -7,11 +7,12 @@ Owner: user. This is the existing work queue, not a substitute for applicable ap
 
 ## CURRENT owner task / NEXT ACTION — 2026-09-24 (continuation default; explicit new owner request takes precedence)
 
-**Primary owner milestone (one per workstream):** Ikigai Box → PAPER Robot.
+**Primary owner milestone (current workflow):** Ikigai Box → PAPER Robot.
 The owner selected it ahead of the pending full Scanner visual pass. This
 checkpoint governs continuation when the owner gives no new task choice;
 a newer explicit owner request takes precedence. Independently authorized
-parallel work and critical safety response are not stopped by this limit.
+parallel work, direct new owner requests and critical safety response are
+not stopped by this limit.
 
 **Done / verified:** Scanner per-symbol 5m→1m PR #216 merged in GitHub main
 (`77385a8`); owner full-universe Telegram acceptance of that version remains
@@ -19,7 +20,7 @@ PENDING. Box first-attempt prices P1/P2/P3/P4 = 75/85/95/105% of the signed
 F(1.0)→F(1.618) distance, four equal 1/4 working-volume slices and common
 TAKE at 10% of that displacement are owner-approved and documented in
 `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`. Existing non-executing planner
-PR #215 (head `f33cb4c`) has 9/9 focused tests PASS on the owner's isolated
+PR #215 (verified revision `f33cb4c`) has 9/9 focused tests PASS on the owner's isolated
 `C:\BybitScanner-box` checkout; PR is OPEN, NOT MERGED. An offline test
 does not authorize PAPER orders, LIVE trades or full Scanner acceptance.
 
@@ -51,6 +52,10 @@ priority, blocker or handoff change, not on every message or test.
 ---
 
 ## HISTORICAL owner work index — 2026-09-23 (superseded by topmost current-task checkpoint)
+
+**Archived snapshot, not live instructions:** its "immediate", "not completed",
+PR status and next-action statements may now be stale. Use the topmost
+checkpoint and verify the actual PR/runtime state before any action.
 
 **Do not repeat completed work.** The 23 September owner-manual real Scanner
 pass completed one universe traversal: 777 tickers, 65 detected patterns
@@ -190,7 +195,7 @@ a trading change or a separate owner visual check.
   axis-label text (not scale ticks); PR #212 implemented the presentation
   change.
 
-**Outstanding:** AEONUSDT historical selection cutoff remains unknown; APRUSDT and other merged presentation/delivery fixes await owner full-pass visual acceptance; IOTXUSDT removal awaits PR #214 verification/merge and then full-pass acceptance. See the CURRENT owner work index above.
+**Outstanding:** AEONUSDT historical selection cutoff remains unknown; APRUSDT and other merged presentation/delivery fixes await owner full-pass visual acceptance; IOTXUSDT removal awaits PR #214 verification/merge and then full-pass acceptance. See the topmost CURRENT owner task / NEXT ACTION for present routing.
 
 ## Unified Scanner Telegram signal caption — PERMANENT FORMAT RULE (2026-09-23)
 
@@ -489,6 +494,10 @@ the charts visually; developer verification stays limited to necessary
 technical checks, not extra test campaigns.
 
 ## HISTORICAL owner execution order — 2026-09-23 (not current scheduling authority)
+
+**Archived owner decision:** this sequence governed 2026-09-23 work; it
+must not overrule the latest explicit user task or the topmost current
+checkpoint. Its underlying still-open tasks remain queued.
 
 The owner explicitly changed the priority to **former tasks 5 → 4 → 2 → 6;
 all remaining tasks afterwards**. This section supersedes the previous
