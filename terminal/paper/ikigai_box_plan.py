@@ -35,6 +35,7 @@ class IkigaiBoxPaperPlan:
     limit_quantities: tuple[Decimal, ...]
     frozen_f1: Decimal
     frozen_f1618: Decimal
+    take_price: Decimal
     grid_spacing: Decimal
     stop_price: Decimal
     stop_basis: str
@@ -103,6 +104,7 @@ def plan_ikigai_box(
     target_fee_rate: Decimal,
     stop_fee_rate: Decimal,
     structural_stop: Decimal | None = None,
+    take_price: Decimal | None = None,
 ) -> IkigaiBoxPaperPlan:
     """Validate a supplied first grid and freeze one fee-aware STOP beyond P4.
 
@@ -136,6 +138,10 @@ def plan_ikigai_box(
         require_positive_decimal(value, "LIMIT quantity")
         if value * 4 != working_quantity:
             raise ValueError("each LIMIT quantity must be exactly 1/4 working quantity")
+    target = frozen_f1 if take_price is None else take_price
+    require_positive_decimal(target, "TAKE price")
+    if target % tick_size:
+        raise ValueError("TAKE price must be tick-aligned")
     entry_fee = _fee(entry_fee_rate, "entry fee")
     target_fee = _fee(target_fee_rate, "target fee")
     stop_fee = _fee(stop_fee_rate, "STOP fee")
@@ -156,12 +162,12 @@ def plan_ikigai_box(
         raise ValueError("LIMITs must be equally spaced in adverse fill order")
     if sign * (prices[3] - frozen_f1618) >= 0:
         raise ValueError("P4 must be strictly beyond F(1.618)")
-    if any(sign * (frozen_f1 - price) <= 0 for price in prices):
-        raise ValueError("F(1.0) must be on the profitable side of every LIMIT")
+    if any(sign * (target - price) <= 0 for price in prices):
+        raise ValueError("TAKE must be on the profitable side of every LIMIT")
 
     total = sum(quantities, Decimal(0))
     average = sum((p * q for p, q in zip(prices, quantities)), Decimal(0)) / total
-    reward = sign * (frozen_f1 - average) - average * entry_fee - frozen_f1 * target_fee
+    reward = sign * (target - average) - average * entry_fee - target * target_fee
     if reward <= 0:
         raise ValueError("fees leave no positive full-grid target profit")
 
@@ -191,7 +197,7 @@ def plan_ikigai_box(
 
     def exposure(price: Decimal, quantity: Decimal) -> PlannedExposure:
         profit = quantity * (
-            sign * (frozen_f1 - price) - price * entry_fee - frozen_f1 * target_fee
+            sign * (target - price) - price * entry_fee - target * target_fee
         )
         loss = quantity * (sign * (price - stop) + price * entry_fee + stop * stop_fee)
         return PlannedExposure(quantity, price, profit, loss, profit / loss)
@@ -200,8 +206,30 @@ def plan_ikigai_box(
     slices = tuple(exposure(p, q) for p, q in zip(prices, quantities))
     return IkigaiBoxPaperPlan(
         direction=direction, limit_prices=prices, limit_quantities=quantities,
-        frozen_f1=frozen_f1, frozen_f1618=frozen_f1618, grid_spacing=abs(step),
+        frozen_f1=frozen_f1, frozen_f1618=frozen_f1618, take_price=target, grid_spacing=abs(step),
         stop_price=stop, stop_basis=basis, full_position=full, slices=slices,
         partial_fill_loss_upper_bound=sum((s.net_stop_loss for s in slices), Decimal(0)),
         minimum_partial_fill_rr=min(s.reward_risk for s in slices),
+    )
+
+def plan_approved_first_ikigai_box(
+    *, direction: str, working_quantity: Decimal,
+    frozen_f1: Decimal, frozen_f1618: Decimal, tick_size: Decimal,
+    entry_fee_rate: Decimal, target_fee_rate: Decimal,
+    stop_fee_rate: Decimal, structural_stop: Decimal | None = None,
+) -> IkigaiBoxPaperPlan:
+    """Plan the approved first-attempt geometry; still no order authorization."""
+    prices, take = approved_first_grid(
+        direction=direction, frozen_f1=frozen_f1,
+        frozen_f1618=frozen_f1618, tick_size=tick_size,
+    )
+    require_positive_decimal(working_quantity, "working quantity")
+    each = working_quantity / Decimal(4)
+    return plan_ikigai_box(
+        direction=direction, limit_prices=prices,
+        limit_quantities=(each,) * 4, working_quantity=working_quantity,
+        frozen_f1=frozen_f1, frozen_f1618=frozen_f1618,
+        tick_size=tick_size, entry_fee_rate=entry_fee_rate,
+        target_fee_rate=target_fee_rate, stop_fee_rate=stop_fee_rate,
+        structural_stop=structural_stop, take_price=take,
     )
