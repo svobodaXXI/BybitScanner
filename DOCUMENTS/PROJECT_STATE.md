@@ -670,6 +670,16 @@ No PAPER/LIVE execution permission, Scanner start or host/runtime sync is
 implied by a documentation checkpoint.
 
 ---
+# CURRENT_DEVELOPMENT_PRIORITY
+
+**Compatibility anchor for the existing `tools/dev/task_context.py` routing.**
+The authoritative current owner milestone and next concrete step are in the
+topmost `CURRENT owner task / NEXT ACTION` section of
+`DOCUMENTS/BACKLOG.md`. Follow the newest explicit owner request first.
+This anchor must not be interpreted as a second current-task ledger or as
+permission to activate PAPER/LIVE trading or launch Scanner.
+
+---
 # HISTORICAL_WORK_CONTROL — 2026-09-18 (not current owner-task routing)
 
 Status:
