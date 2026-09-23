@@ -196,6 +196,16 @@ must not be assumed executable before the first fill. Each confirmed entry
 slice gets its own reduce-only TAKE LIMIT for no more than that slice's
 remaining open quantity, including partial fills.
 
+**Experimental PAPER STOP policy (owner confirmation, 2026-09-23):**
+The precomputed, fixed-price STOP beyond the entire grid is a trial policy;
+record the fully filled theoretical RR separately from realized partial-fill
+RR, protective-stop hits and fee-inclusive outcomes. Do not tune this STOP
+from anecdotal cases or promote it to LIVE without evidence and separate
+authorization. This confirmation authorizes bounded PAPER-only development,
+NOT runtime entry/order activation. Keep execution fail-closed until grid
+endpoint prices, per-slice TAKE pricing, partial-fill exposure budget and
+protective-order reservation/ownership are resolved and verified.
+
 **Risk boundary:** the full-grid planned RR >= 2:1 does not imply the same
 RR for the first one or two fills. Calculate and expose the worst-case
 partial-fill loss and fee-aware RR at this fixed STOP; do not claim per-slice
