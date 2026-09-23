@@ -169,36 +169,24 @@ integrated patterns. Keep the existing 5m Robot/PAPER/LIVE admission, orders,
 risk and protective state unchanged: 1m Scanner signals are observational
 until trading behavior is separately approved.
 
-## Current mandatory task sequence — OWNER UPDATE (2026-09-23)
+## Current owner task routing — latest checkpoint
 
-The user's current execution order is **(1) L-shape Telegram integration
-merged → (2) Ikigai Box card simplification and approximately 40% narrower
-candles merged → (3) one complete real Scanner pass for owner visual review
-of both integrations, with no isolated card preview → (4) implement
-per-symbol 5m then 1m Scanner search and Telegram delivery for every
-integrated pattern → (5) fix queued Scanner geometry errors** (APTUSDT, B3USDT, DASHUSDT, ATHUSDT; preserve B2USDT
-as Box positive control). Follow
-the top **"Binding owner execution order"** section of
-`DOCUMENTS/BACKLOG.md` as the authoritative next-task index. Do **not**
-advance geometry tasks ahead of Telegram integration or Box presentation by
-reading generic priority labels or stale next-step statements elsewhere.
-Correct candidate construction remains the mandatory end-state for all
-patterns; this owner order governs **when** its work is resumed. Each changed
-Scanner behavior still requires one complete real eligible-universe run for
-the owner's Telegram visual acceptance. No automatic Robot/PAPER/LIVE
-activation or risk changes.
+For the next owner-selected primary milestone and its one concrete next
+action, read the **topmost CURRENT owner task / NEXT ACTION** checkpoint in
+`DOCUMENTS/BACKLOG.md`. It supersedes historical "immediate" labels and
+older owner execution orders below it, including the prior 2026-09-23
+Scanner sequence in this file. The current milestone is Ikigai Box PAPER
+Robot planning; the subsequent complete owner-manual Scanner 5m→1m
+Telegram acceptance remains parked until the owner resumes it.
 
-## Active feedback queue and resumption
-
-For the current owner-prioritized Scanner geometry → Box setup lifecycle →
-PAPER execution → unified Telegram work, open the **first section** of
-`DOCUMENTS/BACKLOG.md` ("ACTIVE owner-feedback action plan — 2026-09-23")
-before selecting the next slice. It records APTUSDT/B3USDT false construction,
-ATHUSDT Box impulse/completion and B2USDT positive control. **The immediate
-user-visible blocker is L-shape Telegram delivery**: PR #197's local-only
-observer is not the owner-accepted integration. Complete its ordinary
-Telegram photo/caption/buttons path first, while keeping Robot execution
-separately unauthorized.
+Use the existing backlog as the only work queue / short current checkpoint,
+the owning strategy spec for trading decisions, and GitHub PRs for code
+and verification. Do not create another task tracker, status document,
+session-handoff requirement or automatic recurring audit. Keep one primary
+owner milestone in progress, admit safety-critical interruptions, and update
+the checkpoint only upon a material change of next action, decision,
+verified status or handoff. All safety, trading approval and real-Scanner
+owner-only rules elsewhere in this guide remain binding.
 
 ## Geometry construction first — owner-defined search-system outcome (2026-09-23)
 
