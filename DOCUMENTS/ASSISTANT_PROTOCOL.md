@@ -2,7 +2,7 @@
 
 Version:
 
-4.43
+4.44
 
 Date:
 
@@ -307,6 +307,35 @@ report explaining the delay, what is proven, and the bounded next step.
 A previously authorized long-running scan/build/CI job with a clear purpose
 may continue without repeated polling, redundant tests, or interrupting
 unrelated processes. Do not claim completion for an unfinished step.
+
+### 3.2.1a PROMPT BUDGET / NO TEST LOOPS — OWNER RULE 2026-09-23
+
+Every ChatGPT-to-Codex/Claude Code prompt MUST be a short, outcome-oriented,
+bounded micro-slice: state the actual delta, existing evidence to reuse, the
+smallest genuinely necessary verification, the stopping point and a concise
+result to return. Do not include redundant task recaps, broad research,
+multiple optional investigations, full-suite requests, repeated tests of
+unchanged behavior, or instructions to keep iterating until a vaguely defined
+"perfect" result. Do not append a generic battery of checks to every prompt.
+
+Require the agent to run each necessary focused check **once after the relevant
+change**, reuse already successful evidence, and rerun **only a failing check
+after a targeted fix** or where a changed input invalidates its result.
+No automatic test/fix/test/fix cycles, alternative-threshold tuning loops,
+repeated source fetches, continuous polling or waiting for long jobs. If one
+bounded attempt fails or evidence is unavailable, STOP, report the precise
+blocker and smallest next decision; do not start another exploratory branch
+without a separate reason. Existing mandatory safety/contract/final gates
+remain in force, but prefer consuming their recorded results rather than
+duplicating them with additional ad hoc runs. A code task ends promptly after
+its scoped deliverable and required proof; no agent-supervised real Scanner
+pass or owner visual preview outside the full-pass-only policy.
+
+The assistant MUST check this rule when writing each subsequent delegated
+prompt and remove any instruction that would accidentally trigger repetitive
+work, excessive test campaigns or unbounded autonomous cycles. If a task
+cannot safely complete with the minimum checks, state the concrete mandatory
+exception rather than silently expanding the prompt.
 
 ### 3.2.2 DEFERRED: chat-independent task continuation (idea, NOT an active migration)
 
@@ -852,6 +881,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.44` adds §3.2.1a: compact delegated prompts, one necessary focused check per changed behavior, no automatic verification/research loops or agent waiting; mandatory safety gates remain intact.
 
 `4.43` adds §3.2.1: bounded verifiable slices, no redundant tests or repeated diagnostic loops, and an explicit progress/stop boundary for prolonged unproductive work. It operationalizes §3.2 and §7.3 without weakening mandatory verification or requiring new infrastructure.
 
