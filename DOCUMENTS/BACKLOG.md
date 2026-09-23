@@ -43,6 +43,20 @@ and control work. See the dated sections below for detail, not for current
 scheduling. A new explicit owner request or critical safety issue may change
 this order without first finishing the Box milestone.
 
+**GTD/Kanban adoption state (2026-09-24):** scoped to existing
+`BACKLOG.md`, `AGENTS.md`, `ASSISTANT_PROTOCOL.md` and the
+`PROJECT_STATE.md` pointer; proposed in [PR #217](https://github.com/svobodaXXI/BybitScanner/pull/217),
+OPEN / NOT MERGED as recorded here. Review found and corrected stale
+priority routes, direct-owner-request/WIP ambiguity and the missing
+`CURRENT_DEVELOPMENT_PRIORITY` compatibility heading used by
+`tools/dev/task_context.py`. Earlier CI on this PR failed at that exact
+missing heading; revised GitHub check is **NOT YET VERIFIED** at this
+checkpoint. This documentation change is not a new trading feature,
+PAPER/LIVE approval, Scanner acceptance or local-PC synchronization.
+After the required GitHub check and review, merge the existing PR on
+GitHub and safely synchronize the appropriate local main checkout;
+do not modify the user's dirty `C:\BybitScanner` worktree.
+
 **Work-control rule:** classify and deduplicate new work using
 `DOCUMENTS/ASSISTANT_PROTOCOL.md` §3.2.2. This entry holds only the current
 operational facts and links; strategy decisions remain in their owning spec,
