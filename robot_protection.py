@@ -242,6 +242,57 @@ def build_protection_plan(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class BoxStopTerms:
+    """Pure terms only; not an order, a fill proof, or execution approval."""
+
+    price: Decimal
+    quantity: Decimal
+
+
+def prepare_box_stop_terms(
+    snapshot: Mapping[str, Any], *,
+    confirmed_position_quantity: Decimal,
+    confirmed_average_entry: Decimal,
+) -> BoxStopTerms:
+    """Read the frozen Box STOP and size it to externally confirmed exposure.
+
+    The caller must independently prove fill, position ownership and protection
+    authorization. This function cannot submit orders or promote BOX_PLAN_ONLY.
+    """
+    if (snapshot.get("pattern") != "IKIGAI_BOX"
+            or snapshot.get("environment") != "PAPER"
+            or snapshot.get("execution_authorized") is not False
+            or snapshot.get("attempt") != 1):
+        raise RobotProtectionError("a non-executable first-attempt PAPER Box snapshot is required")
+    plan = snapshot.get("plan")
+    if not isinstance(plan, Mapping):
+        raise RobotProtectionError("Box plan is missing")
+    direction = plan.get("direction")
+    if direction not in (DIRECTION_LONG, DIRECTION_SHORT):
+        raise RobotProtectionError("Box direction is invalid")
+    prices = plan.get("limit_prices")
+    quantities = plan.get("limit_quantities")
+    if (not isinstance(prices, (tuple, list)) or len(prices) != 4
+            or not isinstance(quantities, (tuple, list)) or len(quantities) != 4):
+        raise RobotProtectionError("Box grid must contain four entries")
+    levels = tuple(_decimal(price, "Box LIMIT price") for price in prices)
+    sizes = tuple(_decimal(qty, "Box LIMIT quantity") for qty in quantities)
+    if any(size != sizes[0] for size in sizes):
+        raise RobotProtectionError("Box entry quantities must be equal")
+    stop = _decimal(plan.get("stop_price"), "frozen Box STOP")
+    quantity = _decimal(confirmed_position_quantity, "confirmed position quantity")
+    entry = _decimal(confirmed_average_entry, "confirmed average entry")
+    if quantity > sum(sizes):
+        raise RobotProtectionError("confirmed exposure exceeds the approved Box grid")
+    if direction == DIRECTION_LONG:
+        if not (stop < levels[3] < levels[2] < levels[1] < levels[0] and stop < entry):
+            raise RobotProtectionError("LONG Box STOP is not beyond P4 and actual entry")
+    elif not (stop > levels[3] > levels[2] > levels[1] > levels[0] and stop > entry):
+        raise RobotProtectionError("SHORT Box STOP is not beyond P4 and actual entry")
+    return BoxStopTerms(stop, quantity)
+
+
 def protection_recovery(
     candidate_id: str,
     symbol: str,

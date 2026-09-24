@@ -12,6 +12,8 @@ from robot_protection import (
     RECOVERY_TAKE_ONLY,
     RECOVERY_WAIT,
     build_protection_plan,
+    prepare_box_stop_terms,
+    RobotProtectionError,
     frozen_take_90,
     protection_recovery,
     structural_stop,
@@ -57,6 +59,48 @@ class _Submitter:
 
 
 class RobotProtectionTests(unittest.TestCase):
+    def test_box_stop_terms_are_fixed_and_follow_confirmed_exposure(self):
+        def snapshot(direction):
+            prices = (("94", "93", "92", "91") if direction == "LONG"
+                      else ("106", "107", "108", "109"))
+            stop = "90" if direction == "LONG" else "110"
+            return {
+                "pattern": "IKIGAI_BOX", "environment": "PAPER",
+                "execution_authorized": False, "attempt": 1,
+                "plan": {"direction": direction, "limit_prices": prices,
+                         "limit_quantities": ["2"] * 4, "stop_price": stop},
+            }
+
+        for direction, entry in (("LONG", "94"), ("SHORT", "106")):
+            frozen = snapshot(direction)
+            first = prepare_box_stop_terms(
+                frozen, confirmed_position_quantity=Decimal("2"),
+                confirmed_average_entry=Decimal(entry),
+            )
+            fourth = prepare_box_stop_terms(
+                frozen, confirmed_position_quantity=Decimal("8"),
+                confirmed_average_entry=Decimal(entry),
+            )
+            self.assertEqual(first.price, fourth.price)
+            self.assertEqual(first.quantity, Decimal("2"))
+            self.assertEqual(fourth.quantity, Decimal("8"))
+            with self.assertRaises(RobotProtectionError):
+                prepare_box_stop_terms(
+                    frozen, confirmed_position_quantity=Decimal("9"),
+                    confirmed_average_entry=Decimal(entry),
+                )
+            with self.assertRaises(RobotProtectionError):
+                prepare_box_stop_terms(
+                    frozen, confirmed_position_quantity=Decimal("2"),
+                    confirmed_average_entry=Decimal(frozen["plan"]["stop_price"]),
+                )
+            frozen["execution_authorized"] = True
+            with self.assertRaises(RobotProtectionError):
+                prepare_box_stop_terms(
+                    frozen, confirmed_position_quantity=Decimal("2"),
+                    confirmed_average_entry=Decimal(entry),
+                )
+
     def test_long_structural_stop_one_tick_and_two_percent_fallback(self):
         near = structural_stop(
             DIRECTION_LONG,
