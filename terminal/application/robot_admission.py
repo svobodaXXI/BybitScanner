@@ -91,6 +91,9 @@ def admit_robot_candidate(
     snapshot = candidate.get("signal_snapshot")
     if not isinstance(snapshot, dict):
         raise RobotAdmissionRejected("Scanner candidate snapshot is invalid")
+    if (snapshot.get("pattern") == "IKIGAI_BOX"
+            or candidate.get("status") == "BOX_PLAN_ONLY"):
+        raise RobotAdmissionRejected("BOX_PLAN_ONLY cannot enter execution admission")
     if not is_supported_pattern(snapshot.get("pattern")):
         raise RobotAdmissionRejected("Scanner candidate pattern is not supported by Robot")
 
@@ -124,6 +127,8 @@ def admit_robot_candidate(
     try:
         existing = store.get_robot_candidate(candidate_id)
         if existing is not None:
+            if existing.status == "BOX_PLAN_ONLY":
+                raise RobotAdmissionRejected("BOX_PLAN_ONLY cannot enter execution admission")
             if (
                 existing.trading_account_id != PAPER_ACCOUNT_ID
                 or existing.symbol != symbol

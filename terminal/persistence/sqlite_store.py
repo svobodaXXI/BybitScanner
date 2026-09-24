@@ -55,6 +55,7 @@ from .schema import (
     SCHEMA_V19_MIGRATION_STATEMENTS,
     SCHEMA_V20_MIGRATION_STATEMENTS,
     SCHEMA_V21_MIGRATION_STATEMENTS,
+    SCHEMA_V22_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -88,7 +89,7 @@ ROBOT_MODES = {"ROBOT_STOPPED", "ROBOT_RUNNING"}
 ROBOT_RECOVERY_STATUSES = {
     "ROBOT_STOPPED", "RECONCILING", "READY", "RECONCILIATION_REQUIRED", "PAUSED",
 }
-ROBOT_CANDIDATE_STATUSES = {"APPROVED", "OPEN", "CLOSED", "EXPIRED", "INVALIDATED"}
+ROBOT_CANDIDATE_STATUSES = {"BOX_PLAN_ONLY", "APPROVED", "OPEN", "CLOSED", "EXPIRED", "INVALIDATED"}
 ROBOT_ENTRY_PATHS = {"LIMIT", "MARKET", "MIXED"}
 ROBOT_DIRECTIONS = {"LONG", "SHORT"}
 ROBOT_RUNTIME_STATE_PAIRS = {
@@ -101,6 +102,7 @@ ROBOT_RUNTIME_STATE_PAIRS = {
 }
 SCANNER_MODES = {"SCANNER_STOPPED", "SCANNER_RUNNING", "SCANNER_PAUSED"}
 ROBOT_CANDIDATE_TRANSITIONS = {
+    "BOX_PLAN_ONLY": set(),
     "APPROVED": {"APPROVED", "EXPIRED", "INVALIDATED"},
     "OPEN": {"OPEN"},
     "CLOSED": {"CLOSED"},
@@ -497,7 +499,7 @@ class RobotCandidateRecord:
     snapshot_sha256: str
     robot_state: dict[str, object] | None
     state_revision: int
-    approved_at_ms: int
+    approved_at_ms: int | None
     updated_at_ms: int
 
 
@@ -728,12 +730,22 @@ def _robot_candidate_from_row(row: sqlite3.Row) -> RobotCandidateRecord:
     canonical_snapshot = _canonical_json(snapshot)
     if hashlib.sha256(canonical_snapshot.encode("utf-8")).hexdigest() != row["snapshot_sha256"]:
         raise SchemaError("persisted Robot candidate snapshot hash mismatch")
+    if row["status"] == "BOX_PLAN_ONLY":
+        try:
+            canonical, identity, symbol = _canonical_box_plan(snapshot)
+        except (ValueError, TypeError) as exc:
+            raise SchemaError("persisted Box plan violates its contract") from exc
+        if (identity != row["candidate_id"] or symbol != row["symbol"]
+                or row["trading_account_id"] != "paper" or canonical != canonical_snapshot
+                or row["approved_at_ms"] is not None or state is not None
+                or row["state_revision"] != 0):
+            raise SchemaError("persisted Box plan identity or lifecycle mismatch")
     return RobotCandidateRecord(
         candidate_id=row["candidate_id"],
         trading_account_id=TradingAccountId(row["trading_account_id"]),
         symbol=Symbol(row["symbol"]), status=row["status"], signal_snapshot=snapshot,
         snapshot_sha256=row["snapshot_sha256"], robot_state=state,
-        state_revision=int(row["state_revision"]), approved_at_ms=int(row["approved_at_ms"]),
+        state_revision=int(row["state_revision"]), approved_at_ms=(int(row["approved_at_ms"]) if row["approved_at_ms"] is not None else None),
         updated_at_ms=int(row["updated_at_ms"]),
     )
 
@@ -832,6 +844,101 @@ def _stable_paper_protection_identities(trade_id: str) -> tuple[str, OrderId, Ex
     )
 
 
+def _canonical_box_plan(snapshot: dict[str, object]) -> tuple[str, str, str]:
+    """Validate JSON-only frozen inputs; Decimal values use canonical strings."""
+    if not isinstance(snapshot, dict):
+        raise ValueError("Box snapshot must be an object")
+    expected = {"contract_version", "planner_version", "pattern", "environment",
+                "execution_authorized", "attempt", "identity", "decision_time_ms",
+                "anchors", "fibonacci", "inputs", "plan"}
+    if set(snapshot) != expected:
+        raise ValueError("Box snapshot fields do not match contract v1")
+    if (snapshot["contract_version"] != 1 or type(snapshot["contract_version"]) is not int
+            or snapshot["pattern"] != "IKIGAI_BOX" or snapshot["environment"] != "PAPER"
+            or snapshot["execution_authorized"] is not False
+            or type(snapshot["attempt"]) is not int or snapshot["attempt"] != 1
+            or not isinstance(snapshot["planner_version"], str) or not snapshot["planner_version"].strip()):
+        raise ValueError("Box plan must be a versioned non-executable PAPER first attempt")
+    identity = snapshot["identity"]
+    keys = {"venue", "market", "symbol", "timeframe", "direction", "a_time_ms", "b_time_ms"}
+    if not isinstance(identity, dict) or set(identity) != keys:
+        raise ValueError("invalid Box formation identity")
+    for key in ("venue", "market", "symbol", "timeframe", "direction"):
+        value = identity[key]
+        if not isinstance(value, str) or not value or value != value.strip():
+            raise ValueError("invalid Box identity text")
+    if (identity["direction"] not in {"LONG", "SHORT"}
+            or not identity["timeframe"].isdecimal() or int(identity["timeframe"]) <= 0
+            or identity["timeframe"] != str(int(identity["timeframe"]))
+            or identity["symbol"] != identity["symbol"].upper()
+            or identity["venue"] != identity["venue"].lower()
+            or identity["market"] != identity["market"].lower()):
+        raise ValueError("Box identity must use canonical instrument/timeframe values")
+    for value in (identity["a_time_ms"], identity["b_time_ms"], snapshot["decision_time_ms"]):
+        if type(value) is not int or value < 0:
+            raise ValueError("invalid Box source timestamp")
+    if not identity["a_time_ms"] < identity["b_time_ms"] <= snapshot["decision_time_ms"]:
+        raise ValueError("invalid Box anchor chronology")
+
+    def fields(value, names):
+        if not isinstance(value, dict) or set(value) != set(names.split()):
+            raise ValueError("invalid Box snapshot field set")
+        return value
+
+    def decimal(value, *, zero=False):
+        if not isinstance(value, str):
+            raise ValueError("Box decimals must be strings")
+        try:
+            number = Decimal(value)
+        except InvalidOperation as exc:
+            raise ValueError("invalid Box decimal") from exc
+        if not number.is_finite() or (number < 0 if zero else number <= 0):
+            raise ValueError("invalid Box decimal range")
+        # No context-dependent Decimal.normalize() rounding.
+        text = format(number, "f")
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return "0" if number == 0 else text
+
+    data = json.loads(json.dumps(snapshot, allow_nan=False))
+    for section, names in (("anchors", "a_price b_price"), ("fibonacci", "f1 f1618 f2618")):
+        obj = fields(data[section], names)
+        for key in obj:
+            obj[key] = decimal(obj[key])
+    inputs = fields(data["inputs"], "working_quantity tick_size entry_fee_rate target_fee_rate stop_fee_rate structural_stop")
+    for key in inputs:
+        if key == "structural_stop" and inputs[key] is None:
+            continue
+        inputs[key] = decimal(inputs[key], zero=key.endswith("fee_rate"))
+        if key.endswith("fee_rate") and Decimal(inputs[key]) >= 1:
+            raise ValueError("invalid Box fee rate")
+    plan = fields(data["plan"], "direction limit_prices limit_quantities frozen_f1 frozen_f1618 take_price grid_spacing stop_price stop_basis full_position slices partial_fill_loss_upper_bound minimum_partial_fill_rr environment execution_authorized")
+    if (plan["direction"] != identity["direction"] or plan["environment"] != "PAPER"
+            or plan["execution_authorized"] is not False
+            or plan["stop_basis"] not in {"STRUCTURAL", "FULL_GRID_RR_CAP"}):
+        raise ValueError("invalid frozen Box plan")
+    for key in ("limit_prices", "limit_quantities"):
+        if not isinstance(plan[key], list) or len(plan[key]) != 4:
+            raise ValueError("Box plan requires four slices")
+        plan[key] = [decimal(value) for value in plan[key]]
+    for key in ("frozen_f1", "frozen_f1618", "take_price", "grid_spacing", "stop_price",
+                "partial_fill_loss_upper_bound", "minimum_partial_fill_rr"):
+        plan[key] = decimal(plan[key])
+    if not isinstance(plan["slices"], list) or len(plan["slices"]) != 4:
+        raise ValueError("Box plan requires four exposures")
+    for exposure in [plan["full_position"], *plan["slices"]]:
+        fields(exposure, "quantity average_entry net_target_profit net_stop_loss reward_risk")
+        for key in exposure:
+            exposure[key] = decimal(exposure[key])
+    if (plan["frozen_f1"] != data["fibonacci"]["f1"]
+            or plan["frozen_f1618"] != data["fibonacci"]["f1618"]
+            or data["anchors"]["b_price"] != data["fibonacci"]["f1"]):
+        raise ValueError("Box frozen levels disagree")
+    key = {"identity": identity, "account": "paper", "pattern": "IKIGAI_BOX", "attempt": 1}
+    candidate_id = "box-plan-" + hashlib.sha256(_canonical_json(key).encode("utf-8")).hexdigest()
+    return _canonical_json(data), candidate_id, identity["symbol"]
+
+
 class SQLiteStore:
     """Synchronous store owned by one backend thread and writer."""
 
@@ -878,6 +985,11 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 21:
+            SQLiteStore._validate_required_tables(connection, version=21)
+            SQLiteStore._migrate_v21_to_v22(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 20:
@@ -1270,6 +1382,26 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v21_to_v22(connection)
+
+    @staticmethod
+    def _migrate_v21_to_v22(connection: sqlite3.Connection) -> None:
+        # Rebuild the referenced parent without rewriting robot_trades' FK.
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in SCHEMA_V22_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise SchemaError("Box plan migration found a foreign key violation")
+            connection.execute("PRAGMA user_version = 22")
+            connection.execute("COMMIT")
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -3755,6 +3887,37 @@ class SQLiteStore:
                 raise ConcurrentUpdate("Scanner runtime state changed or timestamp regressed")
         return self.get_scanner_runtime_state(trading_account_id)  # type: ignore[return-value]
 
+    def save_box_plan_only(
+        self, *, snapshot: dict[str, object], created_at_ms: int,
+    ) -> tuple[RobotCandidateRecord, bool]:
+        """Persist an explicit frozen first-attempt plan; never calculate/admit it.
+
+        Repeated identical snapshots return the original row. Identity excludes
+        prices, calculation versions and observation time: conflicts never replan.
+        """
+        self._assert_owner()
+        if type(created_at_ms) is not int or created_at_ms < 0:
+            raise ValueError("invalid Box plan timestamp")
+        snapshot_json, candidate_id, symbol = _canonical_box_plan(snapshot)
+        digest = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
+        with self._transaction():
+            existing = self.get_robot_candidate(candidate_id)
+            if existing is not None:
+                if (existing.status != "BOX_PLAN_ONLY"
+                        or existing.trading_account_id != TradingAccountId("paper")
+                        or existing.symbol.value != symbol
+                        or existing.snapshot_sha256 != digest):
+                    raise DuplicateIdentity("Box formation already has a different frozen plan")
+                return existing, False
+            try:
+                self._connection.execute(
+                    "INSERT INTO robot_candidates VALUES (?, 'paper', ?, 'BOX_PLAN_ONLY', ?, ?, NULL, 0, NULL, ?)",
+                    (candidate_id, symbol, snapshot_json, digest, created_at_ms),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateIdentity("Box plan conflicts with durable state") from exc
+        return self.get_robot_candidate(candidate_id), True
+
     def create_robot_candidate(
         self, *, candidate_id: str, trading_account_id: TradingAccountId, symbol: Symbol,
         status: str, signal_snapshot: dict[str, object], approved_at_ms: int,
@@ -3774,7 +3937,8 @@ class SQLiteStore:
             if existing is not None:
                 record = _robot_candidate_from_row(existing)
                 same = (
-                    record.trading_account_id == trading_account_id and record.symbol == symbol
+                    record.status != "BOX_PLAN_ONLY"
+                    and record.trading_account_id == trading_account_id and record.symbol == symbol
                     and record.snapshot_sha256 == snapshot_sha256
                 )
                 if not same:
