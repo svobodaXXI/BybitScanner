@@ -56,6 +56,7 @@ from .schema import (
     SCHEMA_V20_MIGRATION_STATEMENTS,
     SCHEMA_V21_MIGRATION_STATEMENTS,
     SCHEMA_V22_MIGRATION_STATEMENTS,
+    SCHEMA_V23_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -987,6 +988,11 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 22:
+            SQLiteStore._validate_required_tables(connection, version=22)
+            SQLiteStore._migrate_v22_to_v23(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
         if version == 21:
             SQLiteStore._validate_required_tables(connection, version=21)
             SQLiteStore._migrate_v21_to_v22(connection)
@@ -1402,6 +1408,19 @@ class SQLiteStore:
             raise
         finally:
             connection.execute("PRAGMA foreign_keys = ON")
+        SQLiteStore._migrate_v22_to_v23(connection)
+
+    @staticmethod
+    def _migrate_v22_to_v23(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V23_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 23")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -1450,6 +1469,8 @@ class SQLiteStore:
             required.add("paper_protection_obligations")
         if version >= 20:
             required.add("scanner_runtime_state")
+        if version >= 23:
+            required.update({"box_attempt_ownership", "box_order_ownership"})
         actual = {
             row[0]
             for row in connection.execute(
@@ -3886,6 +3907,120 @@ class SQLiteStore:
             if cursor.rowcount != 1:
                 raise ConcurrentUpdate("Scanner runtime state changed or timestamp regressed")
         return self.get_scanner_runtime_state(trading_account_id)  # type: ignore[return-value]
+
+    def _box_ownership_candidate(self, candidate_id: str) -> RobotCandidateRecord:
+        candidate = self.get_robot_candidate(candidate_id)
+        if (candidate is None or candidate.status != "BOX_PLAN_ONLY"
+                or candidate.trading_account_id != TradingAccountId("paper")
+                or candidate.signal_snapshot["identity"]["market"] != "linear"):
+            raise PersistenceError("a frozen first-attempt PAPER linear Box plan is required")
+        return candidate
+
+    def begin_box_attempt_ownership(self, candidate_id: str) -> bool:
+        """Attest a FLAT baseline, never admit a plan or mutate a trade.
+
+        The journal is the only fill store. Its baseline digest and the position
+        version allow later proof to reject missing/late evidence and mutations.
+        """
+        from terminal.paper.box_ownership import journal_hash
+
+        with self._transaction():
+            candidate = self._box_ownership_candidate(candidate_id)
+            if self._connection.execute(
+                "SELECT 1 FROM box_attempt_ownership WHERE candidate_id=?", (candidate_id,),
+            ).fetchone():
+                return False
+            key = PositionKey(candidate.trading_account_id, Category.LINEAR, candidate.symbol, 0)
+            position = self.get_position_projection(key)
+            fills = self.load_executions_for_symbol(candidate.trading_account_id, candidate.symbol)
+            net = sum((f.quantity.value if f.side is OrderSide.BUY else -f.quantity.value
+                       for f in fills), Decimal(0))
+            if (position is None or position.sync_state != "synced"
+                    or position.side is not PositionSide.FLAT or position.quantity.value != 0
+                    or position.average_entry is not None or net != 0
+                    or any(f.exchange_timestamp_ms > position.updated_at_ms for f in fills)):
+                raise PersistenceError("Box ownership requires reconciled FLAT position and journal")
+            self._connection.execute(
+                "INSERT INTO box_attempt_ownership VALUES (?, 'paper', ?, 1, ?, ?, ?, ?)",
+                (candidate_id, candidate.symbol.value, position.version, position.updated_at_ms,
+                 len(fills), journal_hash(fills)),
+            )
+        return True
+
+    def reserve_box_order_identity(
+        self, candidate_id: str, *, order_id: OrderId, role: str, slot: int,
+    ) -> bool:
+        """Bind an exact future order ID BEFORE submission or fill ingestion.
+
+        ENTRY slots 1..4 are the frozen first grid. EXIT 1..4 are slice exits;
+        EXIT 0 is an aggregate close. One identity per slot: no replenishment
+        lifecycle or submission is implemented here. Existing orders cannot be
+        adopted retrospectively, including an unfilled foreign order.
+        """
+        if (role not in {"ENTRY", "EXIT"} or type(slot) is not int
+                or slot not in (range(1, 5) if role == "ENTRY" else range(5))):
+            raise ValueError("invalid Box order role/slot")
+        with self._transaction():
+            self._box_ownership_candidate(candidate_id)
+            if self._connection.execute(
+                "SELECT 1 FROM box_attempt_ownership WHERE candidate_id=?", (candidate_id,),
+            ).fetchone() is None:
+                raise PersistenceError("Box ownership baseline is missing")
+            existing = self._connection.execute(
+                "SELECT * FROM box_order_ownership WHERE trading_account_id='paper' AND order_id=?",
+                (order_id.value,),
+            ).fetchone()
+            if existing is not None:
+                if (existing["candidate_id"], existing["role"], existing["slot"]) != (candidate_id, role, slot):
+                    raise DuplicateIdentity("Box order already belongs to another owner or role")
+                return False
+            # Prove current ownership before reserving additional identities.
+            self._prove_box_owned_position(candidate_id)
+            if (self._connection.execute("SELECT 1 FROM executions WHERE order_id=?", (order_id.value,)).fetchone()
+                    or self._connection.execute("SELECT 1 FROM paper_limit_orders WHERE order_id=?", (order_id.value,)).fetchone()
+                    or self._connection.execute(
+                        "SELECT 1 FROM trading_commands WHERE exchange_order_id=? OR order_link_id=?",
+                        (order_id.value, order_id.value),
+                    ).fetchone()):
+                raise DuplicateIdentity("cannot adopt a pre-existing order or execution into Box ownership")
+            try:
+                self._connection.execute(
+                    "INSERT INTO box_order_ownership VALUES ('paper', ?, ?, ?, ?)",
+                    (order_id.value, candidate_id, role, slot),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateIdentity("Box grid slot already has a durable order identity") from exc
+        return True
+
+    def prove_box_owned_position(self, candidate_id: str):
+        """Read one consistent journal/ownership/position view; no runtime action."""
+        with self._transaction():
+            return self._prove_box_owned_position(candidate_id)
+
+    def _prove_box_owned_position(self, candidate_id: str):
+        from terminal.paper.box_ownership import BoxOwnershipError, prove_box_exposure
+
+        candidate = self._box_ownership_candidate(candidate_id)
+        baseline = self._connection.execute(
+            "SELECT * FROM box_attempt_ownership WHERE candidate_id=?", (candidate_id,),
+        ).fetchone()
+        if (baseline is None or baseline["symbol"] != candidate.symbol.value
+                or baseline["trading_account_id"] != candidate.trading_account_id.value):
+            raise BoxOwnershipError("Box ownership baseline is missing or conflicts with plan")
+        ownership = self._connection.execute(
+            "SELECT * FROM box_order_ownership WHERE candidate_id=?", (candidate_id,),
+        ).fetchall()
+        for owner in ownership:
+            if any(fill.symbol != candidate.symbol or fill.dedup_key.category is not Category.LINEAR
+                   for fill in self.load_executions_for_order(
+                       candidate.trading_account_id, OrderId(owner["order_id"]))):
+                raise BoxOwnershipError("owned order has foreign execution scope")
+        key = PositionKey(candidate.trading_account_id, Category.LINEAR, candidate.symbol, 0)
+        return prove_box_exposure(
+            candidate, baseline, ownership,
+            self.load_executions_for_symbol(candidate.trading_account_id, candidate.symbol),
+            self.get_position_projection(key),
+        )
 
     def save_box_plan_only(
         self, *, snapshot: dict[str, object], created_at_ms: int,

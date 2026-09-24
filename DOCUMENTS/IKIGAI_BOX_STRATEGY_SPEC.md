@@ -17,7 +17,50 @@ explicit trading decisions in the current conversation take precedence over the 
 
 **Do not repeat completed work.** Do not recreate these adapters, STOP-term functions, PRs, specifications or tests; do not repeat their protected verification, re-audit already resolved design choices, restore the backup stashes, or request another local sync of these merged commits. Reopen a completed item only if a concrete new defect, changed dependency/code, or conflicting evidence makes it relevant; identify that trigger and verify only the affected delta.
 
-**Open execution boundary:** `BOX_PLAN_ONLY` remains non-executable. Box fill routing, four-LIMIT order ownership, durable lifecycle, protective STOP/TAKE submission and recovery have **not** been connected or accepted. `PaperStopMutationRequest` carries a trigger price, not an explicit quantity: inspect whether existing full-position PAPER STOP tracks authoritative position size before adding quantity synchronization. Reuse the existing protection engine where valid; do not wire Box into the Wedge breakout/retest admission monitor or silently relax its execution gate. Resolve the one actual remaining execution gap with the smallest code slice and one scoped verification; no redundant plans, documentation cycles, or Scanner/Robot launches.
+**Open execution boundary:** `BOX_PLAN_ONLY` remains non-executable. The ownership/proof storage slice below is implemented separately; Box admission, fill routing, durable execution lifecycle, protective STOP/TAKE submission and execution recovery have **not** been connected or accepted. `PaperStopMutationRequest` carries a trigger price, not an explicit quantity: inspect whether existing full-position PAPER STOP tracks authoritative position size before adding quantity synchronization. Reuse the existing protection engine where valid; do not wire Box into the Wedge breakout/retest admission monitor or silently relax its execution gate. Resolve the one actual remaining execution gap with the smallest code slice and one scoped verification; no redundant plans, documentation cycles, or Scanner/Robot launches.
+
+### Bounded ownership and remaining-position proof (local implementation, 2026-09-24)
+
+- `SQLiteStore.begin_box_attempt_ownership` records an immutable first-attempt,
+  PAPER/linear FLAT baseline: actual position version/time and existing journal
+  count/SHA-256. A missing, unsynced or non-flat projection, nonzero journal net,
+  or journal evidence beyond the baseline time rejects initialization.
+- `reserve_box_order_identity` binds an exact account/order ID to the frozen
+  candidate, ENTRY/EXIT role and grid slot **before** order submission or fill
+  ingestion. Repeating the same binding is idempotent; conflicting owners/slots
+  and retrospective adoption of existing orders/commands/executions reject.
+  ENTRY slots 1..4 and EXIT slots 0..4 support the first grid only (0 denotes an
+  aggregate exit). One immutable identity per role/slot is a limit of this slice,
+  not a new trading rule. Replenishment identities and attempt 2 remain pending.
+- Schema **22 -> 23** adds `box_attempt_ownership` and `box_order_ownership`,
+  with foreign keys, uniqueness and update/delete rejection. It does not rewrite
+  `BOX_PLAN_ONLY`, Robot trade entry attestations or the existing execution journal.
+  Migration is transactional; schema-22 binaries cannot open schema 23, and
+  downgrade is unsupported. Runtime database migration is not authorized here.
+- `prove_box_owned_position` reads ownership, the existing deduplicated
+  `executions` journal and the PAPER position projection in one transaction.
+  Remaining quantity is owned entry fills minus owned exit fills, reconciled
+  with actual side, quantity, average entry and projection version. Each fill
+  must belong to the exact attempt/order/symbol/category. Foreign executions
+  (including balanced mutations), missing/late evidence, unexplained projection
+  writes, ambiguous equal-timestamp chronology, wrong directions, over-exits
+  and frozen grid-part overfills fail closed. No second journal is created.
+- Proof is read-only and always `execution_authorized=False`. Existing journal
+  duplicate handling is reused; restart reloads the same baseline and bindings,
+  never authorizes execution. Wedge execution and original `entry_quantity` /
+  `entry_position_version` attestations are unchanged.
+- Scoped verification target: `tests/test_box_order_ownership.py`, invoked by
+  protected task finish; only isolated temporary databases. Prior PR #215/#218/
+  #219/#220 evidence is reused, not rerun. Known verification compatibility
+  blocker outside this transaction: `tests/test_box_plan_persistence.py` still
+  constructs schema 21 by slicing the latest SQL tail and expects schema 22;
+  that fixture/assertion requires a separately protected update for schema 23.
+- Next dependent implementation: connect these reserved ownership identities
+  and proven remaining quantity to the separately authorized Box lifecycle /
+  existing protection path, preserving atomic order identity at submission.
+  This slice creates no orders, enables no admission and wires no runtime
+  protection. PAPER execution remains blocked; common TAKE, fixed STOP,
+  replenishment, risk and attempt rules are unchanged.
 
 ## 1. Source references and status
 
