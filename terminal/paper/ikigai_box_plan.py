@@ -212,6 +212,64 @@ def plan_ikigai_box(
         minimum_partial_fill_rr=min(s.reward_risk for s in slices),
     )
 
+
+@dataclass(frozen=True, slots=True)
+class BoxRiskAssessment:
+    """Pre-entry reservation for the entire proposed PAPER grid, in quote USDT."""
+
+    planned_stop_loss: Decimal
+    adverse_execution_allowance: Decimal
+    reserved_loss: Decimal
+    maximum_allowed_loss: Decimal
+    allowed: bool
+
+
+def assess_first_grid_risk(
+    plan: IkigaiBoxPaperPlan,
+    *,
+    maximum_allowed_loss_usdt: Decimal,
+    adverse_stop_slippage_per_unit: Decimal,
+    additional_cost_allowance_usdt: Decimal,
+) -> BoxRiskAssessment:
+    """Fail closed on missing budget/buffers; never authorize an order.
+
+    Reserve risk for ALL four proposed entries even when only P1 might fill.
+    The caller must supply a separately approved monetary loss ceiling, an
+    adverse STOP price-movement allowance per coin and a monetary allowance
+    for incremental exit fees, funding and other costs. This is a bounded
+    scenario, not a guarantee against a worse market execution. Actual fills
+    and remaining entry orders need separate durable runtime reconciliation.
+    """
+    if not isinstance(plan, IkigaiBoxPaperPlan) or plan.environment != "PAPER":
+        raise ValueError("a PAPER Box plan is required")
+
+    def decimal(name: str, value: Decimal, *, positive: bool = False) -> Decimal:
+        if (
+            not isinstance(value, Decimal) or not value.is_finite()
+            or (value <= 0 if positive else value < 0)
+        ):
+            raise ValueError(f"{name} must be an explicit finite Decimal "
+                             f"{'greater than zero' if positive else 'not below zero'}")
+        return value
+
+    ceiling = decimal("maximum allowed loss", maximum_allowed_loss_usdt, positive=True)
+    slippage = decimal("adverse STOP slippage per unit", adverse_stop_slippage_per_unit)
+    extra = decimal("additional cost allowance", additional_cost_allowance_usdt)
+    total_quantity = sum(plan.limit_quantities, Decimal(0))
+    planned = plan.partial_fill_loss_upper_bound
+    allowance = total_quantity * slippage + extra
+    reserved = planned + allowance
+    if not reserved.is_finite() or reserved < 0:
+        raise ValueError("Box reserved loss is invalid")
+    return BoxRiskAssessment(
+        planned_stop_loss=planned,
+        adverse_execution_allowance=allowance,
+        reserved_loss=reserved,
+        maximum_allowed_loss=ceiling,
+        allowed=reserved <= ceiling,
+    )
+
+
 def plan_approved_first_ikigai_box(
     *, direction: str, working_quantity: Decimal,
     frozen_f1: Decimal, frozen_f1618: Decimal, tick_size: Decimal,
