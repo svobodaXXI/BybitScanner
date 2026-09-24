@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 from decimal import Decimal as D
 import unittest
 
-from terminal.paper.ikigai_box_plan import plan_ikigai_box, plan_approved_first_ikigai_box
+from terminal.paper.ikigai_box_plan import plan_ikigai_box, plan_approved_first_ikigai_box, assess_first_grid_risk
 
 
 def inputs(direction="LONG"):
@@ -113,6 +113,41 @@ class IkigaiBoxPaperPlanTests(unittest.TestCase):
         self.assertEqual(sum(s.net_target_profit for s in plan.slices), D("60"))
         with self.assertRaises(FrozenInstanceError):
             plan.stop_price = D("90")
+
+    def test_full_grid_risk_reservation_requires_explicit_budget_and_allowances(self):
+        for direction in ("LONG", "SHORT"):
+            with self.subTest(direction=direction):
+                plan = plan_approved_first_ikigai_box(**{
+                    key: value for key, value in inputs(direction).items()
+                    if key not in ("limit_prices", "limit_quantities")
+                })
+                kwargs = dict(
+                    maximum_allowed_loss_usdt=plan.partial_fill_loss_upper_bound + D("1"),
+                    adverse_stop_slippage_per_unit=D("0.1"),
+                    additional_cost_allowance_usdt=D("0.2"),
+                )
+                decision = assess_first_grid_risk(plan, **kwargs)
+                self.assertEqual(decision.adverse_execution_allowance, D("1.0"))
+                self.assertEqual(
+                    decision.reserved_loss,
+                    plan.partial_fill_loss_upper_bound + D("1.0"),
+                )
+                self.assertTrue(decision.allowed)
+                self.assertFalse(assess_first_grid_risk(
+                    plan, **(kwargs | {"maximum_allowed_loss_usdt":
+                                     plan.partial_fill_loss_upper_bound})
+                ).allowed)
+                self.assertFalse(plan.execution_authorized)
+                for name, value in (
+                    ("maximum_allowed_loss_usdt", None),
+                    ("maximum_allowed_loss_usdt", D("0")),
+                    ("adverse_stop_slippage_per_unit", None),
+                    ("adverse_stop_slippage_per_unit", D("-0.1")),
+                    ("additional_cost_allowance_usdt", None),
+                    ("additional_cost_allowance_usdt", D("NaN")),
+                ):
+                    with self.subTest(field=name, value=value), self.assertRaises(ValueError):
+                        assess_first_grid_risk(plan, **(kwargs | {name: value}))
 
     def test_rejects_no_affordable_tick_strictly_beyond_fourth(self):
         for direction, prices in (("LONG", ("94", "90", "86", "82")),
