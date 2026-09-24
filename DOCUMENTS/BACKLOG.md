@@ -63,6 +63,107 @@ operational facts and links; strategy decisions remain in their owning spec,
 and code/test history in GitHub. Update this entry only on a material status,
 priority, blocker or handoff change, not on every message or test.
 
+
+## PAPER pattern integration — implementation plan (owner-approved direction, 2026-09-24)
+
+**Goal and boundaries.** Connect Ikigai Box first, then L-shape, to the existing
+PAPER Robot signal → orders → protection → reconciliation → closure path.
+Keep current Wedge behavior and LIVE restrictions unchanged; no Scanner change,
+new trading engine/database, automatic service start or order authorization.
+Use one bounded dependent slice at a time and only focused checks of changed
+behavior; the existing full Scanner visual-acceptance rule applies separately
+to any actual Scanner change. Strategy parameters remain in their owning
+specifications, not in this execution checklist.
+
+**Architecture.** Keep immutable source-time formation identity and geometry
+at admission. Use pattern-specific pure planners and entry triggers, followed
+by shared durable admission/risk, PAPER execution, protection and position
+reconciliation. Do not impersonate Wedge apex/breakout geometry for Box or
+L-shape. Extend existing SQLite/execution/exit-obligation ownership only where
+the current schema and commands cannot represent the confirmed multi-order
+lifecycle; do not add parallel order books or independent persistence.
+
+**Dependent implementation slices and completion criteria:**
+
+1. **Finish existing Box planner PR #215, not a second planner.** Reconcile
+   its stale PR description with actual branch code and approved first-grid
+   P1–P4 = 75/85/95/105% of signed F1→F1.618, four 1/4-RO slices, common
+   TAKE = F1 + 0.10*(F1.618-F1). Verify only uncovered instrument tick/quantity
+   alignment and fee-aware STOP invariants; reuse the recorded 9/9 focused
+   checks unless behavior changed. Reject an unrepresentable grid instead of
+   silently altering strategy geometry. Done: non-executing immutable plan,
+   clear focused evidence, reviewed PR ready for its normal merge gate.
+2. **Quantify risk and establish explicit entry gate.** From actual
+   tick/quantity-normalized orders, entry/exit fees and frozen STOP, report
+   net loss and RR for P1 alone, successive partial grids and arbitrary
+   partial fills; include remaining resting entries in worst-case reserved
+   exposure and a separately defined slippage/funding allowance where
+   applicable. Compare with the real Robot constraints; 1 RO = 5% PAPER
+   equity is sizing, NOT a loss budget. The owner must approve any missing
+   maximum monetary/partial-fill loss policy before execution; never invent
+   a risk percentage or claim full-grid RR implies every partial-fill RR.
+   Done: pure fail-closed admission calculation and measured evidence;
+   no order submission.
+3. **Durable Box attempt identity and order ownership.** Reuse existing
+   candidate/SQLite state and execution IDs; persist plan, formation ID,
+   attempt number, entry P1–P4 IDs, actual fills, open exposure, common
+   TAKE/STOP and outstanding exit obligations. Model planned, entry pending,
+   open, exit pending, closed and reconciliation-required transitions without
+   losing open-exposure records on failure. Limit to one exposure owner per
+   symbol/account and no overlapping Box attempt grids. Done: persisted
+   transitions survive duplicate events and restart without duplicate orders.
+4. **Wire PAPER entries only after gate and protection-capability proof.**
+   Through existing serial PAPER command/executor path, reserve the entire
+   potential four-order exposure, persist intents before side effects, submit
+   idempotent LIMITs and reconcile partial or uncertain submit/cancel
+   outcomes. Do not infer fills from OHLC/wicks. A mid-grid failure blocks
+   new entries while preserving and protecting any already confirmed fills.
+   Done: four orders and partial fills tracked against the actual position.
+5. **Immediate fixed-price protection.** Precompute STOP beyond P4, valid
+   against fee-aware full-grid RR >= 2; after the FIRST confirmed nonzero
+   fill, durably register and service STOP protection for actual open
+   quantity, modifying quantity only as exposure changes. Integrate with
+   existing durable protection/exit-obligation and feed-continuity fail-closed
+   controls. Do not submit exposure if the first-fill protection sequence
+   cannot be guaranteed; unresolved protection blocks further entries and
+   retains the closing obligation. Done: no intentional unprotected confirmed
+   fill, including after interruption/recovery.
+6. **Common-price TAKE and terminal close.** Use confirmed execution and
+   position quantities to reconcile reduce-only exits at the frozen common
+   TAKE price; avoid duplicate reserved closing quantity and STOP/TAKE
+   conflicts. Cancel or conclusively settle remaining entries and exits
+   before declaring FLAT/closed. Preserve per-slice realized fees/PnL for
+   later re-arm eligibility. Done: provable flat position, terminal orders,
+   and accounted result on TAKE or STOP.
+7. **Re-arm and optional second attempt, separately gated.** Restore at P1
+   only the volume conclusively released by a profitable slice closure
+   while the same frozen Box remains eligible, without increasing 1-RO
+   exposure or bypassing stop termination. Only after proven STOP closure,
+   FLAT state and no unresolved first-grid obligations may a second,
+   nonoverlapping F2.618-area attempt be considered. Its P1/P4 price
+   definitions, re-arm/expiry conditions and any unresolved fee/risk
+   choices need separate owner approval before enabling them. Done:
+   no duplicates, overlap, martingale or resurrection of terminal setups.
+8. **Attach L-shape using verified shared services.** Reuse Wedge's
+   appropriate entry/retest, protection, order, closure and recovery
+   primitives, but use L-shape's own frozen geometry, freshness and
+   pattern-specific trigger/plan; never synthesize a Wedge apex. Apply
+   owner-approved 0.8% potential, fee-aware RR >= 2, trough/ratio-limited
+   structural STOP and the separate approved L-shape four-part grid/TAKE
+   contract. Done: pattern-specific admissible PAPER lifecycle with
+   unchanged Wedge and Box behavior.
+
+**Verification/acceptance:** each slice gets only necessary changed-behavior
+checks and mandatory repository safety gates; do not repeat successful
+unchanged tests. Before allowing autonomous PAPER orders, run one bounded
+isolated end-to-end verification of partial fills, immediate protection,
+STOP/TAKE competition, stale feed, ambiguous cancel/submit, restart and
+duplicate-free reconciliation; separately obtain owner authorization.
+Never infer LIVE readiness or Scanner visual acceptance from PAPER tests.
+Current next action remains step 2's concrete partial-fill risk measurement
+using PR #215, NOT order activation.
+
+
 ---
 
 ## HISTORICAL owner work index — 2026-09-23 (superseded by topmost current-task checkpoint)
