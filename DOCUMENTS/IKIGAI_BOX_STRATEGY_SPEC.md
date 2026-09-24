@@ -167,13 +167,30 @@ resting order before the second impulse touches it, subject to ordinary
 ownership, sizing and protection gates. The other three LIMITs, each 1/4 РО,
 are evenly spaced further **in the impulse direction**, with the fourth
 strictly past F(1.618), retaining the original beyond-1.618 requirement.
-Owner-confirmed grid rule (2026-09-23): choose P4 strictly beyond F(1.618)
-in the first impulse's direction; P2 and P3 divide P1→P4 into three equal
-price intervals (`step = (P4-P1)/3`; `P2=P1+step`, `P3=P1+2*step`).
+**Owner-approved first-attempt grid (2026-09-24; PAPER DESIGN ONLY):**
+Let `D = F(1.618) - F(1.0)` be a signed price displacement (negative for
+LONG, positive for SHORT). Freeze these four equal-quantity entry levels:
+`P1=F(1.0)+0.75D`, `P2=F(1.0)+0.85D`,
+`P3=F(1.0)+0.95D`, `P4=F(1.0)+1.05D`.
+All adjacent LIMIT gaps are `abs(D)/10`; F(1.618) lies exactly halfway
+between P3 and P4 **before tick rounding**. Each LIMIT is 1/4 working
+volume; the four together are limited to one working volume. Quantize
+to instrument tick/quantity steps and reject an unrepresentable, unequal,
+or invalid grid rather than shifting anchors or silently changing spacing.
+
+**Owner-approved common TAKE for the first attempt:** `TP=F(1.618)
++0.90*(F(1.0)-F(1.618)) = F(1.0)+0.10D`.
+This is **90% of the return from F(1.618) toward F(1.0)**, NOT 90% from
+P1. Every TAKE LIMIT has the same frozen price, but each reduce-only
+TAKE quantity may cover only its own confirmed filled and still-open
+slice. Apply tick rounding toward the entry side, then verify net profit
+after applicable fees for every actual slice, including P1. The common
+TAKE is a plan, never evidence of execution or a guaranteed fill.
+
 For a STOP-terminated second attempt, use the same four-order, equal-interval
 layout around F(2.618), with its final order strictly beyond F(2.618) in
-the first impulse's direction. The exact P4 overshoot in either attempt and
-the second attempt's first-order anchor remain **unresolved owner price/risk
+the first impulse's direction. The first-attempt P4 is fixed by the formula above. The second attempt's
+P4 overshoot and first-order anchor remain **unresolved owner price/risk
 decisions**; do not invent them. Each grid totals at most 1 РО, without
 simultaneously active attempt grids.
 
@@ -215,13 +232,14 @@ be satisfied, keep Robot execution blocked pending an explicit risk decision.
 The earlier proposal to wait for three filled LIMITs before any STOP is
 superseded; no filled exposure may remain intentionally unprotected.
 
-**Per-slice exit:** upon confirmed fill of P1 (including partial quantity),
+**Per-slice exit:** upon any confirmed slice fill (including partial quantity),
 protect the actually filled exposure without delay and place a reduce-only
-opposite-side TAKE LIMIT for **no more than the confirmed filled quantity**
-at an owner-approved price on the profitable side of entry, a little before
-F(1.0) (SHORT: above F(1.0) while below its entry; LONG: below F(1.0)
-while above its entry). Exact offset, minimum net-profit after entry/exit
-fees and tick rounding are pending. A bar wick alone never proves fill or
+opposite-side TAKE LIMIT at the **same frozen common TAKE price** defined
+above, for no more than that slice's confirmed remaining quantity.
+The first-attempt TAKE offset is approved; minimum realized/net profit after
+entry/exit fees, protective reservation, partial-fill risk budget, and
+second-attempt TAKE policy must still be verified before execution.
+A bar wick alone never proves fill or
 exit; do not assume a pending TP/STOP executed within the same candle from
 OHLC alone. Partial fills, reserved close quantity, other protective orders
 and live exchange/broker events must be reconciled to prevent over-closure.
@@ -355,3 +373,45 @@ visualisation placeholder, `GRID_STEP_FRACTION`), partial-take trigger/fraction,
 fee-aware breakeven stop, attempt 2 at `F(2.618)`, any order execution, and the
 Scanner caption text. `build_entry_grid(anchor_level=...)` is reusable for the
 2.618 grid but no second-attempt logic exists.
+
+## Owner-approved implementation approach — PAPER Box (2026-09-24)
+
+Reuse the existing Robot durable candidate/store, PAPER execution, ownership,
+protection and recovery mechanisms; implement a separate Box lifecycle rather
+than treating Box as a wedge breakout/retest or adding a second order system.
+This adopts applicable order-management practices from mature trading systems
+without adopting their trading strategies or inventing new Box geometry.
+
+1. Freeze one first-attempt plan per formation: frozen source-time A/B and
+   Fibonacci levels, four approved equal-gap LIMIT prices (75/85/95/105%),
+   quantities of 1/4 working volume, one common TAKE at 10% of the signed
+   F(1.0)→F(1.618) displacement, one STOP beyond P4, and durable order IDs.
+   Restore that plan after restart; never reconstruct a new one from later
+   candles or repeat an already recorded submission.
+2. Use the **actual common TAKE** (not F(1.0)) in all fee-aware profit, full-grid
+   RR >= 2:1 and STOP calculations. Account for instrument tick/quantity
+   rounding and reject a grid whose equal spacing, midpoint, nonzero slice
+   size, valid STOP, or positive net slice TAKE profit cannot be represented.
+3. Treat planned LIMIT quantities as reservations, not position fills. For each
+   broker-confirmed partial/full entry fill, reconcile actual open quantity,
+   activate/synchronize the precomputed-price STOP immediately, and create a
+   reduce-only TAKE at the common frozen price for no more than that slice's
+   confirmed still-open quantity. No unprotected deliberate exposure, phantom
+   candle-wick fills, duplicate entry ownership, or close over-reservation.
+   On uncertain fills, missing protection, or ambiguous order ownership, fail
+   closed and use the existing Robot emergency/reconciliation path.
+4. Create/amend/cancel only in response to authoritative order/fill/position
+   state transitions, not on every Scanner/Robot loop. On restart reconcile
+   persisted entry, protective and TAKE obligations before admitting new risk.
+5. Preserve wedge execution and all LIVE behavior. PAPER order activation
+   remains blocked until the owner sets an acceptable partial-fill risk budget
+   and remaining exit/re-arm and second-attempt policy is resolved, followed
+   by focused proof of fills, stop/TAKE synchronization and recovery. The
+   already-approved static grid/TAKE arithmetic may be implemented and tested
+   now with execution_authorized=False.
+
+Implementation order: (a) align existing PR #215 pure planner/tests with the
+approved formulas and actual TAKE-based fee-aware RR; (b) wire a separate
+fail-closed Box PAPER lifecycle through existing durable execution; (c) verify
+partial fills, protection, close reservations and restart. No new order
+infrastructure, broad refactor, unattended full Scanner run, or LIVE enablement.
