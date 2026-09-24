@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -794,6 +794,43 @@ SCHEMA_V21_MIGRATION_STATEMENTS = (
     "ALTER TABLE paper_protection_obligations_v21 RENAME TO paper_protection_obligations",
 )
 
+SCHEMA_V22_MIGRATION_STATEMENTS = (
+    """
+    CREATE TABLE robot_candidates_v22 (
+        candidate_id TEXT PRIMARY KEY,
+        trading_account_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        status TEXT NOT NULL,
+        signal_snapshot_json TEXT NOT NULL,
+        snapshot_sha256 TEXT NOT NULL,
+        robot_state_json TEXT,
+        state_revision INTEGER NOT NULL,
+        approved_at_ms INTEGER,
+        updated_at_ms INTEGER NOT NULL,
+        UNIQUE (trading_account_id, snapshot_sha256),
+        CHECK (length(trim(candidate_id)) > 0),
+        CHECK (length(trim(symbol)) > 0),
+        CHECK (status IN ('APPROVED', 'OPEN', 'CLOSED', 'EXPIRED', 'INVALIDATED', 'BOX_PLAN_ONLY')),
+        CHECK (length(snapshot_sha256) = 64),
+        CHECK (state_revision >= 0),
+        CHECK ((state_revision = 0 AND robot_state_json IS NULL)
+            OR (state_revision >= 1 AND robot_state_json IS NOT NULL)),
+        CHECK (updated_at_ms >= 0),
+        CHECK ((status = 'BOX_PLAN_ONLY' AND approved_at_ms IS NULL
+                AND robot_state_json IS NULL AND state_revision = 0)
+            OR (status != 'BOX_PLAN_ONLY' AND approved_at_ms IS NOT NULL
+                AND approved_at_ms >= 0 AND updated_at_ms >= approved_at_ms))
+    ) WITHOUT ROWID
+
+    """,
+    "INSERT INTO robot_candidates_v22 SELECT * FROM robot_candidates",
+    "DROP TABLE robot_candidates",
+    "ALTER TABLE robot_candidates_v22 RENAME TO robot_candidates",
+    """CREATE TRIGGER box_plan_no_update BEFORE UPDATE ON robot_candidates
+       WHEN OLD.status = 'BOX_PLAN_ONLY'
+       BEGIN SELECT RAISE(ABORT, 'BOX_PLAN_ONLY is immutable and non-executable'); END""",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -816,4 +853,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V19_MIGRATION_STATEMENTS
     + SCHEMA_V20_MIGRATION_STATEMENTS
     + SCHEMA_V21_MIGRATION_STATEMENTS
+    + SCHEMA_V22_MIGRATION_STATEMENTS
 )

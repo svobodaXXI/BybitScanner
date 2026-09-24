@@ -1,6 +1,6 @@
 # Ikigai Box — two-impulse Fibonacci reversal (user-defined PAPER strategy)
 
-Status: **observational geometry/opt-in Scanner WATCH implemented; Robot execution NOT implemented**.
+Status: **observational geometry/opt-in Scanner WATCH, pure first-grid planner and BOX_PLAN_ONLY persistence implemented; planner-to-persistence connection pending; PAPER Robot order execution BLOCKED / NOT implemented**.
 Scope: Scanner recognition, Telegram observation charts, and later separately
 authorized PAPER Robot execution. This is **not** the
 ordinary horizontal-range breakout/rectangle pattern. The 2026-09-20 user screenshot and
@@ -415,3 +415,105 @@ approved formulas and actual TAKE-based fee-aware RR; (b) wire a separate
 fail-closed Box PAPER lifecycle through existing durable execution; (c) verify
 partial fills, protection, close reservations and restart. No new order
 infrastructure, broad refactor, unattended full Scanner run, or LIVE enablement.
+
+## Persisted first-attempt plan contract — implemented 2026-09-24
+
+`BOX_PLAN_ONLY` is an immutable, non-executable PAPER record in the existing
+`robot_candidates` SQLite table. It is not admission, risk reservation, an order,
+or evidence of fills. Scanner wiring and automatic plan calculation are absent.
+
+Identity is canonical `(venue, market, symbol, source timeframe, trade direction,
+A candle UTC milliseconds, B candle UTC milliseconds)`, scoped to account `paper`,
+pattern `IKIGAI_BOX`, attempt `1`. Venue/market are lowercase, symbol uppercase,
+timeframe a canonical positive integer string. Use source candle times, never
+moving-window indices. The candidate ID is `box-plan-` plus SHA-256 of canonical
+JSON containing identity, account, pattern and attempt. Prices, decision time and
+planner version do not create new identities. Equal identity plus equal canonical
+snapshot returns the original row unchanged; different content fails with an
+identity conflict. Later candles and restart never replace the frozen plan.
+
+Contract v1 snapshot fields: `contract_version`, `planner_version`, `pattern`,
+`environment`, `execution_authorized`, `attempt`, `identity`, `decision_time_ms`,
+`anchors` (`a_price`, `b_price`), `fibonacci` (`f1`, `f1618`, `f2618`), `inputs`
+(`working_quantity`, `tick_size`, `entry_fee_rate`, `target_fee_rate`,
+`stop_fee_rate`, `structural_stop`, explicitly null when absent), and `plan`
+(the complete existing `IkigaiBoxPaperPlan` result including all four exposures).
+Decimal values are finite decimal strings, normalized without float conversion;
+canonical JSON is hashed with SHA-256 and verified on reads. Save validates the
+storage contract, not trading eligibility or fresh planner arithmetic. The caller
+must supply an already computed plan and its frozen source inputs. Unknown risk
+budgets are not invented; risk assessment and order identities are outside this
+non-executable persistence slice.
+
+State is always `BOX_PLAN_ONLY`, `approved_at_ms=NULL`, `robot_state=NULL`,
+`state_revision=0`, `environment=PAPER`, `execution_authorized=false`.
+No lifecycle transitions are permitted, including self-updates. SQLite rejects
+updates to these rows; ordinary admission rejects both Box handoffs and attempts
+to reuse a stored plan ID. Existing APPROVED-only monitoring and APPROVED/OPEN
+recovery selection exclude plans. Existing trade creation requires APPROVED.
+No approval, broker order, protection obligation or execution recovery is created.
+
+Schema 22 transactionally rebuilds the candidate table from schema 21, preserves
+legacy rows and Robot trade foreign keys, allows null approval time only for plans,
+and restores foreign-key enforcement after checking integrity. Older databases
+continue through the existing migration chain. Rollback preserves schema 21 on
+migration failure. Older application binaries cannot use schema 22; downgrade is
+not supported. Existing APPROVED/OPEN lifecycle semantics remain unchanged.
+
+Execution remains blocked on the previously recorded partial-fill risk and
+exit/re-arm/second-attempt decisions and their separate implementation evidence.
+The verified planner's 10 passing tests are reused, not repeated by this slice.
+
+### Completed persistence slice — implementation and verification record
+
+**Implemented locally:** `SQLiteStore.save_box_plan_only()` stores explicitly
+supplied snapshots in `robot_candidates`; canonical decimal-string JSON and
+SHA-256 verification, deterministic formation identity, immutable reads,
+idempotent duplicate handling and conflicting-snapshot rejection are implemented.
+Admission rejects Box handoffs and reuse of a persisted plan ID. SQL immutability,
+no lifecycle promotion, APPROVED-only monitoring and APPROVED/OPEN recovery
+selection keep these records outside execution. This is a completed persistence
+slice, not completion of Box-to-Robot trading integration or a publication claim.
+
+**Migration implemented:** schema **21 -> 22**, with transactional table rebuild,
+legacy APPROVED/OPEN and Robot trade preservation, foreign-key integrity checking,
+and rollback on migration failure. Approval time is nullable only for
+`BOX_PLAN_ONLY`. Legacy application binaries cannot open schema 22; downgrade is
+not supported. These results concern isolated test databases, not migration or
+acceptance of a running production database.
+
+**Verification evidence (reused; no rerun for this documentation update):**
+
+- Existing pure planner: **10 PASS** at `099cfedc`, reused unchanged.
+- Focused initial run of `tests.test_box_plan_persistence` and
+  `tests.test_robot_admission`: **15 tests; 13 PASS, 2 errors**.
+- New rollback test assertions passed, but Windows temporary-file cleanup failed
+  because the test left a SQLite connection open. The test was corrected to close
+  it explicitly; only that failed test was rerun and **PASS**. Resulting evidence:
+  **all 6 new persistence/safety checks and 8 existing admission checks PASS**.
+- One existing admission check remains **UNRESOLVED / environment-blocked**:
+  `RobotAdmissionGateTests.test_unsupported_pattern_is_rejected_before_sqlite_admission`.
+  Its `telegram_review` import raised `ModuleNotFoundError: No module named 'config'`.
+  No configuration was created or modified; do not report the entire admission
+  module as passing.
+- Protected task `20260924T151746Z-648d207de495` finished **PASS**: task-delta and
+  inverse proofs, isolated candidate overlay, Python compile, focused new test
+  module, scope/index preservation and diff check. The mandatory finish gate
+  automatically repeated `test_box_plan_persistence.py`; planner tests were not
+  repeated. This receipt covers the implementation slice before this subsequent
+  documentation-only update.
+
+**Pending / exact next step:** connect the already verified planner's explicit
+result and frozen source inputs to `BOX_PLAN_ONLY` persistence. That adapter is
+not implemented yet. Preserve deterministic identity, decimal serialization,
+conflict rejection and `execution_authorized=False`; do not automatically derive
+new plans from Scanner signals or invent quantities, risk budgets or fees.
+Scanner handoff, execution admission and order lifecycle integration remain pending.
+
+**Execution safety boundary:** PAPER order execution remains **BLOCKED**. A saved
+plan is not an approved candidate, risk reservation, broker order, fill, or
+protection obligation; restart cannot promote it into execution. Previously
+unresolved partial-fill risk, exit/re-arm and second-attempt decisions and their
+required execution evidence remain unchanged. No Scanner/Robot service, full
+acceptance run or real-order operation was started for this slice.
+
