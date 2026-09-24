@@ -1,6 +1,6 @@
 # Ikigai Box — two-impulse Fibonacci reversal (user-defined PAPER strategy)
 
-Status: **observational geometry/opt-in Scanner WATCH, pure first-grid planner and BOX_PLAN_ONLY persistence implemented; planner-to-persistence connection pending; PAPER Robot order execution BLOCKED / NOT implemented**.
+Status: **observational geometry/opt-in Scanner WATCH, pure first-grid planner and BOX_PLAN_ONLY persistence implemented; planner-to-persistence adapter implemented (not wired to Scanner); PAPER Robot order execution BLOCKED / NOT implemented**.
 Scope: Scanner recognition, Telegram observation charts, and later separately
 authorized PAPER Robot execution. This is **not** the
 ordinary horizontal-range breakout/rectangle pattern. The 2026-09-20 user screenshot and
