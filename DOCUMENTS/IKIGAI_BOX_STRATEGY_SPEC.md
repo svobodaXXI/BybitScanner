@@ -200,13 +200,13 @@ fully-filled, equal-quantity grid average entry from their actual rounded
 order prices. Choose one STOP price beyond the fourth entry LIMIT in the
 adverse direction (SHORT: above P4; LONG: below P4). Prefer a structural
 level when it fits; otherwise cap its distance using the planned full-grid
-average entry, F(1.0) target and fee-aware reward/risk >= 2:1. No fixed
+average entry, the approved common TAKE and fee-aware reward/risk >= 2:1. No fixed
 -1.5% fallback. If there is no valid STOP beyond the entire grid meeting
 these constraints, do not place that grid; do not move the STOP inside it.
 
 Fix this STOP **price** before any entry is submitted. The same price
 protects even the first filled slice and must NOT be moved as later LIMITs
-fill. Once the first fill is confirmed, create/activate protection promptly
+fill. Immediately after the first confirmed entry fill, create/activate protection
 for the actual open quantity; adjust only protective **quantity** for later
 fills and TAKE closures, never the price. A position-free reduce-only STOP
 must not be assumed executable before the first fill. Each confirmed entry
@@ -244,18 +244,36 @@ exit; do not assume a pending TP/STOP executed within the same candle from
 OHLC alone. Partial fills, reserved close quantity, other protective orders
 and live exchange/broker events must be reconciled to prevent over-closure.
 
-**Re-arm only after a proven profitable slice close:** if a P1 slice has
-confirmed TAKE fill, verified reduced position and settled/cancelled
-associated exit obligations, and the frozen pattern is still eligible and
-not completed/expired/stopped, replenish **only the released quantity** as a
-new P1 resting limit within the original 1 РО exposure/risk ceiling, with
-no duplicate orders or overlapping ownership. The owner requested that this
-repeat while the pattern remains valid. Define exact lifecycle completion,
-re-arm count/cooldown (or explicitly unlimited), price re-entry condition
-and interaction with the existing maximum two **STOP-terminated** attempts
-before execution. Never restart an already completed Box, re-arm after STOP
-or reconstruct a fresh frozen setup merely to bypass the two-attempt gate.
-Do not use realized profit to increase the grid allocation (no martingale).
+**Owner-approved grid replenishment (2026-09-24; execution pending):** after
+confirmed profitable partial closure and reconciliation of the actual reduced
+position and associated exit obligations, restore only the corresponding released
+grid quantity at its original frozen entry price. Restore the farthest closed
+entry first: P4 before P3 before P2 before P1, considering only entries with
+proven released quantity. This supersedes the earlier P1-only replenishment rule;
+it does not create a new grid or increase the allocation from realized profit.
+The same frozen common TAKE applies to replenished fills; there are no individual
+TAKE prices. No replenishment after STOP or while cancellation, closure, ownership
+or available quantity is unresolved. Keep the existing eligibility/completion and
+attempt boundaries; unresolved lifecycle details are not permission to execute.
+
+Count confirmed open exposure together with all remaining entry quantities and
+pending submissions against the approved four-part grid. Reserve released quantity
+once before submitting its replacement; neither partial-fill processing, retries
+nor restart may duplicate an entry or exceed its approved part or the total grid.
+A cancellation request alone does not release capacity: reconcile terminal order
+state and any concurrent fills first. Ambiguity blocks further entry/replenishment.
+
+**Owner-approved STOP termination (2026-09-24; execution pending):** STOP is
+strictly beyond P4 in the adverse direction and is placed immediately after the
+first confirmed entry fill. Its precomputed price remains fixed for the attempt;
+only protected quantity follows authoritative actual position size, including
+partial entries and profitable partial closures. On STOP, block further entry and
+replenishment, cancel all remaining entry orders of that attempt and close the
+actual remaining position. Reconcile fills racing with cancellation; never size
+the close from the planned full grid or assume a STOP trigger proves FLAT. Keep
+closure/reconciliation outstanding until authoritative position is FLAT and all
+remaining entry and exit obligations are settled. These rules do not authorize a
+new attempt or change the existing second-attempt conditions.
 
 **Implementation boundary:** this amends the intended first-grid placement
 and introduces a proposed slice-exit/replenishment lifecycle; it does not
@@ -281,7 +299,7 @@ existing later Robot stage in `DOCUMENTS/BACKLOG.md`.
   distance or assume all four orders are filled.
 - **STOP:** compute and freeze a single price **before** placing the grid,
   using the hypothetical fully filled, equal-quantity average and fee-aware
-  RR >= 2:1 to F(1.0). Prefer a valid structural STOP, otherwise the maximum
+  RR >= 2:1 to the approved common TAKE. Prefer a valid structural STOP, otherwise the maximum
   ratio-compliant risk distance; in either case it must be beyond P4 (SHORT
   above, LONG below). If those requirements cannot coexist, reject the grid
   instead of placing STOP inside it. Activate the frozen-price STOP upon the
@@ -516,4 +534,47 @@ protection obligation; restart cannot promote it into execution. Previously
 unresolved partial-fill risk, exit/re-arm and second-attempt decisions and their
 required execution evidence remain unchanged. No Scanner/Robot service, full
 acceptance run or real-order operation was started for this slice.
+
+### Approved execution-rule clarification — 2026-09-24 (NOT implemented)
+
+The STOP-termination and grid-replenishment paragraphs above are the current
+owner-approved design and supersede older P1-only wording. Immediate first-fill
+STOP, fixed STOP price, actual protected quantity, cancellation plus actual-position
+closure on STOP, farthest-closed-entry-first replenishment and duplicate/exposure
+limits are now specified. The approved common TAKE remains unchanged:
+`F(1.0) + 0.10 * (F(1.618) - F(1.0))`, shared by all slices and replacements.
+No individual TAKE levels, new risk parameters, cooldowns or attempt rules are
+introduced. References to unresolved exit/re-arm decisions elsewhere must not be
+read as reopening these newly approved rules; other previously unresolved details
+and risk approvals remain pending. PAPER order execution is still BLOCKED.
+
+**Existing Wedge mechanisms inspected for reuse (not Box implementation):**
+
+- `robot_entry_limit.py::_stable_client_action_id` demonstrates deterministic
+  action identity; `robot_protection.py::_action_id` and
+  `emergency_close_request` preserve identity across protective-close retries.
+  Box needs distinct durable per-attempt/per-entry/replenishment identities;
+  Wedge's single-entry identifiers are not a four-order ownership model.
+- `terminal/application/robot_breakout_monitor.py` uses `cancel_limit` followed
+  by `get_paper_limit` and broker-confirmed `filled_quantity`, persists lifecycle
+  state, checks competing ownership and escalates ambiguous reconciliation.
+  Reuse these execution/state mechanisms; its breakout/retest, repricing and
+  partial-completion policies do not define Box replenishment.
+- `robot_protection.py::submit_initial_protection` submits STOP before TAKE;
+  `protection_recovery`, `submit_emergency_close` and `emergency_close_request`
+  provide fail-closed protection recovery and full-close dispatch. Reuse the
+  supported command/reconciliation mechanisms, not Wedge structural STOP,
+  tightening or TAKE calculations. They do not yet implement Box fixed-price
+  quantity synchronization or four-entry STOP cancellation.
+- Existing SQLite snapshot hashing, idempotent identity/conflict handling and
+  candidate-state revision checks provide persistence/concurrency foundations.
+  `BOX_PLAN_ONLY` itself remains immutable and cannot become executable state.
+
+**Smallest next implementation step remains:** connect an explicitly supplied,
+already verified planner result and frozen source inputs to
+`SQLiteStore.save_box_plan_only()`, with deterministic identity and lossless
+Decimal-string serialization. No Scanner wiring or automatic sizing is included.
+The execution rules documented here require a later separately scoped Box
+lifecycle implementation; this documentation does not enable orders or alter the
+completed non-executable persistence slice.
 
