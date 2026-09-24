@@ -7,6 +7,18 @@ ordinary horizontal-range breakout/rectangle pattern. The 2026-09-20 user screen
 explicit trading decisions in the current conversation take precedence over the obsolete
 `DOCUMENTS/BACKLOG.md` G5 "horizontal range / breakout" text.
 
+## Completed implementation and no-repeat checkpoint (2026-09-24)
+
+- PR #215: pure PAPER first-grid planner; merged into main.
+- PR #218: immutable, non-executable `BOX_PLAN_ONLY` SQLite persistence; merged into main. This does **not** authorize opening or migrating a running Robot database.
+- PR #219: planner-to-persistence adapter (`terminal/application/ikigai_box_plan_persistence.py`); merged as `a155433e0323e2cf11edcdbc05c7c23a22851c94`. Protected task `20260924T164048Z-e41a91ef225c`: PASS; focused adapter test and protected delta checks PASS, blockers NONE.
+- PR #220: pure fixed-price Box STOP terms (`robot_protection.py::prepare_box_stop_terms`) and targeted LONG/SHORT tests; merged as `da52f7c6a05c624d3a6ca7d435ea67db42973486`. Protected task `20260924T172017Z-3553707ea8bf`: PASS; focused protection test and protected delta checks PASS, blockers NONE.
+- The PC worktree `C:\\BybitScanner-box` was fast-forwarded to `da52f7c`. Earlier safety stashes were preserved; do not reapply them over already merged changes.
+
+**Do not repeat completed work.** Do not recreate these adapters, STOP-term functions, PRs, specifications or tests; do not repeat their protected verification, re-audit already resolved design choices, restore the backup stashes, or request another local sync of these merged commits. Reopen a completed item only if a concrete new defect, changed dependency/code, or conflicting evidence makes it relevant; identify that trigger and verify only the affected delta.
+
+**Open execution boundary:** `BOX_PLAN_ONLY` remains non-executable. Box fill routing, four-LIMIT order ownership, durable lifecycle, protective STOP/TAKE submission and recovery have **not** been connected or accepted. `PaperStopMutationRequest` carries a trigger price, not an explicit quantity: inspect whether existing full-position PAPER STOP tracks authoritative position size before adding quantity synchronization. Reuse the existing protection engine where valid; do not wire Box into the Wedge breakout/retest admission monitor or silently relax its execution gate. Resolve the one actual remaining execution gap with the smallest code slice and one scoped verification; no redundant plans, documentation cycles, or Scanner/Robot launches.
+
 ## 1. Source references and status
 
 - `training/reference_patterns/HEIUSDT/post_pump_two_drop_fib_1618_1h/annotation.json`:
