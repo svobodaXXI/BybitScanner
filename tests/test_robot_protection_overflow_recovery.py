@@ -37,15 +37,36 @@ class _Session:
         return _Response()
 
 
+class _BookSnapshot:
+    def __init__(self, *, message_type="delta") -> None:
+        self.message_type = message_type
+
+    def snapshot(self):
+        return {
+            "state": "READY",
+            "symbol": SYMBOL,
+            "bids": [{"price": "4.270", "size": "100"}],
+            "asks": [{"price": "4.271", "size": "100"}],
+            "receivedAt": 1789725000001,
+            "sequence": 177600000001,
+            "updateId": 10680001,
+            "timestamp": 1789725000000,
+            "matchingEngineCts": 1789724999999,
+            "messageType": self.message_type,
+        }
+
+
 @dataclass
 class _Context:
     reconnect_count: int = 7
+    public_orderbook: object | None = None
 
 
 class _Owner:
     def __init__(self, durable_loss=None) -> None:
         self.fences = []
         self.recoveries = []
+        self.processed = []
         self.durable_loss = durable_loss
 
     def robot_protection_coverage_symbols(self):
@@ -66,6 +87,14 @@ class _Owner:
         )
         return True
 
+    def process_robot_market_event(
+        self, symbol, book, *, event_id, received_at_ms,
+    ):
+        self.processed.append(
+            (symbol, book, event_id, received_at_ms)
+        )
+        return 1
+
 
 class _Runtime:
     def __init__(self, owner: _Owner) -> None:
@@ -74,8 +103,20 @@ class _Runtime:
     def call(self, operation, timeout=15.0):
         return operation(self.owner)
 
-    def enqueue(self, operation):
+    def enqueue(self, operation, **_kwargs):
         operation(self.owner)
+
+
+class _QueuedRuntime(_Runtime):
+    def __init__(self, owner: _Owner) -> None:
+        super().__init__(owner)
+        self.queued = []
+
+    def enqueue(self, operation, **_kwargs):
+        self.queued.append(operation)
+
+    def run_next(self):
+        return self.queued.pop(0)(self.owner)
 
 
 class RobotProtectionOverflowRecoveryTests(unittest.TestCase):
@@ -97,6 +138,60 @@ class RobotProtectionOverflowRecoveryTests(unittest.TestCase):
         self.assertEqual(owner.recoveries[0][4], "ingress_overflow")
         self.assertTrue(manager.is_healthy())
         self.assertEqual(len(session.calls), 1)
+
+    def test_disconnect_barrier_preserves_pre_disconnect_event_fifo_order(self):
+        owner = _Owner()
+        runtime = _QueuedRuntime(owner)
+        manager = RobotProtectionCoverageManager(object(), runtime)
+        context = _Context(reconnect_count=0, public_orderbook=_BookSnapshot())
+        manager._covered[SYMBOL] = context
+        manager._roles[SYMBOL] = "OPEN_POSITION"
+
+        manager._on_update(SYMBOL, f"{SYMBOL}:177600000001:10680001")
+        context.reconnect_count = 1
+        manager._on_disconnect(SYMBOL, 1, "OSError")
+
+        self.assertEqual(len(runtime.queued), 2)
+        runtime.run_next()
+        self.assertEqual(len(owner.processed), 1)
+        self.assertEqual(owner.processed[0][1].source_generation, 0)
+        self.assertEqual(owner.fences, [])
+
+        runtime.run_next()
+        self.assertEqual(
+            owner.fences,
+            [(SYMBOL, "websocket_disconnect:OSError")],
+        )
+        self.assertEqual(
+            manager.health()["unhealthy_symbols"],
+            {SYMBOL: "websocket_disconnect:OSError"},
+        )
+
+    def test_disconnect_blocks_new_generation_delta_until_snapshot_recovery(self):
+        owner = _Owner()
+        runtime = _QueuedRuntime(owner)
+        manager = RobotProtectionCoverageManager(object(), runtime)
+        book = _BookSnapshot(message_type="delta")
+        context = _Context(reconnect_count=1, public_orderbook=book)
+        manager._covered[SYMBOL] = context
+        manager._roles[SYMBOL] = "OPEN_POSITION"
+
+        manager._on_disconnect(SYMBOL, 1, "OSError")
+        manager._on_update(SYMBOL, f"{SYMBOL}:177600000001:10680001")
+        self.assertEqual(len(runtime.queued), 1)
+
+        book.message_type = "snapshot"
+        manager._on_update(SYMBOL, f"{SYMBOL}:177600000001:10680001")
+        self.assertEqual(len(runtime.queued), 2)
+
+        runtime.run_next()
+        self.assertEqual(
+            owner.fences,
+            [(SYMBOL, "websocket_disconnect:OSError")],
+        )
+        runtime.run_next()
+        self.assertEqual(len(owner.recoveries), 1)
+        self.assertEqual(owner.recoveries[0][4], "websocket_disconnect:OSError")
 
     def test_unhealthy_symbol_recovers_from_fresh_rest_snapshot_without_ws_snapshot(self):
         owner = _Owner()
