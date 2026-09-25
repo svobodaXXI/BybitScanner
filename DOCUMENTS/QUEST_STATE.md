@@ -61,8 +61,10 @@ Scanner acceptance выявил отдельный control-runtime дефект.
 запускает новые полные проходы. Владелец также разделил требуемую семантику:
 **Пауза/Продолжить** сохраняют текущий проход, а **Остановить сканер** полностью
 завершает его. Исправление находится в draft PR #249. Там же восстанавливается
-исчезающая Telegram-кнопка Menu. До merge + owner runtime acceptance #249
-повторный полный Scanner acceptance не заказывать.
+исчезающая Telegram-кнопка Menu. Current head `d2a6473...` имеет green Robot
+PAPER acceptance, включая прямой Scanner-control/Telegram-menu шаг; merge и
+owner runtime acceptance ещё не выполнены. До них повторный полный Scanner
+acceptance не заказывать.
 
 ### «Переполненный шлюз»
 
@@ -71,6 +73,18 @@ fail-closed recovery аварийно закрыл owned позиции и ос�
 `ROBOT_RUNNING / RECONCILIATION_REQUIRED`. Аварийное закрытие не считать
 дефектом защиты; отдельный незакрытый босс — причина переполнения ingress.
 Перед новыми PAPER admission требуется штатная evidence-based сверка.
+
+
+### «Сломанный телепорт Codex»
+
+Read-only разбор торговли Robot за 25.09.2026 ещё не выполнен. Codex Desktop
+повторно отвечает `401 Incorrect API key`, хотя локальная диагностика
+подтверждает ChatGPT auth, отсутствие сохранённого API key и доступность
+ChatGPT endpoint. Desktop остаётся на 26.917.9434.0 при доступной
+26.924.1866.0; встроенное обновление пока не меняет установленную версию.
+Сначала восстановить рабочий Codex Desktop, затем сделать только read-only
+аудит сделок/PnL. Отдельный `helper_sandbox_lock_failed` не считать дефектом
+BybitScanner без доказанной связи.
 
 ## Очередь после активного квеста
 
