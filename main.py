@@ -70,7 +70,7 @@ def build_scan_finished_message(
     )
 
 
-def run_scan_pass():
+def run_scan_pass(*, box_robot_sink=None):
     """Run exactly one Scanner scan pass over all discovered symbols.
 
     Extracted from main() as a reusable, throttled-repeatable unit (mirroring
@@ -171,6 +171,28 @@ def run_scan_pass():
                             box_observation_count += 1
                             sent_to_telegram_count += 1
                             print(f"{symbol:<15} {timeframe}m IKIGAI BOX observation SENT")
+
+                        if box_robot_sink is not None:
+                            from geometry.ikigai_box import detect_ikigai_box
+
+                            closed = analysis_result["data"].iloc[:-1]
+                            formation = detect_ikigai_box(closed)
+                            if formation is not None:
+                                box_robot_sink(
+                                    symbol,
+                                    timeframe,
+                                    {
+                                        "direction": formation.direction,
+                                        "a_time_ms": int(closed.iloc[formation.anchor_start_index]["time"]),
+                                        "b_time_ms": int(closed.iloc[formation.anchor_end_index]["time"]),
+                                        "decision_time_ms": int(closed.iloc[formation.as_of_index]["time"]),
+                                        "anchor_a_price": str(formation.anchor_start_price),
+                                        "anchor_b_price": str(formation.anchor_end_price),
+                                        "f1": str(formation.fibonacci_1_0),
+                                        "f1618": str(formation.fibonacci_1_618),
+                                        "f2618": str(formation.fibonacci_2_618),
+                                    },
+                                )
                     except Exception as box_error:
                         # An experimental pattern must not suppress the existing
                         # Wedge Scanner signal on the same market.
