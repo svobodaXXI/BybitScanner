@@ -61,8 +61,9 @@ Scanner acceptance выявил отдельный control-runtime дефект.
 запускает новые полные проходы. Владелец также разделил требуемую семантику:
 **Пауза/Продолжить** сохраняют текущий проход, а **Остановить сканер** полностью
 завершает его. Исправление находится в draft PR #249. Там же восстанавливается
-исчезающая Telegram-кнопка Menu. Current head `d2a6473...` имеет green Robot
-PAPER acceptance, включая прямой Scanner-control/Telegram-menu шаг; merge и
+исчезающая Telegram-кнопка Menu. Последний code-bearing head `d2a6473...` имеет green Robot
+PAPER acceptance, включая прямой Scanner-control/Telegram-menu шаг; последующие
+коммиты этого checkpoint — только документация; merge и
 owner runtime acceptance ещё не выполнены. До них повторный полный Scanner
 acceptance не заказывать.
 
