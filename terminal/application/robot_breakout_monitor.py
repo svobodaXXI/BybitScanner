@@ -807,6 +807,10 @@ class RobotBreakoutMonitor:
     def _advance_retest_detected(
         self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
     ) -> bool:
+        if robot_l_shape.is_l_shape_snapshot(record.signal_snapshot):
+            return self._advance_l_shape_retest_detected(
+                record, match_resting_orders=match_resting_orders,
+            )
         execution = dict(record.robot_state.get("execution") or {})
 
         if (
