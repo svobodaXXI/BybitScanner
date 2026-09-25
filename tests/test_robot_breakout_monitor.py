@@ -374,6 +374,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             expected_snapshot_sha256=source.snapshot_sha256,
             approved_at_ms=3002,
         )
+        self.clock.value = 4000
 
         self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
         ready = self.store.get_robot_candidate(candidate.candidate_id)
