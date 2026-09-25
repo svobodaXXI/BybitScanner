@@ -50,6 +50,7 @@ class SymbolContext:
     last_error: str | None = None
     created_at_ms: int = field(default_factory=lambda: int(time.time() * 1000))
     _update_listeners: dict[str, Callable[[str], None]] = field(default_factory=dict)
+    _disconnect_listeners: dict[str, Callable[[int, str], None]] = field(default_factory=dict)
     _listener_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def add_update_listener(self, name: str, callback: Callable[[str], None]) -> None:
@@ -75,9 +76,25 @@ class SymbolContext:
         if empty:
             self.public_orderbook.set_update_consumer(None)
 
+    def add_disconnect_listener(
+        self, name: str, callback: Callable[[int, str], None],
+    ) -> None:
+        if not name:
+            raise ValueError("disconnect listener name must be non-empty")
+        with self._listener_lock:
+            self._disconnect_listeners[name] = callback
+
+    def remove_disconnect_listener(self, name: str) -> None:
+        with self._listener_lock:
+            self._disconnect_listeners.pop(name, None)
+
     def has_update_listeners(self) -> bool:
         with self._listener_lock:
             return bool(self._update_listeners)
+
+    def has_listeners(self) -> bool:
+        with self._listener_lock:
+            return bool(self._update_listeners or self._disconnect_listeners)
 
     def _dispatch_update(self, book_update_id: str) -> None:
         with self._listener_lock:
@@ -89,6 +106,19 @@ class SymbolContext:
                 LOGGER.exception(
                     "Symbol context update listener failed; symbol=%s book_update_id=%s",
                     self.symbol, book_update_id,
+                )
+
+    def _dispatch_disconnect(self, generation: int, reason: str) -> None:
+        with self._listener_lock:
+            listeners = tuple(self._disconnect_listeners.values())
+        for listener in listeners:
+            try:
+                listener(generation, reason)
+            except Exception:
+                LOGGER.exception(
+                    "Symbol context disconnect listener failed; "
+                    "symbol=%s generation=%s reason=%s",
+                    self.symbol, generation, reason,
                 )
 
     def wait_until_ready(self, timeout: float) -> bool:
@@ -121,6 +151,7 @@ class SymbolContext:
     def close(self) -> None:
         with self._listener_lock:
             self._update_listeners.clear()
+            self._disconnect_listeners.clear()
         self.public_orderbook.set_update_consumer(None)
         self.public_orderbook.close()
         self.public_trades.close()
@@ -199,7 +230,7 @@ class MarketDataHub:
         Robot protection coverage (or any other active listener) for a symbol
         Workspace itself no longer needs; release is last-consumer-out.
         """
-        if context.has_update_listeners():
+        if context.has_listeners():
             return
         with self._lock:
             if self._contexts.get(context.symbol) is not context:
@@ -285,6 +316,10 @@ class MarketDataHub:
                         context.reconnect_count += 1
                         context.last_error = type(exc).__name__
                         context.public_orderbook.mark_disconnected()
+                        context._dispatch_disconnect(
+                            context.reconnect_count,
+                            context.last_error,
+                        )
                     self._stop.wait(self._reconnect_delay)
             finally:
                 with self._lock:
