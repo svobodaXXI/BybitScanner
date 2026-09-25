@@ -195,6 +195,11 @@ BybitScanner использует русскую игровую систему �
 Текущий игровой checkpoint всегда читается из
 `DOCUMENTS/QUEST_STATE.md`.
 
+Для новых ChatGPT-чатов и bounded refresh существующего чата используется
+стабильный Custom Instructions bootstrap из
+`DOCUMENTS/CUSTOM_INSTRUCTIONS_BYBITSCANNER.md`. Он не хранит volatile
+состояние, а направляет к AGENTS -> QUEST_STATE -> BACKLOG/owning spec.
+
 
 # Backlog (working queue, priorities, rules)
 
