@@ -29,8 +29,10 @@ Compact mandatory entry point for coding agents. It routes to project authority;
 Он не меняет safety, trading authority, runtime ownership, acceptance или
 технические приоритеты.
 
-ChatGPT Custom Instructions служат только внешним bootstrap-указателем и не
-являются источником текущего состояния. Их канонический текст:
+Global ChatGPT Custom Instructions служат только внешним условным bootstrap-
+указателем и не являются источником текущего состояния. Полный проектный
+контракт остаётся в BybitScanner Project Instructions; внутри проекта он
+приоритетнее глобальных Custom Instructions. Канонические тексты обоих слоёв:
 `DOCUMENTS/CUSTOM_INSTRUCTIONS_BYBITSCANNER.md`. При явной просьбе владельца
 «освежи контекст», при возврате к BybitScanner после заметного перерыва, при
 изменившемся repo state или конфликте памяти с репозиторием выполни быстрое
