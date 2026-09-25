@@ -4,6 +4,32 @@ Compact mandatory entry point for coding agents. It routes to project authority;
 
 ## Fast task entry
 
+## Автоматический игровой bootstrap для новых чатов — OWNER RULE 2026-09-25
+
+Для первого BybitScanner-запроса в каждом новом ChatGPT-чате игровой режим
+восстанавливается автоматически из репозитория.
+
+После чтения этого файла и минимального task-scoped recovery агент обязан:
+
+1. прочитать `DOCUMENTS/QUEST_STATE.md`;
+2. сверить активный квест с текущей командой владельца и верхним актуальным
+   priority index в `DOCUMENTS/BACKLOG.md`;
+3. при конфликте считать текущую команду владельца и BACKLOG более сильной
+   властью, чем QUEST_STATE;
+4. продолжить работу уже в **русском игровом режиме** без просьбы владельцу
+   вручную переносить контекст, квесты, XP или ачивки;
+5. использовать русские названия игровых сущностей из
+   `DOCUMENTS/GTD_QUEST_SYSTEM.md`;
+6. обновлять `QUEST_STATE.md` при изменении активного квеста, очереди,
+   завершённого босса/рейда, XP, уровня или ачивок;
+7. не создавать отдельный ContextDump/chat-handoff только ради игрового
+   состояния.
+
+Игровой режим относится к BybitScanner. В посторонних темах он не навязывается.
+Он не меняет safety, trading authority, runtime ownership, acceptance или
+технические приоритеты.
+
+
 ## Outcome-first Scanner / PAPER Robot priorities — owner direction
 
 **Business goal:** a Scanner that shows faithful, independently checkable
