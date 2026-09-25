@@ -294,13 +294,21 @@ contract: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
 
 **Next after #225:** connect the already-frozen Box four-order specs to the existing Robot execution path with the smallest pattern-specific branch/adapter. The critical behavioral delta is that Box keeps its remaining approved grid orders after the first fill instead of applying Wedge's cancel-remainder rule. No parallel Box lifecycle is to be introduced.
 
-**L-shape PAPER Robot — design captured, not integrated:** inherit the
+**L-shape PAPER Robot — owner timeframe decision 2026-09-26 / draft implementation #248:** inherit the
 existing Wedge Robot entry/retest, order, protection, closure and recovery
 lifecycle **except** pattern-specific L-shape geometry, 0.8% potential floor,
-RR >= 2:1 and trough-derived/ratio-limited STOP. Next bounded step is
-a read-only compatibility inspection if not already running; no separate
-trading-engine implementation or runtime/order activation. Keep Scanner
-and Robot worktrees and approval boundaries separate.
+RR >= 2:1 and trough-derived/ratio-limited STOP. The owner explicitly authorizes
+PAPER Robot execution from **both 1m and 5m L-shape Scanner source timeframes**.
+No other source timeframe is implicitly authorized. A 5m L-shape keeps its own
+frozen L-shape terms and enters the same shared Robot lifecycle; it does not need
+to masquerade as or project into a 1m Wedge geometry handoff.
+
+Draft PR #248 implements this L-shape adapter/handoff and must remain bounded to
+the shared lifecycle: no second execution engine, no separate protection/recovery
+stack, and no LIVE activation. This 1m+5m authorization does **not** by itself
+complete or authorize the deferred Scanner multi-pattern orchestration, nor does
+it permit simultaneous Robot exposure owners for one symbol. Merge and real PAPER
+acceptance remain separate evidence gates.
 
 **Geometry and Scanner follow-ups:** AEONUSDT 5m Box source-time candles
 were recovered; early A 14:30 UTC → B 15:10 UTC passes implemented
