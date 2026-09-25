@@ -69,73 +69,80 @@ explicit trading decisions in the current conversation take precedence over the 
   that later explicit gate; replenishment, attempt 2 and other later lifecycle
   rules remain out of this first-attempt slice.
 
-## Implementation course correction — mature execution engines (2026-09-25)
+## Implementation course correction — REUSE EXISTING ROBOT LIFECYCLE (2026-09-25)
 
-The next implementation order is intentionally tightened to avoid building an
-entry path before restart/partial-fill safety exists.
+The mature-engine review is retained, but the project-specific conclusion is
+now stricter: BybitScanner already has the durable execution/recovery engine
+needed for Wedge trades, so Box must plug into it rather than grow a parallel
+lifecycle.
 
-External reference patterns reviewed:
-- QuantConnect LEAN: pre-check a set of order requests before submission;
-  track durable order identities/tickets and drive lifecycle from asynchronous
-  order events, including partial fills; contingent/bracket/OCO/OUO sets keep
-  related entry/exit orders coordinated.
-- Hummingbot: reconcile persisted active orders and recover positions before
-  executors start after restart/crash.
-- Freqtrade: persist the trade lifecycle and attach protection immediately
-  after confirmed entry rather than treating STOP as a later independent step.
+### Existing shared Robot machinery to reuse
 
-Applied to BybitScanner, without importing their architectures wholesale:
+- `RobotBreakoutMonitor` / existing Robot coordinator and admission gate;
+- `RobotPaperActionExecutor` and the current serialized PAPER mutation path;
+- PAPER LIMIT matching and the single deduplicated execution journal;
+- durable `robot_trades` entry evidence;
+- initial STOP/TAKE submission and fail-closed handling of unprotected fills;
+- full-position PAPER protection, whose effective quantity follows the
+  authoritative current position;
+- durable protection obligations, STOP/TAKE trigger execution and restart
+  recovery/reconciliation;
+- duplicate-owner/foreign-position/order checks and
+  `RECONCILIATION_REQUIRED` escalation.
 
-1. **Keep the completed atomicity work.** Stable Box order IDs, immutable
-   ownership, one execution journal, atomic owned LIMIT persistence and
-   all-or-nothing first-grid persistence are the correct foundation.
-2. **Finish the deterministic first-grid spec adapter.** It remains pure and
-   non-executing; replay/restart must derive the same four identities.
-3. **Before any runtime entry activation, add one Box lifecycle/recovery
-   coordinator, not more persistence layers.** It must derive a fail-closed
-   state from the existing frozen plan, ownership rows, active PAPER LIMITs,
-   execution journal, authoritative position projection and protection
-   evidence. At minimum it must distinguish: no entry submitted; complete
-   working grid while FLAT; partial/full owned exposure; protected exposure;
-   completed FLAT; and inconsistent/foreign evidence requiring reconciliation.
-4. **Reuse the existing full-position PAPER protection path.** It already
-   follows authoritative position quantity, so do not add a Box-specific STOP
-   quantity synchronizer. On the first proven owned fill, protection must become
-   the next required lifecycle action before any new top-up is considered safe.
-   Further partial fills reuse the same full-position protection semantics.
-5. **Reuse the existing durable protection obligation/recovery mechanism.**
-   Do not create a second Box execution journal, second matching engine, second
-   STOP engine or generalized message bus. Box-specific work should only bridge
-   candidate/order ownership into those existing mechanisms.
-6. **Startup/restart reconciliation precedes execution.** A Box attempt with
-   persisted orders/exposure must be reconciled before the Robot may create new
-   Box entry orders. Unknown, foreign or contradictory evidence fails closed.
-7. **Only after recovery + first-fill protection are proven** may the explicit
-   Box execution gate be connected to the existing Robot/PAPER runtime. That
-   activation is a separate step and must not be smuggled into planner,
-   persistence or adapter work.
+### Box-specific delta only
 
-Optimized bounded implementation sequence:
-- A. deterministic four-order spec adapter (current non-executing slice);
-- B. pure/read-only Box lifecycle classification and restart reconciliation;
-- C. bridge first confirmed owned fill to existing durable Robot
-  trade/protection evidence, with STOP/TAKE recovery and fail-closed behavior;
-- D. one execution coordinator that performs preflight -> ownership baseline ->
-  atomic four-order grid -> event-driven fill/protection handling;
-- E. only then enable the separately authorized PAPER Box admission/runtime
-  path and perform PAPER acceptance.
+Box needs a different **entry policy**, not a different trading engine:
 
-Explicitly dropped as unnecessary:
-- Box-specific STOP quantity synchronization;
-- a second fill/execution journal;
-- separate matching/protection engines;
-- per-order ad-hoc retry IDs;
-- infrastructure such as a message bus merely to coordinate this first grid.
+1. detect/admit the already frozen Box plan at the appropriate Box-specific
+   condition rather than Wedge breakout/retest;
+2. create four deterministic owned ENTRY LIMITs instead of one retest LIMIT;
+3. allow sequential fills/top-ups from those four approved orders;
+4. do **not** apply Wedge's "first partial fill -> cancel unfilled remainder"
+   rule to the Box grid;
+5. provide the Box-specific frozen STOP/TAKE prices to the shared protection
+   path.
 
-This ordering is an engineering-safety optimization, not a strategy/economic
-change. Grid geometry, TAKE/STOP prices, risk policy, attempt rules and
-execution authorization remain governed by the existing owner-approved
-strategy decisions.
+After the first proven owned fill, the existing Robot lifecycle owns the
+position. Further Box fills change the same authoritative position; existing
+full-position protection follows that quantity. The shared execution journal,
+trade record, protection obligations and recovery remain authoritative.
+
+### Status of recent Box-specific work
+
+PR #215/#218/#219/#220 provide plan/persistence/STOP inputs. PR #221–#223
+added multi-order ownership and atomic PAPER-grid persistence. These are kept
+because a four-order Box entry needs stronger attribution than the existing
+single Wedge entry order. They are **not** authorization to create a second
+lifecycle, recovery coordinator, matching engine or protection engine.
+
+PR #224 remains the current small adapter: deterministic four-order specs.
+
+### Optimized next steps
+
+A. finish #224;
+B. introduce the smallest entry-policy abstraction/branch in the existing
+   Robot coordinator so Wedge keeps its current single-order behavior and Box
+   gets its four-order behavior;
+C. reuse existing fill evidence -> trade finalization -> STOP/TAKE ->
+   protection obligation/recovery flow, adding only the minimum multi-entry
+   aggregation needed for the four owned Box orders;
+D. focused PAPER tests for: no fill, first partial fill with immediate
+   protection, later grid top-up with protection still covering full
+   position, full grid, restart/reconciliation and foreign-evidence fail
+   closed;
+E. then enable Box in the existing PAPER Robot admission/runtime path.
+
+Explicitly rejected:
+- separate Box lifecycle/recovery coordinator;
+- second Robot state machine for execution;
+- second fill/execution journal;
+- separate matching or protection engine;
+- Box-specific STOP quantity synchronizer;
+- message-bus/infrastructure expansion for this integration.
+
+This is an architecture correction only. The owner-approved Box grid,
+STOP/TAKE economics and later attempt/re-arm rules are unchanged.
 
 ## 1. Source references and status
 
