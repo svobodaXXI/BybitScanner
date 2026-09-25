@@ -60,6 +60,44 @@ class BoxOrderOwnershipTests(unittest.TestCase):
     def proof(self):
         return self.store.prove_box_owned_position(self.plan.candidate_id)
 
+    def test_owned_limit_identity_and_order_are_one_transaction(self):
+        order, created = self.store.create_box_owned_paper_limit(
+            self.plan.candidate_id, role="ENTRY", slot=3,
+            client_action_id="box-entry-3", request_fingerprint="box-entry-3-fp",
+            order_id=OrderId("entry-3"), order_link_id="box-entry-3-link",
+            trading_account_id=self.account, symbol=self.key.symbol,
+            side=OrderSide.BUY, price=D("93"), quantity=D("2"), created_at_ms=4500,
+        )
+        self.assertTrue(created)
+        self.assertEqual(order.order_id, OrderId("entry-3"))
+        replay, replay_created = self.store.create_box_owned_paper_limit(
+            self.plan.candidate_id, role="ENTRY", slot=3,
+            client_action_id="box-entry-3", request_fingerprint="box-entry-3-fp",
+            order_id=OrderId("entry-3"), order_link_id="box-entry-3-link",
+            trading_account_id=self.account, symbol=self.key.symbol,
+            side=OrderSide.BUY, price=D("93"), quantity=D("2"), created_at_ms=4500,
+        )
+        self.assertFalse(replay_created)
+        self.assertEqual(replay, order)
+
+        self.store.create_paper_limit(
+            client_action_id="foreign", request_fingerprint="foreign-fp",
+            order_id=OrderId("foreign"), order_link_id="occupied-link",
+            trading_account_id=self.account, symbol=self.key.symbol,
+            side=OrderSide.BUY, price=D("92"), quantity=D("1"), created_at_ms=4600,
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.create_box_owned_paper_limit(
+                self.plan.candidate_id, role="ENTRY", slot=4,
+                client_action_id="box-entry-4", request_fingerprint="box-entry-4-fp",
+                order_id=OrderId("entry-4"), order_link_id="occupied-link",
+                trading_account_id=self.account, symbol=self.key.symbol,
+                side=OrderSide.BUY, price=D("92"), quantity=D("2"), created_at_ms=4700,
+            )
+        self.assertIsNone(self.store._connection.execute(
+            "SELECT 1 FROM box_order_ownership WHERE order_id='entry-4'"
+        ).fetchone())
+
     def test_partial_entry_growth_exit_duplicate_and_restart(self):
         self.fill("e1", "entry-1", OrderSide.BUY, "1", "94", "1", "94", 5000)
         self.assertEqual(self.proof().remaining_quantity, D(1))
