@@ -121,7 +121,34 @@ class ScannerControlRuntimeRealThreadTests(unittest.TestCase):
                 state = verify_store.get_scanner_runtime_state(ACCOUNT_ID)
             finally:
                 verify_store.close()
-            self.assertEqual(state.mode, SCANNER_RUNNING)
+            self.assertEqual(state.mode, SCANNER_PAUSED)
+
+    def test_one_start_runs_only_one_pass_until_explicit_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "paper.sqlite3"
+            scanned = threading.Event()
+            calls = []
+
+            def scan_once():
+                calls.append(True)
+                scanned.set()
+
+            runtime = ScannerControlRuntime(
+                lambda: SQLiteStore.open(db_path),
+                ACCOUNT_ID,
+                scan_pass=scan_once,
+                clock_ms=lambda: int(time.time() * 1000),
+                scan_interval_s=0.05,
+            )
+            runtime.start()
+            try:
+                runtime.start_scanner()
+                self.assertTrue(scanned.wait(timeout=5.0))
+                time.sleep(0.20)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(runtime.status().mode, SCANNER_PAUSED)
+            finally:
+                runtime.close()
 
 
 if __name__ == "__main__":
