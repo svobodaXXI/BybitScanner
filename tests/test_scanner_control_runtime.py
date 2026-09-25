@@ -36,7 +36,7 @@ class ScannerControlRuntimeTests(unittest.TestCase):
         self.runtime = ScannerControlRuntime(
             lambda: SQLiteStore.open(self.db_path),
             ACCOUNT_ID,
-            scan_pass=lambda: self.scan_calls.append(True),
+            scan_pass=lambda checkpoint: self.scan_calls.append(True),
             clock_ms=self.clock,
         )
 
@@ -59,6 +59,9 @@ class ScannerControlRuntimeTests(unittest.TestCase):
         resumed = self.runtime.resume_scanner()
         self.assertEqual(resumed.mode, SCANNER_RUNNING)
 
+        stopped = self.runtime.stop_scanner()
+        self.assertEqual(stopped.mode, SCANNER_STOPPED)
+
     def test_invalid_transitions_are_rejected_by_the_runtime(self):
         with self.assertRaises(ScannerControlRuntimeError):
             self.runtime.pause_scanner()  # STOPPED -> pause is invalid
@@ -71,11 +74,46 @@ class ScannerControlRuntimeTests(unittest.TestCase):
         with self.assertRaises(ScannerControlRuntimeError):
             self.runtime.resume_scanner()  # RUNNING -> resume is invalid
 
+    def test_pause_blocks_same_pass_until_resume_and_stop_ends_it(self):
+        checkpoints = []
+        first = threading.Event()
+        continued = threading.Event()
+
+        def pass_with_checkpoints(checkpoint):
+            checkpoints.append("first")
+            first.set()
+            self.assertTrue(checkpoint())
+            checkpoints.append("continued")
+            continued.set()
+            self.assertFalse(checkpoint())
+
+        runtime = ScannerControlRuntime(
+            lambda: SQLiteStore.open(self.db_path),
+            ACCOUNT_ID,
+            scan_pass=pass_with_checkpoints,
+            clock_ms=self.clock,
+            scan_interval_s=0.05,
+        )
+        runtime.start()
+        try:
+            runtime.start_scanner()
+            self.assertTrue(first.wait(timeout=5.0))
+            runtime.pause_scanner()
+            time.sleep(0.15)
+            self.assertFalse(continued.is_set())
+            runtime.resume_scanner()
+            self.assertTrue(continued.wait(timeout=5.0))
+            runtime.stop_scanner()
+            time.sleep(0.15)
+            self.assertEqual(runtime.status().mode, SCANNER_STOPPED)
+        finally:
+            runtime.close()
+
     def test_start_and_close_do_not_scan_within_the_interval(self):
         monitor = ScannerControlRuntime(
             lambda: SQLiteStore.open(self.db_path),
             ACCOUNT_ID,
-            scan_pass=lambda: self.scan_calls.append(True),
+            scan_pass=lambda checkpoint: self.scan_calls.append(True),
             clock_ms=self.clock,
             scan_interval_s=60.0,
         )
@@ -99,7 +137,7 @@ class ScannerControlRuntimeRealThreadTests(unittest.TestCase):
             runtime = ScannerControlRuntime(
                 lambda: SQLiteStore.open(db_path),
                 ACCOUNT_ID,
-                scan_pass=scanned.set,
+                scan_pass=lambda checkpoint: scanned.set(),
                 clock_ms=lambda: int(time.time() * 1000),
                 scan_interval_s=0.05,
             )
@@ -121,7 +159,7 @@ class ScannerControlRuntimeRealThreadTests(unittest.TestCase):
                 state = verify_store.get_scanner_runtime_state(ACCOUNT_ID)
             finally:
                 verify_store.close()
-            self.assertEqual(state.mode, SCANNER_PAUSED)
+            self.assertEqual(state.mode, SCANNER_STOPPED)
 
     def test_one_start_runs_only_one_pass_until_explicit_resume(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -136,7 +174,7 @@ class ScannerControlRuntimeRealThreadTests(unittest.TestCase):
             runtime = ScannerControlRuntime(
                 lambda: SQLiteStore.open(db_path),
                 ACCOUNT_ID,
-                scan_pass=scan_once,
+                scan_pass=lambda checkpoint: scan_once(),
                 clock_ms=lambda: int(time.time() * 1000),
                 scan_interval_s=0.05,
             )
@@ -146,7 +184,7 @@ class ScannerControlRuntimeRealThreadTests(unittest.TestCase):
                 self.assertTrue(scanned.wait(timeout=5.0))
                 time.sleep(0.20)
                 self.assertEqual(len(calls), 1)
-                self.assertEqual(runtime.status().mode, SCANNER_PAUSED)
+                self.assertEqual(runtime.status().mode, SCANNER_STOPPED)
             finally:
                 runtime.close()
 
