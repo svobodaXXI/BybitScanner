@@ -16,6 +16,7 @@ RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
 RESUME_WAITING = "RESUME_WAITING"
 RESUME_OPEN_POSITION = "RESUME_OPEN_POSITION"
 EXPIRED_AT_APEX = "EXPIRED_AT_APEX"
+BOX_ENTRY_READY = "BOX_ENTRY_READY"
 
 
 class RobotRestartError(RuntimeError):
@@ -94,6 +95,19 @@ def reconcile_restart(
             raise RobotRestartError("approved candidate lacks durable recovery state")
         state = dict(state_wrapper)
         state.pop("revision", None)
+        if (
+            snapshot.get("pattern") == "IKIGAI_BOX"
+            and state.get("phase") == BOX_ENTRY_READY
+        ):
+            decisions.append(
+                RestartDecision(
+                    RESUME_WAITING,
+                    candidate_id=candidate_id,
+                    reason=BOX_ENTRY_READY,
+                    state=state,
+                )
+            )
+            continue
         if candidate_id not in latest_geometry_index_by_candidate:
             raise RobotRestartError(
                 f"latest geometry index is unavailable for candidate {candidate_id}"

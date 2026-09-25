@@ -4165,6 +4165,49 @@ class SQLiteStore:
                 raise DuplicateIdentity("Box plan conflicts with durable state") from exc
         return self.get_robot_candidate(candidate_id), True
 
+    def handoff_box_plan_to_robot(
+        self, source_candidate_id: str, *, symbol: Symbol,
+        expected_snapshot_sha256: str, approved_at_ms: int,
+    ) -> tuple[RobotCandidateRecord, bool]:
+        """Atomically persist a linked waiting candidate; never authorize execution."""
+        self._assert_owner()
+        if type(approved_at_ms) is not int or approved_at_ms < 0:
+            raise ValueError("invalid Box handoff timestamp")
+        with self._transaction():
+            source = self.get_robot_candidate(source_candidate_id)
+            if source is None or source.status != "BOX_PLAN_ONLY":
+                raise PersistenceError("immutable Box source plan is required")
+            if source.symbol != symbol or source.snapshot_sha256 != expected_snapshot_sha256:
+                raise DuplicateIdentity("Box handoff source symbol or snapshot conflicts")
+            if approved_at_ms < max(source.updated_at_ms, source.signal_snapshot["decision_time_ms"]):
+                raise ValueError("Box handoff predates frozen source plan")
+            candidate_id = "box-robot-" + source_candidate_id.removeprefix("box-plan-")
+            snapshot = {**source.signal_snapshot, "source_box_candidate_id": source_candidate_id}
+            snapshot_json = _canonical_json(snapshot)
+            digest = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
+            existing = self.get_robot_candidate(candidate_id)
+            if existing is not None:
+                if (existing.status == "BOX_PLAN_ONLY"
+                        or existing.trading_account_id != source.trading_account_id
+                        or existing.symbol != symbol or existing.snapshot_sha256 != digest):
+                    raise DuplicateIdentity("Box handoff identity conflicts with durable candidate")
+                return existing, False
+            state = {
+                "state_version": "1.0", "phase": "BOX_ENTRY_READY",
+                "pattern": "IKIGAI_BOX", "direction": snapshot["identity"]["direction"],
+                "source_box_candidate_id": source_candidate_id,
+                "execution_authorized": False,
+            }
+            try:
+                self._connection.execute(
+                    "INSERT INTO robot_candidates VALUES (?, 'paper', ?, 'APPROVED', ?, ?, ?, 1, ?, ?)",
+                    (candidate_id, symbol.value, snapshot_json, digest,
+                     _canonical_json(state), approved_at_ms, approved_at_ms),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateIdentity("Box handoff conflicts with durable state") from exc
+            return self.get_robot_candidate(candidate_id), True
+
     def create_robot_candidate(
         self, *, candidate_id: str, trading_account_id: TradingAccountId, symbol: Symbol,
         status: str, signal_snapshot: dict[str, object], approved_at_ms: int,

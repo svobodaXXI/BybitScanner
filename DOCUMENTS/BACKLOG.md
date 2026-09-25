@@ -1,3 +1,17 @@
+## BOX ROBOT IMPLEMENTATION ROUTE — 2026-09-25 UPDATE
+
+Mature-engine cross-check (LEAN / Hummingbot / Freqtrade patterns) confirms the project-specific architecture: Box is a multi-order **entry policy** over the existing Robot trade/order lifecycle, not a parallel trading subsystem.
+
+Current sequence:
+1. finish #227 recovery compatibility and the linked inert Box->Robot handoff;
+2. add one guard so `BOX_ENTRY_READY` never falls into the Wedge candle state machine;
+3. next shared blocker: allow one OPEN `robot_trade` to refresh its durable aggregate entry attestation after later **owned** entry fills (quantity + VWAP + position version), without changing the frozen STOP/TAKE prices;
+4. update restart/reconciliation to compare the live position with that latest aggregate attestation;
+5. only after that, connect the four Box LIMITs and keep unfilled approved grid orders alive after the first fill;
+6. reuse existing matcher, execution journal, protection, obligations and recovery.
+
+Do not add Box-specific trade states such as GRID_PARTIAL/GRID_FILLED, a Box recovery coordinator, a second execution journal, a second matcher, or a STOP-quantity synchronizer. One focused verification per new invariant; do not rerun already-green prior slices without changed inputs.
+
 # Backlog (working queue, priorities, rules)
 
 Status: WORKING BACKLOG (living document)

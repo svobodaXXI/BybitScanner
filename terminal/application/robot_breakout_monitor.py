@@ -288,6 +288,12 @@ class RobotBreakoutMonitor:
             pass
 
     def _advance_one(self, record: RobotCandidateRecord) -> bool:
+        if (
+            record.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+            and record.robot_state is not None
+            and record.robot_state.get("phase") == "BOX_ENTRY_READY"
+        ):
+            return False
         if record.robot_state is None:
             try:
                 state, _event = robot_state_machine.initialize_state(

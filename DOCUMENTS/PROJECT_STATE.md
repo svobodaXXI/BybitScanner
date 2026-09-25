@@ -667,32 +667,21 @@ not supersede the current Robot work.
 `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
 
 Current Box checkpoint:
-- PR #215 planner, #218 BOX_PLAN_ONLY persistence, #219 persistence adapter,
-  #220 fixed Box STOP terms, #221 durable order ownership/proof,
-  #222 atomic owned LIMIT persistence and #223 all-or-nothing first-grid
-  persistence are merged to `main`.
-- PR #224 is the current bounded slice: deterministic four-order first-grid
-  specs with stable restart-safe identities; still non-executing.
-- `BOX_PLAN_ONLY` remains non-executable. No Box admission/runtime trade
-  activation is authorized yet.
-- Existing PAPER full-position protection already follows authoritative
-  position quantity; do not add Box-specific STOP quantity synchronization.
-- Existing execution journal, matching engine, protection engine and durable
-  protection obligations are to be reused; do not build Box-specific copies.
+- PR #224 merged: deterministic four-order Box entry specs.
+- PR #225 merged: shared Robot entry evidence can aggregate multiple owned LIMIT IDs.
+- PR #226 merged: shared pre-entry guard accepts multiple declared owned entry LIMITs and still fails closed on foreign orders.
+- PR #227 is the current recovery-compatibility slice: `BOX_ENTRY_READY` is resumed by the existing Robot recovery path without Wedge geometry replay.
+- Local worktree additionally contains an uncommitted handoff micro-slice that creates a separate linked `APPROVED` Robot candidate from immutable `BOX_PLAN_ONLY`; this remains under review and is not yet authoritative.
+- `BOX_PLAN_ONLY` remains immutable/non-executable. No Box order submission or runtime activation is authorized yet.
 
-Current implementation order (REUSE-FIRST):
-1. finish/merge deterministic first-grid spec adapter (#224);
-2. add a **Box entry-policy adapter inside the existing Robot lifecycle**:
-   pattern-specific eligibility + four ENTRY LIMITs + sequential owned fills;
-3. reuse the existing Robot finalization/protection/recovery path unchanged
-   wherever possible: durable `robot_trades`, full-position STOP/TAKE,
-   protection obligations, PAPER matching, execution journal, runtime
-   reconciliation and fail-closed escalation;
-4. change only the Wedge-specific assumption that entry has exactly one LIMIT
-   whose remainder is cancelled after the first fill. Box must allow its four
-   preplanned owned LIMITs to remain/top-up according to the Box policy;
-5. only after this adapter passes focused PAPER tests, expose Box through the
-   existing Robot admission/runtime gate and run PAPER acceptance.
+Current implementation order (REUSE-FIRST, mature-engine cross-check applied):
+1. keep Box as an **entry policy / strategy intent** feeding the existing Robot execution lifecycle; do not create a Box-specific execution/recovery lifecycle;
+2. finish the safe handoff boundary: immutable `BOX_PLAN_ONLY` -> linked inert `APPROVED` Robot candidate, with `BOX_ENTRY_READY` ignored by the Wedge candle path until Box entry execution is explicitly wired;
+3. before submitting the four-grid runtime, make the shared `robot_trades` lifecycle multi-entry aware: after later owned Box fills, atomically refresh durable aggregate entry attestation (quantity, VWAP and position version) for the same OPEN trade;
+4. keep Box STOP/TAKE prices frozen by the approved plan; do not reprice them after top-ups. Existing full-position protection continues to cover authoritative current position quantity;
+5. make restart/reconciliation validate the **latest durable aggregate entry attestation**, not only the first fill;
+6. only then wire the four deterministic owned LIMITs through the existing Robot mutation/matching path, preserving Box remainder orders after the first fill instead of applying the Wedge cancel-remainder rule;
+7. verify one focused scenario per new invariant, reuse prior green evidence, then perform the required PAPER acceptance.
 
 There is **no separate Box lifecycle/recovery coordinator** and no second
 Robot engine. Box-specific persistence already merged is treated as entry
