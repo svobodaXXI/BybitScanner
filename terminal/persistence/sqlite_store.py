@@ -404,6 +404,19 @@ class PaperAccountRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class BoxOwnedPaperLimitSpec:
+    slot: int
+    client_action_id: str
+    request_fingerprint: str
+    order_id: OrderId
+    order_link_id: str
+    side: OrderSide
+    price: Decimal
+    quantity: Decimal
+    created_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
 class PaperLimitOrderRecord:
     order_id: OrderId
     order_link_id: str
@@ -2948,6 +2961,43 @@ class SQLiteStore:
             if order.order_id != order_id:
                 raise DuplicateIdentity("Box create action points to another PAPER limit")
             return order, created
+
+    def create_box_owned_paper_grid(
+        self, candidate_id: str, *, trading_account_id: TradingAccountId,
+        symbol: Symbol, orders: tuple[BoxOwnedPaperLimitSpec, ...],
+    ) -> tuple[PaperLimitOrderRecord, ...]:
+        """Persist all four first-grid ENTRY LIMITs as one atomic unit.
+
+        This storage primitive does not admit BOX_PLAN_ONLY or authorize
+        execution. Any conflict rolls back both ownership and every LIMIT row.
+        """
+        self._assert_owner()
+        if trading_account_id != TradingAccountId("paper"):
+            raise ValueError("Box owned PAPER grid requires paper account")
+        if len(orders) != 4 or {item.slot for item in orders} != {1, 2, 3, 4}:
+            raise ValueError("Box first grid requires exactly ENTRY slots 1..4")
+        with self._transaction():
+            created_orders = []
+            for item in sorted(orders, key=lambda value: value.slot):
+                self._reserve_box_order_identity(
+                    candidate_id, order_id=item.order_id, role="ENTRY", slot=item.slot,
+                )
+                order, _ = self._create_paper_limit(
+                    client_action_id=item.client_action_id,
+                    request_fingerprint=item.request_fingerprint,
+                    order_id=item.order_id,
+                    order_link_id=item.order_link_id,
+                    trading_account_id=trading_account_id,
+                    symbol=symbol,
+                    side=item.side,
+                    price=item.price,
+                    quantity=item.quantity,
+                    created_at_ms=item.created_at_ms,
+                )
+                if order.order_id != item.order_id:
+                    raise DuplicateIdentity("Box create action points to another PAPER limit")
+                created_orders.append(order)
+            return tuple(created_orders)
 
     def cancel_paper_limit(
         self, *, client_action_id: str, request_fingerprint: str,
