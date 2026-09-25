@@ -309,32 +309,116 @@ class _Clock:
 
 
 class RobotBreakoutMonitorTests(unittest.TestCase):
-    def test_box_entry_ready_is_inert_pending_entry(self):
-        self.store.create_robot_candidate(
-            candidate_id="box-robot-1", trading_account_id=ACCOUNT_ID,
-            symbol=Symbol(SYMBOL), status="APPROVED",
-            signal_snapshot={"pattern": "IKIGAI_BOX", "symbol": SYMBOL},
-            approved_at_ms=1, updated_at_ms=1,
+    def test_box_entry_ready_runs_four_limit_grid_into_shared_trade(self):
+        source_snapshot = {
+            "contract_version": 1,
+            "planner_version": "runtime-test",
+            "pattern": "IKIGAI_BOX",
+            "environment": "PAPER",
+            "execution_authorized": False,
+            "attempt": 1,
+            "identity": {
+                "venue": "bybit", "market": "linear", "symbol": SYMBOL,
+                "timeframe": "5", "direction": "LONG",
+                "a_time_ms": 1000, "b_time_ms": 2000,
+            },
+            "decision_time_ms": 3000,
+            "anchors": {"a_price": "112.94498381877023", "b_price": "100"},
+            "fibonacci": {"f1": "100", "f1618": "92", "f2618": "79.05501618122977"},
+            "inputs": {
+                "working_quantity": "8", "tick_size": "0.01",
+                "entry_fee_rate": "0", "target_fee_rate": "0",
+                "stop_fee_rate": "0", "structural_stop": None,
+            },
+            "plan": {
+                "direction": "LONG",
+                "limit_prices": ["94", "93.2", "92.4", "91.6"],
+                "limit_quantities": ["2", "2", "2", "2"],
+                "frozen_f1": "100", "frozen_f1618": "92",
+                "take_price": "99.2", "grid_spacing": "0.8",
+                "stop_price": "89.6", "stop_basis": "FULL_GRID_RR_CAP",
+                "environment": "PAPER", "execution_authorized": False,
+                "full_position": {
+                    "quantity": "8", "average_entry": "92.8",
+                    "net_target_profit": "51.2", "net_stop_loss": "25.6",
+                    "reward_risk": "2",
+                },
+                "slices": [
+                    {"quantity": "2", "average_entry": "94", "net_target_profit": "10.4",
+                     "net_stop_loss": "8.8", "reward_risk": "1.181818181818181818181818182"},
+                    {"quantity": "2", "average_entry": "93.2", "net_target_profit": "12",
+                     "net_stop_loss": "7.2", "reward_risk": "1.666666666666666666666666667"},
+                    {"quantity": "2", "average_entry": "92.4", "net_target_profit": "13.6",
+                     "net_stop_loss": "5.6", "reward_risk": "2.428571428571428571428571429"},
+                    {"quantity": "2", "average_entry": "91.6", "net_target_profit": "15.2",
+                     "net_stop_loss": "4", "reward_risk": "3.8"},
+                ],
+                "partial_fill_loss_upper_bound": "25.6",
+                "minimum_partial_fill_rr": "1.181818181818181818181818182",
+            },
+        }
+        self.store._connection.execute(
+            """INSERT INTO position_projections (
+                   trading_account_id, category, symbol, position_idx, side, quantity,
+                   average_entry, realized_pnl, accumulated_fee, engaged_notional,
+                   sync_state, version, updated_at_ms
+               ) VALUES (?, ?, ?, 0, ?, '0', NULL, '0', '0', '0', 'synced', 1, ?)""",
+            (ACCOUNT_ID.value, Category.LINEAR.value, SYMBOL, PositionSide.FLAT.value, 500),
         )
-        original = self.store.save_robot_candidate_state(
-            "box-robot-1", status="APPROVED",
-            robot_state={"phase": "BOX_ENTRY_READY", "pattern": "IKIGAI_BOX"},
-            expected_revision=0, updated_at_ms=2,
+        source, _ = self.store.save_box_plan_only(
+            snapshot=source_snapshot, created_at_ms=3001,
         )
-        with patch.object(robot_state_machine, "initialize_state") as initialize, \
-                patch.object(robot_state_machine, "process_closed_candle") as process:
-            self.assertFalse(self.monitor._advance_one(original))
-            self.assertEqual(self.monitor.tick(), ())
-            initialize.assert_not_called()
-            process.assert_not_called()
-        self.assertEqual(self.store.get_robot_candidate(original.candidate_id), original)
-        self.assertEqual(self.feed.calls, [])
-        self.assertEqual(self.executor.limit_calls, [])
-        self.assertEqual(self.executor.cancel_calls, [])
-        self.assertEqual(self.store._connection.execute(
-            "SELECT COUNT(*) FROM paper_limit_orders"
-        ).fetchone()[0], 0)
-        self.assertNotIn("last_execution_error", original.robot_state.get("execution", {}))
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id,
+            symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            approved_at_ms=3002,
+        )
+
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        ready = self.store.get_robot_candidate(candidate.candidate_id)
+        order_ids = ready.robot_state["execution"]["limit_order_ids"]
+        self.assertEqual(len(order_ids), 4)
+        self.assertEqual(
+            [self.store.get_paper_limit(order_id, ACCOUNT_ID).price for order_id in order_ids],
+            [Decimal("94"), Decimal("93.2"), Decimal("92.4"), Decimal("91.6")],
+        )
+
+        self.executor.fill_resting_limit(
+            order_ids[0], SYMBOL, OrderSide.BUY, Decimal("2"), Decimal("94"),
+        )
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            (candidate.candidate_id,),
+        )
+        opened = self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}")
+        self.assertIsNotNone(opened)
+        self.assertEqual(opened.entry_quantity, Decimal("2"))
+        self.assertEqual(opened.average_entry, Decimal("94"))
+        self.assertEqual(opened.stop_price, Decimal("89.6"))
+        self.assertEqual(opened.take_price, Decimal("99.2"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+
+        self.executor.fill_resting_limit(
+            order_ids[1], SYMBOL, OrderSide.BUY, Decimal("2"), Decimal("93.2"),
+        )
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            (candidate.candidate_id,),
+        )
+        topped_up = self.store.get_robot_trade(opened.trade_id)
+        self.assertEqual(topped_up.trade_id, opened.trade_id)
+        self.assertEqual(topped_up.entry_quantity, Decimal("4"))
+        self.assertEqual(topped_up.average_entry, Decimal("93.6"))
+        self.assertEqual(topped_up.stop_price, Decimal("89.6"))
+        self.assertEqual(topped_up.take_price, Decimal("99.2"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
