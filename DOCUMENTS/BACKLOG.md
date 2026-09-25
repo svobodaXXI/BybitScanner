@@ -105,6 +105,18 @@ contract: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
 
 **Next after #225:** connect the already-frozen Box four-order specs to the existing Robot execution path with the smallest pattern-specific branch/adapter. The critical behavioral delta is that Box keeps its remaining approved grid orders after the first fill instead of applying Wedge's cancel-remainder rule. No parallel Box lifecycle is to be introduced.
 
+**Queued L-shape Telegram Robot-button integration — owner feedback, 2026-09-25:**
+The ordinary L-shape Telegram signal currently has no `🤖 Робот` button because
+`l_shape_scanner.py` is explicitly observational-only and passes
+`robot_candidate_id=None`; there is no L-shape Robot handoff yet. Do **not** add
+a decorative button that cannot execute safely. When the queued L-shape PAPER
+Robot integration is implemented through the existing shared Robot lifecycle,
+include the owner-visible `🤖 Робот` action in the same delivery slice, using the
+actual L-shape candidate/handoff semantics and existing Robot control/admission
+UI rather than a parallel callback path. Telegram button availability and the
+underlying Robot capability must land together and be covered by the normal
+owner Telegram acceptance flow.
+
 **L-shape PAPER Robot — design captured, not integrated:** inherit the
 existing Wedge Robot entry/retest, order, protection, closure and recovery
 lifecycle **except** pattern-specific L-shape geometry, 0.8% potential floor,
