@@ -293,6 +293,54 @@ def prepare_box_stop_terms(
     return BoxStopTerms(stop, quantity)
 
 
+def build_box_protection_plan(
+    candidate: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    average_entry: Decimal,
+    confirmed_position_quantity: Decimal,
+) -> ProtectionPlan:
+    """Build shared Robot protection requests from immutable Box terms."""
+    if candidate.get("status") != "APPROVED":
+        raise RobotProtectionError("candidate must be APPROVED")
+    snapshot = candidate.get("signal_snapshot")
+    if not isinstance(snapshot, Mapping):
+        raise RobotProtectionError("signal snapshot is missing")
+    candidate_id = str(candidate.get("candidate_id", "")).strip()
+    symbol = str(snapshot.get("identity", {}).get("symbol", "")).strip().upper()
+    direction = str(state.get("direction", "")).strip().upper()
+    if not candidate_id or not symbol:
+        raise RobotProtectionError("candidate identity and symbol are required")
+    if direction != str(snapshot.get("plan", {}).get("direction", "")).strip().upper():
+        raise RobotProtectionError("Box direction conflicts with frozen plan")
+
+    stop_terms = prepare_box_stop_terms(
+        snapshot,
+        confirmed_position_quantity=confirmed_position_quantity,
+        confirmed_average_entry=average_entry,
+    )
+    take = _decimal(snapshot["plan"].get("take_price"), "frozen Box TAKE")
+    entry = _decimal(average_entry, "average_entry")
+    if direction == DIRECTION_LONG and not (stop_terms.price < entry < take):
+        raise RobotProtectionError("LONG Box protection geometry is invalid")
+    if direction == DIRECTION_SHORT and not (take < entry < stop_terms.price):
+        raise RobotProtectionError("SHORT Box protection geometry is invalid")
+
+    return ProtectionPlan(
+        candidate_id=candidate_id,
+        symbol=symbol,
+        direction=direction,
+        stop_price=stop_terms.price,
+        take_price=take,
+        stop_request=PaperStopMutationRequest(
+            _action_id(candidate_id, "stop", stop_terms.price), symbol, stop_terms.price,
+        ),
+        take_request=PaperStopMutationRequest(
+            _action_id(candidate_id, "take", take), symbol, take,
+        ),
+    )
+
+
 def protection_recovery(
     candidate_id: str,
     symbol: str,

@@ -40,6 +40,7 @@ from scanner_geometry_cursor import (
 )
 from terminal.api.models import ClientActionId, CommandResultStatus, MarketCommandRequest, PaperLimitCancelRequest
 from terminal.application.command_identity import CommandIdentityCandidate
+from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.robot_admission_catchup import (
     LATE_ADMISSION_MARKET,
@@ -269,13 +270,34 @@ class RobotBreakoutMonitor:
                         f"reason={error}"
                     )
                 continue
-            if (
-                record.status != "APPROVED"
-                or record.robot_state is None
-                or record.robot_state.get("phase") != robot_state_machine.PHASE_RETEST_DETECTED
-            ):
+            if record.status != "APPROVED" or record.robot_state is None:
                 continue
+            phase = record.robot_state.get("phase")
             execution = record.robot_state.get("execution") or {}
+
+            if phase == "BOX_ENTRY_READY":
+                raw_order_ids = execution.get("limit_order_ids")
+                if not isinstance(raw_order_ids, (tuple, list)) or not raw_order_ids:
+                    continue
+                if not any(
+                    (order := self._store().get_paper_limit(order_id, self._account_id))
+                    is not None and order.filled_quantity > 0
+                    for order_id in raw_order_ids
+                ):
+                    continue
+                try:
+                    if self._advance_box_entry_ready(record, match_resting_orders=False):
+                        advanced.append(record.candidate_id)
+                except Exception as error:
+                    print(
+                        "[ROBOT CANDIDATE ERROR] "
+                        f"candidate_id={record.candidate_id} error={error}"
+                    )
+                    self._record_execution_error(record, error)
+                continue
+
+            if phase != robot_state_machine.PHASE_RETEST_DETECTED:
+                continue
             order_id = execution.get("limit_order_id")
             if not order_id:
                 continue
@@ -344,7 +366,7 @@ class RobotBreakoutMonitor:
             and record.robot_state is not None
             and record.robot_state.get("phase") == "BOX_ENTRY_READY"
         ):
-            return False
+            return self._advance_box_entry_ready(record)
         if record.robot_state is None:
             try:
                 state, _event = robot_state_machine.initialize_state(
@@ -408,6 +430,157 @@ class RobotBreakoutMonitor:
             return False
 
         self._persist_state(record, new_state)
+        return True
+
+    def _advance_box_entry_ready(
+        self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
+    ) -> bool:
+        execution = dict(record.robot_state.get("execution") or {})
+        raw_order_ids = execution.get("limit_order_ids")
+
+        if raw_order_ids is None:
+            new_entry_admitted, terminal_stop = self._read_admission_gate()
+            if not new_entry_admitted:
+                if terminal_stop:
+                    self._invalidate_pre_entry_candidate(
+                        record, reason="ROBOT_STOPPED before Box grid creation",
+                    )
+                    return True
+                return False
+            if self._active_other_owner_candidate_ids(record):
+                return False
+            block_reason = self._pre_entry_block_reason(record)
+            if block_reason is not None:
+                self._invalidate_pre_entry_candidate(record, reason=block_reason)
+                return True
+
+            source_id = record.robot_state.get("source_box_candidate_id")
+            if not isinstance(source_id, str) or not source_id.strip():
+                raise RobotBreakoutMonitorError("Box Robot handoff lacks source plan identity")
+            source = self._store().get_robot_candidate(source_id.strip())
+            if (
+                source is None
+                or source.status != "BOX_PLAN_ONLY"
+                or source.symbol != record.symbol
+            ):
+                raise RobotBreakoutMonitorError("Box source plan is unavailable or mismatched")
+
+            self._store().begin_box_attempt_ownership(source.candidate_id)
+            specs = build_box_first_grid_specs(source, created_at_ms=self._now_ms())
+            orders = self._store().create_box_owned_paper_grid(
+                source.candidate_id,
+                trading_account_id=self._account_id,
+                symbol=record.symbol,
+                orders=specs,
+            )
+            execution["entry_mode"] = "BOX_GRID"
+            execution["limit_order_ids"] = [order.order_id.value for order in orders]
+            execution["source_box_candidate_id"] = source.candidate_id
+            self._persist_execution(record, execution)
+            return True
+
+        if (
+            not isinstance(raw_order_ids, (tuple, list))
+            or len(raw_order_ids) != 4
+            or any(not isinstance(item, str) or not item.strip() for item in raw_order_ids)
+        ):
+            raise RobotBreakoutMonitorError("Box grid order identities are invalid")
+
+        if match_resting_orders and self._match_resting_orders is not None:
+            self._match_resting_orders(record.symbol.value)
+        return self._finalize_box_trade(record, execution)
+
+    def _finalize_box_trade(
+        self,
+        record: RobotCandidateRecord,
+        execution: Mapping[str, object],
+    ) -> bool:
+        try:
+            entry_evidence = self._prove_entry_evidence(
+                record, execution, entry_path="LIMIT",
+            )
+        except RobotBreakoutMonitorError as error:
+            self._escalate_reconciliation(
+                "ROBOT_ENTRY_OWNERSHIP_MISMATCH "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                f"reason={error}"
+            )
+            return False
+        if entry_evidence is None:
+            return False
+
+        duplicate_owners = self._active_other_owner_candidate_ids(record)
+        if duplicate_owners:
+            self._escalate_duplicate_ownership(record, duplicate_owners)
+            return False
+
+        try:
+            plan = robot_protection.build_box_protection_plan(
+                self._candidate_payload(record),
+                record.robot_state,
+                average_entry=entry_evidence.average_entry,
+                confirmed_position_quantity=entry_evidence.quantity,
+            )
+            stop_result, take_result = robot_protection.submit_initial_protection(
+                self._action_executor, plan,
+            )
+            if (
+                getattr(stop_result, "status", None) != CommandResultStatus.COMPLETED
+                or getattr(take_result, "status", None) != CommandResultStatus.COMPLETED
+            ):
+                raise RobotBreakoutMonitorError("initial Box protection submission did not complete")
+        except Exception as error:
+            self._fail_closed_unprotected_fill(record, error)
+            return False
+
+        try:
+            confirmed_evidence = self._prove_entry_evidence(
+                record, execution, entry_path="LIMIT",
+            )
+        except RobotBreakoutMonitorError as error:
+            self._escalate_reconciliation(
+                "ROBOT_ENTRY_OWNERSHIP_MISMATCH "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                f"reason={error}"
+            )
+            return False
+        if confirmed_evidence != entry_evidence:
+            self._escalate_reconciliation(
+                "ROBOT_ENTRY_OWNERSHIP_CHANGED "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return False
+
+        quantities = record.signal_snapshot.get("plan", {}).get("limit_quantities")
+        if not isinstance(quantities, list) or len(quantities) != 4:
+            raise RobotBreakoutMonitorError("Box frozen grid quantities are unavailable")
+        planned_quantity = sum((Decimal(str(item)) for item in quantities), Decimal("0"))
+        if planned_quantity <= 0:
+            raise RobotBreakoutMonitorError("Box frozen grid quantity is invalid")
+        actual_wv = min(entry_evidence.quantity / planned_quantity, Decimal("1"))
+
+        now_ms = self._now_ms()
+        self._store().create_robot_trade(
+            trade_id=f"robot-trade-{record.candidate_id}",
+            trading_account_id=self._account_id,
+            candidate_id=record.candidate_id,
+            symbol=record.symbol,
+            direction=str(record.robot_state["direction"]),
+            pattern="IKIGAI_BOX",
+            source_timeframe=str(
+                record.signal_snapshot.get("identity", {}).get("timeframe", "5")
+            ).strip() or "5",
+            signal_time_ms=record.approved_at_ms,
+            entry_time_ms=now_ms,
+            entry_path="LIMIT",
+            actual_wv=actual_wv,
+            average_entry=entry_evidence.average_entry,
+            stop_price=plan.stop_price,
+            take_price=plan.take_price,
+            entry_quantity=entry_evidence.quantity,
+            entry_position_version=entry_evidence.position_version,
+            created_at_ms=now_ms,
+        )
         return True
 
     def _advance_retest_detected(
