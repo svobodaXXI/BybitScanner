@@ -251,9 +251,13 @@ visual acceptance remains a complete manual all-symbol Telegram pass only.
 For CPUSDT 5m and both directions generally, the first impulse A starts at
 the **actual local reversal extreme**, not a later convenient candle. It is
 an initially directional, predominantly single-colour candle sequence: green
-for UP and red for DOWN. Small opposite-colour candles are allowed only while
-they do not create zigzag price action or a material countertrend swing. Do
-not apply an absolute "first opposite colour ends the impulse" rule. The
+for UP and red for DOWN. At most **one or two small opposite-colour candles**
+may appear as a brief pause, and only when they do not form a distinct
+counter-move, local swing or corrective wave. A visible correction made of
+opposite-colour candles terminates the first impulse before that correction;
+a later continuation in the original direction is a new episode and must not
+be glued back onto the earlier leg to obtain convenient Fibonacci geometry.
+Do not apply an absolute "first opposite colour ends the impulse" rule. The
 first substantial opposite-direction/zigzag move terminates the initial leg;
 B must remain at the last valid impulse-direction candle/extremum, before the
 independent consolidation. After B, consolidation may alternate colours in
