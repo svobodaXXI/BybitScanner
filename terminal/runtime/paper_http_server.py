@@ -1882,6 +1882,9 @@ class RobotProtectionCoverageManager:
                 LOGGER.exception("Robot protection coverage subscribe failed; symbol=%s", symbol)
                 continue
             context.add_update_listener(self._LISTENER, self._listener_for(symbol))
+            context.add_disconnect_listener(
+                self._LISTENER, self._disconnect_listener_for(symbol),
+            )
             with self._lock:
                 self._covered[symbol] = context
         for symbol in sorted(to_drop):
@@ -1891,6 +1894,7 @@ class RobotProtectionCoverageManager:
             if context is None:
                 continue
             context.remove_update_listener(self._LISTENER)
+            context.remove_disconnect_listener(self._LISTENER)
             self._hub.discard(context)
 
     def _load_authoritative_recovery_snapshot(
@@ -1991,6 +1995,44 @@ class RobotProtectionCoverageManager:
     def _listener_for(self, symbol: str) -> Callable[[str], None]:
         return lambda book_update_id: self._on_update(symbol, book_update_id)
 
+    def _disconnect_listener_for(self, symbol: str) -> Callable[[int, str], None]:
+        return lambda generation, reason: self._on_disconnect(
+            symbol, generation, reason,
+        )
+
+    def _on_disconnect(self, symbol: str, generation: int, reason: str) -> None:
+        """Enqueue an ordered continuity barrier after old-generation events."""
+        with self._lock:
+            if symbol not in self._covered:
+                return
+            coverage_role = self._roles.get(symbol, "UNKNOWN")
+            continuity_reason = f"websocket_disconnect:{reason or 'UNKNOWN'}"
+            self._unhealthy[symbol] = continuity_reason
+
+        def _fence_after_prior_events(runtime):
+            return runtime.fence_robot_protection_continuity_loss(
+                symbol, continuity_reason,
+            )
+
+        try:
+            self._runtime.enqueue(
+                _fence_after_prior_events,
+                symbol=symbol,
+                coverage_role=coverage_role,
+            )
+        except ProtectionIngressOverflow:
+            LOGGER.error(
+                "Robot protection disconnect barrier ingress overflow; "
+                "symbol=%s generation=%s reason=%s",
+                symbol, generation, continuity_reason,
+            )
+        except Exception:
+            LOGGER.exception(
+                "Robot protection disconnect barrier admission failed; "
+                "symbol=%s generation=%s reason=%s",
+                symbol, generation, continuity_reason,
+            )
+
     def _on_update(self, symbol: str, book_update_id: str) -> None:
         with self._lock:
             context = self._covered.get(symbol)
@@ -2022,26 +2064,10 @@ class RobotProtectionCoverageManager:
             continuity_reason = self._unhealthy.get(symbol)
         if continuity_reason is not None and message_type != "snapshot":
             return
-        generation_at_enqueue = book.source_generation
-
-        def _evaluate_if_current_generation(runtime):
-            # Execution-time guard, evaluated on the owner thread whenever
-            # this task actually runs -- not at enqueue time. The owner
-            # queue is shared with all other PAPER runtime work, so a task
-            # built under one connection generation can sit queued long
-            # enough for a reconnect to bump context.reconnect_count before
-            # it runs. Compares only the live generation counter -- never
-            # rereads the mutable current book -- and fails closed rather
-            # than evaluate/latch on evidence a newer generation has already
-            # superseded.
-            if context.reconnect_count != generation_at_enqueue:
-                self._mark_unhealthy(symbol, "stale_generation_discarded")
-                LOGGER.error(
-                    "Robot protection stale-generation event discarded; "
-                    "symbol=%s enqueued_generation=%s current_generation=%s event=%s",
-                    symbol, generation_at_enqueue, context.reconnect_count, book_update_id,
-                )
-                return None
+        def _evaluate_ordered_event(runtime):
+            # The immutable event was admitted before any later disconnect
+            # barrier. Owner-queue latency must not retroactively invalidate
+            # valid old-generation evidence by rereading reconnect_count.
             if continuity_reason is not None:
                 recovered = runtime.recover_robot_protection_continuity_loss(
                     symbol,
@@ -2059,7 +2085,7 @@ class RobotProtectionCoverageManager:
 
         try:
             self._runtime.enqueue(
-                _evaluate_if_current_generation,
+                _evaluate_ordered_event,
                 symbol=symbol,
                 coverage_role=coverage_role,
             )
@@ -2115,6 +2141,7 @@ class RobotProtectionCoverageManager:
             self._recovery_inflight.clear()
         for symbol, context in covered.items():
             context.remove_update_listener(self._LISTENER)
+            context.remove_disconnect_listener(self._LISTENER)
             self._hub.discard(context)
 
 
