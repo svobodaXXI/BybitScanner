@@ -58,6 +58,15 @@ Expected transitions:
 Invalid transitions shall be rejected by the runtime rather than simulated
 by the frontend.
 
+### Owner one-pass rule — 2026-09-26
+
+A manual Scanner start or resume authorizes **one complete scan pass only**.
+After that pass returns, the authoritative Scanner state becomes `PAUSED`;
+the runtime must not automatically begin a second universe traversal.
+If the pass raises an error, the runtime also returns to `PAUSED` rather
+than retrying the full pass in a loop. A new pass requires a fresh explicit
+owner `resume_scanner` command. Robot/PAPER backend state is unaffected.
+
 ## 4. Unified Menu responsibility
 
 The Unified Menu is a presentation and command surface.
