@@ -2854,13 +2854,12 @@ class SQLiteStore:
             )
         return True
 
-    def create_paper_limit(
+    def _create_paper_limit(
         self, *, client_action_id: str, request_fingerprint: str,
         order_id: OrderId, order_link_id: str, trading_account_id: TradingAccountId,
         symbol: Symbol, side: OrderSide, price: Decimal, quantity: Decimal,
         created_at_ms: int,
     ) -> tuple[PaperLimitOrderRecord, bool]:
-        self._assert_owner()
         existing_action = self._connection.execute(
             "SELECT operation, request_fingerprint, order_id FROM paper_limit_actions WHERE client_action_id = ?",
             (client_action_id,),
@@ -2878,22 +2877,77 @@ class SQLiteStore:
             order_id, order_link_id, trading_account_id, symbol, side, price, quantity,
             Decimal("0"), "GTC", "open", created_at_ms, created_at_ms,
         )
-        with self._transaction():
-            self._connection.execute(
-                """INSERT INTO paper_limit_orders (
-                    order_id, order_link_id, trading_account_id, symbol, side, price,
-                    quantity, filled_quantity, time_in_force, status, created_at_ms, updated_at_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, '0', 'GTC', 'open', ?, ?)""",
-                (order_id.value, order_link_id, trading_account_id.value, symbol.value,
-                 side.value, _decimal_text(price), _decimal_text(quantity),
-                 created_at_ms, created_at_ms),
-            )
-            self._connection.execute(
-                "INSERT INTO paper_limit_actions VALUES (?, 'create', ?, ?, ?)",
-                (client_action_id, request_fingerprint, order_id.value, created_at_ms),
-            )
-            self._advance_paper_state_revision(trading_account_id, symbol)
+        self._connection.execute(
+            """INSERT INTO paper_limit_orders (
+                order_id, order_link_id, trading_account_id, symbol, side, price,
+                quantity, filled_quantity, time_in_force, status, created_at_ms, updated_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, '0', 'GTC', 'open', ?, ?)""",
+            (order_id.value, order_link_id, trading_account_id.value, symbol.value,
+             side.value, _decimal_text(price), _decimal_text(quantity),
+             created_at_ms, created_at_ms),
+        )
+        self._connection.execute(
+            "INSERT INTO paper_limit_actions VALUES (?, 'create', ?, ?, ?)",
+            (client_action_id, request_fingerprint, order_id.value, created_at_ms),
+        )
+        self._advance_paper_state_revision(trading_account_id, symbol)
         return record, True
+
+    def create_paper_limit(
+        self, *, client_action_id: str, request_fingerprint: str,
+        order_id: OrderId, order_link_id: str, trading_account_id: TradingAccountId,
+        symbol: Symbol, side: OrderSide, price: Decimal, quantity: Decimal,
+        created_at_ms: int,
+    ) -> tuple[PaperLimitOrderRecord, bool]:
+        self._assert_owner()
+        with self._transaction():
+            return self._create_paper_limit(
+                client_action_id=client_action_id,
+                request_fingerprint=request_fingerprint,
+                order_id=order_id,
+                order_link_id=order_link_id,
+                trading_account_id=trading_account_id,
+                symbol=symbol,
+                side=side,
+                price=price,
+                quantity=quantity,
+                created_at_ms=created_at_ms,
+            )
+
+    def create_box_owned_paper_limit(
+        self, candidate_id: str, *, role: str, slot: int,
+        client_action_id: str, request_fingerprint: str,
+        order_id: OrderId, order_link_id: str, trading_account_id: TradingAccountId,
+        symbol: Symbol, side: OrderSide, price: Decimal, quantity: Decimal,
+        created_at_ms: int,
+    ) -> tuple[PaperLimitOrderRecord, bool]:
+        """Atomically bind Box ownership and persist the PAPER LIMIT.
+
+        This is a storage primitive only: it does not admit BOX_PLAN_ONLY,
+        calculate terms, submit protection, or enable Robot execution.
+        """
+        self._assert_owner()
+        if trading_account_id != TradingAccountId("paper"):
+            raise ValueError("Box owned PAPER limit requires paper account")
+        with self._transaction():
+            self._reserve_box_order_identity(
+                candidate_id, order_id=order_id, role=role, slot=slot,
+            )
+            order, created = self._create_paper_limit(
+                client_action_id=client_action_id,
+                request_fingerprint=request_fingerprint,
+                order_id=order_id,
+                order_link_id=order_link_id,
+                trading_account_id=trading_account_id,
+                symbol=symbol,
+                side=side,
+                price=price,
+                quantity=quantity,
+                created_at_ms=created_at_ms,
+            )
+            if order.order_id != order_id:
+                raise DuplicateIdentity("Box create action points to another PAPER limit")
+            return order, created
 
     def cancel_paper_limit(
         self, *, client_action_id: str, request_fingerprint: str,
@@ -3947,6 +4001,43 @@ class SQLiteStore:
             )
         return True
 
+    def _reserve_box_order_identity(
+        self, candidate_id: str, *, order_id: OrderId, role: str, slot: int,
+    ) -> bool:
+        if (role not in {"ENTRY", "EXIT"} or type(slot) is not int
+                or slot not in (range(1, 5) if role == "ENTRY" else range(5))):
+            raise ValueError("invalid Box order role/slot")
+        self._box_ownership_candidate(candidate_id)
+        if self._connection.execute(
+            "SELECT 1 FROM box_attempt_ownership WHERE candidate_id=?", (candidate_id,),
+        ).fetchone() is None:
+            raise PersistenceError("Box ownership baseline is missing")
+        existing = self._connection.execute(
+            "SELECT * FROM box_order_ownership WHERE trading_account_id='paper' AND order_id=?",
+            (order_id.value,),
+        ).fetchone()
+        if existing is not None:
+            if (existing["candidate_id"], existing["role"], existing["slot"]) != (candidate_id, role, slot):
+                raise DuplicateIdentity("Box order already belongs to another owner or role")
+            return False
+        # Prove current ownership before reserving additional identities.
+        self._prove_box_owned_position(candidate_id)
+        if (self._connection.execute("SELECT 1 FROM executions WHERE order_id=?", (order_id.value,)).fetchone()
+                or self._connection.execute("SELECT 1 FROM paper_limit_orders WHERE order_id=?", (order_id.value,)).fetchone()
+                or self._connection.execute(
+                    "SELECT 1 FROM trading_commands WHERE exchange_order_id=? OR order_link_id=?",
+                    (order_id.value, order_id.value),
+                ).fetchone()):
+            raise DuplicateIdentity("cannot adopt a pre-existing order or execution into Box ownership")
+        try:
+            self._connection.execute(
+                "INSERT INTO box_order_ownership VALUES ('paper', ?, ?, ?, ?)",
+                (order_id.value, candidate_id, role, slot),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise DuplicateIdentity("Box grid slot already has a durable order identity") from exc
+        return True
+
     def reserve_box_order_identity(
         self, candidate_id: str, *, order_id: OrderId, role: str, slot: int,
     ) -> bool:
@@ -3957,40 +4048,11 @@ class SQLiteStore:
         lifecycle or submission is implemented here. Existing orders cannot be
         adopted retrospectively, including an unfilled foreign order.
         """
-        if (role not in {"ENTRY", "EXIT"} or type(slot) is not int
-                or slot not in (range(1, 5) if role == "ENTRY" else range(5))):
-            raise ValueError("invalid Box order role/slot")
+        self._assert_owner()
         with self._transaction():
-            self._box_ownership_candidate(candidate_id)
-            if self._connection.execute(
-                "SELECT 1 FROM box_attempt_ownership WHERE candidate_id=?", (candidate_id,),
-            ).fetchone() is None:
-                raise PersistenceError("Box ownership baseline is missing")
-            existing = self._connection.execute(
-                "SELECT * FROM box_order_ownership WHERE trading_account_id='paper' AND order_id=?",
-                (order_id.value,),
-            ).fetchone()
-            if existing is not None:
-                if (existing["candidate_id"], existing["role"], existing["slot"]) != (candidate_id, role, slot):
-                    raise DuplicateIdentity("Box order already belongs to another owner or role")
-                return False
-            # Prove current ownership before reserving additional identities.
-            self._prove_box_owned_position(candidate_id)
-            if (self._connection.execute("SELECT 1 FROM executions WHERE order_id=?", (order_id.value,)).fetchone()
-                    or self._connection.execute("SELECT 1 FROM paper_limit_orders WHERE order_id=?", (order_id.value,)).fetchone()
-                    or self._connection.execute(
-                        "SELECT 1 FROM trading_commands WHERE exchange_order_id=? OR order_link_id=?",
-                        (order_id.value, order_id.value),
-                    ).fetchone()):
-                raise DuplicateIdentity("cannot adopt a pre-existing order or execution into Box ownership")
-            try:
-                self._connection.execute(
-                    "INSERT INTO box_order_ownership VALUES ('paper', ?, ?, ?, ?)",
-                    (order_id.value, candidate_id, role, slot),
-                )
-            except sqlite3.IntegrityError as exc:
-                raise DuplicateIdentity("Box grid slot already has a durable order identity") from exc
-        return True
+            return self._reserve_box_order_identity(
+                candidate_id, order_id=order_id, role=role, slot=slot,
+            )
 
     def prove_box_owned_position(self, candidate_id: str):
         """Read one consistent journal/ownership/position view; no runtime action."""
