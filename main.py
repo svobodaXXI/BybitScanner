@@ -20,7 +20,8 @@ import time
 
 from analyzer import analyze_symbol
 from bybit_api import get_symbols
-from config import MODE, MIN_SCORE, MAX_SYMBOLS
+from config import MODE, MIN_SCORE, MAX_SYMBOLS, CANDLE_LIMIT
+from analyzer.candles import load_candles
 
 from signal_adapter import prepare_signal
 from signal_memory import update_signal
@@ -68,6 +69,97 @@ def build_scan_finished_message(
         f"{elapsed_minutes:02d}:"
         f"{elapsed_remainder:02d}"
     )
+
+
+
+def _run_independent_pattern_fanout(
+    symbol,
+    timeframe,
+    candles,
+    *,
+    box_robot_sink=None,
+):
+    """Run every non-envelope detector against one immutable timeframe snapshot.
+
+    No detector may short-circuit a sibling detector. Each failure is isolated,
+    so Wedge/Triangle analysis later in the symbol pass cannot suppress
+    L-shape/Ikigai Box delivery and vice versa.
+    """
+    sent_to_telegram_count = 0
+    box_observation_count = 0
+
+    try:
+        from l_shape_scanner import observe_l_shape, send_l_shape_observation
+
+        l_shape = observe_l_shape(symbol, candles, timeframe=timeframe)
+        if l_shape and send_l_shape_observation(
+            symbol,
+            l_shape,
+            timeframe=timeframe,
+            test_mode=config.TELEGRAM_TEST_MODE,
+        ):
+            sent_to_telegram_count += 1
+            print(f"{symbol:<15} {timeframe}m L-SHAPE observation SENT")
+    except Exception as observation_error:
+        print(f"{symbol:<15} {timeframe}m L-SHAPE ERROR: {observation_error}")
+
+    if os.environ.get("BYBITSCANNER_IKIGAI_BOX_SIGNALS") == "1":
+        try:
+            from ikigai_box_scanner import send_ikigai_box_observation
+
+            box_sent = send_ikigai_box_observation(
+                symbol,
+                candles,
+                timeframe=timeframe,
+                test_mode=config.TELEGRAM_TEST_MODE,
+            )
+            if box_sent:
+                box_observation_count += 1
+                sent_to_telegram_count += 1
+                print(f"{symbol:<15} {timeframe}m IKIGAI BOX observation SENT")
+
+            if box_robot_sink is not None:
+                from geometry.ikigai_box import detect_ikigai_box
+
+                closed = candles.iloc[:-1]
+                formation = detect_ikigai_box(closed)
+                if formation is not None:
+                    box_robot_sink(
+                        symbol,
+                        timeframe,
+                        {
+                            "direction": formation.direction,
+                            "a_time_ms": int(closed.iloc[formation.anchor_start_index]["time"]),
+                            "b_time_ms": int(closed.iloc[formation.anchor_end_index]["time"]),
+                            "decision_time_ms": int(closed.iloc[formation.as_of_index]["time"]),
+                            "anchor_a_price": str(formation.anchor_start_price),
+                            "anchor_b_price": str(formation.anchor_end_price),
+                            "f1": str(formation.fibonacci_1_0),
+                            "f1618": str(formation.fibonacci_1_618),
+                            "f2618": str(formation.fibonacci_2_618),
+                        },
+                    )
+        except Exception as box_error:
+            print(f"{symbol:<15} {timeframe}m IKIGAI BOX ERROR: {box_error}")
+
+        if os.environ.get("BYBITSCANNER_IKIGAI_BOX_WATCH") == "1":
+            try:
+                from ikigai_box_watch_stream import process_ikigai_box_watches
+
+                watch_sent = process_ikigai_box_watches(
+                    symbol,
+                    candles,
+                    timeframe=timeframe,
+                    test_mode=config.TELEGRAM_TEST_MODE,
+                )
+                if watch_sent:
+                    box_observation_count += 1
+                    sent_to_telegram_count += 1
+                    print(f"{symbol:<15} {timeframe}m IKIGAI BOX WATCH observation SENT")
+            except Exception as watch_error:
+                print(f"{symbol:<15} {timeframe}m IKIGAI BOX WATCH ERROR: {watch_error}")
+
+    return sent_to_telegram_count, box_observation_count
 
 
 def run_scan_pass(*, box_robot_sink=None):
@@ -121,105 +213,34 @@ def run_scan_pass(*, box_robot_sink=None):
     for symbol in symbols:
         for timeframe in ("5", "1"):
             try:
-                analysis_result = analyze_symbol(symbol, timeframe=timeframe)
+                # One authoritative OHLC snapshot fans out to every enabled
+                # detector for this symbol/timeframe before the next timeframe.
+                candles = load_candles(symbol, timeframe, CANDLE_LIMIT)
+                if candles is None:
+                    print(f"{symbol:<15} {timeframe}m NO DATA")
+                    continue
+
+                fanout_sent, fanout_boxes = _run_independent_pattern_fanout(
+                    symbol,
+                    timeframe,
+                    candles,
+                    box_robot_sink=box_robot_sink,
+                )
+                sent_to_telegram_count += fanout_sent
+                box_observation_count += fanout_boxes
+
+                # Envelope analysis reuses exactly the same snapshot. It runs
+                # after the independent detectors, so its chart/report/error
+                # path cannot suppress L-shape or Box on this timeframe.
+                analysis_result = analyze_symbol(
+                    symbol,
+                    timeframe=timeframe,
+                    candles=candles,
+                )
 
                 if not analysis_result:
                     print(f"{symbol:<15} {timeframe}m NO RESULT")
                     continue
-
-                # L-shape is a normal owner-visible Telegram signal, even when
-                # no Wedge exists. Its failure must not affect existing delivery.
-                if analysis_result.get("data") is not None:
-                    try:
-                        from l_shape_scanner import (
-                            observe_l_shape,
-                            send_l_shape_observation,
-                        )
-
-                        l_shape = observe_l_shape(
-                            symbol, analysis_result["data"], timeframe=timeframe,
-                        )
-                        if l_shape and send_l_shape_observation(
-                            symbol, l_shape, timeframe=timeframe,
-                            test_mode=config.TELEGRAM_TEST_MODE,
-                        ):
-                            sent_to_telegram_count += 1
-                            print(f"{symbol:<15} {timeframe}m L-SHAPE observation SENT")
-                    except Exception as observation_error:
-                        print(f"{symbol:<15} {timeframe}m L-SHAPE ERROR: {observation_error}")
-
-                # Experimental Box observations are explicitly opt-in and use
-                # the same fetched OHLC snapshot even when no Wedge exists.
-                # A Box photo never enters the Wedge quality/Robot admission path.
-                if (
-                    os.environ.get("BYBITSCANNER_IKIGAI_BOX_SIGNALS") == "1"
-                    and analysis_result.get("data") is not None
-                ):
-                    # The confirmed-formation sender is stateless, so it runs on
-                    # every pass and the very first one can already report Boxes
-                    # that formed before the Scanner started.
-                    try:
-                        from ikigai_box_scanner import send_ikigai_box_observation
-
-                        box_sent = send_ikigai_box_observation(
-                            symbol,
-                            analysis_result["data"],
-                            timeframe=timeframe,
-                            test_mode=config.TELEGRAM_TEST_MODE,
-                        )
-                        if box_sent:
-                            box_observation_count += 1
-                            sent_to_telegram_count += 1
-                            print(f"{symbol:<15} {timeframe}m IKIGAI BOX observation SENT")
-
-                        if box_robot_sink is not None:
-                            from geometry.ikigai_box import detect_ikigai_box
-
-                            closed = analysis_result["data"].iloc[:-1]
-                            formation = detect_ikigai_box(closed)
-                            if formation is not None:
-                                box_robot_sink(
-                                    symbol,
-                                    timeframe,
-                                    {
-                                        "direction": formation.direction,
-                                        "a_time_ms": int(closed.iloc[formation.anchor_start_index]["time"]),
-                                        "b_time_ms": int(closed.iloc[formation.anchor_end_index]["time"]),
-                                        "decision_time_ms": int(closed.iloc[formation.as_of_index]["time"]),
-                                        "anchor_a_price": str(formation.anchor_start_price),
-                                        "anchor_b_price": str(formation.anchor_end_price),
-                                        "f1": str(formation.fibonacci_1_0),
-                                        "f1618": str(formation.fibonacci_1_618),
-                                        "f2618": str(formation.fibonacci_2_618),
-                                    },
-                                )
-                    except Exception as box_error:
-                        # An experimental pattern must not suppress the existing
-                        # Wedge Scanner signal on the same market.
-                        print(f"{symbol:<15} {timeframe}m IKIGAI BOX ERROR: {box_error}")
-
-                    # WATCH is an additional early-observation mode, never a
-                    # replacement: its process-local cursor deliberately only
-                    # bootstraps on the first pass and emits from the next closed
-                    # candle on. A WATCH card for an A/B pair the confirmed sender
-                    # already delivered is suppressed by the shared signal_memory
-                    # identity, so no second mechanism is needed here.
-                    if os.environ.get("BYBITSCANNER_IKIGAI_BOX_WATCH") == "1":
-                        try:
-                            from ikigai_box_watch_stream import process_ikigai_box_watches
-
-                            watch_sent = process_ikigai_box_watches(
-                                symbol,
-                                analysis_result["data"],
-                                timeframe=timeframe,
-                                test_mode=config.TELEGRAM_TEST_MODE,
-                            )
-                            if watch_sent:
-                                box_observation_count += 1
-                                sent_to_telegram_count += 1
-                                print(f"{symbol:<15} {timeframe}m IKIGAI BOX WATCH observation SENT")
-                        except Exception as watch_error:
-                            print(f"{symbol:<15} {timeframe}m IKIGAI BOX WATCH ERROR: {watch_error}")
 
                 analysis = analysis_result.get("result")
 
