@@ -127,6 +127,15 @@ the applicable geometry index and preserve the positive B2USDT control.
 Do not treat old generic priority/order paragraphs below as a fresh
 instruction to redo completed Telegram/card work.
 
+**Queued Robot Telegram position-card UI refinement — owner feedback, 2026-09-25:**
+- shift the visible chart end materially left so right-edge price/level labels do not cover the newest candles; preserve the same candle data and frozen geometry, change presentation/window padding only;
+- remove the text label `Вход`; keep the horizontal entry level and its numeric price;
+- shorten level labels to `SL` and `TP` instead of `Стоп` / `Тейк`;
+- make filled execution triangle markers slightly smaller and replace the black outline with direction-matched outline: green for LONG-side fills, red for SHORT-side fills;
+- in the open-position card line `Размер`, show both coin quantity and entry notional in USD/USDT in parentheses, using authoritative quantity × average entry, e.g. `Размер: 23760 4STOCK (249.95 USDT)`;
+- keep this as a presentation-only slice: no trading-state, order, protection, sizing, PnL or execution-lifecycle changes.
+This task is queued and does not preempt the current Ikigai Box Robot-button fix or the active emergency-close diagnosis.
+
 **Execution:** one bounded step → minimum mandatory verification → publish
 or report precise blocker. Only the owner manually launches the full real
 Scanner pass, through a verified Scanner-only entrypoint, and never via
