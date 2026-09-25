@@ -1,8 +1,8 @@
 # Ikigai Box — two-impulse Fibonacci reversal (user-defined PAPER strategy)
 
-Status: **observational geometry/opt-in Scanner WATCH, pure first-grid planner and BOX_PLAN_ONLY persistence implemented; planner-to-persistence adapter implemented (not wired to Scanner); PAPER Robot order execution BLOCKED / NOT implemented**.
-Scope: Scanner recognition, Telegram observation charts, and later separately
-authorized PAPER Robot execution. This is **not** the
+Status: **Ikigai Box Scanner detection/WATCH, immutable BOX_PLAN_ONLY planning/persistence, Scanner→Robot bridge, four-order PAPER entry, shared Robot fill/protection/recovery lifecycle, and aggregate top-up attestation are implemented. PAPER Robot execution for Ikigai Box v0.1 is owner-authorized as of 2026-09-25. LIVE execution remains prohibited.**
+Scope: Scanner recognition, Telegram observation charts, and owner-authorized
+PAPER Robot execution through the existing shared Robot lifecycle. This is **not** the
 ordinary horizontal-range breakout/rectangle pattern. The 2026-09-20 user screenshot and
 explicit trading decisions in the current conversation take precedence over the obsolete
 `DOCUMENTS/BACKLOG.md` G5 "horizontal range / breakout" text.
@@ -21,7 +21,7 @@ explicit trading decisions in the current conversation take precedence over the 
 
 **Do not repeat completed work.** Do not recreate these adapters, STOP-term functions, PRs, specifications or tests; do not repeat their protected verification, re-audit already resolved design choices, restore the backup stashes, or request another local sync of these merged commits. Reopen a completed item only if a concrete new defect, changed dependency/code, or conflicting evidence makes it relevant; identify that trigger and verify only the affected delta.
 
-**Open execution boundary:** `BOX_PLAN_ONLY` remains non-executable. The ownership/proof storage slice below is implemented separately; Box admission, fill routing, durable execution lifecycle, protective STOP/TAKE submission and execution recovery have **not** been connected or accepted. `PaperStopMutationRequest` carries a trigger price, not an explicit quantity: inspect whether existing full-position PAPER STOP tracks authoritative position size before adding quantity synchronization. Reuse the existing protection engine where valid; do not wire Box into the Wedge breakout/retest admission monitor or silently relax its execution gate. Resolve the one actual remaining execution gap with the smallest code slice and one scoped verification; no redundant plans, documentation cycles, or Scanner/Robot launches.
+**Execution boundary (updated 2026-09-25):** `BOX_PLAN_ONLY` remains immutable and non-executable, but a separate linked `APPROVED` candidate in phase `BOX_ENTRY_READY` is now the authorized PAPER execution handoff. PRs #227–#232 connected recovery-safe handoff, aggregate OPEN-trade entry attestation, four deterministic owned PAPER LIMITs, shared fill routing, shared STOP/TAKE protection, and the Scanner→Robot bridge. The Box path reuses the existing Robot lifecycle and protection/recovery machinery; it does not use the Wedge breakout/retest state machine and does not create a second execution engine. PAPER execution is authorized only under the approved v0.1 contract below. LIVE execution remains prohibited.
 
 ### Bounded ownership and remaining-position proof (local implementation, 2026-09-24)
 
@@ -59,15 +59,12 @@ explicit trading decisions in the current conversation take precedence over the 
   blocker outside this transaction: `tests/test_box_plan_persistence.py` still
   constructs schema 21 by slicing the latest SQL tail and expects schema 22;
   that fixture/assertion requires a separately protected update for schema 23.
-- Current dependency after #224: **do not connect runtime entry yet**.
-  First add a read-only lifecycle/restart classifier over the frozen plan,
-  ownership rows, active PAPER LIMITs, execution journal, authoritative
-  position and protection evidence. Then bridge the first proven owned fill
-  into the existing durable Robot trade/protection path. Only after those
-  recovery/protection guarantees are proven should one Box execution
-  coordinator be wired to the runtime. PAPER execution remains blocked until
-  that later explicit gate; replenishment, attempt 2 and other later lifecycle
-  rules remain out of this first-attempt slice.
+- Historical dependency after #224 is closed. PR #227 added the recovery-safe
+  `BOX_ENTRY_READY` handoff; PR #228 added durable aggregate-entry attestation;
+  PR #229 wired top-up attestation refresh; PR #231 connected the four-order
+  Box grid to the existing shared PAPER Robot lifecycle; PR #232 connected
+  confirmed Scanner Box formations to that runtime bridge. Attempt 2 and
+  replenishment beyond the approved first grid remain outside v0.1.
 
 ## Implementation course correction — REUSE EXISTING ROBOT LIFECYCLE (2026-09-25)
 
@@ -129,10 +126,13 @@ Current durable checkpoint:
 - PR #224 merged: deterministic four-order Box entry specs.
 - PR #225 merged: shared entry proof aggregates multiple owned LIMIT fills.
 - PR #226 merged: shared pre-entry foreign-order guard accepts a declared set of owned entry LIMIT IDs.
-- PR #227 is the current recovery-compatibility slice for `BOX_ENTRY_READY`.
-- A local uncommitted handoff slice creates a separate linked `APPROVED` Robot candidate while preserving immutable `BOX_PLAN_ONLY`; it is not yet merged.
+- PR #227 merged: recovery-safe `BOX_ENTRY_READY` handoff preserving immutable `BOX_PLAN_ONLY`.
+- PR #228 merged: durable aggregate entry attestation refresh for an OPEN trade.
+- PR #229 merged: later owned Box fills refresh the same OPEN trade attestation without repricing STOP/TAKE.
+- PR #231 merged: four owned Box LIMITs execute through the existing PAPER Robot lifecycle.
+- PR #232 merged: confirmed Scanner Box formations bridge into the PAPER Robot runtime when Robot admission is `ROBOT_RUNNING + READY`.
 
-The key shared-lifecycle blocker discovered by this review is **multi-entry OPEN trade attestation**.
+The previously identified shared-lifecycle blocker, **multi-entry OPEN trade attestation**, is closed by PRs #228–#229.
 The Wedge path freezes `entry_quantity`, `average_entry` and `entry_position_version`
 at its first/final entry fill because its unfilled remainder is cancelled. Box intentionally
 keeps later grid orders active, so P2/P3/P4 fills can legitimately change authoritative
@@ -140,7 +140,7 @@ position quantity, VWAP and version after the trade is already OPEN. If the dura
 continues to attest only the first fill, restart recovery will correctly see a mismatch and
 fail closed.
 
-Therefore the implementation order is:
+Historical implementation order (completed for v0.1 first-attempt PAPER execution):
 
 A. finish recovery-safe handoff into the existing Robot lifecycle; `BOX_ENTRY_READY`
 must remain inert to the Wedge candle state machine until Box order submission is wired;
@@ -162,9 +162,9 @@ is introduced;
 D. make shared restart/reconciliation validate the current position against the latest
 durable aggregate entry attestation rather than assuming the first fill is final;
 
-E. only after B-D are proven, wire the four deterministic Box LIMITs through the existing
-Robot PAPER execution path. On first owned fill create/finalize the normal Robot trade and
-initial protection; on later owned fills refresh the same trade attestation while leaving
+E. completed in PR #231: the four deterministic Box LIMITs use the existing
+Robot PAPER execution path. The first owned fill creates/finalizes the normal Robot trade
+and initial protection; later owned fills refresh the same trade attestation while leaving
 the remaining approved Box grid orders active;
 
 F. verify only the new invariants with narrow tests: first fill -> OPEN, later owned top-up
@@ -595,12 +595,12 @@ without adopting their trading strategies or inventing new Box geometry.
 4. Create/amend/cancel only in response to authoritative order/fill/position
    state transitions, not on every Scanner/Robot loop. On restart reconcile
    persisted entry, protective and TAKE obligations before admitting new risk.
-5. Preserve wedge execution and all LIVE behavior. PAPER order activation
-   remains blocked until the owner sets an acceptable partial-fill risk budget
-   and remaining exit/re-arm and second-attempt policy is resolved, followed
-   by focused proof of fills, stop/TAKE synchronization and recovery. The
-   already-approved static grid/TAKE arithmetic may be implemented and tested
-   now with execution_authorized=False.
+5. Preserve Wedge execution and all LIVE behavior. For Ikigai Box v0.1,
+   PAPER order activation is owner-authorized as of 2026-09-25 for the implemented
+   first-attempt contract: total size 1 WV, four equal-sized LIMIT slices, frozen
+   STOP/TAKE prices, shared Robot lifecycle, and fail-closed ownership/recovery.
+   Attempt 2, replenishment beyond the approved first grid, and any LIVE execution
+   remain unauthorized until separately specified and approved.
 
 Implementation order: (a) align existing PR #215 pure planner/tests with the
 approved formulas and actual TAKE-based fee-aware RR; (b) wire a separate
@@ -652,8 +652,9 @@ continue through the existing migration chain. Rollback preserves schema 21 on
 migration failure. Older application binaries cannot use schema 22; downgrade is
 not supported. Existing APPROVED/OPEN lifecycle semantics remain unchanged.
 
-Execution remains blocked on the previously recorded partial-fill risk and
-exit/re-arm/second-attempt decisions and their separate implementation evidence.
+For v0.1, first-attempt PAPER execution is authorized under the implemented
+shared-lifecycle contract. Attempt 2, later replenishment/re-arm behavior and
+LIVE execution remain outside this authorization.
 The verified planner's 10 passing tests are reused, not repeated by this slice.
 
 ### Completed persistence slice — implementation and verification record
@@ -702,14 +703,14 @@ conflict rejection and `execution_authorized=False`; do not automatically derive
 new plans from Scanner signals or invent quantities, risk budgets or fees.
 Scanner handoff, execution admission and order lifecycle integration remain pending.
 
-**Execution safety boundary:** PAPER order execution remains **BLOCKED**. A saved
-plan is not an approved candidate, risk reservation, broker order, fill, or
-protection obligation; restart cannot promote it into execution. Previously
-unresolved partial-fill risk, exit/re-arm and second-attempt decisions and their
-required execution evidence remain unchanged. No Scanner/Robot service, full
-acceptance run or real-order operation was started for this slice.
+**Execution safety boundary (updated 2026-09-25):** a saved `BOX_PLAN_ONLY`
+record still cannot execute or self-promote. Execution requires the separate
+linked `APPROVED / BOX_ENTRY_READY` candidate created by the approved handoff,
+Robot admission `ROBOT_RUNNING + READY`, durable ownership checks and the shared
+PAPER Robot lifecycle. First-attempt PAPER order execution is now owner-authorized.
+Attempt 2 and LIVE execution remain unauthorized.
 
-### Approved execution-rule clarification — 2026-09-24 (NOT implemented)
+### Approved execution-rule clarification — 2026-09-24 (v0.1 first-attempt runtime implemented)
 
 The STOP-termination and grid-replenishment paragraphs above are the current
 owner-approved design and supersede older P1-only wording. Immediate first-fill
@@ -719,8 +720,8 @@ limits are now specified. The approved common TAKE remains unchanged:
 `F(1.0) + 0.10 * (F(1.618) - F(1.0))`, shared by all slices and replacements.
 No individual TAKE levels, new risk parameters, cooldowns or attempt rules are
 introduced. References to unresolved exit/re-arm decisions elsewhere must not be
-read as reopening these newly approved rules; other previously unresolved details
-and risk approvals remain pending. PAPER order execution is still BLOCKED.
+read as reopening these newly approved rules. The v0.1 first-attempt PAPER path
+is now authorized; attempt 2 and LIVE execution remain pending separate approval.
 
 **Existing Wedge mechanisms inspected for reuse (not Box implementation):**
 
@@ -744,11 +745,10 @@ and risk approvals remain pending. PAPER order execution is still BLOCKED.
   candidate-state revision checks provide persistence/concurrency foundations.
   `BOX_PLAN_ONLY` itself remains immutable and cannot become executable state.
 
-**Smallest next implementation step remains:** connect an explicitly supplied,
-already verified planner result and frozen source inputs to
-`SQLiteStore.save_box_plan_only()`, with deterministic identity and lossless
-Decimal-string serialization. No Scanner wiring or automatic sizing is included.
-The execution rules documented here require a later separately scoped Box
-lifecycle implementation; this documentation does not enable orders or alter the
-completed non-executable persistence slice.
+**Current execution status:** the planner/persistence adapter, recovery-safe
+handoff, aggregate top-up attestation, four-order PAPER runtime path and confirmed
+Scanner→Robot bridge are implemented through PR #232. The next operational step is
+a manual owner-started PAPER run from current main, with Robot admission verified
+as `ROBOT_RUNNING + READY` and Scanner started through `ScannerControlRuntime`.
+No LIVE execution is authorized.
 
