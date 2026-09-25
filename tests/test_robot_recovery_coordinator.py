@@ -263,6 +263,69 @@ class RobotRecoveryCoordinatorTests(unittest.TestCase):
         self.assertTrue(result.admission_ready)
         self.assertEqual(result.decisions[0].status, "RESUME_OPEN_POSITION")
 
+    def test_running_open_trade_after_topup_recovers_from_latest_attestation(self):
+        self._create_open_candidate()
+        self._initialize_running()
+        symbol = Symbol("TESTUSDT")
+        position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, symbol, 0)
+        before = self.store.get_position_projection(position_key)
+        self.assertIsNotNone(before)
+
+        topup_at = self.clock()
+        self.store.apply_execution_once(
+            Execution(
+                dedup_key=ExecutionDedupKey(
+                    ACCOUNT_ID, Category.LINEAR, ExecutionId("entry-topup-exec"),
+                ),
+                order_id=OrderId("entry-topup-order"),
+                symbol=symbol,
+                side=OrderSide.BUY,
+                price=Price(Decimal("80")),
+                quantity=Quantity(Decimal("1")),
+                fee=Decimal("0"),
+                exchange_timestamp_ms=topup_at,
+            ),
+            PositionProjectionUpdate(
+                position_key=position_key,
+                side=PositionSide.LONG,
+                quantity=Quantity(Decimal("2")),
+                average_entry=Price(Decimal("90")),
+                realized_pnl=Decimal("0"),
+                accumulated_fee=Decimal("0"),
+                engaged_notional=Notional(Decimal("180")),
+                sync_state="synced",
+                expected_version=before.version,
+                updated_at_ms=topup_at,
+            ),
+        )
+        after = self.store.get_position_projection(position_key)
+        self.assertIsNotNone(after)
+
+        trade = self.store.get_robot_trade("trade-open")
+        self.assertIsNotNone(trade)
+        refreshed, changed = self.store.refresh_open_robot_trade_entry_attestation(
+            trade.trade_id,
+            trading_account_id=ACCOUNT_ID,
+            candidate_id=trade.candidate_id,
+            symbol=symbol,
+            average_entry=Decimal("90"),
+            entry_quantity=Decimal("2"),
+            entry_position_version=after.version,
+            updated_at_ms=self.clock(),
+        )
+        self.assertTrue(changed)
+        self.assertEqual(refreshed.stop_price, trade.stop_price)
+        self.assertEqual(refreshed.take_price, trade.take_price)
+
+        coordinator = RobotRecoveryCoordinator(
+            self.store, ACCOUNT_ID, clock_ms=self.clock,
+        )
+        result = coordinator.recover()
+
+        self.assertEqual(result.runtime_state.recovery_status, READY)
+        self.assertTrue(result.admission_ready)
+        self.assertEqual(result.decisions[0].status, "RESUME_OPEN_POSITION")
+
     def test_running_open_trade_with_missing_take_fails_closed_before_ready(self):
         self._create_open_candidate()
         self._initialize_running()
