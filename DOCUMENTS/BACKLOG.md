@@ -48,27 +48,31 @@ proof; #222 atomic owned LIMIT persistence; #223 all-or-nothing four-order
 first-grid persistence. PR #224 is the current non-executing slice for
 deterministic restart-safe four-order specs.
 
-The current goal is **not** to add more persistence layers or immediately
-turn on Box trading. Mature-engine review (LEAN/Hummingbot/Freqtrade) moved
-restart recovery and first-fill protection ahead of runtime activation.
+The current goal is **not** to add more persistence layers or build a
+Box-specific trading lifecycle. The existing Wedge Robot path is the shared
+execution engine and must be reused.
+
 Canonical next sequence:
 
 1. finish #224 deterministic four-order specs;
-2. read-only lifecycle/restart classifier over frozen plan + ownership +
-   active PAPER LIMITs + execution journal + authoritative position +
-   protection evidence;
-3. first-proven-owned-fill bridge into the existing durable Robot
-   trade/protection path;
-4. one execution coordinator for preflight -> ownership baseline -> atomic
-   grid -> event-driven fill/protection lifecycle;
-5. only after those pass, separately enable PAPER Box admission/runtime and
-   run PAPER acceptance.
+2. add a Box entry-policy adapter to the existing Robot execution lifecycle;
+3. parameterize only the entry-specific behavior that differs from Wedge:
+   four preplanned LIMITs, owned sequential fills/top-ups, Box eligibility and
+   Box fixed STOP/TAKE inputs;
+4. after the first proven owned fill, reuse the existing durable Robot trade,
+   full-position protection, protection obligations, execution journal,
+   matching, restart reconciliation and fail-closed escalation;
+5. expose Box through the existing Robot admission/runtime path only after
+   this adapter passes focused PAPER tests.
 
-Required lifecycle states must distinguish at least: no entry submitted;
-complete working grid while FLAT; partial/full owned exposure; protected
-exposure; completed FLAT; inconsistent/foreign evidence requiring
-reconciliation. Restart reconciliation must run before any new Box entry
-creation. Contradictory evidence fails closed.
+The existing Wedge behavior that cancels the unfilled remainder after a first
+partial fill is **not** copied to Box: Box intentionally keeps the remaining
+approved grid orders active under its own entry policy. That is the principal
+lifecycle delta; it does not justify a second lifecycle engine.
+
+Any Box-specific ownership/atomic-grid persistence already merged is retained
+as evidence for the four-order entry policy, but no further parallel recovery
+state machine/coordinator is to be built.
 
 Reuse existing PAPER components: one execution journal, current matching
 engine, current full-position protection, and durable protection obligations.
