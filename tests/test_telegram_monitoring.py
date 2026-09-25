@@ -150,17 +150,18 @@ class TelegramMonitoringTests(unittest.TestCase):
     @patch("telegram_monitoring._scanner_request")
     def test_menu_tracks_external_state_preserving_monitoring(self, request, telegram):
         for mode, label in (
-            ("SCANNER_RUNNING", "Остановить сканер"),
-            ("SCANNER_PAUSED", "Запустить сканер"),
+            ("SCANNER_RUNNING", "⏸ Пауза сканера"),
+            ("SCANNER_PAUSED", "▶ Продолжить сканер"),
         ):
             request.return_value = {"mode": mode}
             monitoring.refresh_command_menu()
             commands = json.loads(telegram.call_args.kwargs["commands"])
             self.assertEqual(
                 [item["command"] for item in commands],
-                ["terminal", "scanner", "robot", "positions", "monitoring"],
+                ["terminal", "scanner", "scanner_stop", "robot", "positions", "monitoring"],
             )
             self.assertEqual(commands[1]["description"], label)
+            self.assertEqual(commands[2]["description"], "⏹ Остановить сканер")
             self.assertEqual(commands[-1]["description"], "Мониторинг кандидатов")
         self.assertEqual(telegram.call_count, 2)
 
@@ -177,6 +178,12 @@ class TelegramMonitoringTests(unittest.TestCase):
         scanner.assert_not_called()
         monitoring._process_message(message(123, 123, "/scanner"))
         scanner.assert_called_once_with(123)
+
+    @patch("telegram_monitoring._send_scanner_stop")
+    def test_owner_scanner_stop_command(self, stop):
+        message = {"from": {"id": 123}, "chat": {"id": 123}, "text": "/scanner_stop"}
+        self.assertTrue(monitoring._process_message(message))
+        stop.assert_called_once_with(123)
 
     @patch("telegram_monitoring._send_text")
     def test_positions_preserves_workspace_context(self, send):
