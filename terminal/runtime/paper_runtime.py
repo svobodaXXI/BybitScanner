@@ -1203,16 +1203,26 @@ class PaperRuntime:
         for candidate in self.store.load_robot_candidates_for_symbol(
             self._paper_account_id, normalized,
         ):
-            if (
-                candidate.status != "APPROVED"
-                or candidate.symbol != normalized
-                or candidate.robot_state is None
-                or candidate.robot_state.get("phase") != "RETEST_DETECTED"
-            ):
+            if candidate.symbol != normalized or candidate.robot_state is None:
                 continue
-            order_id = (candidate.robot_state.get("execution") or {}).get("limit_order_id")
-            if order_id:
-                entry_order_ids.add(order_id)
+            execution = candidate.robot_state.get("execution") or {}
+            phase = candidate.robot_state.get("phase")
+            if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
+                order_id = execution.get("limit_order_id")
+                if order_id:
+                    entry_order_ids.add(order_id)
+                continue
+            if (
+                candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+                and candidate.status in {"APPROVED", "OPEN"}
+                and phase == "BOX_ENTRY_READY"
+            ):
+                raw_order_ids = execution.get("limit_order_ids")
+                if isinstance(raw_order_ids, (tuple, list)):
+                    entry_order_ids.update(
+                        item for item in raw_order_ids
+                        if isinstance(item, str) and item.strip()
+                    )
         matched_fills = self._match_limits_only(
             normalized, book, event_id, allowed_order_ids=entry_order_ids,
         )
