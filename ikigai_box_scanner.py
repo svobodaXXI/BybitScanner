@@ -72,10 +72,12 @@ def send_ikigai_box_observation(
     owner_chat_id = get_telegram_owner_chat_id()
     delivered = True
     for chat_id in recipients:
+        is_owner = chat_id == owner_chat_id and bool(owner_chat_id)
         markup = build_tradingview_keyboard(
             symbol, timeframe,
-            include_review_actions=(chat_id == owner_chat_id and bool(owner_chat_id)),
+            include_review_actions=is_owner,
             robot_candidate_id=None,
+            robot_status_button=(is_owner and not test_mode),
         )
         try:
             text_response = send_message(config.TELEGRAM_TOKEN, chat_id, message)
