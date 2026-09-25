@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -831,6 +831,37 @@ SCHEMA_V22_MIGRATION_STATEMENTS = (
        BEGIN SELECT RAISE(ABORT, 'BOX_PLAN_ONLY is immutable and non-executable'); END""",
 )
 
+SCHEMA_V23_MIGRATION_STATEMENTS = (
+    """CREATE TABLE box_attempt_ownership (
+        candidate_id TEXT PRIMARY KEY REFERENCES robot_candidates(candidate_id),
+        trading_account_id TEXT NOT NULL CHECK (trading_account_id = 'paper'),
+        symbol TEXT NOT NULL,
+        attempt INTEGER NOT NULL CHECK (attempt = 1),
+        baseline_position_version INTEGER NOT NULL CHECK (baseline_position_version >= 1),
+        baseline_time_ms INTEGER NOT NULL CHECK (baseline_time_ms >= 0),
+        baseline_execution_count INTEGER NOT NULL CHECK (baseline_execution_count >= 0),
+        baseline_execution_hash TEXT NOT NULL CHECK (length(baseline_execution_hash) = 64)
+    ) WITHOUT ROWID""",
+    """CREATE TABLE box_order_ownership (
+        trading_account_id TEXT NOT NULL CHECK (trading_account_id = 'paper'),
+        order_id TEXT NOT NULL CHECK (length(trim(order_id)) > 0),
+        candidate_id TEXT NOT NULL REFERENCES box_attempt_ownership(candidate_id),
+        role TEXT NOT NULL CHECK (role IN ('ENTRY', 'EXIT')),
+        slot INTEGER NOT NULL CHECK ((role = 'ENTRY' AND slot BETWEEN 1 AND 4)
+            OR (role = 'EXIT' AND slot BETWEEN 0 AND 4)),
+        PRIMARY KEY (trading_account_id, order_id),
+        UNIQUE (candidate_id, role, slot)
+    ) WITHOUT ROWID""",
+    """CREATE TRIGGER box_attempt_immutable BEFORE UPDATE ON box_attempt_ownership
+        BEGIN SELECT RAISE(ABORT, 'Box ownership is immutable'); END""",
+    """CREATE TRIGGER box_order_immutable BEFORE UPDATE ON box_order_ownership
+        BEGIN SELECT RAISE(ABORT, 'Box ownership is immutable'); END""",
+    """CREATE TRIGGER box_attempt_no_delete BEFORE DELETE ON box_attempt_ownership
+        BEGIN SELECT RAISE(ABORT, 'Box ownership cannot be forgotten'); END""",
+    """CREATE TRIGGER box_order_no_delete BEFORE DELETE ON box_order_ownership
+        BEGIN SELECT RAISE(ABORT, 'Box ownership cannot be forgotten'); END""",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -854,4 +885,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V20_MIGRATION_STATEMENTS
     + SCHEMA_V21_MIGRATION_STATEMENTS
     + SCHEMA_V22_MIGRATION_STATEMENTS
+    + SCHEMA_V23_MIGRATION_STATEMENTS
 )

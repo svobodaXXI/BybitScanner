@@ -70,7 +70,8 @@ class BoxPlanPersistenceTests(unittest.TestCase):
         con = sqlite3.connect(self.path, isolation_level=None)
         con.row_factory = sqlite3.Row
         con.execute("PRAGMA foreign_keys=ON")
-        for statement in schema.SCHEMA_STATEMENTS[:-len(schema.SCHEMA_V22_MIGRATION_STATEMENTS)]:
+        first_v22_statement = schema.SCHEMA_V22_MIGRATION_STATEMENTS[0]
+        for statement in schema.SCHEMA_STATEMENTS[:schema.SCHEMA_STATEMENTS.index(first_v22_statement)]:
             con.execute(statement)
         con.execute("PRAGMA user_version=21")
         return SQLiteStore(con, self.path, 5000)
@@ -89,7 +90,7 @@ class BoxPlanPersistenceTests(unittest.TestCase):
         for name, record in before.items():
             self.assertEqual(store.get_robot_candidate(name), record)
         self.assertEqual(store.get_robot_trade("trade-1"), trade)
-        self.assertEqual(store._connection.execute("PRAGMA user_version").fetchone()[0], 22)
+        self.assertEqual(store._connection.execute("PRAGMA user_version").fetchone()[0], schema.SCHEMA_VERSION)
         self.assertEqual(store._connection.execute("PRAGMA foreign_keys").fetchone()[0], 1)
         self.assertEqual(store._connection.execute("PRAGMA foreign_key_check").fetchall(), [])
         saved, created = store.save_box_plan_only(snapshot=snapshot(), created_at_ms=3001)
