@@ -6,12 +6,41 @@ from decimal import Decimal as D
 from pathlib import Path
 
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
-from terminal.domain.models import TradingAccountId
+from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
+from terminal.domain.models import OrderSide, TradingAccountId
 from terminal.paper.ikigai_box_plan import plan_approved_first_ikigai_box
 from terminal.persistence.sqlite_store import DuplicateIdentity, SQLiteStore
 
 
 class IkigaiBoxPlanAdapterTests(unittest.TestCase):
+    def test_frozen_plan_builds_four_stable_non_executing_entry_specs(self):
+        inputs = dict(working_quantity=D("8"), tick_size=D("0.01"),
+                      entry_fee_rate=D("0"), target_fee_rate=D("0"),
+                      stop_fee_rate=D("0"), structural_stop=None)
+        plan = plan_approved_first_ikigai_box(direction="LONG", frozen_f1=D("100"),
+                                             frozen_f1618=D("92"), **inputs)
+        args = dict(planner_version="099cfedc", decision_time_ms=3000,
+                    identity=dict(venue="bybit", market="linear", symbol="BTCUSDT",
+                                  timeframe="5", direction="LONG", a_time_ms=1000, b_time_ms=2000),
+                    anchor_a_price=D("112.94498381877023"), anchor_b_price=D("100"),
+                    frozen_f2618=D("79.05501618122977"), **inputs)
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteStore.open(Path(directory) / "adapter.sqlite3")
+            try:
+                candidate, _ = persist_ikigai_box_plan(store, plan, created_at_ms=3001, **args)
+                first = build_box_first_grid_specs(candidate, created_at_ms=4000)
+                second = build_box_first_grid_specs(candidate, created_at_ms=4000)
+                self.assertEqual(first, second)
+                self.assertEqual(tuple(item.slot for item in first), (1, 2, 3, 4))
+                self.assertEqual(tuple(item.price for item in first), plan.limit_prices)
+                self.assertEqual(tuple(item.quantity for item in first), plan.limit_quantities)
+                self.assertTrue(all(item.side is OrderSide.BUY for item in first))
+                self.assertEqual(len({item.order_id for item in first}), 4)
+                self.assertEqual(len({item.client_action_id for item in first}), 4)
+                self.assertFalse(candidate.signal_snapshot["execution_authorized"])
+            finally:
+                store.close()
+
     def test_persist_calculated_plan_duplicate_and_conflict(self):
         inputs = dict(working_quantity=D("8"), tick_size=D("0.01"),
                       entry_fee_rate=D("0"), target_fee_rate=D("0"),
