@@ -302,6 +302,7 @@ def build_tradingview_keyboard(
     timeframe,
     include_review_actions=True,
     robot_candidate_id=None,
+    robot_status_button=False,
 ):
     """Telegram inline keyboard for TradingView, review, and Robot admission."""
 
@@ -335,6 +336,15 @@ def build_tradingview_keyboard(
                     "callback_data": (
                         f"robot:approve:{robot_candidate_id}"
                     ),
+                }
+            ]
+        )
+    elif robot_status_button:
+        keyboard.append(
+            [
+                {
+                    "text": "🤖 Робот",
+                    "callback_data": "robot:cmd:status",
                 }
             ]
         )
