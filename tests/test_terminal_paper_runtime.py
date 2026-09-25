@@ -116,6 +116,47 @@ def _runtime_with_provider(path: Path, provider) -> PaperRuntime:
     )
 
 
+def test_confirmed_box_bridges_one_wv_plan_into_entry_ready_candidate():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime(Path(temp) / "paper.sqlite3")
+        try:
+            _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="READY")
+            candidate_id = runtime._admit_ikigai_box_robot_candidate(
+                "BTCUSDT",
+                "5",
+                {
+                    "direction": "LONG",
+                    "a_time_ms": 1000,
+                    "b_time_ms": 2000,
+                    "decision_time_ms": 3000,
+                    "anchor_a_price": "66618",
+                    "anchor_b_price": "65000",
+                    "f1": "65000",
+                    "f1618": "64000",
+                    "f2618": "62382",
+                },
+            )
+
+            assert candidate_id is not None
+            candidate = runtime.store.get_robot_candidate(candidate_id)
+            assert candidate.status == "APPROVED"
+            assert candidate.robot_state["phase"] == "BOX_ENTRY_READY"
+            source_id = candidate.robot_state["source_box_candidate_id"]
+            source = runtime.store.get_robot_candidate(source_id)
+            assert source.status == "BOX_PLAN_ONLY"
+            assert source.signal_snapshot["plan"]["limit_prices"] == [
+                "64250", "64150", "64050", "63950",
+            ]
+            quantities = source.signal_snapshot["plan"]["limit_quantities"]
+            assert len(set(quantities)) == 1
+            assert Decimal(quantities[0]) > 0
+            assert sum((Decimal(item) for item in quantities), Decimal("0")) == Decimal(
+                source.signal_snapshot["inputs"]["working_quantity"]
+            )
+        finally:
+            runtime.close()
+
+
 def test_paper_runtime_rejects_non_paper_active_account() -> None:
     account = TradingAccount(
         TradingAccountId("other"), "Other Paper", TradingAccountProvider.PAPER,
