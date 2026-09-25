@@ -251,6 +251,24 @@ class RobotBreakoutMonitor:
         for record in self._store().load_robot_candidates_for_symbol(
             self._account_id, symbol_value,
         ):
+            if record.status == "OPEN":
+                if record.robot_state is None:
+                    continue
+                execution = record.robot_state.get("execution") or {}
+                try:
+                    if self._refresh_open_trade_entry_attestation(record, execution):
+                        advanced.append(record.candidate_id)
+                except Exception as error:
+                    print(
+                        "[ROBOT CANDIDATE ERROR] "
+                        f"candidate_id={record.candidate_id} error={error}"
+                    )
+                    self._escalate_reconciliation(
+                        "ROBOT_ENTRY_ATTESTATION_REFRESH_FAILED "
+                        f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                        f"reason={error}"
+                    )
+                continue
             if (
                 record.status != "APPROVED"
                 or record.robot_state is None
@@ -274,6 +292,39 @@ class RobotBreakoutMonitor:
                 )
                 self._record_execution_error(record, error)
         return tuple(advanced)
+
+    def _refresh_open_trade_entry_attestation(
+        self,
+        record: RobotCandidateRecord,
+        execution: Mapping[str, object],
+    ) -> bool:
+        trade = self._store().get_open_robot_trade_for_symbol(
+            self._account_id, record.symbol,
+        )
+        if trade is None or trade.candidate_id != record.candidate_id:
+            raise RobotBreakoutMonitorError(
+                "OPEN Robot candidate lacks its matching OPEN trade"
+            )
+        if trade.entry_path != "LIMIT":
+            return False
+
+        evidence = self._prove_entry_evidence(
+            record, execution, entry_path="LIMIT",
+        )
+        if evidence is None:
+            return False
+
+        _updated, changed = self._store().refresh_open_robot_trade_entry_attestation(
+            trade.trade_id,
+            trading_account_id=self._account_id,
+            candidate_id=record.candidate_id,
+            symbol=record.symbol,
+            average_entry=evidence.average_entry,
+            entry_quantity=evidence.quantity,
+            entry_position_version=evidence.position_version,
+            updated_at_ms=self._now_ms(),
+        )
+        return changed
 
     def _record_execution_error(self, record: RobotCandidateRecord, error: Exception) -> None:
         if record.robot_state is None:
