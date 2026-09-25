@@ -164,13 +164,22 @@ class LShapeTelegramTests(unittest.TestCase):
     def candidate(self):
         return {
             "formation": SimpleNamespace(direction="LONG", potential_percent=8.0495),
-            "signal_plan": SimpleNamespace(eligible=True),
+            "signal_plan": SimpleNamespace(
+                eligible=True,
+                reference=100.0,
+                target=110.0,
+                stop=96.0,
+                stop_kind="STRUCTURAL",
+                structural_stop=96.0,
+                potential_percent=8.0495,
+                reward_risk=2.5,
+            ),
             "extreme_time_ms": 1700000300000,
             "source_candle_time_ms": 1700000600000,
             "chart_path": "charts/l_shape/TESTUSDT.png",
         }
 
-    def test_normal_photo_owner_review_buttons_no_robot_and_dedup(self):
+    def test_normal_photo_owner_gets_real_robot_button_and_dedup(self):
         memory = {}
         candidate = self.candidate()
         with patch.object(observer.config, "TELEGRAM_ENABLED", True), \
@@ -179,12 +188,15 @@ class LShapeTelegramTests(unittest.TestCase):
                 patch.object(observer, "load_memory", return_value=memory), \
                 patch.object(observer, "save_memory") as save, \
                 patch.object(observer, "send_photo", return_value={"ok": True}) as photo, \
-                patch("notification.create_signal_snapshot") as robot:
+                patch.object(
+                    observer, "create_signal_snapshot",
+                    return_value={"candidate_id": "candidate-lshape"},
+                ) as robot:
             self.assertTrue(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
             self.assertFalse(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
         self.assertEqual(photo.call_count, 2)
-        self.assertEqual(save.call_count, 2)
-        robot.assert_not_called()
+        self.assertEqual(save.call_count, 3)
+        robot.assert_called_once()
         owner, friend = photo.call_args_list
         self.assertEqual(owner.args[1], "owner")
         self.assertEqual(friend.args[1], "friend")
@@ -194,8 +206,12 @@ class LShapeTelegramTests(unittest.TestCase):
         owner_buttons = [b["text"] for row in owner.kwargs["reply_markup"]["inline_keyboard"] for b in row]
         self.assertIn("✅ Хороший", owner_buttons)
         self.assertIn("❌ Геометрия", owner_buttons)
-        self.assertNotIn("🤖 Робот", owner_buttons)
+        self.assertIn("🤖 Робот", owner_buttons)
         self.assertEqual(len(friend.kwargs["reply_markup"]["inline_keyboard"]), 1)
+        self.assertEqual(
+            memory["l_shape:TESTUSDT:5:LONG:1700000300000:1700000600000"]["robot_candidate_id"],
+            "candidate-lshape",
+        )
 
     def test_partial_delivery_retry_only_failed_recipient(self):
         memory = {}
@@ -205,6 +221,10 @@ class LShapeTelegramTests(unittest.TestCase):
                 patch.object(observer, "get_telegram_owner_chat_id", return_value="owner"), \
                 patch.object(observer, "load_memory", return_value=memory), \
                 patch.object(observer, "save_memory"), \
+                patch.object(
+                    observer, "create_signal_snapshot",
+                    return_value={"candidate_id": "candidate-lshape"},
+                ) as robot, \
                 patch.object(observer, "send_photo", side_effect=[
                     {"ok": True}, {"ok": False}, {"ok": True},
                 ]) as photo:
@@ -212,6 +232,7 @@ class LShapeTelegramTests(unittest.TestCase):
             self.assertTrue(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
             self.assertFalse(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
         self.assertEqual([call.args[1] for call in photo.call_args_list], ["owner", "friend", "friend"])
+        robot.assert_called_once()
 
     def test_ineligible_plan_is_never_sent(self):
         candidate = {**self.candidate(), "signal_plan": SimpleNamespace(eligible=False)}
