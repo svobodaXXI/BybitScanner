@@ -118,38 +118,68 @@ lifecycle, recovery coordinator, matching engine or protection engine.
 
 PR #224 remains the current small adapter: deterministic four-order specs.
 
-### Optimized next steps
+### Mature-engine cross-check and optimized next steps (2026-09-25)
 
-A. finish #224;
-B. introduce the smallest entry-policy abstraction/branch in the existing
-   Robot coordinator so Wedge keeps its current single-order behavior and Box
-   gets its four-order behavior;
-C. reuse existing fill evidence -> trade finalization -> STOP/TAKE ->
-   protection obligation/recovery flow, adding only the minimum multi-entry
-   aggregation needed for the four owned Box orders;
-D. focused PAPER tests for: no fill, first partial fill with immediate
-   protection, later grid top-up with protection still covering full
-   position, full grid, restart/reconciliation and foreign-evidence fail
-   closed;
-E. then enable Box in the existing PAPER Robot admission/runtime path.
+The architecture comparison with mature trading engines reinforces a strict separation:
+**strategy/entry intent may vary by pattern; order/trade execution and recovery stay shared.**
+For BybitScanner this means the Box-specific surface stops at frozen plan, four owned
+entry orders and the rule for whether remaining grid orders stay active.
+
+Current durable checkpoint:
+- PR #224 merged: deterministic four-order Box entry specs.
+- PR #225 merged: shared entry proof aggregates multiple owned LIMIT fills.
+- PR #226 merged: shared pre-entry foreign-order guard accepts a declared set of owned entry LIMIT IDs.
+- PR #227 is the current recovery-compatibility slice for `BOX_ENTRY_READY`.
+- A local uncommitted handoff slice creates a separate linked `APPROVED` Robot candidate while preserving immutable `BOX_PLAN_ONLY`; it is not yet merged.
+
+The key shared-lifecycle blocker discovered by this review is **multi-entry OPEN trade attestation**.
+The Wedge path freezes `entry_quantity`, `average_entry` and `entry_position_version`
+at its first/final entry fill because its unfilled remainder is cancelled. Box intentionally
+keeps later grid orders active, so P2/P3/P4 fills can legitimately change authoritative
+position quantity, VWAP and version after the trade is already OPEN. If the durable trade
+continues to attest only the first fill, restart recovery will correctly see a mismatch and
+fail closed.
+
+Therefore the implementation order is:
+
+A. finish recovery-safe handoff into the existing Robot lifecycle; `BOX_ENTRY_READY`
+must remain inert to the Wedge candle state machine until Box order submission is wired;
+
+B. add the smallest **shared** operation that refreshes one OPEN Robot trade's entry
+attestation after an additional proven-owned entry fill:
+- aggregate authoritative owned entry quantity;
+- aggregate actual entry VWAP;
+- latest authoritative position version;
+- same candidate/trade identity;
+- no foreign evidence accepted;
+- idempotent/restart-safe persistence;
+
+C. keep the Box plan's STOP and TAKE prices frozen. Later entry fills must not reprice
+those levels. Existing full-position protection remains responsible for covering the
+authoritative current position quantity, so no Box-specific STOP quantity synchronizer
+is introduced;
+
+D. make shared restart/reconciliation validate the current position against the latest
+durable aggregate entry attestation rather than assuming the first fill is final;
+
+E. only after B-D are proven, wire the four deterministic Box LIMITs through the existing
+Robot PAPER execution path. On first owned fill create/finalize the normal Robot trade and
+initial protection; on later owned fills refresh the same trade attestation while leaving
+the remaining approved Box grid orders active;
+
+F. verify only the new invariants with narrow tests: first fill -> OPEN, later owned top-up
+-> refreshed quantity/VWAP/version with unchanged STOP/TAKE, restart -> READY when evidence
+matches, foreign/ambiguous evidence -> fail closed. Reuse previous green evidence and do
+not rerun unchanged slices.
 
 Explicitly rejected:
 - separate Box lifecycle/recovery coordinator;
-- second Robot state machine for execution;
-- second fill/execution journal;
-- separate matching or protection engine;
-- Box-specific STOP quantity synchronizer;
-- message-bus/infrastructure expansion for this integration.
+- Box-specific GRID_PARTIAL / GRID_FILLED / PROTECTED state machine;
+- second Robot execution state machine or execution journal;
+- separate matcher or protection engine;
+- Box-specific STOP quantity synchronization;
+- infrastructure expansion not required by the next executable invariant.
 
-This is an architecture correction only. The owner-approved Box grid,
-STOP/TAKE economics and later attempt/re-arm rules are unchanged.
-
-### Current reuse-first implementation checkpoint (2026-09-25)
-
-- PR #224 merged as `b5378659e83326f9505b806c25f346f1f76a942c`: deterministic first-grid specs for all four Box ENTRY LIMITs.
-- PR #225 is current: `RobotBreakoutMonitor` entry evidence is being generalized from one LIMIT ID to multiple owned LIMIT IDs. Existing Wedge candidates continue to use the original single-ID field; Box will provide the four grid IDs.
-- The intended result is one shared post-fill lifecycle: aggregated owned entry evidence -> existing Robot trade finalization -> existing full-position STOP/TAKE -> existing protection obligations/recovery.
-- The next implementation slice after #225 is entry-policy wiring only: submit/track the four Box grid orders through the existing Robot path and preserve those remaining grid orders after the first fill. Do not create a Box-specific lifecycle coordinator.
 
 ## 1. Source references and status
 
