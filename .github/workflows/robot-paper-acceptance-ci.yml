@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "robot_candidate_store.py"
+      - "robot_l_shape.py"
+      - "l_shape_scanner.py"
       - "robot_state_machine.py"
       - "robot_entry_limit.py"
       - "robot_partial_fill.py"
@@ -25,6 +27,8 @@ on:
       - "tests/test_terminal_persistence.py"
       - "tests/test_scanner_geometry_cursor.py"
       - "tests/test_robot_admission.py"
+      - "tests/test_robot_l_shape.py"
+      - "tests/test_l_shape_scanner.py"
       - "tests/test_signal_admission.py"
       - "tests/test_telegram_delivery.py"
       - "analyzer/core.py"
@@ -66,6 +70,8 @@ jobs:
           pytest==9.1.1
           pandas==3.0.5
           numpy==2.5.1
+          matplotlib==3.11.1
+          mplfinance==0.12.10b0
       - name: Compile acceptance surface
         run: >-
           python -m py_compile
@@ -86,10 +92,14 @@ jobs:
           tests/test_terminal_paper_trading_application.py
           tests/test_scanner_geometry_cursor.py
           tests/test_robot_admission.py
+          tests/test_robot_l_shape.py
+          tests/test_l_shape_scanner.py
           tests/test_signal_admission.py
           tests/test_telegram_delivery.py
           analyzer/core.py
           notification.py
+          robot_l_shape.py
+          l_shape_scanner.py
           terminal/application/robot_breakout_monitor.py
           terminal/application/robot_late_admission.py
           terminal/application/robot_late_admission_market.py
@@ -116,6 +126,7 @@ jobs:
           tests.test_robot_legacy_protection_recovery_command
           tests.test_robot_legacy_protection_reconciliation
           tests.test_terminal_paper_trading_application
+          tests.test_robot_l_shape
       - name: Run Scanner to Robot handoff acceptance
         run: >-
           python -m unittest -v
@@ -123,6 +134,7 @@ jobs:
           tests.test_robot_admission
           tests.test_signal_admission
           tests.test_telegram_delivery
+          tests.test_l_shape_scanner.LShapeTelegramTests
       - name: Run Robot scoped LIMIT amend acceptance
         run: >-
           python -m pytest -q
