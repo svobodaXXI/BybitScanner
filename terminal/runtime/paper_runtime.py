@@ -808,8 +808,16 @@ class PaperRuntime:
             or slice_quantity > instrument.max_order_quantity
         ):
             raise ValueError("Box slice quantity is outside instrument limits")
-        if working_quantity * average_grid_price < instrument.min_notional_value:
-            raise ValueError("1 WV Box grid is below instrument minimum notional")
+        if any(
+            price < instrument.min_price or price > instrument.max_price
+            for price in limit_prices
+        ):
+            raise ValueError("Box LIMIT price is outside instrument limits")
+        if any(
+            slice_quantity * price < instrument.min_notional_value
+            for price in limit_prices
+        ):
+            raise ValueError("Box slice is below instrument minimum notional")
 
         fee_rate = Decimal("0.0006")
         plan = plan_ikigai_box(
