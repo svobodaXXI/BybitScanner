@@ -162,34 +162,39 @@ change:
 - Multi-pattern Scanner and focused-monitor architecture are documented and
   remain planned, not implemented.
 
-## GTD QUEST LAYER — ACTIVE FROM 2026-09-25
+## ИГРОВОЙ СЛОЙ GTD — АКТИВЕН С 2026-09-25
 
-BybitScanner now uses the optional game layer defined in
+BybitScanner использует русскую игровую систему из
 `DOCUMENTS/GTD_QUEST_SYSTEM.md`.
 
-Rules:
+Правила:
 
-- GTD/backlog/governance remain authoritative; the game layer never overrides
-  priority, safety or acceptance.
-- New work may be presented as Main Quest, Boss Fight, Side Quest, Escort
-  Quest, Exploration Quest or Raid when that classification helps.
-- XP is awarded only for verified outcomes, never activity volume, test count,
-  commits, hours or extra documentation.
-- Achievements unlock only from evidence.
-- Waiting work goes to the Tavern; someday/maybe to the World Map; weekly GTD
-  review may be presented as a Campfire Review.
-- Use quest cards only at meaningful checkpoints; do not spam every response.
-- Remove/simplify any mechanic that creates bookkeeping instead of motivation.
+- GTD / BACKLOG / governance остаются источниками истины;
+- игровые названия не меняют приоритет, safety, acceptance или trading authority;
+- XP выдаётся только за доказанный результат, а не за активность;
+- ачивки открываются только по evidence;
+- ожидание уходит в **Таверну ожидания**;
+- Someday/Maybe — на **Карту мира / в Туман войны**;
+- Weekly Review можно проводить как **Привал у костра**;
+- `DOCUMENTS/QUEST_STATE.md` хранит компактное состояние кампании для
+  автоматического восстановления нового чата;
+- новый BybitScanner-чат не требует от владельца ручного переноса игрового
+  контекста;
+- если QUEST_STATE и BACKLOG расходятся, побеждает BACKLOG/текущая команда
+  владельца, а QUEST_STATE обновляется;
+- игровая механика не должна создавать лишний учёт.
 
-Current campaign:
+Текущая кампания **«PAPER Robot: Гильдия паттернов»**:
 
-1. **Raid: The L-shaped Door** — L-shape -> PAPER Robot + real Robot button.
-2. **Boss: The Crooked First Impulse** — Ikigai Box first-impulse correction.
-3. **Side Quest: Dress the Position Card** — Telegram open-position UI.
-4. **Raid: Many Beasts, One Ticker** — deferred multi-pattern Scanner.
-5. **Quest: The Watcher** — deferred focused post-discovery monitoring.
+1. **Рейд «Г-образные врата»** — L-shape -> PAPER Robot + настоящая кнопка «🤖 Робот».
+2. **Босс «Кривой первый импульс»** — исправление первого импульса Ikigai Box.
+3. **Побочный квест «Приодеть карточку позиции»** — Telegram open-position UI.
+4. **Рейд «Много зверей — один тикер»** — отложенный multi-pattern Scanner.
+5. **Квест «Ночной дозор»** — отложенный FocusedPatternMonitor.
 
-Owner priority always overrides campaign order.
+Текущий игровой checkpoint всегда читается из
+`DOCUMENTS/QUEST_STATE.md`.
+
 
 # Backlog (working queue, priorities, rules)
 
