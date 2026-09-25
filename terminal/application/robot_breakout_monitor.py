@@ -270,13 +270,34 @@ class RobotBreakoutMonitor:
                         f"reason={error}"
                     )
                 continue
-            if (
-                record.status != "APPROVED"
-                or record.robot_state is None
-                or record.robot_state.get("phase") != robot_state_machine.PHASE_RETEST_DETECTED
-            ):
+            if record.status != "APPROVED" or record.robot_state is None:
                 continue
+            phase = record.robot_state.get("phase")
             execution = record.robot_state.get("execution") or {}
+
+            if phase == "BOX_ENTRY_READY":
+                raw_order_ids = execution.get("limit_order_ids")
+                if not isinstance(raw_order_ids, (tuple, list)) or not raw_order_ids:
+                    continue
+                if not any(
+                    (order := self._store().get_paper_limit(order_id, self._account_id))
+                    is not None and order.filled_quantity > 0
+                    for order_id in raw_order_ids
+                ):
+                    continue
+                try:
+                    if self._advance_box_entry_ready(record, match_resting_orders=False):
+                        advanced.append(record.candidate_id)
+                except Exception as error:
+                    print(
+                        "[ROBOT CANDIDATE ERROR] "
+                        f"candidate_id={record.candidate_id} error={error}"
+                    )
+                    self._record_execution_error(record, error)
+                continue
+
+            if phase != robot_state_machine.PHASE_RETEST_DETECTED:
+                continue
             order_id = execution.get("limit_order_id")
             if not order_id:
                 continue
