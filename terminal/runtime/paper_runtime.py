@@ -377,15 +377,42 @@ class ScannerControlRuntime:
             # reaches a real scan_pass() call. Mirrors RobotBreakoutMonitor's
             # same safety pattern.
             while not self._stop.wait(self._scan_interval_s):
+                state = self._store().get_scanner_runtime_state(self._account_id)
+                if state is None or state.mode != SCANNER_RUNNING:
+                    continue
                 try:
-                    state = self._store().get_scanner_runtime_state(self._account_id)
-                    if state is not None and state.mode == SCANNER_RUNNING:
-                        self._scan_pass()
+                    self._scan_pass()
                 except Exception as error:
                     print(
                         "[SCANNER CONTROL RUNTIME ERROR] "
                         f"error={error}"
                     )
+                finally:
+                    # Owner-manual Scanner runs are one-shot. Whether the pass
+                    # completes or fails, do not immediately start another
+                    # universe traversal. Pause only if this exact RUNNING
+                    # generation is still current; an operator command that
+                    # changed the durable state during the pass wins.
+                    try:
+                        current = self._store().get_scanner_runtime_state(
+                            self._account_id
+                        )
+                        if (
+                            current is not None
+                            and current.mode == SCANNER_RUNNING
+                            and current.version == state.version
+                        ):
+                            self._store().update_scanner_runtime_state(
+                                self._account_id,
+                                mode=SCANNER_PAUSED,
+                                expected_version=current.version,
+                                updated_at_ms=self._now_ms(),
+                            )
+                    except Exception as pause_error:
+                        print(
+                            "[SCANNER CONTROL RUNTIME PAUSE ERROR] "
+                            f"error={pause_error}"
+                        )
         finally:
             self._close_local_store()
 
