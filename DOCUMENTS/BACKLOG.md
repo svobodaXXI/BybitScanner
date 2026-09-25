@@ -109,63 +109,46 @@ not change this status until a reviewed implementation is merged and accepted.
 
 ## TODAY PRIORITY INDEX — 2026-09-25
 
-This index captures only work discussed or materially advanced on 2026-09-25.
-It is ordered by dependency and risk, not by visual convenience.
+Owner reprioritization at 23:15 MSK: **first do the previously listed items 4,
+5 and 7**, interpreted as the user-facing list immediately preceding this
+change:
 
-### P0 — runtime correctness / activation
+1. **L-shape PAPER Robot integration + real `🤖 Робот` button — ACTIVE NEXT.**
+   Reuse the shared Robot lifecycle. Implement the actual L-shape
+   Scanner/Telegram -> Robot handoff first; add the owner-visible Robot button
+   in the same slice so it is backed by a real executable PAPER capability,
+   not a decorative control. Preserve L-shape-specific geometry, minimum
+   potential 0.8%, RR >= 2:1, frozen STOP/TAKE rules, and shared Robot
+   protection/recovery ownership.
 
-1. **Activate today's merged Robot runtime fixes on the PC runtime worktree.**
-   Current repository main contains the ordered protection continuity fix
-   (#237) and the Ikigai Box Robot-status button (#238), but the already-running
-   PAPER runtime was started from an older checkout. Before relying on those
-   fixes in another PAPER session, synchronize the clean runtime worktree to
-   current main and perform the normal owner-controlled manual restart. Do not
-   restart automatically from ChatGPT/Codex.
-2. **Treat the 4STOCKUSDT false `stale_generation_discarded` incident as fixed
-   in code, not as a reason to weaken fail-closed protection.** #237 removed
-   owner-queue-latency false positives by introducing an ordered disconnect
-   barrier; a genuine unknown disconnect gap still remains fail-closed.
+2. **Ikigai Box first-impulse geometry correction — NEXT AFTER L-SHAPE.**
+   Use AIGENSYNUSDT 5m as the concrete defect. A distinct corrective
+   counter-wave terminates the first impulse. At most 1-2 small opposite-colour
+   candles may remain inside the impulse only when they form a brief pause and
+   not an independent local counter-swing. Keep Robot execution unchanged while
+   correcting detector geometry. Resolve the known FLOCK baseline detector
+   failure in this same Box-geometry slice if it shares the same rule boundary;
+   do not reopen already-completed Box Robot integration.
 
-### P1 — Scanner signal completeness
+3. **Telegram open-position card refinement — THIRD.**
+   Presentation-only slice: increase right-side chart clearance; remove the word
+   `Вход` while keeping entry price/line; rename `Стоп`/`Тейк` to
+   `SL`/`TP`; reduce execution-triangle size and use direction-matched
+   outline; show `Размер` as quantity plus USDT notional. No trading logic
+   changes.
 
-3. **Implement per-symbol multi-pattern orchestration.**
-   Owner contract: finish all enabled patterns on 5m, then all enabled patterns
-   on 1m, then next ticker. Use one snapshot per `symbol x timeframe`, fan out
-   to all detector families, isolate errors, collect multiple observations, and
-   add bounded plural envelope candidates instead of one global
-   `best_geometry`. Owning plan:
+### Deferred until the three owner-prioritized tasks above are completed
+
+4. **Per-symbol multi-pattern Scanner orchestration.**
+   Plan remains authoritative in
    `DOCUMENTS/SCANNER_MULTIPATTERN_ORCHESTRATION_PLAN.md`.
-4. **Implement focused post-discovery monitoring after item 3.**
-   Full Scanner discovers the universe; existing Robot candidate monitoring
-   evolves the same setup; new `FocusedPatternMonitor` keeps selected symbols
-   under closed-candle pattern observation for new Box/L-shape/future Flag/
-   later Wedge-Triangle structures. Owning plan:
+5. **Focused post-discovery pattern monitoring.**
+   Plan remains authoritative in
    `DOCUMENTS/FOCUSED_PATTERN_MONITOR_PLAN.md`.
-
-### P2 — pattern/Robot coverage
-
-5. **L-shape PAPER Robot integration + real Robot button.**
-   Reuse the shared Robot lifecycle; no decorative button before the backend
-   handoff exists. Include the owner-visible `🤖 Робот` action in the same
-   implementation slice.
-6. **Ikigai Box first-impulse geometry correction.**
-   AIGENSYNUSDT 5m remains the concrete example: a distinct corrective wave
-   must terminate the first impulse; only 1-2 small opposite-colour pause
-   candles are allowed when they do not form a local counter-swing. Keep this
-   separate from Robot execution.
-7. **Resolve the known Ikigai Box detector baseline failure.**
-   `test_flock_style_green_wick_anchors_red_core_and_55pct_box_gate` still
-   fails in the Box detector workflow and was not caused by the Robot-button
-   change. Diagnose/fix only when entering the Box geometry slice; do not use it
-   to reopen already-merged presentation/runtime work.
-
-### P3 — presentation / operator UX
-
-8. **Telegram open-position card refinement.**
-   Queue already captured: more right-side chart clearance; remove the word
-   `Вход` while preserving entry price/line; rename `Стоп`/`Тейк` to
-   `SL`/`TP`; smaller direction-coloured fill triangles; show position size
-   as quantity plus USDT notional. No trading-logic changes.
+6. **PC runtime synchronization/restart for today's merged changes.**
+   Required before relying on those changes in a new PAPER runtime session,
+   but do not interrupt the current owner-run runtime solely for repository
+   synchronization unless explicitly requested.
 
 ### Completed today — do not repeat
 
@@ -176,8 +159,8 @@ It is ordered by dependency and risk, not by visual convenience.
   PAPER acceptance passed.
 - Manual reconcile completed; Robot was returned from PAUSED to
   `ROBOT_RUNNING / READY` through the normal Telegram control path.
-- Multi-pattern Scanner prerequisites and focused-monitor architecture are now
-  documented; implementation remains pending.
+- Multi-pattern Scanner and focused-monitor architecture are documented and
+  remain planned, not implemented.
 
 # Backlog (working queue, priorities, rules)
 
