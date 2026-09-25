@@ -58,9 +58,11 @@ active_change:
 
 * draft PR #249 — Scanner one-pass + cooperative pause/resume + explicit stop +
   Telegram Menu self-heal;
-* current documented head before this checkpoint: `a730312...`;
-* direct Scanner-control/Telegram-menu CI coverage added; current-head evidence
-  must be re-read before merge.
+* current head: `d2a6473...`;
+* first direct Scanner-control run exposed a test-ordering race only; the test
+  was made deterministic without runtime-code changes;
+* Robot PAPER acceptance run #191 is green, including the direct
+  Scanner-control/Telegram-menu step; merge remains owner-controlled.
 
 open_blockers:
 
@@ -71,13 +73,22 @@ open_blockers:
 * root cause of protection ingress overflow remains unproven;
 * FLOCK Ikigai Box baseline detector test is red in the existing Box geometry
   boundary and is separate from #249;
-* the repeating/interrupted Scanner session is not valid full-run acceptance.
+* the repeating/interrupted Scanner session is not valid full-run acceptance;
+* the requested read-only audit of 25.09 PAPER Robot trading/PnL is still
+  pending because Codex Desktop repeatedly returns 401 despite healthy ChatGPT
+  auth diagnostics;
+* Codex Desktop remains on build 26.917.9434.0 while 26.924.1866.0 is reported
+  available; its in-app updater has not actually replaced the installed
+  package;
+* Codex Windows elevated sandbox also reports helper_sandbox_lock_failed; keep
+  this separate from BybitScanner runtime unless proven related.
 
 next_dependent_sequence:
 
-1. verify #249 current-head targeted CI;
-2. merge #249 only with sufficient Scanner/Telegram evidence;
-3. synchronize/restart local PC runtime only on owner command;
+1. owner decision on merging #249 now that current-head targeted CI is green;
+2. synchronize/restart local PC runtime only on owner command;
+3. resolve Codex Desktop update/401 tooling blocker and perform the pending
+   read-only Robot trading/PnL audit;
 4. owner-check pause -> continue same pass -> stop and one-pass natural STOP;
 5. reconcile Robot through the evidence-based path;
 6. complete real L-shape PAPER acceptance;
