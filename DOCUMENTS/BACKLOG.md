@@ -63,8 +63,10 @@ Draft PR #249 implements this boundary:
   `getChatMenuButton` -> `setChatMenuButton` when needed;
 - focused runtime/Telegram regression coverage.
 
-Current #249 head: `d2a6473fe654134a017d48840232cfe16b83e05f`,
-status **DRAFT / NOT MERGED**. The first direct Scanner-control CI run exposed
+Latest #249 code-bearing head before this documentation checkpoint:
+`d2a6473fe654134a017d48840232cfe16b83e05f`, status **DRAFT / NOT MERGED**.
+Subsequent commits in this branch are documentation-only, so do not confuse
+the branch tip with a new runtime-code change. The first direct Scanner-control CI run exposed
 a race in the new pause/resume test itself (`ConcurrentUpdate` caused by the
 test allowing the background pass to cross the checkpoint before PAUSED was
 committed). Commit `d2a6473...` made the test ordering deterministic without
