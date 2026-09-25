@@ -7,6 +7,8 @@ never submits, retries, amends, cancels, or closes an exchange order.
 
 from __future__ import annotations
 
+import robot_l_shape
+
 from dataclasses import dataclass
 from typing import Callable, Mapping
 
@@ -323,9 +325,12 @@ class RobotRecoveryCoordinator:
         result: dict[str, int] = {}
         for candidate in approved:
             if (
-                candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
-                and isinstance(candidate.robot_state, Mapping)
-                and candidate.robot_state.get("phase") == "BOX_ENTRY_READY"
+                (
+                    candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+                    and isinstance(candidate.robot_state, Mapping)
+                    and candidate.robot_state.get("phase") == "BOX_ENTRY_READY"
+                )
+                or robot_l_shape.is_l_shape_snapshot(candidate.signal_snapshot)
             ):
                 continue
             value = provider(candidate.symbol.value, candidate.signal_snapshot)
