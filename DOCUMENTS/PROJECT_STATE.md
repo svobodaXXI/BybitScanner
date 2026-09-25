@@ -655,29 +655,68 @@ ACTIVE
 
 ---
 
-# CURRENT_OWNER_WORK_CONTROL — 2026-09-23
+# CURRENT_OWNER_WORK_CONTROL — 2026-09-25
 
-Scope: owner's latest explicitly selected Scanner feedback and PAPER
-pattern-strategy design. **Current task index and completion/acceptance
-ledger:** `DOCUMENTS/BACKLOG.md#current-owner-work-index--2026-09-23-supersedes-stale-next-step-claims-below`.
-Consult that short index first for this owner-requested work; older
-priority labels and next-step claims below are historical subsystem
-snapshots, not instructions to redo finished Scanner integrations or to
-launch Robot/Scanner.
+Scope: current owner-selected path to a reliable PAPER Robot v0.1, with
+Ikigai Box as the active bounded implementation track. Scanner visual fixes
+remain queued for the next single owner-started complete real pass; they do
+not supersede the current Robot work.
 
-- Complete manual Scanner pass on 2026-09-23: 777 tickers / 65 found /
-  62 sent; this precedes PR #213 and the pending #214 fix. Subsequent
-  Telegram visual acceptance remains pending, not implied by that pass.
-- Telegram status-circle removal: PR #214 OPEN, implementation proposed
-  but not merged or technically/visually accepted.
-- Ikigai Box pure PAPER grid/STOP planner: Codex reports local PASS,
-  not published to GitHub main and not execution-enabled. The owner has
-  approved only bounded PAPER development, not automatic orders.
-- L-shape Robot: owner-approved strategy reuse of Wedge lifecycle with
-  pattern-specific thresholds/geometry; design only, no admission.
-- The earlier PAPER protection-ingress evidence below remains a historical
-  safety risk requiring fresh operational evidence before any live PAPER
-  Robot activation; no claim of resolution or current runtime status.
+**Canonical work index:** `DOCUMENTS/BACKLOG.md#current-owner-work-index`.
+**Detailed Box strategy/execution contract:**
+`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
+
+Current Box checkpoint:
+- PR #215 planner, #218 BOX_PLAN_ONLY persistence, #219 persistence adapter,
+  #220 fixed Box STOP terms, #221 durable order ownership/proof,
+  #222 atomic owned LIMIT persistence and #223 all-or-nothing first-grid
+  persistence are merged to `main`.
+- PR #224 is the current bounded slice: deterministic four-order first-grid
+  specs with stable restart-safe identities; still non-executing.
+- `BOX_PLAN_ONLY` remains non-executable. No Box admission/runtime trade
+  activation is authorized yet.
+- Existing PAPER full-position protection already follows authoritative
+  position quantity; do not add Box-specific STOP quantity synchronization.
+- Existing execution journal, matching engine, protection engine and durable
+  protection obligations are to be reused; do not build Box-specific copies.
+
+Current implementation order (REUSE-FIRST):
+1. finish/merge deterministic first-grid spec adapter (#224);
+2. add a **Box entry-policy adapter inside the existing Robot lifecycle**:
+   pattern-specific eligibility + four ENTRY LIMITs + sequential owned fills;
+3. reuse the existing Robot finalization/protection/recovery path unchanged
+   wherever possible: durable `robot_trades`, full-position STOP/TAKE,
+   protection obligations, PAPER matching, execution journal, runtime
+   reconciliation and fail-closed escalation;
+4. change only the Wedge-specific assumption that entry has exactly one LIMIT
+   whose remainder is cancelled after the first fill. Box must allow its four
+   preplanned owned LIMITs to remain/top-up according to the Box policy;
+5. only after this adapter passes focused PAPER tests, expose Box through the
+   existing Robot admission/runtime gate and run PAPER acceptance.
+
+There is **no separate Box lifecycle/recovery coordinator** and no second
+Robot engine. Box-specific persistence already merged is treated as entry
+evidence for the shared lifecycle, not as the foundation of a parallel
+trading subsystem.
+
+Fail-closed rule: startup/restart reconciliation precedes any new Box entry
+creation. Foreign, missing or contradictory ownership/execution/position/
+protection evidence blocks further execution and requires reconciliation.
+
+No-repeat rule: do not recreate or re-test already merged planner,
+persistence, STOP, ownership or atomic-grid slices unless a concrete new
+defect or changed dependency affects them. Do not start Scanner/Robot to
+validate these non-runtime slices.
+
+Scanner acceptance remains unchanged: only the owner manually starts one
+complete real pass across all eligible symbols and integrated patterns with
+ordinary Telegram delivery; partial runs and isolated chart previews do not
+count.
+
+L-shape PAPER Robot remains design-only and follows the existing Wedge
+lifecycle except its documented pattern-specific geometry/risk conditions.
+Do not switch to it while the current Box execution track is active unless
+the owner explicitly changes priority.
 
 ---
 # HISTORICAL_WORK_CONTROL — 2026-09-18 (not current owner-task routing)
