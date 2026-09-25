@@ -1562,6 +1562,81 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         )
         self.assertEqual(evidence.position_version, projection.version)
 
+    def test_owned_topup_refreshes_same_open_trade_attestation(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        first_order_id = record.robot_state["execution"]["limit_order_id"]
+
+        second_order_id = "test-box-limit-2"
+        self.store.create_paper_limit(
+            client_action_id="test-box-entry-2",
+            request_fingerprint="test-box-entry-2-fp",
+            order_id=OrderId(second_order_id),
+            order_link_id="test-box-entry-2-link",
+            trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL),
+            side=OrderSide.BUY,
+            price=Decimal("80"),
+            quantity=Decimal("0.6"),
+            created_at_ms=self.clock(),
+        )
+        state = dict(record.robot_state)
+        execution = dict(state["execution"])
+        execution["limit_order_ids"] = [first_order_id, second_order_id]
+        state["execution"] = execution
+        self.store.save_robot_candidate_state(
+            record.candidate_id,
+            status="APPROVED",
+            robot_state=state,
+            expected_revision=record.state_revision,
+            updated_at_ms=self.clock(),
+        )
+
+        self.executor.fill_resting_limit(
+            first_order_id, SYMBOL, OrderSide.BUY, Decimal("0.4"), Decimal("81"),
+        )
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            ("candidate-1",),
+        )
+        initial_trade = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertEqual(initial_trade.entry_quantity, Decimal("0.4"))
+        self.assertEqual(initial_trade.average_entry, Decimal("81"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+
+        self.executor.fill_resting_limit(
+            second_order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("80"),
+        )
+        projection = self.store.get_position_projection(
+            PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        )
+
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            ("candidate-1",),
+        )
+
+        refreshed = self.store.get_robot_trade("robot-trade-candidate-1")
+        self.assertEqual(refreshed.trade_id, initial_trade.trade_id)
+        self.assertEqual(refreshed.entry_quantity, Decimal("1.0"))
+        self.assertEqual(refreshed.average_entry, Decimal("80.4"))
+        self.assertEqual(refreshed.entry_position_version, projection.version)
+        self.assertEqual(refreshed.version, initial_trade.version + 1)
+        self.assertEqual(refreshed.entry_time_ms, initial_trade.entry_time_ms)
+        self.assertEqual(refreshed.entry_path, initial_trade.entry_path)
+        self.assertEqual(refreshed.actual_wv, initial_trade.actual_wv)
+        self.assertEqual(refreshed.stop_price, initial_trade.stop_price)
+        self.assertEqual(refreshed.take_price, initial_trade.take_price)
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
+
     def test_event_driven_authoritative_fill_finalizes_without_periodic_tick_or_candle(self):
         self._create_candidate()
         self._drive_to_retest_detected()
