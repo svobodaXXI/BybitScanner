@@ -12,6 +12,54 @@ Current sequence:
 
 Do not add Box-specific trade states such as GRID_PARTIAL/GRID_FILLED, a Box recovery coordinator, a second execution journal, a second matcher, or a STOP-quantity synchronizer. One focused verification per new invariant; do not rerun already-green prior slices without changed inputs.
 
+## FOCUSED POST-DISCOVERY PATTERN MONITOR — PLANNED 2026-09-25
+
+Owner requirement: after Full Scanner discovers a structurally interesting
+symbol and moves on, the project must continue following that symbol without
+waiting for the next full-universe pass.
+
+Architecture is split into three responsibilities:
+
+- Full Scanner: broad universe discovery;
+- existing Robot candidate monitor: evolution of the **same** setup
+  (breakout, mirror/retest, bare-candle trigger, entry/fill/protection);
+- new `FocusedPatternMonitor`: discovery of **new independent structures**
+  on watched symbols (Ikigai Box, L-shape, future Flag/channel, later
+  Wedge/Triangle).
+
+Do not make Robot call the whole Scanner again and do not move pattern
+detectors into Robot execution logic. Focused monitoring must reuse the same
+detectors and shared market-data/candle infrastructure as Scanner.
+
+A discovery may create a durable focused-watch subscription keyed by symbol,
+timeframe, parent observation/candidate and reason. Watches are monitoring
+subscriptions, not order permissions.
+
+Initial symbol-ownership policy remains fail-closed: if a new opposite or
+conflicting pattern appears while an earlier Robot trade still owns the
+symbol, persist the new observation as `WAIT_FOR_FLAT`, then re-check its
+freshness/eligibility after the symbol becomes flat. Do not add automatic
+close-and-reverse or simultaneous Robot owners in the first slice.
+
+Watch lifetime is structural, not one arbitrary global TTL. End the watch when
+the parent episode is stale/invalid, no active candidate/trade/child
+observation remains, and the post-breakout continuation/reversal window has
+closed.
+
+Implementation dependency/order:
+
+1. complete the Scanner multi-pattern per-symbol orchestration plan;
+2. add durable focused-watch registry with no trading side effect;
+3. add FocusedPatternMonitor using existing shared market-data sources;
+4. route new observations through the normal observation/admission boundary;
+5. add `WAIT_FOR_FLAT` revalidation;
+6. only later add future Flag and any explicit close-and-reverse policy.
+
+Owning design:
+`DOCUMENTS/FOCUSED_PATTERN_MONITOR_PLAN.md`.
+
+Status: **PLANNED / NOT IMPLEMENTED**.
+
 ## SCANNER MULTI-PATTERN PER-SYMBOL ORCHESTRATION — PLANNED 2026-09-25
 
 Owner requirement: for each ticker, Scanner must evaluate **all enabled pattern
