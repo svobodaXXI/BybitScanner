@@ -93,25 +93,31 @@ It shall not:
 - directly manipulate Scanner internals;
 - duplicate Scanner lifecycle logic.
 
-## 5. Dynamic menu action
+## 5. Telegram Scanner controls
 
-The Scanner menu item shall reflect authoritative state.
+Scanner controls shall reflect authoritative state and expose **two distinct
+owner actions**, because pause and stop have different runtime semantics.
 
-For `RUNNING`:
+Dynamic command:
 
-`Остановить сканер` / pause semantics according to the accepted Scanner
-control contract.
+- `RUNNING` -> `⏸ Пауза сканера`;
+- `PAUSED` -> `▶ Продолжить сканер`;
+- `STOPPED` -> `▶ Запустить сканер`.
 
-For `PAUSED`:
+Separate command:
 
-`Продолжить сканер`.
+- `⏹ Остановить сканер` is always the explicit hard-stop action and moves an
+  active or paused pass toward `STOPPED` at the next cooperative checkpoint.
 
-For `STOPPED`:
+The displayed action is a projection of runtime state, not a locally toggled
+UI flag. Pause must preserve the current traversal cursor; continue must resume
+that same pass rather than start a fresh pass from the first ticker.
 
-`Запустить сканер`.
-
-The displayed action is therefore a projection of runtime state, not a
-locally toggled UI flag.
+The Telegram commands Menu button is part of the owner control surface.
+Monitoring shall periodically verify that the owner's chat menu button is still
+of type `commands` and restore it when it has disappeared or been replaced.
+This self-heal changes presentation only; it must not infer or mutate Scanner
+or Robot runtime state.
 
 ## 6. State flow
 
@@ -192,3 +198,34 @@ the immediate click flow, including runtime refresh/restart scenarios.
 
 The authoritative runtime state, not the frontend interaction history, is
 the source of truth.
+
+
+## 12. 2026-09-26 runtime discovery and acceptance gate
+
+Observed production-like owner runtime evidence supersedes the earlier
+assumption that pause was sufficient for “stop”:
+
+- RUNNING caused repeated full-universe traversals; the owner observed a third
+  pass.
+- PAUSED did not interrupt the already executing `run_scan_pass()`; Telegram
+  signals could continue from that in-flight pass.
+- invoking the same toggle while PAUSED resumed Scanner, which made the old
+  single-command UX ambiguous.
+- the Telegram Menu button was observed to disappear intermittently.
+
+Required acceptance after implementation:
+
+1. start one pass, pause between safe units, and observe no progress while
+   paused;
+2. continue and prove the same traversal resumes rather than restarting at the
+   first ticker;
+3. stop and prove the in-flight pass exits at the next safe checkpoint and
+   durable mode becomes STOPPED;
+4. run one uninterrupted complete pass and prove no second pass starts;
+5. verify Telegram exposes the dynamic pause/continue/start command plus the
+   separate stop command;
+6. verify the commands Menu button is restored if absent;
+7. verify Scanner commands do not alter Robot runtime/admission state.
+
+Draft implementation authority: PR #249. Do not call this accepted from CI
+that does not directly execute the Scanner-control and Telegram-menu tests.
