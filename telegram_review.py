@@ -426,6 +426,12 @@ def _run_robot_control_command(
     callback_query,
     command,
 ):
+    if command == "status":
+        prefix = f"{ROBOT_EMOJI} Робот"
+        _answer_callback(callback_query.get("id"), prefix)
+        _send_robot_status_panel(callback_query, prefix)
+        return None
+
     # close_all_now() is the one command that forces an immediate Market
     # close, so it is never fired directly from a single tap -- see
     # AUTOPILOT_ROBOT_V0_1_ROBOT_CONTROL_DECISION.md v1.2 Rationale and
