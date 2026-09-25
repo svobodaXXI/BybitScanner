@@ -309,6 +309,33 @@ class _Clock:
 
 
 class RobotBreakoutMonitorTests(unittest.TestCase):
+    def test_box_entry_ready_is_inert_pending_entry(self):
+        self.store.create_robot_candidate(
+            candidate_id="box-robot-1", trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL), status="APPROVED",
+            signal_snapshot={"pattern": "IKIGAI_BOX", "symbol": SYMBOL},
+            approved_at_ms=1, updated_at_ms=1,
+        )
+        original = self.store.save_robot_candidate_state(
+            "box-robot-1", status="APPROVED",
+            robot_state={"phase": "BOX_ENTRY_READY", "pattern": "IKIGAI_BOX"},
+            expected_revision=0, updated_at_ms=2,
+        )
+        with patch.object(robot_state_machine, "initialize_state") as initialize, \
+                patch.object(robot_state_machine, "process_closed_candle") as process:
+            self.assertFalse(self.monitor._advance_one(original))
+            self.assertEqual(self.monitor.tick(), ())
+            initialize.assert_not_called()
+            process.assert_not_called()
+        self.assertEqual(self.store.get_robot_candidate(original.candidate_id), original)
+        self.assertEqual(self.feed.calls, [])
+        self.assertEqual(self.executor.limit_calls, [])
+        self.assertEqual(self.executor.cancel_calls, [])
+        self.assertEqual(self.store._connection.execute(
+            "SELECT COUNT(*) FROM paper_limit_orders"
+        ).fetchone()[0], 0)
+        self.assertNotIn("last_execution_error", original.robot_state.get("execution", {}))
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "terminal.db"
