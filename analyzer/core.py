@@ -47,7 +47,7 @@ from .charts import create_chart
 from .reports import create_report
 
 
-def analyze_symbol(symbol, *, timeframe=None):
+def analyze_symbol(symbol, *, timeframe=None, candles=None):
     """
     Анализ одной торговой пары.
     """
@@ -64,10 +64,14 @@ def analyze_symbol(symbol, *, timeframe=None):
         # Candles
         # =========================
 
-        df = load_candles(
-            symbol,
-            timeframe,
-            CANDLE_LIMIT
+        df = (
+            load_candles(
+                symbol,
+                timeframe,
+                CANDLE_LIMIT
+            )
+            if candles is None
+            else candles
         )
 
         if df is None:
