@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from robot_state_machine import PHASE_EXPIRED_AT_APEX, resume_without_replay
+import robot_l_shape
 
 ROBOT_STOPPED = "ROBOT_STOPPED"
 ROBOT_RUNNING = "ROBOT_RUNNING"
@@ -104,6 +105,22 @@ def reconcile_restart(
                     RESUME_WAITING,
                     candidate_id=candidate_id,
                     reason=BOX_ENTRY_READY,
+                    state=state,
+                )
+            )
+            continue
+        if robot_l_shape.is_l_shape_snapshot(snapshot):
+            robot_l_shape.frozen_terms(snapshot)
+            if state.get("phase") not in {
+                robot_l_shape.PHASE_WAITING_RETEST,
+                robot_l_shape.PHASE_RETEST_DETECTED,
+            }:
+                raise RobotRestartError("L-shape candidate has invalid durable recovery phase")
+            decisions.append(
+                RestartDecision(
+                    RESUME_WAITING,
+                    candidate_id=candidate_id,
+                    reason=str(state.get("phase")),
                     state=state,
                 )
             )
