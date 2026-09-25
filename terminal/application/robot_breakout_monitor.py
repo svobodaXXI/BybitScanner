@@ -863,6 +863,7 @@ class RobotBreakoutMonitor:
         record: RobotCandidateRecord,
         *,
         allowed_limit_order_id: str | None = None,
+        allowed_limit_order_ids: tuple[str, ...] | None = None,
     ) -> str | None:
         position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
         position = self._store().get_position_projection(position_key)
@@ -878,12 +879,20 @@ class RobotBreakoutMonitor:
                 f"symbol={record.symbol.value}"
             )
 
+        allowed_ids = {
+            item.strip()
+            for item in (allowed_limit_order_ids or ())
+            if isinstance(item, str) and item.strip()
+        }
+        if allowed_limit_order_id is not None:
+            allowed_ids.add(allowed_limit_order_id)
+
         foreign_orders = tuple(
             order.order_id.value
             for order in self._store().load_active_paper_limits(
                 self._account_id, record.symbol,
             )
-            if order.order_id.value != allowed_limit_order_id
+            if order.order_id.value not in allowed_ids
         )
         if foreign_orders:
             return (
