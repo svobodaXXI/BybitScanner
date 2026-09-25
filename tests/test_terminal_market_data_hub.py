@@ -207,12 +207,17 @@ def test_hub_reconnects_and_resubscribes_existing_contexts():
         reconnect_delay=0,
     )
     context = hub.subscribe("BTCUSDT")
+    disconnects = []
+    context.add_disconnect_listener(
+        "test", lambda generation, reason: disconnects.append((generation, reason)),
+    )
     hub.start()
     assert second.subscribed.wait(timeout=1)
 
     assert first.sent[0]["args"] == ["orderbook.1000.BTCUSDT", "publicTrade.BTCUSDT"]
     assert second.sent[0]["args"] == first.sent[0]["args"]
     assert context.reconnect_count == 1
+    assert disconnects == [(1, "OSError")]
     assert context.subscription_state == "SUBSCRIBING"
     hub._dispatch({"topic": "orderbook.1000.BTCUSDT", "type": "snapshot", "data": {}})
     assert context.subscription_state == "SUBSCRIBED"
@@ -270,6 +275,28 @@ def test_symbol_context_fans_out_updates_to_independent_named_listeners():
     assert context.public_orderbook.consumer is None
 
 
+def test_symbol_context_fans_out_disconnect_boundaries():
+    context = _context("BTCUSDT", Decimal("0.01"))
+    received_a = []
+    received_b = []
+    context.add_disconnect_listener(
+        "a", lambda generation, reason: received_a.append((generation, reason)),
+    )
+    context.add_disconnect_listener(
+        "b", lambda generation, reason: received_b.append((generation, reason)),
+    )
+
+    context._dispatch_disconnect(3, "OSError")
+
+    assert received_a == [(3, "OSError")]
+    assert received_b == [(3, "OSError")]
+    assert context.has_listeners() is True
+
+    context.remove_disconnect_listener("a")
+    context.remove_disconnect_listener("b")
+    assert context.has_listeners() is False
+
+
 def test_symbol_context_listener_failure_does_not_block_sibling_listener():
     context = _context("BTCUSDT", Decimal("0.01"))
     received = []
@@ -308,6 +335,7 @@ TESTS = (
     test_hub_reconnects_and_resubscribes_existing_contexts,
     test_workspace_switch_reuses_hub_context_and_preserves_previous_context,
     test_symbol_context_fans_out_updates_to_independent_named_listeners,
+    test_symbol_context_fans_out_disconnect_boundaries,
     test_symbol_context_listener_failure_does_not_block_sibling_listener,
     test_hub_discard_is_deferred_while_an_independent_listener_remains,
 )

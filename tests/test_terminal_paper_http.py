@@ -2055,14 +2055,12 @@ def test_robot_protection_coverage_manager_marks_unhealthy_until_authoritative_s
     manager.close()
 
 
-def test_robot_protection_coverage_manager_rejects_stale_generation_after_reconnect():
-    """T22: an owner task built under one connection generation must not
-    evaluate/latch once a reconnect has advanced context.reconnect_count by
-    the time it actually executes -- the shared owner queue's latency means
-    enqueue-time and execution-time can straddle a reconnect. Coverage must
-    fail closed and expose the gap explicitly (never a silent drop), and
-    only a fresh authoritative snapshot of the new generation may recover
-    it -- an ordinary delta must not."""
+def test_robot_protection_coverage_manager_orders_disconnect_barrier_after_admitted_event():
+    """Owner-queue latency must not retroactively invalidate a book event
+    already admitted before a real disconnect. The disconnect itself is the
+    ordered continuity barrier: old evidence runs first, then admission is
+    fenced, new-generation deltas are ignored, and only a fresh snapshot may
+    enter fail-safe recovery for the genuinely unknown disconnect interval."""
     hub = MarketDataHub(
         _CoverageRegistry(["BTCUSDT"]), _coverage_context,
         connection_factory=lambda *args, **kwargs: None,
@@ -2072,49 +2070,56 @@ def test_robot_protection_coverage_manager_rejects_stale_generation_after_reconn
     manager.resync()
     context = hub.get("BTCUSDT")
 
-    # Simulate the real owner queue's latency: capture the task instead of
-    # running it inline, so a reconnect can happen before it executes.
     captured: list = []
     real_enqueue = runtime.enqueue
     runtime.enqueue = lambda operation, **_metadata: captured.append(operation)
 
     _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=1)
     assert len(captured) == 1
-    # Admission itself succeeded (a snapshot was admitted); the task just
-    # has not run yet.
     assert manager.is_healthy() is True
 
-    # Reconnect happens before the owner thread drains the queued task.
+    # A real disconnect is emitted by MarketDataHub after all old-generation
+    # update callbacks have returned, so its barrier is admitted behind them.
     context.reconnect_count = 1
-
-    stale_task = captured[0]
-    stale_task(runtime)
-
-    assert runtime.crossing_calls == []
+    manager._on_disconnect("BTCUSDT", 1, "OSError")
+    assert len(captured) == 2
     assert manager.is_healthy() is False
-    assert manager.health()["unhealthy_symbols"] == {"BTCUSDT": "stale_generation_discarded"}
+    assert manager.health()["unhealthy_symbols"] == {
+        "BTCUSDT": "websocket_disconnect:OSError"
+    }
 
-    # An ordinary delta under the new generation must not silently recover
-    # coverage -- same rule as any other continuity gap.
+    # The valid pre-disconnect event is historical evidence and must still be
+    # evaluated even though reconnect_count has already advanced.
+    captured[0](runtime)
+    assert len(runtime.crossing_calls) == 1
+    assert runtime.crossing_calls[0][1] == "BTCUSDT:1:1"
+    assert runtime.fence_calls == []
+
+    # The next FIFO item is the explicit continuity barrier.
+    captured[1](runtime)
+    assert runtime.fence_calls == [
+        ("BTCUSDT", "websocket_disconnect:OSError")
+    ]
+
     runtime.enqueue = real_enqueue
+
+    # New-generation deltas cannot bypass the gap.
     _apply_book_delta(context.public_orderbook, bid="100", ask="101", update_id=2)
     assert manager.is_healthy() is False
-    assert manager.health()["unhealthy_symbols"] == {"BTCUSDT": "stale_generation_discarded"}
-    assert runtime.crossing_calls == []
+    assert len(runtime.crossing_calls) == 1
+    assert runtime.recovery_calls == []
 
-    # Only a fresh authoritative snapshot of the current generation may run
-    # the fail-safe recovery. It is never treated as proof that no STOP/TAKE
-    # crossing occurred during the gap.
+    # A fresh snapshot may enter the existing fail-safe recovery path. It does
+    # not claim that the unknown disconnect interval itself was safe.
     _apply_book_snapshot(context.public_orderbook, bid="100", ask="101", update_id=3)
     assert manager.is_healthy() is True
     assert manager.health()["unhealthy_symbols"] == {}
-    assert runtime.crossing_calls == []
+    assert len(runtime.crossing_calls) == 1
     assert len(runtime.recovery_calls) == 1
     assert runtime.recovery_calls[0][1] == "BTCUSDT:3:3"
-    assert runtime.recovery_calls[0][3] == "stale_generation_discarded"
+    assert runtime.recovery_calls[0][3] == "websocket_disconnect:OSError"
 
     manager.close()
-
 
 def test_robot_protection_coverage_manager_marks_unhealthy_on_any_admission_failure():
     hub = MarketDataHub(
