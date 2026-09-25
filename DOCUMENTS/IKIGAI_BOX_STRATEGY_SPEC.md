@@ -62,6 +62,74 @@ explicit trading decisions in the current conversation take precedence over the 
   protection. PAPER execution remains blocked; common TAKE, fixed STOP,
   replenishment, risk and attempt rules are unchanged.
 
+## Implementation course correction — mature execution engines (2026-09-25)
+
+The next implementation order is intentionally tightened to avoid building an
+entry path before restart/partial-fill safety exists.
+
+External reference patterns reviewed:
+- QuantConnect LEAN: pre-check a set of order requests before submission;
+  track durable order identities/tickets and drive lifecycle from asynchronous
+  order events, including partial fills; contingent/bracket/OCO/OUO sets keep
+  related entry/exit orders coordinated.
+- Hummingbot: reconcile persisted active orders and recover positions before
+  executors start after restart/crash.
+- Freqtrade: persist the trade lifecycle and attach protection immediately
+  after confirmed entry rather than treating STOP as a later independent step.
+
+Applied to BybitScanner, without importing their architectures wholesale:
+
+1. **Keep the completed atomicity work.** Stable Box order IDs, immutable
+   ownership, one execution journal, atomic owned LIMIT persistence and
+   all-or-nothing first-grid persistence are the correct foundation.
+2. **Finish the deterministic first-grid spec adapter.** It remains pure and
+   non-executing; replay/restart must derive the same four identities.
+3. **Before any runtime entry activation, add one Box lifecycle/recovery
+   coordinator, not more persistence layers.** It must derive a fail-closed
+   state from the existing frozen plan, ownership rows, active PAPER LIMITs,
+   execution journal, authoritative position projection and protection
+   evidence. At minimum it must distinguish: no entry submitted; complete
+   working grid while FLAT; partial/full owned exposure; protected exposure;
+   completed FLAT; and inconsistent/foreign evidence requiring reconciliation.
+4. **Reuse the existing full-position PAPER protection path.** It already
+   follows authoritative position quantity, so do not add a Box-specific STOP
+   quantity synchronizer. On the first proven owned fill, protection must become
+   the next required lifecycle action before any new top-up is considered safe.
+   Further partial fills reuse the same full-position protection semantics.
+5. **Reuse the existing durable protection obligation/recovery mechanism.**
+   Do not create a second Box execution journal, second matching engine, second
+   STOP engine or generalized message bus. Box-specific work should only bridge
+   candidate/order ownership into those existing mechanisms.
+6. **Startup/restart reconciliation precedes execution.** A Box attempt with
+   persisted orders/exposure must be reconciled before the Robot may create new
+   Box entry orders. Unknown, foreign or contradictory evidence fails closed.
+7. **Only after recovery + first-fill protection are proven** may the explicit
+   Box execution gate be connected to the existing Robot/PAPER runtime. That
+   activation is a separate step and must not be smuggled into planner,
+   persistence or adapter work.
+
+Optimized bounded implementation sequence:
+- A. deterministic four-order spec adapter (current non-executing slice);
+- B. pure/read-only Box lifecycle classification and restart reconciliation;
+- C. bridge first confirmed owned fill to existing durable Robot
+  trade/protection evidence, with STOP/TAKE recovery and fail-closed behavior;
+- D. one execution coordinator that performs preflight -> ownership baseline ->
+  atomic four-order grid -> event-driven fill/protection handling;
+- E. only then enable the separately authorized PAPER Box admission/runtime
+  path and perform PAPER acceptance.
+
+Explicitly dropped as unnecessary:
+- Box-specific STOP quantity synchronization;
+- a second fill/execution journal;
+- separate matching/protection engines;
+- per-order ad-hoc retry IDs;
+- infrastructure such as a message bus merely to coordinate this first grid.
+
+This ordering is an engineering-safety optimization, not a strategy/economic
+change. Grid geometry, TAKE/STOP prices, risk policy, attempt rules and
+execution authorization remain governed by the existing owner-approved
+strategy decisions.
+
 ## 1. Source references and status
 
 - `training/reference_patterns/HEIUSDT/post_pump_two_drop_fib_1618_1h/annotation.json`:
