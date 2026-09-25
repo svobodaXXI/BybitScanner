@@ -1596,11 +1596,11 @@ class RobotBreakoutMonitor:
         }
         try:
             terms = robot_l_shape.frozen_terms(record.signal_snapshot)
-            rr = risk_reward_ratio(
+            rr = robot_l_shape.net_reward_risk(
                 terms.direction,
                 entry_price=plan.request.limit_price,
                 stop_price=terms.stop,
-                take_price=terms.target,
+                target_price=terms.target,
             )
         except Exception as error:
             details["error"] = str(error)
