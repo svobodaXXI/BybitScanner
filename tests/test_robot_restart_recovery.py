@@ -44,6 +44,34 @@ def _candidate_with_state(candidate_id="candidate-1"):
 
 
 class RobotRestartRecoveryTests(unittest.TestCase):
+    def test_box_entry_ready_resumes_without_wedge_geometry(self):
+        candidate = {
+            "candidate_id": "box-robot-1",
+            "status": "APPROVED",
+            "signal_snapshot": {"pattern": "IKIGAI_BOX"},
+            "robot_state": {
+                "state_version": "1.0",
+                "phase": "BOX_ENTRY_READY",
+                "pattern": "IKIGAI_BOX",
+                "direction": "LONG",
+            },
+        }
+
+        status, decisions = reconcile_restart(
+            durable_mode="ROBOT_RUNNING",
+            open_robot_positions=(),
+            approved_candidates=(candidate,),
+            latest_geometry_index_by_candidate={},
+        )
+
+        self.assertEqual(status, "ROBOT_RUNNING")
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].status, RESUME_WAITING)
+        self.assertEqual(decisions[0].candidate_id, "box-robot-1")
+        self.assertEqual(decisions[0].reason, "BOX_ENTRY_READY")
+        self.assertEqual(decisions[0].state, candidate["robot_state"])
+
+
     def test_first_run_defaults_to_stopped(self):
         self.assertEqual(initial_robot_mode(None), ROBOT_STOPPED)
 
