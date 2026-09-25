@@ -947,6 +947,11 @@ class TerminalPersistenceTests(unittest.TestCase):
             "ALTER TABLE paper_protection_obligations_v20 "
             "RENAME TO paper_protection_obligations"
         )
+        # This fixture starts from the current schema, so remove objects that
+        # did not exist in v20 before replaying the real v20->current chain.
+        connection.execute("DROP TABLE box_order_ownership")
+        connection.execute("DROP TABLE box_attempt_ownership")
+        connection.execute("DROP TRIGGER box_plan_no_update")
         connection.execute("PRAGMA user_version = 20")
         connection.commit()
         connection.close()
