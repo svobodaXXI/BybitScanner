@@ -1,412 +1,414 @@
-# BybitScanner Quest System — GTD Gamification Layer
+# BybitScanner — игровая GTD-система
 
-Status: ACTIVE PROCESS LAYER  
-Date adopted: 2026-09-25  
-Purpose: make project execution more engaging without weakening GTD, safety, evidence or delivery discipline.
+Статус: ACTIVE PROCESS LAYER  
+Дата принятия: 2026-09-25  
+Язык интерфейса: русский  
+Назначение: сделать разработку проекта похожей на прохождение кампании, не превращая её в бюрократическую RPG.
 
-## 1. Core rule
+## 1. Главный закон
 
-The Quest System is a presentation/motivation layer over the existing GTD and
-project-governance system. It never replaces backlog priority, ChangeRequests,
-tests, acceptance, safety gates, Git history or owner decisions.
+Игровой слой работает **поверх GTD и проектного управления**, а не вместо них.
 
-**No farming rule:** XP is awarded for verified outcomes, not activity volume.
+Приоритеты владельца, BACKLOG, ChangeRequest, тесты, acceptance, Git-история,
+runtime safety и торговые ограничения остаются источниками истины.
 
-Do not award XP for:
+### Закон против фарма
 
-- writing more tests than necessary;
-- adding documentation that does not change project authority;
-- splitting one task into artificial subtasks;
-- number of commits, PRs, messages or hours;
-- repeating already-green checks;
-- speculative refactors.
+Опыт и ачивки выдаются только за проверяемый результат.
 
-Reward only evidence-backed progress that reduces distance to the project goal.
+Не начислять опыт за:
 
-## 2. GTD -> Quest mapping
+- количество коммитов;
+- количество тестов;
+- количество файлов;
+- часы работы;
+- искусственное дробление одной задачи;
+- повтор уже зелёных проверок;
+- документацию ради документации;
+- рефакторинг без пользы текущей цели.
 
-The existing GTD flow remains authoritative:
+Цель игры — быстрее получать работающий результат, а не набивать статистику.
+
+## 2. GTD → игровая карта
+
+Обычный GTD:
 
 ```text
-CAPTURE -> CLARIFY -> ORGANIZE -> REFLECT -> ENGAGE
+СОБРАТЬ → ПРОЯСНИТЬ → ОРГАНИЗОВАТЬ → ОБЗОР → ДЕЛАТЬ
 ```
 
-Game layer:
+Игровой слой:
 
 ```text
-CAPTURE  = Quest Inbox
-CLARIFY  = Identify quest / boss / side quest / trash loot
-ORGANIZE = Quest Log + dependencies + rewards
-REFLECT  = Campfire Review
-ENGAGE   = Active Quest
-DONE     = Quest Complete / Achievement unlock
-WAITING  = Tavern / Waiting on external event
-SOMEDAY  = World Map / Fog of War
+Inbox             → Входящие задания
+Clarify           → Определить тип задания
+Organize          → Журнал квестов
+Reflect           → Привал у костра
+Engage            → Активный квест
+Done              → Квест выполнен / ачивка открыта
+Waiting For       → Таверна ожидания
+Someday / Maybe   → Карта мира / Туман войны
 ```
 
-### Quest Inbox
+### Входящие задания
 
-Every new idea/bug/request is captured first without immediately changing the
-active mission.
+Любая новая идея, баг, хотелка или наблюдение сначала фиксируется, но не
+перехватывает текущую работу автоматически.
 
-### Quest Log
+### Журнал квестов
 
-Only clarified work enters the Quest Log. Every quest needs:
+Каждый прояснённый квест должен иметь:
 
-- outcome;
-- why it matters;
-- completion evidence;
-- priority;
-- dependencies;
-- safety/runtime boundary if relevant.
+- конкретный результат;
+- зачем он нужен;
+- критерий завершения;
+- приоритет;
+- зависимости;
+- safety/runtime границы;
+- доказательство завершения.
 
-### Active Quest
+### Активный квест
 
-One primary quest at a time unless two tasks are objectively independent.
+По умолчанию активен один главный квест. Параллельные задачи допускаются только
+когда они действительно независимы.
 
-The current owner-priority queue still decides what is active. The game layer
-must not reorder work on its own.
+Порядок задаёт владелец и BACKLOG. Игровой слой сам приоритеты не меняет.
 
-### Tavern
+### Таверна ожидания
 
-Waiting-for-external-event items live here:
+Сюда отправляются задачи, которые сейчас ждут внешнего события:
 
 - CI;
-- owner visual acceptance;
-- exchange/runtime evidence;
-- future market event;
-- dependency PR.
+- ручной acceptance;
+- рынок;
+- ответ внешней системы;
+- зависимый PR;
+- будущий разрешённый запуск.
 
-Waiting does not count as active work.
+Ожидание не считается активной работой.
 
-### World Map
+### Карта мира / Туман войны
 
-Someday/maybe ideas remain visible but do not consume attention.
+Здесь живут Someday/Maybe:
 
-Examples:
-
-- future Flag detector;
+- будущий Flag;
 - close-and-reverse;
-- LIVE expansion;
-- optional UX polish.
+- LIVE-расширения;
+- необязательная полировка;
+- исследовательские идеи без текущего приоритета.
 
-### Campfire Review
+### Привал у костра
 
-Equivalent to GTD weekly review.
+Это GTD Weekly Review в игровой форме.
 
-At review time:
+На привале:
 
-1. clear Quest Inbox;
-2. confirm Active Quest still matches owner priority;
-3. move blocked work to Tavern;
-4. remove completed quests from active queue;
-5. reveal newly unblocked quests;
-6. award achievements only from actual evidence;
-7. choose the next quest with the shortest reliable path to project value.
+1. разбираем входящие;
+2. сверяем активный квест с приоритетом владельца;
+3. блокированные задачи отправляем в Таверну;
+4. закрытые убираем из активной очереди;
+5. открываем ставшие доступными квесты;
+6. начисляем только доказанные XP/ачивки;
+7. выбираем самый короткий надёжный путь к следующей ценности.
 
-## 3. Quest types
+## 3. Типы заданий
 
-### Main Quest
+### Главный квест
 
-Directly advances the current project objective.
+Непосредственно двигает текущую основную цель проекта.
 
-Examples:
+Примеры:
 
-- connect L-shape to PAPER Robot;
-- make multi-pattern Scanner exhaustive;
-- validate PAPER Robot reliability.
+- подключить L-shape к PAPER Robot;
+- сделать Scanner полноценно мультипаттерновым;
+- довести PAPER Robot до надёжного цикла.
 
-### Boss Fight
+### Битва с боссом
 
-A blocker that prevents trustworthy operation or invalidates results.
+Блокер, который делает работу ненадёжной или искажает результат.
 
-Examples:
+Примеры:
 
-- protection continuity loss;
+- потеря protection continuity;
 - duplicate ownership;
-- stale signal execution;
+- stale signal;
 - reconciliation failure.
 
-A Boss is complete only when root cause + fix + required verification are done.
-
-### Side Quest
-
-Useful but not on the critical path.
-
-Examples:
-
-- UI polish;
-- diagnostic labels;
-- non-blocking cleanup.
-
-Side quests never preempt a Main Quest unless the owner explicitly changes
-priority.
-
-### Escort Quest
-
-A task where an existing working subsystem must survive while another change is
-made.
-
-Examples:
-
-- modify Box entry policy without breaking Wedge;
-- change Telegram presentation without changing trading behavior.
-
-Success condition includes preservation of the escorted subsystem.
-
-### Exploration Quest
-
-Bounded research with a concrete question.
-
-Examples:
-
-- inspect how mature engines handle reconnect recovery;
-- compare focused-symbol monitoring architectures.
-
-Exploration must end in a decision, plan or rejected option. Endless research
-earns no XP.
-
-### Raid
-
-A coordinated multi-slice mission with several dependent stages.
-
-Example:
+Босс побеждён только после:
 
 ```text
-Raid: L-shape -> PAPER Robot
+причина установлена
++ исправление внедрено
++ обязательная проверка пройдена
+```
+
+### Побочный квест
+
+Полезная задача вне критического пути.
+
+Пример: косметика Telegram-карточки.
+
+Побочный квест не перехватывает Главный без решения владельца.
+
+### Квест сопровождения
+
+Нужно изменить одну систему и при этом не сломать уже работающую.
+
+Примеры:
+
+- подключить новый паттерн через общий Robot lifecycle;
+- изменить Telegram presentation без торговых изменений.
+
+### Разведывательный квест
+
+Ограниченное исследование с конкретным вопросом.
+
+Он обязан завершиться решением, планом или осознанным отказом от варианта.
+Бесконечное исследование XP не даёт.
+
+### Рейд
+
+Цепочка действительно зависимых этапов.
+
+Пример:
+
+```text
+Рейд «Г-образные врата»
   1. admission contract
-  2. durable candidate state
-  3. entry/protection reuse
-  4. Telegram Robot button
-  5. focused acceptance
+  2. durable candidate
+  3. shared entry/protection lifecycle
+  4. Telegram-кнопка Робот
+  5. обязательная PAPER-проверка
 ```
 
-A Raid is used only when the slices are truly dependent. Do not turn ordinary
-tasks into raids for theatrical effect.
+Обычную небольшую задачу нельзя объявлять рейдом только ради пафоса.
 
-## 4. XP system
+## 4. Опыт
 
-XP expresses verified project progress. It is intentionally coarse.
+Шкала намеренно грубая:
 
-- **10 XP — Scout:** useful verified finding that removes uncertainty.
-- **25 XP — Quest step:** bounded implementation slice merged with required proof.
-- **50 XP — Major quest:** user-visible or runtime capability completed.
-- **100 XP — Boss defeated:** material reliability/safety blocker eliminated and verified.
-- **150 XP — Raid cleared:** multi-stage capability completed end-to-end with acceptance.
+- **10 XP — Разведка:** полезный доказанный факт, снявший неопределённость.
+- **25 XP — Этап квеста:** законченный ограниченный срез с обязательной проверкой.
+- **50 XP — Большой квест:** законченная пользовательская/runtime-возможность.
+- **100 XP — Босс повержен:** устранён значимый safety/reliability блокер.
+- **150 XP — Рейд завершён:** зависимая цепочка доведена end-to-end до acceptance.
 
-No partial XP for work-in-progress unless it produced reusable verified
-evidence.
+За незавершённую работу XP обычно не начисляется.
 
-No negative XP. Bugs are information, not punishment.
+Отрицательного XP нет. Баг — это разведданные, а не штраф персонажу.
 
-## 5. Levels
+## 5. Уровни проекта
 
-Total XP is project-level, not personal performance.
+Это уровни проекта, не оценка владельца или разработчика.
 
-- Level 1 — Candle Goblin: 0–99 XP
-- Level 2 — Pivot Hunter: 100–249 XP
-- Level 3 — Wedge Ranger: 250–449 XP
-- Level 4 — Breakout Tactician: 450–699 XP
-- Level 5 — Robot Handler: 700–999 XP
-- Level 6 — Risk Warden: 1000–1399 XP
-- Level 7 — Market Cartographer: 1400–1899 XP
-- Level 8 — Execution Architect: 1900–2499 XP
-- Level 9 — Liquidity Dragon Tamer: 2500–3199 XP
-- Level 10 — Keeper of the Green PnL: 3200+ XP
+- **Уровень 1 — Свечной гоблин:** 0–99 XP
+- **Уровень 2 — Охотник за пивотами:** 100–249 XP
+- **Уровень 3 — Следопыт клиньев:** 250–449 XP
+- **Уровень 4 — Тактик пробоя:** 450–699 XP
+- **Уровень 5 — Укротитель робота:** 700–999 XP
+- **Уровень 6 — Страж риска:** 1000–1399 XP
+- **Уровень 7 — Картограф рынка:** 1400–1899 XP
+- **Уровень 8 — Архитектор исполнения:** 1900–2499 XP
+- **Уровень 9 — Укротитель дракона ликвидности:** 2500–3199 XP
+- **Уровень 10 — Хранитель зелёного PnL:** 3200+ XP
 
-Ranks are humorous project milestones, not quality claims or trading guarantees.
+## 6. Ачивки
 
-## 6. Achievements
+### Инженерные
 
-Achievements are permanent labels unlocked by evidence.
+**«Призрачных сигналов больше нет»**  
+Устранить stale-signal path и доказать исправление.
 
-### Engineering achievements
+**«Один тикер — много зверей»**  
+Получить несколько независимых валидных паттернов на одном тикере.
 
-**No More Ghost Signals**  
-Eliminate a stale-signal path and verify it.
+**«Оба этажа зачищены»**  
+Один тикер проходит все детекторы 5m и 1m до перехода к следующему.
 
-**One Symbol, Many Beasts**  
-Scanner successfully returns multiple independent patterns for one symbol.
+**«Ночной дозор»**  
+FocusedPatternMonitor обнаруживает новую структуру уже после ухода Full Scanner.
 
-**Two Floors Cleared**  
-One ticker completes all 5m and 1m detectors before the next ticker.
+**«Новый монстр, старый движок»**  
+Новый паттерн подключён к Robot через общий lifecycle без второго execution engine.
 
-**The Watcher**  
-FocusedPatternMonitor discovers a later independent structure after Full
-Scanner has moved on.
+**«Путь четырёх ордеров»**  
+Ikigai Box проходит четыре принадлежащие ему части входа через общий Robot lifecycle.
 
-**Same Engine, New Monster**  
-A new pattern family reaches Robot by reusing the shared lifecycle rather than
-building a duplicate engine.
+**«Без двойников»**  
+Duplicate Robot ownership предотвращён durable-доказательством.
 
-**Fourfold Path**  
-Ikigai Box executes its four owned entry parts through the shared Robot
-lifecycle.
+**«Феникс»**  
+Restart/reconcile восстанавливает корректный lifecycle без ручного редактирования БД.
 
-**No Doppelgängers**  
-Duplicate Robot ownership is prevented by durable evidence.
+**«Повелитель барьера»**  
+Reconnect обрабатывается без ложного уничтожения валидных pre-disconnect событий.
 
-**Phoenix Protocol**  
-A restart/reconcile restores a valid Robot lifecycle without manual DB edits.
+### Процессные
 
-**Barrier Master**  
-A reconnect boundary is handled without falsely invalidating pre-disconnect
-evidence.
+**«Комбо без бюрократии»**  
+Три задачи подряд завершены без лишних тестов, документов и повторов.
 
-### Workflow achievements
+**«Контекст не потерян»**  
+Новый чат/сессия продолжает работу из репозиторной власти без ручного пересказа владельцем.
 
-**Zero Bureaucracy Combo**  
-Three consecutive tasks completed without redundant test/doc repetition.
+**«Один заход»**  
+Полный owner-run acceptance проходит без частичных перезапусков.
 
-**Clean Handoff**  
-A task survives chat/session transition using repository authority without the
-owner having to reconstruct context.
+**«Безжалостный бэклог»**  
+Устаревшая или superseded задача закрыта вместо повторной реализации.
 
-**One Shot Acceptance**  
-A complete owner-run acceptance pass succeeds without partial reruns.
+**«Малый патч — большая добыча»**  
+Серьёзный дефект решён минимальным изменением.
 
-**The Ruthless Backlog**  
-A stale or superseded task is removed/closed instead of being repeated.
+### Торговая система
 
-**Tiny Diff, Big Win**  
-A production defect is solved with a deliberately small change surface.
+**«Первая кровь — PAPER»**  
+Первый валидный PAPER trade нового семейства паттернов.
 
-### Trading-system achievements
+**«Цепная реакция»**  
+Один market episode даёт две последовательные независимые сделки по разным структурам.
 
-**First Blood (PAPER)**  
-First valid PAPER trade from a newly integrated pattern family.
+**«Сначала FLAT, потом разворот»**  
+Встречный setup дождался FLAT, был перепроверен и только затем допущен.
 
-**Chain Reaction**  
-One market episode produces two separate valid sequential trades from different
-structures, with independent candidates and protection.
+**«Щит поднят»**  
+Каждая открытая Robot-позиция имеет доказанную защиту полной позиции.
 
-**Flat Before Flip**  
-An opposite secondary setup waits safely for flat, is revalidated and only then
-enters.
+## 7. Боссы
 
-**Guardian Online**  
-Every open Robot position has proven full-position protection.
+Для серьёзного блокера допускается игровое имя, но техническая причина всегда
+указывается рядом.
 
-## 7. Bosses
-
-A serious blocker may be given a boss name for communication, but the technical
-reason remains explicit.
-
-Format:
+Формат:
 
 ```text
-BOSS: The Stale Generation Wraith
-Technical blocker: pre-reconnect event retroactively rejected after owner-queue delay
-HP: 3 evidence gates
-  [x] root cause
-  [x] code fix
-  [x] Robot PAPER acceptance
-Status: DEFEATED
+👹 БОСС: Призрак старого поколения
+Технический блокер:
+валидное событие до reconnect ретроспективно признаётся stale из-за задержки FIFO
+
+HP: 3 доказательства
+[x] первопричина
+[x] исправление
+[x] Robot PAPER acceptance
+
+Статус: ПОВЕРЖЕН
 ```
 
-Boss HP is the number of real evidence gates, never arbitrary story points.
+HP = реальные доказательные ворота, а не выдуманные story points.
 
-## 8. Loot
+## 8. Добыча
 
-Loot means a reusable asset produced by a quest:
+«Добыча» — reusable результат:
 
 - regression test;
-- stable API/contract;
+- стабильный контракт;
 - reusable detector primitive;
 - recovery path;
 - operator control;
-- documented invariant.
+- документированный инвариант.
 
-Loot is not a reward for creating files. It must reduce future work.
+Файл сам по себе добычей не считается.
 
-Example:
+## 9. Комбо
 
-```text
-Loot acquired:
-- ordered disconnect barrier
-- protection-continuity regression test
-```
+### Комбо точности
 
-## 9. Combo system
+Серия задач без:
 
-Combos reward process quality, not speed.
+- побочных изменений;
+- повторных проверок;
+- действий владельца, которые можно было выполнить автоматически;
+- регрессий вне scope.
 
-### Precision Combo
+### Комбо переиспользования
 
-Consecutive quests with:
+Новые возможности последовательно подключаются через общую инфраструктуру
+вместо параллельных механизмов.
 
-- no unrelated edits;
-- no repeated checks;
-- no owner action that could have been automated;
-- no regression outside scope.
+### Комбо доказательств
 
-### Reuse Combo
+Несколько решений подряд приняты по repo/runtime evidence, а не по догадкам.
 
-Consecutive features delivered by reusing shared infrastructure instead of
-adding parallel mechanisms.
+Комбо может закончиться естественно. Штрафа нет.
 
-### Evidence Combo
+## 10. Карточка квеста
 
-Several decisions resolved from repository/runtime evidence without guessing.
-
-A combo ends when a task legitimately requires a different path; there is no
-penalty.
-
-## 10. Quest card format
-
-When useful, project status may be summarized as:
+Используется только при старте, важном checkpoint, завершении, Привале у костра
+или по просьбе владельца.
 
 ```text
-🎯 ACTIVE QUEST
-L-shape -> PAPER Robot
+🎯 АКТИВНЫЙ КВЕСТ
+Рейд «Г-образные врата»
 
-Type: Main Quest / Raid
-Priority: #1
-Objective: real L-shape Robot handoff + working Telegram Robot button
-Boss: unsupported Robot admission for L-shape
-Done when:
-- L-shape produces durable Robot candidate
-- shared Robot lifecycle accepts it
-- STOP/TAKE rules remain L-shape-specific
-- Telegram Robot button controls a real candidate
-- required focused PAPER verification passes
+Приоритет: №1
+Цель: реальный L-shape -> PAPER Robot + рабочая кнопка «🤖 Робот»
+Босс: Robot admission пока не поддерживает L-shape
 
-Reward: 50 XP
-Possible achievement: Same Engine, New Monster
+Готово, когда:
+- L-shape создаёт durable candidate
+- общий Robot lifecycle принимает его
+- L-shape STOP/TAKE сохраняют свои правила
+- Telegram-кнопка управляет реальным candidate
+- обязательная PAPER-проверка проходит
+
+Награда: 50 XP
+Возможная ачивка: «Новый монстр, старый движок»
 ```
 
-Do not show a quest card on every reply. Use it at task start, meaningful
-checkpoint, completion, owner request, or Campfire Review.
+## 11. Текущая кампания
 
-## 11. Current campaign
+### Кампания «PAPER Robot: Гильдия паттернов»
 
-### Campaign: PAPER Robot — Pattern Guild
+Текущая очередь владельца:
 
-Current ordered quests:
+1. **Рейд «Г-образные врата»**
+   L-shape -> PAPER Robot + настоящая кнопка «🤖 Робот».
+2. **Босс «Кривой первый импульс»**
+   Исправить сегментацию первого импульса Ikigai Box.
+3. **Побочный квест «Приодеть карточку позиции»**
+   Telegram-карточка открытой позиции.
+4. **Рейд «Много зверей — один тикер»** — отложено.
+   Multi-pattern Scanner 5m + 1m.
+5. **Квест «Ночной дозор»** — отложено.
+   Focused post-discovery monitoring.
 
-1. **Raid: The L-shaped Door**
-   L-shape -> PAPER Robot + real Telegram Robot button.
-2. **Boss: The Crooked First Impulse**
-   Correct Ikigai Box first-impulse segmentation; AIGENSYNUSDT 5m is the
-   concrete defect.
-3. **Side Quest: Dress the Position Card**
-   Telegram position-card presentation refinement.
-4. **Raid: Many Beasts, One Ticker** — deferred
-   Multi-pattern 5m + 1m Scanner orchestration.
-5. **Quest: The Watcher** — deferred
-   Focused post-discovery pattern monitoring.
+Решение владельца всегда сильнее порядка кампании.
 
-Owner priority always overrides campaign order.
+## 12. Автоматический старт нового чата
 
-## 12. Integration with existing project authority
+Для BybitScanner игровой режим восстанавливается из репозитория, а не из
+ручного chat handoff.
 
-- `DOCUMENTS/BACKLOG.md` remains the canonical task queue.
-- This document owns game semantics only.
-- ChangeRequests/specs own technical contracts.
-- CI/tests/runtime evidence own completion proof.
-- Telegram/Robot safety rules remain unchanged.
-- The owner may rename quests/achievements at any time without changing
-  implementation scope.
+Источник текущего игрового состояния:
 
-The game system must make work more enjoyable and easier to reason about. If a
-mechanic starts creating bookkeeping, remove or simplify it.
+`DOCUMENTS/QUEST_STATE.md`
+
+При первом BybitScanner-запросе в новом чате агент обязан:
+
+1. прочитать root `AGENTS.md`;
+2. восстановить обычный task-scoped project context;
+3. прочитать `DOCUMENTS/QUEST_STATE.md`;
+4. сверить активный квест с текущим owner priority в `DOCUMENTS/BACKLOG.md`;
+5. если есть расхождение, BACKLOG/текущая команда владельца побеждают;
+6. продолжить ответ уже в русском игровом режиме без просьбы владельцу
+   пересказывать квесты;
+7. обновить `QUEST_STATE.md`, когда меняются активный квест, очередь,
+   завершённые квесты, XP или ачивки.
+
+Не нужно создавать новый ContextDump или отдельный chat-handoff только ради
+игрового режима.
+
+Если текущая задача не относится к BybitScanner, игровой режим не навязывается.
+
+## 13. Иерархия власти
+
+- текущая команда владельца;
+- `DOCUMENTS/BACKLOG.md`;
+- применимый ChangeRequest/spec;
+- `DOCUMENTS/PROJECT_STATE.md`;
+- `DOCUMENTS/QUEST_STATE.md` — компактная игровая проекция текущего состояния;
+- этот документ — правила игры.
+
+Quest State не может сам изменить технический приоритет или trading authority.
+
+Если игровая механика начинает создавать лишний процесс — её нужно упростить.

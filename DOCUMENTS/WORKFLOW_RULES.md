@@ -18,18 +18,25 @@ ACTIVE
 
 ---
 
-## GTD quest presentation layer
+## Игровой слой GTD
 
-The project may use the optional gamification vocabulary defined in
-`DOCUMENTS/GTD_QUEST_SYSTEM.md` for motivation and status communication.
+Проект использует русскую игровую терминологию из
+`DOCUMENTS/GTD_QUEST_SYSTEM.md` как лёгкий слой мотивации и навигации.
 
-This layer is strictly subordinate to GTD and project governance:
+Он строго подчинён обычному GTD и project governance:
 
-- backlog priority, safety gates, acceptance and evidence remain authoritative;
-- game labels never change implementation scope or authorization;
-- XP/achievements are outcome-based and cannot be earned by creating extra
-  work, tests, commits or documentation;
-- if the game layer creates process overhead, simplify or omit it.
+- текущая команда владельца, backlog, safety, acceptance и evidence сильнее
+  любого игрового состояния;
+- игровые названия не меняют scope и не дают торговых разрешений;
+- XP и ачивки выдаются только за доказанный результат;
+- запрещён фарм XP через лишние тесты, коммиты, документы или дробление задач;
+- `DOCUMENTS/QUEST_STATE.md` хранит компактное текущее состояние кампании и
+  автоматически читается при первом BybitScanner-запросе нового чата;
+- если QUEST_STATE расходится с BACKLOG, исправляется QUEST_STATE;
+- игровой слой должен экономить контекст и усиливать GTD, а не создавать новую
+  систему учёта.
+
+Новый чат не требует ручного game-handoff от владельца.
 
 
 # DOCUMENT_METADATA

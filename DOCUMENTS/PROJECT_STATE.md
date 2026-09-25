@@ -657,62 +657,57 @@ ACTIVE
 
 # CURRENT_OWNER_WORK_CONTROL — 2026-09-25
 
-Scope: current owner-selected path to a reliable PAPER Robot v0.1, with
-Ikigai Box as the active bounded implementation track. Scanner visual fixes
-remain queued for the next single owner-started complete real pass; they do
-not supersede the current Robot work.
+Scope: owner-selected path to a reliable PAPER Robot v0.1.
 
-**Canonical work index:** `DOCUMENTS/BACKLOG.md#current-owner-work-index`.
-**Detailed Box strategy/execution contract:**
-`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
+**Canonical work index:** the top current priority section in
+`DOCUMENTS/BACKLOG.md`.
 
-Current Box checkpoint:
-- PR #224 merged: deterministic four-order Box entry specs.
-- PR #225 merged: shared Robot entry evidence can aggregate multiple owned LIMIT IDs.
-- PR #226 merged: shared pre-entry guard accepts multiple declared owned entry LIMITs and still fails closed on foreign orders.
-- PR #227 is the current recovery-compatibility slice: `BOX_ENTRY_READY` is resumed by the existing Robot recovery path without Wedge geometry replay.
-- Local worktree additionally contains an uncommitted handoff micro-slice that creates a separate linked `APPROVED` Robot candidate from immutable `BOX_PLAN_ONLY`; this remains under review and is not yet authoritative.
-- `BOX_PLAN_ONLY` remains immutable/non-executable. No Box order submission or runtime activation is authorized yet.
+**Game-state projection:** `DOCUMENTS/QUEST_STATE.md`.
 
-Current implementation order (REUSE-FIRST, mature-engine cross-check applied):
-1. keep Box as an **entry policy / strategy intent** feeding the existing Robot execution lifecycle; do not create a Box-specific execution/recovery lifecycle;
-2. finish the safe handoff boundary: immutable `BOX_PLAN_ONLY` -> linked inert `APPROVED` Robot candidate, with `BOX_ENTRY_READY` ignored by the Wedge candle path until Box entry execution is explicitly wired;
-3. before submitting the four-grid runtime, make the shared `robot_trades` lifecycle multi-entry aware: after later owned Box fills, atomically refresh durable aggregate entry attestation (quantity, VWAP and position version) for the same OPEN trade;
-4. keep Box STOP/TAKE prices frozen by the approved plan; do not reprice them after top-ups. Existing full-position protection continues to cover authoritative current position quantity;
-5. make restart/reconciliation validate the **latest durable aggregate entry attestation**, not only the first fill;
-6. only then wire the four deterministic owned LIMITs through the existing Robot mutation/matching path, preserving Box remainder orders after the first fill instead of applying the Wedge cancel-remainder rule;
-7. verify one focused scenario per new invariant, reuse prior green evidence, then perform the required PAPER acceptance.
+Current owner order:
 
-There is **no separate Box lifecycle/recovery coordinator** and no second
-Robot engine. Box-specific persistence already merged is treated as entry
-evidence for the shared lifecycle, not as the foundation of a parallel
-trading subsystem.
+1. L-shape -> PAPER Robot + real Telegram «🤖 Робот» button;
+2. Ikigai Box first-impulse geometry correction (AIGENSYNUSDT 5m concrete defect;
+   inspect the known FLOCK baseline failure in the same slice only if the root
+   cause is shared);
+3. Telegram open-position card presentation refinement.
 
-Current reuse-first implementation checkpoint (2026-09-25):
-- PR #224 merged as `b5378659e83326f9505b806c25f346f1f76a942c`: deterministic four-order Box first-grid specs with restart-stable identities.
-- PR #225 is CURRENT: generalize the existing Robot entry-evidence proof from one LIMIT order ID to multiple owned LIMIT order IDs. Wedge keeps the single-ID path unchanged; Box will later supply four IDs.
-- This is explicitly a shared-lifecycle extension, not a Box-specific execution engine.
-- After #225, the next bounded slice is to feed the Box four-order entry policy into the existing Robot lifecycle while preserving Wedge behavior and the shared trade/protection/recovery path.
-- Do not add a separate Box coordinator, recovery state machine, execution journal, matching engine, or protection engine.
+Deferred until those three are complete:
 
-Fail-closed rule: startup/restart reconciliation precedes any new Box entry
-creation. Foreign, missing or contradictory ownership/execution/position/
-protection evidence blocks further execution and requires reconciliation.
+- per-symbol multi-pattern Scanner orchestration;
+- FocusedPatternMonitor;
+- runtime synchronization/restart solely for repository freshness unless the
+  owner explicitly decides to restart the current PAPER runtime.
 
-No-repeat rule: do not recreate or re-test already merged planner,
-persistence, STOP, ownership or atomic-grid slices unless a concrete new
-defect or changed dependency affects them. Do not start Scanner/Robot to
-validate these non-runtime slices.
+Completed today and not to repeat:
 
-Scanner acceptance remains unchanged: only the owner manually starts one
-complete real pass across all eligible symbols and integrated patterns with
-ordinary Telegram delivery; partial runs and isolated chart previews do not
-count.
+- Ikigai Box first-attempt PAPER Robot integration through the shared lifecycle;
+- Box owner Robot status/control button (#238);
+- protection-continuity false-positive fix with ordered reconnect barrier (#237),
+  with Robot PAPER acceptance;
+- manual reconcile and return to `ROBOT_RUNNING / READY`;
+- multi-pattern Scanner and focused-monitor architecture documentation.
 
-L-shape PAPER Robot remains design-only and follows the existing Wedge
-lifecycle except its documented pattern-specific geometry/risk conditions.
-Do not switch to it while the current Box execution track is active unless
-the owner explicitly changes priority.
+### Russian GTD game mode
+
+BybitScanner development now uses the Russian game layer defined in
+`DOCUMENTS/GTD_QUEST_SYSTEM.md`.
+
+The compact current campaign checkpoint is `DOCUMENTS/QUEST_STATE.md`. On the
+first BybitScanner request of a new ChatGPT chat, normal task-scoped recovery
+loads that file and reconciles it with the current owner command and BACKLOG.
+No manual chat handoff is required merely to restore quests, XP, level,
+achievements or the active campaign.
+
+If the game state conflicts with owner priority, owner priority wins and
+QUEST_STATE must be corrected.
+
+Current active quest:
+
+**Рейд «Г-образные врата»** — L-shape -> PAPER Robot + real Robot button.
+
+Safety/acceptance rules are unchanged. The game layer grants no runtime, PAPER
+or LIVE authorization.
 
 ---
 # HISTORICAL_WORK_CONTROL — 2026-09-18 (not current owner-task routing)
