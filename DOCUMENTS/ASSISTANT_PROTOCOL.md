@@ -267,6 +267,17 @@ handoff. Update `QUEST_STATE.md` when the active quest, quest queue, XP, level
 or achievements materially change. Do not create a ContextDump solely to carry
 the game state between chats.
 
+The stable ChatGPT Custom Instructions bootstrap text lives in
+`DOCUMENTS/CUSTOM_INSTRUCTIONS_BYBITSCANNER.md`. Custom Instructions are a
+pointer to repository authority, never a store of current SHA/PR/XP/quest or
+runtime state. During an existing chat, perform a bounded context refresh when
+the owner explicitly asks for it, returns to BybitScanner after a meaningful
+interruption, repo state materially changed for the active task, or chat memory
+conflicts with repository authority. Default refresh footprint:
+`QUEST_STATE.md` + current BACKLOG priority section + the active quest's owning
+spec; expand to staged/deep recovery only when the normal triggers below
+justify it.
+
 ## 3.2 CONTEXT_AND_LIMIT_ECONOMY_RULE
 
 Use the smallest reliable context footprint:
