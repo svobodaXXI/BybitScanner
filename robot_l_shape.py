@@ -43,6 +43,8 @@ EVENT_TERMINAL = "L_SHAPE_TERMINAL_STATE"
 
 MIN_POTENTIAL_PERCENT = Decimal("0.8")
 MIN_REWARD_RISK = Decimal("2")
+# Same conservative per-side PAPER fee assumption used by the Box Robot planner.
+PAPER_ROBOT_FEE_RATE = Decimal("0.0006")
 
 
 class RobotLShapeError(RuntimeError):
@@ -156,6 +158,36 @@ def frozen_terms(snapshot: Mapping[str, Any]) -> FrozenLShapeTerms:
         reward_risk=reward_risk,
     )
 
+
+
+def net_reward_risk(
+    direction: str,
+    *,
+    entry_price: Decimal,
+    stop_price: Decimal,
+    target_price: Decimal,
+    fee_rate: Decimal = PAPER_ROBOT_FEE_RATE,
+) -> Decimal:
+    """Fee-aware planned RR using the PAPER Robot's conservative per-side fee."""
+    direction = str(direction).strip().upper()
+    if direction not in {DIRECTION_LONG, DIRECTION_SHORT}:
+        raise RobotLShapeError("L-shape direction is invalid")
+    entry = _decimal(entry_price, "entry_price")
+    stop = _decimal(stop_price, "stop_price")
+    target = _decimal(target_price, "target_price")
+    if (
+        not isinstance(fee_rate, Decimal)
+        or not fee_rate.is_finite()
+        or fee_rate < 0
+        or fee_rate >= 1
+    ):
+        raise RobotLShapeError("fee_rate must be a finite Decimal in [0, 1)")
+    sign = Decimal(1 if direction == DIRECTION_LONG else -1)
+    reward = sign * (target - entry) - entry * fee_rate - target * fee_rate
+    risk = sign * (entry - stop) + entry * fee_rate + stop * fee_rate
+    if reward <= 0 or risk <= 0:
+        raise RobotLShapeError("fees leave no positive L-shape reward/risk")
+    return reward / risk
 
 def initialize_state(candidate: Mapping[str, Any]) -> tuple[dict[str, Any], str]:
     if not isinstance(candidate, Mapping) or candidate.get("status") != "APPROVED":
