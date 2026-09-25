@@ -39,34 +39,49 @@ approval flow and include it in the next full-pass acceptance. Its absence
 from current local acceptance checkout until explicitly synchronized is
 expected; never modify a running checkout.
 
-**Ikigai Box PAPER development — owner-authorized design/code, no trade
-activation:** the owner approved four equally spaced 1/4-РО LIMITs,
-P1 at 75% of F1→F1.618, P4 strictly beyond F1.618; the second,
-STOP-terminated attempt uses a comparable grid around F2.618 with final
-LIMIT beyond F2.618. A STOP price is computed **before orders** using the
-hypothetical fully filled average, must lie beyond P4 and meet fee-aware
-planned full-grid RR >= 2:1 to F1; freeze that price for the attempt,
-activate for the first confirmed fill, update only protected quantity as
-fills/individual reduce-only TAKE exits change exposure. This is an
-**experimental PAPER policy**, not a claim of partial-fill RR or permission
-to trade. A pure planner and seven focused tests were reported PASS by
-Codex in `C:\BybitScanner-main-acceptance` under
-`terminal/paper/ikigai_box_plan.py` and
-`tests/test_ikigai_box_plan.py`; **the planner is not present on GitHub
-main and no planner PR has been confirmed**. Its reported local receipt,
-branch, dirty state and any continuing owner Scanner process require a
-bounded host-local inspection **only before touching that checkout**.
-Preserve the original two files and receipt; publish only that completed
-delta to an isolated PR when safe, without repeating passed tests or
-starting/stopping any running service. Do not mistake the separate
-in-progress Codex status-circle task (interrupted by quota exhaustion)
-for completion of the planner publication.
-Open financial decisions for actual Box Robot execution: fourth-grid
-overshoot for both attempts, second-attempt P1 anchor, per-slice TAKE price
-and net-fee threshold, maximum partial-fill risk, re-arm/cancellation
-conditions and order/protection ownership. See
-`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`; no LIVE or autonomous PAPER
-orders are authorized by the planner.
+**Ikigai Box PAPER development — CURRENT ACTIVE ROBOT TRACK,
+no trade activation yet:** first-attempt planner/persistence/protection/
+ownership foundations are already merged and must not be repeated:
+PR #215 planner; #218 immutable `BOX_PLAN_ONLY`; #219 planner persistence
+adapter; #220 fixed STOP terms; #221 durable ownership + remaining-exposure
+proof; #222 atomic owned LIMIT persistence; #223 all-or-nothing four-order
+first-grid persistence. PR #224 is the current non-executing slice for
+deterministic restart-safe four-order specs.
+
+The current goal is **not** to add more persistence layers or immediately
+turn on Box trading. Mature-engine review (LEAN/Hummingbot/Freqtrade) moved
+restart recovery and first-fill protection ahead of runtime activation.
+Canonical next sequence:
+
+1. finish #224 deterministic four-order specs;
+2. read-only lifecycle/restart classifier over frozen plan + ownership +
+   active PAPER LIMITs + execution journal + authoritative position +
+   protection evidence;
+3. first-proven-owned-fill bridge into the existing durable Robot
+   trade/protection path;
+4. one execution coordinator for preflight -> ownership baseline -> atomic
+   grid -> event-driven fill/protection lifecycle;
+5. only after those pass, separately enable PAPER Box admission/runtime and
+   run PAPER acceptance.
+
+Required lifecycle states must distinguish at least: no entry submitted;
+complete working grid while FLAT; partial/full owned exposure; protected
+exposure; completed FLAT; inconsistent/foreign evidence requiring
+reconciliation. Restart reconciliation must run before any new Box entry
+creation. Contradictory evidence fails closed.
+
+Reuse existing PAPER components: one execution journal, current matching
+engine, current full-position protection, and durable protection obligations.
+Do **not** add a Box-specific STOP quantity synchronizer, second execution
+journal, second matching/protection engine, random retry identities or a
+message-bus layer for this grid.
+
+Still out of current first-attempt execution scope: replenishment/re-arm,
+attempt 2 around F2.618, and any unresolved economic rules specifically
+needed by those later features. Existing approved first-grid geometry,
+frozen TAKE/STOP policy and ownership rules stay unchanged. No LIVE or
+autonomous PAPER orders are authorized by this planning state. Detailed
+contract: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
 
 **L-shape PAPER Robot — design captured, not integrated:** inherit the
 existing Wedge Robot entry/retest, order, protection, closure and recovery
