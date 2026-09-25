@@ -14,7 +14,7 @@ from terminal.paper.box_ownership import BoxOwnershipError
 from terminal.persistence import schema
 from terminal.persistence.sqlite_store import (
     SQLiteStore, PositionProjectionUpdate, DuplicateIdentity, PersistenceError,
-    ExecutionApplyResult, SchemaError,
+    ExecutionApplyResult, SchemaError, BoxOwnedPaperLimitSpec,
 )
 from tests.test_box_plan_persistence import snapshot, trade_args
 
@@ -59,6 +59,74 @@ class BoxOrderOwnershipTests(unittest.TestCase):
 
     def proof(self):
         return self.store.prove_box_owned_position(self.plan.candidate_id)
+
+    def test_first_grid_is_all_or_nothing(self):
+        data = snapshot()
+        data["identity"]["a_time_ms"] = 997
+        candidate, _ = self.store.save_box_plan_only(snapshot=data, created_at_ms=3002)
+        self.assertTrue(self.store.begin_box_attempt_ownership(candidate.candidate_id))
+        orders = tuple(
+            BoxOwnedPaperLimitSpec(
+                slot=slot,
+                client_action_id=f"grid-{slot}",
+                request_fingerprint=f"grid-fp-{slot}",
+                order_id=OrderId(f"grid-order-{slot}"),
+                order_link_id=f"grid-link-{slot}",
+                side=OrderSide.BUY,
+                price=D(price),
+                quantity=D("2"),
+                created_at_ms=5000 + slot,
+            )
+            for slot, price in enumerate(("94", "93.2", "92.4", "91.6"), start=1)
+        )
+        created = self.store.create_box_owned_paper_grid(
+            candidate.candidate_id,
+            trading_account_id=self.account,
+            symbol=self.key.symbol,
+            orders=orders,
+        )
+        self.assertEqual(tuple(order.order_id for order in created),
+                         tuple(item.order_id for item in orders))
+
+        other = snapshot()
+        other["identity"]["a_time_ms"] = 996
+        failed, _ = self.store.save_box_plan_only(snapshot=other, created_at_ms=3003)
+        self.assertTrue(self.store.begin_box_attempt_ownership(failed.candidate_id))
+        self.store.create_paper_limit(
+            client_action_id="occupied", request_fingerprint="occupied-fp",
+            order_id=OrderId("occupied"), order_link_id="grid-fail-link-3",
+            trading_account_id=self.account, symbol=self.key.symbol,
+            side=OrderSide.BUY, price=D("92"), quantity=D("1"), created_at_ms=5100,
+        )
+        failing_orders = tuple(
+            BoxOwnedPaperLimitSpec(
+                slot=slot,
+                client_action_id=f"grid-fail-{slot}",
+                request_fingerprint=f"grid-fail-fp-{slot}",
+                order_id=OrderId(f"grid-fail-order-{slot}"),
+                order_link_id=f"grid-fail-link-{slot}",
+                side=OrderSide.BUY,
+                price=D(price),
+                quantity=D("2"),
+                created_at_ms=5200 + slot,
+            )
+            for slot, price in enumerate(("94", "93.2", "92.4", "91.6"), start=1)
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.create_box_owned_paper_grid(
+                failed.candidate_id,
+                trading_account_id=self.account,
+                symbol=self.key.symbol,
+                orders=failing_orders,
+            )
+        self.assertEqual(self.store._connection.execute(
+            "SELECT COUNT(*) FROM box_order_ownership WHERE candidate_id=?",
+            (failed.candidate_id,),
+        ).fetchone()[0], 0)
+        self.assertEqual(sum(
+            self.store.get_paper_limit(item.order_id.value, self.account) is not None
+            for item in failing_orders
+        ), 0)
 
     def test_owned_limit_identity_and_order_are_one_transaction(self):
         order, created = self.store.create_box_owned_paper_limit(
