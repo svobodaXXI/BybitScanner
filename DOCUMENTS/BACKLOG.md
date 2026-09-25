@@ -107,6 +107,78 @@ pattern, a universal geometry engine, or first-result short-circuiting.
 Status: **PLANNED / NOT IMPLEMENTED**. Existing experimental code branches do
 not change this status until a reviewed implementation is merged and accepted.
 
+## TODAY PRIORITY INDEX — 2026-09-25
+
+This index captures only work discussed or materially advanced on 2026-09-25.
+It is ordered by dependency and risk, not by visual convenience.
+
+### P0 — runtime correctness / activation
+
+1. **Activate today's merged Robot runtime fixes on the PC runtime worktree.**
+   Current repository main contains the ordered protection continuity fix
+   (#237) and the Ikigai Box Robot-status button (#238), but the already-running
+   PAPER runtime was started from an older checkout. Before relying on those
+   fixes in another PAPER session, synchronize the clean runtime worktree to
+   current main and perform the normal owner-controlled manual restart. Do not
+   restart automatically from ChatGPT/Codex.
+2. **Treat the 4STOCKUSDT false `stale_generation_discarded` incident as fixed
+   in code, not as a reason to weaken fail-closed protection.** #237 removed
+   owner-queue-latency false positives by introducing an ordered disconnect
+   barrier; a genuine unknown disconnect gap still remains fail-closed.
+
+### P1 — Scanner signal completeness
+
+3. **Implement per-symbol multi-pattern orchestration.**
+   Owner contract: finish all enabled patterns on 5m, then all enabled patterns
+   on 1m, then next ticker. Use one snapshot per `symbol x timeframe`, fan out
+   to all detector families, isolate errors, collect multiple observations, and
+   add bounded plural envelope candidates instead of one global
+   `best_geometry`. Owning plan:
+   `DOCUMENTS/SCANNER_MULTIPATTERN_ORCHESTRATION_PLAN.md`.
+4. **Implement focused post-discovery monitoring after item 3.**
+   Full Scanner discovers the universe; existing Robot candidate monitoring
+   evolves the same setup; new `FocusedPatternMonitor` keeps selected symbols
+   under closed-candle pattern observation for new Box/L-shape/future Flag/
+   later Wedge-Triangle structures. Owning plan:
+   `DOCUMENTS/FOCUSED_PATTERN_MONITOR_PLAN.md`.
+
+### P2 — pattern/Robot coverage
+
+5. **L-shape PAPER Robot integration + real Robot button.**
+   Reuse the shared Robot lifecycle; no decorative button before the backend
+   handoff exists. Include the owner-visible `🤖 Робот` action in the same
+   implementation slice.
+6. **Ikigai Box first-impulse geometry correction.**
+   AIGENSYNUSDT 5m remains the concrete example: a distinct corrective wave
+   must terminate the first impulse; only 1-2 small opposite-colour pause
+   candles are allowed when they do not form a local counter-swing. Keep this
+   separate from Robot execution.
+7. **Resolve the known Ikigai Box detector baseline failure.**
+   `test_flock_style_green_wick_anchors_red_core_and_55pct_box_gate` still
+   fails in the Box detector workflow and was not caused by the Robot-button
+   change. Diagnose/fix only when entering the Box geometry slice; do not use it
+   to reopen already-merged presentation/runtime work.
+
+### P3 — presentation / operator UX
+
+8. **Telegram open-position card refinement.**
+   Queue already captured: more right-side chart clearance; remove the word
+   `Вход` while preserving entry price/line; rename `Стоп`/`Тейк` to
+   `SL`/`TP`; smaller direction-coloured fill triangles; show position size
+   as quantity plus USDT notional. No trading-logic changes.
+
+### Completed today — do not repeat
+
+- Ikigai Box first-attempt PAPER Robot integration/authorization chain through
+  Scanner -> Robot, shared multi-LIMIT lifecycle and fixed protection terms.
+- Box owner card `🤖 Робот` status/control button merged in #238.
+- 4STOCKUSDT protection-continuity false-positive fix merged in #237; Robot
+  PAPER acceptance passed.
+- Manual reconcile completed; Robot was returned from PAUSED to
+  `ROBOT_RUNNING / READY` through the normal Telegram control path.
+- Multi-pattern Scanner prerequisites and focused-monitor architecture are now
+  documented; implementation remains pending.
+
 # Backlog (working queue, priorities, rules)
 
 Status: WORKING BACKLOG (living document)
