@@ -36,7 +36,7 @@ from terminal.api.projections import project_protection
 from terminal.application.protection import normalize_paper_protection_trigger
 from terminal.application.execution_engine import ExecutionEngine
 from terminal.application.pretrade_guard import MutationGate, PreTradeGuard
-from terminal.application.normalization import normalize_limit_price
+from terminal.application.normalization import floor_to_step, normalize_limit_price
 from terminal.application.pretrade_guard import NotionalIntent, OrderKind, PreTradeIntent
 from terminal.application.pretrade_guard import WorkingVolumeIntent
 from terminal.application.trading_application import TradingApplication
@@ -54,8 +54,10 @@ from terminal.application.live_account_reconciliation import (
     LiveAccountReconciliationError,
 )
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
+from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
+from terminal.paper.ikigai_box_plan import approved_first_grid, plan_ikigai_box
 from terminal.application.robot_recovery import (
-    PAUSED, RECONCILING, RECONCILIATION_REQUIRED, ROBOT_RUNNING,
+    PAUSED, READY, RECONCILING, RECONCILIATION_REQUIRED, ROBOT_RUNNING,
     RobotRecoveryCoordinator,
 )
 from robot_flat_closure import CandidateOwnership, prove_flat_closure
@@ -275,11 +277,11 @@ SCANNER_PAUSED = "SCANNER_PAUSED"
 DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0
 
 
-def _run_scanner_scan_pass() -> None:
+def _run_scanner_scan_pass(*, box_robot_sink=None) -> None:
     """Load Scanner/config only when an actual scan pass is due."""
     from main import run_scan_pass
 
-    run_scan_pass()
+    run_scan_pass(box_robot_sink=box_robot_sink)
 
 # DOCUMENTS/SCANNER_CONTROL_RUNTIME_DECISION.md section 3: exactly these
 # three commands are authoritative; there is no separate "stop" command.
@@ -731,7 +733,9 @@ class PaperRuntime:
         self._scanner_control = ScannerControlRuntime(
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
-            scan_pass=_run_scanner_scan_pass,
+            scan_pass=lambda: _run_scanner_scan_pass(
+                box_robot_sink=self._dispatch_ikigai_box_robot_candidate,
+            ),
             clock_ms=lambda: int(time.time() * 1000),
         )
         self._scanner_control.start()
@@ -751,6 +755,118 @@ class PaperRuntime:
             raise RuntimeError("Robot command dispatcher is already bound")
         self._robot_command_dispatcher = dispatcher
         self._robot_breakout_monitor.start()
+
+    def _dispatch_ikigai_box_robot_candidate(
+        self, symbol: str, timeframe: str, formation: Mapping[str, object],
+    ) -> object:
+        return self._dispatch_robot_command(
+            lambda runtime: runtime._admit_ikigai_box_robot_candidate(
+                symbol, timeframe, formation,
+            )
+        )
+
+    def _admit_ikigai_box_robot_candidate(
+        self, symbol: str, timeframe: str, formation: Mapping[str, object],
+    ) -> str | None:
+        runtime = self.store.get_robot_runtime_state(self._paper_account_id)
+        if (
+            runtime is None
+            or runtime.mode != ROBOT_RUNNING
+            or runtime.recovery_status != READY
+        ):
+            return None
+
+        normalized_symbol = Symbol(symbol.strip().upper())
+        normalized_timeframe = str(timeframe).strip()
+        direction = str(formation.get("direction", "")).strip().upper()
+        if direction not in {"LONG", "SHORT"} or not normalized_timeframe.isdecimal():
+            raise ValueError("invalid Ikigai Box Robot formation identity")
+
+        instrument = self._instrument_provider(normalized_symbol.value)
+        paper_account = self.store.get_paper_account(self._paper_account_id)
+        if paper_account is None:
+            raise ValueError("paper account is not initialized")
+        one_wv_usdt = working_volume_usdt(paper_account.equity_usdt)
+
+        f1 = Decimal(str(formation["f1"]))
+        f1618 = Decimal(str(formation["f1618"]))
+        f2618 = Decimal(str(formation["f2618"]))
+        limit_prices, take_price = approved_first_grid(
+            direction=direction,
+            frozen_f1=f1,
+            frozen_f1618=f1618,
+            tick_size=instrument.tick_size,
+        )
+        average_grid_price = sum(limit_prices, Decimal("0")) / Decimal("4")
+        raw_slice_quantity = one_wv_usdt / average_grid_price / Decimal("4")
+        slice_quantity = floor_to_step(raw_slice_quantity, instrument.quantity_step)
+        if slice_quantity <= 0:
+            raise ValueError("1 WV is below the instrument minimum Box slice")
+        working_quantity = slice_quantity * Decimal("4")
+        if (
+            slice_quantity < instrument.min_order_quantity
+            or slice_quantity > instrument.max_order_quantity
+        ):
+            raise ValueError("Box slice quantity is outside instrument limits")
+        if any(
+            price < instrument.min_price or price > instrument.max_price
+            for price in limit_prices
+        ):
+            raise ValueError("Box LIMIT price is outside instrument limits")
+        if any(
+            slice_quantity * price < instrument.min_notional_value
+            for price in limit_prices
+        ):
+            raise ValueError("Box slice is below instrument minimum notional")
+
+        fee_rate = Decimal("0.0006")
+        plan = plan_ikigai_box(
+            direction=direction,
+            limit_prices=limit_prices,
+            limit_quantities=(slice_quantity,) * 4,
+            working_quantity=working_quantity,
+            frozen_f1=f1,
+            frozen_f1618=f1618,
+            tick_size=instrument.tick_size,
+            entry_fee_rate=fee_rate,
+            target_fee_rate=fee_rate,
+            stop_fee_rate=fee_rate,
+            structural_stop=None,
+            take_price=take_price,
+        )
+        now_ms = int(time.time() * 1000)
+        source, _created = persist_ikigai_box_plan(
+            self.store,
+            plan,
+            planner_version="robot-v0.1",
+            identity={
+                "venue": "bybit",
+                "market": "linear",
+                "symbol": normalized_symbol.value,
+                "timeframe": normalized_timeframe,
+                "direction": direction,
+                "a_time_ms": int(formation["a_time_ms"]),
+                "b_time_ms": int(formation["b_time_ms"]),
+            },
+            decision_time_ms=int(formation["decision_time_ms"]),
+            anchor_a_price=Decimal(str(formation["anchor_a_price"])),
+            anchor_b_price=Decimal(str(formation["anchor_b_price"])),
+            frozen_f2618=f2618,
+            working_quantity=working_quantity,
+            tick_size=instrument.tick_size,
+            entry_fee_rate=fee_rate,
+            target_fee_rate=fee_rate,
+            stop_fee_rate=fee_rate,
+            structural_stop=None,
+            created_at_ms=now_ms,
+        )
+        candidate, _created = self.store.handoff_box_plan_to_robot(
+            source.candidate_id,
+            symbol=normalized_symbol,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            approved_at_ms=now_ms,
+        )
+        return candidate.candidate_id
 
     def _dispatch_robot_command(self, operation: Callable[["PaperRuntime"], object]) -> object:
         if self._robot_command_dispatcher is None:
