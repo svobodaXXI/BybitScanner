@@ -12,6 +12,73 @@ Current sequence:
 
 Do not add Box-specific trade states such as GRID_PARTIAL/GRID_FILLED, a Box recovery coordinator, a second execution journal, a second matcher, or a STOP-quantity synchronizer. One focused verification per new invariant; do not rerun already-green prior slices without changed inputs.
 
+## P0 PAPER Robot protection continuity — 2026-09-25
+
+Observed production-like PAPER failure: 4STOCKUSDT Falling Wedge was closed as
+`EMERGENCY_CLOSE` after durable Robot state entered
+`ROBOT_RUNNING / RECONCILIATION_REQUIRED` with reason
+`ROBOT_PROTECTION_COVERAGE_LOST symbol=4STOCKUSDT reason=stale_generation_discarded`.
+The protection obligation resolved successfully; the defect under review is the
+continuity-loss trigger/recovery policy, not STOP placement itself.
+
+### Mature-engine conclusion
+
+- Keep rejecting stale market-data evidence. Never evaluate a queued order-book
+  event against a newer connection generation as if it were current.
+- Do **not** treat public recent trades as proof that the current PAPER SL/TP was
+  not crossed: current PAPER protection triggers LONG from bid and SHORT from ask,
+  while trade prints do not reconstruct historical bid/ask excursions.
+- LIVE remains exchange-authoritative: Bybit native position TP/SL/conditional
+  orders are the protection authority and a local public-feed reconnect alone
+  must not force a market exit while exchange-side protection is proven active.
+- PAPER needs an ordered continuity boundary rather than retrospective comparison
+  of an already-admitted event with mutable `context.reconnect_count`.
+
+### Current false-positive surface
+
+`RobotProtectionCoverageManager._on_update()` freezes an immutable book and its
+`generation_at_enqueue`, then queues it into the shared serialized PAPER owner
+FIFO. At execution time it compares that frozen generation with the *current*
+mutable `context.reconnect_count`. A valid event received before a reconnect can
+therefore be reclassified later as `stale_generation_discarded` solely because
+it waited in the owner queue until after the reconnect counter incremented.
+This conflates two different facts: "this event belongs to the previous valid
+ordered segment" and "there is an unknown interval after disconnect".
+
+### Required implementation route
+
+1. Preserve each admitted protection event as immutable historical evidence in
+   FIFO order; do not invalidate it merely because a later reconnect occurred.
+2. Represent disconnect/reconnect as an explicit ordered **continuity barrier**
+   for Robot protection coverage. The barrier must enter the same ordered
+   protection ingress after all previously admitted old-generation events and
+   before any new-generation protection event can be accepted as continuous.
+3. On the barrier, fence Robot admission and mark the symbol continuity-lost.
+   Process all preceding valid old-generation events first, so their STOP/TP
+   crossings are not discarded because of owner-thread latency.
+4. Require a fresh authoritative snapshot for the new generation before normal
+   coverage resumes. A snapshot restores current book state but does not invent
+   the unknown bid/ask path across the disconnect gap.
+5. If an OPEN PAPER position spans a genuinely unknown disconnect interval,
+   retain the existing fail-closed `EMERGENCY_CLOSE` behavior unless an exact
+   authoritative history source capable of reconstructing the configured
+   trigger price is introduced. Do not downgrade safety to "current price looks
+   fine" or public-trade replay.
+6. Keep diagnostics for queue latency/high-watermark and add evidence sufficient
+   to distinguish: real websocket disconnect barrier, protection ingress
+   overflow, event-identity mismatch, and pure owner-queue delay.
+7. Verify with focused tests only:
+   - old-generation event queued before reconnect is processed before barrier;
+   - barrier fences admission;
+   - new-generation deltas cannot bypass required fresh snapshot;
+   - true gap with OPEN position still resolves fail-closed;
+   - owner-queue latency alone no longer creates `stale_generation_discarded`;
+   - existing overflow/admission-failure fail-closed behavior remains unchanged.
+
+This is a **P0 PAPER reliability fix before using Robot PAPER results for strategy
+statistics**. Do not weaken protection semantics, add a second execution engine,
+or conflate it with the separate Telegram/UI tasks.
+
 # Backlog (working queue, priorities, rules)
 
 Status: WORKING BACKLOG (living document)
