@@ -18,6 +18,20 @@ ACTIVE
 
 ---
 
+## GTD quest presentation layer
+
+The project may use the optional gamification vocabulary defined in
+`DOCUMENTS/GTD_QUEST_SYSTEM.md` for motivation and status communication.
+
+This layer is strictly subordinate to GTD and project governance:
+
+- backlog priority, safety gates, acceptance and evidence remain authoritative;
+- game labels never change implementation scope or authorization;
+- XP/achievements are outcome-based and cannot be earned by creating extra
+  work, tests, commits or documentation;
+- if the game layer creates process overhead, simplify or omit it.
+
+
 # DOCUMENT_METADATA
 
 document_id:
