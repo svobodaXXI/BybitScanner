@@ -29,6 +29,7 @@ from decimal import Decimal
 from typing import Callable, Mapping, Protocol
 
 import robot_entry_limit
+import robot_l_shape
 import robot_protection
 import robot_state_machine
 from robot_market_confirmation import risk_reward_ratio
@@ -115,6 +116,13 @@ def _cancel_blocked_entry_action_id(candidate_id: str) -> ClientActionId:
         f"{candidate_id}\0cancel-blocked-entry".encode("utf-8")
     ).hexdigest()[:32]
     return ClientActionId(f"robot-cancel-blocked-{digest}")
+
+
+def _cancel_l_shape_invalid_action_id(candidate_id: str) -> ClientActionId:
+    digest = hashlib.sha256(
+        f"{candidate_id}\0cancel-l-shape-invalid".encode("utf-8")
+    ).hexdigest()[:32]
+    return ClientActionId(f"robot-cancel-lshape-invalid-{digest}")
 
 
 def _cancel_apex_entry_action_id(candidate_id: str) -> ClientActionId:
@@ -367,6 +375,10 @@ class RobotBreakoutMonitor:
             and record.robot_state.get("phase") == "BOX_ENTRY_READY"
         ):
             return self._advance_box_entry_ready(record)
+
+        if robot_l_shape.is_l_shape_snapshot(record.signal_snapshot):
+            return self._advance_l_shape(record)
+
         if record.robot_state is None:
             try:
                 state, _event = robot_state_machine.initialize_state(
@@ -429,6 +441,41 @@ class RobotBreakoutMonitor:
         ):
             return False
 
+        self._persist_state(record, new_state)
+        return True
+
+    def _advance_l_shape(self, record: RobotCandidateRecord) -> bool:
+        if record.robot_state is None:
+            state, _event = robot_l_shape.initialize_state(
+                self._candidate_payload(record),
+            )
+            self._persist_state(record, state)
+            return True
+
+        phase = record.robot_state.get("phase")
+        if phase == robot_state_machine.PHASE_RETEST_DETECTED:
+            return self._advance_l_shape_retest_detected(record)
+        if phase == robot_l_shape.PHASE_INVALIDATED:
+            return False
+        if phase != robot_l_shape.PHASE_WAITING_RETEST:
+            raise RobotBreakoutMonitorError(
+                f"unsupported L-shape Robot phase: {phase!r}"
+            )
+
+        candle = self._get_closed_candle(record.symbol.value)
+        if candle is None:
+            return False
+        new_state, event = robot_l_shape.process_closed_candle(
+            record.signal_snapshot, record.robot_state, candle,
+        )
+        if event in {
+            robot_l_shape.EVENT_IGNORED_STALE,
+            robot_l_shape.EVENT_TERMINAL,
+        }:
+            return False
+        if new_state.get("phase") == robot_l_shape.PHASE_INVALIDATED:
+            self._persist_l_shape_invalidation(record, new_state, reason=event)
+            return True
         self._persist_state(record, new_state)
         return True
 
@@ -583,9 +630,187 @@ class RobotBreakoutMonitor:
         )
         return True
 
+    def _advance_l_shape_retest_detected(
+        self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
+    ) -> bool:
+        execution = dict(record.robot_state.get("execution") or {})
+
+        if "limit_order_id" not in execution:
+            candle = self._get_closed_candle(record.symbol.value)
+            if candle is not None:
+                invalidation = robot_l_shape.invalidation_event(
+                    record.signal_snapshot, candle,
+                )
+                if invalidation is not None:
+                    state = dict(record.robot_state)
+                    state["phase"] = robot_l_shape.PHASE_INVALIDATED
+                    state["last_event"] = invalidation
+                    state["last_candle_time_ms"] = int(candle["time_ms"])
+                    self._persist_l_shape_invalidation(
+                        record, state, reason=invalidation,
+                    )
+                    return True
+
+            new_entry_admitted, terminal_stop = self._read_admission_gate()
+            if not new_entry_admitted:
+                if terminal_stop:
+                    self._invalidate_pre_entry_candidate(
+                        record, reason="ROBOT_STOPPED before L-shape entry submission",
+                    )
+                    return True
+                return False
+            if self._active_other_owner_candidate_ids(record):
+                return False
+            block_reason = self._pre_entry_block_reason(record)
+            if block_reason is not None:
+                self._invalidate_pre_entry_candidate(record, reason=block_reason)
+                return True
+
+            plan = robot_l_shape.build_initial_retest_limit(
+                self._candidate_payload(record),
+                record.robot_state,
+                tick_size=self._tick_size_provider(record.symbol.value),
+            )
+            rr_skip = self._l_shape_entry_rr_skip(record, plan)
+            if rr_skip is not None:
+                reason, details = rr_skip
+                self._invalidate_pre_entry_candidate(
+                    record, reason=reason, details=details,
+                )
+                return True
+            result = robot_entry_limit.submit_initial_retest_limit(
+                self._action_executor, plan,
+            )
+            order_id = getattr(result, "order_id", None)
+            if not order_id:
+                return False
+            execution["limit_order_id"] = order_id
+            execution["l_shape_retest_time_ms"] = plan.retest_time_ms
+            self._persist_execution(record, execution)
+            return True
+
+        order = self._store().get_paper_limit(
+            execution["limit_order_id"], self._account_id,
+        )
+        if order is None or order.quantity <= 0:
+            return False
+
+        filled_fraction = min(order.filled_quantity / order.quantity, Decimal("1"))
+        inactive = order.status in INACTIVE_LIMIT_STATUSES
+
+        if filled_fraction <= 0:
+            block_reason = self._pre_entry_block_reason(
+                record, allowed_limit_order_id=execution["limit_order_id"],
+            )
+            if block_reason is not None:
+                if not inactive:
+                    self._action_executor.cancel_limit(PaperLimitCancelRequest(
+                        _cancel_blocked_entry_action_id(record.candidate_id),
+                        record.symbol.value,
+                        execution["limit_order_id"],
+                    ))
+                self._invalidate_pre_entry_candidate(record, reason=block_reason)
+                return True
+
+            new_entry_admitted, terminal_stop = self._read_admission_gate()
+            if not new_entry_admitted:
+                if not inactive:
+                    self._action_executor.cancel_limit(PaperLimitCancelRequest(
+                        _cancel_blocked_entry_action_id(record.candidate_id),
+                        record.symbol.value,
+                        execution["limit_order_id"],
+                    ))
+                if terminal_stop:
+                    self._invalidate_pre_entry_candidate(
+                        record,
+                        reason="ROBOT_STOPPED with unfilled L-shape entry LIMIT",
+                    )
+                return True
+
+            candle = self._get_closed_candle(record.symbol.value)
+            if candle is not None:
+                invalidation = robot_l_shape.invalidation_event(
+                    record.signal_snapshot, candle,
+                )
+                if invalidation is not None:
+                    if not inactive:
+                        result = self._action_executor.cancel_limit(
+                            PaperLimitCancelRequest(
+                                _cancel_l_shape_invalid_action_id(record.candidate_id),
+                                record.symbol.value,
+                                execution["limit_order_id"],
+                            )
+                        )
+                        if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+                            return False
+                    state = dict(record.robot_state)
+                    state["phase"] = robot_l_shape.PHASE_INVALIDATED
+                    state["last_event"] = invalidation
+                    state["last_candle_time_ms"] = int(candle["time_ms"])
+                    self._persist_l_shape_invalidation(
+                        record, state, reason=invalidation,
+                    )
+                    return True
+
+            if inactive:
+                self._invalidate_pre_entry_candidate(
+                    record, reason="ENTRY_LIMIT_INACTIVE_BEFORE_FILL",
+                )
+                return True
+
+            if match_resting_orders and self._match_resting_orders is not None:
+                self._match_resting_orders(record.symbol.value)
+                order = self._store().get_paper_limit(
+                    execution["limit_order_id"], self._account_id,
+                )
+                if order is None or order.quantity <= 0:
+                    return False
+                filled_fraction = min(
+                    order.filled_quantity / order.quantity, Decimal("1"),
+                )
+                inactive = order.status in INACTIVE_LIMIT_STATUSES
+            if filled_fraction <= 0:
+                if inactive:
+                    self._invalidate_pre_entry_candidate(
+                        record, reason="ENTRY_LIMIT_INACTIVE_BEFORE_FILL",
+                    )
+                    return True
+                return False
+
+        if not inactive:
+            self._action_executor.cancel_limit(PaperLimitCancelRequest(
+                _cancel_partial_remainder_action_id(record.candidate_id),
+                record.symbol.value,
+                execution["limit_order_id"],
+            ))
+            refreshed = self._store().get_paper_limit(
+                execution["limit_order_id"], self._account_id,
+            )
+            if refreshed is not None:
+                order = refreshed
+                filled_fraction = min(
+                    order.filled_quantity / order.quantity, Decimal("1"),
+                )
+
+        if filled_fraction <= 0:
+            return True
+
+        fresh_record = self._store().get_robot_candidate(record.candidate_id) or record
+        self._finalize_trade(
+            fresh_record,
+            execution,
+            entry_path="LIMIT",
+            actual_wv=filled_fraction,
+        )
+        return True
+
     def _advance_retest_detected(
         self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
     ) -> bool:
+        if robot_l_shape.is_l_shape_snapshot(record.signal_snapshot):
+            return self._advance_l_shape_retest_detected(
+                record, match_resting_orders=match_resting_orders,
+            )
         execution = dict(record.robot_state.get("execution") or {})
 
         if (
@@ -955,19 +1180,32 @@ class RobotBreakoutMonitor:
 
         average_entry = entry_evidence.average_entry
         try:
-            structural_extreme = self._structural_extreme(record.signal_snapshot, direction)
-            tick_size = self._tick_size_provider(record.symbol.value)
-            reference_price, target_price = self._frozen_prices(record.signal_snapshot, direction)
-            existing_stop = (
-                Decimal(execution["stop_price"]) if execution.get("stop_price") else None
-            )
             payload = self._candidate_payload(record)
-            plan = robot_protection.build_protection_plan(
-                payload, record.robot_state,
-                average_entry=average_entry, structural_extreme=structural_extreme,
-                tick_size=tick_size, frozen_signal_reference_price=reference_price,
-                frozen_scanner_target_price=target_price, existing_stop=existing_stop,
-            )
+            if robot_l_shape.is_l_shape_snapshot(record.signal_snapshot):
+                plan = robot_protection.build_l_shape_protection_plan(
+                    payload,
+                    record.robot_state,
+                    average_entry=average_entry,
+                )
+            else:
+                structural_extreme = self._structural_extreme(
+                    record.signal_snapshot, direction,
+                )
+                tick_size = self._tick_size_provider(record.symbol.value)
+                reference_price, target_price = self._frozen_prices(
+                    record.signal_snapshot, direction,
+                )
+                existing_stop = (
+                    Decimal(execution["stop_price"])
+                    if execution.get("stop_price")
+                    else None
+                )
+                plan = robot_protection.build_protection_plan(
+                    payload, record.robot_state,
+                    average_entry=average_entry, structural_extreme=structural_extreme,
+                    tick_size=tick_size, frozen_signal_reference_price=reference_price,
+                    frozen_scanner_target_price=target_price, existing_stop=existing_stop,
+                )
         except Exception as error:
             self._fail_closed_unprotected_fill(record, error)
             return False
@@ -1348,6 +1586,34 @@ class RobotBreakoutMonitor:
             payload, state, tick_size=tick_size,
         )
 
+    def _l_shape_entry_rr_skip(
+        self, record: RobotCandidateRecord, plan,
+    ) -> tuple[str, dict[str, object]] | None:
+        threshold = robot_l_shape.MIN_REWARD_RISK
+        details: dict[str, object] = {
+            "entry_price": str(plan.request.limit_price),
+            "min_rr": str(threshold),
+        }
+        try:
+            terms = robot_l_shape.frozen_terms(record.signal_snapshot)
+            rr = robot_l_shape.net_reward_risk(
+                terms.direction,
+                entry_price=plan.request.limit_price,
+                stop_price=terms.stop,
+                target_price=terms.target,
+            )
+        except Exception as error:
+            details["error"] = str(error)
+            return ENTRY_RR_SKIP_UNAVAILABLE, details
+        details.update(
+            stop_price=str(terms.stop),
+            take_price=str(terms.target),
+            rr=str(rr),
+        )
+        if rr <= 0 or rr < threshold:
+            return ENTRY_RR_SKIP_POOR_RR, details
+        return None
+
     def _entry_rr_skip(
         self, record: RobotCandidateRecord, plan, *,
         direction: str | None = None,
@@ -1508,6 +1774,27 @@ class RobotBreakoutMonitor:
                 record.candidate_id,
                 status="INVALIDATED",
                 robot_state=new_state,
+                expected_revision=record.state_revision,
+                updated_at_ms=self._now_ms(),
+            )
+        except ConcurrentUpdate:
+            pass
+
+    def _persist_l_shape_invalidation(
+        self,
+        record: RobotCandidateRecord,
+        state: Mapping[str, object],
+        *,
+        reason: str,
+    ) -> None:
+        invalidated = dict(state)
+        invalidated["invalidated_reason"] = reason
+        invalidated["invalidated_at_ms"] = self._now_ms()
+        try:
+            self._store().save_robot_candidate_state(
+                record.candidate_id,
+                status="INVALIDATED",
+                robot_state=invalidated,
                 expected_revision=record.state_revision,
                 updated_at_ms=self._now_ms(),
             )

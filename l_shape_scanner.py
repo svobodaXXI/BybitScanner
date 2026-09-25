@@ -1,7 +1,7 @@
 """Scanner-owned L-shaped candidate preview and owner-visible Telegram delivery.
 
-Reuse already fetched candles; no separate market fetch, Robot candidate,
-approval, order placement or modification of Wedge/Box signal memory.
+Reuse already fetched candles. Production owner cards may persist an immutable
+L-shape Robot candidate, but this module never approves or executes it.
 """
 
 from pathlib import Path
@@ -10,6 +10,7 @@ import re
 import config
 from geometry.l_shape import detect_l_shape, l_shape_signal_plan
 from geometry.l_shape_preview import l_shape_caption, render_l_shape_preview
+from robot_candidate_store import create_signal_snapshot
 from notification import (
     build_tradingview_keyboard,
     get_telegram_chat_ids,
@@ -75,12 +76,37 @@ def observe_l_shape(symbol, candles, *, timeframe, chart_dir="charts"):
     }
 
 
-def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False):
-    """Send a candidate preview to the normal Telegram feed, without Robot.
+def _robot_signal_snapshot(symbol, timeframe, observation):
+    formation = observation["formation"]
+    plan = observation["signal_plan"]
+    return {
+        "pattern": "L-shape",
+        "symbol": str(symbol).strip().upper(),
+        "timeframe": str(timeframe).strip(),
+        "scanner_source_timeframe": str(timeframe).strip(),
+        "robot_handoff_ready": True,
+        "l_shape": {
+            "direction": formation.direction,
+            "source_timeframe": str(timeframe).strip(),
+            "breakout_time_ms": int(observation["source_candle_time_ms"]),
+            "extreme_time_ms": int(observation["extreme_time_ms"]),
+            "reference": plan.reference,
+            "target": plan.target,
+            "stop": plan.stop,
+            "stop_kind": plan.stop_kind,
+            "structural_stop": plan.structural_stop,
+            "potential_percent": plan.potential_percent,
+            "reward_risk": plan.reward_risk,
+        },
+    }
 
-    Deduplicate by the frozen local HIGH/LOW + breakout candle, which never
-    change once the breakout candle has closed. Persist per-recipient success so retries do not resend
-    a successful photo to other recipients when only one delivery failed.
+
+def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False):
+    """Send an eligible L-shape preview and owner-only executable Robot handoff.
+
+    The immutable candidate identity is persisted in signal memory before
+    delivery, so a per-recipient Telegram retry reuses the same Robot candidate
+    instead of allocating a second one.
     """
     if not getattr(config, "TELEGRAM_ENABLED", False) or not observation:
         return False
@@ -107,6 +133,30 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
     seen = memory.get(memory_key, {})
     already_sent = set(seen.get("delivered_to", ())) if not test_mode else set()
     owner_chat_id = get_telegram_owner_chat_id()
+    robot_candidate_id = None
+    if owner_chat_id and not test_mode:
+        robot_candidate_id = str(seen.get("robot_candidate_id", "")).strip() or None
+        if robot_candidate_id is None:
+            try:
+                candidate = create_signal_snapshot(
+                    _robot_signal_snapshot(symbol, timeframe, observation),
+                    timeframe=timeframe,
+                )
+                robot_candidate_id = candidate["candidate_id"]
+                memory[memory_key] = {
+                    **seen,
+                    "delivered_to": sorted(already_sent),
+                    "pattern": "L-shape",
+                    "robot_candidate_id": robot_candidate_id,
+                }
+                save_memory(memory)
+                seen = memory[memory_key]
+            except Exception as error:
+                print(
+                    "[ROBOT CANDIDATE ERROR] "
+                    f"symbol={symbol} pattern=L-shape error={error}"
+                )
+
     caption = l_shape_caption(symbol, timeframe, formation)
     if test_mode:
         caption += "\n🧪 TEST MODE"
@@ -116,10 +166,11 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
     for chat_id in recipients:
         if chat_id in already_sent:
             continue
+        is_owner = chat_id == owner_chat_id and bool(owner_chat_id)
         markup = build_tradingview_keyboard(
             symbol, timeframe,
-            include_review_actions=(chat_id == owner_chat_id and bool(owner_chat_id)),
-            robot_candidate_id=None,
+            include_review_actions=is_owner,
+            robot_candidate_id=robot_candidate_id if is_owner else None,
         )
         try:
             response = send_photo(
@@ -136,8 +187,10 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
             if not test_mode:
                 already_sent.add(chat_id)
                 memory[memory_key] = {
+                    **seen,
                     "delivered_to": sorted(already_sent),
                     "pattern": "L-shape",
+                    "robot_candidate_id": robot_candidate_id,
                 }
                 save_memory(memory)
         except Exception as error:

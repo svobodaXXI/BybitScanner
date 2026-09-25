@@ -14,6 +14,7 @@ from typing import Any, Mapping
 import time
 
 from robot_candidate_store import approve_candidate, load_candidate
+import robot_l_shape
 from robot_state_machine import is_supported_pattern
 from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
@@ -94,11 +95,25 @@ def admit_robot_candidate(
     if (snapshot.get("pattern") == "IKIGAI_BOX"
             or candidate.get("status") == "BOX_PLAN_ONLY"):
         raise RobotAdmissionRejected("BOX_PLAN_ONLY cannot enter execution admission")
-    if not is_supported_pattern(snapshot.get("pattern")):
+    is_l_shape = robot_l_shape.is_l_shape_snapshot(snapshot)
+    if not is_l_shape and not is_supported_pattern(snapshot.get("pattern")):
         raise RobotAdmissionRejected("Scanner candidate pattern is not supported by Robot")
 
     source_timeframe = str(candidate.get("timeframe", "")).strip()
-    if source_timeframe != "1":
+    if is_l_shape:
+        if source_timeframe not in {"1", "5"}:
+            raise RobotAdmissionRejected(
+                "L-shape Robot supports only 1m or 5m source timeframe"
+            )
+        if snapshot.get("robot_handoff_ready") is not True:
+            raise RobotAdmissionRejected("L-shape candidate has no Robot handoff")
+        try:
+            terms = robot_l_shape.frozen_terms(snapshot)
+        except robot_l_shape.RobotLShapeError as exc:
+            raise RobotAdmissionRejected("Scanner candidate snapshot is invalid") from exc
+        if source_timeframe != terms.source_timeframe:
+            raise RobotAdmissionRejected("L-shape source timeframe conflicts with frozen terms")
+    elif source_timeframe != "1":
         if snapshot.get("robot_handoff_ready") is not True:
             raise RobotAdmissionRejected(
                 "Scanner candidate has no proven Robot 1m handoff"
@@ -159,6 +174,19 @@ def admit_robot_candidate(
             approved_at_ms=now,
             updated_at_ms=now,
         )
+        if created and is_l_shape:
+            state, _event = robot_l_shape.initialize_state({
+                "candidate_id": candidate_id,
+                "status": "APPROVED",
+                "signal_snapshot": snapshot,
+            })
+            record = store.save_robot_candidate_state(
+                candidate_id,
+                status="APPROVED",
+                robot_state=state,
+                expected_revision=record.state_revision,
+                updated_at_ms=now,
+            )
     finally:
         store.close()
 

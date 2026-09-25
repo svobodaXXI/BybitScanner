@@ -210,6 +210,104 @@ class RobotAdmissionGateTests(unittest.TestCase):
                 110.0,
             )
 
+    def test_l_shape_5m_admission_persists_restart_safe_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate_dir = root / "candidates"
+            db_path = root / "paper.sqlite3"
+            create_signal_snapshot(
+                {
+                    "symbol": "ONGUSDT",
+                    "pattern": "L-shape",
+                    "timeframe": "5",
+                    "scanner_source_timeframe": "5",
+                    "robot_handoff_ready": True,
+                    "l_shape": {
+                        "direction": "LONG",
+                        "source_timeframe": "5",
+                        "breakout_time_ms": 1_000_000,
+                        "extreme_time_ms": 900_000,
+                        "reference": 100,
+                        "target": 110,
+                        "stop": 96,
+                        "stop_kind": "STRUCTURAL",
+                        "structural_stop": 96,
+                        "potential_percent": 10,
+                        "reward_risk": 2.5,
+                    },
+                },
+                timeframe="5",
+                store_dir=candidate_dir,
+                candidate_id="candidate-lshape",
+                created_at="2026-09-25T20:00:00+00:00",
+            )
+            self._ready_database(db_path)
+
+            record, created = admit_robot_candidate(
+                "candidate-lshape",
+                database_path=db_path,
+                store_dir=candidate_dir,
+                clock_ms=lambda: 2000,
+            )
+
+            self.assertTrue(created)
+            self.assertEqual(record.status, "APPROVED")
+            self.assertEqual(record.robot_state["phase"], "L_SHAPE_WAITING_RETEST")
+            self.assertEqual(record.robot_state["direction"], "LONG")
+            self.assertEqual(
+                load_candidate("candidate-lshape", store_dir=candidate_dir)["status"],
+                "APPROVED",
+            )
+
+    def test_l_shape_other_timeframe_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate_dir = root / "candidates"
+            db_path = root / "paper.sqlite3"
+            create_signal_snapshot(
+                {
+                    "symbol": "ONGUSDT",
+                    "pattern": "L-shape",
+                    "timeframe": "15",
+                    "scanner_source_timeframe": "15",
+                    "robot_handoff_ready": True,
+                    "l_shape": {
+                        "direction": "LONG",
+                        "source_timeframe": "15",
+                        "breakout_time_ms": 1_000_000,
+                        "extreme_time_ms": 900_000,
+                        "reference": 100,
+                        "target": 110,
+                        "stop": 96,
+                        "stop_kind": "STRUCTURAL",
+                        "structural_stop": 96,
+                        "potential_percent": 10,
+                        "reward_risk": 2.5,
+                    },
+                },
+                timeframe="15",
+                store_dir=candidate_dir,
+                candidate_id="candidate-lshape-15m",
+                created_at="2026-09-25T20:00:00+00:00",
+            )
+            self._ready_database(db_path)
+
+            with self.assertRaisesRegex(
+                RobotAdmissionRejected, "only 1m or 5m",
+            ):
+                admit_robot_candidate(
+                    "candidate-lshape-15m",
+                    database_path=db_path,
+                    store_dir=candidate_dir,
+                    clock_ms=lambda: 2000,
+                )
+
+            store = SQLiteStore.open(db_path)
+            try:
+                self.assertIsNone(store.get_robot_candidate("candidate-lshape-15m"))
+            finally:
+                store.close()
+
     def test_ready_runtime_admits_and_marks_legacy_approved(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
