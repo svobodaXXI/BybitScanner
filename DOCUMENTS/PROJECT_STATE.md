@@ -40,6 +40,51 @@ parser_version:
 
 ---
 
+# CURRENT_OPERATIONAL_CHECKPOINT_2026_09_26
+
+active_owner_goal:
+
+Finish L-shape PAPER Robot runtime acceptance safely, with Scanner lifecycle
+control corrected before commissioning another full owner run.
+
+proven_completed:
+
+* PR #248 merged to main as `753a800...`;
+* L-shape -> shared PAPER Robot lifecycle and real Telegram Robot handoff;
+* executable L-shape source timeframes explicitly bounded to 1m + 5m;
+* deterministic Robot PAPER acceptance green on the #248 implementation.
+
+active_change:
+
+* draft PR #249 — Scanner one-pass + cooperative pause/resume + explicit stop +
+  Telegram Menu self-heal;
+* current documented head before this checkpoint: `a730312...`;
+* direct Scanner-control/Telegram-menu CI coverage added; current-head evidence
+  must be re-read before merge.
+
+open_blockers:
+
+* real L-shape PAPER runtime acceptance not yet complete;
+* Robot durable state observed as
+  `ROBOT_RUNNING / RECONCILIATION_REQUIRED` after protection
+  `ingress_overflow`;
+* root cause of protection ingress overflow remains unproven;
+* FLOCK Ikigai Box baseline detector test is red in the existing Box geometry
+  boundary and is separate from #249;
+* the repeating/interrupted Scanner session is not valid full-run acceptance.
+
+next_dependent_sequence:
+
+1. verify #249 current-head targeted CI;
+2. merge #249 only with sufficient Scanner/Telegram evidence;
+3. synchronize/restart local PC runtime only on owner command;
+4. owner-check pause -> continue same pass -> stop and one-pass natural STOP;
+5. reconcile Robot through the evidence-based path;
+6. complete real L-shape PAPER acceptance;
+7. then return to Ikigai first-impulse/FLOCK geometry.
+
+---
+
 # CURRENT_PROJECT_STATUS
 
 status:
