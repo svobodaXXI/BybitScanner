@@ -699,6 +699,13 @@ Robot engine. Box-specific persistence already merged is treated as entry
 evidence for the shared lifecycle, not as the foundation of a parallel
 trading subsystem.
 
+Current reuse-first implementation checkpoint (2026-09-25):
+- PR #224 merged as `b5378659e83326f9505b806c25f346f1f76a942c`: deterministic four-order Box first-grid specs with restart-stable identities.
+- PR #225 is CURRENT: generalize the existing Robot entry-evidence proof from one LIMIT order ID to multiple owned LIMIT order IDs. Wedge keeps the single-ID path unchanged; Box will later supply four IDs.
+- This is explicitly a shared-lifecycle extension, not a Box-specific execution engine.
+- After #225, the next bounded slice is to feed the Box four-order entry policy into the existing Robot lifecycle while preserving Wedge behavior and the shared trade/protection/recovery path.
+- Do not add a separate Box coordinator, recovery state machine, execution journal, matching engine, or protection engine.
+
 Fail-closed rule: startup/restart reconciliation precedes any new Box entry
 creation. Foreign, missing or contradictory ownership/execution/position/
 protection evidence blocks further execution and requires reconciliation.

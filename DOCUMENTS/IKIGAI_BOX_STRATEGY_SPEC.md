@@ -144,6 +144,13 @@ Explicitly rejected:
 This is an architecture correction only. The owner-approved Box grid,
 STOP/TAKE economics and later attempt/re-arm rules are unchanged.
 
+### Current reuse-first implementation checkpoint (2026-09-25)
+
+- PR #224 merged as `b5378659e83326f9505b806c25f346f1f76a942c`: deterministic first-grid specs for all four Box ENTRY LIMITs.
+- PR #225 is current: `RobotBreakoutMonitor` entry evidence is being generalized from one LIMIT ID to multiple owned LIMIT IDs. Existing Wedge candidates continue to use the original single-ID field; Box will provide the four grid IDs.
+- The intended result is one shared post-fill lifecycle: aggregated owned entry evidence -> existing Robot trade finalization -> existing full-position STOP/TAKE -> existing protection obligations/recovery.
+- The next implementation slice after #225 is entry-policy wiring only: submit/track the four Box grid orders through the existing Robot path and preserve those remaining grid orders after the first fill. Do not create a Box-specific lifecycle coordinator.
+
 ## 1. Source references and status
 
 - `training/reference_patterns/HEIUSDT/post_pump_two_drop_fib_1618_1h/annotation.json`:

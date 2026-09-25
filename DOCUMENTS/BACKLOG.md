@@ -87,6 +87,10 @@ frozen TAKE/STOP policy and ownership rules stay unchanged. No LIVE or
 autonomous PAPER orders are authorized by this planning state. Detailed
 contract: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
 
+**Reuse-first checkpoint — 2026-09-25:** PR #224 is merged (`b537865`), providing deterministic four-order Box entry specs. PR #225 is the current bounded slice and extends the existing Robot entry proof to aggregate fills from multiple owned LIMIT IDs while preserving the Wedge single-order path. This is the intended integration direction: Box-specific logic stops at entry-policy differences; `robot_trades`, protection, obligations, recovery, matching and reconciliation remain shared.
+
+**Next after #225:** connect the already-frozen Box four-order specs to the existing Robot execution path with the smallest pattern-specific branch/adapter. The critical behavioral delta is that Box keeps its remaining approved grid orders after the first fill instead of applying Wedge's cancel-remainder rule. No parallel Box lifecycle is to be introduced.
+
 **L-shape PAPER Robot — design captured, not integrated:** inherit the
 existing Wedge Robot entry/retest, order, protection, closure and recovery
 lifecycle **except** pattern-specific L-shape geometry, 0.8% potential floor,

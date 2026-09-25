@@ -1491,6 +1491,50 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         same_trade = self.store.get_robot_trade("robot-trade-candidate-1")
         self.assertEqual(same_trade, trade)
 
+    def test_entry_evidence_can_aggregate_multiple_owned_limit_orders(self):
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.monitor.tick()
+        record = self.store.get_robot_candidate("candidate-1")
+        first_order_id = record.robot_state["execution"]["limit_order_id"]
+
+        second_order_id = "test-box-limit-2"
+        self.store.create_paper_limit(
+            client_action_id="test-box-entry-2",
+            request_fingerprint="test-box-entry-2-fp",
+            order_id=OrderId(second_order_id),
+            order_link_id="test-box-entry-2-link",
+            trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL),
+            side=OrderSide.BUY,
+            price=Decimal("80"),
+            quantity=Decimal("0.6"),
+            created_at_ms=self.clock(),
+        )
+        self.executor.fill_resting_limit(
+            first_order_id, SYMBOL, OrderSide.BUY, Decimal("0.4"), Decimal("81"),
+        )
+        self.executor.fill_resting_limit(
+            second_order_id, SYMBOL, OrderSide.BUY, Decimal("0.6"), Decimal("80"),
+        )
+
+        evidence = self.monitor._prove_entry_evidence(
+            record,
+            {"limit_order_ids": [first_order_id, second_order_id]},
+            entry_path="LIMIT",
+        )
+
+        self.assertEqual(
+            tuple(order_id.value for order_id in evidence.order_ids),
+            (first_order_id, second_order_id),
+        )
+        self.assertEqual(evidence.quantity, Decimal("1.0"))
+        self.assertEqual(evidence.average_entry, Decimal("80.4"))
+        projection = self.store.get_position_projection(
+            PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        )
+        self.assertEqual(evidence.position_version, projection.version)
+
     def test_event_driven_authoritative_fill_finalizes_without_periodic_tick_or_candle(self):
         self._create_candidate()
         self._drive_to_retest_detected()
