@@ -12,6 +12,53 @@ Current sequence:
 
 Do not add Box-specific trade states such as GRID_PARTIAL/GRID_FILLED, a Box recovery coordinator, a second execution journal, a second matcher, or a STOP-quantity synchronizer. One focused verification per new invariant; do not rerun already-green prior slices without changed inputs.
 
+## SCANNER MULTI-PATTERN PER-SYMBOL ORCHESTRATION — PLANNED 2026-09-25
+
+Owner requirement: for each ticker, Scanner must evaluate **all enabled pattern
+families on 5m, then all enabled pattern families on 1m, and only then move to
+the next ticker**. Multiple valid patterns on the same ticker/timeframe must be
+able to produce independent signals; first-match/one-best-result behavior is
+not the target contract.
+
+Repository diagnosis before implementation:
+
+- current `run_scan_pass()` already loops `symbol -> ("5", "1")` and contains
+  no explicit Wedge-triggered `break`/`return`;
+- L-shape and Ikigai Box are already called independently of Wedge notification
+  admission, so a missing L-shape on a Wedge chart is not proven to be caused
+  by ticker/timeframe short-circuit;
+- however, L-shape/Box still receive candles through `analyze_symbol()`, which
+  also owns Wedge/Triangle analysis, chart and report side effects;
+- `geometry.engine.analyze_geometry()` evaluates many envelope candidates but
+  returns only one `best_geometry`, so Wedge/Triangle currently remain a
+  single-winner family and cannot emit several distinct valid envelope
+  structures on one `symbol x timeframe`.
+
+Implementation route is fixed in
+`DOCUMENTS/SCANNER_MULTIPATTERN_ORCHESTRATION_PLAN.md`:
+
+1. Scanner-owned one-snapshot-per-`symbol x timeframe` boundary;
+2. fan-out the same snapshot to every enabled detector with failure isolation;
+3. finish all 5m detectors, then all 1m detectors, then next symbol;
+4. introduce a thin multi-observation collection boundary;
+5. add bounded plural envelope-candidate support with stable dedup of equivalent
+   line-pair representations while preserving distinct valid structures;
+6. keep pattern-specific geometry and Robot admission separate;
+7. preserve independent signal memory by `symbol x timeframe x pattern` plus
+   formation identity where available;
+8. verify with focused traversal/fan-out/error-isolation/plural-envelope tests;
+9. final owner acceptance remains one complete real Scanner pass over all
+   eligible tickers, both timeframes and all connected patterns with normal
+   Telegram delivery.
+
+Mature-engine principle adopted: shared market-data snapshot -> multiple
+independent detector/strategy consumers -> collect all observations. Do not
+solve this with separate scanner loops/processes, repeated candle fetches per
+pattern, a universal geometry engine, or first-result short-circuiting.
+
+Status: **PLANNED / NOT IMPLEMENTED**. Existing experimental code branches do
+not change this status until a reviewed implementation is merged and accepted.
+
 # Backlog (working queue, priorities, rules)
 
 Status: WORKING BACKLOG (living document)
