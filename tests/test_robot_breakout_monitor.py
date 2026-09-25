@@ -9,6 +9,7 @@ import time
 import unittest
 from unittest.mock import patch
 
+import robot_l_shape
 import robot_protection
 import robot_state_machine
 from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
@@ -82,6 +83,30 @@ def _snapshot(
             timeframe="1",
         ),
     }
+
+
+def _l_shape_snapshot():
+    return {
+        "symbol": SYMBOL,
+        "pattern": "L-shape",
+        "timeframe": "5",
+        "scanner_source_timeframe": "5",
+        "robot_handoff_ready": True,
+        "l_shape": {
+            "direction": "LONG",
+            "source_timeframe": "5",
+            "breakout_time_ms": T0_MS,
+            "extreme_time_ms": T0_MS - 300_000,
+            "reference": 100,
+            "target": 110,
+            "stop": 96,
+            "stop_kind": "STRUCTURAL",
+            "structural_stop": 96,
+            "potential_percent": 10,
+            "reward_risk": 2.5,
+        },
+    }
+
 
 
 def _candle_at(index, *, high, low, close):
@@ -2314,6 +2339,80 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         reference, target = M._frozen_prices(snapshot, robot_state_machine.DIRECTION_SHORT)
         self.assertEqual(reference, Decimal("100"))
         self.assertEqual(target, Decimal("80"))  # reference - start_width (DOWN)
+
+
+    def test_l_shape_retest_fill_uses_shared_trade_and_frozen_protection(self):
+        snapshot = _l_shape_snapshot()
+        candidate, created = self.store.create_robot_candidate(
+            candidate_id="candidate-lshape",
+            trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL),
+            status="APPROVED",
+            signal_snapshot=snapshot,
+            approved_at_ms=1,
+            updated_at_ms=1,
+        )
+        self.assertTrue(created)
+        state, _ = robot_l_shape.initialize_state({
+            "candidate_id": candidate.candidate_id,
+            "status": "APPROVED",
+            "timeframe": "5",
+            "signal_snapshot": snapshot,
+        })
+        self.store.save_robot_candidate_state(
+            candidate.candidate_id,
+            status="APPROVED",
+            robot_state=state,
+            expected_revision=candidate.state_revision,
+            updated_at_ms=2,
+        )
+
+        self.feed.push(
+            SYMBOL,
+            {
+                "time_ms": T0_MS + 60_000,
+                "high": Decimal("101"),
+                "low": Decimal("99.5"),
+                "close": Decimal("100.4"),
+            },
+        )
+        self.assertEqual(self.monitor.tick(), ("candidate-lshape",))
+        detected = self.store.get_robot_candidate("candidate-lshape")
+        self.assertEqual(
+            detected.robot_state["phase"],
+            robot_state_machine.PHASE_RETEST_DETECTED,
+        )
+
+        self.assertEqual(self.monitor.tick(), ("candidate-lshape",))
+        admitted = self.store.get_robot_candidate("candidate-lshape")
+        order_id = admitted.robot_state["execution"]["limit_order_id"]
+        order = self.store.get_paper_limit(order_id, ACCOUNT_ID)
+        self.assertEqual(order.price, Decimal("100.2"))
+        self.assertEqual(order.quantity, Decimal("1"))
+
+        self.executor.fill_resting_limit(
+            order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("100.2"),
+        )
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            ("candidate-lshape",),
+        )
+
+        opened = self.store.get_robot_candidate("candidate-lshape")
+        self.assertEqual(opened.status, "OPEN")
+        trade = self.store.get_robot_trade("robot-trade-candidate-lshape")
+        self.assertIsNotNone(trade)
+        self.assertEqual(trade.pattern, "L-shape")
+        self.assertEqual(trade.source_timeframe, "5")
+        self.assertEqual(trade.entry_path, "LIMIT")
+        self.assertEqual(trade.actual_wv, Decimal("1"))
+        self.assertEqual(trade.average_entry, Decimal("100.2"))
+        self.assertEqual(trade.stop_price, Decimal("96"))
+        self.assertEqual(trade.take_price, Decimal("110"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "create_take"],
+        )
 
 
 class RobotBreakoutMonitorRealThreadTests(unittest.TestCase):
