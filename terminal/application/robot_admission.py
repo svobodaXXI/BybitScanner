@@ -101,6 +101,10 @@ def admit_robot_candidate(
 
     source_timeframe = str(candidate.get("timeframe", "")).strip()
     if is_l_shape:
+        if source_timeframe not in {"1", "5"}:
+            raise RobotAdmissionRejected(
+                "L-shape Robot supports only 1m or 5m source timeframe"
+            )
         if snapshot.get("robot_handoff_ready") is not True:
             raise RobotAdmissionRejected("L-shape candidate has no Robot handoff")
         try:
