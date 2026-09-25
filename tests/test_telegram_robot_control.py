@@ -48,6 +48,36 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         self.assertIsNone(telegram_review._parse_callback("robot:cmd:pause"))
         self.assertIsNone(telegram_review._parse_robot_callback("robot:cmd:pause"))
 
+    def test_owner_status_callback_opens_panel_without_mutation(self):
+        callback_query = _owner_callback("cb-status", "status")
+        with patch.object(
+            telegram_review.config, "TELEGRAM_CHAT_ID", "42",
+        ), patch.object(
+            telegram_review, "start_robot",
+        ) as start_mock, patch.object(
+            telegram_review, "pause_robot",
+        ) as pause_mock, patch.object(
+            telegram_review, "resume_robot",
+        ) as resume_mock, patch.object(
+            telegram_review, "stop_robot",
+        ) as stop_mock, patch.object(
+            telegram_review, "_answer_callback",
+        ) as answer_mock, patch.object(
+            telegram_review, "get_robot_runtime_status",
+            return_value=_state("ROBOT_RUNNING", "READY"),
+        ), patch.object(
+            telegram_review.telegram_bot, "send_message",
+        ) as send_mock:
+            telegram_review._process_callback(callback_query)
+
+        start_mock.assert_not_called()
+        pause_mock.assert_not_called()
+        resume_mock.assert_not_called()
+        stop_mock.assert_not_called()
+        answer_mock.assert_called_once_with("cb-status", "🤖 Робот")
+        send_mock.assert_called_once()
+        self.assertIn("Статус робота: Запущен / Готов", send_mock.call_args.args[2])
+
     def test_owner_pause_callback_invokes_pause_robot_and_answers_success(self):
         callback_query = _owner_callback("cb-1", "pause")
         with patch.object(

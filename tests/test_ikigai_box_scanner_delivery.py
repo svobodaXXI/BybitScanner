@@ -32,7 +32,7 @@ def _candles():
 
 
 class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
-    def test_actual_scanner_without_wedge_sends_photo_once_and_no_robot(self):
+    def test_actual_scanner_without_wedge_sends_confirmed_box_with_robot_status_button(self):
         source = _candles()
         original = source.copy(deep=True)
         history = {}
@@ -68,7 +68,9 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             box, "load_memory", side_effect=lambda: dict(history),
         ), patch.object(
             box, "save_memory", side_effect=lambda record: history.update(record),
-        ), patch.object(box, "get_telegram_chat_ids", return_value=("owner",)), patch(
+        ), patch.object(box, "get_telegram_chat_ids", return_value=("owner",)), patch.object(
+            box, "get_telegram_owner_chat_id", return_value="owner",
+        ), patch(
             "notification.create_signal_snapshot",
         ) as robot:
             # Actual Scanner integration; temporary chart root can be passed by
@@ -110,7 +112,14 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
             for button in row
         ]
-        self.assertNotIn("🤖 Робот", buttons)
+        self.assertIn("🤖 Робот", buttons)
+        callbacks = [
+            button.get("callback_data")
+            for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
+            for button in row
+            if button.get("callback_data")
+        ]
+        self.assertIn("robot:cmd:status", callbacks)
         robot.assert_not_called()
         self.assertEqual(len(history), 1)
         pd.testing.assert_frame_equal(source, original)
