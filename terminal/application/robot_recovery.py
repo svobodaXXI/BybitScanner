@@ -322,6 +322,12 @@ class RobotRecoveryCoordinator:
         provider = self._latest_geometry_index_provider
         result: dict[str, int] = {}
         for candidate in approved:
+            if (
+                candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+                and isinstance(candidate.robot_state, Mapping)
+                and candidate.robot_state.get("phase") == "BOX_ENTRY_READY"
+            ):
+                continue
             value = provider(candidate.symbol.value, candidate.signal_snapshot)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise RobotRecoveryError(
