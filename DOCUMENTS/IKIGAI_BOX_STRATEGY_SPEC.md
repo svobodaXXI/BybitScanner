@@ -13,6 +13,10 @@ explicit trading decisions in the current conversation take precedence over the 
 - PR #218: immutable, non-executable `BOX_PLAN_ONLY` SQLite persistence; merged into main. This does **not** authorize opening or migrating a running Robot database.
 - PR #219: planner-to-persistence adapter (`terminal/application/ikigai_box_plan_persistence.py`); merged as `a155433e0323e2cf11edcdbc05c7c23a22851c94`. Protected task `20260924T164048Z-e41a91ef225c`: PASS; focused adapter test and protected delta checks PASS, blockers NONE.
 - PR #220: pure fixed-price Box STOP terms (`robot_protection.py::prepare_box_stop_terms`) and targeted LONG/SHORT tests; merged as `da52f7c6a05c624d3a6ca7d435ea67db42973486`. Protected task `20260924T172017Z-3553707ea8bf`: PASS; focused protection test and protected delta checks PASS, blockers NONE.
+- PR #221: schema 23 durable Box attempt/order ownership plus fail-closed remaining-exposure proof; merged to main. GitHub `deterministic-paper-path`: PASS after correcting one stale legacy migration fixture.
+- PR #222: atomically reserve one Box ownership identity and persist its PAPER LIMIT; merged to main, CI PASS.
+- PR #223: atomically persist the entire first grid (four ENTRY ownership identities + four PAPER LIMITs), all-or-nothing; merged to main, CI PASS.
+- PR #224: CURRENT bounded slice on branch `feat/box-first-grid-specs`; deterministic four-order specs with stable restart-safe identities. Non-executing; merge/CI status remains authoritative on GitHub.
 - The PC worktree `C:\\BybitScanner-box` was fast-forwarded to `da52f7c`. Earlier safety stashes were preserved; do not reapply them over already merged changes.
 
 **Do not repeat completed work.** Do not recreate these adapters, STOP-term functions, PRs, specifications or tests; do not repeat their protected verification, re-audit already resolved design choices, restore the backup stashes, or request another local sync of these merged commits. Reopen a completed item only if a concrete new defect, changed dependency/code, or conflicting evidence makes it relevant; identify that trigger and verify only the affected delta.
@@ -55,12 +59,15 @@ explicit trading decisions in the current conversation take precedence over the 
   blocker outside this transaction: `tests/test_box_plan_persistence.py` still
   constructs schema 21 by slicing the latest SQL tail and expects schema 22;
   that fixture/assertion requires a separately protected update for schema 23.
-- Next dependent implementation: connect these reserved ownership identities
-  and proven remaining quantity to the separately authorized Box lifecycle /
-  existing protection path, preserving atomic order identity at submission.
-  This slice creates no orders, enables no admission and wires no runtime
-  protection. PAPER execution remains blocked; common TAKE, fixed STOP,
-  replenishment, risk and attempt rules are unchanged.
+- Current dependency after #224: **do not connect runtime entry yet**.
+  First add a read-only lifecycle/restart classifier over the frozen plan,
+  ownership rows, active PAPER LIMITs, execution journal, authoritative
+  position and protection evidence. Then bridge the first proven owned fill
+  into the existing durable Robot trade/protection path. Only after those
+  recovery/protection guarantees are proven should one Box execution
+  coordinator be wired to the runtime. PAPER execution remains blocked until
+  that later explicit gate; replenishment, attempt 2 and other later lifecycle
+  rules remain out of this first-attempt slice.
 
 ## Implementation course correction — mature execution engines (2026-09-25)
 
