@@ -7,6 +7,8 @@ TAKE recovery.
 
 from __future__ import annotations
 
+import robot_l_shape
+
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import hashlib
@@ -340,6 +342,54 @@ def build_box_protection_plan(
         ),
     )
 
+
+
+def build_l_shape_protection_plan(
+    candidate: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    average_entry: Decimal,
+) -> ProtectionPlan:
+    """Build shared protection requests from immutable L-shape STOP/target terms."""
+    if candidate.get("status") != "APPROVED":
+        raise RobotProtectionError("candidate must be APPROVED")
+    snapshot = candidate.get("signal_snapshot")
+    if not isinstance(snapshot, Mapping):
+        raise RobotProtectionError("signal snapshot is missing")
+    try:
+        terms = robot_l_shape.frozen_terms(snapshot)
+    except robot_l_shape.RobotLShapeError as exc:
+        raise RobotProtectionError(str(exc)) from exc
+
+    candidate_id = str(candidate.get("candidate_id", "")).strip()
+    symbol = str(snapshot.get("symbol", "")).strip().upper()
+    direction = str(state.get("direction", "")).strip().upper()
+    if not candidate_id or not symbol:
+        raise RobotProtectionError("candidate identity and symbol are required")
+    if direction != terms.direction:
+        raise RobotProtectionError("L-shape direction conflicts with frozen terms")
+
+    entry = _decimal(average_entry, "average_entry")
+    stop = terms.stop
+    take = terms.target
+    if direction == DIRECTION_LONG and not (stop < entry < take):
+        raise RobotProtectionError("LONG L-shape protection geometry is invalid")
+    if direction == DIRECTION_SHORT and not (take < entry < stop):
+        raise RobotProtectionError("SHORT L-shape protection geometry is invalid")
+
+    return ProtectionPlan(
+        candidate_id=candidate_id,
+        symbol=symbol,
+        direction=direction,
+        stop_price=stop,
+        take_price=take,
+        stop_request=PaperStopMutationRequest(
+            _action_id(candidate_id, "stop", stop), symbol, stop,
+        ),
+        take_request=PaperStopMutationRequest(
+            _action_id(candidate_id, "take", take), symbol, take,
+        ),
+    )
 
 def protection_recovery(
     candidate_id: str,
