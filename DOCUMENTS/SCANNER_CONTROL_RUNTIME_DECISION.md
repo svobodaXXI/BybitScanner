@@ -60,12 +60,18 @@ by the frontend.
 
 ### Owner one-pass rule — 2026-09-26
 
-A manual Scanner start or resume authorizes **one complete scan pass only**.
-After that pass returns, the authoritative Scanner state becomes `PAUSED`;
-the runtime must not automatically begin a second universe traversal.
-If the pass raises an error, the runtime also returns to `PAUSED` rather
-than retrying the full pass in a loop. A new pass requires a fresh explicit
-owner `resume_scanner` command. Robot/PAPER backend state is unaffected.
+A manual Scanner start authorizes **one complete scan pass only**. Natural
+completion returns the authoritative state to `STOPPED`; the runtime must
+not automatically begin a second universe traversal.
+
+`pause_scanner` is cooperative and preserves the current in-memory traversal
+cursor. The current symbol/timeframe may finish, then the pass blocks before
+the next unit. `resume_scanner` continues that same pass from the preserved
+cursor; it does not start again from the first ticker.
+
+`stop_scanner` is a distinct command, legal from RUNNING or PAUSED. It aborts
+the current pass at the next cooperative checkpoint and leaves the Scanner
+`STOPPED`. Robot/PAPER backend state is unaffected.
 
 ## 4. Unified Menu responsibility
 
