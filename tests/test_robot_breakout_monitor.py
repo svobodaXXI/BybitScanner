@@ -1718,6 +1718,46 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             reason=None, expected_version=current.version, updated_at_ms=self.clock(),
         )
 
+    def test_pre_entry_guard_allows_multiple_owned_limits_but_blocks_foreign(self):
+        self._create_candidate()
+        record = self.store.get_robot_candidate("candidate-1")
+        for order_id in ("owned-1", "owned-2"):
+            self.store.create_paper_limit(
+                client_action_id=f"action-{order_id}",
+                request_fingerprint=f"fp-{order_id}",
+                order_id=OrderId(order_id),
+                order_link_id=f"link-{order_id}",
+                trading_account_id=ACCOUNT_ID,
+                symbol=Symbol(SYMBOL),
+                side=OrderSide.BUY,
+                price=Decimal("80"),
+                quantity=Decimal("1"),
+                created_at_ms=self.clock(),
+            )
+        self.assertIsNone(self.monitor._pre_entry_block_reason(
+            record,
+            allowed_limit_order_ids=("owned-1", "owned-2"),
+        ))
+
+        self.store.create_paper_limit(
+            client_action_id="action-foreign",
+            request_fingerprint="fp-foreign",
+            order_id=OrderId("foreign"),
+            order_link_id="link-foreign",
+            trading_account_id=ACCOUNT_ID,
+            symbol=Symbol(SYMBOL),
+            side=OrderSide.BUY,
+            price=Decimal("79"),
+            quantity=Decimal("1"),
+            created_at_ms=self.clock(),
+        )
+        reason = self.monitor._pre_entry_block_reason(
+            record,
+            allowed_limit_order_ids=("owned-1", "owned-2"),
+        )
+        self.assertIn("FOREIGN_WORKING_ORDER_PRESENT_BEFORE_ROBOT_ENTRY", reason)
+        self.assertIn("foreign", reason)
+
     def test_paused_with_no_working_order_never_submits_entry(self):
         self._create_candidate()
         self._drive_to_retest_detected()
