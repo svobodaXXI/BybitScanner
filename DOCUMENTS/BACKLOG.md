@@ -63,11 +63,16 @@ Draft PR #249 implements this boundary:
   `getChatMenuButton` -> `setChatMenuButton` when needed;
 - focused runtime/Telegram regression coverage.
 
-Current #249 head: `a7303126c13fa7a0165d9122792cc5dde734400d`,
-status **DRAFT / NOT MERGED**. The Robot PAPER workflow was extended so the
-next run directly executes `tests.test_scanner_control_runtime` and
-`tests.test_telegram_monitoring`; do not claim #249 accepted until that head
-has current green evidence.
+Current #249 head: `d2a6473fe654134a017d48840232cfe16b83e05f`,
+status **DRAFT / NOT MERGED**. The first direct Scanner-control CI run exposed
+a race in the new pause/resume test itself (`ConcurrentUpdate` caused by the
+test allowing the background pass to cross the checkpoint before PAUSED was
+committed). Commit `d2a6473...` made the test ordering deterministic without
+changing runtime code. Robot PAPER acceptance run #191 is now green, including
+the direct `tests.test_scanner_control_runtime` +
+`tests.test_telegram_monitoring` step. The separate Ikigai Box workflow remains
+red on the pre-existing FLOCK baseline and is not a #249 Scanner-control
+regression.
 
 ### Separate Box blocker — keep out of #249
 
@@ -78,11 +83,36 @@ already exist in current `main`; #249 does not modify Box geometry. Treat this
 as the existing Box geometry boss, not as justification for Scanner-control
 patching. Resolve it in the dedicated Ikigai first-impulse/FLOCK slice.
 
+### Tooling/runtime audit blocker discovered 2026-09-26
+
+- Owner requested a read-only audit of what PAPER Robot traded on 25.09.2026
+  (plus any post-midnight 26.09 MSK records): per-trade ownership, entry/exit,
+  gross PnL, fees, net PnL, close reason, emergency closes, open trades and
+  durable Robot state. This audit is still **pending**; do not infer trading
+  performance from partial Telegram evidence.
+- The intended host-local read-only audit through Codex Desktop is currently
+  blocked by repeated `401 Unauthorized: Incorrect API key provided` responses.
+- Diagnostics prove the normal credential sources are not the cause:
+  current/process/user/machine `OPENAI_API_KEY` and `CODEX_API_KEY` are
+  absent; `~/.codex/auth.json` reports `auth_mode=chatgpt`, no stored API key
+  and valid ChatGPT tokens; `codex doctor` reaches the ChatGPT websocket with
+  HTTP 101.
+- Codex Desktop is still installed as build `26.917.9434.0` while
+  `codex doctor` reports build `26.924.1866.0` available. The in-app updater
+  repeatedly says the update is ready but relaunches without changing the
+  installed package version. Resolve/update the Desktop client before spending
+  more owner time on credential hunting.
+- `codex doctor` also reports
+  `helper_sandbox_lock_failed` for elevated Windows sandbox provisioning.
+  Treat that as a separate Codex host-tooling issue unless evidence connects it
+  to the 401; do not conflate it with BybitScanner runtime defects.
+
 ### Next dependent work
 
-1. Get direct green CI evidence for #249 Scanner runtime + Telegram menu tests.
-2. If green, merge #249; then synchronize/restart the PC runtime only when the
-   owner explicitly chooses to do so.
+1. #249 now has direct green Scanner runtime + Telegram menu CI evidence on
+   `d2a6473...`; merge decision remains owner-controlled.
+2. If merged, synchronize/restart the PC runtime only when the owner explicitly
+   chooses to do so.
 3. Owner acceptance for Scanner control: start -> pause -> continue same pass ->
    stop; separately prove one uninterrupted complete pass ends in STOPPED and
    does not auto-start another cycle.
