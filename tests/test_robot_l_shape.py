@@ -88,6 +88,16 @@ class RobotLShapePolicyTests(unittest.TestCase):
         self.assertEqual(stop_event, robot_l_shape.EVENT_INVALIDATED_STOP)
         self.assertEqual(stop_state["phase"], robot_l_shape.PHASE_INVALIDATED)
 
+    def test_net_rr_includes_conservative_paper_fees(self):
+        rr = robot_l_shape.net_reward_risk(
+            "LONG",
+            entry_price=Decimal("100"),
+            stop_price=Decimal("95"),
+            target_price=Decimal("110"),
+        )
+        self.assertLess(rr, Decimal("2"))
+        self.assertGreater(rr, Decimal("1.9"))
+
     def test_restart_preserves_durable_l_shape_state_without_wedge_geometry(self):
         candidate = _candidate()
         state, _ = robot_l_shape.initialize_state(candidate)
