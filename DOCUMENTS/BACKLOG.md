@@ -113,6 +113,16 @@ a read-only compatibility inspection if not already running; no separate
 trading-engine implementation or runtime/order activation. Keep Scanner
 and Robot worktrees and approval boundaries separate.
 
+**Queued Ikigai Box geometry defect — AIGENSYNUSDT 5m (owner feedback, 2026-09-25):**
+the current detector can incorrectly merge a first directional leg, a visible
+opposite-colour corrective wave, and the later continuation into one A→B first
+impulse. The first impulse may contain only a brief pause of at most one or two
+small opposite-colour candles; a distinct correction/local swing terminates the
+impulse and the later continuation is a separate episode. Fix this at first-leg
+candidate construction, not by downstream scoring or Telegram suppression.
+This task is queued **after the current Telegram Robot-button fix for confirmed
+Ikigai Box cards** and must preserve the existing full-pass owner acceptance rule.
+
 **Geometry and Scanner follow-ups:** AEONUSDT 5m Box source-time candles
 were recovered; early A 14:30 UTC → B 15:10 UTC passes implemented
 first-leg gates. A later 16:00→16:10 UTC segment is too short, while
