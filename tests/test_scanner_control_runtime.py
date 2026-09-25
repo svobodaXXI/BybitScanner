@@ -75,17 +75,22 @@ class ScannerControlRuntimeTests(unittest.TestCase):
             self.runtime.resume_scanner()  # RUNNING -> resume is invalid
 
     def test_pause_blocks_same_pass_until_resume_and_stop_ends_it(self):
-        checkpoints = []
-        first = threading.Event()
+        entered = threading.Event()
+        attempt_first_checkpoint = threading.Event()
         continued = threading.Event()
+        attempt_second_checkpoint = threading.Event()
+        finished = threading.Event()
 
         def pass_with_checkpoints(checkpoint):
-            checkpoints.append("first")
-            first.set()
-            self.assertTrue(checkpoint())
-            checkpoints.append("continued")
+            entered.set()
+            self.assertTrue(attempt_first_checkpoint.wait(timeout=5.0))
+            if not checkpoint():
+                finished.set()
+                return
             continued.set()
+            self.assertTrue(attempt_second_checkpoint.wait(timeout=5.0))
             self.assertFalse(checkpoint())
+            finished.set()
 
         runtime = ScannerControlRuntime(
             lambda: SQLiteStore.open(self.db_path),
@@ -97,14 +102,23 @@ class ScannerControlRuntimeTests(unittest.TestCase):
         runtime.start()
         try:
             runtime.start_scanner()
-            self.assertTrue(first.wait(timeout=5.0))
+            self.assertTrue(entered.wait(timeout=5.0))
+
+            # Pause is committed before the in-flight pass reaches its next
+            # cooperative checkpoint, so that checkpoint must block in place.
             runtime.pause_scanner()
+            attempt_first_checkpoint.set()
             time.sleep(0.15)
             self.assertFalse(continued.is_set())
+
             runtime.resume_scanner()
             self.assertTrue(continued.wait(timeout=5.0))
+
+            # STOP is distinct from PAUSE: the same pass observes STOPPED at
+            # its next checkpoint and exits instead of waiting for a resume.
             runtime.stop_scanner()
-            time.sleep(0.15)
+            attempt_second_checkpoint.set()
+            self.assertTrue(finished.wait(timeout=5.0))
             self.assertEqual(runtime.status().mode, SCANNER_STOPPED)
         finally:
             runtime.close()
