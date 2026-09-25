@@ -58,7 +58,8 @@ active_change:
 
 * draft PR #249 — Scanner one-pass + cooperative pause/resume + explicit stop +
   Telegram Menu self-heal;
-* current head: `d2a6473...`;
+* latest code-bearing head before the 2026-09-26 documentation-only checkpoint:
+  `d2a6473...`;
 * first direct Scanner-control run exposed a test-ordering race only; the test
   was made deterministic without runtime-code changes;
 * Robot PAPER acceptance run #191 is green, including the direct
