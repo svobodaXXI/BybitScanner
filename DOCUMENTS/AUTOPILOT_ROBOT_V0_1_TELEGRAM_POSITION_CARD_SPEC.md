@@ -186,3 +186,16 @@ Decisions (implemented; change on request):
   Tapping CELOUSDT (manual dust) gives the text card without a chart.
 - Slice 3: after a robot trade opens / closes, within ~10 s one post arrives (closed: exit marker, the
   correct close reason, entry + exit fees); a restart of the listener does not re-send it.
+
+## 6. Owner UI refinement — queued 2026-09-25
+
+This is a presentation-only follow-up for the **open Robot position card**. It does not change trading state, execution, protection, sizing, order ownership, PnL accounting or lifecycle behavior.
+
+1. **Right-side chart clearance.** Move the visible end of the candle plot materially left, approximately toward the middle of the right half of the chart, so right-edge level/price annotations do not overlap the newest candles. Preserve the same candle set, timestamps and frozen pattern geometry; solve this with chart window/padding/layout only, not by dropping recent candles or moving execution evidence.
+2. **Entry label.** Remove the word `Вход`. Keep the horizontal average-entry level and keep its numeric price annotation.
+3. **Protection labels.** Render the stop and take labels as short `SL` and `TP`.
+4. **Executed-fill markers.** Make the filled triangular execution markers slightly smaller. Replace the current black marker edge with a direction-matched edge: green for LONG-side fills and red for SHORT-side fills. Do not change execution time/price placement or the filled-vs-resting semantic distinction.
+5. **Position size text.** The open-position card's `Размер` row must show the authoritative coin quantity plus the position's entry notional in parentheses. Compute notional as `quantity × average_entry` and format in USDT, for example: `Размер: 23760 4STOCK (249.95 USDT)`.
+6. **Scope discipline.** Reuse the existing `robot_position_view.py` / `robot_position_chart.py` path. No new card subsystem, no data-model change and no trading mutation are justified by this UI refinement.
+
+Acceptance: verify the changed renderer/text with focused tests, then inspect it through the normal Telegram position-card flow. Do not infer any trading correctness from the visual acceptance itself.
