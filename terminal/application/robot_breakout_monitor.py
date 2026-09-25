@@ -96,7 +96,7 @@ class RobotBreakoutMonitorError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class _EntryEvidence:
-    order_id: OrderId
+    order_ids: tuple[OrderId, ...]
     quantity: Decimal
     average_entry: Decimal
     position_version: int
@@ -892,30 +892,43 @@ class RobotBreakoutMonitor:
             )
         return None
 
-    def _entry_order_id(
+    def _entry_order_ids(
         self,
         record: RobotCandidateRecord,
         execution: Mapping[str, object],
         *,
         entry_path: str,
-    ) -> OrderId | None:
+    ) -> tuple[OrderId, ...]:
         if entry_path == "LIMIT":
+            raw_order_ids = execution.get("limit_order_ids")
+            if raw_order_ids is not None:
+                if (
+                    not isinstance(raw_order_ids, (tuple, list))
+                    or not raw_order_ids
+                    or any(not isinstance(item, str) or not item.strip() for item in raw_order_ids)
+                ):
+                    raise RobotBreakoutMonitorError("Robot LIMIT entry identities are invalid")
+                normalized = tuple(OrderId(item.strip()) for item in raw_order_ids)
+                if len({item.value for item in normalized}) != len(normalized):
+                    raise RobotBreakoutMonitorError("Robot LIMIT entry identities contain duplicates")
+                return normalized
+
             raw_order_id = execution.get("limit_order_id")
             if not isinstance(raw_order_id, str) or not raw_order_id.strip():
-                return None
-            return OrderId(raw_order_id.strip())
+                return ()
+            return (OrderId(raw_order_id.strip()),)
 
         if entry_path != "MARKET":
             raise RobotBreakoutMonitorError(f"unsupported Robot entry path: {entry_path}")
         intent = execution.get("late_market_intent")
         if not isinstance(intent, Mapping):
-            return None
+            return ()
         raw_command_id = intent.get("command_id")
         if not isinstance(raw_command_id, str) or not raw_command_id.strip():
             raise RobotBreakoutMonitorError("late Market intent lacks command identity")
         command = self._store().get_command(CommandId(raw_command_id.strip()))
         if command is None or command.exchange_order_id is None:
-            return None
+            return ()
         if (
             command.trading_account_id != self._account_id
             or command.symbol != record.symbol
@@ -923,7 +936,7 @@ class RobotBreakoutMonitor:
             raise RobotBreakoutMonitorError(
                 "late Market command identity does not match Robot candidate scope"
             )
-        return command.exchange_order_id
+        return (command.exchange_order_id,)
 
     def _prove_entry_evidence(
         self,
@@ -932,11 +945,16 @@ class RobotBreakoutMonitor:
         *,
         entry_path: str,
     ) -> _EntryEvidence | None:
-        order_id = self._entry_order_id(record, execution, entry_path=entry_path)
-        if order_id is None:
+        order_ids = self._entry_order_ids(record, execution, entry_path=entry_path)
+        if not order_ids:
             return None
+        owned_order_ids = {item.value for item in order_ids}
 
-        fills = self._store().load_executions_for_order(self._account_id, order_id)
+        fills = tuple(
+            fill
+            for order_id in order_ids
+            for fill in self._store().load_executions_for_order(self._account_id, order_id)
+        )
         if not fills:
             return None
 
@@ -1011,7 +1029,7 @@ class RobotBreakoutMonitor:
             if item.exchange_timestamp_ms < first_at:
                 pre_entry_net += signed
                 continue
-            if item.order_id != order_id:
+            if item.order_id.value not in owned_order_ids:
                 raise RobotBreakoutMonitorError(
                     "foreign execution exists after Robot entry began"
                 )
@@ -1024,7 +1042,7 @@ class RobotBreakoutMonitor:
             for item in self._store().load_active_paper_limits(
                 self._account_id, record.symbol,
             )
-            if item.order_id != order_id
+            if item.order_id.value not in owned_order_ids
         )
         if foreign_orders:
             raise RobotBreakoutMonitorError(
@@ -1032,7 +1050,7 @@ class RobotBreakoutMonitor:
             )
 
         return _EntryEvidence(
-            order_id=order_id,
+            order_ids=order_ids,
             quantity=quantity,
             average_entry=average_entry,
             position_version=position.version,
