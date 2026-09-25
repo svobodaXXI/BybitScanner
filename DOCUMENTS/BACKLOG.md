@@ -12,6 +12,173 @@ Current sequence:
 
 Do not add Box-specific trade states such as GRID_PARTIAL/GRID_FILLED, a Box recovery coordinator, a second execution journal, a second matcher, or a STOP-quantity synchronizer. One focused verification per new invariant; do not rerun already-green prior slices without changed inputs.
 
+## FOCUSED POST-DISCOVERY PATTERN MONITOR — PLANNED 2026-09-25
+
+Owner requirement: after Full Scanner discovers a structurally interesting
+symbol and moves on, the project must continue following that symbol without
+waiting for the next full-universe pass.
+
+Architecture is split into three responsibilities:
+
+- Full Scanner: broad universe discovery;
+- existing Robot candidate monitor: evolution of the **same** setup
+  (breakout, mirror/retest, bare-candle trigger, entry/fill/protection);
+- new `FocusedPatternMonitor`: discovery of **new independent structures**
+  on watched symbols (Ikigai Box, L-shape, future Flag/channel, later
+  Wedge/Triangle).
+
+Do not make Robot call the whole Scanner again and do not move pattern
+detectors into Robot execution logic. Focused monitoring must reuse the same
+detectors and shared market-data/candle infrastructure as Scanner.
+
+A discovery may create a durable focused-watch subscription keyed by symbol,
+timeframe, parent observation/candidate and reason. Watches are monitoring
+subscriptions, not order permissions.
+
+Initial symbol-ownership policy remains fail-closed: if a new opposite or
+conflicting pattern appears while an earlier Robot trade still owns the
+symbol, persist the new observation as `WAIT_FOR_FLAT`, then re-check its
+freshness/eligibility after the symbol becomes flat. Do not add automatic
+close-and-reverse or simultaneous Robot owners in the first slice.
+
+Watch lifetime is structural, not one arbitrary global TTL. End the watch when
+the parent episode is stale/invalid, no active candidate/trade/child
+observation remains, and the post-breakout continuation/reversal window has
+closed.
+
+Implementation dependency/order:
+
+1. complete the Scanner multi-pattern per-symbol orchestration plan;
+2. add durable focused-watch registry with no trading side effect;
+3. add FocusedPatternMonitor using existing shared market-data sources;
+4. route new observations through the normal observation/admission boundary;
+5. add `WAIT_FOR_FLAT` revalidation;
+6. only later add future Flag and any explicit close-and-reverse policy.
+
+Owning design:
+`DOCUMENTS/FOCUSED_PATTERN_MONITOR_PLAN.md`.
+
+Status: **PLANNED / NOT IMPLEMENTED**.
+
+## SCANNER MULTI-PATTERN PER-SYMBOL ORCHESTRATION — PLANNED 2026-09-25
+
+Owner requirement: for each ticker, Scanner must evaluate **all enabled pattern
+families on 5m, then all enabled pattern families on 1m, and only then move to
+the next ticker**. Multiple valid patterns on the same ticker/timeframe must be
+able to produce independent signals; first-match/one-best-result behavior is
+not the target contract.
+
+Repository diagnosis before implementation:
+
+- current `run_scan_pass()` already loops `symbol -> ("5", "1")` and contains
+  no explicit Wedge-triggered `break`/`return`;
+- L-shape and Ikigai Box are already called independently of Wedge notification
+  admission, so a missing L-shape on a Wedge chart is not proven to be caused
+  by ticker/timeframe short-circuit;
+- however, L-shape/Box still receive candles through `analyze_symbol()`, which
+  also owns Wedge/Triangle analysis, chart and report side effects;
+- `geometry.engine.analyze_geometry()` evaluates many envelope candidates but
+  returns only one `best_geometry`, so Wedge/Triangle currently remain a
+  single-winner family and cannot emit several distinct valid envelope
+  structures on one `symbol x timeframe`.
+
+Implementation route is fixed in
+`DOCUMENTS/SCANNER_MULTIPATTERN_ORCHESTRATION_PLAN.md`:
+
+1. Scanner-owned one-snapshot-per-`symbol x timeframe` boundary;
+2. fan-out the same snapshot to every enabled detector with failure isolation;
+3. finish all 5m detectors, then all 1m detectors, then next symbol;
+4. introduce a thin multi-observation collection boundary;
+5. add bounded plural envelope-candidate support with stable dedup of equivalent
+   line-pair representations while preserving distinct valid structures;
+6. keep pattern-specific geometry and Robot admission separate;
+7. preserve independent signal memory by `symbol x timeframe x pattern` plus
+   formation identity where available;
+8. verify with focused traversal/fan-out/error-isolation/plural-envelope tests;
+9. final owner acceptance remains one complete real Scanner pass over all
+   eligible tickers, both timeframes and all connected patterns with normal
+   Telegram delivery.
+
+Mature-engine principle adopted: shared market-data snapshot -> multiple
+independent detector/strategy consumers -> collect all observations. Do not
+solve this with separate scanner loops/processes, repeated candle fetches per
+pattern, a universal geometry engine, or first-result short-circuiting.
+
+Status: **PLANNED / NOT IMPLEMENTED**. Existing experimental code branches do
+not change this status until a reviewed implementation is merged and accepted.
+
+## TODAY PRIORITY INDEX — 2026-09-25
+
+This index captures only work discussed or materially advanced on 2026-09-25.
+It is ordered by dependency and risk, not by visual convenience.
+
+### P0 — runtime correctness / activation
+
+1. **Activate today's merged Robot runtime fixes on the PC runtime worktree.**
+   Current repository main contains the ordered protection continuity fix
+   (#237) and the Ikigai Box Robot-status button (#238), but the already-running
+   PAPER runtime was started from an older checkout. Before relying on those
+   fixes in another PAPER session, synchronize the clean runtime worktree to
+   current main and perform the normal owner-controlled manual restart. Do not
+   restart automatically from ChatGPT/Codex.
+2. **Treat the 4STOCKUSDT false `stale_generation_discarded` incident as fixed
+   in code, not as a reason to weaken fail-closed protection.** #237 removed
+   owner-queue-latency false positives by introducing an ordered disconnect
+   barrier; a genuine unknown disconnect gap still remains fail-closed.
+
+### P1 — Scanner signal completeness
+
+3. **Implement per-symbol multi-pattern orchestration.**
+   Owner contract: finish all enabled patterns on 5m, then all enabled patterns
+   on 1m, then next ticker. Use one snapshot per `symbol x timeframe`, fan out
+   to all detector families, isolate errors, collect multiple observations, and
+   add bounded plural envelope candidates instead of one global
+   `best_geometry`. Owning plan:
+   `DOCUMENTS/SCANNER_MULTIPATTERN_ORCHESTRATION_PLAN.md`.
+4. **Implement focused post-discovery monitoring after item 3.**
+   Full Scanner discovers the universe; existing Robot candidate monitoring
+   evolves the same setup; new `FocusedPatternMonitor` keeps selected symbols
+   under closed-candle pattern observation for new Box/L-shape/future Flag/
+   later Wedge-Triangle structures. Owning plan:
+   `DOCUMENTS/FOCUSED_PATTERN_MONITOR_PLAN.md`.
+
+### P2 — pattern/Robot coverage
+
+5. **L-shape PAPER Robot integration + real Robot button.**
+   Reuse the shared Robot lifecycle; no decorative button before the backend
+   handoff exists. Include the owner-visible `🤖 Робот` action in the same
+   implementation slice.
+6. **Ikigai Box first-impulse geometry correction.**
+   AIGENSYNUSDT 5m remains the concrete example: a distinct corrective wave
+   must terminate the first impulse; only 1-2 small opposite-colour pause
+   candles are allowed when they do not form a local counter-swing. Keep this
+   separate from Robot execution.
+7. **Resolve the known Ikigai Box detector baseline failure.**
+   `test_flock_style_green_wick_anchors_red_core_and_55pct_box_gate` still
+   fails in the Box detector workflow and was not caused by the Robot-button
+   change. Diagnose/fix only when entering the Box geometry slice; do not use it
+   to reopen already-merged presentation/runtime work.
+
+### P3 — presentation / operator UX
+
+8. **Telegram open-position card refinement.**
+   Queue already captured: more right-side chart clearance; remove the word
+   `Вход` while preserving entry price/line; rename `Стоп`/`Тейк` to
+   `SL`/`TP`; smaller direction-coloured fill triangles; show position size
+   as quantity plus USDT notional. No trading-logic changes.
+
+### Completed today — do not repeat
+
+- Ikigai Box first-attempt PAPER Robot integration/authorization chain through
+  Scanner -> Robot, shared multi-LIMIT lifecycle and fixed protection terms.
+- Box owner card `🤖 Робот` status/control button merged in #238.
+- 4STOCKUSDT protection-continuity false-positive fix merged in #237; Robot
+  PAPER acceptance passed.
+- Manual reconcile completed; Robot was returned from PAUSED to
+  `ROBOT_RUNNING / READY` through the normal Telegram control path.
+- Multi-pattern Scanner prerequisites and focused-monitor architecture are now
+  documented; implementation remains pending.
+
 # Backlog (working queue, priorities, rules)
 
 Status: WORKING BACKLOG (living document)
