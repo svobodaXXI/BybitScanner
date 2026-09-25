@@ -29,6 +29,14 @@ Compact mandatory entry point for coding agents. It routes to project authority;
 Он не меняет safety, trading authority, runtime ownership, acceptance или
 технические приоритеты.
 
+ChatGPT Custom Instructions служат только внешним bootstrap-указателем и не
+являются источником текущего состояния. Их канонический текст:
+`DOCUMENTS/CUSTOM_INSTRUCTIONS_BYBITSCANNER.md`. При явной просьбе владельца
+«освежи контекст», при возврате к BybitScanner после заметного перерыва, при
+изменившемся repo state или конфликте памяти с репозиторием выполни быстрое
+освежение: QUEST_STATE -> актуальный priority section BACKLOG -> owning spec
+текущего квеста. Не расширяй это до полного deep recovery без причины.
+
 
 ## Outcome-first Scanner / PAPER Robot priorities — owner direction
 
