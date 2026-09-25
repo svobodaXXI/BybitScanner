@@ -257,6 +257,16 @@ Do not perform full/deep recovery, broad snapshots or Project Sync without the c
 Current project priority, phase, pipeline health, and implementation state never belong in this protocol. Their
 authority is `PROJECT_STATE.md` and the applicable active Task/ChangeRequest.
 
+For BybitScanner chats, session bootstrap also loads the compact Russian game
+projection in `DOCUMENTS/QUEST_STATE.md` after the normal task-scoped authority
+is known. `QUEST_STATE.md` must be checked against the owner's current message
+and the current priority index in `DOCUMENTS/BACKLOG.md`; it cannot override
+either. The assistant then continues in the Russian quest mode defined by
+`DOCUMENTS/GTD_QUEST_SYSTEM.md` without asking the user to manually transfer a
+handoff. Update `QUEST_STATE.md` when the active quest, quest queue, XP, level
+or achievements materially change. Do not create a ContextDump solely to carry
+the game state between chats.
+
 ## 3.2 CONTEXT_AND_LIMIT_ECONOMY_RULE
 
 Use the smallest reliable context footprint:
