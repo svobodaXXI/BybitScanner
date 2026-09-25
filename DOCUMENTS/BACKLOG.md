@@ -1,3 +1,101 @@
+## RUNTIME / L-SHAPE / SCANNER CONTROL CHECKPOINT — 2026-09-26
+
+### Completed and proven — do not repeat
+
+- PR #248 `feat(robot): connect L-shape to PAPER lifecycle` was merged to
+  `main` as `753a800341fd66a2b0a616b0e934ed87141661aa`.
+- L-shape now has a durable Scanner -> Robot candidate handoff, reuses the
+  shared PAPER Robot lifecycle/protection/recovery path, and has the real
+  owner Telegram `🤖 Робот` control.
+- Owner explicitly authorized executable L-shape source timeframes **1m and
+  5m**. Admission is bounded to exactly those timeframes; 15m/other timeframes
+  are rejected rather than implicitly enabled.
+- The #248 head passed `Robot PAPER acceptance` before merge. This proves the
+  deterministic CI path, **not** the still-required owner runtime/PAPER
+  acceptance.
+
+### Runtime incident / open blocker
+
+- The live PAPER Robot entered
+  `ROBOT_RUNNING / RECONCILIATION_REQUIRED` after protection-feed
+  `ingress_overflow`. REST recovery then produced the expected fail-closed
+  `EMERGENCY_CLOSE` obligations for owned open Robot positions.
+- The emergency-close behavior is consistent with the designed safety path;
+  the unresolved root cause is **why protection ingress overflowed**. Do not
+  weaken or bypass the reconciliation/protection fence to make admission READY.
+- Before relying on Robot for new PAPER entries, complete the normal
+  evidence-based Robot reconciliation and separately diagnose the
+  `ingress_overflow` latency/queue-pressure cause from runtime metrics/logs.
+- The current L-shape raid therefore remains **not runtime-accepted** and earns
+  no completion XP yet.
+
+### Scanner control defect discovered during acceptance
+
+Observed owner runtime behavior: while Scanner durable mode remained
+`SCANNER_RUNNING`, `ScannerControlRuntime` launched a new full-universe pass
+after the prior pass returned. The owner observed a third traversal. The old
+Telegram `/scanner` command also conflated pause/resume with “stop”:
+`PAUSED` prevented a future pass from starting but did not abort the pass
+already executing.
+
+Owner-approved control contract:
+
+1. **One manual start = at most one complete universe pass.** Natural
+   completion -> `SCANNER_STOPPED`; never auto-loop into pass 2.
+2. **Pause** is cooperative and preserves the current traversal cursor. The
+   current symbol/timeframe may finish; execution then blocks before the next
+   checkpoint.
+3. **Continue** resumes the same in-memory traversal from that checkpoint; it
+   must not restart from ticker 1.
+4. **Stop Scanner** is a separate command. It aborts the current pass at the
+   next safe symbol/timeframe checkpoint and leaves `SCANNER_STOPPED`.
+5. Scanner lifecycle actions must not start/stop/pause Robot or otherwise
+   mutate Robot admission state.
+
+Draft PR #249 implements this boundary:
+- cooperative Scanner checkpoint in `run_scan_pass()`;
+- explicit runtime/API `stop_scanner`;
+- natural one-pass completion -> STOPPED;
+- dynamic Telegram command: `⏸ Пауза сканера` /
+  `▶ Продолжить сканер` / `▶ Запустить сканер`;
+- separate permanent `⏹ Остановить сканер` command;
+- Telegram command-menu button self-check/recovery via
+  `getChatMenuButton` -> `setChatMenuButton` when needed;
+- focused runtime/Telegram regression coverage.
+
+Current #249 head: `a7303126c13fa7a0165d9122792cc5dde734400d`,
+status **DRAFT / NOT MERGED**. The Robot PAPER workflow was extended so the
+next run directly executes `tests.test_scanner_control_runtime` and
+`tests.test_telegram_monitoring`; do not claim #249 accepted until that head
+has current green evidence.
+
+### Separate Box blocker — keep out of #249
+
+The `Ikigai Box detector` workflow on #249 failed only
+`test_flock_style_green_wick_anchors_red_core_and_55pct_box_gate`
+(expected one FLOCK-style watch, got zero). The same test and detector logic
+already exist in current `main`; #249 does not modify Box geometry. Treat this
+as the existing Box geometry boss, not as justification for Scanner-control
+patching. Resolve it in the dedicated Ikigai first-impulse/FLOCK slice.
+
+### Next dependent work
+
+1. Get direct green CI evidence for #249 Scanner runtime + Telegram menu tests.
+2. If green, merge #249; then synchronize/restart the PC runtime only when the
+   owner explicitly chooses to do so.
+3. Owner acceptance for Scanner control: start -> pause -> continue same pass ->
+   stop; separately prove one uninterrupted complete pass ends in STOPPED and
+   does not auto-start another cycle.
+4. Complete evidence-based Robot reconciliation before accepting new PAPER
+   Robot entries.
+5. Diagnose the `ingress_overflow` root cause without weakening fail-closed
+   protection.
+6. Finish L-shape real PAPER acceptance; only then close «Г-образные врата».
+7. Continue to Ikigai Box «Кривой первый импульс» / FLOCK geometry.
+
+The interrupted/repeating Scanner session from this incident is **not** a valid
+full Scanner acceptance run.
+
 ## BOX ROBOT IMPLEMENTATION ROUTE — 2026-09-25 UPDATE
 
 Mature-engine cross-check (LEAN / Hummingbot / Freqtrade patterns) confirms the project-specific architecture: Box is a multi-order **entry policy** over the existing Robot trade/order lifecycle, not a parallel trading subsystem.
