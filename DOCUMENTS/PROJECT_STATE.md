@@ -680,14 +680,24 @@ Current Box checkpoint:
 - Existing execution journal, matching engine, protection engine and durable
   protection obligations are to be reused; do not build Box-specific copies.
 
-Current implementation order:
+Current implementation order (REUSE-FIRST):
 1. finish/merge deterministic first-grid spec adapter (#224);
-2. add read-only Box lifecycle classification and restart reconciliation;
-3. bridge first proven owned fill to existing durable trade/protection path;
-4. add one Box execution coordinator: preflight -> ownership baseline ->
-   atomic four-order grid -> event-driven fill/protection handling;
-5. only then expose a separately authorized PAPER Box admission/runtime gate
-   and perform PAPER acceptance.
+2. add a **Box entry-policy adapter inside the existing Robot lifecycle**:
+   pattern-specific eligibility + four ENTRY LIMITs + sequential owned fills;
+3. reuse the existing Robot finalization/protection/recovery path unchanged
+   wherever possible: durable `robot_trades`, full-position STOP/TAKE,
+   protection obligations, PAPER matching, execution journal, runtime
+   reconciliation and fail-closed escalation;
+4. change only the Wedge-specific assumption that entry has exactly one LIMIT
+   whose remainder is cancelled after the first fill. Box must allow its four
+   preplanned owned LIMITs to remain/top-up according to the Box policy;
+5. only after this adapter passes focused PAPER tests, expose Box through the
+   existing Robot admission/runtime gate and run PAPER acceptance.
+
+There is **no separate Box lifecycle/recovery coordinator** and no second
+Robot engine. Box-specific persistence already merged is treated as entry
+evidence for the shared lifecycle, not as the foundation of a parallel
+trading subsystem.
 
 Fail-closed rule: startup/restart reconciliation precedes any new Box entry
 creation. Foreign, missing or contradictory ownership/execution/position/
