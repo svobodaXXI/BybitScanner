@@ -63,7 +63,7 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 
 **Этапы рейда:**
 
-- [ ] довести PR #249 как bounded prerequisite для one-pass authoritative Scanner runtime;
+- [x] PR #249 merged (`2032188`): one-pass authoritative Scanner runtime с pause/resume/stop;
 - [ ] убрать standalone Scanner из канонического prototype launcher;
 - [ ] сделать Telegram update consumer singleton + observable readiness;
 - [ ] заменить fixed sleeps на bounded dependency readiness/fail-closed startup;
