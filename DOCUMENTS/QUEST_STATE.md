@@ -68,7 +68,8 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #252 merged (`1e07dec`): Telegram getUpdates worker теперь singleton + observable readiness;
 - [x] PR #254 merged (`fe56450`): backend bind/reserve 127.0.0.1 listener происходит ДО REST/WebSocket/SQLite/runtime/recovery side effects;
 - [x] PR #253 merged (`18fc8c2`): Scanner restart-safe + launcher lifecycle-aware;
-- [ ] отдельным следующим slice сделать canonical launcher reuse уже живого healthy backend;
+- [ ] prerequisite: усилить backend `/api/health` идентичностью canonical PAPER backend + database identity/current owner proof, чтобы reuse не мог принять чужой HTTP 200/не тот runtime;
+- [ ] затем отдельным slice сделать canonical launcher reuse уже живого healthy backend с проверкой этой identity;
 - [ ] заменить fixed sleeps на bounded dependency readiness/fail-closed startup;
 - [ ] убрать устаревший 1m Wedge observational-only Robot-button gate;
 - [ ] только после этого провести один полный owner-run acceptance.
