@@ -48,11 +48,14 @@ Economical implementation sequence:
 2. **DONE:** PR #251 merged as `b02e330` — canonical prototype launcher no
    longer spawns standalone `main.py`; Scanner start goes through the backend
    Scanner control API;
-3. micro-slice: make `telegram_monitoring.py` single-owner and observable
-   (minimal singleton guard + readiness/heartbeat) and make startup wait for
-   it before allowing Scanner start;
-4. micro-slice: make launcher Scanner dispatch lifecycle-aware:
-   `STOPPED -> start`, `PAUSED -> resume`, `RUNNING -> reuse/no mutation`,
+3. **DONE:** PR #252 merged as `1e07dec` — `telegram_monitoring.py` is
+   single-owner, proves getUpdates ownership before READY, and startup waits
+   for its identified health endpoint before Scanner mutation;
+4. micro-slice: make Scanner restart recovery + launcher dispatch one complete invariant.
+   The Scanner pause cursor is in-memory only, so a fresh backend must normalize
+   persisted stale `SCANNER_RUNNING`/`SCANNER_PAUSED` to `SCANNER_STOPPED` before
+   accepting lifecycle commands. On an already-live backend the launcher routes
+   `STOPPED -> start`, `PAUSED -> resume`, `RUNNING -> reuse/no mutation`;
    unknown/unavailable -> fail closed. Until this is merged, do not reuse the
    canonical full-prototype launcher;
 5. micro-slice: replace fixed startup sleeps with bounded readiness checks and
