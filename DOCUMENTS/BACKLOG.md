@@ -1,3 +1,163 @@
+## P0 — FULL PAPER PROTOTYPE OPERATIONAL COMPLETENESS — 2026-09-26
+
+Owner priority override: before another long owner acceptance pass, eliminate
+the runtime-composition gaps that can make a partially running stack look
+"fully ready". This exists to protect owner time; do not work around it with
+manual repeated preflights.
+
+Incident evidence from the 2026-09-26 run:
+
+- PAPER backend and Robot were healthy/READY, but `telegram_monitoring.py`
+  was not running, so Robot approval callbacks and Telegram menu commands had
+  no consumer;
+- the owner-visible Telegram buttons remained present, creating a false
+  appearance of an interactive system;
+- local `start_scanner_all.cmd` launches standalone `main.py`, while
+  Telegram Scanner controls target the backend-owned
+  `ScannerControlRuntime`; those are separate Scanner owners and may create
+  duplicate scans if both are used;
+- tracked `start_robot_runtime.bat` launches backend, Telegram monitoring
+  and standalone `main.py` using fixed sleeps, with no dependency readiness,
+  Robot readiness, callback-worker readiness or duplicate-owner proof;
+- local `start_robot_all.cmd` has better backend/Robot gates but starts
+  Scanner before Telegram monitoring and is untracked, so it is not a
+  versioned/testable canonical launcher;
+- `/api/health` is liveness only and cannot establish full prototype
+  readiness;
+- `telegram_monitoring.py` has no enforced singleton ownership/readiness
+  heartbeat, despite the code contract that it must be the sole getUpdates
+  consumer;
+- explicit 1m Wedge analysis is still marked
+  `scanner_observational_only=True`, which intentionally suppresses the
+  Robot candidate/button and conflicts with the owner's current requirement
+  that executable supported Wedge signals keep the Robot action available.
+
+Architecture direction, borrowing mature runtime practice without importing a
+new platform: one canonical composition/start path, dependency readiness
+barriers instead of sleeps, one owner per runtime component, startup
+reconciliation/readiness before admission, and a compact status/preflight
+surface. Do not add Docker/systemd merely for this Windows prototype.
+
+Economical implementation sequence:
+
+1. finish/verify PR #249 as the one-pass authoritative ScannerControlRuntime;
+   do not expand it into a general supervisor;
+2. micro-slice: remove the standalone-Scanner split brain from the canonical
+   prototype launcher — Scanner start must go through the backend Scanner
+   control API after #249, never spawn `main.py` alongside it;
+3. micro-slice: make `telegram_monitoring.py` single-owner and observable
+   (minimal singleton guard + readiness/heartbeat) and make startup wait for
+   it before allowing Scanner start;
+4. micro-slice: replace fixed startup sleeps with bounded readiness checks and
+   fail closed unless backend, Robot/protection, Telegram callback worker,
+   shared runtime identity/config and Scanner owner are coherent;
+5. micro-slice: remove the stale explicit-1m Wedge observational-only gate
+   under the owner's current Robot-button rule, preserving normal admission
+   safety at the callback boundary;
+6. only then run the next owner full-universe Telegram acceptance pass.
+
+Each Codex task is one bounded micro-slice with one minimum changed-behavior
+check. No broad refactor, supervisor framework, new persistence system,
+Docker migration, repeated full suites, or agent-run Scanner pass.
+
+## NEXT SESSION START — RECONCILIATION / SYNC DEBT — 2026-09-26
+
+Owner direction: **start the next work session with the remaining synchronization /
+reconciliation debt before resuming feature work.** Do not treat the seven
+historical dirty worktrees as unresolved work; their audit directly below has
+already proven them fully superseded.
+
+The next-session checkpoint is the still-live/sensitive state outside those seven:
+
+1. `C:\BybitScanner-box-robot-run` — runtime checkout; last observed with
+   backend PID 21116, open RDWUSDT position and `RECONCILIATION_REQUIRED`.
+   Re-check actual runtime/position/process state before any mutation; do not
+   assume the recorded PID or position is still current tomorrow.
+2. `C:\BybitScanner` — current dirty session checkout with untracked
+   `runtime/`, launchers and other local state. Reconcile deliberately; do
+   not overwrite or broadly clean user-owned local work.
+3. `C:\BybitScanner-sync-20260926` — reconciliation working copy to be
+   resolved/retired only after its role and remaining delta are re-established.
+4. `C:\BybitScanner-reconciliation-backup-20260926` — preserved
+   `start_robot_all.cmd` backup; keep until reconciliation is conclusively
+   finished and no longer depends on it.
+
+Start with **minimal state recovery** of these four items and current `main`,
+then resolve only the narrowest remaining synchronization debt. Do not rerun
+the already-completed seven-worktree history audit, do not recreate backups
+without new evidence, and do not touch active runtime/trading state blindly.
+
+**Checkpoint completed 2026-09-26.** The four sensitive paths were reconciled
+without broad cleanup. `sync-20260926` and `box-robot-run` are on current
+`main`; two unique local files from `C:\BybitScanner` were preserved in the
+external reconciliation backup; the dirty checkout itself remains untouched.
+The PAPER backend was started with LIVE gates off and Scanner still stopped.
+Protection coverage recovered healthy, explicit operator reconciliation
+succeeded, and Robot landed in `ROBOT_RUNNING / PAUSED` with the open RDWUSDT
+PAPER lifecycle preserved. Unresolved protection obligations were zero.
+Return now to the active L-shape PAPER Robot quest; do not repeat this
+reconciliation unless new evidence changes runtime or repository state.
+
+## DIRTY WORKTREE RECONCILIATION AUDIT — 2026-09-26
+
+Read-only audit result for the seven previously dirty historical worktrees:
+`.worktrees/ikigai-card`, `bv`, `ikigai-bands`, `ikigai-viz`,
+`locality`, `lshape`, and `lshape-observer`.
+
+**Outcome: all seven are fully superseded; no unique work remains in any of
+them. Do not repeat recovery, patch preservation, or implementation work from
+these worktrees.**
+
+Evidence boundary:
+
+- each worktree's complete dirty set (tracked changes plus untracked files
+  where present) was compared by blob content against repository history;
+- a match counted only when the whole dirty set corresponded to one historical
+  commit/state rather than a mixture of unrelated versions;
+- PR/branch history was checked for the corresponding merged work;
+- tests were **not** rerun for this audit; the conclusion is repository-history
+  equivalence, not fresh runtime/test acceptance.
+
+Resolved mappings:
+
+- `.worktrees/ikigai-card`: 6/6 dirty files = `5ad500d`, branch
+  `origin/codex/ikigai-card-cleanup`, PR #205 squash `5f2afe2`; only the
+  living `BACKLOG.md` has evolved afterward.
+- `bv`: 3/3 = `a4ef2ff`, merged through PR #180; local HEAD is the pre-squash
+  version, with only LF/CRLF warning noted.
+- `ikigai-bands`: 5/5 = `8009997`, merged through PR #167.
+- `ikigai-viz`: 4/4 = `4ea5ee4`, first commit of merged PR #166; its
+  untracked overlay/test files are historical merged content, while main later
+  evolved further.
+- `locality`: 3/3 tracked+untracked = `d6a7df9`, merged PR #176; fixture
+  files are identical to main.
+- `lshape`: 4/4 untracked = `05eeae0`, first L-shape file version from
+  PR #195, later superseded by subsequent L-shape work.
+- `lshape-observer`: dirty `main.py`, `l_shape_scanner.py`, and test =
+  branch tip `0a7e88d`, merged PR #197; local HEAD is three commits behind its
+  upstream.
+
+No standalone patch or backup is required for these seven worktrees; their
+content is recoverable from Git history via `5ad500d`, `4ea5ee4`,
+`d6a7df9`, `0a7e88d`, `05eeae0`, `a4ef2ff`, and `8009997` plus the
+corresponding squash/merge commits.
+
+**Do not touch as part of this cleanup/reconciliation without a separate
+owner-authorized step:**
+
+- `C:\BybitScanner-box-robot-run` — active runtime checkout; at audit time
+  backend PID 21116, open RDWUSDT position, `RECONCILIATION_REQUIRED`;
+- `C:\BybitScanner` — current dirty session checkout with untracked
+  `runtime/`, launchers and other local state;
+- `C:\BybitScanner-sync-20260926` — active reconciliation copy;
+- `C:\BybitScanner-reconciliation-backup-20260926` — preserved
+  `start_robot_all.cmd` backup.
+
+The audit itself made no worktree cleanup, file transfer, runtime change, HEAD
+change, branch change, stash change, or process launch/stop.
+
+> Historical #249 checkpoint below; the current P0 operational-completeness priority and acceptance gate above take precedence over its next-work sequence and runtime snapshot.
+
 ## RUNTIME / L-SHAPE / SCANNER CONTROL CHECKPOINT — 2026-09-26
 
 ### Completed and proven — do not repeat
@@ -424,7 +584,7 @@ contract: `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
 
 **Next after #225:** connect the already-frozen Box four-order specs to the existing Robot execution path with the smallest pattern-specific branch/adapter. The critical behavioral delta is that Box keeps its remaining approved grid orders after the first fill instead of applying Wedge's cancel-remainder rule. No parallel Box lifecycle is to be introduced.
 
-**L-shape PAPER Robot — owner timeframe decision 2026-09-26 / draft implementation #248:** inherit the
+**L-shape PAPER Robot — owner timeframe decision 2026-09-26 / PR #248 merged:** inherit the
 existing Wedge Robot entry/retest, order, protection, closure and recovery
 lifecycle **except** pattern-specific L-shape geometry, 0.8% potential floor,
 RR >= 2:1 and trough-derived/ratio-limited STOP. The owner explicitly authorizes
@@ -433,12 +593,14 @@ No other source timeframe is implicitly authorized. A 5m L-shape keeps its own
 frozen L-shape terms and enters the same shared Robot lifecycle; it does not need
 to masquerade as or project into a 1m Wedge geometry handoff.
 
-Draft PR #248 implements this L-shape adapter/handoff and must remain bounded to
-the shared lifecycle: no second execution engine, no separate protection/recovery
-stack, and no LIVE activation. This 1m+5m authorization does **not** by itself
-complete or authorize the deferred Scanner multi-pattern orchestration, nor does
-it permit simultaneous Robot exposure owners for one symbol. Merge and real PAPER
-acceptance remain separate evidence gates.
+PR #248 is merged in `main` at `753a800` and implements this L-shape adapter/handoff
+within the shared lifecycle: no second execution engine, no separate
+protection/recovery stack, and no LIVE activation. The implementation/merge
+gate is complete; **real PAPER acceptance remains pending** and is the next
+uncompleted evidence gate for this quest. This 1m+5m authorization does **not**
+by itself complete or authorize the deferred Scanner multi-pattern
+orchestration, nor does it permit simultaneous Robot exposure owners for one
+symbol.
 
 **Geometry and Scanner follow-ups:** AEONUSDT 5m Box source-time candles
 were recovered; early A 14:30 UTC → B 15:10 UTC passes implemented

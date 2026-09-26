@@ -201,9 +201,12 @@ candlesticks) and before the queued geometry repairs**. Do not interrupt
 that card task or start the full Scanner pass merely to document the rule.
 After implementation, owner acceptance requires one full real eligible-symbol
 Scanner pass showing the ordered 5m→1m coverage and Telegram charts for all
-integrated patterns. Keep the existing 5m Robot/PAPER/LIVE admission, orders,
-risk and protective state unchanged: 1m Scanner signals are observational
-until trading behavior is separately approved.
+integrated patterns. Keep existing Robot/PAPER/LIVE risk and protective state unchanged. Owner update
+2026-09-26: supported executable Wedge signals on both 1m and 5m must retain
+the owner Robot action; explicit 1m Scanner analysis is no longer
+observational-only merely because its timeframe was passed explicitly.
+Admission remains fail-closed at the normal Robot boundary, and this does not
+authorize unsupported patterns or LIVE trading.
 
 ## Current mandatory task sequence — OWNER UPDATE (2026-09-23)
 

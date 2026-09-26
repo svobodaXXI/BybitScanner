@@ -188,6 +188,50 @@ Apply the same task-scoped trace when recommending test/build commands (actual h
 (branch → host → runtime). This rule requires no new skill, global inventory, full Project Sync or repeated checks
 when the relevant trace has already been verified and its source/host state has not changed.
 
+
+### 2.2.4 MULTI-COMPONENT READINESS CLAIM GATE — HARD RULE
+
+When the owner asks whether a multi-component BybitScanner outcome is fully
+working, ready, complete, or safe to launch, the assistant must not answer
+"yes" from partial component evidence. First resolve the complete capability
+chain required by that exact outcome and prove every currently material link.
+
+For a real Scanner + PAPER Robot + Telegram interactive run, the minimum
+readiness set is:
+
+- the PAPER backend is alive on the intended endpoint and uses the intended
+  database/runtime root;
+- Robot durable state is appropriate for the requested action, and protection
+  coverage is healthy when exposure exists;
+- exactly one Telegram update consumer owns the bot callback stream, is
+  actually running/ready, and uses the same runtime root/database/backend
+  authority as the Robot;
+- actionable Telegram buttons have a live callback consumer; the continued
+  presence of old buttons or menu entries in Telegram is not evidence that
+  the consumer is alive;
+- Scanner is started through the one authoritative runtime owner expected by
+  the controls. A standalone `main.py` Scanner and backend
+  `ScannerControlRuntime` must never be treated as one Scanner or allowed to
+  run concurrently for the same acceptance run;
+- the launch path has duplicate-worker prevention and does not create a second
+  backend, Telegram poller, Scanner owner, or conflicting runtime checkout;
+- production acceptance configuration is proven: ordinary Telegram mode,
+  full eligible universe (no accidental symbol cap), required pattern flags,
+  and the expected timeframe coverage;
+- PAPER/LIVE boundaries are explicit and LIVE mutation gates remain disabled
+  unless separately authorized.
+
+A process existing, a port listening, a health endpoint returning liveness, a
+durable state row, or a Telegram button being visible proves only that narrow
+fact. None may be promoted to a full-readiness claim by inference.
+
+If any required link is unknown or not ready, say that the full outcome is
+not yet proven and name the exact missing link. Do not ask the owner to begin
+a long acceptance run until this gate passes. Reuse already-proven unchanged
+evidence; this rule is a completeness gate, not permission for repetitive
+checks.
+
+
 ## 2.3 NO ASSUMED USER STATE + BEGINNER-SAFE STEP-BY-STEP
 
 Assume an ordinary Windows user without developer, PowerShell, Git, Node, Python, process, port, frontend/backend,
