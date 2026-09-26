@@ -52,7 +52,12 @@ class RuntimeLauncherTests(unittest.TestCase):
         self.assertEqual(lines[worker + 1:worker + 3],
                          ["call :wait_telegram_ready 60", "if errorlevel 1 ("])
         self.assertIn("exit /b 1", lines[worker + 4])
-        self.assertEqual(lines[scanner - 1], ":telegram_ready")
+        # Telegram READY leads to the Robot/protection barrier, then Scanner routing.
+        self.assertEqual(lines[scanner - 7], ":telegram_ready")
+        self.assertTrue(lines[scanner - 6].startswith("rem "))
+        self.assertEqual(lines[scanner - 5:scanner - 3],
+                         ["call :probe_paper_backend 0 robot", "if errorlevel 1 ("])
+        self.assertEqual(lines[scanner - 2:scanner], ["exit /b 1", ")"])
         self.assertEqual(lines.count(":telegram_ready"), 1)
         self.assertEqual(sum("goto telegram_ready" in line for line in lines), 1)
         probe = lines[lines.index(":wait_telegram_ready") + 2]
@@ -188,7 +193,7 @@ class LauncherBackendReuseTests(unittest.TestCase):
         # The reuse path jumps past both the spawn and the post-spawn wait.
         reuse = lines.index("if not errorlevel 1 goto paper_backend_ready")
         self.assertTrue(reuse < spawn < wait < ready < telegram)
-        self.assertEqual(sum(line.startswith("call :probe_paper_backend") for line in lines), 2)
+        self.assertEqual(sum(line.startswith("call :probe_paper_backend") for line in lines), 3)
         label = lines.index(":probe_paper_backend")
         self.assertEqual(lines[label + 1], 'set "BYBITSCANNER_PAPER_BACKEND_WAIT_SECONDS=%~1"')
 
@@ -209,14 +214,15 @@ class LauncherBackendProbeTests(unittest.TestCase):
         finally:
             store.close()
 
-    def _probe(self, backend_url, wait_seconds=0):
+    def _probe(self, backend_url, wait_seconds=0, require=""):
         lines = [line.strip() for line in LAUNCHER.read_text().splitlines()]
-        command = lines[lines.index(":probe_paper_backend") + 2]
+        command = lines[lines.index(":probe_paper_backend") + 3]
         prefix = 'powershell.exe -NoProfile -Command "'
         self.assertTrue(command.startswith(prefix) and command.endswith('"'))
         env = dict(os.environ, BYBITSCANNER_PAPER_BACKEND_URL=backend_url,
                    BYBITSCANNER_PAPER_DB=str(self.db_path), BYBITSCANNER_PYTHON=sys.executable,
-                   BYBITSCANNER_PAPER_BACKEND_WAIT_SECONDS=str(wait_seconds))
+                   BYBITSCANNER_PAPER_BACKEND_WAIT_SECONDS=str(wait_seconds),
+                   BYBITSCANNER_PAPER_BACKEND_REQUIRE=require)
         result = subprocess.run(
             ["powershell.exe", "-NoProfile", "-Command", command[len(prefix):-1]],
             env=env, capture_output=True, text=True, timeout=60,
@@ -316,6 +322,82 @@ def _health_get(self):
     self.send_header("Content-Type", "application/json")
     self.end_headers()
     self.wfile.write(self.status_body)
+
+
+
+@unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell launcher probe")
+class LauncherRobotBarrierTests(unittest.TestCase):
+    """Run the launcher's Robot/protection barrier against a stub backend."""
+
+    setUp = LauncherBackendProbeTests.setUp
+    _probe = LauncherBackendProbeTests._probe
+    _health = LauncherBackendProbeTests._health
+    _free_port = staticmethod(LauncherBackendProbeTests._free_port)
+
+    def _barrier(self, health, protection, protection_code=200):
+        routes = {"/api/health": (200, health), "/api/robot/protection-health":
+                  (protection_code, protection)}
+
+        def do_get(handler):
+            code, body = routes.get(handler.path, (404, {"ok": False}))
+            raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+            handler.send_response(code)
+            handler.send_header("Content-Type", "application/json")
+            handler.end_headers()
+            handler.wfile.write(raw)
+
+        handler = type("Handler", (_StubBackend,), {"posts": [], "do_GET": do_get})
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            returncode = self._probe(f"http://127.0.0.1:{server.server_address[1]}",
+                                     require="robot")
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(handler.posts, [])  # never any Scanner or Robot mutation
+        return returncode
+
+    def _protection(self, **overrides):
+        return {"ok": True, "healthy": True, "covered_symbols": [], "coverage_roles": {},
+                "unhealthy_symbols": {}, "ingress": {}, **overrides}
+
+    def test_admission_and_protection_ready_lets_scanner_routing_proceed(self):
+        self.assertEqual(
+            self._barrier(self._health(robot_admission_ready=True), self._protection()), 0)
+
+    def test_robot_admission_not_ready_fails_before_scanner_mutation(self):
+        for admission in (False, "true", None):
+            with self.subTest(admission=admission):
+                health = self._health(robot_admission_ready=admission)
+                self.assertEqual(self._barrier(health, self._protection()), 2)
+        self.assertEqual(self._barrier(self._health(), self._protection()), 2)  # field missing
+
+    def test_unhealthy_protection_fails_before_scanner_mutation(self):
+        ready = self._health(robot_admission_ready=True)
+        for protection in (self._protection(healthy=False),
+                           self._protection(unhealthy_symbols={"BTCUSDT": "subscribe_failed"}),
+                           self._protection(healthy="true")):
+            with self.subTest(protection=protection):
+                self.assertEqual(self._barrier(ready, protection), 2)
+
+    def test_malformed_or_unavailable_barrier_responses_fail_closed(self):
+        ready = self._health(robot_admission_ready=True)
+        without_symbols = self._protection()
+        del without_symbols["unhealthy_symbols"]
+        for protection, code in ((without_symbols, 200),
+                                 (self._protection(unhealthy_symbols=None), 200),
+                                 (self._protection(unhealthy_symbols=[]), 200),
+                                 (self._protection(ok=False), 200),
+                                 (b"not json", 200),
+                                 ({"ok": False, "error": "robot_protection_health_unavailable"}, 503)):
+            with self.subTest(protection=protection, code=code):
+                self.assertEqual(self._barrier(ready, protection, code), 2)
+        self.assertEqual(self._barrier(
+            self._health(robot_admission_ready=True, database_identity="0" * 64),
+            self._protection()), 2)
+        self.assertNotEqual(
+            self._probe(f"http://127.0.0.1:{self._free_port()}", require="robot"), 0)
 
 
 if __name__ == "__main__":
