@@ -64,7 +64,7 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 **Этапы рейда:**
 
 - [x] PR #249 merged (`2032188`): one-pass authoritative Scanner runtime с pause/resume/stop;
-- [ ] убрать standalone Scanner из канонического prototype launcher;
+- [x] PR #251 merged (`b02e330`): canonical launcher больше не запускает standalone `main.py`; Scanner стартует через backend `/api/scanner/start`;
 - [ ] сделать Telegram update consumer singleton + observable readiness;
 - [ ] заменить fixed sleeps на bounded dependency readiness/fail-closed startup;
 - [ ] убрать устаревший 1m Wedge observational-only Robot-button gate;
