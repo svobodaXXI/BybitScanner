@@ -5,18 +5,24 @@ changing Robot state. It reads authoritative candidate state from the Terminal
 SQLite store and delegates all non-monitoring callbacks to ``telegram_review``.
 
 Run this listener instead of ``telegram_review.py``; two long-polling getUpdates
-consumers must not be run for the same bot token.
+consumers must not be run for the same bot token. A localhost-only health
+listener (default port 8766) doubles as the per-host singleton: a second worker
+cannot bind it and never enters getUpdates. ``GET /health`` answers 200 only
+after a getUpdates response proved this worker owns the update stream.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import socket
 import sqlite3
+import sys
 import threading
 import time
 from contextlib import contextmanager
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -702,50 +708,142 @@ def configure_monitoring_menu() -> None:
     _ensure_commands_menu_button()
 
 
-def run() -> None:
+HEALTH_COMPONENT = "telegram_monitoring"
+HEALTH_PORT_ENV = "BYBITSCANNER_TELEGRAM_MONITORING_PORT"
+DEFAULT_HEALTH_PORT = 8766
+INITIAL_POLL_TIMEOUT = 0
+LONG_POLL_TIMEOUT = 30
+_POLLING_READY = threading.Event()
+
+
+class TelegramUpdateConflict(RuntimeError):
+    """getUpdates 409: another consumer owns this bot's update stream."""
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):  # noqa: N802 - http.server API
+        if self.path.split("?", 1)[0] != "/health":
+            self.send_error(404)
+            return
+        ready = _POLLING_READY.is_set()
+        body = json.dumps({"component": HEALTH_COMPONENT,
+                           "status": "ready" if ready else "not_ready"}).encode("ascii")
+        self.send_response(200 if ready else 503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):  # noqa: A002 - keep the console quiet
+        pass
+
+
+class _ExclusiveHealthServer(ThreadingHTTPServer):
+    # SO_REUSEADDR on Windows lets a second process bind the same port; the
+    # listener is the singleton, so the bind must be exclusive.
+    allow_reuse_address = False
+    daemon_threads = True
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def health_port() -> int:
+    return int(os.environ.get(HEALTH_PORT_ENV) or DEFAULT_HEALTH_PORT)
+
+
+def acquire_worker_singleton(port: int | None = None):
+    """Bind the localhost health listener; ``None`` means another worker owns the host."""
+    try:
+        server = _ExclusiveHealthServer(("127.0.0.1", health_port() if port is None else port),
+                                        _HealthHandler)
+    except OSError:
+        return None
+    threading.Thread(target=server.serve_forever, name="telegram-monitoring-health",
+                     daemon=True).start()
+    return server
+
+
+def poll_updates_once(offset):
+    """One getUpdates round; readiness follows proven update-stream ownership."""
+    params = {
+        "timeout": LONG_POLL_TIMEOUT if _POLLING_READY.is_set() else INITIAL_POLL_TIMEOUT,
+        "allowed_updates": json.dumps(["callback_query", "message"]),
+    }
+    if offset is not None:
+        params["offset"] = offset
+    try:
+        result = _telegram_request("getUpdates", **params)
+    except Exception:
+        _POLLING_READY.clear()
+        raise
+    if not result.get("ok"):
+        _POLLING_READY.clear()
+        if result.get("error_code") == 409:
+            raise TelegramUpdateConflict(result.get("description") or "getUpdates conflict")
+        print("[MONITORING TELEGRAM ERROR]", result)
+        time.sleep(3)
+        return offset
+    _POLLING_READY.set()
+
+    for update in result.get("result", []):
+        update_id = update.get("update_id")
+        if update_id is not None:
+            offset = update_id + 1
+            _save_offset(offset)
+
+        callback_query = update.get("callback_query")
+        if callback_query:
+            if not (_process_positions_callback(callback_query)
+                    or _process_monitor_callback(callback_query)):
+                import telegram_review
+
+                telegram_review._process_callback(callback_query)
+            continue
+
+        message = update.get("message")
+        if message:
+            _process_message(message)
+    return offset
+
+
+def _release_worker_singleton(server) -> None:
+    _POLLING_READY.clear()
+    server.shutdown()
+    server.server_close()
+
+
+def run() -> int:
+    server = acquire_worker_singleton()
+    if server is None:
+        print(f"Telegram monitoring worker already owns 127.0.0.1:{health_port()}; "
+              "not starting a second getUpdates consumer.")
+        return 1
     print("=" * 60)
     print("BybitScanner Telegram Monitoring Listener")
     print(f"DB: {DB_PATH}")
+    print(f"Health: http://127.0.0.1:{server.server_address[1]}/health")
     print("=" * 60)
-    configure_monitoring_menu()
-    start_lifecycle_thread()
     offset = _load_offset()
+    owned = False
 
     while True:
         try:
-            refresh_command_menu()
-            _ensure_commands_menu_button()
-            params = {
-                "timeout": 30,
-                "allowed_updates": json.dumps(["callback_query", "message"]),
-            }
-            if offset is not None:
-                params["offset"] = offset
-            result = _telegram_request("getUpdates", **params)
-            if not result.get("ok"):
-                print("[MONITORING TELEGRAM ERROR]", result)
-                time.sleep(3)
-                continue
-
-            for update in result.get("result", []):
-                update_id = update.get("update_id")
-                if update_id is not None:
-                    offset = update_id + 1
-                    _save_offset(offset)
-
-                callback_query = update.get("callback_query")
-                if callback_query:
-                    if not (_process_positions_callback(callback_query)
-                            or _process_monitor_callback(callback_query)):
-                        import telegram_review
-
-                        telegram_review._process_callback(callback_query)
-                    continue
-
-                message = update.get("message")
-                if message:
-                    _process_message(message)
-
+            if owned:
+                refresh_command_menu()
+                _ensure_commands_menu_button()
+            offset = poll_updates_once(offset)
+            if not owned and _POLLING_READY.is_set():
+                # Menu and lifecycle posts only after getUpdates proved stream ownership.
+                owned = True
+                start_lifecycle_thread()
+                configure_monitoring_menu()
+        except TelegramUpdateConflict as exc:
+            print("[MONITORING TELEGRAM CONFLICT] another getUpdates consumer is active:", exc)
+            _release_worker_singleton(server)
+            return 1
         except KeyboardInterrupt:
             print()
             print("Monitoring listener stopped.")
@@ -753,7 +851,8 @@ def run() -> None:
         except Exception as exc:
             print("[MONITORING LOOP ERROR]", exc)
             time.sleep(3)
-
+    _release_worker_singleton(server)
+    return 0
 
 if __name__ == "__main__":
-    run()
+    sys.exit(run())
