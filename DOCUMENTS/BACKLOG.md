@@ -176,6 +176,36 @@ task explicitly requires it.
 Telegram runtime. Do not infer that a checkout's on-disk version equals the
 version loaded in a running process until an explicitly authorized restart occurs.
 
+### ACTIVE DEVELOPMENT REGISTRY (live streams only)
+
+| STREAM | BRANCH | STATUS |
+| --- | --- | --- |
+| ROBOT_UI | `feat/robot-position-card-presentation` | DRAFT |
+| ROBOT_RUNTIME | `fix/paper-ingress-entry-only-terminalization` | PORT REQUIRED |
+| RESEARCH | `feat/geometry-pattern-chart-window` | RESEARCH |
+
+Only live directions belong here. STATUS is one of ACTIVE, DRAFT (live work still
+in a draft PR), BLOCKED, RESEARCH, PORT REQUIRED. A line answers only why the
+branch exists (its stream) and its current lifecycle status. Do not catalogue the
+historical branches, keep status history, or copy GitHub metadata. A merged or
+superseded branch leaves this list when its worktree is retired.
+
+### WORKTREE BUDGET
+
+Target 5–7 worktrees. Above 7, state briefly why each extra one exists. Above 10,
+create no new worktree until cleanup or an owner-approved exception.
+
+### LIFECYCLE INVARIANT
+
+Merging or closing a PR without a retirement decision for its linked worktree is
+not a fully finished task. The decision is one of: RETIRE NOW, KEEP ACTIVE, KEEP
+RESEARCH, PORT REQUIRED, BLOCKED BY USER/RUNTIME ARTIFACT.
+
+### ANTI-BUREAUCRACY GUARD
+
+Updating this registry is a few lines inside the task at hand. If maintaining it
+needs a separate audit or noticeable time, do not expand the system — trim it.
+
 ## NEXT SESSION START — RECONCILIATION / SYNC DEBT — 2026-09-26
 
 > **Superseded 2026-09-27:** the reconciliation is COMPLETE (29 → 5 worktrees); see the
