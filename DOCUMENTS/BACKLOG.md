@@ -61,12 +61,11 @@ Economical implementation sequence:
 6. **DONE:** PR #255 merged as `0f209e7` — backend `/api/health` now proves
    canonical PAPER component identity through the live serialized owner and exposes only
    allow-listed `database_identity`, `process_instance_id`, and `build_sha`;
-7. canonical launcher backend-reuse preflight follows after that health-identity prerequisite
-   and touches `start_robot_runtime.bat` + launcher tests only. Early bind remains the
-   process-ownership safety barrier; reuse prevents redundant duplicate startup operationally.
-   The untracked `start_robot_all.cmd` false-success (HTTP failures can still print success)
-   is recorded but must not be edited as startup authority during P0; retire it after the
-   canonical path is proven;
+7. **DONE:** PR #256 merged as `f7815fe` — canonical launcher reuses an already-running
+   canonical PAPER backend only when health identity matches the launcher's intended DB;
+   wrong/malformed identity fails closed and no duplicate backend is spawned. Early bind
+   remains the process-ownership safety barrier. The untracked `start_robot_all.cmd`
+   false-success remains recorded debt and is not startup authority;
 
 8. micro-slice: replace fixed startup sleeps with bounded readiness checks and
    fail closed unless backend, Robot/protection, Telegram callback worker,
