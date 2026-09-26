@@ -1,3 +1,34 @@
+## NEXT SESSION START — RECONCILIATION / SYNC DEBT — 2026-09-26
+
+Owner direction: **start the next work session with the remaining synchronization /
+reconciliation debt before resuming feature work.** Do not treat the seven
+historical dirty worktrees as unresolved work; their audit directly below has
+already proven them fully superseded.
+
+The next-session checkpoint is the still-live/sensitive state outside those seven:
+
+1. `C:\BybitScanner-box-robot-run` — runtime checkout; last observed with
+   backend PID 21116, open RDWUSDT position and `RECONCILIATION_REQUIRED`.
+   Re-check actual runtime/position/process state before any mutation; do not
+   assume the recorded PID or position is still current tomorrow.
+2. `C:\BybitScanner` — current dirty session checkout with untracked
+   `runtime/`, launchers and other local state. Reconcile deliberately; do
+   not overwrite or broadly clean user-owned local work.
+3. `C:\BybitScanner-sync-20260926` — reconciliation working copy to be
+   resolved/retired only after its role and remaining delta are re-established.
+4. `C:\BybitScanner-reconciliation-backup-20260926` — preserved
+   `start_robot_all.cmd` backup; keep until reconciliation is conclusively
+   finished and no longer depends on it.
+
+Start with **minimal state recovery** of these four items and current `main`,
+then resolve only the narrowest remaining synchronization debt. Do not rerun
+the already-completed seven-worktree history audit, do not recreate backups
+without new evidence, and do not touch active runtime/trading state blindly.
+
+After reconciliation reaches a verified safe checkpoint, return to the normal
+owner-priority queue (active L-shape PAPER Robot quest unless the owner
+reprioritizes again).
+
 ## DIRTY WORKTREE RECONCILIATION AUDIT — 2026-09-26
 
 Read-only audit result for the seven previously dirty historical worktrees:
