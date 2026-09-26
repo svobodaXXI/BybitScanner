@@ -114,7 +114,72 @@ Each Codex task is one bounded micro-slice with one minimum changed-behavior
 check. No broad refactor, supervisor framework, new persistence system,
 Docker migration, repeated full suites, or agent-run Scanner pass.
 
+## RECONCILIATION / WORKTREE CLEANUP = COMPLETE — 29 → 5 — 2026-09-27
+
+**Status: COMPLETE. No further cleanup quest remains from this reconciliation.**
+The PC↔GitHub reconciliation retired 24 of the original 29 worktrees; five
+remain by design. Authoritative `origin/main` when this was recorded:
+`ac677620a5b02735a6704eac9c41cf3a4b43c120`.
+
+Surviving worktrees (intentional):
+
+1. `C:\BybitScanner` — **primary**, current authoritative checkout. Tracked tree
+   clean at reconciliation finish; user-owned untracked/runtime data preserved
+   (119 untracked entries at closeout; no user-owned file was touched — the count
+   fell from 120 only because the retired nested `.worktrees/ikigai-card/` entry left the list).
+2. `C:\BybitScanner-box-robot-run` — **ACTIVE runtime checkout.** Do not retire,
+   switch or clean while runtime ownership remains. It holds user-owned legacy
+   launchers/artifacts, and live processes were launched from this path during
+   reconciliation.
+3. `C:\BybitScanner-main-acceptance` — acceptance checkout; keep.
+4. `C:\BybitScanner-sync-20260926` — reconciliation/sync checkout; keep.
+5. `C:\BybitScanner-ingress` — **PORT REQUIRED.** Branch
+   `fix/paper-ingress-entry-only-terminalization`, unique commit
+   `9bc902d62ec7d3b65524ac78e503da8e6c42a9cb`. It must NOT be deleted or blindly
+   cherry-picked. A fresh, focused port from current `main` is required when Robot
+   queue work resumes; the owning record is
+   `DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md` §23. Before any
+   port: add that CR's crash-window convergence test, decide how the
+   single-`limit_order_id` entry-only predicate treats Box grid candidates
+   (`limit_order_ids`, `BOX_PLAN_ONLY`), and run the commit's 10 cases against
+   current `main`.
+
+All other historical worktrees from the reconciliation audit were retired only
+after one of: proof of absorption/merge/supersession; preservation of dirty
+tracked state; exact-copy preservation of untracked/ignored artifacts; or
+explicit owner decision. The retirements deleted no local or remote branch and ran
+no `git worktree prune`.
+
+Preservation root: `C:\BybitScanner-reconciliation-backup-20260926` — **keep it;
+do not delete backups.** It holds the primary's local tracked backup, the old
+main-acceptance staged rollback patch, per-worktree dirty patches with exact
+copies, exact copies of ignored `debug/`, `charts/` and `config.py` artifacts (the
+`config.py` copy is a local config file whose contents were never inspected —
+treat it as sensitive), the `scanner-g1a` staged patch, and the `scanner-g2a`
+research dataset (3,382 files, 142,113,649 bytes, path set identical, every
+SHA256 verified, `MANIFEST.txt` alongside).
+
+PR #156 remains an **OPEN DRAFT research** PR and is not production authority;
+its local g1a/g2a worktrees were retired and its history stays on the remote
+branch `feat/geometry-pattern-chart-window`. Reuse only compatible, verified
+pieces later (see `SCANNER_GEOMETRY_CURRENT_COURSE.md`). PR #267 (branch
+`feat/robot-position-card-presentation`) was untouched by the reconciliation and
+remains a separate draft task.
+
+**No-repeat rule.** Do NOT recreate or re-audit the retired 24 worktrees merely
+because old docs, chat or history mention them, and do not read their absence as
+missing work. If historical evidence is needed, consult the reconciliation backup
+and branch/PR history. Reopen a retired item only when a NEW concrete defect or
+task explicitly requires it.
+
+**Runtime caveat.** The reconciliation did NOT stop or restart Robot, Scanner or
+Telegram runtime. Do not infer that a checkout's on-disk version equals the
+version loaded in a running process until an explicitly authorized restart occurs.
+
 ## NEXT SESSION START — RECONCILIATION / SYNC DEBT — 2026-09-26
+
+> **Superseded 2026-09-27:** the reconciliation is COMPLETE (29 → 5 worktrees); see the
+> completion record above. The list below is historical.
 
 Owner direction: **start the next work session with the remaining synchronization /
 reconciliation debt before resuming feature work.** Do not treat the seven
@@ -153,6 +218,9 @@ Return now to the active L-shape PAPER Robot quest; do not repeat this
 reconciliation unless new evidence changes runtime or repository state.
 
 ## DIRTY WORKTREE RECONCILIATION AUDIT — 2026-09-26
+
+> **Update 2026-09-27:** these worktrees were later retired; patches and exact copies were
+> nevertheless preserved under the reconciliation backup root (see the completion record above).
 
 Read-only audit result for the seven previously dirty historical worktrees:
 `.worktrees/ikigai-card`, `bv`, `ikigai-bands`, `ikigai-viz`,

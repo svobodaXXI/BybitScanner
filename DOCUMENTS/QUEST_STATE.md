@@ -2,7 +2,7 @@
 
 Статус: ACTIVE  
 GAME_MODE: ACTIVE  
-Обновлено: 2026-09-26  
+Обновлено: 2026-09-27  
 Назначение: компактная игровая проекция текущего GTD/backlog состояния для автоматического восстановления в новом чате.
 
 > Этот файл не задаёт технический приоритет сам по себе. При конфликте текущая
@@ -45,6 +45,31 @@ GAME_MODE: ACTIVE
 
 Backup и dirty локальный checkout пока сохраняются; не удалять их только ради
 cleanup. Следующий активный этап — один полный owner-run PAPER acceptance.
+
+### Завершение — 2026-09-27
+
+**RECONCILIATION / WORKTREE CLEANUP = COMPLETE. Worktree: 29 → 5.** Дальнейших
+cleanup-квестов по этой сверке нет.
+
+- Остаются намеренно: `C:\BybitScanner` (primary), `C:\BybitScanner-box-robot-run`
+  (АКТИВНЫЙ runtime-checkout; не retire/switch/clean, пока runtime им владеет),
+  `C:\BybitScanner-main-acceptance`, `C:\BybitScanner-sync-20260926` и
+  `C:\BybitScanner-ingress` (PORT REQUIRED: коммит `9bc902d`; не удалять и не
+  cherry-pick вслепую; свежий узкий порт — когда возобновится работа над Robot queue).
+- Остальные 24 исторических worktree закрыты только после доказанного
+  поглощения/merge/supersession, сохранения dirty-состояния, побайтового
+  сохранения untracked/ignored артефактов или решения владельца; при retirement
+  ветки не удалялись, `git worktree prune` не выполнялся.
+- Backup `C:\BybitScanner-reconciliation-backup-20260926` сохранять, включая
+  датасет scanner-g2a (3 382 файла, 142 113 649 байт, все SHA256 проверены).
+- PR #156 остаётся OPEN DRAFT research, не production; PR #267 не затрагивался.
+- No-repeat: не пересоздавать и не переаудировать закрытые 24 worktree из-за
+  старых упоминаний; их отсутствие не означает потерянную работу; исторические
+  доказательства — backup и история веток/PR.
+- Runtime не останавливался и не перезапускался: не считать версию checkout на
+  диске равной версии в запущенном процессе до явно разрешённого перезапуска.
+
+Подробная запись: `DOCUMENTS/BACKLOG.md` → «RECONCILIATION / WORKTREE CLEANUP = COMPLETE».
 
 ## 🎯 Активный квест
 
