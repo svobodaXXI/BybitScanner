@@ -311,6 +311,16 @@ def _format_quantity(value: Any) -> str:
     return "—" if number is None else format(number.normalize(), "f")
 
 
+def _format_position_size(quantity: Any, average_entry: Any) -> str:
+    quantity_number = _decimal(quantity)
+    average_number = _decimal(average_entry)
+    notional = (
+        quantity_number * average_number
+        if quantity_number is not None and average_number is not None else None
+    )
+    return f"{_format_quantity(quantity_number)} ({format_price(notional)} USDT)"
+
+
 def _signed_usdt(value: Decimal) -> str:
     sign = "+" if value >= 0 else "-"
     return f"{sign}{format_price(abs(value))} USDT"
@@ -355,7 +365,7 @@ def format_position_card(view: PositionView) -> str:
         f"{view.symbol} · {view.direction}",
         "",
         f"Статус: {'открыта' if view.is_open else 'закрыта'}",
-        f"Размер: {_format_quantity(view.quantity)}",
+        f"Размер: {_format_position_size(view.quantity, view.average_entry)}",
         f"Средний вход: {format_price(view.average_entry)}",
     ]
     if view.is_open:
@@ -371,8 +381,8 @@ def format_position_card(view: PositionView) -> str:
         if trade.realized_pnl_usdt is not None:
             lines.append(format_trade_result(view))
     lines += [
-        f"STOP: {format_price(view.stop_price)}",
-        f"TAKE: {format_price(view.take_price)}",
+        f"SL: {format_price(view.stop_price)}",
+        f"TP: {format_price(view.take_price)}",
         f"Паттерн: {view.pattern or '—'}",
     ]
     if view.entry_before_chart:

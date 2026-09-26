@@ -48,6 +48,7 @@ from robot_telegram_feed import (
 from terminal.application.robot_control import get_robot_runtime_status
 from terminal.domain.models import TradingAccountId
 from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
+from tradingview_bridge import create_tradingview_url
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -248,6 +249,18 @@ POSITIONS_BACK_MARKUP = {
 }
 
 
+def build_position_card_markup(view) -> dict:
+    return {
+        "inline_keyboard": [
+            [{
+                "text": "Открыть в Trading View",
+                "url": create_tradingview_url(view.symbol, str(view.chart_candle_minutes)),
+            }],
+            POSITIONS_BACK_MARKUP["inline_keyboard"][0],
+        ],
+    }
+
+
 def build_position_buttons(positions) -> list[list[dict[str, str]]]:
     # Numbering and order match format_paper_positions_view's list.
     return [
@@ -285,10 +298,11 @@ def _send_position_card(chat_id, symbol: str) -> None:
 
     view, candles = _with_candles(view)
     caption = format_position_card(view)
+    reply_markup = build_position_card_markup(view)
     if not view.is_robot:
-        _send_text(chat_id, caption, reply_markup=POSITIONS_BACK_MARKUP)
+        _send_text(chat_id, caption, reply_markup=reply_markup)
         return
-    _send_chart_card(chat_id, view, candles, caption, POSITIONS_BACK_MARKUP)
+    _send_chart_card(chat_id, view, candles, caption, reply_markup)
 
 
 def _with_candles(view, now_ms: int | None = None):
