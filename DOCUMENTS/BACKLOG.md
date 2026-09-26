@@ -25,9 +25,16 @@ then resolve only the narrowest remaining synchronization debt. Do not rerun
 the already-completed seven-worktree history audit, do not recreate backups
 without new evidence, and do not touch active runtime/trading state blindly.
 
-After reconciliation reaches a verified safe checkpoint, return to the normal
-owner-priority queue (active L-shape PAPER Robot quest unless the owner
-reprioritizes again).
+**Checkpoint completed 2026-09-26.** The four sensitive paths were reconciled
+without broad cleanup. `sync-20260926` and `box-robot-run` are on current
+`main`; two unique local files from `C:\BybitScanner` were preserved in the
+external reconciliation backup; the dirty checkout itself remains untouched.
+The PAPER backend was started with LIVE gates off and Scanner still stopped.
+Protection coverage recovered healthy, explicit operator reconciliation
+succeeded, and Robot landed in `ROBOT_RUNNING / PAUSED` with the open RDWUSDT
+PAPER lifecycle preserved. Unresolved protection obligations were zero.
+Return now to the active L-shape PAPER Robot quest; do not repeat this
+reconciliation unless new evidence changes runtime or repository state.
 
 ## DIRTY WORKTREE RECONCILIATION AUDIT — 2026-09-26
 
