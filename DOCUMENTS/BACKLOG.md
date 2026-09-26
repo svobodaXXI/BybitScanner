@@ -51,20 +51,30 @@ Economical implementation sequence:
 3. **DONE:** PR #252 merged as `1e07dec` — `telegram_monitoring.py` is
    single-owner, proves getUpdates ownership before READY, and startup waits
    for its identified health endpoint before Scanner mutation;
-4. micro-slice: make Scanner restart recovery + launcher dispatch one complete invariant.
-   The Scanner pause cursor is in-memory only, so a fresh backend must normalize
-   persisted stale `SCANNER_RUNNING`/`SCANNER_PAUSED` to `SCANNER_STOPPED` before
-   accepting lifecycle commands. On an already-live backend the launcher routes
-   `STOPPED -> start`, `PAUSED -> resume`, `RUNNING -> reuse/no mutation`;
-   unknown/unavailable -> fail closed. Until this is merged, do not reuse the
-   canonical full-prototype launcher;
-5. micro-slice: replace fixed startup sleeps with bounded readiness checks and
+4. prerequisite micro-slice before PR #253 merge: PAPER backend must bind/reserve
+   its localhost HTTP listener before REST/WebSocket/SQLite/runtime/recovery side effects.
+   A duplicate backend that loses port ownership must fail before touching authoritative
+   state. Implement only in `terminal/runtime/paper_http_server.py` plus one focused
+   regression in `tests/test_terminal_paper_http.py`; do not touch launcher/Scanner runtime.
+5. PR #253 remains the Scanner restart-recovery + launcher-routing slice:
+   the Scanner pause cursor is in-memory only, so a fresh backend normalizes stale
+   `SCANNER_RUNNING`/`SCANNER_PAUSED` to `SCANNER_STOPPED`; on an already-live backend
+   launcher routes `STOPPED -> start`, `PAUSED -> resume`, `RUNNING -> reuse/no mutation`;
+   unknown/unavailable -> fail closed. Keep #253 unchanged until prerequisite 4 is merged,
+   then sync/review it;
+6. canonical launcher backend-reuse preflight is a later separate slice because it touches
+   `start_robot_runtime.bat`; early bind is the safety barrier and reuse removes redundant
+   duplicate startup operationally. The untracked `start_robot_all.cmd` false-success
+   (HTTP failures can still print success) is recorded but must not be edited as startup
+   authority during P0; retire it after canonical path is proven;
+
+7. micro-slice: replace fixed startup sleeps with bounded readiness checks and
    fail closed unless backend, Robot/protection, Telegram callback worker,
    shared runtime identity/config and Scanner owner are coherent;
-6. micro-slice: remove the stale explicit-1m Wedge observational-only gate
+8. micro-slice: remove the stale explicit-1m Wedge observational-only gate
    under the owner's current Robot-button rule, preserving normal admission
    safety at the callback boundary;
-7. only then run the next owner full-universe Telegram acceptance pass.
+9. only then run the next owner full-universe Telegram acceptance pass.
 
 Each Codex task is one bounded micro-slice with one minimum changed-behavior
 check. No broad refactor, supervisor framework, new persistence system,
