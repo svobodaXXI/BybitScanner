@@ -70,7 +70,7 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #253 merged (`18fc8c2`): Scanner restart-safe + launcher lifecycle-aware;
 - [x] PR #255 merged (`0f209e7`): backend `/api/health` теперь подтверждает canonical PAPER backend, live owner и database identity;
 - [x] PR #256 merged (`f7815fe`): canonical launcher переиспользует уже живой canonical PAPER backend с совпадающей database identity;
-- [ ] заменить оставшиеся startup gaps на bounded dependency readiness/fail-closed startup; backend PR #257, Robot admission PR #258, Robot/protection barrier PR #259, Telegram DB identity health PR #260, launcher Telegram/backend identity match PR #261, backend PAPER/config safety health PR #262;
+- [x] startup-path закрыт fail-closed: backend PR #257, Robot admission PR #258, Robot/protection barrier PR #259, Telegram DB identity health PR #260, launcher Telegram/backend identity match PR #261, backend PAPER/config safety health PR #262, launcher safety enforcement PR #263;
 - [ ] убрать устаревший 1m Wedge observational-only Robot-button gate;
 - [ ] только после этого провести один полный owner-run acceptance.
 
