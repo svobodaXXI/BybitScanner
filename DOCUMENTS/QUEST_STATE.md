@@ -47,31 +47,34 @@ cleanup. Следующий активный этап — реальная PAPER
 
 ## 🎯 Активный квест
 
-### Рейд «Г-образные врата»
+### Рейд «Один запуск — весь прототип»
 
-**Приоритет:** №1  
+**Приоритет:** P0  
 **Статус:** АКТИВЕН  
-**Цель:** подключить L-shape к PAPER Robot через существующий общий lifecycle и
-дать владельцу настоящую кнопку «🤖 Робот».
+**Цель:** сделать один канонический owner-start путь, после которого PAPER
+backend, Robot protection/admission, Telegram callbacks/menu и Scanner имеют
+по одному владельцу, одну runtime authority и проверенную readiness-цепочку.
 
-**Главный босс:** «Врата допуска»  
-PR #248 уже **merged** в `main` (`753a800`): L-shape подключён к общему
-PAPER Robot lifecycle и настоящей кнопке «🤖 Робот». Владелец 2026-09-26
-явно разрешил исполняемые L-shape source timeframe **1м и 5м**; остальные
-таймфреймы не разрешены автоматически. Реальная обязательная PAPER-проверка
-ещё не пройдена, поэтому рейд остаётся активным и XP не начисляется.
+Причина переключения: 2026-09-26 длинный acceptance-run был начат после
+неполного preflight. Backend и Robot были READY, но Telegram callback worker
+не работал; дополнительно обнаружен split-brain Scanner ownership:
+standalone `main.py` и backend `ScannerControlRuntime` являются разными
+владельцами и могут породить дубли.
 
 **Этапы рейда:**
 
-- [x] определить минимальный L-shape -> durable candidate contract;
-- [x] переиспользовать общий Robot lifecycle без второго execution engine;
-- [x] сохранить L-shape-специфичные 0.8% potential, RR >= 2:1 и frozen STOP/TAKE;
-- [x] подключить реальный Telegram «🤖 Робот» к настоящему candidate;
-- [ ] пройти минимальную обязательную PAPER-проверку;
-- [ ] только после доказанного completion начислить награду.
+- [ ] довести PR #249 как bounded prerequisite для one-pass authoritative Scanner runtime;
+- [ ] убрать standalone Scanner из канонического prototype launcher;
+- [ ] сделать Telegram update consumer singleton + observable readiness;
+- [ ] заменить fixed sleeps на bounded dependency readiness/fail-closed startup;
+- [ ] убрать устаревший 1m Wedge observational-only Robot-button gate;
+- [ ] только после этого провести один полный owner-run acceptance.
 
-**Награда:** 50 XP  
-**Ачивка-кандидат:** «Новый монстр, старый движок»
+**Награда:** без XP за документацию/рефакторинг; награда только за доказанный
+полный запуск без ручного кризисного восстановления.
+
+Предыдущий рейд «Г-образные врата» не отменён: PR #248 merged, но его
+реальная PAPER acceptance временно ждёт завершения этого P0 operational gate.
 
 ## Очередь после активного квеста
 
