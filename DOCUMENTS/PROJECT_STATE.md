@@ -40,6 +40,63 @@ parser_version:
 
 ---
 
+# CURRENT_OPERATIONAL_CHECKPOINT_2026_09_26
+
+active_owner_goal:
+
+Finish L-shape PAPER Robot runtime acceptance safely, with Scanner lifecycle
+control corrected before commissioning another full owner run.
+
+proven_completed:
+
+* PR #248 merged to main as `753a800...`;
+* L-shape -> shared PAPER Robot lifecycle and real Telegram Robot handoff;
+* executable L-shape source timeframes explicitly bounded to 1m + 5m;
+* deterministic Robot PAPER acceptance green on the #248 implementation.
+
+active_change:
+
+* draft PR #249 — Scanner one-pass + cooperative pause/resume + explicit stop +
+  Telegram Menu self-heal;
+* latest code-bearing head before the 2026-09-26 documentation-only checkpoint:
+  `d2a6473...`;
+* first direct Scanner-control run exposed a test-ordering race only; the test
+  was made deterministic without runtime-code changes;
+* Robot PAPER acceptance run #191 is green, including the direct
+  Scanner-control/Telegram-menu step; merge remains owner-controlled.
+
+open_blockers:
+
+* real L-shape PAPER runtime acceptance not yet complete;
+* Robot durable state observed as
+  `ROBOT_RUNNING / RECONCILIATION_REQUIRED` after protection
+  `ingress_overflow`;
+* root cause of protection ingress overflow remains unproven;
+* FLOCK Ikigai Box baseline detector test is red in the existing Box geometry
+  boundary and is separate from #249;
+* the repeating/interrupted Scanner session is not valid full-run acceptance;
+* the requested read-only audit of 25.09 PAPER Robot trading/PnL is still
+  pending because Codex Desktop repeatedly returns 401 despite healthy ChatGPT
+  auth diagnostics;
+* Codex Desktop remains on build 26.917.9434.0 while 26.924.1866.0 is reported
+  available; its in-app updater has not actually replaced the installed
+  package;
+* Codex Windows elevated sandbox also reports helper_sandbox_lock_failed; keep
+  this separate from BybitScanner runtime unless proven related.
+
+next_dependent_sequence:
+
+1. owner decision on merging #249 now that current-head targeted CI is green;
+2. synchronize/restart local PC runtime only on owner command;
+3. resolve Codex Desktop update/401 tooling blocker and perform the pending
+   read-only Robot trading/PnL audit;
+4. owner-check pause -> continue same pass -> stop and one-pass natural STOP;
+5. reconcile Robot through the evidence-based path;
+6. complete real L-shape PAPER acceptance;
+7. then return to Ikigai first-impulse/FLOCK geometry.
+
+---
+
 # CURRENT_PROJECT_STATUS
 
 status:

@@ -53,9 +53,9 @@ PAPER_ACCOUNT_ID = TradingAccountId("paper")
 DB_PATH = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
 
 SCANNER_ACTIONS = {
-    "SCANNER_RUNNING": ("Остановить сканер", "pause"),
-    "SCANNER_PAUSED": ("Запустить сканер", "resume"),
-    "SCANNER_STOPPED": ("Запустить сканер", "start"),
+    "SCANNER_RUNNING": ("⏸ Пауза сканера", "pause"),
+    "SCANNER_PAUSED": ("▶ Продолжить сканер", "resume"),
+    "SCANNER_STOPPED": ("▶ Запустить сканер", "start"),
 }
 
 
@@ -92,6 +92,7 @@ def _send_text(chat_id, text, **kwargs):
 
 
 def _send_scanner_control(chat_id):
+    """Backward-compatible pause/resume/start toggle."""
     try:
         state = _scanner_request()
         # One dispatch only. Never retry a mutation after an ambiguous response.
@@ -100,6 +101,31 @@ def _send_scanner_control(chat_id):
         _send_text(
             chat_id,
             "Команда сканера не подтверждена. Состояние будет проверено; автоматического повтора нет.",
+        )
+    try:
+        state = _scanner_request()
+        _send_text(
+            chat_id,
+            f"{SCANNER_EMOJI} Сканер: "
+            + {
+                "SCANNER_RUNNING": "запущен",
+                "SCANNER_PAUSED": "на паузе",
+                "SCANNER_STOPPED": "остановлен",
+            }[state["mode"]],
+        )
+    except Exception:
+        _send_text(chat_id, "Состояние сканера недоступно.")
+    refresh_command_menu()
+
+
+def _send_scanner_stop(chat_id):
+    try:
+        _scanner_request("stop")
+    except Exception:
+        _send_text(
+            chat_id,
+            "Остановка сканера не подтверждена. Состояние будет проверено; "
+            "автоматического повтора нет.",
         )
     try:
         state = _scanner_request()
@@ -591,6 +617,7 @@ def _process_message(message) -> bool:
     handlers = {
         "/terminal": _send_workspace,
         "/scanner": _send_scanner_control,
+        "/scanner_stop": _send_scanner_stop,
         "/robot": _send_robot_status,
         "/positions": _send_paper_positions,
         "/monitoring": _send_candidate_list,
@@ -639,6 +666,7 @@ def refresh_command_menu() -> None:
         [
             {"command": "terminal", "description": "Терминал"},
             {"command": "scanner", "description": scanner_label},
+            {"command": "scanner_stop", "description": "⏹ Остановить сканер"},
             {"command": "robot", "description": "Робот"},
             {"command": "positions", "description": "Все открытые позиции"},
             {"command": "monitoring", "description": "Мониторинг кандидатов"},
@@ -653,18 +681,25 @@ def refresh_command_menu() -> None:
         _published_commands = commands
 
 
+def _ensure_commands_menu_button() -> None:
+    owner = _owner_id()
+    if not owner:
+        return
+    current = _telegram_request("getChatMenuButton", chat_id=owner)
+    if current.get("ok") and (current.get("result") or {}).get("type") == "commands":
+        return
+    response = _telegram_request(
+        "setChatMenuButton",
+        chat_id=owner,
+        menu_button=json.dumps({"type": "commands"}),
+    )
+    if not response.get("ok"):
+        raise RuntimeError(f"setChatMenuButton failed: {response}")
+
+
 def configure_monitoring_menu() -> None:
     refresh_command_menu()
-
-    owner = _owner_id()
-    if owner:
-        response = _telegram_request(
-            "setChatMenuButton",
-            chat_id=owner,
-            menu_button=json.dumps({"type": "commands"}),
-        )
-        if not response.get("ok"):
-            raise RuntimeError(f"setChatMenuButton failed: {response}")
+    _ensure_commands_menu_button()
 
 
 def run() -> None:
@@ -679,6 +714,7 @@ def run() -> None:
     while True:
         try:
             refresh_command_menu()
+            _ensure_commands_menu_button()
             params = {
                 "timeout": 30,
                 "allowed_updates": json.dumps(["callback_query", "message"]),

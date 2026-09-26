@@ -3028,11 +3028,15 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **payload})
             return
 
-        if self.path in {"/api/scanner/start", "/api/scanner/pause", "/api/scanner/resume"}:
+        if self.path in {
+            "/api/scanner/start", "/api/scanner/pause",
+            "/api/scanner/resume", "/api/scanner/stop",
+        }:
             command = {
                 "/api/scanner/start": lambda runtime: runtime.start_scanner(),
                 "/api/scanner/pause": lambda runtime: runtime.pause_scanner(),
                 "/api/scanner/resume": lambda runtime: runtime.resume_scanner(),
+                "/api/scanner/stop": lambda runtime: runtime.stop_scanner(),
             }[self.path]
             try:
                 result = self.server.runtime.call(command)

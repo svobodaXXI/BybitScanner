@@ -156,6 +156,138 @@ owner-authorized step:**
 The audit itself made no worktree cleanup, file transfer, runtime change, HEAD
 change, branch change, stash change, or process launch/stop.
 
+> Historical #249 checkpoint below; the current P0 operational-completeness priority and acceptance gate above take precedence over its next-work sequence and runtime snapshot.
+
+## RUNTIME / L-SHAPE / SCANNER CONTROL CHECKPOINT — 2026-09-26
+
+### Completed and proven — do not repeat
+
+- PR #248 `feat(robot): connect L-shape to PAPER lifecycle` was merged to
+  `main` as `753a800341fd66a2b0a616b0e934ed87141661aa`.
+- L-shape now has a durable Scanner -> Robot candidate handoff, reuses the
+  shared PAPER Robot lifecycle/protection/recovery path, and has the real
+  owner Telegram `🤖 Робот` control.
+- Owner explicitly authorized executable L-shape source timeframes **1m and
+  5m**. Admission is bounded to exactly those timeframes; 15m/other timeframes
+  are rejected rather than implicitly enabled.
+- The #248 head passed `Robot PAPER acceptance` before merge. This proves the
+  deterministic CI path, **not** the still-required owner runtime/PAPER
+  acceptance.
+
+### Runtime incident / open blocker
+
+- The live PAPER Robot entered
+  `ROBOT_RUNNING / RECONCILIATION_REQUIRED` after protection-feed
+  `ingress_overflow`. REST recovery then produced the expected fail-closed
+  `EMERGENCY_CLOSE` obligations for owned open Robot positions.
+- The emergency-close behavior is consistent with the designed safety path;
+  the unresolved root cause is **why protection ingress overflowed**. Do not
+  weaken or bypass the reconciliation/protection fence to make admission READY.
+- Before relying on Robot for new PAPER entries, complete the normal
+  evidence-based Robot reconciliation and separately diagnose the
+  `ingress_overflow` latency/queue-pressure cause from runtime metrics/logs.
+- The current L-shape raid therefore remains **not runtime-accepted** and earns
+  no completion XP yet.
+
+### Scanner control defect discovered during acceptance
+
+Observed owner runtime behavior: while Scanner durable mode remained
+`SCANNER_RUNNING`, `ScannerControlRuntime` launched a new full-universe pass
+after the prior pass returned. The owner observed a third traversal. The old
+Telegram `/scanner` command also conflated pause/resume with “stop”:
+`PAUSED` prevented a future pass from starting but did not abort the pass
+already executing.
+
+Owner-approved control contract:
+
+1. **One manual start = at most one complete universe pass.** Natural
+   completion -> `SCANNER_STOPPED`; never auto-loop into pass 2.
+2. **Pause** is cooperative and preserves the current traversal cursor. The
+   current symbol/timeframe may finish; execution then blocks before the next
+   checkpoint.
+3. **Continue** resumes the same in-memory traversal from that checkpoint; it
+   must not restart from ticker 1.
+4. **Stop Scanner** is a separate command. It aborts the current pass at the
+   next safe symbol/timeframe checkpoint and leaves `SCANNER_STOPPED`.
+5. Scanner lifecycle actions must not start/stop/pause Robot or otherwise
+   mutate Robot admission state.
+
+Draft PR #249 implements this boundary:
+- cooperative Scanner checkpoint in `run_scan_pass()`;
+- explicit runtime/API `stop_scanner`;
+- natural one-pass completion -> STOPPED;
+- dynamic Telegram command: `⏸ Пауза сканера` /
+  `▶ Продолжить сканер` / `▶ Запустить сканер`;
+- separate permanent `⏹ Остановить сканер` command;
+- Telegram command-menu button self-check/recovery via
+  `getChatMenuButton` -> `setChatMenuButton` when needed;
+- focused runtime/Telegram regression coverage.
+
+Latest #249 code-bearing head before this documentation checkpoint:
+`d2a6473fe654134a017d48840232cfe16b83e05f`, status **DRAFT / NOT MERGED**.
+Subsequent commits in this branch are documentation-only, so do not confuse
+the branch tip with a new runtime-code change. The first direct Scanner-control CI run exposed
+a race in the new pause/resume test itself (`ConcurrentUpdate` caused by the
+test allowing the background pass to cross the checkpoint before PAUSED was
+committed). Commit `d2a6473...` made the test ordering deterministic without
+changing runtime code. Robot PAPER acceptance run #191 is now green, including
+the direct `tests.test_scanner_control_runtime` +
+`tests.test_telegram_monitoring` step. The separate Ikigai Box workflow remains
+red on the pre-existing FLOCK baseline and is not a #249 Scanner-control
+regression.
+
+### Separate Box blocker — keep out of #249
+
+The `Ikigai Box detector` workflow on #249 failed only
+`test_flock_style_green_wick_anchors_red_core_and_55pct_box_gate`
+(expected one FLOCK-style watch, got zero). The same test and detector logic
+already exist in current `main`; #249 does not modify Box geometry. Treat this
+as the existing Box geometry boss, not as justification for Scanner-control
+patching. Resolve it in the dedicated Ikigai first-impulse/FLOCK slice.
+
+### Tooling/runtime audit blocker discovered 2026-09-26
+
+- Owner requested a read-only audit of what PAPER Robot traded on 25.09.2026
+  (plus any post-midnight 26.09 MSK records): per-trade ownership, entry/exit,
+  gross PnL, fees, net PnL, close reason, emergency closes, open trades and
+  durable Robot state. This audit is still **pending**; do not infer trading
+  performance from partial Telegram evidence.
+- The intended host-local read-only audit through Codex Desktop is currently
+  blocked by repeated `401 Unauthorized: Incorrect API key provided` responses.
+- Diagnostics prove the normal credential sources are not the cause:
+  current/process/user/machine `OPENAI_API_KEY` and `CODEX_API_KEY` are
+  absent; `~/.codex/auth.json` reports `auth_mode=chatgpt`, no stored API key
+  and valid ChatGPT tokens; `codex doctor` reaches the ChatGPT websocket with
+  HTTP 101.
+- Codex Desktop is still installed as build `26.917.9434.0` while
+  `codex doctor` reports build `26.924.1866.0` available. The in-app updater
+  repeatedly says the update is ready but relaunches without changing the
+  installed package version. Resolve/update the Desktop client before spending
+  more owner time on credential hunting.
+- `codex doctor` also reports
+  `helper_sandbox_lock_failed` for elevated Windows sandbox provisioning.
+  Treat that as a separate Codex host-tooling issue unless evidence connects it
+  to the 401; do not conflate it with BybitScanner runtime defects.
+
+### Next dependent work
+
+1. #249 now has direct green Scanner runtime + Telegram menu CI evidence on
+   `d2a6473...`; merge decision remains owner-controlled.
+2. If merged, synchronize/restart the PC runtime only when the owner explicitly
+   chooses to do so.
+3. Owner acceptance for Scanner control: start -> pause -> continue same pass ->
+   stop; separately prove one uninterrupted complete pass ends in STOPPED and
+   does not auto-start another cycle.
+4. Complete evidence-based Robot reconciliation before accepting new PAPER
+   Robot entries.
+5. Diagnose the `ingress_overflow` root cause without weakening fail-closed
+   protection.
+6. Finish L-shape real PAPER acceptance; only then close «Г-образные врата».
+7. Continue to Ikigai Box «Кривой первый импульс» / FLOCK geometry.
+
+The interrupted/repeating Scanner session from this incident is **not** a valid
+full Scanner acceptance run.
+
 ## BOX ROBOT IMPLEMENTATION ROUTE — 2026-09-25 UPDATE
 
 Mature-engine cross-check (LEAN / Hummingbot / Freqtrade patterns) confirms the project-specific architecture: Box is a multi-order **entry policy** over the existing Robot trade/order lifecycle, not a parallel trading subsystem.

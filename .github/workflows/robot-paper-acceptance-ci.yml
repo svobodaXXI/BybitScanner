@@ -31,6 +31,8 @@ on:
       - "tests/test_l_shape_scanner.py"
       - "tests/test_signal_admission.py"
       - "tests/test_telegram_delivery.py"
+      - "tests/test_scanner_control_runtime.py"
+      - "tests/test_telegram_monitoring.py"
       - "analyzer/core.py"
       - "notification.py"
       - "tests/test_robot_breakout_monitor_admission_catchup.py"
@@ -96,6 +98,8 @@ jobs:
           tests/test_l_shape_scanner.py
           tests/test_signal_admission.py
           tests/test_telegram_delivery.py
+          tests/test_scanner_control_runtime.py
+          tests/test_telegram_monitoring.py
           analyzer/core.py
           notification.py
           robot_l_shape.py
@@ -135,6 +139,12 @@ jobs:
           tests.test_signal_admission
           tests.test_telegram_delivery
           tests.test_l_shape_scanner.LShapeTelegramTests
+      - name: Run Scanner control and Telegram menu acceptance
+        run: >-
+          python -m unittest -v
+          tests.test_scanner_control_runtime
+          tests.test_telegram_monitoring
+
       - name: Run Robot scoped LIMIT amend acceptance
         run: >-
           python -m pytest -q

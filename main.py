@@ -70,7 +70,7 @@ def build_scan_finished_message(
     )
 
 
-def run_scan_pass(*, box_robot_sink=None):
+def run_scan_pass(*, box_robot_sink=None, control_checkpoint=None):
     """Run exactly one Scanner scan pass over all discovered symbols.
 
     Extracted from main() as a reusable, throttled-repeatable unit (mirroring
@@ -120,6 +120,9 @@ def run_scan_pass(*, box_robot_sink=None):
 
     for symbol in symbols:
         for timeframe in ("5", "1"):
+            if control_checkpoint is not None and not control_checkpoint():
+                print("[SCANNER] current pass stopped by owner")
+                return
             try:
                 analysis_result = analyze_symbol(symbol, timeframe=timeframe)
 

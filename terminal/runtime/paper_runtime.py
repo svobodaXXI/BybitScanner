@@ -277,18 +277,20 @@ SCANNER_PAUSED = "SCANNER_PAUSED"
 DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0
 
 
-def _run_scanner_scan_pass(*, box_robot_sink=None) -> None:
+def _run_scanner_scan_pass(*, box_robot_sink=None, control_checkpoint=None) -> None:
     """Load Scanner/config only when an actual scan pass is due."""
     from main import run_scan_pass
 
-    run_scan_pass(box_robot_sink=box_robot_sink)
+    run_scan_pass(
+        box_robot_sink=box_robot_sink,
+        control_checkpoint=control_checkpoint,
+    )
 
-# DOCUMENTS/SCANNER_CONTROL_RUNTIME_DECISION.md section 3: exactly these
-# three commands are authoritative; there is no separate "stop" command.
 _SCANNER_VALID_TRANSITIONS = {
     "start_scanner": ({SCANNER_STOPPED}, SCANNER_RUNNING),
     "pause_scanner": ({SCANNER_RUNNING}, SCANNER_PAUSED),
     "resume_scanner": ({SCANNER_PAUSED}, SCANNER_RUNNING),
+    "stop_scanner": ({SCANNER_RUNNING, SCANNER_PAUSED}, SCANNER_STOPPED),
 }
 
 
@@ -321,7 +323,7 @@ class ScannerControlRuntime:
         store_factory: Callable[[], SQLiteStore],
         trading_account_id: TradingAccountId,
         *,
-        scan_pass: Callable[[], None],
+        scan_pass: Callable[[Callable[[], bool]], None],
         clock_ms: Callable[[], int],
         scan_interval_s: float = DEFAULT_SCANNER_SCAN_INTERVAL_S,
     ) -> None:
@@ -377,17 +379,51 @@ class ScannerControlRuntime:
             # reaches a real scan_pass() call. Mirrors RobotBreakoutMonitor's
             # same safety pattern.
             while not self._stop.wait(self._scan_interval_s):
+                state = self._store().get_scanner_runtime_state(self._account_id)
+                if state is None or state.mode != SCANNER_RUNNING:
+                    continue
                 try:
-                    state = self._store().get_scanner_runtime_state(self._account_id)
-                    if state is not None and state.mode == SCANNER_RUNNING:
-                        self._scan_pass()
+                    self._scan_pass(self._control_checkpoint)
                 except Exception as error:
                     print(
                         "[SCANNER CONTROL RUNTIME ERROR] "
                         f"error={error}"
                     )
+                finally:
+                    # A manual start authorizes one pass. Natural completion
+                    # returns to STOPPED. An explicit stop may already have
+                    # committed STOPPED while the pass was between checkpoints.
+                    try:
+                        current = self._store().get_scanner_runtime_state(
+                            self._account_id
+                        )
+                        if current is not None and current.mode == SCANNER_RUNNING:
+                            self._store().update_scanner_runtime_state(
+                                self._account_id,
+                                mode=SCANNER_STOPPED,
+                                expected_version=current.version,
+                                updated_at_ms=self._now_ms(),
+                            )
+                    except Exception as stop_error:
+                        print(
+                            "[SCANNER CONTROL RUNTIME STOP ERROR] "
+                            f"error={stop_error}"
+                        )
         finally:
             self._close_local_store()
+
+    def _control_checkpoint(self) -> bool:
+        """Block a live pass while PAUSED; return False when it must stop."""
+        while not self._stop.is_set():
+            state = self._store().get_scanner_runtime_state(self._account_id)
+            if state is None or state.mode == SCANNER_STOPPED:
+                return False
+            if state.mode == SCANNER_RUNNING:
+                return True
+            # PAUSED preserves the current Python loop/cursor. Resume changes
+            # durable state and the same pass continues from this checkpoint.
+            self._stop.wait(0.2)
+        return False
 
     def status(self) -> ScannerRuntimeStateRecord:
         store = self._store()
@@ -406,6 +442,12 @@ class ScannerControlRuntime:
 
     def resume_scanner(self) -> ScannerRuntimeStateRecord:
         return self._transition("resume_scanner")
+
+    def stop_scanner(self) -> ScannerRuntimeStateRecord:
+        current = self.status()
+        if current.mode == SCANNER_STOPPED:
+            return current
+        return self._transition("stop_scanner")
 
     def _transition(self, command: str) -> ScannerRuntimeStateRecord:
         expected_modes, new_mode = _SCANNER_VALID_TRANSITIONS[command]
@@ -733,8 +775,9 @@ class PaperRuntime:
         self._scanner_control = ScannerControlRuntime(
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
-            scan_pass=lambda: _run_scanner_scan_pass(
+            scan_pass=lambda checkpoint: _run_scanner_scan_pass(
                 box_robot_sink=self._dispatch_ikigai_box_robot_candidate,
+                control_checkpoint=checkpoint,
             ),
             clock_ms=lambda: int(time.time() * 1000),
         )
@@ -905,6 +948,9 @@ class PaperRuntime:
 
     def resume_scanner(self) -> ScannerRuntimeStateRecord:
         return self._scanner_control.resume_scanner()
+
+    def stop_scanner(self) -> ScannerRuntimeStateRecord:
+        return self._scanner_control.stop_scanner()
 
     def scanner_status(self) -> ScannerRuntimeStateRecord:
         return self._scanner_control.status()
