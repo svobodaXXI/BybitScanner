@@ -86,6 +86,7 @@ LOGGER = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"
 PORT = 8765
+HEALTH_IDENTITY_FIELDS = ("database_identity", "process_instance_id", "build_sha")
 OPERATOR_DIAGNOSTICS_PATH = "/api/operator/live-limit-acceptance"
 OPERATOR_ARM_PATH = "/api/operator/live-limit-acceptance/arm"
 OPERATOR_REVOKE_PATH = "/api/operator/live-limit-acceptance/revoke"
@@ -2176,12 +2177,20 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             return
 
         if parsed.path == "/api/health":
+            # Only the serialized owner can answer, and only an allow-listed
+            # subset of its existing runtime attribution leaves the owner thread.
+            def _health_identity(runtime):
+                diagnostics = runtime.live_limit_acceptance_diagnostics()
+                return {key: diagnostics[key] for key in HEALTH_IDENTITY_FIELDS}
+
+            try:
+                identity = self.server.runtime.call(_health_identity)
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "paper_runtime_unavailable"})
+                return
             self._json_response(
                 200,
-                {
-                    "ok": True,
-                    "mode": "paper",
-                },
+                {"ok": True, "component": "paper_backend", "mode": "paper", **identity},
             )
             return
 

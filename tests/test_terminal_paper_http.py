@@ -1178,32 +1178,107 @@ def test_limit_mutations_return_revisioned_resulting_authoritative_state():
             runtime.close()
 
 
-def test_health_get_returns_exact_paper_status():
-    with tempfile.TemporaryDirectory() as temp:
-        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
-        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
-        server.runtime = runtime
-        response = {}
+def _get_health_once(server):
+    response = {}
 
-        def get_health():
+    def get_health():
+        try:
             with urllib.request.urlopen(
                 f"http://127.0.0.1:{server.server_port}/api/health"
             ) as result:
                 response["status"] = result.status
-                response["body"] = json.load(result)
+                response["raw"] = result.read()
+        except urllib.error.HTTPError as error:
+            response["status"] = error.code
+            response["raw"] = error.read()
 
-        client = threading.Thread(target=get_health)
-        client.start()
+    client = threading.Thread(target=get_health)
+    client.start()
+    server.handle_request()
+    client.join(timeout=5)
+    assert not client.is_alive()
+    return response["status"], json.loads(response["raw"]), response["raw"]
+
+
+def test_health_get_proves_owner_and_returns_allow_listed_identity():
+    with tempfile.TemporaryDirectory() as temp:
+        runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
+        server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        server.runtime = runtime
         try:
-            server.handle_request()
-            client.join(timeout=5)
+            status, body, _raw = _get_health_once(server)
+            diagnostics = runtime.call(
+                lambda owned: owned.live_limit_acceptance_diagnostics()
+            )
 
-            assert not client.is_alive()
-            assert response["status"] == 200
-            assert response["body"] == {"ok": True, "mode": "paper"}
+            assert status == 200
+            assert body == {
+                "ok": True,
+                "component": "paper_backend",
+                "mode": "paper",
+                "database_identity": diagnostics["database_identity"],
+                "process_instance_id": diagnostics["process_instance_id"],
+                "build_sha": diagnostics["build_sha"],
+            }
+            assert len(body["database_identity"]) == 64
+            assert body["process_instance_id"]
         finally:
             server.server_close()
             runtime.close()
+
+
+def test_health_get_returns_503_when_runtime_owner_does_not_answer():
+    class UnavailableRuntime:
+        def call(self, operation, timeout=15.0):
+            raise TimeoutError("PAPER runtime operation timed out")
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = UnavailableRuntime()
+    try:
+        status, body, _raw = _get_health_once(server)
+    finally:
+        server.server_close()
+
+    assert status == 503
+    assert body == {"ok": False, "error": "paper_runtime_unavailable"}
+
+
+def test_health_get_never_leaks_operator_or_secret_diagnostics():
+    class OwnedRuntime:
+        def live_limit_acceptance_diagnostics(self):
+            return {
+                "database_identity": "a" * 64,
+                "process_instance_id": "instance-1",
+                "build_sha": "abc123",
+                "database_path": "C:/secret/paper.sqlite3",
+                "host_identity": "host-secret",
+                "operator_authorization_reference": "operator-secret",
+                "operator_token": "token-secret",
+                "api_key": "key-secret",
+                "live_gates": {"live_mainnet_authorized": True},
+                "active_account_id": "bybit-secret",
+                "current_session": {"state": "ARMED"},
+            }
+
+    class SerializedRuntime:
+        def call(self, operation, timeout=15.0):
+            return operation(OwnedRuntime())
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = SerializedRuntime()
+    server.operator_token = "server-operator-token"
+    try:
+        status, body, raw = _get_health_once(server)
+    finally:
+        server.server_close()
+
+    assert status == 200
+    assert set(body) == {
+        "ok", "component", "mode", "database_identity", "process_instance_id", "build_sha",
+    }
+    assert b"secret" not in raw
+    assert b"server-operator-token" not in raw
+    assert b"ARMED" not in raw
 
 
 def test_robot_protection_health_get_returns_ingress_diagnostics():
