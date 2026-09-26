@@ -73,6 +73,17 @@ cursor; it does not start again from the first ticker.
 the current pass at the next cooperative checkpoint and leaves the Scanner
 `STOPPED`. Robot/PAPER backend state is unaffected.
 
+### Restart recovery — 2026-09-26
+
+The pause cursor is intentionally in-memory only. Therefore a new backend
+process cannot truthfully resume an interrupted PAUSED/RUNNING pass from its
+old ticker/timeframe position. On ScannerControlRuntime startup, any persisted
+`SCANNER_RUNNING` or `SCANNER_PAUSED` left by a previous process is stale and
+must be recovered to `SCANNER_STOPPED` before owner commands are accepted.
+The next owner start then begins one new pass. This is distinct from
+same-process `PAUSED -> resume`, which continues the existing in-memory pass.
+
+
 ## 4. Unified Menu responsibility
 
 The Unified Menu is a presentation and command surface.
