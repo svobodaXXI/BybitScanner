@@ -54,12 +54,10 @@ Economical implementation sequence:
 4. **DONE:** PR #254 merged as `fe56450` — PAPER backend binds/reserves its
    localhost HTTP listener before REST/WebSocket/SQLite/runtime/recovery side effects;
    a duplicate backend loses ownership before touching authoritative state.
-5. PR #253 remains the Scanner restart-recovery + launcher-routing slice:
-   the Scanner pause cursor is in-memory only, so a fresh backend normalizes stale
+5. **DONE:** PR #253 merged as `18fc8c2` — fresh backend recovers stale
    `SCANNER_RUNNING`/`SCANNER_PAUSED` to `SCANNER_STOPPED`; on an already-live backend
-   launcher routes `STOPPED -> start`, `PAUSED -> resume`, `RUNNING -> reuse/no mutation`;
-   unknown/unavailable -> fail closed. Keep #253 unchanged until prerequisite 4 is merged,
-   then sync/review it;
+   launcher routes `STOPPED -> start`, `PAUSED -> resume`, `RUNNING -> reuse/no mutation`,
+   unknown/unavailable -> fail closed;
 6. canonical launcher backend-reuse preflight is a later separate slice because it touches
    `start_robot_runtime.bat`; early bind is the safety barrier and reuse removes redundant
    duplicate startup operationally. The untracked `start_robot_all.cmd` false-success
