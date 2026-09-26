@@ -161,13 +161,18 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
     def test_flock_style_green_wick_anchors_red_core_and_55pct_box_gate(self):
         # Synthetic OHLC around the user-supplied FLOCK 986..994 pattern.
         # The actual archived 999-candle sample is NOT embedded here.
-        calm = [dict(open=0.07010, high=0.07012, low=0.07008,
-                     close=0.07010) for _ in range(20)]
+        # Owner clarification 2026-09-23: A is the actual local reversal
+        # extreme. The candles before A therefore APPROACH it from below (a
+        # small rise) instead of being an already-running decline that A
+        # would sit inside; A's high strictly exceeds the 3 highs before and
+        # after it, as ``_is_reversal_origin`` requires.
+        calm = [dict(open=0.06900, high=0.06902, low=0.06898,
+                     close=0.06900) for _ in range(20)]
         first = [
-            (0.07006, 0.07037, 0.07006, 0.07017),  # 986 GREEN
-            (0.07017, 0.07021, 0.06933, 0.06970),
-            (0.06970, 0.06994, 0.06951, 0.06960),
-            (0.06960, 0.06975, 0.06933, 0.06944),
+            (0.06900, 0.06925, 0.06895, 0.06920),  # approach into A
+            (0.06920, 0.06945, 0.06915, 0.06940),
+            (0.06940, 0.06960, 0.06935, 0.06955),
+            (0.06955, 0.06970, 0.06950, 0.06965),
             (0.06944, 0.06983, 0.06940, 0.06955),  # 990 GREEN A
             (0.06955, 0.06956, 0.06837, 0.06917),  # red core
             (0.06917, 0.06936, 0.06761, 0.06775),
@@ -187,6 +192,12 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             )
 
         narrow = sample(box)
+        rows = list(narrow[["open", "high", "low", "close"]]
+                    .itertuples(index=False, name=None))
+        # A (24) is a valid actual local reversal origin; the approach
+        # candles before it are not.
+        self.assertTrue(_is_reversal_origin(rows, 24, -1))
+        self.assertFalse(any(_is_reversal_origin(rows, i, -1) for i in range(20, 24)))
         watches = detect_ikigai_box_watches(narrow)
         matching = [
             w for w in watches if w.anchor_identity == ("LONG", 24, 28)
@@ -198,10 +209,10 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
         self.assertEqual(found.phase, "BOX_READY")
         self.assertEqual((found.box_start_index, found.box_end_index), (29, 32))
         self.assertAlmostEqual(found.fibonacci_1_618, 0.062549)
-        self.assertNotIn(
-            ("LONG", 20, 28),
-            {w.anchor_identity for w in watches},
-        )
+        # An earlier approach candle can never extend the measured A/B span.
+        self.assertFalse({
+            ("LONG", start, 28) for start in range(20, 24)
+        } & {w.anchor_identity for w in watches})
 
         # FLOCK-style: full range 0.00271 / 0.00450 = 60.22%,
         # but retracement ABOVE B is 0.00247 / 0.00450 = 54.89%.
