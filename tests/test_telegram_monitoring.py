@@ -1,12 +1,13 @@
 import json
 import os
+from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import call, patch
 
 from terminal.domain.models import Symbol, TradingAccountId
-from terminal.persistence.sqlite_store import RobotCandidateRecord
+from terminal.persistence.sqlite_store import RobotCandidateRecord, SQLiteStore
 # Runtime config.py is local and may contain secrets; unit tests own this
 # import dependency and restore the module registry immediately afterward.
 _previous_config = sys.modules.get("config")
@@ -734,6 +735,20 @@ class RobotLifecyclePostDeliveryTests(unittest.TestCase):
 
 class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
     def setUp(self):
+        import tempfile
+
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        db_path = Path(temp.name) / "paper.sqlite3"
+        store = SQLiteStore.open(db_path)
+        try:
+            self.identity = store.database_identity  # the backend's own definition
+        finally:
+            store.close()
+        for target, value in (("DB_PATH", db_path), ("_DATABASE_IDENTITY", self.identity)):
+            fixture = patch.object(monitoring, target, value)
+            fixture.start()
+            self.addCleanup(fixture.stop)
         monitoring._POLLING_READY.clear()
         self.addCleanup(monitoring._POLLING_READY.clear)
         for target in ("_save_offset", "_process_message", "time.sleep"):
@@ -758,7 +773,8 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
 
     def test_health_turns_ready_only_after_successful_short_initial_poll(self):
         self.assertEqual(self._health(), (503, {"component": "telegram_monitoring",
-                                               "status": "not_ready"}))
+                                               "status": "not_ready",
+                                               "database_identity": self.identity}))
         update = {"update_id": 41, "message": {"text": "/robot"}}
         with patch("telegram_monitoring._telegram_request",
                    return_value={"ok": True, "result": [update]}) as request:
@@ -767,7 +783,8 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
         monitoring._process_message.assert_called_once_with(update["message"])
         self.assertEqual(offset, 42)
         self.assertEqual(self._health(), (200, {"component": "telegram_monitoring",
-                                               "status": "ready"}))
+                                               "status": "ready",
+                                               "database_identity": self.identity}))
         with patch("telegram_monitoring._telegram_request",
                    return_value={"ok": True, "result": []}) as request:
             monitoring.poll_updates_once(offset)
@@ -828,6 +845,14 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
         again.shutdown()
         again.server_close()
 
+    def test_worker_identity_matches_store_definition_and_missing_db_fails_closed(self):
+        monitoring._DATABASE_IDENTITY = None  # restored by the setUp patch
+        self.assertEqual(monitoring.database_identity(), self.identity)
+        with patch.object(monitoring, "DB_PATH", monitoring.DB_PATH.with_name("missing.sqlite3")),                 patch("telegram_monitoring.acquire_worker_singleton") as acquire,                 patch("telegram_monitoring._telegram_request") as request:
+            self.assertEqual(monitoring.run(), 1)
+        acquire.assert_not_called()
+        request.assert_not_called()
+
     def test_duplicate_worker_cannot_bind_and_never_polls(self):
         self.assertIsNone(monitoring.acquire_worker_singleton(port=self.port))
         with patch.dict(os.environ, {monitoring.HEALTH_PORT_ENV: str(self.port)}),                 patch("telegram_monitoring._telegram_request") as request,                 patch("telegram_monitoring.configure_monitoring_menu") as menu:
@@ -840,7 +865,8 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
         monitoring._POLLING_READY.set()
         status, body = self._health()
         self.assertEqual((status, body), (200, {"component": "telegram_monitoring",
-                                                "status": "ready"}))
+                                                "status": "ready",
+                                                "database_identity": self.identity}))
         self.assertNotIn("test", json.dumps(body))
 
 

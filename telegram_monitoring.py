@@ -714,6 +714,7 @@ DEFAULT_HEALTH_PORT = 8766
 INITIAL_POLL_TIMEOUT = 0
 LONG_POLL_TIMEOUT = 30
 _POLLING_READY = threading.Event()
+_DATABASE_IDENTITY: str | None = None
 
 
 class TelegramUpdateConflict(RuntimeError):
@@ -727,7 +728,8 @@ class _HealthHandler(BaseHTTPRequestHandler):
             return
         ready = _POLLING_READY.is_set()
         body = json.dumps({"component": HEALTH_COMPONENT,
-                           "status": "ready" if ready else "not_ready"}).encode("ascii")
+                           "status": "ready" if ready else "not_ready",
+                           "database_identity": _DATABASE_IDENTITY}).encode("ascii")
         self.send_response(200 if ready else 503)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -815,7 +817,19 @@ def _release_worker_singleton(server) -> None:
     server.server_close()
 
 
+def database_identity() -> str:
+    """This worker's PAPER DB authority, exactly as SQLiteStore defines it."""
+    with _robot_store() as store:
+        return store.database_identity
+
+
 def run() -> int:
+    global _DATABASE_IDENTITY
+    try:
+        _DATABASE_IDENTITY = database_identity()
+    except Exception as exc:
+        print(f"Telegram monitoring cannot attach to PAPER DB {DB_PATH}: {exc}")
+        return 1
     server = acquire_worker_singleton()
     if server is None:
         print(f"Telegram monitoring worker already owns 127.0.0.1:{health_port()}; "
