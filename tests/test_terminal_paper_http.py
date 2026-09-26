@@ -1,6 +1,7 @@
 import json
 import os
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -10,6 +11,8 @@ from dataclasses import replace
 from decimal import Decimal
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import ModuleType
+from unittest.mock import patch
 
 import pytest
 
@@ -1200,13 +1203,29 @@ def _get_health_once(server):
     return response["status"], json.loads(response["raw"]), response["raw"]
 
 
+def _acceptance_config(**overrides):
+    config = ModuleType("config")
+    values = {"MAX_SYMBOLS": None, "TELEGRAM_TEST_MODE": False, "TELEGRAM_ENABLED": True,
+              "TELEGRAM_TOKEN": "config-secret-token", **overrides}
+    for key, value in values.items():
+        if value is not _ABSENT:
+            setattr(config, key, value)
+    return config
+
+
+_ABSENT = object()
+
+
 def test_health_get_proves_owner_and_returns_allow_listed_identity():
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime_owner(Path(temp) / "paper.sqlite3")
         server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
         server.runtime = runtime
+        server.operator_token = ""
         try:
-            status, body, _raw = _get_health_once(server)
+            with patch.dict(sys.modules, {"config": _acceptance_config()}), \
+                    patch.dict(os.environ, {"BYBITSCANNER_IKIGAI_BOX_SIGNALS": "1"}):
+                status, body, _raw = _get_health_once(server)
             diagnostics = runtime.call(
                 lambda owned: owned.live_limit_acceptance_diagnostics()
             )
@@ -1222,6 +1241,9 @@ def test_health_get_proves_owner_and_returns_allow_listed_identity():
                 "build_sha": diagnostics["build_sha"],
                 # A fresh durable Robot is (ROBOT_STOPPED, ROBOT_STOPPED): not ready, still 200.
                 "robot_admission_ready": False,
+                # Default runtime LIVE gates are all off; production Scanner config is full.
+                "paper_live_safe": True,
+                "scanner_acceptance_ready": True,
             }
             assert admission_ready is False
             assert len(body["database_identity"]) == 64
@@ -1275,16 +1297,20 @@ def test_health_get_never_leaks_operator_or_secret_diagnostics():
     server.runtime = SerializedRuntime()
     server.operator_token = "server-operator-token"
     try:
-        status, body, raw = _get_health_once(server)
+        with patch.dict(sys.modules, {"config": _acceptance_config()}), \
+                patch.dict(os.environ, {"BYBITSCANNER_IKIGAI_BOX_SIGNALS": "1"}):
+            status, body, raw = _get_health_once(server)
     finally:
         server.server_close()
 
     assert status == 200
     assert set(body) == {
         "ok", "component", "mode", "database_identity", "process_instance_id", "build_sha",
-        "robot_admission_ready",
+        "robot_admission_ready", "paper_live_safe", "scanner_acceptance_ready",
     }
+    assert body["paper_live_safe"] is False and body["scanner_acceptance_ready"] is True
     assert b"secret" not in raw
+    assert b"MAX_SYMBOLS" not in raw and b"live_gates" not in raw and b"live_mainnet" not in raw
     assert b"server-operator-token" not in raw
     assert b"ARMED" not in raw
 
@@ -1316,6 +1342,108 @@ def test_health_get_reports_robot_admission_as_data(admission_ready):
     assert body["ok"] is True
     assert body["robot_admission_ready"] is admission_ready
     assert len(calls) == 1  # identity and admission share one owner call
+
+
+_SAFE_LIVE_GATES = {
+    "live_mainnet_authorized": False,
+    "live_limit_mutations_enabled": False,
+    "live_market_mutations_enabled": False,
+    "live_parity_mutations_enabled": False,
+    "live_parity_mutation_scope": "",
+    "live_protection_mutations_enabled": False,
+    "live_full_close_mutations_enabled": False,
+    "live_market_acceptance_notional_ceiling": "0",
+    "live_market_acceptance_single_flight": False,
+    "live_limit_acceptance_notional_ceiling": "0",
+    "live_limit_acceptance_service_available": False,
+}
+
+
+def _health_with(live_gates=_SAFE_LIVE_GATES, operator_token="", config=None, box_signals="1",
+                 config_module_missing=False):
+    class OwnedRuntime:
+        def live_limit_acceptance_diagnostics(self):
+            diagnostics = {"database_identity": "a" * 64, "process_instance_id": "i",
+                           "build_sha": ""}
+            if live_gates is not _ABSENT:
+                diagnostics["live_gates"] = live_gates
+            return diagnostics
+
+        def robot_admission_ready(self):
+            return True
+
+    class SerializedRuntime:
+        def call(self, operation, timeout=15.0):
+            return operation(OwnedRuntime())
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = SerializedRuntime()
+    server.operator_token = operator_token
+    environ = dict(os.environ)
+    environ.pop("BYBITSCANNER_IKIGAI_BOX_SIGNALS", None)
+    if box_signals is not None:
+        environ["BYBITSCANNER_IKIGAI_BOX_SIGNALS"] = box_signals
+    # sys.modules["config"] = None makes `import config` raise ImportError.
+    modules = {"config": None if config_module_missing
+               else _acceptance_config() if config is None else config}
+    try:
+        with patch.dict(sys.modules, modules), patch.dict(os.environ, environ, clear=True):
+            status, body, raw = _get_health_once(server)
+    finally:
+        server.server_close()
+    assert status == 200
+    return body, raw
+
+
+def test_health_get_safe_paper_acceptance_config_reports_both_true():
+    body, _raw = _health_with()
+    assert body["paper_live_safe"] is True
+    assert body["scanner_acceptance_ready"] is True
+
+
+@pytest.mark.parametrize("unsafe", [
+    {"live_market_mutations_enabled": True},
+    {"live_mainnet_authorized": True},
+    {"live_market_acceptance_notional_ceiling": "5"},
+    {"live_market_acceptance_single_flight": True},
+    {"live_parity_mutations_enabled": True},
+    {"live_limit_mutations_enabled": True},
+    {"live_limit_acceptance_notional_ceiling": "5.20"},
+    {"live_limit_acceptance_notional_ceiling": "not-a-number"},
+    {"live_mainnet_authorized": None},
+    {"operator_token": "x" * 40},
+    {"live_gates": _ABSENT},
+])
+def test_health_get_unsafe_live_gates_make_paper_live_safe_false(unsafe):
+    unsafe = dict(unsafe)
+    operator_token = unsafe.pop("operator_token", "")
+    live_gates = unsafe.pop("live_gates", {**_SAFE_LIVE_GATES, **unsafe})
+    body, raw = _health_with(live_gates=live_gates, operator_token=operator_token)
+    assert body["paper_live_safe"] is False
+    assert body["scanner_acceptance_ready"] is True
+    assert b"x" * 40 not in raw
+
+
+@pytest.mark.parametrize("config, box_signals", [
+    (_acceptance_config(MAX_SYMBOLS=10), "1"),
+    (_acceptance_config(MAX_SYMBOLS=_ABSENT), "1"),
+    (_acceptance_config(TELEGRAM_TEST_MODE=True), "1"),
+    (_acceptance_config(TELEGRAM_ENABLED=False), "1"),
+    (_acceptance_config(TELEGRAM_ENABLED=1), "1"),
+    (None, None),
+    (None, "0"),
+])
+def test_health_get_incomplete_scanner_config_makes_acceptance_false(config, box_signals):
+    body, raw = _health_with(config=config, box_signals=box_signals)
+    assert body["scanner_acceptance_ready"] is False
+    assert body["paper_live_safe"] is True
+    assert b"config-secret-token" not in raw
+
+
+def test_health_get_unimportable_config_is_not_acceptance_ready_and_stays_200():
+    body, _raw = _health_with(config_module_missing=True)
+    assert body["scanner_acceptance_ready"] is False
+    assert body["paper_live_safe"] is True
 
 
 def test_robot_protection_health_get_returns_ingress_diagnostics():
