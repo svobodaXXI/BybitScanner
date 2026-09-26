@@ -41,6 +41,8 @@ class ScannerControlRuntimeTests(unittest.TestCase):
         )
 
     def tearDown(self):
+        for runtime in getattr(self, "_fresh_runtimes", ()):
+            runtime.close()
         self.runtime.close()
         self.temp_dir.cleanup()
 
@@ -135,6 +137,51 @@ class ScannerControlRuntimeTests(unittest.TestCase):
         monitor.close()
 
         self.assertEqual(self.scan_calls, [])
+
+
+    def _fresh_process_runtime(self):
+        runtime = ScannerControlRuntime(
+            lambda: SQLiteStore.open(self.db_path),
+            ACCOUNT_ID,
+            scan_pass=lambda checkpoint: self.scan_calls.append(True),
+            clock_ms=self.clock,
+            scan_interval_s=60.0,
+        )
+        self.__dict__.setdefault("_fresh_runtimes", []).append(runtime)
+        return runtime
+
+    def test_fresh_start_recovers_stale_paused_to_stopped(self):
+        self.runtime.start_scanner()
+        self.runtime.pause_scanner()
+        fresh = self._fresh_process_runtime()
+        fresh.start()
+        state = fresh.status()
+        self.assertEqual((state.mode, state.reason), (SCANNER_STOPPED, "restart_recovery"))
+        with self.assertRaises(ScannerControlRuntimeError):
+            fresh.resume_scanner()  # a dead process's cursor is never resumed
+        self.assertEqual(fresh.start_scanner().mode, SCANNER_RUNNING)
+
+    def test_fresh_start_recovers_stale_running_to_stopped(self):
+        self.runtime.start_scanner()
+        fresh = self._fresh_process_runtime()
+        fresh.start()
+        state = fresh.status()
+        self.assertEqual((state.mode, state.reason), (SCANNER_STOPPED, "restart_recovery"))
+
+    def test_fresh_start_keeps_stopped_unchanged(self):
+        before = self.runtime.status()
+        fresh = self._fresh_process_runtime()
+        fresh.start()
+        self.assertEqual(fresh.status(), before)
+
+    def test_repeated_start_does_not_reset_same_process_state(self):
+        fresh = self._fresh_process_runtime()
+        fresh.start()
+        fresh.start_scanner()
+        fresh.pause_scanner()
+        fresh.start()
+        self.assertEqual(fresh.status().mode, SCANNER_PAUSED)
+        self.assertEqual(fresh.resume_scanner().mode, SCANNER_RUNNING)
 
 
 class ScannerControlRuntimeRealThreadTests(unittest.TestCase):
