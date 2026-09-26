@@ -348,11 +348,17 @@ class LauncherRobotBarrierTests(unittest.TestCase):
     _health = LauncherBackendProbeTests._health
     _free_port = staticmethod(LauncherBackendProbeTests._free_port)
 
+    def _ready_health(self, **overrides):
+        return self._health(**{"robot_admission_ready": True, "paper_live_safe": True,
+                               "scanner_acceptance_ready": True, **overrides})
+
     def _barrier(self, health, protection, protection_code=200):
         routes = {"/api/health": (200, health), "/api/robot/protection-health":
                   (protection_code, protection)}
+        self.requested = []
 
         def do_get(handler):
+            self.requested.append(handler.path)
             code, body = routes.get(handler.path, (404, {"ok": False}))
             raw = body if isinstance(body, bytes) else json.dumps(body).encode()
             handler.send_response(code)
@@ -378,17 +384,20 @@ class LauncherRobotBarrierTests(unittest.TestCase):
 
     def test_admission_and_protection_ready_lets_scanner_routing_proceed(self):
         self.assertEqual(
-            self._barrier(self._health(robot_admission_ready=True), self._protection()), 0)
+            self._barrier(self._ready_health(), self._protection()), 0)
+        self.assertEqual(self.requested, ["/api/health", "/api/robot/protection-health"])
 
     def test_robot_admission_not_ready_fails_before_scanner_mutation(self):
         for admission in (False, "true", None):
             with self.subTest(admission=admission):
-                health = self._health(robot_admission_ready=admission)
+                health = self._ready_health(robot_admission_ready=admission)
                 self.assertEqual(self._barrier(health, self._protection()), 2)
-        self.assertEqual(self._barrier(self._health(), self._protection()), 2)  # field missing
+        missing = self._ready_health()
+        del missing["robot_admission_ready"]
+        self.assertEqual(self._barrier(missing, self._protection()), 2)
 
     def test_unhealthy_protection_fails_before_scanner_mutation(self):
-        ready = self._health(robot_admission_ready=True)
+        ready = self._ready_health()
         for protection in (self._protection(healthy=False),
                            self._protection(unhealthy_symbols={"BTCUSDT": "subscribe_failed"}),
                            self._protection(healthy="true")):
@@ -396,7 +405,7 @@ class LauncherRobotBarrierTests(unittest.TestCase):
                 self.assertEqual(self._barrier(ready, protection), 2)
 
     def test_malformed_or_unavailable_barrier_responses_fail_closed(self):
-        ready = self._health(robot_admission_ready=True)
+        ready = self._ready_health()
         without_symbols = self._protection()
         del without_symbols["unhealthy_symbols"]
         for protection, code in ((without_symbols, 200),
@@ -408,10 +417,21 @@ class LauncherRobotBarrierTests(unittest.TestCase):
             with self.subTest(protection=protection, code=code):
                 self.assertEqual(self._barrier(ready, protection, code), 2)
         self.assertEqual(self._barrier(
-            self._health(robot_admission_ready=True, database_identity="0" * 64),
+            self._ready_health(database_identity="0" * 64),
             self._protection()), 2)
         self.assertNotEqual(
             self._probe(f"http://127.0.0.1:{self._free_port()}", require="robot"), 0)
+
+    def test_unproven_paper_safety_or_scanner_config_fails_before_protection(self):
+        for field in ("paper_live_safe", "scanner_acceptance_ready"):
+            for value in (False, None, "true", 1, "missing"):
+                with self.subTest(field=field, value=value):
+                    health = self._ready_health(**{field: value})
+                    if value == "missing":
+                        del health[field]
+                    self.assertEqual(self._barrier(health, self._protection()), 2)
+                    # Neither protection health nor Scanner status is read after the failure.
+                    self.assertEqual(self.requested, ["/api/health"])
 
 
 
