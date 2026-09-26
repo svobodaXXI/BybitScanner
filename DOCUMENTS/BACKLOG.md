@@ -1,3 +1,61 @@
+## DIRTY WORKTREE RECONCILIATION AUDIT — 2026-09-26
+
+Read-only audit result for the seven previously dirty historical worktrees:
+`.worktrees/ikigai-card`, `bv`, `ikigai-bands`, `ikigai-viz`,
+`locality`, `lshape`, and `lshape-observer`.
+
+**Outcome: all seven are fully superseded; no unique work remains in any of
+them. Do not repeat recovery, patch preservation, or implementation work from
+these worktrees.**
+
+Evidence boundary:
+
+- each worktree's complete dirty set (tracked changes plus untracked files
+  where present) was compared by blob content against repository history;
+- a match counted only when the whole dirty set corresponded to one historical
+  commit/state rather than a mixture of unrelated versions;
+- PR/branch history was checked for the corresponding merged work;
+- tests were **not** rerun for this audit; the conclusion is repository-history
+  equivalence, not fresh runtime/test acceptance.
+
+Resolved mappings:
+
+- `.worktrees/ikigai-card`: 6/6 dirty files = `5ad500d`, branch
+  `origin/codex/ikigai-card-cleanup`, PR #205 squash `5f2afe2`; only the
+  living `BACKLOG.md` has evolved afterward.
+- `bv`: 3/3 = `a4ef2ff`, merged through PR #180; local HEAD is the pre-squash
+  version, with only LF/CRLF warning noted.
+- `ikigai-bands`: 5/5 = `8009997`, merged through PR #167.
+- `ikigai-viz`: 4/4 = `4ea5ee4`, first commit of merged PR #166; its
+  untracked overlay/test files are historical merged content, while main later
+  evolved further.
+- `locality`: 3/3 tracked+untracked = `d6a7df9`, merged PR #176; fixture
+  files are identical to main.
+- `lshape`: 4/4 untracked = `05eeae0`, first L-shape file version from
+  PR #195, later superseded by subsequent L-shape work.
+- `lshape-observer`: dirty `main.py`, `l_shape_scanner.py`, and test =
+  branch tip `0a7e88d`, merged PR #197; local HEAD is three commits behind its
+  upstream.
+
+No standalone patch or backup is required for these seven worktrees; their
+content is recoverable from Git history via `5ad500d`, `4ea5ee4`,
+`d6a7df9`, `0a7e88d`, `05eeae0`, `a4ef2ff`, and `8009997` plus the
+corresponding squash/merge commits.
+
+**Do not touch as part of this cleanup/reconciliation without a separate
+owner-authorized step:**
+
+- `C:\BybitScanner-box-robot-run` — active runtime checkout; at audit time
+  backend PID 21116, open RDWUSDT position, `RECONCILIATION_REQUIRED`;
+- `C:\BybitScanner` — current dirty session checkout with untracked
+  `runtime/`, launchers and other local state;
+- `C:\BybitScanner-sync-20260926` — active reconciliation copy;
+- `C:\BybitScanner-reconciliation-backup-20260926` — preserved
+  `start_robot_all.cmd` backup.
+
+The audit itself made no worktree cleanup, file transfer, runtime change, HEAD
+change, branch change, stash change, or process launch/stop.
+
 ## BOX ROBOT IMPLEMENTATION ROUTE — 2026-09-25 UPDATE
 
 Mature-engine cross-check (LEAN / Hummingbot / Freqtrade patterns) confirms the project-specific architecture: Box is a multi-order **entry policy** over the existing Robot trade/order lifecycle, not a parallel trading subsystem.
