@@ -23,6 +23,7 @@ start "BybitScanner - Telegram Monitoring" powershell.exe -NoExit -Command "Set-
 
 timeout /t 2 /nobreak >nul
 
-start "BybitScanner - Scanner" powershell.exe -NoExit -Command "Set-Location '%~dp0'; & '%BYBITSCANNER_PYTHON%' '%~dp0main.py'"
+powershell.exe -NoProfile -Command "$ErrorActionPreference = 'Stop'; $backendUrl = $env:BYBITSCANNER_PAPER_BACKEND_URL; if (-not $backendUrl) { $backendUrl = 'http://127.0.0.1:8765' }; Invoke-RestMethod -Method Post -Uri ($backendUrl.TrimEnd('/') + '/api/scanner/start') -ContentType 'application/json' -Body '{}'"
+if errorlevel 1 exit /b 1
 
 exit /b 0
