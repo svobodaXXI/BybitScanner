@@ -51,11 +51,9 @@ Economical implementation sequence:
 3. **DONE:** PR #252 merged as `1e07dec` — `telegram_monitoring.py` is
    single-owner, proves getUpdates ownership before READY, and startup waits
    for its identified health endpoint before Scanner mutation;
-4. prerequisite micro-slice before PR #253 merge: PAPER backend must bind/reserve
-   its localhost HTTP listener before REST/WebSocket/SQLite/runtime/recovery side effects.
-   A duplicate backend that loses port ownership must fail before touching authoritative
-   state. Implement only in `terminal/runtime/paper_http_server.py` plus one focused
-   regression in `tests/test_terminal_paper_http.py`; do not touch launcher/Scanner runtime.
+4. **DONE:** PR #254 merged as `fe56450` — PAPER backend binds/reserves its
+   localhost HTTP listener before REST/WebSocket/SQLite/runtime/recovery side effects;
+   a duplicate backend loses ownership before touching authoritative state.
 5. PR #253 remains the Scanner restart-recovery + launcher-routing slice:
    the Scanner pause cursor is in-memory only, so a fresh backend normalizes stale
    `SCANNER_RUNNING`/`SCANNER_PAUSED` to `SCANNER_STOPPED`; on an already-live backend
