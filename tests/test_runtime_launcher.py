@@ -156,7 +156,7 @@ class LauncherBackendReuseTests(unittest.TestCase):
         spawn = [i for i, line in enumerate(lines) if "start_paper_backend.bat" in line]
         self.assertEqual(len(spawn), 1)
         spawn = spawn[0]
-        probe_call = lines.index("call :probe_paper_backend")
+        probe_call = lines.index("call :probe_paper_backend 0")
         # 2 = something answered without matching identity: exit before any spawn.
         self.assertEqual(lines[probe_call + 1], "if errorlevel 2 (")
         self.assertEqual(lines[probe_call + 3], "exit /b 1")
@@ -171,6 +171,26 @@ class LauncherBackendReuseTests(unittest.TestCase):
         scanner = next(i for i, line in enumerate(lines) if "/api/scanner/" in line)
         telegram = next(i for i, line in enumerate(lines) if "telegram_monitoring.py" in line)
         self.assertTrue(ready < telegram < scanner)
+
+    def test_only_a_spawned_backend_waits_and_unproven_readiness_stops_startup(self):
+        lines = self._lines()
+        spawn = next(i for i, line in enumerate(lines) if "start_paper_backend.bat" in line)
+        ready = lines.index(":paper_backend_ready")
+        telegram = next(i for i, line in enumerate(lines) if "telegram_monitoring.py" in line)
+        # The fixed backend sleep is replaced by the bounded readiness wait.
+        self.assertNotIn("timeout /t", LAUNCHER.read_text().lower())
+        wait = lines.index("call :probe_paper_backend 60")
+        self.assertTrue(lines[spawn + 1].startswith("rem "))
+        self.assertEqual(wait, spawn + 2)
+        self.assertEqual(lines[wait + 1], "if errorlevel 1 (")
+        self.assertEqual(lines[wait + 3], "exit /b 1")
+        self.assertEqual(lines[wait + 4:wait + 6], [")", ":paper_backend_ready"])
+        # The reuse path jumps past both the spawn and the post-spawn wait.
+        reuse = lines.index("if not errorlevel 1 goto paper_backend_ready")
+        self.assertTrue(reuse < spawn < wait < ready < telegram)
+        self.assertEqual(sum(line.startswith("call :probe_paper_backend") for line in lines), 2)
+        label = lines.index(":probe_paper_backend")
+        self.assertEqual(lines[label + 1], 'set "BYBITSCANNER_PAPER_BACKEND_WAIT_SECONDS=%~1"')
 
 
 @unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell launcher probe")
@@ -189,29 +209,41 @@ class LauncherBackendProbeTests(unittest.TestCase):
         finally:
             store.close()
 
-    def _probe(self, backend_url):
+    def _probe(self, backend_url, wait_seconds=0):
         lines = [line.strip() for line in LAUNCHER.read_text().splitlines()]
-        command = lines[lines.index(":probe_paper_backend") + 1]
+        command = lines[lines.index(":probe_paper_backend") + 2]
         prefix = 'powershell.exe -NoProfile -Command "'
         self.assertTrue(command.startswith(prefix) and command.endswith('"'))
         env = dict(os.environ, BYBITSCANNER_PAPER_BACKEND_URL=backend_url,
-                   BYBITSCANNER_PAPER_DB=str(self.db_path), BYBITSCANNER_PYTHON=sys.executable)
+                   BYBITSCANNER_PAPER_DB=str(self.db_path), BYBITSCANNER_PYTHON=sys.executable,
+                   BYBITSCANNER_PAPER_BACKEND_WAIT_SECONDS=str(wait_seconds))
         result = subprocess.run(
             ["powershell.exe", "-NoProfile", "-Command", command[len(prefix):-1]],
             env=env, capture_output=True, text=True, timeout=60,
         )
         return result.returncode
 
-    def _probe_stub(self, body, code=200):
+    @staticmethod
+    def _handler(body, code=200):
         if not isinstance(body, bytes):
             body = json.dumps(body).encode()
-        handler = type("Handler", (_StubBackend,), {
+        return type("Handler", (_StubBackend,), {
             "status_code": code, "status_body": body, "posts": [], "do_GET": _health_get,
         })
+
+    @staticmethod
+    def _free_port():
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            return probe.getsockname()[1]
+
+    def _probe_stub(self, body, code=200, wait_seconds=0):
+        handler = self._handler(body, code)
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
-            returncode = self._probe(f"http://127.0.0.1:{server.server_address[1]}")
+            returncode = self._probe(f"http://127.0.0.1:{server.server_address[1]}",
+                                     wait_seconds)
         finally:
             server.shutdown()
             server.server_close()
@@ -227,10 +259,44 @@ class LauncherBackendProbeTests(unittest.TestCase):
         self.assertEqual(self._probe_stub(self._health()), 0)
 
     def test_unreachable_backend_is_spawned(self):
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
-        self.assertEqual(self._probe(f"http://127.0.0.1:{port}"), 1)
+        self.assertEqual(self._probe(f"http://127.0.0.1:{self._free_port()}"), 1)
+
+    def test_spawned_backend_that_becomes_ready_is_accepted(self):
+        port = self._free_port()
+        handler = self._handler(self._health())
+        servers = []
+
+        def start_backend_late():
+            # Nothing listens at first, then the early-bound backend appears.
+            server = ThreadingHTTPServer(("127.0.0.1", port), handler)
+            servers.append(server)
+            server.serve_forever()
+
+        timer = threading.Timer(2.0, start_backend_late)
+        timer.start()
+        try:
+            self.assertEqual(self._probe(f"http://127.0.0.1:{port}", wait_seconds=30), 0)
+        finally:
+            timer.join(timeout=5)
+            for server in servers:
+                server.shutdown()
+                server.server_close()
+
+    def test_spawned_backend_that_never_becomes_ready_times_out_nonzero(self):
+        self.assertEqual(self._probe(f"http://127.0.0.1:{self._free_port()}", wait_seconds=3), 1)
+        # An early-bound backend that accepts but never serves is also retried, then times out.
+        with socket.socket() as bound:
+            bound.bind(("127.0.0.1", 0))
+            bound.listen(8)
+            port = bound.getsockname()[1]
+            self.assertEqual(self._probe(f"http://127.0.0.1:{port}", wait_seconds=3), 1)
+
+    def test_wrong_identity_during_wait_fails_closed(self):
+        for body, code in ((self._health(database_identity="0" * 64), 200),
+                           (self._health(component="telegram_monitoring"), 200),
+                           (b"not json", 200)):
+            with self.subTest(body=body, code=code):
+                self.assertEqual(self._probe_stub(body, code, wait_seconds=30), 2)
 
     def test_non_matching_answer_fails_closed_without_spawn(self):
         for body, code in ((self._health(component="telegram_monitoring"), 200),

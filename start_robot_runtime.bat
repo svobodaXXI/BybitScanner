@@ -16,7 +16,7 @@ if not exist "%~dp0venv\Scripts\python.exe" (
 set "BYBITSCANNER_PYTHON=%~dp0venv\Scripts\python.exe"
 
 rem Reuse only a canonical PAPER backend proven for this DB; never start over another listener.
-call :probe_paper_backend
+call :probe_paper_backend 0
 if errorlevel 2 (
     echo PAPER backend URL answered without matching identity; nothing was started.
     exit /b 1
@@ -25,7 +25,12 @@ if not errorlevel 1 goto paper_backend_ready
 
 start "BybitScanner - PAPER Backend" powershell.exe -NoExit -Command "Set-Location '%~dp0'; & '%~dp0start_paper_backend.bat'"
 
-timeout /t 2 /nobreak >nul
+rem The spawned backend must prove canonical READY for this DB within the bound.
+call :probe_paper_backend 60
+if errorlevel 1 (
+    echo PAPER backend did not prove READY; Telegram and Scanner were not started.
+    exit /b 1
+)
 
 :paper_backend_ready
 rem Scanner start requires a READY Telegram callback worker; reuse one if present.
@@ -53,5 +58,6 @@ powershell.exe -NoProfile -Command "$port = $env:BYBITSCANNER_TELEGRAM_MONITORIN
 exit /b %errorlevel%
 
 :probe_paper_backend
-powershell.exe -NoProfile -Command "$ErrorActionPreference = 'Stop'; $backendUrl = $env:BYBITSCANNER_PAPER_BACKEND_URL; if (-not $backendUrl) { $backendUrl = 'http://127.0.0.1:8765' }; $code = 'import hashlib, os, pathlib; path = pathlib.Path(os.environ.get(''BYBITSCANNER_PAPER_DB'', ''paper_runtime.sqlite3'')); print(hashlib.sha256(str(path.resolve()).encode(''utf-8'')).hexdigest())'; try { $expected = (& $env:BYBITSCANNER_PYTHON -c $code | Out-String).Trim() } catch { $expected = '' }; if ($LASTEXITCODE -ne 0 -or $expected -cnotmatch '^[0-9a-f]{64}$') { Write-Host 'Cannot compute PAPER database identity.'; exit 2 }; try { $r = Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 10 -Uri ($backendUrl.TrimEnd('/') + '/api/health') } catch [System.Net.WebException] { if ($_.Exception.Status -eq [System.Net.WebExceptionStatus]::ConnectFailure) { exit 1 }; Write-Host ('PAPER backend URL answered without proven health: ' + $_.Exception.Status); exit 2 } catch { Write-Host 'PAPER backend health probe failed.'; exit 2 }; try { $h = $r.Content | ConvertFrom-Json } catch { $h = $null }; if ($r.StatusCode -eq 200 -and $h.ok -is [bool] -and $h.ok -and $h.component -ceq 'paper_backend' -and $h.mode -ceq 'paper' -and $h.database_identity -ceq $expected) { Write-Host 'Reusing running PAPER backend.'; exit 0 }; Write-Host 'PAPER backend URL answered with a different component or database identity.'; exit 2"
+set "BYBITSCANNER_PAPER_BACKEND_WAIT_SECONDS=%~1"
+powershell.exe -NoProfile -Command "$ErrorActionPreference = 'Stop'; $backendUrl = $env:BYBITSCANNER_PAPER_BACKEND_URL; if (-not $backendUrl) { $backendUrl = 'http://127.0.0.1:8765' }; $wait = [int]$env:BYBITSCANNER_PAPER_BACKEND_WAIT_SECONDS; $deadline = (Get-Date).AddSeconds($wait); $requestTimeout = if ($wait -gt 0) { 2 } else { 10 }; $retryable = @('ConnectFailure', 'Timeout', 'ConnectionClosed', 'ReceiveFailure', 'KeepAliveFailure', 'SendFailure'); $code = 'import hashlib, os, pathlib; path = pathlib.Path(os.environ.get(''BYBITSCANNER_PAPER_DB'', ''paper_runtime.sqlite3'')); print(hashlib.sha256(str(path.resolve()).encode(''utf-8'')).hexdigest())'; try { $expected = (& $env:BYBITSCANNER_PYTHON -c $code | Out-String).Trim() } catch { $expected = '' }; if ($LASTEXITCODE -ne 0 -or $expected -cnotmatch '^[0-9a-f]{64}$') { Write-Host 'Cannot compute PAPER database identity.'; exit 2 }; do { $r = $null; try { $r = Invoke-WebRequest -UseBasicParsing -MaximumRedirection 0 -TimeoutSec $requestTimeout -Uri ($backendUrl.TrimEnd('/') + '/api/health') } catch [System.Net.WebException] { $status = [string]$_.Exception.Status; if ($_.Exception.Response -ne $null) { Write-Host ('PAPER backend URL answered without proven health: ' + $status); exit 2 }; if ($wait -le 0) { if ($status -eq 'ConnectFailure') { exit 1 }; Write-Host ('PAPER backend URL answered without proven health: ' + $status); exit 2 }; if ($retryable -notcontains $status) { Write-Host ('PAPER backend health probe failed: ' + $status); exit 2 } } catch { Write-Host 'PAPER backend health probe failed.'; exit 2 }; if ($r -ne $null) { try { $h = $r.Content | ConvertFrom-Json } catch { $h = $null }; if ($r.StatusCode -eq 200 -and $h.ok -is [bool] -and $h.ok -and $h.component -ceq 'paper_backend' -and $h.mode -ceq 'paper' -and $h.database_identity -ceq $expected) { Write-Host 'PAPER backend READY.'; exit 0 }; Write-Host 'PAPER backend URL answered with a different component or database identity.'; exit 2 }; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); Write-Host 'PAPER backend did not become READY within the bound.'; exit 1"
 exit /b %errorlevel%
