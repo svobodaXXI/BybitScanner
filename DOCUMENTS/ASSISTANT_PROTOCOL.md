@@ -402,6 +402,34 @@ prove that another host or its running services are synchronized.
 
 The synchronization preflight is fail-closed: uncertainty about repository ancestry or remote freshness means `SAFE TO START: NO` until resolved.
 
+## 4.2 GITHUB ↔ CODEX/LOCAL HANDOFF SYNC GUARD — HARD GATE
+
+A tool-boundary handoff is itself a synchronization trigger when the next step
+will mutate repository state.
+
+Before the first mutating Codex/local task after ChatGPT-led GitHub-first work,
+or the first GitHub-first repository edit after Codex/local changes, the
+assistant must automatically initiate or propose a bounded synchronization
+preflight. Do not wait for the owner to remember this step.
+
+The preflight must establish only what is necessary for the intended task:
+
+1. intended destination checkout/worktree and branch/HEAD;
+2. current remote state after fetch;
+3. ahead/behind/diverged ancestry against the intended remote ref;
+4. dirty/untracked/stashed user-owned work relevant to safe reconciliation;
+5. whether the destination contains commits or file changes not represented on
+   the other side.
+
+If the states do not match, preserve both histories/work products first and
+resolve the mismatch explicitly before editing. Never hide the mismatch with
+`reset --hard`, `clean`, force-push, discard, blind pull/rebase, or checkout
+that could overwrite unrelated work.
+
+This guard is required for **mutating handoffs**, not for ordinary read-only
+inspection. A previously proven synchronization result may be reused while its
+branch/HEAD/remote inputs remain unchanged.
+
 Destructive or broad Git/filesystem actions require explicit authority and verified exact targets. In particular,
 `reset`, `restore`, `clean`, and discard operations are prohibited without explicit authorization. Prefer minimal,
 scoped, reversible changes. Do not request content already accessible in the repository or current context.
