@@ -3,7 +3,7 @@
 Current owner sequence, superseding earlier next-step ordering:
 
 1. **Open-PR weekly triage** — review all currently open PRs touched/left hanging this week; close superseded/obsolete ones, retain only genuinely active work, and do not merge by age or convenience.
-2. **Robot open-position Telegram card** — presentation-only refinement; no trading-logic change.
+2. **Robot open-position Telegram card** — presentation-only refinement; no trading-logic change. Add an **«Открыть в Trading View»** URL button under each open-position card for its symbol, and rename the shared TradingView button under **all Scanner signals** to exactly **«Открыть в Trading View»** (currently `📈 Open TradingView`).
 3. **Ikigai Box first-impulse geometry** — resolve AIGENSYNUSDT 5m and the general owner-defined first-impulse construction rule; do not reopen the already-fixed stale FLOCK fixture unless new evidence requires it.
 4. **Full dual-timeframe Scanner 5m→1m** — per-symbol 5m then 1m processing with independent (symbol × timeframe × pattern × formation) memory/dedup/evidence.
 
