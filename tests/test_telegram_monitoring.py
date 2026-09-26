@@ -731,5 +731,75 @@ class RobotLifecyclePostDeliveryTests(unittest.TestCase):
         self.assertTrue(send.call_args.args[1].endswith("\nГрафик недоступен"))
 
 
+
+class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
+    def setUp(self):
+        monitoring._POLLING_READY.clear()
+        self.addCleanup(monitoring._POLLING_READY.clear)
+        for target in ("_save_offset", "_process_message", "time.sleep"):
+            fixture = patch(f"telegram_monitoring.{target}")
+            fixture.start()
+            self.addCleanup(fixture.stop)
+        self.server = monitoring.acquire_worker_singleton(port=0)
+        self.assertIsNotNone(self.server)
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.port = self.server.server_address[1]
+
+    def _health(self):
+        import urllib.error
+        import urllib.request
+
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{self.port}/health", timeout=5) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    def test_health_turns_ready_only_after_successful_short_initial_poll(self):
+        self.assertEqual(self._health(), (503, {"status": "not_ready"}))
+        update = {"update_id": 41, "message": {"text": "/robot"}}
+        with patch("telegram_monitoring._telegram_request",
+                   return_value={"ok": True, "result": [update]}) as request:
+            offset = monitoring.poll_updates_once(None)
+        self.assertEqual(request.call_args.kwargs["timeout"], 0)
+        monitoring._process_message.assert_called_once_with(update["message"])
+        self.assertEqual(offset, 42)
+        self.assertEqual(self._health(), (200, {"status": "ready"}))
+        with patch("telegram_monitoring._telegram_request",
+                   return_value={"ok": True, "result": []}) as request:
+            monitoring.poll_updates_once(offset)
+        self.assertEqual(request.call_args.kwargs["timeout"], 30)
+        self.assertEqual(request.call_args.kwargs["offset"], 42)
+
+    def test_conflict_or_failed_get_updates_never_reports_ready(self):
+        conflict = {"ok": False, "error_code": 409, "description": "Conflict"}
+        with patch("telegram_monitoring._telegram_request", return_value=conflict):
+            self.assertIsNone(monitoring.poll_updates_once(None))
+        self.assertEqual(self._health()[0], 503)
+        with patch("telegram_monitoring._telegram_request", side_effect=OSError("net")):
+            with self.assertRaises(OSError):
+                monitoring.poll_updates_once(None)
+        self.assertEqual(self._health()[0], 503)
+        monitoring._POLLING_READY.set()
+        with patch("telegram_monitoring._telegram_request", return_value=conflict):
+            monitoring.poll_updates_once(7)
+        self.assertEqual(self._health()[0], 503)
+
+    def test_duplicate_worker_cannot_bind_and_never_polls(self):
+        self.assertIsNone(monitoring.acquire_worker_singleton(port=self.port))
+        with patch.dict(os.environ, {monitoring.HEALTH_PORT_ENV: str(self.port)}),                 patch("telegram_monitoring._telegram_request") as request,                 patch("telegram_monitoring.configure_monitoring_menu") as menu:
+            self.assertEqual(monitoring.run(), 1)
+        request.assert_not_called()
+        menu.assert_not_called()
+        self.assertEqual(self._health()[0], 503)
+
+    def test_health_exposes_no_secrets(self):
+        monitoring._POLLING_READY.set()
+        status, body = self._health()
+        self.assertEqual((status, body), (200, {"status": "ready"}))
+        self.assertNotIn("test", json.dumps(body))
+
+
 if __name__ == "__main__":
     unittest.main()
