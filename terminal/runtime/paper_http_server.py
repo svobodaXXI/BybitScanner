@@ -2179,9 +2179,13 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/health":
             # Only the serialized owner can answer, and only an allow-listed
             # subset of its existing runtime attribution leaves the owner thread.
+            # Robot admission is reported as data; NOT ready is still a healthy owner.
             def _health_identity(runtime):
                 diagnostics = runtime.live_limit_acceptance_diagnostics()
-                return {key: diagnostics[key] for key in HEALTH_IDENTITY_FIELDS}
+                return {
+                    **{key: diagnostics[key] for key in HEALTH_IDENTITY_FIELDS},
+                    "robot_admission_ready": runtime.robot_admission_ready() is True,
+                }
 
             try:
                 identity = self.server.runtime.call(_health_identity)

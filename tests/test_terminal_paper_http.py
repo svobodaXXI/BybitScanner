@@ -1210,6 +1210,7 @@ def test_health_get_proves_owner_and_returns_allow_listed_identity():
             diagnostics = runtime.call(
                 lambda owned: owned.live_limit_acceptance_diagnostics()
             )
+            admission_ready = runtime.call(lambda owned: owned.robot_admission_ready())
 
             assert status == 200
             assert body == {
@@ -1219,7 +1220,10 @@ def test_health_get_proves_owner_and_returns_allow_listed_identity():
                 "database_identity": diagnostics["database_identity"],
                 "process_instance_id": diagnostics["process_instance_id"],
                 "build_sha": diagnostics["build_sha"],
+                # A fresh durable Robot is (ROBOT_STOPPED, ROBOT_STOPPED): not ready, still 200.
+                "robot_admission_ready": False,
             }
+            assert admission_ready is False
             assert len(body["database_identity"]) == 64
             assert body["process_instance_id"]
         finally:
@@ -1260,6 +1264,9 @@ def test_health_get_never_leaks_operator_or_secret_diagnostics():
                 "current_session": {"state": "ARMED"},
             }
 
+        def robot_admission_ready(self):
+            return False
+
     class SerializedRuntime:
         def call(self, operation, timeout=15.0):
             return operation(OwnedRuntime())
@@ -1275,10 +1282,40 @@ def test_health_get_never_leaks_operator_or_secret_diagnostics():
     assert status == 200
     assert set(body) == {
         "ok", "component", "mode", "database_identity", "process_instance_id", "build_sha",
+        "robot_admission_ready",
     }
     assert b"secret" not in raw
     assert b"server-operator-token" not in raw
     assert b"ARMED" not in raw
+
+
+@pytest.mark.parametrize("admission_ready", [True, False])
+def test_health_get_reports_robot_admission_as_data(admission_ready):
+    calls = []
+
+    class OwnedRuntime:
+        def live_limit_acceptance_diagnostics(self):
+            return {"database_identity": "a" * 64, "process_instance_id": "i", "build_sha": ""}
+
+        def robot_admission_ready(self):
+            return admission_ready
+
+    class SerializedRuntime:
+        def call(self, operation, timeout=15.0):
+            calls.append(operation)
+            return operation(OwnedRuntime())
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+    server.runtime = SerializedRuntime()
+    try:
+        status, body, _raw = _get_health_once(server)
+    finally:
+        server.server_close()
+
+    assert status == 200
+    assert body["ok"] is True
+    assert body["robot_admission_ready"] is admission_ready
+    assert len(calls) == 1  # identity and admission share one owner call
 
 
 def test_robot_protection_health_get_returns_ingress_diagnostics():
