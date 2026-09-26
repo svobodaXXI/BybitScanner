@@ -31,8 +31,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem Route by durable Scanner state; unknown or unavailable state fails closed.
 :telegram_ready
-powershell.exe -NoProfile -Command "$ErrorActionPreference = 'Stop'; $backendUrl = $env:BYBITSCANNER_PAPER_BACKEND_URL; if (-not $backendUrl) { $backendUrl = 'http://127.0.0.1:8765' }; Invoke-RestMethod -Method Post -Uri ($backendUrl.TrimEnd('/') + '/api/scanner/start') -ContentType 'application/json' -Body '{}'"
+powershell.exe -NoProfile -Command "$ErrorActionPreference = 'Stop'; $backendUrl = $env:BYBITSCANNER_PAPER_BACKEND_URL; if (-not $backendUrl) { $backendUrl = 'http://127.0.0.1:8765' }; $base = $backendUrl.TrimEnd('/'); $status = Invoke-RestMethod -Method Get -Uri ($base + '/api/scanner/status'); $mode = if ($status.ok -eq $true) { [string]$status.mode } else { '' }; if ($mode -ceq 'SCANNER_STOPPED') { Invoke-RestMethod -Method Post -Uri ($base + '/api/scanner/start') -ContentType 'application/json' -Body '{}' | Out-Null } elseif ($mode -ceq 'SCANNER_PAUSED') { Invoke-RestMethod -Method Post -Uri ($base + '/api/scanner/resume') -ContentType 'application/json' -Body '{}' | Out-Null } elseif ($mode -ceq 'SCANNER_RUNNING') { Write-Host 'Scanner already running; no lifecycle change.' } else { Write-Host ('Scanner state unknown: ' + $mode); exit 1 }"
 if errorlevel 1 exit /b 1
 
 exit /b 0

@@ -353,9 +353,18 @@ class ScannerControlRuntime:
         # Ensure the durable row exists (defaults to SCANNER_STOPPED -- never
         # autostart) using whichever thread calls start(), typically the
         # constructing thread.
-        self._store().initialize_scanner_runtime_state(
+        state = self._store().initialize_scanner_runtime_state(
             self._account_id, updated_at_ms=self._now_ms(),
         )
+        # The pause cursor lives only in this process's pass. A persisted
+        # RUNNING/PAUSED left by a previous process cannot be continued, so a
+        # fresh coordinator recovers it to STOPPED before accepting commands.
+        if state.mode in (SCANNER_RUNNING, SCANNER_PAUSED):
+            self._store().update_scanner_runtime_state(
+                self._account_id, mode=SCANNER_STOPPED, reason="restart_recovery",
+                expected_version=state.version,
+                updated_at_ms=max(self._now_ms(), state.updated_at_ms),
+            )
         self._thread.start()
 
     def close(self) -> None:
