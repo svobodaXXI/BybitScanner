@@ -43,7 +43,8 @@
 - admission остаётся закрытым, Scanner не запускался.
 
 Backup и dirty локальный checkout пока сохраняются; не удалять их только ради
-cleanup. Следующий активный этап — реальная PAPER-проверка L-shape рейда.
+cleanup. Следующий активный этап — закрыть explicit 1m Wedge Robot-eligible gate,
+затем провести один полный owner-run PAPER acceptance.
 
 ## 🎯 Активный квест
 
@@ -71,7 +72,8 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #255 merged (`0f209e7`): backend `/api/health` теперь подтверждает canonical PAPER backend, live owner и database identity;
 - [x] PR #256 merged (`f7815fe`): canonical launcher переиспользует уже живой canonical PAPER backend с совпадающей database identity;
 - [x] startup-path закрыт fail-closed: backend PR #257, Robot admission PR #258, Robot/protection barrier PR #259, Telegram DB identity health PR #260, launcher Telegram/backend identity match PR #261, backend PAPER/config safety health PR #262, launcher safety enforcement PR #263;
-- [ ] убрать устаревший 1m Wedge observational-only Robot-button gate;
+- [x] PR #265 merged (`15ad7aa`): failure Robot candidate persistence теперь даёт одно owner-only Telegram warning после обычной доставки сигнала, без декоративной Robot-кнопки и без утечки exception/DB/path деталей;
+- [ ] PR #264: убрать устаревший explicit 1m Wedge observational-only Robot-button gate;
 - [ ] только после этого провести один полный owner-run acceptance.
 
 **Награда:** без XP за документацию/рефакторинг; награда только за доказанный
