@@ -42,9 +42,9 @@ Economical implementation sequence:
 
 1. **DONE:** PR #249 merged as `2032188` — one-pass authoritative
    ScannerControlRuntime with pause/resume/stop; do not reopen or repeat it;
-2. micro-slice: remove the standalone-Scanner split brain from the canonical
-   prototype launcher — Scanner start must go through the backend Scanner
-   control API after #249, never spawn `main.py` alongside it;
+2. **DONE:** PR #251 merged as `b02e330` — canonical prototype launcher no
+   longer spawns standalone `main.py`; Scanner start goes through the backend
+   Scanner control API;
 3. micro-slice: make `telegram_monitoring.py` single-owner and observable
    (minimal singleton guard + readiness/heartbeat) and make startup wait for
    it before allowing Scanner start;
