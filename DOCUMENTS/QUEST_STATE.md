@@ -74,8 +74,8 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] startup-path закрыт fail-closed: backend PR #257, Robot admission PR #258, Robot/protection barrier PR #259, Telegram DB identity health PR #260, launcher Telegram/backend identity match PR #261, backend PAPER/config safety health PR #262, launcher safety enforcement PR #263;
 - [x] PR #265 merged (`15ad7aa`): failure Robot candidate persistence теперь даёт одно owner-only Telegram warning после обычной доставки сигнала, без декоративной Robot-кнопки и без утечки exception/DB/path деталей;
 - [x] PR #264 merged (`5852a09`): explicit 1m Wedge больше не observational-only; Robot handoff строится только после успешного evidence projection/cursor и остаётся fail-closed при ошибке;
-- [ ] pre-existing Ikigai FLOCK regression: synthetic test ожидает A=24 внутри нисходящего движения, что противоречит owner rule 2026-09-23 об actual local reversal origin; исправить только stale test fixture/expectation, не detector;
-- [ ] только после green независимого Ikigai check провести один полный owner-run acceptance.
+- [x] PR #266 merged (`90b8559`): stale FLOCK synthetic fixture приведён к owner rule 2026-09-23 — A теперь actual local reversal origin; detector не менялся, red-core и 55%/12% box-boundary coverage сохранены; Ikigai Box detector CI SUCCESS;
+- [ ] провести один полный owner-run PAPER acceptance.
 
 **Награда:** без XP за документацию/рефакторинг; награда только за доказанный
 полный запуск без ручного кризисного восстановления.
