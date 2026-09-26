@@ -296,7 +296,6 @@ def format_signal(
         "UNKNOWN"
     )
 
-    circle = signal_stage_circle(result)
 
     timeframe_label = format_timeframe_ru(
         result.get(
@@ -322,7 +321,7 @@ def format_signal(
     )
 
     message = f"""
-{SCANNER_EMOJI} Сканер: {symbol} {circle}
+{SCANNER_EMOJI} Сканер: {symbol}
 {pattern_line}
 {timeframe_label}{test_marker}
 Баллы: {score}
