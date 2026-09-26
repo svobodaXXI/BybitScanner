@@ -40,8 +40,8 @@ surface. Do not add Docker/systemd merely for this Windows prototype.
 
 Economical implementation sequence:
 
-1. finish/verify PR #249 as the one-pass authoritative ScannerControlRuntime;
-   do not expand it into a general supervisor;
+1. **DONE:** PR #249 merged as `2032188` — one-pass authoritative
+   ScannerControlRuntime with pause/resume/stop; do not reopen or repeat it;
 2. micro-slice: remove the standalone-Scanner split brain from the canonical
    prototype launcher — Scanner start must go through the backend Scanner
    control API after #249, never spawn `main.py` alongside it;
