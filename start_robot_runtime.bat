@@ -39,5 +39,5 @@ exit /b 0
 
 :wait_telegram_ready
 set "BYBITSCANNER_TELEGRAM_WAIT_SECONDS=%~1"
-powershell.exe -NoProfile -Command "$port = $env:BYBITSCANNER_TELEGRAM_MONITORING_PORT; if (-not $port) { $port = '8766' }; $deadline = (Get-Date).AddSeconds([int]$env:BYBITSCANNER_TELEGRAM_WAIT_SECONDS); do { try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri ('http://127.0.0.1:' + $port + '/health'); if ($r.StatusCode -eq 200) { exit 0 } } catch {}; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"
+powershell.exe -NoProfile -Command "$port = $env:BYBITSCANNER_TELEGRAM_MONITORING_PORT; if (-not $port) { $port = '8766' }; $deadline = (Get-Date).AddSeconds([int]$env:BYBITSCANNER_TELEGRAM_WAIT_SECONDS); do { try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri ('http://127.0.0.1:' + $port + '/health'); $h = $r.Content | ConvertFrom-Json; if ($r.StatusCode -eq 200 -and $h.component -eq 'telegram_monitoring' -and $h.status -eq 'ready') { exit 0 } } catch {}; Start-Sleep -Milliseconds 500 } while ((Get-Date) -lt $deadline); exit 1"
 exit /b %errorlevel%

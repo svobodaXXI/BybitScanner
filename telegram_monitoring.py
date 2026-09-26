@@ -708,11 +708,16 @@ def configure_monitoring_menu() -> None:
     _ensure_commands_menu_button()
 
 
+HEALTH_COMPONENT = "telegram_monitoring"
 HEALTH_PORT_ENV = "BYBITSCANNER_TELEGRAM_MONITORING_PORT"
 DEFAULT_HEALTH_PORT = 8766
 INITIAL_POLL_TIMEOUT = 0
 LONG_POLL_TIMEOUT = 30
 _POLLING_READY = threading.Event()
+
+
+class TelegramUpdateConflict(RuntimeError):
+    """getUpdates 409: another consumer owns this bot's update stream."""
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
@@ -721,7 +726,8 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         ready = _POLLING_READY.is_set()
-        body = json.dumps({"status": "ready" if ready else "not_ready"}).encode("ascii")
+        body = json.dumps({"component": HEALTH_COMPONENT,
+                           "status": "ready" if ready else "not_ready"}).encode("ascii")
         self.send_response(200 if ready else 503)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -775,6 +781,8 @@ def poll_updates_once(offset):
         raise
     if not result.get("ok"):
         _POLLING_READY.clear()
+        if result.get("error_code") == 409:
+            raise TelegramUpdateConflict(result.get("description") or "getUpdates conflict")
         print("[MONITORING TELEGRAM ERROR]", result)
         time.sleep(3)
         return offset
@@ -801,6 +809,12 @@ def poll_updates_once(offset):
     return offset
 
 
+def _release_worker_singleton(server) -> None:
+    _POLLING_READY.clear()
+    server.shutdown()
+    server.server_close()
+
+
 def run() -> int:
     server = acquire_worker_singleton()
     if server is None:
@@ -812,15 +826,24 @@ def run() -> int:
     print(f"DB: {DB_PATH}")
     print(f"Health: http://127.0.0.1:{server.server_address[1]}/health")
     print("=" * 60)
-    configure_monitoring_menu()
-    start_lifecycle_thread()
     offset = _load_offset()
+    owned = False
 
     while True:
         try:
-            refresh_command_menu()
-            _ensure_commands_menu_button()
+            if owned:
+                refresh_command_menu()
+                _ensure_commands_menu_button()
             offset = poll_updates_once(offset)
+            if not owned and _POLLING_READY.is_set():
+                # Menu and lifecycle posts only after getUpdates proved stream ownership.
+                owned = True
+                start_lifecycle_thread()
+                configure_monitoring_menu()
+        except TelegramUpdateConflict as exc:
+            print("[MONITORING TELEGRAM CONFLICT] another getUpdates consumer is active:", exc)
+            _release_worker_singleton(server)
+            return 1
         except KeyboardInterrupt:
             print()
             print("Monitoring listener stopped.")
@@ -828,8 +851,8 @@ def run() -> int:
         except Exception as exc:
             print("[MONITORING LOOP ERROR]", exc)
             time.sleep(3)
+    _release_worker_singleton(server)
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(run())

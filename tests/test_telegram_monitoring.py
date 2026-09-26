@@ -757,7 +757,8 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
             return exc.code, json.loads(exc.read())
 
     def test_health_turns_ready_only_after_successful_short_initial_poll(self):
-        self.assertEqual(self._health(), (503, {"status": "not_ready"}))
+        self.assertEqual(self._health(), (503, {"component": "telegram_monitoring",
+                                               "status": "not_ready"}))
         update = {"update_id": 41, "message": {"text": "/robot"}}
         with patch("telegram_monitoring._telegram_request",
                    return_value={"ok": True, "result": [update]}) as request:
@@ -765,26 +766,67 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
         self.assertEqual(request.call_args.kwargs["timeout"], 0)
         monitoring._process_message.assert_called_once_with(update["message"])
         self.assertEqual(offset, 42)
-        self.assertEqual(self._health(), (200, {"status": "ready"}))
+        self.assertEqual(self._health(), (200, {"component": "telegram_monitoring",
+                                               "status": "ready"}))
         with patch("telegram_monitoring._telegram_request",
                    return_value={"ok": True, "result": []}) as request:
             monitoring.poll_updates_once(offset)
         self.assertEqual(request.call_args.kwargs["timeout"], 30)
         self.assertEqual(request.call_args.kwargs["offset"], 42)
 
-    def test_conflict_or_failed_get_updates_never_reports_ready(self):
-        conflict = {"ok": False, "error_code": 409, "description": "Conflict"}
-        with patch("telegram_monitoring._telegram_request", return_value=conflict):
+    def test_transient_failure_stays_not_ready_and_retryable(self):
+        with patch("telegram_monitoring._telegram_request",
+                   return_value={"ok": False, "error_code": 502}):
             self.assertIsNone(monitoring.poll_updates_once(None))
         self.assertEqual(self._health()[0], 503)
         with patch("telegram_monitoring._telegram_request", side_effect=OSError("net")):
             with self.assertRaises(OSError):
                 monitoring.poll_updates_once(None)
         self.assertEqual(self._health()[0], 503)
+
+    def test_conflict_clears_readiness_and_is_fatal(self):
         monitoring._POLLING_READY.set()
+        conflict = {"ok": False, "error_code": 409, "description": "Conflict"}
         with patch("telegram_monitoring._telegram_request", return_value=conflict):
-            monitoring.poll_updates_once(7)
+            with self.assertRaises(monitoring.TelegramUpdateConflict):
+                monitoring.poll_updates_once(7)
         self.assertEqual(self._health()[0], 503)
+
+    def _run_with(self, responses):
+        events = []
+        record = lambda name: (lambda *a, **k: events.append(name))  # noqa: E731
+
+        def request(method, **params):
+            events.append(method)
+            response = responses.pop(0)
+            if isinstance(response, BaseException):
+                raise response
+            return response
+
+        with patch("telegram_monitoring.acquire_worker_singleton", return_value=self.server),                 patch("telegram_monitoring._load_offset", return_value=None),                 patch("telegram_monitoring._telegram_request", side_effect=request),                 patch("telegram_monitoring._process_message", side_effect=record("message")),                 patch("telegram_monitoring.start_lifecycle_thread", side_effect=record("lifecycle")),                 patch("telegram_monitoring.configure_monitoring_menu", side_effect=record("menu")),                 patch("telegram_monitoring.refresh_command_menu", side_effect=record("refresh")),                 patch("telegram_monitoring._ensure_commands_menu_button",
+                      side_effect=record("button")):
+            return monitoring.run(), events
+
+    def test_no_menu_or_lifecycle_side_effects_before_ownership(self):
+        update = {"update_id": 5, "message": {"text": "/robot"}}
+        code, events = self._run_with([
+            {"ok": False, "error_code": 502},
+            {"ok": True, "result": [update]},
+            KeyboardInterrupt(),
+        ])
+        self.assertEqual(code, 0)
+        self.assertEqual(events, ["getUpdates", "getUpdates", "message", "lifecycle", "menu",
+                                  "refresh", "button", "getUpdates"])
+
+    def test_conflict_exits_nonzero_and_releases_listener(self):
+        code, events = self._run_with([{"ok": False, "error_code": 409}])
+        self.assertEqual(code, 1)
+        self.assertEqual(events, ["getUpdates"])
+        self.assertFalse(monitoring._POLLING_READY.is_set())
+        again = monitoring.acquire_worker_singleton(port=self.port)
+        self.assertIsNotNone(again)
+        again.shutdown()
+        again.server_close()
 
     def test_duplicate_worker_cannot_bind_and_never_polls(self):
         self.assertIsNone(monitoring.acquire_worker_singleton(port=self.port))
@@ -797,7 +839,8 @@ class TelegramWorkerSingletonReadinessTests(unittest.TestCase):
     def test_health_exposes_no_secrets(self):
         monitoring._POLLING_READY.set()
         status, body = self._health()
-        self.assertEqual((status, body), (200, {"status": "ready"}))
+        self.assertEqual((status, body), (200, {"component": "telegram_monitoring",
+                                                "status": "ready"}))
         self.assertNotIn("test", json.dumps(body))
 
 

@@ -47,7 +47,11 @@ class RuntimeLauncherTests(unittest.TestCase):
         self.assertIn("$env:BYBITSCANNER_TELEGRAM_MONITORING_PORT", probe)
         self.assertIn("$port = '8766'", probe)
         self.assertIn("'http://127.0.0.1:' + $port + '/health'", probe)
-        self.assertIn("$r.StatusCode -eq 200) { exit 0 }", probe)
+        # An unrelated HTTP 200 fails closed: component identity and status are both required.
+        self.assertIn("$h = $r.Content | ConvertFrom-Json;", probe)
+        self.assertIn("if ($r.StatusCode -eq 200 -and $h.component -eq 'telegram_monitoring' "
+                      "-and $h.status -eq 'ready') { exit 0 }", probe)
+        self.assertEqual(probe.count("exit 0"), 1)
         self.assertTrue(probe.endswith('exit 1"'))
         self.assertGreater(lines.index(":wait_telegram_ready"), lines.index("exit /b 0"))
 
