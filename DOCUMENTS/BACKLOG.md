@@ -1,3 +1,17 @@
+## TODAY — 2026-09-26
+
+Today's owner execution sequence:
+
+1. Open-PR weekly triage.
+2. Robot open-position Telegram card refinement, including:
+   - add **«Открыть в Trading View»** under each open-position card;
+   - rename the shared TradingView button under all Scanner signals to exactly **«Открыть в Trading View»**;
+   - keep the already queued position-card presentation refinements; no trading-logic change.
+3. Ikigai Box first-impulse geometry — AIGENSYNUSDT 5m / general construction rule; do not reopen FLOCK without new evidence.
+4. Full dual-timeframe Scanner 5m→1m — per symbol, 5m then 1m, with independent symbol × timeframe × pattern × formation state.
+
+This daily order supersedes older next-step wording for today unless the owner changes it.
+
 ## BINDING OWNER EXECUTION ORDER — 2026-09-26
 
 Current owner sequence, superseding earlier next-step ordering:
