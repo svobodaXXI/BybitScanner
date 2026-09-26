@@ -73,6 +73,28 @@ cleanup-квестов по этой сверке нет.
 
 Подробная запись: `DOCUMENTS/BACKLOG.md` → «RECONCILIATION / WORKTREE CLEANUP = COMPLETE».
 
+
+### Ночной checkpoint — 2026-09-27
+
+**PC ↔ GitHub взаимосинхронизация завершена, кроме намеренного runtime-pin.**
+
+- authoritative `origin/main` на завершении: `83535e81241fa24de3952ce13b62eeb26f53da44`;
+- primary `C:\BybitScanner` и `C:\BybitScanner-main-acceptance` синхронизированы с этим `main`;
+- docs worktree `C:\BybitScanner-sync-20260926` совпадает с remote branch PR #269;
+- `C:\BybitScanner-ingress` совпадает со своей remote branch, commit `9bc902d` сохранён как **PORT REQUIRED**;
+- local stash count = **0**;
+- stranded local commits = **0**;
+- surviving worktrees = **5/5**;
+- PR #156 / #267 / #268 / #269 не менялись в ходе финального sync;
+- `C:\BybitScanner-box-robot-run` остаётся **RUNTIME-PINNED** на старом disk HEAD, потому что оттуда живёт runtime; checkout не обновлять до явно разрешённого штатного restart;
+- runtime не останавливался и не перезапускался.
+
+Отдельный квест **«Ikigai Box — Кривой первый импульс»** дошёл до gate
+`CONFIRMED RED + READY ARCHITECTURE PLAN + NO PRODUCTION MUTATION YET`.
+Следующий production implementation slice выполнять в отдельном чате на
+**Opus 5.5**; основной координационный чат эту реализацию не забирает.
+
+
 ## 🎯 Активный квест
 
 ### Рейд «Один запуск — весь прототип»
