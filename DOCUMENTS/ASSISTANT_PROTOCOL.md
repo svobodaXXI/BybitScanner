@@ -515,6 +515,41 @@ Required no-repeat behavior:
 The purpose of this gate is to prevent the observed failure mode:
 `stale worktree -> mistaken unfinished work -> duplicate or obsolete work -> owner time lost`.
 
+
+### 4.2.2 CLAUDE MODEL / EFFORT HANDOFF — OWNER RULE 2026-09-26
+
+Before every copy-ready prompt intended for Claude Code, state the recommended
+model and reasoning mode **before** the prompt so the owner knows whether to
+switch models.
+
+Default routing:
+
+- `Sonnet 5 / Medium` — routine Git/reconciliation/retirement work, bounded
+  repository inspection, mechanical implementation with clear architecture,
+  straightforward tests and PR maintenance;
+- `Sonnet 5 / High` — non-trivial bounded implementation where architecture
+  and invariants are already fixed but the code path is complex enough to
+  benefit from deeper reasoning;
+- `Opus 5.5` — the first slice of a difficult implementation, architecture
+  decisions, ambiguous runtime/ownership/race defects, geometry/algorithm
+  changes with competing invariants, or reconciliation where semantic
+  equivalence is uncertain.
+
+Preferred development pattern for difficult work:
+
+1. use `Opus 5.5` for the first architectural/diagnostic slice to define
+   invariants, scope and failure modes;
+2. once those decisions are explicit and stable, subsequent bounded slices may
+   move to `Sonnet 5 / High`;
+3. do not downgrade while material architectural questions remain unresolved;
+4. do not use Opus for routine mechanical cleanup when Sonnet is sufficient.
+
+If switching models would not materially improve correctness or owner time,
+say `Остаться на текущей модели` rather than recommending a change.
+
+Model choice never changes project authority, safety gates, scope ownership,
+runtime restrictions, acceptance rules, or verification requirements.
+
 Destructive or broad Git/filesystem actions require explicit authority and verified exact targets. In particular,
 `reset`, `restore`, `clean`, and discard operations are prohibited without explicit authorization. Prefer minimal,
 scoped, reversible changes. Do not request content already accessible in the repository or current context.
