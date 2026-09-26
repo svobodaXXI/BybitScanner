@@ -66,7 +66,7 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #249 merged (`2032188`): one-pass authoritative Scanner runtime с pause/resume/stop;
 - [x] PR #251 merged (`b02e330`): canonical launcher больше не запускает standalone `main.py`; Scanner стартует через backend `/api/scanner/start`;
 - [x] PR #252 merged (`1e07dec`): Telegram getUpdates worker теперь singleton + observable readiness;
-- [ ] prerequisite: backend bind/reserve 127.0.0.1 listener ДО REST/WebSocket/SQLite/runtime/recovery side effects; duplicate backend должен проигрывать без durable mutations;
+- [x] PR #254 merged (`fe56450`): backend bind/reserve 127.0.0.1 listener происходит ДО REST/WebSocket/SQLite/runtime/recovery side effects;
 - [ ] PR #253 после prerequisite: Scanner restart-safe + launcher lifecycle-aware; сам #253 до sync/review не расширять и не merge;
 - [ ] отдельным следующим slice сделать canonical launcher reuse уже живого healthy backend;
 - [ ] заменить fixed sleeps на bounded dependency readiness/fail-closed startup;
