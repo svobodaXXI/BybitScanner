@@ -190,6 +190,40 @@ def format_symbol_for_telegram(symbol):
     return symbol
 
 
+ROBOT_CANDIDATE_FAILURE_WARNING = (
+    "⚠️ Робот: кандидат {symbol} {timeframe} не создан. "
+    "Сигнал доставлен без Robot-кнопки."
+)
+
+
+def warn_owner_robot_candidate_failed(owner_chat_id, symbol, timeframe):
+    """Tell only the owner that a signal has no Robot button; never retried."""
+
+    text = ROBOT_CANDIDATE_FAILURE_WARNING.format(
+        symbol=format_symbol_for_telegram(symbol),
+        timeframe=format_timeframe_ru(timeframe),
+    )
+
+    try:
+        response = send_message(
+            config.TELEGRAM_TOKEN,
+            owner_chat_id,
+            text
+        )
+
+        if not _telegram_delivery_ok(response):
+            print(
+                f"[ROBOT CANDIDATE WARNING ERROR] "
+                f"chat_id={owner_chat_id} response={response}"
+            )
+
+    except Exception as error:
+        print(
+            f"[ROBOT CANDIDATE WARNING ERROR] "
+            f"chat_id={owner_chat_id} error={error}"
+        )
+
+
 def send_message_to_recipients(text, reply_markup=None):
     """Send one message to every configured recipient without fail-fast."""
 
@@ -456,6 +490,7 @@ def send_signal(
 
     owner_chat_id = get_telegram_owner_chat_id()
     robot_candidate_id = None
+    robot_candidate_failed = False
 
     # Only production Scanner signals can be handed to Robot.  Persist the
     # complete signal payload first; a failed persistence simply withholds the
@@ -473,6 +508,7 @@ def send_signal(
             )
             robot_candidate_id = candidate["candidate_id"]
         except Exception as error:
+            robot_candidate_failed = True
             print(
                 "[ROBOT CANDIDATE ERROR] "
                 f"symbol={symbol} error={error}"
@@ -517,5 +553,10 @@ def send_signal(
                 f"[TELEGRAM PHOTO ERROR] "
                 f"chat_id={chat_id} error={error}"
             )
+
+    # After the ordinary card/photo delivery, tell the owner (only) why the
+    # Robot button is missing. The warning never affects delivery status.
+    if robot_candidate_failed:
+        warn_owner_robot_candidate_failed(owner_chat_id, symbol, timeframe)
 
     return all_delivered
