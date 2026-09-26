@@ -122,7 +122,7 @@ BybitScanner без доказанной связи.
 Текущий порядок работ от владельца:
 
 1. 🧹 **Разобрать старые открытые PR недели** — triage открытых PR: закрыть superseded/obsolete, оставить только реально нужные; ничего не merge'ить механически.
-2. 🎨 **Карточка открытой позиции Robot** — Telegram position card refinement без изменения торговой логики.
+2. 🎨 **Карточка открытой позиции Robot** — Telegram position card refinement без изменения торговой логики; добавить под карточкой кнопку **«Открыть в Trading View»** для её symbol и унифицировать подпись соответствующей TradingView-кнопки под **всеми Scanner-сигналами** на **«Открыть в Trading View»** (сейчас signal-кнопка подписана `📈 Open TradingView`).
 3. 👹 **Ikigai Box — «Кривой первый импульс»** — AIGENSYNUSDT 5m и общий first-impulse construction rule; FLOCK regression уже закрыт и не должен переоткрываться без нового доказательства.
 4. 🏢 **Полный dual-timeframe Scanner 5m→1m** — per-symbol 5m then 1m, независимые symbol × timeframe × pattern identities/dedup/evidence.
 
@@ -152,7 +152,9 @@ Telegram open-position card:
 - «Стоп» / «Тейк» -> `SL` / `TP`;
 - уменьшить execution triangles;
 - цвет контура по направлению;
-- `Размер` = quantity + USDT notional.
+- `Размер` = quantity + USDT notional;
+- добавить под карточкой позиции кнопку **«Открыть в Trading View»** для текущего symbol;
+- под всеми Scanner-сигналами переименовать существующую TradingView-кнопку в **«Открыть в Trading View»**; сейчас общий signal keyboard использует `📈 Open TradingView`.
 
 Торговую логику не менять.
 
