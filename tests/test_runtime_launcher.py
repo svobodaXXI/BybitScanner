@@ -14,9 +14,18 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 LAUNCHER = Path(__file__).resolve().parents[1] / "start_robot_runtime.bat"
+IDENTITY_CODE_PREFIX = 'set "BYBITSCANNER_PAPER_DB_IDENTITY_CODE='
+
+
+def _identity_code():
+    """The launcher's single expected PAPER DB identity definition."""
+    lines = [line.strip() for line in LAUNCHER.read_text().splitlines()]
+    (line,) = [line for line in lines if line.startswith(IDENTITY_CODE_PREFIX)]
+    return line[len(IDENTITY_CODE_PREFIX):-1]
 
 
 class RuntimeLauncherTests(unittest.TestCase):
@@ -45,9 +54,12 @@ class RuntimeLauncherTests(unittest.TestCase):
         lines = [line.strip() for line in launcher.splitlines() if line.strip()]
         worker = next(i for i, line in enumerate(lines) if "telegram_monitoring.py" in line)
         scanner = next(i for i, line in enumerate(lines) if "/api/scanner/start" in line)
-        # An already READY worker is reused and skips the second start.
-        self.assertEqual(lines[worker - 2:worker],
-                         ["call :wait_telegram_ready 1", "if not errorlevel 1 goto telegram_ready"])
+        # An already READY worker is reused and skips the second start; a READY worker
+        # for another PAPER DB stops the launcher before anything else starts.
+        self.assertEqual(lines[worker - 6:worker - 4],
+                         ["call :wait_telegram_ready 1", "if errorlevel 2 ("])
+        self.assertEqual(lines[worker - 3:worker], ["exit /b 1", ")",
+                                                    "if not errorlevel 1 goto telegram_ready"])
         # A newly started worker must prove READY within a bound or the launcher exits nonzero.
         self.assertEqual(lines[worker + 1:worker + 3],
                          ["call :wait_telegram_ready 60", "if errorlevel 1 ("])
@@ -65,9 +77,10 @@ class RuntimeLauncherTests(unittest.TestCase):
         self.assertIn("$port = '8766'", probe)
         self.assertIn("'http://127.0.0.1:' + $port + '/health'", probe)
         # An unrelated HTTP 200 fails closed: component identity and status are both required.
-        self.assertIn("$h = $r.Content | ConvertFrom-Json;", probe)
-        self.assertIn("if ($r.StatusCode -eq 200 -and $h.component -eq 'telegram_monitoring' "
-                      "-and $h.status -eq 'ready') { exit 0 }", probe)
+        self.assertIn("$h = $r.Content | ConvertFrom-Json }", probe)
+        self.assertIn("$r.StatusCode -eq 200 -and $h.component -eq 'telegram_monitoring' "
+                      "-and $h.status -eq 'ready') { if ($h.database_identity -is [string] "
+                      "-and $h.database_identity -ceq $expected) { exit 0 }", probe)
         self.assertEqual(probe.count("exit 0"), 1)
         self.assertTrue(probe.endswith('exit 1"'))
         self.assertGreater(lines.index(":wait_telegram_ready"), lines.index("exit /b 0"))
@@ -222,7 +235,8 @@ class LauncherBackendProbeTests(unittest.TestCase):
         env = dict(os.environ, BYBITSCANNER_PAPER_BACKEND_URL=backend_url,
                    BYBITSCANNER_PAPER_DB=str(self.db_path), BYBITSCANNER_PYTHON=sys.executable,
                    BYBITSCANNER_PAPER_BACKEND_WAIT_SECONDS=str(wait_seconds),
-                   BYBITSCANNER_PAPER_BACKEND_REQUIRE=require)
+                   BYBITSCANNER_PAPER_BACKEND_REQUIRE=require,
+                   BYBITSCANNER_PAPER_DB_IDENTITY_CODE=_identity_code())
         result = subprocess.run(
             ["powershell.exe", "-NoProfile", "-Command", command[len(prefix):-1]],
             env=env, capture_output=True, text=True, timeout=60,
@@ -398,6 +412,85 @@ class LauncherRobotBarrierTests(unittest.TestCase):
             self._protection()), 2)
         self.assertNotEqual(
             self._probe(f"http://127.0.0.1:{self._free_port()}", require="robot"), 0)
+
+
+
+class LauncherIdentityDefinitionTests(unittest.TestCase):
+    def test_backend_and_telegram_share_one_identity_definition(self):
+        text = LAUNCHER.read_text()
+        self.assertEqual(text.count(IDENTITY_CODE_PREFIX), 1)
+        self.assertEqual(text.count("hashlib.sha256"), 1)
+        self.assertEqual(text.count("-c $env:BYBITSCANNER_PAPER_DB_IDENTITY_CODE"), 2)
+
+
+@unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell launcher probe")
+class LauncherTelegramIdentityTests(unittest.TestCase):
+    """Run only the launcher's Telegram READY wait against a stub worker."""
+
+    setUp = LauncherBackendProbeTests.setUp
+    _free_port = staticmethod(LauncherBackendProbeTests._free_port)
+
+    def _wait(self, port, wait_seconds):
+        lines = [line.strip() for line in LAUNCHER.read_text().splitlines()]
+        command = lines[lines.index(":wait_telegram_ready") + 2]
+        prefix = 'powershell.exe -NoProfile -Command "'
+        self.assertTrue(command.startswith(prefix) and command.endswith('"'))
+        env = dict(os.environ, BYBITSCANNER_TELEGRAM_MONITORING_PORT=str(port),
+                   BYBITSCANNER_TELEGRAM_WAIT_SECONDS=str(wait_seconds),
+                   BYBITSCANNER_PAPER_DB=str(self.db_path), BYBITSCANNER_PYTHON=sys.executable,
+                   BYBITSCANNER_PAPER_DB_IDENTITY_CODE=_identity_code())
+        started = time.monotonic()
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", command[len(prefix):-1]],
+            env=env, capture_output=True, text=True, timeout=90,
+        )
+        return result.returncode, time.monotonic() - started
+
+    def _wait_stub(self, body, code=200, wait_seconds=30):
+        raw = body if isinstance(body, bytes) else json.dumps(body).encode()
+
+        def do_get(handler):
+            handler.send_response(code if handler.path == "/health" else 404)
+            handler.send_header("Content-Type", "application/json")
+            handler.end_headers()
+            handler.wfile.write(raw)
+
+        handler = type("Handler", (_StubBackend,), {"posts": [], "do_GET": do_get})
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            return self._wait(server.server_address[1], wait_seconds)
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def _ready(self, **overrides):
+        return {"component": "telegram_monitoring", "status": "ready",
+                "database_identity": self.identity, **overrides}
+
+    def test_matching_ready_identity_proceeds(self):
+        self.assertEqual(self._wait_stub(self._ready())[0], 0)
+
+    def test_ready_with_wrong_or_missing_identity_fails_closed_immediately(self):
+        missing = self._ready()
+        del missing["database_identity"]
+        for body in (self._ready(database_identity="0" * 64),
+                     self._ready(database_identity=self.identity.upper()),
+                     self._ready(database_identity=None),
+                     self._ready(database_identity=123),
+                     missing):
+            with self.subTest(body=body):
+                returncode, elapsed = self._wait_stub(body, wait_seconds=30)
+                self.assertEqual(returncode, 2)
+                self.assertLess(elapsed, 20)  # not treated as merely not ready
+
+    def test_not_ready_or_unavailable_keeps_bounded_wait(self):
+        not_ready = {"component": "telegram_monitoring", "status": "not_ready",
+                     "database_identity": self.identity}
+        for returncode, elapsed in (self._wait_stub(not_ready, code=503, wait_seconds=3),
+                                    self._wait(self._free_port(), wait_seconds=3)):
+            self.assertEqual(returncode, 1)
+            self.assertGreaterEqual(elapsed, 3)
 
 
 if __name__ == "__main__":
