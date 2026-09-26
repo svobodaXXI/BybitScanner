@@ -1,3 +1,14 @@
+## BINDING OWNER EXECUTION ORDER — 2026-09-26
+
+Current owner sequence, superseding earlier next-step ordering:
+
+1. **Open-PR weekly triage** — review all currently open PRs touched/left hanging this week; close superseded/obsolete ones, retain only genuinely active work, and do not merge by age or convenience.
+2. **Robot open-position Telegram card** — presentation-only refinement; no trading-logic change.
+3. **Ikigai Box first-impulse geometry** — resolve AIGENSYNUSDT 5m and the general owner-defined first-impulse construction rule; do not reopen the already-fixed stale FLOCK fixture unless new evidence requires it.
+4. **Full dual-timeframe Scanner 5m→1m** — per-symbol 5m then 1m processing with independent (symbol × timeframe × pattern × formation) memory/dedup/evidence.
+
+The previously queued full owner PAPER acceptance remains mandatory when its corresponding implementation state is ready, but it is **not the immediate next task** while this owner sequence is active.
+
 ## P0 — FULL PAPER PROTOTYPE OPERATIONAL COMPLETENESS — 2026-09-26
 
 Owner priority override: before another long owner acceptance pass, eliminate
