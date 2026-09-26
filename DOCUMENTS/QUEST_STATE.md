@@ -22,25 +22,28 @@
 которое прошло Robot PAPER acceptance. Планирование, документация и количество
 коммитов XP не добавляют.
 
-## Старт следующей сессии
+## Последний reconciliation checkpoint — 2026-09-26
 
-Перед продолжением активного рейда владелец назначил короткий обязательный
-checkpoint: **закончить оставшиеся долги синхронизации/reconciliation**.
+Обязательный долг синхронизации/reconciliation закрыт.
 
-Не повторять аудит семи старых dirty worktree — он уже доказал, что все семь
-полностью superseded и уникальной работы там нет. На старте следующей сессии
-нужно восстановить только актуальное состояние четырёх чувствительных путей:
+- `C:\BybitScanner-sync-20260926` fast-forward синхронизирован с текущим `main`;
+- `C:\BybitScanner-box-robot-run` синхронизирован с текущим `main` и сохраняет
+  локальные launcher-файлы;
+- уникальные локальные дельты `C:\BybitScanner` для
+  `geometry/ikigai_box_chart.py` и `start_scanner.bat` сохранены побайтово
+  в `C:\BybitScanner-reconciliation-backup-20260926\main-local`; сам dirty
+  checkout не очищался и не перезаписывался;
+- PAPER backend поднят на актуальном коде без Scanner и без LIVE;
+- protection coverage восстановлено в healthy state;
+- explicit operator reconciliation успешно перевёл Robot из
+  `ROBOT_RUNNING / RECONCILIATION_REQUIRED` в
+  `ROBOT_RUNNING / PAUSED`;
+- открытая RDWUSDT PAPER-позиция не закрывалась; вход, durable trade,
+  protection и ownership были согласованы; unresolved protection obligations = 0;
+- admission остаётся закрытым, Scanner не запускался.
 
-- `C:\BybitScanner-box-robot-run` — перепроверить runtime/position/reconciliation state;
-- `C:\BybitScanner` — сохранить и аккуратно сверить текущий dirty local state;
-- `C:\BybitScanner-sync-20260926` — определить оставшийся reconciliation delta;
-- `C:\BybitScanner-reconciliation-backup-20260926` — сохранить backup до
-  доказанного завершения reconciliation.
-
-Сначала минимальная task-scoped сверка фактического состояния, затем только
-необходимая синхронизация. Никаких слепых cleanup/restart/runtime mutations.
-После безопасного checkpoint вернуться к рейду «Г-образные врата», если
-владелец не изменит приоритет.
+Backup и dirty локальный checkout пока сохраняются; не удалять их только ради
+cleanup. Следующий активный этап — реальная PAPER-проверка L-shape рейда.
 
 ## 🎯 Активный квест
 
