@@ -67,9 +67,10 @@ Economical implementation sequence:
    remains the process-ownership safety barrier. The untracked `start_robot_all.cmd`
    false-success remains recorded debt and is not startup authority;
 
-8. micro-slice: replace fixed startup sleeps with bounded readiness checks and
-   fail closed unless backend, Robot/protection, Telegram callback worker,
-   shared runtime identity/config and Scanner owner are coherent;
+8. **PARTIAL:** PR #257 merged as `00b250c` — fixed 2s PAPER backend sleep is gone;
+   spawned backend now has a bounded 60s canonical health/DB-identity readiness wait.
+   Remaining readiness work is Robot/protection/shared runtime identity/config coherence;
+   Telegram callback readiness and Scanner owner routing are already bounded;
 9. micro-slice: remove the stale explicit-1m Wedge observational-only gate
    under the owner's current Robot-button rule, preserving normal admission
    safety at the callback boundary;
