@@ -58,19 +58,25 @@ Economical implementation sequence:
    `SCANNER_RUNNING`/`SCANNER_PAUSED` to `SCANNER_STOPPED`; on an already-live backend
    launcher routes `STOPPED -> start`, `PAUSED -> resume`, `RUNNING -> reuse/no mutation`,
    unknown/unavailable -> fail closed;
-6. canonical launcher backend-reuse preflight is a later separate slice because it touches
-   `start_robot_runtime.bat`; early bind is the safety barrier and reuse removes redundant
-   duplicate startup operationally. The untracked `start_robot_all.cmd` false-success
-   (HTTP failures can still print success) is recorded but must not be edited as startup
-   authority during P0; retire it after canonical path is proven;
+6. prerequisite before launcher reuse: strengthen existing backend `/api/health`
+   with a canonical component identity plus safe runtime/database identity derived from the
+   already-initialized authoritative runtime. A reuse probe must not trust an arbitrary
+   HTTP 200 or a different BybitScanner DB/runtime. Keep this slice disjoint from launcher
+   code: `terminal/runtime/paper_http_server.py` + focused HTTP tests only;
+7. canonical launcher backend-reuse preflight follows after that health-identity prerequisite
+   and touches `start_robot_runtime.bat` + launcher tests only. Early bind remains the
+   process-ownership safety barrier; reuse prevents redundant duplicate startup operationally.
+   The untracked `start_robot_all.cmd` false-success (HTTP failures can still print success)
+   is recorded but must not be edited as startup authority during P0; retire it after the
+   canonical path is proven;
 
-7. micro-slice: replace fixed startup sleeps with bounded readiness checks and
+8. micro-slice: replace fixed startup sleeps with bounded readiness checks and
    fail closed unless backend, Robot/protection, Telegram callback worker,
    shared runtime identity/config and Scanner owner are coherent;
-8. micro-slice: remove the stale explicit-1m Wedge observational-only gate
+9. micro-slice: remove the stale explicit-1m Wedge observational-only gate
    under the owner's current Robot-button rule, preserving normal admission
    safety at the callback boundary;
-9. only then run the next owner full-universe Telegram acceptance pass.
+10. only then run the next owner full-universe Telegram acceptance pass.
 
 Each Codex task is one bounded micro-slice with one minimum changed-behavior
 check. No broad refactor, supervisor framework, new persistence system,
