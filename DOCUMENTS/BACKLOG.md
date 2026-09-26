@@ -74,8 +74,9 @@ Economical implementation sequence:
    Robot admission plus existing protection health. PR #260 merged as `6c1dea9` — Telegram
    health now exposes the same PAPER `database_identity` definition. PR #261 merged as `91a1b18`
    — launcher now requires Telegram READY for that same DB identity. PR #262 merged as `087b00c`
-   — backend health now exposes PAPER LIVE/config acceptance booleans. Remaining readiness work
-   is launcher enforcement of those booleans; Telegram callback readiness and Scanner owner routing are bounded;
+   — backend health now exposes PAPER LIVE/config acceptance booleans. PR #263 merged as `2b2e097`
+   — launcher now enforces them before protection/Scanner routing. Startup readiness path is closed;
+   Telegram callback readiness and Scanner owner routing are bounded.
 9. micro-slice: remove the stale explicit-1m Wedge observational-only gate
    under the owner's current Robot-button rule, preserving normal admission
    safety at the callback boundary;
