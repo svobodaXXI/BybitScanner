@@ -2,7 +2,7 @@
 
 Статус: ACTIVE  
 GAME_MODE: ACTIVE  
-Обновлено: 2026-09-26  
+Обновлено: 2026-09-27  
 Назначение: компактная игровая проекция текущего GTD/backlog состояния для автоматического восстановления в новом чате.
 
 > Этот файл не задаёт технический приоритет сам по себе. При конфликте текущая
@@ -22,6 +22,41 @@ GAME_MODE: ACTIVE
 сегодня результат: устранение protection-continuity false positive (#237),
 которое прошло Robot PAPER acceptance. Планирование, документация и количество
 коммитов XP не добавляют.
+
+## ⏭️ Первая очередь следующей рабочей сессии — Opus 5.5
+
+👹 **Ikigai Box — «Кривой первый импульс»** поставлен владельцем первой задачей
+или одной из первых задач следующей рабочей сессии.
+
+**Для первого production implementation slice обязателен именно `Opus 5.5`.**
+Не начинать production-edit на другой модели: это geometry/algorithm change с
+конкурирующими invariants. Уже выполненные diagnosis/RED/architecture gate
+не повторять.
+
+Сохранённый checkpoint:
+
+- base `ac677620a5b02735a6704eac9c41cf3a4b43c120`;
+- branch `test/ikigai-aigensyn-first-impulse-regression`;
+- HEAD `b027000f2119a2cbee4753f709e2b4a2bc8fdd82`;
+- draft PR #268 остаётся test-only, production untouched;
+- `Ikigai Box detector` run #81: **55 tests / 1 expected FAIL**;
+- единственный FAIL подтверждает AIGENSYNUSDT 5m B-reanchor:
+  historical B `19:05 MSK` ошибочно переезжает на `20:00 MSK` при later progress;
+- следующий slice: минимальный upstream fix в
+  `geometry/ikigai_box.py::_qualified_first_impulse_and_box()`;
+- использовать существующую mirrored structural pivot semantics
+  (`REVERSAL_LEFT_BARS=3`, `REVERSAL_RIGHT_BARS=3`), без нового arbitrary
+  `%`/ATR/coin-specific threshold;
+- 1–2 small opposite candles остаются допустимой паузой, пока не образуют
+  confirmed material counter-swing;
+- legacy test `test_first_down_leg_stops_at_any_green_or_doji_candle` должен
+  быть приведён к новому owner invariant, а не сохранять color-only veto;
+- FLOCK #266 не переоткрывать без новой общей причины;
+- boundary: только `geometry/ikigai_box.py` +
+  `tests/test_ikigai_box_detector.py`; PR #267 и runtime не трогать.
+
+Следующий объективный gate: **Opus 5.5 implementation → AIGENSYN GREEN →
+targeted Ikigai detector tests GREEN**. Scanner/Robot/Telegram runtime не запускать.
 
 ## Последний reconciliation checkpoint — 2026-09-26
 
