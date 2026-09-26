@@ -117,6 +117,17 @@ ChatGPT endpoint. Desktop остаётся на 26.917.9434.0 при досту�
 аудит сделок/PnL. Отдельный `helper_sandbox_lock_failed` не считать дефектом
 BybitScanner без доказанной связи.
 
+## 🎯 Новый binding owner order — 2026-09-26
+
+Текущий порядок работ от владельца:
+
+1. 🧹 **Разобрать старые открытые PR недели** — triage открытых PR: закрыть superseded/obsolete, оставить только реально нужные; ничего не merge'ить механически.
+2. 🎨 **Карточка открытой позиции Robot** — Telegram position card refinement без изменения торговой логики.
+3. 👹 **Ikigai Box — «Кривой первый импульс»** — AIGENSYNUSDT 5m и общий first-impulse construction rule; FLOCK regression уже закрыт и не должен переоткрываться без нового доказательства.
+4. 🏢 **Полный dual-timeframe Scanner 5m→1m** — per-symbol 5m then 1m, независимые symbol × timeframe × pattern identities/dedup/evidence.
+
+Этот owner order **временно supersede'ит** прежнее утверждение, что следующий шаг — немедленный полный PAPER acceptance. Acceptance остаётся обязательным финальным gate для соответствующих Scanner/runtime изменений, но не должен вытеснять перечисленные четыре задачи раньше времени.
+
 ## Очередь после активного квеста
 
 ### 2. 👹 Босс «Кривой первый импульс»
