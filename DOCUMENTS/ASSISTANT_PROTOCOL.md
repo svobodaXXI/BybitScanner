@@ -482,6 +482,39 @@ This guard is required for **mutating handoffs**, not for ordinary read-only
 inspection. A previously proven synchronization result may be reused while its
 branch/HEAD/remote inputs remain unchanged.
 
+
+### 4.2.1 STALE WORKTREE / DUPLICATE-WORK PREVENTION — OWNER RULE 2026-09-26
+
+A stale local worktree can make already-merged, superseded, or otherwise
+absorbed work look active and can cause duplicate implementation or repeated
+investigation. Treat this as a process defect, not as harmless repository
+clutter.
+
+Before resuming implementation from an old/detached/dirty worktree, or before
+re-implementing work that appears unfinished locally, the assistant must first
+establish whether its commits and relevant file deltas are already represented
+on current `origin/main` or an active remote branch/PR. Use ancestry plus
+patch-equivalence/content comparison where hashes differ; do not infer from
+commit counts alone.
+
+Required no-repeat behavior:
+
+1. if a local commit/patch is already merged or patch-equivalent on current
+   `main`, classify the local branch/worktree as historical/superseded rather
+   than active work;
+2. if current `main` has structurally replaced the code a dirty local edit
+   depends on, preserve that edit first, then treat it as superseded unless a
+   current task explicitly reauthorizes porting its behavior;
+3. preserve unique dirty/untracked/runtime/user-owned artifacts before any
+   cleanup or checkout move; do not use stale worktree state as authority after
+   a successful reconciliation;
+4. after reconciliation, record the surviving authoritative state and avoid
+   repeating tests, implementation, or diagnosis whose outcome is already
+   established by the merged/current state.
+
+The purpose of this gate is to prevent the observed failure mode:
+`stale worktree -> mistaken unfinished work -> duplicate or obsolete work -> owner time lost`.
+
 Destructive or broad Git/filesystem actions require explicit authority and verified exact targets. In particular,
 `reset`, `restore`, `clean`, and discard operations are prohibited without explicit authorization. Prefer minimal,
 scoped, reversible changes. Do not request content already accessible in the repository or current context.
