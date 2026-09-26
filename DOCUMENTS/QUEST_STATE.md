@@ -69,7 +69,7 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #254 merged (`fe56450`): backend bind/reserve 127.0.0.1 listener происходит ДО REST/WebSocket/SQLite/runtime/recovery side effects;
 - [x] PR #253 merged (`18fc8c2`): Scanner restart-safe + launcher lifecycle-aware;
 - [x] PR #255 merged (`0f209e7`): backend `/api/health` теперь подтверждает canonical PAPER backend, live owner и database identity;
-- [ ] затем отдельным slice сделать canonical launcher reuse уже живого healthy backend с проверкой этой identity;
+- [x] PR #256 merged (`f7815fe`): canonical launcher переиспользует уже живой canonical PAPER backend с совпадающей database identity;
 - [ ] заменить fixed sleeps на bounded dependency readiness/fail-closed startup;
 - [ ] убрать устаревший 1m Wedge observational-only Robot-button gate;
 - [ ] только после этого провести один полный owner-run acceptance.
