@@ -96,6 +96,23 @@ and its narrow changed-behavior checks during implementation; complete the
 mandatory full-universe Scanner acceptance pass below for every new pattern
 or Scanner correction, without redundant repeated passes.
 
+## GitHub ↔ Codex/local handoff sync guard — OWNER RULE 2026-09-26
+
+When work is about to move from ChatGPT-led GitHub-first edits/review to
+Codex/local implementation, or back from local/Codex work to GitHub-first
+editing, do not assume both sides still describe the same repository state.
+
+Before the first **mutating** task on the destination side, automatically
+apply the synchronization preflight in `DOCUMENTS/ASSISTANT_PROTOCOL.md`
+§4.1–4.2. The assistant must initiate or propose that preflight itself; the
+owner must not have to remember to ask for synchronization.
+
+If the relevant checkout/worktree is ahead, behind, diverged, dirty in the
+task scope, detached on an obsolete commit, or its relation to the intended
+remote branch is unknown, stop before editing and reconcile the states
+explicitly while preserving all user-owned work. A read-only repository
+inspection does not require synchronization by itself.
+
 ## Delegated prompt budget — NO REDUNDANT TEST/ITERATION LOOPS (OWNER RULE 2026-09-23)
 
 For EVERY subsequent Codex/Claude Code prompt, apply
