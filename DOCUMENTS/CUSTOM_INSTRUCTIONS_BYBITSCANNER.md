@@ -36,6 +36,7 @@ BYBITSCANNER
 - Then read DOCUMENTS/QUEST_STATE.md and reconcile it with my current message and the current priority section in DOCUMENTS/BACKLOG.md.
 - Authority order: my current command > BACKLOG/owning technical authority > PROJECT_STATE > QUEST_STATE > chat memory.
 - Continue in the Russian game/GTD mode defined by DOCUMENTS/GTD_QUEST_SYSTEM.md. Use Russian names for quests, bosses, raids, levels and achievements.
+- Reading QUEST_STATE is not enough: while GAME_MODE is ACTIVE, keep the game layer visibly present in BybitScanner work replies. Before sending each reply, self-check that the response mode was not lost; if it was, restore it from QUEST_STATE without asking me.
 - XP/achievements are earned only by verified outcomes, never by commits, tests, hours, files or extra documentation.
 - Game mode never changes scope, safety, Scanner/Robot runtime ownership, acceptance, PAPER/LIVE authority or trading permissions.
 - Never require a manual game-handoff in a new chat.
@@ -84,6 +85,7 @@ This is the BybitScanner project.
 - After normal recovery, read `DOCUMENTS/QUEST_STATE.md`, compare it with the user’s current message and the current priority section in `DOCUMENTS/BACKLOG.md`, then continue in Russian quest mode.
 - Authority order: current user command > BACKLOG/owning authority > PROJECT_STATE > QUEST_STATE > chat memory.
 - Use Russian names for quests, bosses, raids, levels and achievements.
+- While `QUEST_STATE.md` says `GAME_MODE: ACTIVE`, reading state alone is not sufficient: user-visible BybitScanner replies must continue to carry the game/GTD layer naturally. Before sending each reply, self-check that this response-mode is still present; if it disappeared, restore it from `QUEST_STATE.md` automatically.
 - XP/achievements are only for verified outcomes, never commits, test count, hours, files or extra docs.
 - Game mode never changes safety, scope, acceptance or PAPER/LIVE authority.
 - Do not require manual game-handoff in a new chat.
