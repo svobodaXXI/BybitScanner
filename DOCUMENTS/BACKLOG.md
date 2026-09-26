@@ -16,9 +16,12 @@ Incident evidence from the 2026-09-26 run:
   Telegram Scanner controls target the backend-owned
   `ScannerControlRuntime`; those are separate Scanner owners and may create
   duplicate scans if both are used;
-- tracked `start_robot_runtime.bat` launches backend, Telegram monitoring
-  and standalone `main.py` using fixed sleeps, with no dependency readiness,
-  Robot readiness, callback-worker readiness or duplicate-owner proof;
+- historical tracked `start_robot_runtime.bat` launched backend, Telegram
+  monitoring and standalone `main.py` using fixed sleeps; PR #251 removed
+  the standalone owner, but a new runtime check then exposed another launcher
+  defect: it blindly POSTs `/api/scanner/start`, so persisted
+  `SCANNER_PAUSED` cannot resume and the launcher must not be reused until
+  state-aware dispatch is merged;
 - local `start_robot_all.cmd` has better backend/Robot gates but starts
   Scanner before Telegram monitoring and is untracked, so it is not a
   versioned/testable canonical launcher;
@@ -48,13 +51,17 @@ Economical implementation sequence:
 3. micro-slice: make `telegram_monitoring.py` single-owner and observable
    (minimal singleton guard + readiness/heartbeat) and make startup wait for
    it before allowing Scanner start;
-4. micro-slice: replace fixed startup sleeps with bounded readiness checks and
+4. micro-slice: make launcher Scanner dispatch lifecycle-aware:
+   `STOPPED -> start`, `PAUSED -> resume`, `RUNNING -> reuse/no mutation`,
+   unknown/unavailable -> fail closed. Until this is merged, do not reuse the
+   canonical full-prototype launcher;
+5. micro-slice: replace fixed startup sleeps with bounded readiness checks and
    fail closed unless backend, Robot/protection, Telegram callback worker,
    shared runtime identity/config and Scanner owner are coherent;
-5. micro-slice: remove the stale explicit-1m Wedge observational-only gate
+6. micro-slice: remove the stale explicit-1m Wedge observational-only gate
    under the owner's current Robot-button rule, preserving normal admission
    safety at the callback boundary;
-6. only then run the next owner full-universe Telegram acceptance pass.
+7. only then run the next owner full-universe Telegram acceptance pass.
 
 Each Codex task is one bounded micro-slice with one minimum changed-behavior
 check. No broad refactor, supervisor framework, new persistence system,
