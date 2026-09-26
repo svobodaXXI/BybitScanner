@@ -1,3 +1,50 @@
+## NEXT WORK SESSION — IKIGAI FIRST-IMPULSE IMPLEMENTATION — OWNER QUEUE 2026-09-27
+
+Owner direction: make **Ikigai Box — «Кривой первый импульс»** the first task
+or one of the first tasks of the next work session. Do not repeat the already
+completed diagnosis/RED gate.
+
+**Required model for the first production implementation slice: Opus 5.5.**
+This is task-specific and mandatory because the remaining change is a
+geometry/algorithm construction rule with competing invariants. Do not begin
+the production edit on another model; once the architectural questions are
+closed by the Opus slice, later bounded/mechanical follow-up may be routed
+according to `DOCUMENTS/ASSISTANT_PROTOCOL.md`.
+
+Accepted checkpoint before implementation:
+
+- authoritative base: `ac677620a5b02735a6704eac9c41cf3a4b43c120`;
+- test branch: `test/ikigai-aigensyn-first-impulse-regression`;
+- test-only HEAD: `b027000f2119a2cbee4753f709e2b4a2bc8fdd82`;
+- draft PR #268, production code still untouched;
+- objective `Ikigai Box detector` CI run #81: **55 tests, exactly 1 FAIL**;
+- the sole failure is
+  `test_aigensyn_first_impulse_b_is_not_reanchored_by_later_leg_progress`;
+- proven defect: AIGENSYNUSDT 5m historical B moves from **19:05 MSK** to
+  **20:00 MSK** when later second-leg progress appears;
+- architecture is already defined: reject a malformed long first-impulse
+  candidate **before ranking** when an earlier confirmed terminal structural
+  pivot exists;
+- reuse the existing mirrored
+  `REVERSAL_LEFT_BARS=3 / REVERSAL_RIGHT_BARS=3` pivot semantics; do not add
+  a new arbitrary percent/ATR/coin-specific threshold;
+- preserve 1–2 small opposite-colour pause candles when they do not form a
+  confirmed counter-swing;
+- replace/correct the legacy
+  `test_first_down_leg_stops_at_any_green_or_doji_candle` semantics rather
+  than reintroducing “any opposite candle ends the impulse”;
+- inspect `test_mixed_body_down_wick_leg_is_not_one_red_impulse` so its
+  rejection remains structural rather than colour-only;
+- allowed production boundary remains only
+  `geometry/ikigai_box.py` and `tests/test_ikigai_box_detector.py`;
+- do not reopen FLOCK #266 without new common-cause evidence;
+- do not touch Robot/PAPER/Telegram/DB/Scanner runtime, PR #267, or
+  reconciliation/worktree cleanup for this slice.
+
+Next objective gate: on **Opus 5.5**, implement the minimal upstream
+construction fix, make the AIGENSYN regression GREEN, and run only targeted
+Ikigai detector tests first. Scanner/Robot/Telegram runtime must not be run.
+
 ## TODAY — 2026-09-26
 
 Today's owner execution sequence:
