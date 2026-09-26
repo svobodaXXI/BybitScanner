@@ -422,10 +422,10 @@ class TelegramMonitoringTests(unittest.TestCase):
         render.assert_not_called()
         photo.assert_not_called()
         self.assertIn("Позиция не от робота — график недоступен", send.call_args.args[1])
-        self.assertEqual(
-            send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
-            "robot:view:positions",
-        )
+        keyboard = send.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        self.assertEqual(keyboard[0][0]["text"], "Открыть в Trading View")
+        self.assertIn("SAGAUSDT", keyboard[0][0]["url"])
+        self.assertEqual(keyboard[1][0]["callback_data"], "robot:view:positions")
 
     @patch("telegram_monitoring.render_position_chart", return_value="chart.png")
     @patch("telegram_monitoring.telegram_bot.send_photo", return_value={"ok": True})
@@ -440,7 +440,10 @@ class TelegramMonitoringTests(unittest.TestCase):
         send.assert_not_called()
         caption = photo.call_args.kwargs["caption"]
         self.assertIn("PnL: ≈ +0.10 USDT (+10.00%)", caption)
-        self.assertEqual(photo.call_args.kwargs["reply_markup"], monitoring.POSITIONS_BACK_MARKUP)
+        keyboard = photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        self.assertEqual(keyboard[0][0]["text"], "Открыть в Trading View")
+        self.assertIn("SAGAUSDT", keyboard[0][0]["url"])
+        self.assertEqual(keyboard[1][0]["callback_data"], "robot:view:positions")
 
     def test_candle_window_follows_entry_age(self):
         import pandas as pd

@@ -82,11 +82,11 @@ class FormatPositionCardTests(unittest.TestCase):
         card = format_position_card(with_last_price(_view(), "0.0260"))
         self.assertTrue(card.startswith("SAGAUSDT · LONG"))
         self.assertIn("Статус: открыта", card)
-        self.assertIn("Размер: 100", card)
+        self.assertIn("Размер: 100 (2.54 USDT)", card)
         self.assertIn("Средний вход: 0.0254", card)
         self.assertIn("PnL: ≈ +0.06 USDT (+2.36%)", card)
-        self.assertIn("STOP: 0.0249", card)
-        self.assertIn("TAKE: 0.0284", card)
+        self.assertIn("SL: 0.0249", card)
+        self.assertIn("TP: 0.0284", card)
         self.assertIn("Паттерн: Falling Wedge", card)
         self.assertNotIn(NOT_ROBOT_LINE, card)
 
@@ -112,7 +112,7 @@ class FormatPositionCardTests(unittest.TestCase):
             symbol="CELOUSDT", trade=None, signal_snapshot=None, pattern=None,
             stop_price=None, take_price=None,
         ))
-        self.assertIn("STOP: —", card)
+        self.assertIn("SL: —", card)
         self.assertIn("Паттерн: —", card)
         self.assertTrue(card.endswith(NOT_ROBOT_LINE))
 
@@ -394,19 +394,35 @@ class RenderPositionChartTests(unittest.TestCase):
         self.assertEqual([c.args[1] for c in draw.call_args_list], [40, 40, 40, 41])
         self.assertTrue(plot.call_args.kwargs["title"].endswith("| LONG | 5m"))
 
-    def test_hollow_marker_has_outline_only(self):
+    def test_hollow_marker_has_outline_only_and_directional_outline(self):
+        import matplotlib.colors as mcolors
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots()
         try:
-            chart._draw_marker(ax, 0, 1.0, "Buy", filled=False)
-            chart._draw_marker(ax, 1, 1.0, "Buy", filled=True)
+            chart._draw_marker(ax, 0, 1.0, "Buy", filled=False, direction="LONG")
+            chart._draw_marker(ax, 1, 1.0, "Buy", filled=True, direction="SHORT")
             hollow, filled = ax.collections
             self.assertEqual(len(hollow.get_facecolor()), 0)
             self.assertEqual(len(hollow.get_edgecolor()), 1)
             self.assertEqual(len(filled.get_facecolor()), 1)
+            self.assertEqual(tuple(hollow.get_edgecolor()[0]), mcolors.to_rgba(chart.BUY_COLOR))
+            self.assertEqual(tuple(filled.get_edgecolor()[0]), mcolors.to_rgba(chart.SELL_COLOR))
+            self.assertEqual(hollow.get_sizes().tolist(), [80])
+            self.assertEqual(filled.get_sizes().tolist(), [80])
         finally:
             plt.close(fig)
+
+    def test_position_chart_labels_and_right_margin(self):
+        self.assertEqual(chart._right_margin_candles(120), 12)
+        self.assertEqual(chart._right_margin_candles(1000), 60)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("robot_position_chart._draw_level", wraps=chart._draw_level) as draw_level:
+            render_position_chart(_view(), _candles(120), Path(directory) / "x.png")
+            self.assertEqual(
+                [call.args[2] for call in draw_level.call_args_list],
+                ["", "SL", "TP"],
+            )
 
     def test_renders_without_frozen_geometry(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -263,7 +263,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
         self.assertEqual(
             [button["text"] for row in owner_keyboard for button in row],
             [
-                "📈 Open TradingView",
+                "Открыть в Trading View",
                 "📌 В разбор",
                 "✅ Хороший",
                 "❌ Геометрия",
@@ -273,7 +273,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
         self.assertEqual(len(friend_keyboard), 1)
         self.assertEqual(
             [button["text"] for button in friend_keyboard[0]],
-            ["📈 Open TradingView"],
+            ["Открыть в Trading View"],
         )
 
     def test_5m_robot_button_requires_proven_handoff(self):
@@ -414,7 +414,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             self.assertEqual(len(keyboard), 1)
             self.assertEqual(
                 [button["text"] for button in keyboard[0]],
-                ["📈 Open TradingView"],
+                ["Открыть в Trading View"],
             )
 
     def test_first_recipient_failure_does_not_block_second(self):
