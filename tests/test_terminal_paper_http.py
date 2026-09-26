@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import tempfile
 import threading
 import time
@@ -41,6 +42,63 @@ from terminal.exchange.bybit_account_validation import ValidatedBybitAccount
 from terminal.exchange.bybit_account_validation import AccountValidationError
 from terminal.persistence.credential_store import CredentialStoreError, DpapiCredentialStore
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
+
+
+
+def test_duplicate_backend_bind_before_runtime_side_effects_robot_protection_coverage_manager_not_reached(
+    monkeypatch,
+):
+    import terminal.runtime.paper_http_server as paper_http_server
+
+    reached = []
+
+    def forbidden(name):
+        def _forbidden(*args, **kwargs):
+            reached.append(name)
+            raise AssertionError(f"{name} reached after failed backend bind")
+        return _forbidden
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+        occupied.bind((paper_http_server.HOST, 0))
+        occupied.listen(1)
+        monkeypatch.setenv(
+            "BYBITSCANNER_PAPER_PORT", str(occupied.getsockname()[1]),
+        )
+        monkeypatch.setattr(
+            paper_http_server,
+            "configure_bybit_proxy_environment",
+            forbidden("proxy"),
+        )
+        monkeypatch.setattr(
+            paper_http_server,
+            "create_bybit_rest_session",
+            forbidden("rest"),
+        )
+        monkeypatch.setattr(
+            paper_http_server,
+            "InstrumentRegistry",
+            forbidden("instrument_registry"),
+        )
+        monkeypatch.setattr(
+            paper_http_server,
+            "MarketDataHub",
+            forbidden("market_data"),
+        )
+        monkeypatch.setattr(
+            paper_http_server,
+            "SerializedPaperRuntime",
+            forbidden("runtime"),
+        )
+        monkeypatch.setattr(
+            paper_http_server,
+            "RobotProtectionCoverageManager",
+            forbidden("robot_protection_coverage"),
+        )
+
+        with pytest.raises(OSError):
+            paper_http_server.main()
+
+    assert reached == []
 
 
 def test_bybit_proxy_is_optional_and_machine_configurable(monkeypatch):

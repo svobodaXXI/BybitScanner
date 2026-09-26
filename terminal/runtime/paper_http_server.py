@@ -3333,71 +3333,76 @@ def main() -> None:
     )
     database_path = Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
     port = int(os.environ.get("BYBITSCANNER_PAPER_PORT", str(PORT)))
-    validate_bybit_proxy(configure_bybit_proxy_environment())
-    rest_session = create_bybit_rest_session()
-    instruments = InstrumentRegistry(rest_session)
-    instruments.refresh()
-    instrument_snapshot = instruments.get("ONGUSDT")
-    hub = MarketDataHub(
-        instruments,
-        create_symbol_context,
-        connection_factory=create_bybit_websocket_connection,
-    )
-    initial_market = hub.subscribe("ONGUSDT")
-    hub.start()
-    book_provider = LiveOrderBookProvider(
-        initial_market.public_orderbook,
-        rest_session=rest_session,
-    )
-    runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
-        database_path,
-        book_provider=book_provider,
-        instrument_snapshot=instrument_snapshot,
-        instrument_provider=lambda symbol: instruments.get(symbol),
-        live_market_mutations_enabled=os.environ.get("LIVE_MARKET_MUTATIONS_ENABLED", "").lower() == "true",
-        live_mainnet_authorized=os.environ.get("LIVE_MAINNET_AUTHORIZED", "").lower() == "true",
-        live_acceptance_notional_ceiling=Decimal(os.environ.get("LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING", "0")),
-        live_acceptance_single_flight=os.environ.get("LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT", "").lower() == "true",
-        live_parity_mutations_enabled=os.environ.get("LIVE_PARITY_MUTATIONS_ENABLED", "").lower() == "true",
-        live_limit_mutations_enabled=os.environ.get("LIVE_LIMIT_MUTATIONS_ENABLED", "").lower() == "true",
-        live_limit_acceptance_notional_ceiling=Decimal(
-            os.environ.get("LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING", "0")
-        ),
-        live_limit_build_sha=os.environ.get("BYBITSCANNER_BUILD_SHA", ""),
-        deployment_identity=os.environ.get("BYBITSCANNER_DEPLOYMENT_IDENTITY", "local"),
-    ))
-    runtime.start_robot_monitor()
-    initial_market.add_update_listener(
-        WorkspaceMarketDataManager._WORKSPACE_LISTENER, runtime.enqueue_book_update,
-    )
-    market_data = WorkspaceMarketDataManager(
-        instruments,
-        book_provider,
-        runtime,
-        initial_market,
-        hub=hub,
-        initial_readiness_timeout=INITIAL_WORKSPACE_READINESS_TIMEOUT,
-    )
-    market_data.ensure_initial_ready()
-    robot_protection_coverage = RobotProtectionCoverageManager(hub, runtime)
-    robot_protection_coverage.start()
 
+    # Port ownership is the process-level backend singleton barrier. Acquire it
+    # before any network, persistence, runtime, or recovery side effect.
     server = ThreadingHTTPServer((HOST, port), PaperHttpHandler)
-    server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
-    server.runtime = runtime
-    server.market_data = market_data
-    server.robot_protection_coverage = robot_protection_coverage
-    server.diary_setup_store_path = decision_store_path(database_path)
-    server.diary_factor_store_path = server.diary_setup_store_path
-
     try:
-        print(f"PAPER HTTP runtime listening on http://{HOST}:{port}")
-        print("Bybit public market data streams: active workspace symbol (initial ONGUSDT)")
-        server.serve_forever()
+        validate_bybit_proxy(configure_bybit_proxy_environment())
+        rest_session = create_bybit_rest_session()
+        instruments = InstrumentRegistry(rest_session)
+        instruments.refresh()
+        instrument_snapshot = instruments.get("ONGUSDT")
+        hub = MarketDataHub(
+            instruments,
+            create_symbol_context,
+            connection_factory=create_bybit_websocket_connection,
+        )
+        initial_market = hub.subscribe("ONGUSDT")
+        hub.start()
+        book_provider = LiveOrderBookProvider(
+            initial_market.public_orderbook,
+            rest_session=rest_session,
+        )
+        runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
+            database_path,
+            book_provider=book_provider,
+            instrument_snapshot=instrument_snapshot,
+            instrument_provider=lambda symbol: instruments.get(symbol),
+            live_market_mutations_enabled=os.environ.get("LIVE_MARKET_MUTATIONS_ENABLED", "").lower() == "true",
+            live_mainnet_authorized=os.environ.get("LIVE_MAINNET_AUTHORIZED", "").lower() == "true",
+            live_acceptance_notional_ceiling=Decimal(os.environ.get("LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING", "0")),
+            live_acceptance_single_flight=os.environ.get("LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT", "").lower() == "true",
+            live_parity_mutations_enabled=os.environ.get("LIVE_PARITY_MUTATIONS_ENABLED", "").lower() == "true",
+            live_limit_mutations_enabled=os.environ.get("LIVE_LIMIT_MUTATIONS_ENABLED", "").lower() == "true",
+            live_limit_acceptance_notional_ceiling=Decimal(
+                os.environ.get("LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING", "0")
+            ),
+            live_limit_build_sha=os.environ.get("BYBITSCANNER_BUILD_SHA", ""),
+            deployment_identity=os.environ.get("BYBITSCANNER_DEPLOYMENT_IDENTITY", "local"),
+        ))
+        runtime.start_robot_monitor()
+        initial_market.add_update_listener(
+            WorkspaceMarketDataManager._WORKSPACE_LISTENER, runtime.enqueue_book_update,
+        )
+        market_data = WorkspaceMarketDataManager(
+            instruments,
+            book_provider,
+            runtime,
+            initial_market,
+            hub=hub,
+            initial_readiness_timeout=INITIAL_WORKSPACE_READINESS_TIMEOUT,
+        )
+        market_data.ensure_initial_ready()
+        robot_protection_coverage = RobotProtectionCoverageManager(hub, runtime)
+        robot_protection_coverage.start()
+
+        server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
+        server.runtime = runtime
+        server.market_data = market_data
+        server.robot_protection_coverage = robot_protection_coverage
+        server.diary_setup_store_path = decision_store_path(database_path)
+        server.diary_factor_store_path = server.diary_setup_store_path
+
+        try:
+            print(f"PAPER HTTP runtime listening on http://{HOST}:{port}")
+            print("Bybit public market data streams: active workspace symbol (initial ONGUSDT)")
+            server.serve_forever()
+        finally:
+            robot_protection_coverage.close()
+            market_data.close()
+            runtime.close()
     finally:
-        robot_protection_coverage.close()
-        market_data.close()
-        runtime.close()
         server.server_close()
 
 
