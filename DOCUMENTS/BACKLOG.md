@@ -58,11 +58,9 @@ Economical implementation sequence:
    `SCANNER_RUNNING`/`SCANNER_PAUSED` to `SCANNER_STOPPED`; on an already-live backend
    launcher routes `STOPPED -> start`, `PAUSED -> resume`, `RUNNING -> reuse/no mutation`,
    unknown/unavailable -> fail closed;
-6. prerequisite before launcher reuse: strengthen existing backend `/api/health`
-   with a canonical component identity plus safe runtime/database identity derived from the
-   already-initialized authoritative runtime. A reuse probe must not trust an arbitrary
-   HTTP 200 or a different BybitScanner DB/runtime. Keep this slice disjoint from launcher
-   code: `terminal/runtime/paper_http_server.py` + focused HTTP tests only;
+6. **DONE:** PR #255 merged as `0f209e7` — backend `/api/health` now proves
+   canonical PAPER component identity through the live serialized owner and exposes only
+   allow-listed `database_identity`, `process_instance_id`, and `build_sha`;
 7. canonical launcher backend-reuse preflight follows after that health-identity prerequisite
    and touches `start_robot_runtime.bat` + launcher tests only. Early bind remains the
    process-ownership safety barrier; reuse prevents redundant duplicate startup operationally.
