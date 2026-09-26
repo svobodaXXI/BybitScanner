@@ -132,6 +132,40 @@ LIVE_PROTECTION_FIELDS = {
 LIVE_FULL_CLOSE_FIELDS = FULL_CLOSE_FIELDS | LIVE_AUTHORITY_FIELDS
 ACCOUNT_CREATE_FIELDS = {"display_name", "api_key", "api_secret"}
 ACCOUNT_ACTIVATE_FIELDS = {"expected_active_account_id", "expected_session_generation"}
+PAPER_UNSAFE_LIVE_FLAGS = (
+    "live_market_mutations_enabled", "live_mainnet_authorized",
+    "live_market_acceptance_single_flight", "live_parity_mutations_enabled",
+    "live_limit_mutations_enabled",
+)
+PAPER_UNSAFE_LIVE_CEILINGS = (
+    "live_market_acceptance_notional_ceiling", "live_limit_acceptance_notional_ceiling",
+)
+
+
+def _paper_live_safe(live_gates: object, operator_token: object) -> bool:
+    """True only when the running runtime's effective LIVE gates are all off."""
+    try:
+        return bool(
+            all(live_gates.get(key) is False for key in PAPER_UNSAFE_LIVE_FLAGS)
+            and all(Decimal(str(live_gates.get(key))) == 0 for key in PAPER_UNSAFE_LIVE_CEILINGS)
+            and operator_token == ""
+        )
+    except (AttributeError, ArithmeticError, TypeError, ValueError):
+        return False
+
+
+def _scanner_acceptance_ready() -> bool:
+    """True only when this process's Scanner config is the full acceptance config."""
+    try:
+        import config
+    except Exception:
+        return False
+    return (
+        getattr(config, "MAX_SYMBOLS", False) is None
+        and getattr(config, "TELEGRAM_TEST_MODE", None) is False
+        and getattr(config, "TELEGRAM_ENABLED", None) is True
+        and os.environ.get("BYBITSCANNER_IKIGAI_BOX_SIGNALS") == "1"
+    )
 
 
 def _account_route_id(path: str, action: str) -> str | None:
@@ -2179,12 +2213,18 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/health":
             # Only the serialized owner can answer, and only an allow-listed
             # subset of its existing runtime attribution leaves the owner thread.
-            # Robot admission is reported as data; NOT ready is still a healthy owner.
+            # Robot admission and acceptance safety are reported as booleans only;
+            # NOT ready/safe is still a healthy owner.
+            operator_token = getattr(self.server, "operator_token", "")
+
             def _health_identity(runtime):
                 diagnostics = runtime.live_limit_acceptance_diagnostics()
                 return {
                     **{key: diagnostics[key] for key in HEALTH_IDENTITY_FIELDS},
                     "robot_admission_ready": runtime.robot_admission_ready() is True,
+                    "paper_live_safe": _paper_live_safe(
+                        diagnostics.get("live_gates"), operator_token,
+                    ),
                 }
 
             try:
@@ -2194,7 +2234,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 return
             self._json_response(
                 200,
-                {"ok": True, "component": "paper_backend", "mode": "paper", **identity},
+                {
+                    "ok": True, "component": "paper_backend", "mode": "paper", **identity,
+                    "scanner_acceptance_ready": _scanner_acceptance_ready(),
+                },
             )
             return
 
