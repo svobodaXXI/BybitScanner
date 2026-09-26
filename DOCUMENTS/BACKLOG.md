@@ -1,3 +1,65 @@
+## P0 — FULL PAPER PROTOTYPE OPERATIONAL COMPLETENESS — 2026-09-26
+
+Owner priority override: before another long owner acceptance pass, eliminate
+the runtime-composition gaps that can make a partially running stack look
+"fully ready". This exists to protect owner time; do not work around it with
+manual repeated preflights.
+
+Incident evidence from the 2026-09-26 run:
+
+- PAPER backend and Robot were healthy/READY, but `telegram_monitoring.py`
+  was not running, so Robot approval callbacks and Telegram menu commands had
+  no consumer;
+- the owner-visible Telegram buttons remained present, creating a false
+  appearance of an interactive system;
+- local `start_scanner_all.cmd` launches standalone `main.py`, while
+  Telegram Scanner controls target the backend-owned
+  `ScannerControlRuntime`; those are separate Scanner owners and may create
+  duplicate scans if both are used;
+- tracked `start_robot_runtime.bat` launches backend, Telegram monitoring
+  and standalone `main.py` using fixed sleeps, with no dependency readiness,
+  Robot readiness, callback-worker readiness or duplicate-owner proof;
+- local `start_robot_all.cmd` has better backend/Robot gates but starts
+  Scanner before Telegram monitoring and is untracked, so it is not a
+  versioned/testable canonical launcher;
+- `/api/health` is liveness only and cannot establish full prototype
+  readiness;
+- `telegram_monitoring.py` has no enforced singleton ownership/readiness
+  heartbeat, despite the code contract that it must be the sole getUpdates
+  consumer;
+- explicit 1m Wedge analysis is still marked
+  `scanner_observational_only=True`, which intentionally suppresses the
+  Robot candidate/button and conflicts with the owner's current requirement
+  that executable supported Wedge signals keep the Robot action available.
+
+Architecture direction, borrowing mature runtime practice without importing a
+new platform: one canonical composition/start path, dependency readiness
+barriers instead of sleeps, one owner per runtime component, startup
+reconciliation/readiness before admission, and a compact status/preflight
+surface. Do not add Docker/systemd merely for this Windows prototype.
+
+Economical implementation sequence:
+
+1. finish/verify PR #249 as the one-pass authoritative ScannerControlRuntime;
+   do not expand it into a general supervisor;
+2. micro-slice: remove the standalone-Scanner split brain from the canonical
+   prototype launcher — Scanner start must go through the backend Scanner
+   control API after #249, never spawn `main.py` alongside it;
+3. micro-slice: make `telegram_monitoring.py` single-owner and observable
+   (minimal singleton guard + readiness/heartbeat) and make startup wait for
+   it before allowing Scanner start;
+4. micro-slice: replace fixed startup sleeps with bounded readiness checks and
+   fail closed unless backend, Robot/protection, Telegram callback worker,
+   shared runtime identity/config and Scanner owner are coherent;
+5. micro-slice: remove the stale explicit-1m Wedge observational-only gate
+   under the owner's current Robot-button rule, preserving normal admission
+   safety at the callback boundary;
+6. only then run the next owner full-universe Telegram acceptance pass.
+
+Each Codex task is one bounded micro-slice with one minimum changed-behavior
+check. No broad refactor, supervisor framework, new persistence system,
+Docker migration, repeated full suites, or agent-run Scanner pass.
+
 ## NEXT SESSION START — RECONCILIATION / SYNC DEBT — 2026-09-26
 
 Owner direction: **start the next work session with the remaining synchronization /
