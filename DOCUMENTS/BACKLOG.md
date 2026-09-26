@@ -81,10 +81,9 @@ Economical implementation sequence:
    ordinary Scanner delivery remains intact and the owner receives exactly one bounded
    warning explaining the missing Robot button; secondary recipients are not warned and
    warning-delivery failure is non-fatal;
-10. micro-slice: remove the stale explicit-1m Wedge observational-only gate
-   under the owner's current Robot-button rule, preserving normal admission
-   safety at the callback boundary (draft PR #264);
-11. only then run the next owner full-universe Telegram acceptance pass.
+10. **DONE:** PR #264 merged as `5852a09` — explicit 1m Wedge is Robot-eligible only after canonical geometry/cursor evidence is built; projection/cursor failures remain fail-closed.
+11. **BLOCKER (pre-existing, independent of #264):** the FLOCK synthetic Ikigai test fails on main because it still expects anchor A=24 inside an ongoing DOWN move. Owner clarification 2026-09-23 requires A to be the actual local reversal extreme and supersedes the older convenience-anchor behavior. Correct the stale test fixture/expectation only; do not relax the detector or the reversal-origin rule. Preserve the red-core and 55%/12% box-boundary coverage.
+12. after that narrow Ikigai check is green, run the next owner full-universe Telegram acceptance pass.
 
 Each Codex task is one bounded micro-slice with one minimum changed-behavior
 check. No broad refactor, supervisor framework, new persistence system,
