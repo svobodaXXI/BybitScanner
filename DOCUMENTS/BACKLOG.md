@@ -77,10 +77,14 @@ Economical implementation sequence:
    — backend health now exposes PAPER LIVE/config acceptance booleans. PR #263 merged as `2b2e097`
    — launcher now enforces them before protection/Scanner routing. Startup readiness path is closed;
    Telegram callback readiness and Scanner owner routing are bounded.
-9. micro-slice: remove the stale explicit-1m Wedge observational-only gate
+9. **DONE:** PR #265 merged as `15ad7aa` — when Robot candidate persistence fails,
+   ordinary Scanner delivery remains intact and the owner receives exactly one bounded
+   warning explaining the missing Robot button; secondary recipients are not warned and
+   warning-delivery failure is non-fatal;
+10. micro-slice: remove the stale explicit-1m Wedge observational-only gate
    under the owner's current Robot-button rule, preserving normal admission
-   safety at the callback boundary;
-10. only then run the next owner full-universe Telegram acceptance pass.
+   safety at the callback boundary (draft PR #264);
+11. only then run the next owner full-universe Telegram acceptance pass.
 
 Each Codex task is one bounded micro-slice with one minimum changed-behavior
 check. No broad refactor, supervisor framework, new persistence system,
