@@ -70,9 +70,9 @@ Economical implementation sequence:
 8. **PARTIAL:** PR #257 merged as `00b250c` — fixed 2s PAPER backend sleep is gone;
    spawned backend now has a bounded 60s canonical health/DB-identity readiness wait.
    PR #258 merged as `1d9b258` — backend health now exposes owner-proven
-   `robot_admission_ready`. Remaining readiness work is the launcher barrier that combines
-   Robot admission with existing protection health, then shared runtime identity/config coherence;
-   Telegram callback readiness and Scanner owner routing are already bounded;
+   `robot_admission_ready`. PR #259 merged as `259161f` — Scanner routing is now gated on
+   Robot admission plus existing protection health. Remaining readiness work is shared runtime
+   identity/config coherence; Telegram callback readiness and Scanner owner routing are bounded;
 9. micro-slice: remove the stale explicit-1m Wedge observational-only gate
    under the owner's current Robot-button rule, preserving normal admission
    safety at the callback boundary;
