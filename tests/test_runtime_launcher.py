@@ -9,7 +9,10 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
+import sys
+import tempfile
 import threading
 import unittest
 
@@ -139,6 +142,114 @@ class LauncherScannerRoutingTests(unittest.TestCase):
                 returncode, posts = self._route(body, code)
                 self.assertNotEqual(returncode, 0)
                 self.assertEqual(posts, [])
+
+
+
+class LauncherBackendReuseTests(unittest.TestCase):
+    """Backend spawn is decided only by the canonical /api/health identity probe."""
+
+    def _lines(self):
+        return [line.strip() for line in LAUNCHER.read_text().splitlines() if line.strip()]
+
+    def test_probe_result_decides_spawn_before_any_scanner_mutation(self):
+        lines = self._lines()
+        spawn = [i for i, line in enumerate(lines) if "start_paper_backend.bat" in line]
+        self.assertEqual(len(spawn), 1)
+        spawn = spawn[0]
+        probe_call = lines.index("call :probe_paper_backend")
+        # 2 = something answered without matching identity: exit before any spawn.
+        self.assertEqual(lines[probe_call + 1], "if errorlevel 2 (")
+        self.assertEqual(lines[probe_call + 3], "exit /b 1")
+        # 0 = matching canonical backend: skip the only backend spawn.
+        self.assertEqual(lines[probe_call + 5], "if not errorlevel 1 goto paper_backend_ready")
+        self.assertEqual(sum("goto paper_backend_ready" in line for line in lines), 1)
+        self.assertEqual(lines.count(":paper_backend_ready"), 1)
+        ready = lines.index(":paper_backend_ready")
+        self.assertTrue(probe_call < spawn < ready)
+        # 1 = unreachable: fall through to exactly one spawn.
+        self.assertEqual(lines[probe_call + 6], lines[spawn])
+        scanner = next(i for i, line in enumerate(lines) if "/api/scanner/" in line)
+        telegram = next(i for i, line in enumerate(lines) if "telegram_monitoring.py" in line)
+        self.assertTrue(ready < telegram < scanner)
+
+
+@unittest.skipUnless(shutil.which("powershell.exe"), "Windows PowerShell launcher probe")
+class LauncherBackendProbeTests(unittest.TestCase):
+    """Run only the launcher's backend health probe against a stub or closed port."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.db_path = Path(temp.name) / "paper.sqlite3"
+        from terminal.persistence.sqlite_store import SQLiteStore
+
+        store = SQLiteStore.open(self.db_path)
+        try:
+            self.identity = store.database_identity  # the backend's own definition
+        finally:
+            store.close()
+
+    def _probe(self, backend_url):
+        lines = [line.strip() for line in LAUNCHER.read_text().splitlines()]
+        command = lines[lines.index(":probe_paper_backend") + 1]
+        prefix = 'powershell.exe -NoProfile -Command "'
+        self.assertTrue(command.startswith(prefix) and command.endswith('"'))
+        env = dict(os.environ, BYBITSCANNER_PAPER_BACKEND_URL=backend_url,
+                   BYBITSCANNER_PAPER_DB=str(self.db_path), BYBITSCANNER_PYTHON=sys.executable)
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", command[len(prefix):-1]],
+            env=env, capture_output=True, text=True, timeout=60,
+        )
+        return result.returncode
+
+    def _probe_stub(self, body, code=200):
+        if not isinstance(body, bytes):
+            body = json.dumps(body).encode()
+        handler = type("Handler", (_StubBackend,), {
+            "status_code": code, "status_body": body, "posts": [], "do_GET": _health_get,
+        })
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            returncode = self._probe(f"http://127.0.0.1:{server.server_address[1]}")
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(handler.posts, [])  # the probe never mutates the backend
+        return returncode
+
+    def _health(self, **overrides):
+        return {"ok": True, "component": "paper_backend", "mode": "paper",
+                "database_identity": self.identity, "process_instance_id": "i",
+                "build_sha": "", **overrides}
+
+    def test_matching_canonical_backend_is_reused(self):
+        self.assertEqual(self._probe_stub(self._health()), 0)
+
+    def test_unreachable_backend_is_spawned(self):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        self.assertEqual(self._probe(f"http://127.0.0.1:{port}"), 1)
+
+    def test_non_matching_answer_fails_closed_without_spawn(self):
+        for body, code in ((self._health(component="telegram_monitoring"), 200),
+                           (self._health(database_identity="0" * 64), 200),
+                           (self._health(database_identity=self.identity.upper()), 200),
+                           (self._health(mode="live"), 200),
+                           (self._health(ok="true"), 200),
+                           ({"ok": True, "mode": "paper"}, 200),
+                           (b"not json", 200),
+                           ({"ok": False, "error": "paper_runtime_unavailable"}, 503)):
+            with self.subTest(body=body, code=code):
+                self.assertEqual(self._probe_stub(body, code), 2)
+
+
+def _health_get(self):
+    self.send_response(self.status_code if self.path == "/api/health" else 404)
+    self.send_header("Content-Type", "application/json")
+    self.end_headers()
+    self.wfile.write(self.status_body)
 
 
 if __name__ == "__main__":
