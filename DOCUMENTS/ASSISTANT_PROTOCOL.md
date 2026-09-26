@@ -213,6 +213,10 @@ readiness set is:
   the controls. A standalone `main.py` Scanner and backend
   `ScannerControlRuntime` must never be treated as one Scanner or allowed to
   run concurrently for the same acceptance run;
+- startup must route from the authoritative persisted Scanner lifecycle instead
+  of blindly issuing `start`: `SCANNER_STOPPED -> start`,
+  `SCANNER_PAUSED -> resume`, `SCANNER_RUNNING -> reuse/no mutation`;
+  unknown/unavailable state fails closed before Scanner mutation;
 - the launch path has duplicate-worker prevention and does not create a second
   backend, Telegram poller, Scanner owner, or conflicting runtime checkout;
 - production acceptance configuration is proven: ordinary Telegram mode,
