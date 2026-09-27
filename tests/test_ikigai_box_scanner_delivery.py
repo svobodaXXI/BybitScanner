@@ -32,7 +32,7 @@ def _candles():
 
 
 class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
-    def test_actual_scanner_without_wedge_sends_confirmed_box_with_robot_status_button(self):
+    def test_actual_scanner_without_wedge_sends_confirmed_box_without_robot_affordance(self):
         source = _candles()
         original = source.copy(deep=True)
         history = {}
@@ -112,14 +112,17 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
             for button in row
         ]
-        self.assertIn("🤖 Робот", buttons)
+        self.assertNotIn("🤖 Робот", buttons)
         callbacks = [
             button.get("callback_data")
             for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
             for button in row
             if button.get("callback_data")
         ]
-        self.assertIn("robot:cmd:status", callbacks)
+        self.assertFalse(any(
+            callback.startswith("robot:")
+            for callback in callbacks
+        ))
         robot.assert_not_called()
         self.assertEqual(len(history), 1)
         pd.testing.assert_frame_equal(source, original)
