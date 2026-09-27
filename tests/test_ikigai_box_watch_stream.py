@@ -171,7 +171,7 @@ class IkigaiBoxWatchStreamTests(unittest.TestCase):
             stream, "process_ikigai_box_watches", return_value=True,
         ) as watch, patch(
             "ikigai_box_scanner.send_ikigai_box_observation",
-        ) as old_box, patch("notification.create_signal_snapshot") as robot:
+        ) as old_box, patch("pattern_robot_integration.create_signal_snapshot") as robot:
             main.run_scan_pass()
         # WATCH supplements the stateless confirmed-formation sender; it must
         # not replace it, or an initial pass could never report an existing
