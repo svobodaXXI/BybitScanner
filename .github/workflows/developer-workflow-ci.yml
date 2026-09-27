@@ -7,6 +7,7 @@ on:
       - "CLAUDE.md"
       - "DOCUMENTS/ASSISTANT_PROTOCOL.md"
       - "DOCUMENTS/GITHUB_FIRST_WORKFLOW.md"
+      - "DOCUMENTS/PROJECT_STATE.md"
       - "tools/dev/**"
       - "tools/project_sync/governance/**"
       - "tests/test_dev_workflow.py"
