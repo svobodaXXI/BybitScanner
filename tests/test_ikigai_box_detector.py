@@ -139,24 +139,39 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             + 1.618 * (found.anchor_end_price - found.anchor_start_price),
         )
 
-    def test_first_down_leg_stops_at_any_green_or_doji_candle(self):
+    def test_first_down_leg_pause_candle_kept_but_counter_swing_ends_it(self):
         frame, first_end, shelf_end = _two_impulses(-1)
         self.assertEqual(first_end, 27)
+
+        def qualified(modified):
+            rows = list(modified[["open", "high", "low", "close"]]
+                        .itertuples(index=False, name=None))
+            box = rows[first_end + 1:shelf_end + 1]
+            return _qualified_first_impulse_and_box(
+                rows, 20, first_end,
+                min(row[2] for row in box),
+                max(row[1] for row in box),
+                -1, IkigaiBoxParameters(),
+            )
+
         for candle_close in (198.05, 198.0):
             with self.subTest(close=candle_close):
                 modified = frame.copy(deep=True)
-                # Candle 22 opens at 198.0; a green or doji inside the
-                # otherwise bearish 20..27 run must break that run.
+                # Candle 22 opens at 198.0; a green or doji pause that forms
+                # no confirmed reversal LOW does not end the 20..27 impulse.
                 modified.loc[22, "close"] = candle_close
-                rows = list(modified[["open", "high", "low", "close"]]
-                            .itertuples(index=False, name=None))
-                box = rows[first_end + 1:shelf_end + 1]
-                self.assertIsNone(_qualified_first_impulse_and_box(
-                    rows, 20, first_end,
-                    min(row[2] for row in box),
-                    max(row[1] for row in box),
-                    -1, IkigaiBoxParameters(),
-                ))
+                self.assertIsNotNone(qualified(modified))
+
+        # A confirmed counter-swing does: 24..26 hold above candle 23's low,
+        # so 23 is a strict reversal LOW and B cannot move past it to 27.
+        swing = frame.copy(deep=True)
+        for index, (start, finish) in zip(
+            (24, 25, 26, 27),
+            ((196.1, 196.6), (196.6, 196.9), (196.9, 196.3), (196.3, 192.0)),
+        ):
+            swing.loc[index] = _bar(start, finish)
+        self.assertEqual(swing.loc[27, "low"], frame.loc[27, "low"])
+        self.assertIsNone(qualified(swing))
 
     def test_flock_style_green_wick_anchors_red_core_and_55pct_box_gate(self):
         # Synthetic OHLC around the user-supplied FLOCK 986..994 pattern.
@@ -325,19 +340,19 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             detect_ikigai_box(future, as_of_index=len(frame) - 1), found
         )
 
-    def test_mixed_body_down_wick_leg_is_not_one_red_impulse(self):
+    def test_mixed_body_down_wick_leg_mirrors_up_wick_impulse(self):
         frame, box_end = _terminal_wick_two_impulses(
             direction=-1, second=False,
         )
         first = frame.iloc[20:24]
         self.assertTrue((first["close"] >= first["open"]).any())
+        # No confirmed counter-swing lies inside A..B, so the green pause
+        # candle alone does not split it: the exact mirror of the SHORT case.
         watches = detect_ikigai_box_watches(frame, as_of_index=box_end)
-        self.assertNotIn(
+        self.assertIn(
             ("LONG", 20, 23),
             {watch.anchor_identity for watch in watches},
         )
-        # A longer or later red-only leg may remain eligible; only the
-        # mixed-body first-impulse boundaries are forbidden.
 
     def test_wick_box_is_watch_before_second_impulse_and_full_extension(self):
         frame, box_end = _terminal_wick_two_impulses()
@@ -595,7 +610,80 @@ _CPUSDT_5M = [
 ]
 
 
+# Real Bybit AIGENSYNUSDT 5m closed candles 17:40-21:00 MSK 2026-09-25.
+# The owner-identified defect is source-time stable: A=18:50 and terminal
+# B=19:05 are already detected through 20:55, but the next closed candle makes
+# the current ranker absorb the completed 19:10-19:25 counter-wave and resumed
+# rise into impulse 1, relocating B retrospectively to 20:00.
+_AIGENSYNUSDT_5M = [
+    (1790347200000, 0.02089, 0.02089, 0.02083, 0.02084),
+    (1790347500000, 0.02084, 0.02084, 0.02078, 0.02079),
+    (1790347800000, 0.02079, 0.02079, 0.02072, 0.02079),
+    (1790348100000, 0.02079, 0.02082, 0.02079, 0.02082),
+    (1790348400000, 0.02082, 0.02086, 0.02079, 0.02079),
+    (1790348700000, 0.02079, 0.02081, 0.02079, 0.02079),
+    (1790349000000, 0.02079, 0.02089, 0.02077, 0.02087),
+    (1790349300000, 0.02087, 0.02095, 0.02085, 0.02087),
+    (1790349600000, 0.02087, 0.02093, 0.02086, 0.02093),
+    (1790349900000, 0.02093, 0.02094, 0.02090, 0.02094),
+    (1790350200000, 0.02094, 0.02101, 0.02092, 0.02092),
+    (1790350500000, 0.02092, 0.02092, 0.02076, 0.02077),
+    (1790350800000, 0.02077, 0.02082, 0.02076, 0.02076),
+    (1790351100000, 0.02076, 0.02081, 0.02075, 0.02078),
+    (1790351400000, 0.02078, 0.02078, 0.02072, 0.02075),
+    (1790351700000, 0.02075, 0.02085, 0.02075, 0.02085),
+    (1790352000000, 0.02085, 0.02103, 0.02085, 0.02103),
+    (1790352300000, 0.02103, 0.02138, 0.02103, 0.02132),
+    (1790352600000, 0.02132, 0.02134, 0.02114, 0.02116),
+    (1790352900000, 0.02116, 0.02119, 0.02111, 0.02115),
+    (1790353200000, 0.02115, 0.02115, 0.02104, 0.02105),
+    (1790353500000, 0.02105, 0.02109, 0.02105, 0.02109),
+    (1790353800000, 0.02109, 0.02116, 0.02106, 0.02110),
+    (1790354100000, 0.02110, 0.02128, 0.02110, 0.02121),
+    (1790354400000, 0.02121, 0.02124, 0.02121, 0.02123),
+    (1790354700000, 0.02123, 0.02123, 0.02118, 0.02123),
+    (1790355000000, 0.02123, 0.02130, 0.02122, 0.02126),
+    (1790355300000, 0.02126, 0.02135, 0.02126, 0.02132),
+    (1790355600000, 0.02132, 0.02144, 0.02132, 0.02144),
+    (1790355900000, 0.02144, 0.02149, 0.02132, 0.02144),
+    (1790356200000, 0.02144, 0.02149, 0.02144, 0.02146),
+    (1790356500000, 0.02146, 0.02148, 0.02141, 0.02141),
+    (1790356800000, 0.02141, 0.02152, 0.02141, 0.02145),
+    (1790357100000, 0.02145, 0.02155, 0.02145, 0.02145),
+    (1790357400000, 0.02145, 0.02166, 0.02142, 0.02164),
+    (1790357700000, 0.02164, 0.02165, 0.02151, 0.02151),
+    (1790358000000, 0.02151, 0.02162, 0.02151, 0.02162),
+    (1790358300000, 0.02162, 0.02170, 0.02160, 0.02170),
+    (1790358600000, 0.02170, 0.02176, 0.02164, 0.02164),
+    (1790358900000, 0.02164, 0.02174, 0.02162, 0.02172),
+    (1790359200000, 0.02172, 0.02184, 0.02172, 0.02178),
+]
+
+
 class ReversalOriginTests(unittest.TestCase):
+    def test_aigensyn_first_impulse_b_is_not_reanchored_by_later_leg_progress(self):
+        candles = pd.DataFrame(
+            _AIGENSYNUSDT_5M,
+            columns=["time", "open", "high", "low", "close"],
+        )
+        before = detect_ikigai_box(candles, as_of_index=39)  # 20:55 MSK
+        self.assertIsNotNone(before)
+        self.assertEqual(before.direction, "SHORT")
+        time = candles["time"]
+        self.assertEqual(int(time[before.anchor_start_index]), 1790351400000)  # 18:50
+        self.assertEqual(int(time[before.anchor_end_index]), 1790352300000)  # 19:05
+
+        later = detect_ikigai_box(candles, as_of_index=40)  # 21:00 MSK
+        self.assertIsNotNone(later)
+        self.assertEqual(later.direction, "SHORT")
+        self.assertEqual(int(time[later.anchor_start_index]), 1790351400000)
+        self.assertEqual(
+            int(time[later.anchor_end_index]),
+            1790352300000,
+            "later second-leg progress must not absorb the completed counter-wave "
+            "and relocate historical first-impulse B",
+        )
+
     def test_cpusdt_first_impulse_starts_at_the_reversal_low(self):
         """Previously A 12:05 (mid-rise) -> B 12:25 won on extension fit; with
         A required to be a confirmed reversal low it is 11:50 -> 12:20."""

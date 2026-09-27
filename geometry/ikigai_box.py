@@ -144,8 +144,9 @@ REVERSAL_RIGHT_BARS = 3
 
 def _is_reversal_origin(rows, index, sign):
     """UP: A's low is strictly below the lows of the 3 candles before and after
-    it; DOWN mirrors with highs. ``rows`` is the closed decision-time prefix,
-    so the confirming candles are never read from the future."""
+    it; DOWN mirrors with highs. With ``-sign`` it tests the opposite,
+    terminal pivot of that impulse. ``rows`` is the closed decision-time
+    prefix, so the confirming candles are never read from the future."""
     before = rows[index - REVERSAL_LEFT_BARS : index]
     after = rows[index + 1 : index + 1 + REVERSAL_RIGHT_BARS]
     if (
@@ -167,16 +168,6 @@ def _qualified_first_impulse_and_box(
     """Shared frozen-A/B and consolidation gates for WATCH and confirmation."""
     first_n = first_end - first_start + 1
     first_rows = rows[first_start : first_end + 1]
-    # The DOWN impulse has an uninterrupted red-body CORE between its
-    # price-extreme anchors A and B. One adjacent boundary candle at
-    # either end may be green: its wick can supply A or B without making
-    # that candle part of the red run. A green/doji INSIDE the core splits
-    # the impulse and cannot be absorbed to extend the measured A/B span.
-    # Keep the UP path unchanged (HEI's terminal rejection-wick case).
-    if sign == -1 and any(
-        close >= opened for opened, _, _, close in first_rows[1:-1]
-    ):
-        return None
     a = rows[first_start][2 if sign == 1 else 1]
     b = rows[first_end][1 if sign == 1 else 2]
     span = sign * (b - a)
@@ -184,7 +175,17 @@ def _qualified_first_impulse_and_box(
         return None
     if not _is_reversal_origin(rows, first_start, sign):
         return None
-    atr = _pre_impulse_atr(rows, first_start)
+    # Impulse 1 ends at its FIRST confirmed terminal pivot: the mirrored
+    # reversal rule (UP: a reversal HIGH; DOWN: a reversal LOW). A confirmed
+    # counter-swing inside A..B already froze B there, so later leg progress
+    # cannot re-anchor it. A short pause of either candle color that does not
+    # form such a pivot stays inside the impulse; color alone never ends it.
+    if any(
+        _is_reversal_origin(rows, index, -sign)
+        for index in range(first_start + 1, first_end)
+    ):
+        return None
+    atr =_pre_impulse_atr(rows, first_start)
     if not atr or span < max(
         p.min_impulse_atr * atr, p.min_impulse_fraction * a
     ):
