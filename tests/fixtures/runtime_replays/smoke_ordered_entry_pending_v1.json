@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "name": "smoke_ordered_entry_pending",
+  "events": [
+    {
+      "event_id": "2ZUSDT:10:1001",
+      "symbol": "2ZUSDT",
+      "coverage_role": "ENTRY_PENDING",
+      "bid": "0.5000",
+      "ask": "0.5001",
+      "bid_size": "100",
+      "ask_size": "100",
+      "received_at_ms": 1790520000001,
+      "source_generation": 0,
+      "source_sequence": 10,
+      "source_update_id": 1001,
+      "source_event_at_ms": 1790520000000
+    },
+    {
+      "event_id": "ARBUSDT:11:1002",
+      "symbol": "ARBUSDT",
+      "coverage_role": "ENTRY_PENDING",
+      "bid": "0.6200",
+      "ask": "0.6201",
+      "bid_size": "100",
+      "ask_size": "100",
+      "received_at_ms": 1790520000002,
+      "source_generation": 0,
+      "source_sequence": 11,
+      "source_update_id": 1002,
+      "source_event_at_ms": 1790520000001
+    },
+    {
+      "event_id": "2ZUSDT:12:1003",
+      "symbol": "2ZUSDT",
+      "coverage_role": "ENTRY_PENDING",
+      "bid": "0.5002",
+      "ask": "0.5003",
+      "bid_size": "100",
+      "ask_size": "100",
+      "received_at_ms": 1790520000003,
+      "source_generation": 0,
+      "source_sequence": 12,
+      "source_update_id": 1003,
+      "source_event_at_ms": 1790520000002
+    }
+  ]
+}
