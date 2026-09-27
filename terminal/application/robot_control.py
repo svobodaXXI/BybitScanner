@@ -131,21 +131,39 @@ def start_robot(
     """
     store = _open_store(database_path)
     try:
-        now = _now_ms(clock_ms)
-        runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
-        if runtime is None:
-            runtime = store.initialize_robot_runtime_state(PAPER_ACCOUNT_ID, updated_at_ms=now)
-        # Legal only from the fully clean (ROBOT_STOPPED, ROBOT_STOPPED) pair.
-        # (ROBOT_STOPPED, RECONCILIATION_REQUIRED) shares mode=ROBOT_STOPPED but
-        # must still be rejected: recovering out of RECONCILIATION_REQUIRED is a
-        # separate, unresolved problem that start_robot() must never shortcut.
-        if runtime.mode != ROBOT_STOPPED or runtime.recovery_status != ROBOT_STOPPED:
-            raise RobotControlRejected("start_robot is legal only from (ROBOT_STOPPED, ROBOT_STOPPED)")
-        coordinator = RobotRecoveryCoordinator(store, PAPER_ACCOUNT_ID, clock_ms=_clock(clock_ms))
-        result = coordinator.start()
-        return result.runtime_state
+        return start_robot_in_store(
+            store,
+            coordinator_factory=lambda: RobotRecoveryCoordinator(
+                store, PAPER_ACCOUNT_ID, clock_ms=_clock(clock_ms),
+            ),
+            clock_ms=clock_ms,
+        )
     finally:
         store.close()
+
+
+def start_robot_in_store(
+    store: SQLiteStore,
+    *,
+    coordinator_factory: Callable[[], RobotRecoveryCoordinator],
+    clock_ms: Callable[[], int] | None = None,
+) -> RobotRuntimeStateRecord:
+    """``start_robot()`` legality + transition on an already-open store.
+
+    For the PAPER backend owner thread, which must reuse its own store and
+    RobotRecoveryCoordinator instead of opening a second connection.
+    """
+    now = _now_ms(clock_ms)
+    runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+    if runtime is None:
+        runtime = store.initialize_robot_runtime_state(PAPER_ACCOUNT_ID, updated_at_ms=now)
+    # Legal only from the fully clean (ROBOT_STOPPED, ROBOT_STOPPED) pair.
+    # (ROBOT_STOPPED, RECONCILIATION_REQUIRED) shares mode=ROBOT_STOPPED but
+    # must still be rejected: recovering out of RECONCILIATION_REQUIRED is a
+    # separate, unresolved problem that start_robot() must never shortcut.
+    if runtime.mode != ROBOT_STOPPED or runtime.recovery_status != ROBOT_STOPPED:
+        raise RobotControlRejected("start_robot is legal only from (ROBOT_STOPPED, ROBOT_STOPPED)")
+    return coordinator_factory().start().runtime_state
 
 
 def _escalate_to_reconciliation_required(
@@ -293,16 +311,23 @@ def resume_robot(
     """
     store = _open_store(database_path)
     try:
-        now = _now_ms(clock_ms)
-        runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
-        if runtime is None or runtime.mode != ROBOT_RUNNING or runtime.recovery_status != PAUSED:
-            raise RobotControlRejected("resume_robot is legal only from (ROBOT_RUNNING, PAUSED)")
-        return store.update_robot_runtime_state(
-            PAPER_ACCOUNT_ID, mode=ROBOT_RUNNING, recovery_status=READY, reason=None,
-            expected_version=runtime.version, updated_at_ms=now,
-        )
+        return resume_robot_in_store(store, clock_ms=clock_ms)
     finally:
         store.close()
+
+
+def resume_robot_in_store(
+    store: SQLiteStore, *, clock_ms: Callable[[], int] | None = None,
+) -> RobotRuntimeStateRecord:
+    """``resume_robot()`` legality + transition on an already-open store."""
+    now = _now_ms(clock_ms)
+    runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+    if runtime is None or runtime.mode != ROBOT_RUNNING or runtime.recovery_status != PAUSED:
+        raise RobotControlRejected("resume_robot is legal only from (ROBOT_RUNNING, PAUSED)")
+    return store.update_robot_runtime_state(
+        PAPER_ACCOUNT_ID, mode=ROBOT_RUNNING, recovery_status=READY, reason=None,
+        expected_version=runtime.version, updated_at_ms=now,
+    )
 
 
 def close_all_now(

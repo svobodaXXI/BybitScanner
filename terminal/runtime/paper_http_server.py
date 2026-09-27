@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
 from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
 
@@ -79,6 +79,7 @@ from terminal.persistence.credential_store import (
 from terminal.persistence.live_account_store import LiveAccountProjectionStore
 from terminal.persistence.active_account_preference import ActiveAccountPreferenceStore
 from terminal.application.live_account_reconciliation import LiveAccountReconciliationError
+from terminal.application.runtime_intent import RuntimeIntent, RuntimeIntentReconciler
 
 
 LOGGER = logging.getLogger(__name__)
@@ -287,6 +288,61 @@ def _require_robot_route_legality(runtime: PaperRuntime, command: str) -> None:
 def _execute_robot_route(runtime: PaperRuntime, command: str, operation):
     _require_robot_route_legality(runtime, command)
     return operation()
+
+
+RUNTIME_INTENT_FIELDS = {"intent"}
+
+
+class BackendRuntimeIntentPorts:
+    """RuntimeIntentReconciler ports bound to the canonical in-process backend.
+
+    Every read and command runs on the serialized PAPER owner thread via
+    ``runtime.call``; nothing here makes an HTTP request or owns state.
+    """
+
+    def __init__(self, runtime, protection_coverage) -> None:
+        self._runtime = runtime
+        self._protection = protection_coverage
+
+    def robot_state(self):
+        state = self._runtime.call(lambda runtime: runtime.robot_runtime_state())
+        return None if state is None else (state.mode, state.recovery_status)
+
+    def protection_healthy(self):
+        health = self._protection.health()
+        if not isinstance(health, Mapping):
+            return None
+        unhealthy = health.get("unhealthy_symbols")
+        if health.get("healthy") is True and isinstance(unhealthy, Mapping) and not unhealthy:
+            return True
+        return False
+
+    def scanner_state(self):
+        return self._runtime.call(lambda runtime: runtime.scanner_status()).mode
+
+    def start_robot(self):
+        return self._runtime.call(lambda runtime: runtime.robot_start())
+
+    def resume_robot(self):
+        return self._runtime.call(lambda runtime: runtime.robot_resume())
+
+    def reconcile_robot(self):
+        warm = getattr(self._runtime, "warm_robot_closed_candles", None)
+        if warm is not None:
+            try:
+                warm()
+            except Exception:
+                LOGGER.warning("Robot candle cache warm-up failed", exc_info=True)
+        result = self._runtime.call(lambda runtime: runtime.robot_reconcile())
+        if result.success is not True:
+            raise RuntimeError(result.reason or "reconcile_robot did not complete safely")
+        return result
+
+    def start_scanner(self):
+        return self._runtime.call(lambda runtime: runtime.start_scanner())
+
+    def resume_scanner(self):
+        return self._runtime.call(lambda runtime: runtime.resume_scanner())
 
 
 class PublicTradeBuffer:
@@ -3089,6 +3145,37 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **payload})
             return
 
+        if self.path == "/api/runtime/intent":
+            try:
+                raw_intent = self._payload(RUNTIME_INTENT_FIELDS)["intent"]
+                if not isinstance(raw_intent, str):
+                    raise ValueError("intent must be a string")
+                intent = RuntimeIntent(raw_intent)
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_runtime_intent"})
+                return
+            lock = getattr(self.server, "runtime_intent_lock", None)
+            coverage = getattr(self.server, "robot_protection_coverage", None)
+            if lock is None or coverage is None:
+                self._json_response(503, {"ok": False, "error": "runtime_intent_unavailable"})
+                return
+            try:
+                ports = BackendRuntimeIntentPorts(self.server.runtime, coverage)
+                with lock:
+                    result = RuntimeIntentReconciler(ports).reconcile(intent)
+            except Exception:
+                LOGGER.exception("runtime intent reconciliation failed")
+                self._json_response(503, {"ok": False, "error": "runtime_intent_unavailable"})
+                return
+            self._json_response(200 if result.ok else 409, {
+                "ok": result.ok,
+                "intent": result.intent.value,
+                "changed": list(result.changed),
+                "final": dict(result.final),
+                "blocked_by": list(result.blocked_by),
+            })
+            return
+
         if self.path in {
             "/api/scanner/start", "/api/scanner/pause",
             "/api/scanner/resume", "/api/scanner/stop",
@@ -3452,6 +3539,7 @@ def main() -> None:
         server.runtime = runtime
         server.market_data = market_data
         server.robot_protection_coverage = robot_protection_coverage
+        server.runtime_intent_lock = threading.Lock()
         server.diary_setup_store_path = decision_store_path(database_path)
         server.diary_factor_store_path = server.diary_setup_store_path
 
