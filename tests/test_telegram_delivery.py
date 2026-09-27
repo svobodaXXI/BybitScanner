@@ -352,7 +352,8 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
                 delivered = notification.send_signal(signal)
 
         self.assertTrue(delivered)
-        create_mock.assert_not_called()
+        create_mock.assert_called_once()
+        self.assertTrue(create_mock.call_args.kwargs["enabled"])
         keyboard = photo_mock.call_args.kwargs["reply_markup"]["inline_keyboard"]
         self.assertNotIn(
             "🤖 Робот", [button["text"] for row in keyboard for button in row],
@@ -382,7 +383,7 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
                     ) as candidate:
                 self.assertTrue(notification.send_signal(signal))
             candidate.assert_called_once()
-            self.assertFalse(candidate.call_args.kwargs["enabled"] is False)
+            self.assertTrue(candidate.call_args.kwargs["enabled"])
             buttons = [
                 button["text"]
                 for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
