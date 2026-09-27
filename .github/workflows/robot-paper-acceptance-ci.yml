@@ -28,6 +28,7 @@ on:
       - "tests/test_terminal_persistence.py"
       - "tests/test_scanner_geometry_cursor.py"
       - "tests/test_robot_admission.py"
+      - "tests/test_robot_autopilot.py"
       - "tests/test_pattern_robot_integration.py"
       - "tests/test_robot_l_shape.py"
       - "tests/test_l_shape_scanner.py"
@@ -100,6 +101,7 @@ jobs:
           tests/test_terminal_paper_trading_application.py
           tests/test_scanner_geometry_cursor.py
           tests/test_robot_admission.py
+          tests/test_robot_autopilot.py
           tests/test_pattern_robot_integration.py
           tests/test_robot_l_shape.py
           tests/test_l_shape_scanner.py
@@ -118,6 +120,7 @@ jobs:
           terminal/application/robot_late_admission.py
           terminal/application/robot_late_admission_market.py
           terminal/application/robot_admission.py
+          terminal/application/robot_autopilot.py
           terminal/application/robot_control.py
           terminal/application/robot_legacy_protection_recovery.py
           terminal/application/trading_application.py
@@ -150,6 +153,10 @@ jobs:
           tests.test_signal_admission
           tests.test_telegram_delivery
           tests.test_l_shape_scanner.LShapeTelegramTests
+      - name: Run Robot Autopilot shadow foundation
+        run: >-
+          python -m unittest -v
+          tests.test_robot_autopilot
       - name: Run Scanner control and Telegram menu acceptance
         run: >-
           python -m unittest -v
