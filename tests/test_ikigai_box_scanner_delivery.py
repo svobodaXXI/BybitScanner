@@ -71,7 +71,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         ), patch.object(box, "get_telegram_chat_ids", return_value=("owner",)), patch.object(
             box, "get_telegram_owner_chat_id", return_value="owner",
         ), patch(
-            "notification.create_signal_snapshot",
+            "pattern_robot_integration.create_signal_snapshot",
         ) as robot:
             # Actual Scanner integration; temporary chart root can be passed by
             # patching the module's default function call below.
@@ -155,7 +155,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             box, "load_memory", side_effect=lambda: dict(history),
         ), patch.object(
             box, "save_memory", side_effect=lambda v: history.update(v),
-        ), patch("notification.create_signal_snapshot") as robot:
+        ), patch("pattern_robot_integration.create_signal_snapshot") as robot:
             self.assertTrue(box.send_ikigai_box_watch_observation(
                 "HEIUSDT", live, watch, timeframe="60", chart_dir=root,
             ))
@@ -230,7 +230,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                 stack.enter_context(patch.object(box, "render_ikigai_box_chart"))
                 text = stack.enter_context(patch.object(box, "send_message", return_value={"ok": True}))
                 photo = stack.enter_context(patch.object(box, "send_photo", return_value={"ok": True}))
-                robot = stack.enter_context(patch("notification.create_signal_snapshot"))
+                robot = stack.enter_context(patch("pattern_robot_integration.create_signal_snapshot"))
                 if early:
                     result = box.send_ikigai_box_watch_observation(
                         "TESTUSDT", live, watch, timeframe="5", test_mode=True)
