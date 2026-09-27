@@ -180,9 +180,9 @@ Authoritative standard:
   Reuse `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` for future runtime
   incidents and broaden only when new evidence does not match a known path.
 
-### P0.5 — One-action Runtime Intent Reconciler — PLANNED / NEXT
+### P0.5 — One-action Runtime Intent Reconciler — COMPLETE
 
-Owner runtime UX override from 2026-09-27:
+Owner runtime UX override from 2026-09-27 remains authoritative:
 
 > The owner states the desired outcome once; BybitScanner must inspect,
 > prepare, reconcile and verify the required PAPER runtime automatically.
@@ -190,50 +190,20 @@ Owner runtime UX override from 2026-09-27:
 Authoritative plan:
 `DOCUMENTS/RUNTIME_INTENT_RECONCILER_PLAN.md`.
 
-Triggering evidence:
-- after the proven canonical safe-stop, Robot correctly remained
-  `ROBOT_STOPPED / ROBOT_STOPPED`;
-- the normal desktop `Запуск робота` path then reused backend/Telegram but
-  failed on `robot_admission_ready=false` before Scanner start;
-- the current launcher therefore requires a separate Telegram
-  `Робот -> ▶ Старт` transition and then a repeated launcher action;
-- this is safe but violates the owner's one-action runtime intent.
+Implementation/evidence:
+- PR #285 merged as `543168420afaab3b0dde9be083969ff867b69263`: shared
+  `SCANNER / ROBOT / ALL` Runtime Intent Reconciler, PAPER backend boundary,
+  desktop bootstrap and Telegram routing;
+- canonical desktop `Запуск робота` now expresses one `ALL` intent and has
+  been owner-run from a stopped state to Robot READY/protection healthy +
+  Scanner RUNNING without the former manual Robot-start prerequisite;
+- canonical safe-stop remains separate and proven;
+- backend/Telegram reuse is guarded by PAPER DB identity and readiness checks;
+- LIVE/operator authority remains forced off for the PAPER bootstrap.
 
-Required product contract:
-- desktop and Telegram express `SCANNER`, `ROBOT`, `ALL` (plus stop intents);
-- one canonical intent reconciler observes actual state and applies only
-  existing legal/fail-closed transitions;
-- STOPPED -> start, PAUSED -> resume, already-ready -> no-op;
-- canonical reconciliation may be used automatically when its own evidence
-  proves the state recoverable;
-- wrong DB identity, ambiguous ownership/protection, unknown state or failed
-  canonical reconciliation remain hard blockers;
-- no direct SQLite repair, no LIVE mutation, no second runtime/state machine;
-- existing desktop shortcuts remain stable and become thin intent entrypoints;
-- Telegram calls the same intent contract instead of duplicating preparation
-  logic;
-- SCANNER-only must not start Robot; ROBOT-only must not start Scanner;
-- `ALL` must prepare/reuse backend + Telegram, reach Robot READY/protection
-  healthy, then start/resume one Scanner pass;
-- repeated/double intent must be idempotent and duplicate-safe.
-
-Implementation order:
-1. freeze the intent/state transition matrix with focused tests;
-2. add backend `RuntimeIntentReconciler` using existing Robot/Scanner
-   control/recovery primitives;
-3. add a compact PAPER-only intent/status boundary;
-4. consolidate desktop bootstrap into one tracked Python intent entrypoint and
-   reduce .bat launchers to thin wrappers;
-5. route Telegram intent actions through the same contract and add one
-   explicit **«▶ Всё»** action;
-6. fold stop composition into the same contract without regressing canonical
-   safe-stop;
-7. perform the single full owner acceptance from an intentionally non-prepared
-   safe state.
-
-**Priority effect:** the existing P1 final full owner acceptance is blocked
-behind P0.5. Do not work around this gap by asking the owner to manually start
-Robot first, query health, toggle states, or repeat the launcher.
+Do not reopen P0.5 unless new evidence contradicts the one-action contract.
+The remaining owner gate is the complete full-universe acceptance, not runtime
+intent implementation.
 
 ### P1 — Ikigai Box «Кривой первый импульс» — COMPLETE
 
@@ -254,6 +224,23 @@ Robot first, query health, toggle states, or repeat the launcher.
   evidence contradicts this result.
 
 ### P1 final gate — one clean owner-run full acceptance
+
+**Current checkpoint — 2026-09-28 (partial evidence only, full-pass gate still open):**
+- local runtime loaded current main `e546e167c20bc97257e01fae4d90b400eed35e7e`;
+- local Ikigai Box WATCH flags were disabled; owner-facing acceptance is
+  CONFIRMED-only;
+- real CONFIRMED `AKEUSDT 5m` rendered `🤖 Робот`; owner tap returned
+  `Сигнал принят: AKEUSDT ✅` and Robot remained `Запущен / Готов`;
+- PR #300 tick-normalization fix had already been verified on the exact frozen
+  production-failing `2ZUSDT 1m` A/B case before merge;
+- Telegram Bot API reports the owner chat menu button as `type=commands` and
+  all eight expected commands, including dynamic Scanner pause, are published;
+  the current desktop Telegram client nevertheless does not visibly render the
+  Menu button. Treat this as a client-presentation discrepancy, not as missing
+  server-side bot configuration. Do not repeat the same Bot API wiring checks
+  unless new evidence changes;
+- this checkpoint **does not** satisfy the permanent acceptance rule because the
+  current full eligible-universe pass has not yet been reported complete.
 
 After the P0 fixes that affect the owner/runtime surface are merged and loaded
 into the canonical desktop path:
