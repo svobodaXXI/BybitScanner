@@ -13,5 +13,5 @@ if not exist "%~dp0venv\Scripts\python.exe" (
     exit /b 1
 )
 
-"%~dp0venv\Scripts\python.exe" "%~dp0tools\stop_robot_runtime.py"
+"%~dp0venv\Scripts\python.exe" -m tools.stop_robot_runtime
 exit /b %errorlevel%
