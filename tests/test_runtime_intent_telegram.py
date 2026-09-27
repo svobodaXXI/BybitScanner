@@ -5,7 +5,8 @@ from unittest import mock
 
 import telegram_runtime_intent
 from tests.test_runtime_intent_bootstrap import (
-    BACKEND_HEALTH, INTENT_URL, ROOT, TELEGRAM_HEALTH, FakeWorld, _converged, _response,
+    BACKEND_HEALTH, EXPECTED_PAPER_SAFE_CHILD, INTENT_URL, ROOT, TELEGRAM_HEALTH,
+    UNSAFE_PARENT_ENV, FakeWorld, _converged, _response,
 )
 from tools import runtime_intent
 from tools.runtime_intent import BootstrapResult, RuntimeIntentBootstrap, expected_database_identity
@@ -60,6 +61,26 @@ class TelegramRuntimeIntentBootstrapTests(unittest.TestCase):
                 result = self.bootstrap.execute("ROBOT")
                 self.assertEqual(result.outcome, outcome)
                 self.assertEqual(len(self.world.posts), 1)
+
+
+class TelegramPaperSafeBackendSpawnTests(unittest.TestCase):
+    def test_telegram_bootstrap_spawns_backend_with_the_same_paper_safe_env(self):
+        parent = dict(UNSAFE_PARENT_ENV)
+        world = FakeWorld(expected_database_identity(ROOT, parent))
+        world.backend = None
+        world.after_spawn["PAPER backend"] = world.backend_health()
+        world.intent_reply = _converged(intent="ROBOT", changed=("robot:start",))
+
+        result = world.bootstrap(env=parent, require_telegram=False).execute("ROBOT")
+
+        self.assertTrue(result.ok)
+        self.assertEqual([name for name, _ in world.spawn_envs], ["PAPER backend"])
+        child = world.spawn_envs[0][1]
+        for key, value in EXPECTED_PAPER_SAFE_CHILD.items():
+            self.assertEqual(child[key], value, key)
+        self.assertEqual(child["BYBITSCANNER_PAPER_DB"], parent["BYBITSCANNER_PAPER_DB"])
+        self.assertEqual(parent, UNSAFE_PARENT_ENV)
+        self.assertEqual(len(world.posts), 1)
 
 
 class TelegramRuntimeIntentFacadeTests(unittest.TestCase):
