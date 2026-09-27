@@ -278,12 +278,12 @@ SCANNER_PAUSED = "SCANNER_PAUSED"
 DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0
 
 
-def _run_scanner_scan_pass(*, box_robot_sink=None, control_checkpoint=None) -> None:
+def _run_scanner_scan_pass(*, box_plan_preparer=None, control_checkpoint=None) -> None:
     """Load Scanner/config only when an actual scan pass is due."""
     from main import run_scan_pass
 
     run_scan_pass(
-        box_robot_sink=box_robot_sink,
+        box_plan_preparer=box_plan_preparer,
         control_checkpoint=control_checkpoint,
     )
 
@@ -786,7 +786,7 @@ class PaperRuntime:
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
             scan_pass=lambda checkpoint: _run_scanner_scan_pass(
-                box_robot_sink=self._dispatch_ikigai_box_robot_candidate,
+                box_plan_preparer=self._dispatch_ikigai_box_plan_preparation,
                 control_checkpoint=checkpoint,
             ),
             clock_ms=lambda: int(time.time() * 1000),
@@ -809,26 +809,23 @@ class PaperRuntime:
         self._robot_command_dispatcher = dispatcher
         self._robot_breakout_monitor.start()
 
-    def _dispatch_ikigai_box_robot_candidate(
+    def _dispatch_ikigai_box_plan_preparation(
         self, symbol: str, timeframe: str, formation: Mapping[str, object],
     ) -> object:
         return self._dispatch_robot_command(
-            lambda runtime: runtime._admit_ikigai_box_robot_candidate(
+            lambda runtime: runtime._prepare_ikigai_box_robot_plan(
                 symbol, timeframe, formation,
             )
         )
 
-    def _admit_ikigai_box_robot_candidate(
+    def _prepare_ikigai_box_robot_plan(
         self, symbol: str, timeframe: str, formation: Mapping[str, object],
-    ) -> str | None:
-        runtime = self.store.get_robot_runtime_state(self._paper_account_id)
-        if (
-            runtime is None
-            or runtime.mode != ROBOT_RUNNING
-            or runtime.recovery_status != READY
-        ):
-            return None
+    ) -> str:
+        """Freeze one CONFIRMED Box as an immutable BOX_PLAN_ONLY source; never admit it.
 
+        Admission (linked APPROVED / BOX_ENTRY_READY) happens only on the owner's
+        ``🤖 Робот`` tap through terminal.application.robot_admission.
+        """
         normalized_symbol = Symbol(symbol.strip().upper())
         normalized_timeframe = str(timeframe).strip()
         direction = str(formation.get("direction", "")).strip().upper()
@@ -913,13 +910,7 @@ class PaperRuntime:
             structural_stop=None,
             created_at_ms=now_ms,
         )
-        candidate, _created = self.store.handoff_box_plan_to_robot(
-            source.candidate_id,
-            symbol=normalized_symbol,
-            expected_snapshot_sha256=source.snapshot_sha256,
-            approved_at_ms=now_ms,
-        )
-        return candidate.candidate_id
+        return source.candidate_id
 
     def _dispatch_robot_command(self, operation: Callable[["PaperRuntime"], object]) -> object:
         if self._robot_command_dispatcher is None:

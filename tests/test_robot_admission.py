@@ -575,5 +575,120 @@ class ActiveRobotOwnerLightReadTests(unittest.TestCase):
             finally:
                 store.close()
 
+
+class BoxPlanOwnerAdmissionTests(unittest.TestCase):
+    """Owner 🤖 Робот tap on a frozen Ikigai Box plan (BOX_PLAN_ONLY source)."""
+
+    def setUp(self):
+        from tests.test_box_plan_persistence import snapshot
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = Path(self.tmp.name) / "paper.sqlite3"
+        self.candidates = Path(self.tmp.name) / "candidates"
+        store = SQLiteStore.open(self.db)
+        try:
+            self.source, _ = store.save_box_plan_only(snapshot=snapshot(), created_at_ms=3001)
+            store.initialize_robot_runtime_state(TradingAccountId("paper"), updated_at_ms=3001)
+        finally:
+            store.close()
+        from terminal.application.robot_admission import box_plan_admission_handle
+
+        self.handle = box_plan_admission_handle(self.source.candidate_id)
+
+    def _set_runtime(self, mode, recovery_status):
+        store = SQLiteStore.open(self.db)
+        try:
+            current = store.get_robot_runtime_state(TradingAccountId("paper"))
+            store.update_robot_runtime_state(
+                TradingAccountId("paper"), mode=mode, recovery_status=recovery_status,
+                reason=None, expected_version=current.version,
+                updated_at_ms=current.updated_at_ms + 1,
+            )
+        finally:
+            store.close()
+
+    def _rows(self):
+        store = SQLiteStore.open(self.db)
+        try:
+            return {item.candidate_id: item for item in store.load_robot_candidates(TradingAccountId("paper"))}
+        finally:
+            store.close()
+
+    def _admit(self, handle=None, now=5000):
+        return admit_robot_candidate(
+            handle or self.handle, database_path=self.db, store_dir=self.candidates,
+            clock_ms=lambda: now,
+        )
+
+    def test_handle_fits_telegram_callback_and_names_the_exact_source(self):
+        self.assertTrue(self.handle.startswith("bp-"))
+        self.assertTrue(self.source.candidate_id.startswith("box-plan-" + self.handle[3:]))
+        self.assertLessEqual(len(f"robot:approve:{self.handle}".encode("utf-8")), 64)
+
+    def test_ready_owner_tap_hands_off_source_to_linked_entry_ready_candidate(self):
+        self._set_runtime("ROBOT_RUNNING", "READY")
+        record, changed = self._admit()
+        self.assertTrue(changed)
+        self.assertEqual(record.status, "APPROVED")
+        self.assertEqual(record.robot_state["phase"], "BOX_ENTRY_READY")
+        self.assertEqual(record.robot_state["pattern"], "IKIGAI_BOX")
+        self.assertEqual(record.robot_state["source_box_candidate_id"], self.source.candidate_id)
+        self.assertEqual(record.signal_snapshot["source_box_candidate_id"], self.source.candidate_id)
+        rows = self._rows()
+        self.assertEqual(rows[self.source.candidate_id].status, "BOX_PLAN_ONLY")
+        self.assertEqual(rows[self.source.candidate_id].snapshot_sha256, self.source.snapshot_sha256)
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(self.candidates.exists())  # no legacy JSON envelope for Box
+
+    def test_duplicate_tap_is_idempotent_even_after_robot_leaves_ready(self):
+        self._set_runtime("ROBOT_RUNNING", "READY")
+        first, changed = self._admit()
+        self.assertTrue(changed)
+        self._set_runtime("ROBOT_RUNNING", "PAUSED")
+        second, changed_again = self._admit(now=6000)
+        self.assertFalse(changed_again)
+        self.assertEqual(second.candidate_id, first.candidate_id)
+        self.assertEqual(len(self._rows()), 2)
+
+    def test_not_ready_robot_fails_closed_and_leaves_source_immutable(self):
+        for mode, status in (
+            ("ROBOT_STOPPED", "ROBOT_STOPPED"),
+            ("ROBOT_RUNNING", "PAUSED"),
+            ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"),
+        ):
+            with self.subTest(mode=mode, status=status):
+                if (mode, status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
+                    self._set_runtime(mode, status)
+                with self.assertRaisesRegex(RobotAdmissionRejected, "not ready"):
+                    self._admit()
+                rows = self._rows()
+                self.assertEqual(list(rows), [self.source.candidate_id])
+                self.assertEqual(rows[self.source.candidate_id].status, "BOX_PLAN_ONLY")
+                self.assertEqual(
+                    rows[self.source.candidate_id].snapshot_sha256, self.source.snapshot_sha256,
+                )
+                if (mode, status) != ("ROBOT_STOPPED", "ROBOT_STOPPED"):
+                    self._set_runtime("ROBOT_STOPPED", "ROBOT_STOPPED")
+
+    def test_unknown_or_malformed_handles_fail_closed(self):
+        self._set_runtime("ROBOT_RUNNING", "READY")
+        for handle in ("bp-" + "0" * 40, "bp-" + self.handle[3:-1], "bp-" + self.handle[3:].upper(),
+                       "bp-" + self.handle[3:] + "0"):
+            with self.subTest(handle=handle):
+                with self.assertRaisesRegex(RobotAdmissionRejected, "not admissible"):
+                    self._admit(handle)
+        self.assertEqual(list(self._rows()), [self.source.candidate_id])
+
+    def test_full_source_id_still_cannot_bypass_through_the_json_path(self):
+        self._set_runtime("ROBOT_RUNNING", "READY")
+        create_signal_snapshot({"symbol": "BTCUSDT", "pattern": "Falling Wedge"},
+                               timeframe="1", candidate_id=self.source.candidate_id,
+                               store_dir=self.candidates)
+        with self.assertRaisesRegex(RobotAdmissionRejected, "BOX_PLAN_ONLY"):
+            self._admit(self.source.candidate_id)
+        self.assertEqual(list(self._rows()), [self.source.candidate_id])
+
+
 if __name__ == "__main__":
     unittest.main()

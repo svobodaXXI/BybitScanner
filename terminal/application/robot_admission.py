@@ -29,9 +29,95 @@ DEFAULT_DATABASE_PATH = Path(
     os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3")
 )
 
+# Telegram callback_data is limited to 64 bytes and a Box source id is 73
+# characters, so the owner button carries a 160-bit prefix of its digest.
+BOX_PLAN_HANDLE_PREFIX = "bp-"
+_BOX_PLAN_SOURCE_PREFIX = "box-plan-"
+_BOX_PLAN_HANDLE_HEX = 40
+
 
 class RobotAdmissionRejected(PersistenceError):
     """Raised when a candidate cannot cross the durable Robot admission gate."""
+
+
+def box_plan_admission_handle(source_candidate_id: str) -> str:
+    """Callback-safe handle naming exactly one immutable BOX_PLAN_ONLY source."""
+    digest = str(source_candidate_id).removeprefix(_BOX_PLAN_SOURCE_PREFIX)
+    if (not str(source_candidate_id).startswith(_BOX_PLAN_SOURCE_PREFIX) or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)):
+        raise ValueError("invalid BOX_PLAN_ONLY candidate id")
+    return BOX_PLAN_HANDLE_PREFIX + digest[:_BOX_PLAN_HANDLE_HEX]
+
+
+def _box_plan_source_prefix(handle: str) -> str | None:
+    digest = handle.removeprefix(BOX_PLAN_HANDLE_PREFIX)
+    if (not handle.startswith(BOX_PLAN_HANDLE_PREFIX) or len(digest) != _BOX_PLAN_HANDLE_HEX
+            or any(char not in "0123456789abcdef" for char in digest)):
+        return None
+    return _BOX_PLAN_SOURCE_PREFIX + digest
+
+
+def _admit_box_plan_candidate(
+    handle: str, *, database_path: Path | str | None, clock_ms,
+) -> tuple[RobotCandidateRecord, bool]:
+    """Owner admission of one frozen Box plan through the existing atomic handoff.
+
+    The source stays immutable; only store.handoff_box_plan_to_robot() creates the
+    linked APPROVED / BOX_ENTRY_READY candidate. A repeated tap returns it unchanged.
+    """
+    source_prefix = _box_plan_source_prefix(handle)
+    if source_prefix is None:
+        raise RobotAdmissionRejected("Scanner candidate is not admissible")
+    now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
+    if not isinstance(now, int) or isinstance(now, bool) or now < 0:
+        raise RobotAdmissionRejected("Robot admission clock returned invalid timestamp")
+
+    store = SQLiteStore.open(
+        Path(database_path) if database_path is not None else DEFAULT_DATABASE_PATH
+    )
+    try:
+        candidates = store.load_robot_candidates(PAPER_ACCOUNT_ID)
+        sources = [item for item in candidates if item.candidate_id.startswith(source_prefix)]
+        if len(sources) != 1:
+            raise RobotAdmissionRejected("Scanner candidate is not admissible")
+        source = sources[0]
+        if (source.status != "BOX_PLAN_ONLY"
+                or source.trading_account_id != PAPER_ACCOUNT_ID
+                or source.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+                or source.signal_snapshot.get("identity", {}).get("symbol") != source.symbol.value):
+            raise RobotAdmissionRejected("Scanner candidate is not admissible")
+
+        linked = [
+            item for item in candidates
+            if item.status != "BOX_PLAN_ONLY"
+            and item.signal_snapshot.get("source_box_candidate_id") == source.candidate_id
+        ]
+        if len(linked) > 1:
+            raise RobotAdmissionRejected("Robot candidate identity conflicts with durable state")
+        if linked:
+            return linked[0], False
+
+        runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+        if runtime is None:
+            raise RobotAdmissionRejected("Robot runtime state is unavailable")
+        if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
+            raise RobotAdmissionRejected("Robot admission is not ready")
+        owners = active_robot_owner_candidate_ids(store, PAPER_ACCOUNT_ID, source.symbol)
+        if owners:
+            raise RobotAdmissionRejected(
+                "Robot symbol already has an active exposure owner: " + ",".join(owners)
+            )
+        try:
+            return store.handoff_box_plan_to_robot(
+                source.candidate_id,
+                symbol=source.symbol,
+                expected_snapshot_sha256=source.snapshot_sha256,
+                approved_at_ms=now,
+            )
+        except (PersistenceError, ValueError) as exc:
+            raise RobotAdmissionRejected("Robot candidate identity conflicts with durable state") from exc
+    finally:
+        store.close()
 
 
 def active_robot_owner_candidate_ids(
@@ -82,7 +168,13 @@ def admit_robot_candidate(
 
     Existing durable admission is returned idempotently. A new candidate is
     admitted only while the durable Robot runtime is ROBOT_RUNNING + READY.
+    A ``bp-`` handle names an immutable Ikigai Box plan (SQLite only, no JSON envelope).
     """
+
+    if str(candidate_id).startswith(BOX_PLAN_HANDLE_PREFIX):
+        return _admit_box_plan_candidate(
+            str(candidate_id), database_path=database_path, clock_ms=clock_ms,
+        )
 
     candidate = load_candidate(candidate_id, store_dir=store_dir)
     if candidate["status"] not in {"AVAILABLE", "APPROVED"}:
