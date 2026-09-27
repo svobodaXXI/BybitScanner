@@ -102,7 +102,7 @@ cleanup. Следующий активный этап — один полный 
 ### Рейд «Один запуск — весь прототип»
 
 **Приоритет:** P0  
-**Статус:** IMPLEMENTATION/SAFE-STOP GATES COMPLETE; FINAL FULL OWNER ACCEPTANCE PENDING  
+**Статус:** ONE-ACTION INTENT GATE OPEN; FINAL FULL OWNER ACCEPTANCE BLOCKED ON P0.5  
 **Цель:** сделать один канонический owner-start путь, после которого PAPER
 backend, Robot protection/admission, Telegram callbacks/menu и Scanner имеют
 по одному владельцу, одну runtime authority и проверенную readiness-цепочку.
@@ -133,13 +133,38 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #275 merged (`03d19cb`): у non-executable Ikigai Box убран ложный `🤖 Робот` status-affordance; Box execution остаётся fail-closed до authoritative executable contract;
 - [x] PR #276 merged (`0f72355`): canonical tracked safe-stop path без process-title kills/forced close;
 - [x] owner-PC: current `main` загружен, desktop Robot start/stop path перенаправлен на canonical tracked launchers и safe-stop owner-run подтверждён;
-- [ ] после загрузки P0 изменений провести один чистый полный owner-run PAPER acceptance.
+- [ ] P0.5: реализовать `DOCUMENTS/RUNTIME_INTENT_RECONCILER_PLAN.md` — один owner intent автоматически готовит/reconcile'ит backend, Telegram, Robot и/или Scanner через канонические safe transitions;
+- [ ] после P0.5 провести один чистый полный owner-run PAPER acceptance **без** подготовительных Telegram/terminal действий.
 
 **Награда:** без XP за документацию/рефакторинг; награда только за доказанный
 полный запуск без ручного кризисного восстановления.
 
 Предыдущий рейд «Г-образные врата» не отменён: PR #248 merged, но его
 реальная PAPER acceptance временно ждёт завершения этого P0 operational gate.
+
+## 🧭 Новый P0-квест — «Одно намерение — один запуск»
+
+Owner evidence 2026-09-27 показал новый orchestration gap: после штатного
+safe-stop нормальный desktop `Запуск робота` остановился на
+`robot_admission_ready=false`, потому что Robot был корректно
+`ROBOT_STOPPED / ROBOT_STOPPED`. Для продолжения требовался отдельный
+Telegram START и повторный запуск ярлыка.
+
+Это больше не считается допустимым normal UX.
+
+Канонический план:
+`DOCUMENTS/RUNTIME_INTENT_RECONCILER_PLAN.md`.
+
+Цель квеста: владелец одним действием задаёт `SCANNER`, `ROBOT` или `ALL`;
+система сама проверяет authoritative state, запускает/reuse'ит зависимости,
+делает допустимые START/RESUME/reconcile переходы, перепроверяет postconditions
+и либо достигает desired state, либо один раз возвращает точный
+неисправимый blocker. Ручные промежуточные проверки/переключения в normal
+flow запрещены.
+
+Full owner acceptance остаётся обязательным, но теперь идёт **после** этого
+P0 gate и должен доказать именно one-action запуск из безопасного
+неподготовленного состояния.
 
 ## 🚧 Временные ворота активного рейда
 
