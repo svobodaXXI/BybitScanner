@@ -87,6 +87,21 @@ class RuntimeLauncherTests(unittest.TestCase):
 
 
 
+
+class StopRuntimeLauncherTests(unittest.TestCase):
+    def test_safe_stop_runs_as_repo_module(self):
+        launcher = (Path(__file__).resolve().parents[1] / "stop_robot_runtime.bat").read_text()
+        self.assertIn('cd /d "%~dp0"', launcher)
+        self.assertIn(
+            '"%~dp0venv\\Scripts\\python.exe" -m tools.stop_robot_runtime',
+            launcher,
+        )
+        self.assertNotIn(
+            '"%~dp0venv\\Scripts\\python.exe" "%~dp0tools\\stop_robot_runtime.py"',
+            launcher,
+        )
+
+
 class _StubBackend(BaseHTTPRequestHandler):
     status_code = 200
     status_body = b""
