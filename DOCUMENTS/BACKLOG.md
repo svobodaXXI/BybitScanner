@@ -39,16 +39,31 @@ Authoritative standard:
   do not invent strategy parameters to force it through.
 - Triangle/future patterns must use the same shared route.
 
-### P0.4 — Close remaining desktop-runtime composition debt — GITHUB SIDE COMPLETE / LOCAL LOAD PENDING
+### P0.4 — Close remaining desktop-runtime composition debt — COMPLETE
 
 - Canonical tracked start path remains `start_robot_runtime.bat` with PAPER DB
   identity, backend/Telegram readiness, admission/protection and Scanner gates.
-- PR #276 merged as `0f72355`: tracked `stop_robot_runtime.bat` now provides
-  fail-closed safe stop (canonical backend/DB proof → Scanner stop → durable
-  Robot stop), without process-title kills or forced position close.
-- Remaining work is owner-PC-only: load current `main`, point the existing
-  desktop Robot start/stop surfaces at the tracked canonical launchers, then
-  runtime-check the shortcuts. Do not redo GitHub-side safe-stop work.
+- Existing desktop shortcuts remain the stable owner UX. Local thin wrappers now
+  route `start_robot.bat -> start_robot_runtime.bat` and
+  `stop_robot.bat -> stop_robot_runtime.bat`; no shortcut recreation required.
+- Owner runtime-check on 2026-09-27 proved the canonical start path.
+- Abrupt-power recovery exposed a stale fail-closed
+  `ROBOT_ENTRY_OWNERSHIP_MISMATCH` latch for BLENDUSDT after the durable
+  candidate/trade/position evidence had already settled flat. The canonical
+  `POST /api/robot/reconcile` path correctly cleared it to
+  `ROBOT_RUNNING / PAUSED`; no DB hand-edit was used.
+- The first canonical stop attempt then exposed a launcher-only defect:
+  `ModuleNotFoundError: No module named 'terminal'` because the helper was
+  executed as `tools\\stop_robot_runtime.py` instead of a repository module.
+- PR #280 merged as `adcd44e1580a1f7648abb79c20a84c6980859660`:
+  safe-stop now launches `python -m tools.stop_robot_runtime`; Robot PAPER
+  acceptance #218 succeeded.
+- Owner reran the real desktop/canonical stop path: success text returned,
+  exit code 0, final durable state `ROBOT_STOPPED / ROBOT_STOPPED` version 80;
+  backend/Telegram intentionally remained running.
+- This P0.4 migration/repair is complete. **Do not repeat its investigation.**
+  Reuse `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` for future runtime
+  incidents and broaden only when new evidence does not match a known path.
 
 ### P1 — Ikigai Box «Кривой первый импульс»
 
@@ -86,6 +101,7 @@ symbol × timeframe × pattern × formation identity/dedup/evidence.
   update both automatically as part of Definition of Done.
 - `DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md` defines the shared product
   and integration contract.
+- `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` records stable runtime failure signatures and canonical recovery/repair paths; recurring incidents use known-path diagnosis before exploratory probing.
 
 ## OWNER RUNTIME ENTRYPOINT — DESKTOP SHORTCUTS — 2026-09-27
 
