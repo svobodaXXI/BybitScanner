@@ -124,6 +124,35 @@ polling/waiting to burn agent quotas. Retry a failed check only after a
 specific fix; retain genuinely mandatory safety/contract/final gates without
 adding duplicate verification. Never delegate a real Scanner pass to an agent.
 
+## Owner desktop launch surface — PERMANENT UX CONTRACT (OWNER RULE 2026-09-27)
+
+The owner's normal runtime entrypoint is the **existing desktop shortcut surface**,
+not ad-hoc terminal commands and not a newly invented launcher workflow.
+
+Known owner-facing shortcuts:
+- `start_scanner` — manual Scanner launch/control entry;
+- `Запуск робота` — manual Robot/prototype launch entry;
+- the companion desktop stop shortcut remains part of the same owner-facing surface.
+
+For all future Scanner/Robot/runtime development:
+
+1. preserve these desktop shortcuts as the owner's stable launch UX;
+2. when implementation changes canonical scripts, runtime ownership, readiness gates,
+   or accepted startup composition, **upgrade the scripts/targets behind this existing
+   desktop surface automatically as part of the task** rather than asking the owner to
+   switch to a different launch method;
+3. do not repeatedly ask which shortcut the owner uses once this contract is loaded;
+4. do not replace the desktop surface with PowerShell/CMD instructions except for a
+   bounded diagnostic or one-time repair that cannot be performed otherwise;
+5. before declaring a runtime change complete, verify that the desktop launch path
+   reaches the new canonical implementation and preserves the project's safety/readiness
+   gates;
+6. the owner still performs the actual Scanner/Robot start manually. Updating the
+   shortcut path does not authorize an agent to launch runtime.
+
+If the underlying target path is migrated, maintain compatibility or update the shortcut
+as part of the same implementation slice and record the new target in project docs.
+
 ## Scanner runtime ownership — MANUAL ONLY (OWNER RULE 2026-09-23)
 
 **Only the owner manually starts the real Scanner through the verified existing
