@@ -291,6 +291,7 @@ def _execute_robot_route(runtime: PaperRuntime, command: str, operation):
 
 
 RUNTIME_INTENT_FIELDS = {"intent"}
+RUNTIME_SHUTDOWN_FIELDS = {"database_identity"}
 
 
 class BackendRuntimeIntentPorts:
@@ -3153,6 +3154,54 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(409, {"ok": False, **payload})
                 return
             self._json_response(200, {"ok": True, **payload})
+            return
+
+        if self.path == "/api/runtime/shutdown":
+            try:
+                claimed = self._payload(RUNTIME_SHUTDOWN_FIELDS)["database_identity"]
+                if not isinstance(claimed, str) or not claimed:
+                    raise ValueError("database_identity must be a non-empty string")
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_runtime_shutdown"})
+                return
+            coverage = getattr(self.server, "robot_protection_coverage", None)
+
+            def _shutdown_evidence(runtime):
+                robot = runtime.robot_runtime_state()
+                return (
+                    runtime.live_limit_acceptance_diagnostics()["database_identity"],
+                    None if robot is None else (robot.mode, robot.recovery_status),
+                    runtime.scanner_status().mode,
+                )
+
+            try:
+                if coverage is None:
+                    raise RuntimeError("protection coverage is unavailable")
+                identity, robot, scanner = self.server.runtime.call(_shutdown_evidence)
+                protection = coverage.health()
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "runtime_shutdown_unavailable"})
+                return
+            if not (isinstance(identity, str) and hmac.compare_digest(identity, claimed)):
+                self._json_response(409, {"ok": False, "error": "database_identity_mismatch"})
+                return
+            # The backend is the last Robot/protection authority; never exit while it is needed.
+            if (
+                robot != ("ROBOT_STOPPED", "ROBOT_STOPPED")
+                or scanner != "SCANNER_STOPPED"
+                or not isinstance(protection, Mapping)
+                or protection.get("healthy") is not True
+                or protection.get("covered_symbols")
+                or protection.get("unhealthy_symbols")
+            ):
+                self._json_response(409, {"ok": False, "error": "runtime_still_required"})
+                return
+            self._json_response(200, {"ok": True, "shutdown": "scheduled"})
+            # serve_forever() must be stopped from outside this handler thread; main()'s
+            # finally then closes coverage, market data and the runtime normally.
+            threading.Thread(
+                target=self.server.shutdown, name="paper-runtime-shutdown", daemon=True,
+            ).start()
             return
 
         if self.path == "/api/runtime/intent":

@@ -1,145 +1,361 @@
-"""Canonical owner-safe PAPER Robot shutdown orchestration.
+"""Canonical owner runtime shutdown for the PAPER prototype.
 
-Stops Scanner admission first, then delegates durable Robot stop semantics to
-terminal.application.robot_control.stop_robot. Backend and Telegram processes
-are intentionally left alive so protection/reconciliation authority remains
-available. No LIVE mutation is authorized here.
+One orchestrator behind every owner stop surface:
+
+* ``all``     — Scanner STOPPED -> Robot canonical safe-stop -> Telegram worker
+                graceful shutdown -> PAPER backend graceful shutdown (always last).
+* ``scanner`` — Scanner STOPPED; the shared runtime is shut down only when the
+                durable Robot is already fully STOPPED and no protection coverage
+                remains, otherwise backend/Telegram stay alive for the Robot.
+
+Ownership is proven by the exact PAPER DB identity before any mutation, and
+processes are only asked to exit through their own identity-checked localhost
+shutdown endpoints. Nothing is killed by name, port or PID. No LIVE mutation.
+
+Usage: python -m tools.stop_robot_runtime [all|scanner] [--notify-chat CHAT_ID]
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import sqlite3
+import subprocess
 import sys
-from typing import Any
+import time
+from typing import Callable, Mapping
 
 import requests
 
-from terminal.application.robot_control import RobotControlRejected, stop_robot
-from terminal.persistence.sqlite_store import SQLiteStore
+from urllib.parse import urlsplit
 
+from terminal.application.robot_control import RobotControlRejected, stop_robot
+from tools.legacy_runtime_process import (
+    BACKEND, TELEGRAM, LegacyOwnerUnproven, resolve_legacy_chain, terminate_exact_pids,
+)
+from tools.runtime_intent import PROJECT_ROOT, expected_database_identity
+
+SCOPE_ALL = "all"
+SCOPE_SCANNER = "scanner"
+SCOPES = (SCOPE_ALL, SCOPE_SCANNER)
 
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8765"
+DEFAULT_TELEGRAM_PORT = "8766"
+EXIT_WAIT_S = 60.0
+POLL_INTERVAL_S = 0.5
+PROBE_TIMEOUT_S = 5.0
+MUTATION_TIMEOUT_S = 15.0
+
+ROBOT_STOPPED_PAIR = ("ROBOT_STOPPED", "ROBOT_STOPPED")
+ROBOT_STOPPABLE = {("ROBOT_RUNNING", "READY"), ("ROBOT_RUNNING", "PAUSED")}
+
+ABSENT = "absent"
+PRESENT = "present"
 
 
 class SafeStopError(RuntimeError):
-    """Raised when canonical safe-stop preconditions cannot be proven."""
+    """A shutdown precondition could not be proven; nothing further is changed."""
 
 
-def _backend_url() -> str:
-    return os.environ.get("BYBITSCANNER_PAPER_BACKEND_URL", DEFAULT_BACKEND_URL).rstrip("/")
+class Unreachable(Exception):
+    """No HTTP response: nothing is serving the endpoint."""
 
 
-def _database_path() -> Path:
-    return Path(os.environ.get("BYBITSCANNER_PAPER_DB", "paper_runtime.sqlite3"))
+@dataclass(frozen=True)
+class ShutdownResult:
+    scope: str
+    ok: bool
+    message: str
+    steps: tuple[str, ...] = field(default_factory=tuple)
+    runtime_stopped: bool = False
 
 
-def _expected_database_identity(path: Path) -> str:
-    store = SQLiteStore.open(path)
+def _http_get(url: str, timeout: float) -> tuple[int, object]:
     try:
-        return store.database_identity
-    finally:
-        store.close()
-
-
-def _json_response(response, *, action: str) -> dict[str, Any]:
+        response = requests.get(url, timeout=timeout, allow_redirects=False)
+    except requests.RequestException as exc:
+        raise Unreachable(str(exc)) from exc
     try:
-        payload = response.json()
-    except Exception as exc:
-        raise SafeStopError(f"{action} returned non-JSON response") from exc
-    if not isinstance(payload, dict) or payload.get("ok") is not True:
-        reason = payload.get("error") if isinstance(payload, dict) else None
-        raise SafeStopError(f"{action} rejected: {reason or 'unproven response'}")
-    return payload
+        return response.status_code, response.json()
+    except ValueError:
+        return response.status_code, None
 
 
-def verify_canonical_backend(*, backend_url: str, database_path: Path) -> None:
+def _http_post(url: str, payload: Mapping[str, object], timeout: float) -> tuple[int, object]:
+    response = requests.post(url, json=dict(payload), timeout=timeout, allow_redirects=False)
     try:
-        response = requests.get(
-            backend_url + "/api/health",
-            timeout=10,
-            allow_redirects=False,
-        )
-    except Exception as exc:
-        raise SafeStopError("PAPER backend health is unavailable") from exc
-
-    if response.status_code != 200:
-        raise SafeStopError("PAPER backend health is unavailable")
-    health = _json_response(response, action="PAPER backend health")
-    expected = _expected_database_identity(database_path)
-    if (
-        health.get("component") != "paper_backend"
-        or health.get("mode") != "paper"
-        or health.get("database_identity") != expected
-    ):
-        raise SafeStopError("PAPER backend identity does not match the configured database")
-
-
-def stop_scanner(*, backend_url: str) -> None:
-    try:
-        response = requests.post(
-            backend_url + "/api/scanner/stop",
-            json={},
-            timeout=10,
-            allow_redirects=False,
-        )
-    except Exception as exc:
-        raise SafeStopError("Scanner stop request failed") from exc
-    if response.status_code != 200:
-        raise SafeStopError("Scanner stop request was rejected")
-    _json_response(response, action="Scanner stop")
+        return response.status_code, response.json()
+    except ValueError:
+        return response.status_code, None
 
 
 def _post_robot_json(url: str, payload: dict) -> dict:
     try:
-        response = requests.post(
-            url,
-            json=payload,
-            timeout=15,
-            allow_redirects=False,
-        )
+        response = requests.post(url, json=payload, timeout=MUTATION_TIMEOUT_S, allow_redirects=False)
     except Exception as exc:
         raise RobotControlRejected(f"Robot backend request failed: {exc}") from exc
-    if response.status_code != 200:
-        try:
-            body = response.json()
-        except Exception:
-            body = {}
-        raise RobotControlRejected(
-            str(body.get("error") or f"Robot backend HTTP {response.status_code}")
-        )
-    body = response.json()
-    if not isinstance(body, dict) or body.get("ok") is not True:
-        raise RobotControlRejected(
-            str(body.get("error") if isinstance(body, dict) else "Robot backend rejected request")
-        )
+    try:
+        body = response.json()
+    except Exception:
+        body = {}
+    if response.status_code != 200 or not isinstance(body, dict) or body.get("ok") is not True:
+        reason = body.get("error") if isinstance(body, dict) else None
+        raise RobotControlRejected(str(reason or f"Robot backend HTTP {response.status_code}"))
     return body
 
 
-def safe_stop() -> None:
-    database_path = _database_path()
-    backend_url = _backend_url()
-
-    verify_canonical_backend(
-        backend_url=backend_url,
-        database_path=database_path,
-    )
-    stop_scanner(backend_url=backend_url)
-    stop_robot(
-        http_post=_post_robot_json,
-        database_path=database_path,
-        backend_url=backend_url,
-    )
+def _database_path(root: Path, env: Mapping[str, str]) -> Path:
+    path = Path(env.get("BYBITSCANNER_PAPER_DB") or "paper_runtime.sqlite3")
+    return path if path.is_absolute() else root / path
 
 
-def main() -> int:
+def read_robot_state(database_path: Path) -> tuple[str, str] | None:
+    """Durable Robot (mode, recovery_status), read-only; never creates or migrates the DB."""
+    if not database_path.exists():
+        return None
     try:
-        safe_stop()
-    except (SafeStopError, RobotControlRejected) as exc:
-        print(f"SAFE STOP BLOCKED: {exc}")
-        return 1
-    print("Scanner STOPPED; Robot STOPPED. Backend/Telegram left running.")
-    return 0
+        connection = sqlite3.connect(database_path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            row = connection.execute(
+                "SELECT mode, recovery_status FROM robot_runtime_state WHERE trading_account_id = ?",
+                ("paper",),
+            ).fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise SafeStopError("durable Robot state is unreadable") from exc
+    return None if row is None else (str(row[0]), str(row[1]))
+
+
+class RuntimeShutdown:
+    def __init__(
+        self,
+        *,
+        root: Path = PROJECT_ROOT,
+        env: Mapping[str, str] | None = None,
+        get: Callable[[str, float], tuple[int, object]] = _http_get,
+        post: Callable[[str, Mapping[str, object], float], tuple[int, object]] = _http_post,
+        robot_state: Callable[[], tuple[str, str] | None] | None = None,
+        stop_robot_fn: Callable[[], object] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
+        legacy_resolver: Callable[[str, str, int, Path], tuple[int, ...]] = resolve_legacy_chain,
+        legacy_terminator: Callable[[tuple[int, ...]], None] = terminate_exact_pids,
+    ) -> None:
+        env = dict(os.environ if env is None else env)
+        database_path = _database_path(root, env)
+        self._root = root
+        self._expected = expected_database_identity(root, env)
+        self._backend = (env.get("BYBITSCANNER_PAPER_BACKEND_URL") or DEFAULT_BACKEND_URL).rstrip("/")
+        port = env.get("BYBITSCANNER_TELEGRAM_MONITORING_PORT") or DEFAULT_TELEGRAM_PORT
+        self._telegram = f"http://127.0.0.1:{port}"
+        self._legacy_resolver = legacy_resolver
+        self._legacy_terminator = legacy_terminator
+        self._get = get
+        self._post = post
+        self._robot_state = robot_state or (lambda: read_robot_state(database_path))
+        self._stop_robot = stop_robot_fn or (lambda: stop_robot(
+            http_post=_post_robot_json, database_path=database_path, backend_url=self._backend,
+        ))
+        self._sleep = sleep
+        self._monotonic = monotonic
+
+    def run(self, scope: str) -> ShutdownResult:
+        if scope not in SCOPES:
+            return ShutdownResult(scope, False, f"unknown shutdown scope {scope!r}")
+        steps: list[str] = []
+        try:
+            return self._run(scope, steps)
+        except (SafeStopError, RobotControlRejected) as exc:
+            return ShutdownResult(scope, False, f"STOP BLOCKED: {exc}", tuple(steps))
+
+    def _run(self, scope: str, steps: list[str]) -> ShutdownResult:
+        # Both identities are proven before the first mutation of anything.
+        backend = self._probe_backend()
+        telegram = self._probe_telegram()
+
+        if backend == PRESENT:
+            self._stop_scanner()
+            steps.append("scanner:stop")
+            if scope == SCOPE_ALL:
+                state = self._robot_state()
+                if state in ROBOT_STOPPABLE:
+                    self._stop_robot()
+                    steps.append("robot:stop")
+                elif state != ROBOT_STOPPED_PAIR:
+                    raise SafeStopError(f"Robot state {state} requires the PAPER backend; runtime kept alive")
+
+        state = self._robot_state()
+        if state is None and backend == PRESENT:
+            # A live backend always initializes the durable Robot row; absence is unproven.
+            raise SafeStopError("durable Robot state is unavailable; runtime kept alive")
+        if state not in (ROBOT_STOPPED_PAIR, None):
+            if scope == SCOPE_SCANNER:
+                return ShutdownResult(
+                    scope, True, f"Scanner STOPPED; Robot {state[0]}/{state[1]} keeps the runtime alive.",
+                    tuple(steps),
+                )
+            raise SafeStopError(f"Robot is {state} but the PAPER backend is unavailable to stop it")
+
+        if backend == PRESENT and not self._protection_quiescent():
+            if scope == SCOPE_SCANNER:
+                return ShutdownResult(
+                    scope, True, "Scanner STOPPED; Robot protection coverage keeps the runtime alive.",
+                    tuple(steps),
+                )
+            raise SafeStopError("Robot protection coverage is still active; runtime kept alive")
+
+        if telegram == PRESENT:
+            steps.append(self._shutdown(
+                self._telegram + "/shutdown", self._telegram + "/health", "Telegram monitoring",
+                TELEGRAM, "telegram",
+            ))
+        if backend == PRESENT:
+            steps.append(self._shutdown(
+                self._backend + "/api/runtime/shutdown", self._backend + "/api/health",
+                "PAPER backend", BACKEND, "backend",
+            ))
+        return ShutdownResult(scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True)
+
+    def _probe_backend(self) -> str:
+        try:
+            status, health = self._get(self._backend + "/api/health", PROBE_TIMEOUT_S)
+        except Unreachable:
+            return ABSENT
+        if (
+            status == 200 and isinstance(health, dict) and health.get("ok") is True
+            and health.get("component") == "paper_backend" and health.get("mode") == "paper"
+            and health.get("database_identity") == self._expected
+        ):
+            return PRESENT
+        raise SafeStopError("PAPER backend identity does not match the configured PAPER DB")
+
+    def _probe_telegram(self) -> str:
+        try:
+            _status, health = self._get(self._telegram + "/health", PROBE_TIMEOUT_S)
+        except Unreachable:
+            return ABSENT
+        if (
+            isinstance(health, dict) and health.get("component") == "telegram_monitoring"
+            and health.get("database_identity") == self._expected
+        ):
+            return PRESENT
+        raise SafeStopError("Telegram monitoring identity does not match the configured PAPER DB")
+
+    def _stop_scanner(self) -> None:
+        try:
+            status, body = self._post(self._backend + "/api/scanner/stop", {}, MUTATION_TIMEOUT_S)
+        except Exception as exc:
+            raise SafeStopError("Scanner stop outcome is unknown; not retried") from exc
+        if status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
+            raise SafeStopError("Scanner stop was rejected")
+
+    def _protection_quiescent(self) -> bool:
+        try:
+            status, health = self._get(self._backend + "/api/robot/protection-health", PROBE_TIMEOUT_S)
+        except Unreachable as exc:
+            raise SafeStopError("Robot protection health is unavailable") from exc
+        return (
+            status == 200 and isinstance(health, dict) and health.get("healthy") is True
+            and health.get("covered_symbols") == [] and health.get("unhealthy_symbols") == {}
+        )
+
+    def _shutdown(self, shutdown_url: str, health_url: str, name: str, kind: str, step: str) -> str:
+        try:
+            status, body = self._post(shutdown_url, {"database_identity": self._expected}, MUTATION_TIMEOUT_S)
+        except Exception as exc:
+            raise SafeStopError(f"{name} shutdown outcome is unknown; not retried") from exc
+        if status in (404, 501):
+            # Identity was proven by health and the graceful endpoint is absent: legacy process.
+            step = f"{step}:legacy-terminate"
+            self._terminate_legacy(health_url, name, kind)
+        elif status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
+            reason = body.get("error") if isinstance(body, dict) else None
+            raise SafeStopError(f"{name} refused shutdown: {reason or status}")
+        else:
+            step = f"{step}:shutdown"
+        self._wait_gone(health_url, name)
+        return step
+
+    def _terminate_legacy(self, health_url: str, name: str, kind: str) -> None:
+        location = urlsplit(health_url)
+        try:
+            chain = self._legacy_resolver(kind, location.hostname or "", location.port or 0, self._root)
+        except LegacyOwnerUnproven as exc:
+            raise SafeStopError(
+                f"{name} is a legacy process without a shutdown endpoint and its ownership "
+                f"could not be proven ({exc}); nothing was terminated"
+            ) from exc
+        try:
+            self._legacy_terminator(tuple(chain))
+        except Exception as exc:
+            raise SafeStopError(f"{name} legacy termination failed: {type(exc).__name__}") from exc
+
+    def _wait_gone(self, health_url: str, name: str) -> None:
+        deadline = self._monotonic() + EXIT_WAIT_S
+        while self._monotonic() < deadline:
+            try:
+                self._get(health_url, PROBE_TIMEOUT_S)
+            except Unreachable:
+                return
+            self._sleep(POLL_INTERVAL_S)
+        raise SafeStopError(f"{name} did not exit within {int(EXIT_WAIT_S)} s")
+
+
+def launch_detached(scope: str, *, notify_chat: object | None = None, root: Path = PROJECT_ROOT) -> None:
+    """Run this helper as an independent, windowless process (Telegram self-shutdown handoff)."""
+    if scope not in SCOPES:
+        raise ValueError(f"unknown shutdown scope {scope!r}")
+    argv = [sys.executable, "-m", "tools.stop_robot_runtime", scope]
+    if notify_chat is not None:
+        argv += ["--notify-chat", str(notify_chat)]
+    subprocess.Popen(
+        argv, cwd=str(root),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=(
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        ),
+    )
+
+
+def owner_text(result: ShutdownResult) -> str:
+    if not result.ok:
+        return "⛔ Остановка не выполнена: " + result.message.removeprefix("STOP BLOCKED: ")
+    if result.runtime_stopped:
+        return "✅ Остановлено: сканер, робот, Telegram и backend."
+    return "⏹ Сканер остановлен. Робот продолжает работу — runtime оставлен."
+
+
+def _notify(chat_id: str, text: str) -> None:
+    try:
+        import config
+        import telegram_bot
+
+        telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text)
+    except Exception as exc:
+        print(f"[STOP NOTIFY ERROR] {type(exc).__name__}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    notify_chat = None
+    if "--notify-chat" in args:
+        index = args.index("--notify-chat")
+        if index + 1 >= len(args):
+            print("usage: python -m tools.stop_robot_runtime [all|scanner] [--notify-chat CHAT_ID]")
+            return 64
+        notify_chat = args[index + 1]
+        del args[index:index + 2]
+    if len(args) > 1:
+        print("usage: python -m tools.stop_robot_runtime [all|scanner] [--notify-chat CHAT_ID]")
+        return 64
+    result = RuntimeShutdown().run(args[0] if args else SCOPE_ALL)
+    print(result.message)
+    if notify_chat is not None:
+        _notify(notify_chat, owner_text(result))
+    return 0 if result.ok else 1
 
 
 if __name__ == "__main__":

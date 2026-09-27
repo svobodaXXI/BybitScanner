@@ -26,8 +26,8 @@ from terminal.application.robot_control import (
     close_all_now,
     get_robot_runtime_status,
     pause_robot,
-    stop_robot,
 )
+from tools import stop_robot_runtime
 
 
 PROJECT_ROOT = Path(r"C:\BybitScanner")
@@ -350,8 +350,6 @@ def _call_robot_control_command(command):
     # admit_robot_candidate, instead of a reference captured at import time.
     if command == "pause":
         return pause_robot(http_post=_post_robot_synchronize_pending_entries)
-    if command == "stop":
-        return stop_robot(http_post=_post_robot_synchronize_pending_entries)
     raise ValueError(f"unsupported Robot control command: {command}")
 
 
@@ -443,6 +441,8 @@ def _run_robot_control_command(
         return None
     if command in ("start", "resume"):
         return _run_robot_intent(callback_query, command)
+    if command == "stop":
+        return _run_runtime_stop(callback_query)
 
     try:
         state = _call_robot_control_command(command)
@@ -502,6 +502,25 @@ def _run_robot_intent(callback_query, command):
                 print("[ROBOT CONTROL ERROR]", command, exc)
     print("[ROBOT CONTROL]", command, result.message)
     return result
+
+
+def _run_runtime_stop(callback_query):
+    # Robot Stop is the owner's FULL runtime stop. The canonical helper runs as an
+    # independent process because it will shut down this Telegram worker itself.
+    _answer_callback(callback_query.get("id"), f"{ROBOT_EMOJI} Робот: остановка…")
+    chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+    text = "⏹ Останавливаю сканер, робота, Telegram и backend…"
+    try:
+        stop_robot_runtime.launch_detached(stop_robot_runtime.SCOPE_ALL, notify_chat=chat_id)
+    except Exception as exc:
+        print("[ROBOT CONTROL ERROR]", "stop", type(exc).__name__)
+        text = "⚠ Остановка не запущена."
+    if chat_id is not None:
+        try:
+            telegram_bot.send_message(config.TELEGRAM_TOKEN, chat_id, text)
+        except Exception as exc:
+            print("[ROBOT CONTROL ERROR]", "stop", exc)
+    return None
 
 
 def _approve_robot_candidate(

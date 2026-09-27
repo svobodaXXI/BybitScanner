@@ -33,6 +33,7 @@ import config
 import telegram_bot
 import telegram_runtime_intent
 from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
+from tools import stop_robot_runtime
 from robot_lifecycle_posts import (
     build_lifecycle_keyboard, collect_new_lifecycle_events, format_lifecycle_caption,
     load_lifecycle_state, mark_notified, save_lifecycle_state,
@@ -137,28 +138,13 @@ def _send_scanner_control(chat_id):
 
 
 def _send_scanner_stop(chat_id):
+    """Canonical SCANNER-scope shutdown; the independent helper may close this worker."""
+    _send_text(chat_id, "⏹ Останавливаю сканер…")
     try:
-        _scanner_request("stop")
-    except Exception:
-        _send_text(
-            chat_id,
-            "Остановка сканера не подтверждена. Состояние будет проверено; "
-            "автоматического повтора нет.",
-        )
-    try:
-        state = _scanner_request()
-        _send_text(
-            chat_id,
-            f"{SCANNER_EMOJI} Сканер: "
-            + {
-                "SCANNER_RUNNING": "запущен",
-                "SCANNER_PAUSED": "на паузе",
-                "SCANNER_STOPPED": "остановлен",
-            }[state["mode"]],
-        )
-    except Exception:
-        _send_text(chat_id, "Состояние сканера недоступно.")
-    refresh_command_menu()
+        stop_robot_runtime.launch_detached(stop_robot_runtime.SCOPE_SCANNER, notify_chat=chat_id)
+    except Exception as exc:
+        print("[SCANNER STOP LAUNCH ERROR]", type(exc).__name__)
+        _send_text(chat_id, "⚠ Остановка сканера не запущена.")
 
 
 def _send_robot_status(chat_id):
@@ -757,6 +743,7 @@ DEFAULT_HEALTH_PORT = 8766
 INITIAL_POLL_TIMEOUT = 0
 LONG_POLL_TIMEOUT = 30
 _POLLING_READY = threading.Event()
+_SHUTDOWN_REQUESTED = threading.Event()
 _DATABASE_IDENTITY: str | None = None
 
 
@@ -774,6 +761,36 @@ class _HealthHandler(BaseHTTPRequestHandler):
                            "status": "ready" if ready else "not_ready",
                            "database_identity": _DATABASE_IDENTITY}).encode("ascii")
         self.send_response(200 if ready else 503)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):  # noqa: N802 - http.server API
+        """Identity-checked graceful exit request from the canonical shutdown helper."""
+        if self.path.split("?", 1)[0] != "/shutdown":
+            self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+            payload = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else None
+            if not isinstance(payload, dict) or set(payload) != {"database_identity"}:
+                raise ValueError("invalid shutdown payload")
+            claimed = payload["database_identity"]
+            if not isinstance(claimed, str) or not claimed:
+                raise ValueError("invalid shutdown identity")
+        except (ValueError, UnicodeDecodeError):
+            self._json(400, {"ok": False, "error": "invalid_shutdown"})
+            return
+        if not isinstance(_DATABASE_IDENTITY, str) or claimed != _DATABASE_IDENTITY:
+            self._json(409, {"ok": False, "error": "database_identity_mismatch"})
+            return
+        self._json(200, {"ok": True, "shutdown": "scheduled"})
+        _SHUTDOWN_REQUESTED.set()
+
+    def _json(self, status, payload):
+        body = json.dumps(payload).encode("ascii")
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -896,7 +913,7 @@ def run() -> int:
     offset = _load_offset()
     owned = False
 
-    while True:
+    while not _SHUTDOWN_REQUESTED.is_set():
         try:
             if owned:
                 refresh_command_menu()
@@ -917,7 +934,9 @@ def run() -> int:
             break
         except Exception as exc:
             print("[MONITORING LOOP ERROR]", exc)
-            time.sleep(3)
+            _SHUTDOWN_REQUESTED.wait(3)
+    if _SHUTDOWN_REQUESTED.is_set():
+        print("Monitoring listener stopped by canonical runtime shutdown.")
     _release_worker_singleton(server)
     return 0
 
