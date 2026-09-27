@@ -4,7 +4,10 @@ from dataclasses import FrozenInstanceError
 from decimal import Decimal as D
 import unittest
 
-from terminal.paper.ikigai_box_plan import plan_ikigai_box, plan_approved_first_ikigai_box, assess_first_grid_risk
+from terminal.paper.ikigai_box_plan import (
+    approved_first_grid, assess_first_grid_risk, plan_approved_first_ikigai_box,
+    plan_ikigai_box,
+)
 
 
 def inputs(direction="LONG"):
@@ -42,13 +45,39 @@ class IkigaiBoxPaperPlanTests(unittest.TestCase):
                     args["frozen_f1618"],
                 )
 
-    def test_approved_first_grid_fails_closed_if_tick_breaks_spacing(self):
-        args = inputs()
-        args.pop("limit_prices")
-        args.pop("limit_quantities")
-        args["tick_size"] = D("1")
-        with self.assertRaisesRegex(ValueError, "tick-aligned"):
-            plan_approved_first_ikigai_box(**args)
+    def test_approved_first_grid_tick_normalizes_without_losing_equal_spacing(self):
+        for direction, f1618, prices, take in (
+            ("LONG", "92.01", ("94", "93", "92", "91"), "99"),
+            ("SHORT", "107.99", ("106", "107", "108", "109"), "101"),
+        ):
+            with self.subTest(direction=direction):
+                grid, target = approved_first_grid(
+                    direction=direction,
+                    frozen_f1=D("100"),
+                    frozen_f1618=D(f1618),
+                    tick_size=D("1"),
+                )
+                self.assertEqual(grid, tuple(map(D, prices)))
+                self.assertEqual(target, D(take))
+                self.assertEqual(
+                    (grid[1] - grid[0], grid[2] - grid[1], grid[3] - grid[2]),
+                    (grid[1] - grid[0],) * 3,
+                )
+                if direction == "LONG":
+                    self.assertLess(grid[3], D(f1618))
+                else:
+                    self.assertGreater(grid[3], D(f1618))
+
+    def test_approved_first_grid_rounds_step_outward_to_keep_p4_beyond_f1618(self):
+        grid, take = approved_first_grid(
+            direction="LONG",
+            frozen_f1=D("0.06850"),
+            frozen_f1618=D("0.06740"),
+            tick_size=D("0.0001"),
+        )
+        self.assertEqual(grid, tuple(map(D, ("0.0676", "0.0674", "0.0672", "0.0670"))))
+        self.assertEqual(take, D("0.0683"))
+        self.assertLess(grid[3], D("0.06740"))
 
     def test_mirrored_full_grid_average_and_exact_two_to_one_stop(self):
         for direction, average, stop in (("LONG", "92.5", "88.75"),
