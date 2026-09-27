@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import tests.test_telegram_delivery  # existing offline config/API stubs
 import main
 import signal_memory
 
