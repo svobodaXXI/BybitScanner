@@ -37,6 +37,7 @@ class FakeWorld:
         self.telegram = None
         self.after_spawn = {}
         self.spawns = []
+        self.spawn_envs = []
         self.posts = []
         self.intent_reply = None
         self.now = 0.0
@@ -66,8 +67,9 @@ class FakeWorld:
             raise self.intent_reply
         return self.intent_reply
 
-    def spawn(self, name, argv, cwd):
+    def spawn(self, name, argv, cwd, env=None):
         self.spawns.append((name, list(argv)))
+        self.spawn_envs.append((name, None if env is None else dict(env)))
         replacement = self.after_spawn.get(name)
         if name == "PAPER backend":
             self.backend = replacement
@@ -77,12 +79,42 @@ class FakeWorld:
     def sleep(self, seconds):
         self.now += seconds
 
-    def bootstrap(self, env=None):
+    def bootstrap(self, env=None, require_telegram=True):
         return RuntimeIntentBootstrap(
             root=ROOT, env=env or {}, get=self.get, post=self.post, spawn=self.spawn,
             python="python.exe", sleep=self.sleep, monotonic=lambda: self.now,
-            out=self.lines.append,
+            out=self.lines.append, require_telegram=require_telegram,
         )
+
+
+UNSAFE_PARENT_ENV = {
+    "BYBITSCANNER_OPERATOR_TOKEN": "t" * 64,
+    "LIVE_MARKET_MUTATIONS_ENABLED": "true",
+    "LIVE_MAINNET_AUTHORIZED": "true",
+    "LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT": "true",
+    "LIVE_PARITY_MUTATIONS_ENABLED": "true",
+    "LIVE_LIMIT_MUTATIONS_ENABLED": "TRUE",
+    "LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING": "25",
+    "LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING": "10",
+    "LIVE_PARITY_MUTATION_SCOPE": "full_close",
+    "BYBITSCANNER_PAPER_DB": "paper_runtime.sqlite3",
+    "BYBITSCANNER_PAPER_BACKEND_URL": BACKEND,
+    "HTTPS_PROXY": "http://proxy.local:3128",
+    "BYBITSCANNER_DEPLOYMENT_IDENTITY": "local",
+    "BYBITSCANNER_IKIGAI_BOX_SIGNALS": "1",
+}
+
+EXPECTED_PAPER_SAFE_CHILD = {
+    "BYBITSCANNER_OPERATOR_TOKEN": "",
+    "LIVE_MARKET_MUTATIONS_ENABLED": "false",
+    "LIVE_MAINNET_AUTHORIZED": "false",
+    "LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT": "false",
+    "LIVE_PARITY_MUTATIONS_ENABLED": "false",
+    "LIVE_LIMIT_MUTATIONS_ENABLED": "false",
+    "LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING": "0",
+    "LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING": "0",
+    "LIVE_PARITY_MUTATION_SCOPE": "",
+}
 
 
 def _converged(intent="ALL", changed=("robot:start", "scanner:start")):
@@ -281,6 +313,72 @@ class RuntimeIntentBootstrapTests(unittest.TestCase):
         self.assertNotIn("robot_admission_ready", source)
 
 
+class PaperSafeBackendSpawnTests(unittest.TestCase):
+    def setUp(self):
+        self.parent = dict(UNSAFE_PARENT_ENV)
+        self.world = FakeWorld(expected_database_identity(ROOT, self.parent))
+        self.world.backend = None
+        self.world.after_spawn["PAPER backend"] = self.world.backend_health()
+        self.world.telegram = None
+        self.world.after_spawn["Telegram monitoring"] = self.world.telegram_health("ready")
+        self.world.intent_reply = _converged()
+
+    def test_spawned_backend_gets_forced_paper_safe_env_and_parent_is_untouched(self):
+        before = dict(self.parent)
+        with mock.patch.dict("os.environ", {"BYBITSCANNER_OPERATOR_TOKEN": "g" * 64}):
+            global_before = dict(runtime_intent.os.environ)
+            self.assertEqual(self.world.bootstrap(env=self.parent).run("ALL"), 0)
+            self.assertEqual(dict(runtime_intent.os.environ), global_before)
+        self.assertEqual(self.parent, before)
+
+        backend = [env for name, env in self.world.spawn_envs if name == "PAPER backend"]
+        self.assertEqual(len(backend), 1)
+        child = backend[0]
+        for key, value in EXPECTED_PAPER_SAFE_CHILD.items():
+            self.assertEqual(child[key], value, key)
+        for key in ("BYBITSCANNER_PAPER_DB", "BYBITSCANNER_PAPER_BACKEND_URL", "HTTPS_PROXY",
+                    "BYBITSCANNER_DEPLOYMENT_IDENTITY", "BYBITSCANNER_IKIGAI_BOX_SIGNALS"):
+            self.assertEqual(child[key], self.parent[key], key)
+        self.assertEqual(len(self.world.posts), 1)
+
+    def test_telegram_child_keeps_default_inheritance(self):
+        self.world.bootstrap(env=self.parent).run("ALL")
+        self.assertEqual(
+            [name for name, _ in self.world.spawn_envs],
+            ["PAPER backend", "Telegram monitoring"],
+        )
+        self.assertIsNone(dict(self.world.spawn_envs)["Telegram monitoring"])
+
+    def test_forced_keys_replace_case_variants_without_duplicates(self):
+        parent = {"bybitscanner_operator_token": "x" * 64, "Live_Limit_Mutations_Enabled": "true",
+                  "BYBITSCANNER_PAPER_DB": "db.sqlite3"}
+        child = runtime_intent.paper_safe_backend_env(parent)
+        upper = [key.upper() for key in child]
+        self.assertEqual(len(upper), len(set(upper)))
+        self.assertEqual(child["BYBITSCANNER_OPERATOR_TOKEN"], "")
+        self.assertEqual(child["LIVE_LIMIT_MUTATIONS_ENABLED"], "false")
+        self.assertEqual(child["BYBITSCANNER_PAPER_DB"], "db.sqlite3")
+        self.assertEqual(parent["bybitscanner_operator_token"], "x" * 64)
+
+    def test_existing_canonical_backend_is_reused_even_when_parent_env_is_unsafe(self):
+        self.world.backend = self.world.backend_health()
+        self.world.telegram = self.world.telegram_health("ready")
+        self.world.intent_reply = _response(409, {
+            "ok": False, "intent": "ALL", "changed": [], "final": {},
+            "blocked_by": ["PAPER_LIVE_UNSAFE"],
+        })
+        self.assertEqual(self.world.bootstrap(env=self.parent).run("ALL"), 2)
+        self.assertEqual(self.world.spawns, [])
+        self.assertEqual(len(self.world.posts), 1)
+        self.assertIn("blocked_by=PAPER_LIVE_UNSAFE", self.world.lines[-1])
+
+    def test_mismatched_existing_backend_still_fails_closed_without_spawn(self):
+        self.world.backend = self.world.backend_health(database_identity="0" * 64)
+        self.assertEqual(self.world.bootstrap(env=self.parent).run("ALL"), 1)
+        self.assertEqual(self.world.spawns, [])
+        self.assertEqual(self.world.posts, [])
+
+
 class ProductionPrimitivesTests(unittest.TestCase):
     def test_identity_matches_sqlite_store_without_touching_the_database(self):
         from terminal.persistence.sqlite_store import SQLiteStore
@@ -313,6 +411,13 @@ class ProductionPrimitivesTests(unittest.TestCase):
         self.assertEqual(kwargs["cwd"], str(ROOT))
         self.assertEqual(kwargs["creationflags"], getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
         self.assertNotIn("shell", kwargs)
+        self.assertIsNone(kwargs["env"])
+
+        child = {"BYBITSCANNER_OPERATOR_TOKEN": "", "BYBITSCANNER_PAPER_DB": "db.sqlite3"}
+        with mock.patch("tools.runtime_intent.subprocess.Popen") as popen:
+            runtime_intent.spawn_console(["start_paper_backend.bat"], ROOT, child)
+        self.assertEqual(popen.call_args.kwargs["env"], child)
+        self.assertIsNot(popen.call_args.kwargs["env"], child)
 
     def test_main_defaults_to_all_and_rejects_extra_arguments(self):
         with mock.patch.object(RuntimeIntentBootstrap, "run", return_value=0) as run:

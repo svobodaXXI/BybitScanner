@@ -115,10 +115,34 @@ def http_post_json(url: str, payload: Mapping[str, object], timeout: float) -> H
         return HttpResponse(error.code, error.read())
 
 
-def spawn_console(argv: list[str], cwd: Path) -> None:
+# A backend this bootstrap creates is a PAPER runtime by construction: the global
+# operator token and any LIVE gates of the parent environment must not reach it.
+PAPER_SAFE_BACKEND_ENV = {
+    "BYBITSCANNER_OPERATOR_TOKEN": "",
+    "LIVE_MARKET_MUTATIONS_ENABLED": "false",
+    "LIVE_MAINNET_AUTHORIZED": "false",
+    "LIVE_MARKET_ACCEPTANCE_SINGLE_FLIGHT": "false",
+    "LIVE_PARITY_MUTATIONS_ENABLED": "false",
+    "LIVE_LIMIT_MUTATIONS_ENABLED": "false",
+    "LIVE_MARKET_ACCEPTANCE_NOTIONAL_CEILING": "0",
+    "LIVE_LIMIT_ACCEPTANCE_NOTIONAL_CEILING": "0",
+    "LIVE_PARITY_MUTATION_SCOPE": "",
+}
+
+
+def paper_safe_backend_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Copy of ``env`` with every LIVE/operator input forced off; ``env`` is not mutated."""
+    forced = {key.upper() for key in PAPER_SAFE_BACKEND_ENV}
+    child = {key: value for key, value in env.items() if key.upper() not in forced}
+    child.update(PAPER_SAFE_BACKEND_ENV)
+    return child
+
+
+def spawn_console(argv: list[str], cwd: Path, env: Mapping[str, str] | None = None) -> None:
     """Start a dependency in its own visible console that stays open after exit."""
     subprocess.Popen(
         ["cmd.exe", "/k", *argv], cwd=str(cwd),
+        env=None if env is None else dict(env),
         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
     )
 
@@ -154,7 +178,7 @@ class RuntimeIntentBootstrap:
         env: Mapping[str, str] | None = None,
         get: Callable[[str, float], HttpResponse] = http_get,
         post: Callable[[str, Mapping[str, object], float], HttpResponse] = http_post_json,
-        spawn: Callable[[str, list[str], Path], None] | None = None,
+        spawn: Callable[[str, list[str], Path, Mapping[str, str] | None], None] | None = None,
         python: str = sys.executable,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
@@ -166,7 +190,7 @@ class RuntimeIntentBootstrap:
         self._env = dict(os.environ if env is None else env)
         self._get = get
         self._post = post
-        self._spawn = spawn or (lambda _name, argv, cwd: spawn_console(argv, cwd))
+        self._spawn = spawn or (lambda _name, argv, cwd, env: spawn_console(argv, cwd, env))
         self._python = python
         self._sleep = sleep
         self._monotonic = monotonic
@@ -190,12 +214,15 @@ class RuntimeIntentBootstrap:
                 f"ERROR: unknown intent {intent!r}; expected one of {', '.join(INTENTS)}",
             )
         try:
-            self._ensure("PAPER backend", self._probe_backend, backend_argv(self._root))
+            self._ensure(
+                "PAPER backend", self._probe_backend, backend_argv(self._root),
+                paper_safe_backend_env(self._env),
+            )
             # A Telegram caller is itself the proven getUpdates owner; never probe/spawn over it.
             if self._require_telegram:
                 self._ensure(
                     "Telegram monitoring", self._probe_telegram,
-                    telegram_argv(self._root, self._python),
+                    telegram_argv(self._root, self._python), None,
                 )
         except (Mismatch, TimeoutError, OSError) as error:
             return BootstrapResult(
@@ -203,13 +230,16 @@ class RuntimeIntentBootstrap:
             )
         return self._send_intent(intent)
 
-    def _ensure(self, name: str, probe: Callable[[], str], argv: list[str]) -> None:
+    def _ensure(
+        self, name: str, probe: Callable[[], str], argv: list[str],
+        child_env: Mapping[str, str] | None,
+    ) -> None:
         state = probe()
         if state == READY:
             return
         if state == ABSENT:
             self._out(f"Starting {name}...")
-            self._spawn(name, argv, self._root)
+            self._spawn(name, argv, self._root, child_env)
         deadline = self._monotonic() + READY_TIMEOUT_S
         while self._monotonic() < deadline:
             self._sleep(POLL_INTERVAL_S)
