@@ -26,16 +26,16 @@ workflow. Ассистент обязан апгрейдить target/scripts з
 
 ## Текущий уровень
 
-- XP: **100**
+- XP: **140**
 - Уровень: **2 — Охотник за пивотами**
 - Серия: **Комбо переиспользования ×1**
 
-Начальный XP после введения игровой системы начислен только за уже доказанный
-сегодня результат: устранение protection-continuity false positive (#237),
-которое прошло Robot PAPER acceptance. Планирование, документация и количество
-коммитов XP не добавляют.
+Канонический XP/ачивки/loot теперь восстанавливаются из
+`DOCUMENTS/QUEST_REWARD_LEDGER.md`; этот файл — только текущая проекция.
+Baseline ledger зафиксирован на **140 XP**. Планирование, документация,
+количество коммитов и тестов сами по себе XP не добавляют.
 
-## ⏭️ Первая очередь следующей рабочей сессии — Opus 5.5
+## 💾 Сохранённый geometry-checkpoint — Opus 5.5
 
 👹 **Ikigai Box — «Кривой первый импульс»** поставлен владельцем первой задачей
 или одной из первых задач следующей рабочей сессии.
@@ -122,7 +122,12 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #265 merged (`15ad7aa`): failure Robot candidate persistence теперь даёт одно owner-only Telegram warning после обычной доставки сигнала, без декоративной Robot-кнопки и без утечки exception/DB/path деталей;
 - [x] PR #264 merged (`5852a09`): explicit 1m Wedge больше не observational-only; Robot handoff строится только после успешного evidence projection/cursor и остаётся fail-closed при ошибке;
 - [x] PR #266 merged (`90b8559`): stale FLOCK synthetic fixture приведён к owner rule 2026-09-23 — A теперь actual local reversal origin; detector не менялся, red-core и 55%/12% box-boundary coverage сохранены; Ikigai Box detector CI SUCCESS;
-- [ ] провести один полный owner-run PAPER acceptance.
+- [x] 2026-09-27 owner desktop launch доказал backend READY, PAPER/LIVE safety, Robot RUNNING/READY, admission/protection READY, Telegram Monitoring на той же DB и реальный Scanner traversal;
+- [x] Scanner Pause/Continue state semantics подтверждены owner-run: пауза реально остановила новые сигналы, повторный вход показал ту же `/scanner` как `▶ Продолжить сканер`;
+- [ ] закрыть общий дефект исчезающей Telegram Menu button (draft PR #271), затем загрузить fix в canonical runtime;
+- [ ] реализовать общий Pattern → Robot adapter/platform contract вместо per-pattern Telegram/Robot wiring;
+- [ ] убрать ложный Ikigai Box `🤖 Робот` status-affordance и подключать Box/L-shape к реальному candidate admission только через общий lifecycle;
+- [ ] после этих P0 изменений провести один чистый полный owner-run PAPER acceptance.
 
 **Награда:** без XP за документацию/рефакторинг; награда только за доказанный
 полный запуск без ручного кризисного восстановления.
@@ -132,17 +137,30 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 
 ## 🚧 Временные ворота активного рейда
 
-### «Один запуск — один проход»
+### «Портал не должен исчезать»
 
-Во время реальной проверки обнаружено, что Scanner в RUNNING автоматически
-запускает новые полные проходы. Владелец также разделил требуемую семантику:
-**Пауза/Продолжить** сохраняют текущий проход, а **Остановить сканер** полностью
-завершает его. Исправление находится в draft PR #249. Там же восстанавливается
-исчезающая Telegram-кнопка Menu. Последний code-bearing head `d2a6473...` имеет green Robot
-PAPER acceptance, включая прямой Scanner-control/Telegram-menu шаг; последующие
-коммиты этого checkpoint — только документация; merge и
-owner runtime acceptance ещё не выполнены. До них повторный полный Scanner
-acceptance не заказывать.
+Owner-run 2026-09-27 подтвердил Scanner Pause/Continue semantics, но выявил
+общий UI-дефект: после управляющего действия Telegram Menu button может исчезнуть
+из уже открытого чата и появиться только после повторного входа. Dynamic
+`/scanner` label при этом корректно меняется на `▶ Продолжить сканер`.
+
+Draft PR #271 чинит именно common menu-button lifecycle. До merge + загрузки
+этого кода текущий runtime остаётся доказательством RED, а не acceptance fix.
+
+### «Один портал для всех зверей»
+
+Ikigai Box сигнал показал `🤖 Робот`, но callback открыл только Robot status,
+поскольку текущий Robot state-machine поддерживает Wedge, а не Box candidate
+admission. Это признано архитектурным boundary defect: общий Telegram/Robot
+lifecycle не должен заново проектироваться для каждого паттерна.
+
+Канонический стандарт:
+`DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md`.
+
+Следующий platform slice должен вынести общий Signal → durable candidate →
+admission → execution/protection → position → lifecycle notifications →
+reconcile контракт; Wedge остаётся reference adapter, Box/L-shape подключаются
+через тот же boundary со своими strategy rules.
 
 ### «Переполненный шлюз»
 
@@ -164,7 +182,50 @@ ChatGPT endpoint. Desktop остаётся на 26.917.9434.0 при досту�
 аудит сделок/PnL. Отдельный `helper_sandbox_lock_failed` не считать дефектом
 BybitScanner без доказанной связи.
 
-## 🗓️ План на сегодня — 2026-09-26
+## 🗓️ План на сегодня — 2026-09-27
+
+Binding owner order:
+
+1. 🧭 **P0 — Постоянный Telegram Menu**
+   - довести PR #271;
+   - Menu не исчезает после Scanner/Robot owner actions;
+   - та же `/scanner` мгновенно отражает Pause/Continue/Start state.
+
+2. 🧩 **P0 — «Один портал для всех зверей»**
+   - реализовать общий Pattern → Robot integration contract;
+   - общий candidate/admission, execution ownership, protection, position cards,
+     lifecycle notifications, monitoring/reconcile;
+   - pattern-specific оставить только evidence + trading strategy adapter.
+
+3. 🐉 **P0 — Миграция паттернов на общий lifecycle**
+   - Wedge сохранить как reference adapter;
+   - Box: убрать misleading status action и подключать реальный candidate только
+     через общий admission;
+   - L-shape: тот же shared lifecycle со своими trading rules;
+   - не изобретать недостающие strategy parameters.
+
+4. 🖥️ **P0 — Закрыть desktop runtime debt**
+   - свести постоянные Scanner/Robot shortcuts к одной intended PAPER runtime/DB identity;
+   - убрать drift от копирования canonical launcher gates;
+   - отдельно доказать safe stop path.
+
+5. 👹 **P1 — Ikigai Box «Кривой первый импульс»**
+   - продолжить уже доказанный AIGENSYN RED на Opus 5.5;
+   - diagnosis не повторять.
+
+6. 🏁 **P1 — Один чистый полный owner-run acceptance**
+   - только после загрузки P0 fixes;
+   - полный universe, обычный Telegram, все integrated patterns;
+   - Menu persistence + Pause/Continue + real Robot candidate admission where supported.
+
+7. 🏢 **P2 — Full dual-timeframe 5m→1m**
+   - per-symbol 5m then 1m;
+   - independent symbol × timeframe × pattern × formation state.
+
+Текущий pre-fix Scanner run полезен как exploratory evidence, но не может
+принять исправления, которых в его runtime ещё нет.
+
+## 📜 Исторический план — 2026-09-26
 
 Работаем строго в таком порядке:
 
@@ -194,7 +255,7 @@ BybitScanner без доказанной связи.
 
 Этот порядок действует на сегодня и имеет приоритет над более старыми next-step формулировками, пока владелец явно его не изменит.
 
-## 🎯 Новый binding owner order — 2026-09-26
+## 📜 Historical owner order — 2026-09-26 (superseded 2026-09-27)
 
 Текущий порядок работ от владельца:
 
@@ -256,8 +317,10 @@ Telegram open-position card:
 - ⬜ **«Один тикер — много зверей»** — будущий multi-pattern Scanner.
 - ⬜ **«Оба этажа зачищены»** — будущий полный 5m+1m per-symbol traversal.
 - ⬜ **«Ночной дозор»** — будущий FocusedPatternMonitor.
-- ⬜ **«Контекст не потерян»** — откроется после нового чата, который без ручного
-  handoff/напоминания восстановит из репозитория и актуальный квест, и видимый
+- ✅ **«Контекст не потерян»** — 2026-09-27 новый чат без ручного handoff
+  восстановил из репозитория актуальный проектный state и видимый игровой
+  режим; зафиксировано в `QUEST_REWARD_LEDGER.md` без дополнительного XP.
+- ⬜ **«Контекст не потерян» (повторная проверка bootstrap после будущих изменений)** — не отдельная награда;
   игровой response-mode.
 
 ## Последняя доказанная добыча
