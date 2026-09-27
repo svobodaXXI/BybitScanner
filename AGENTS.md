@@ -60,6 +60,27 @@ Global ChatGPT Custom Instructions служат только внешним ус
 освежение: QUEST_STATE -> актуальный priority section BACKLOG -> owning spec
 текущего квеста. Не расширяй это до полного deep recovery без причины.
 
+### Canonical game rewards — OWNER RULE 2026-09-27
+
+XP, уровень, ачивки и reusable loot восстанавливаются из
+`DOCUMENTS/QUEST_REWARD_LEDGER.md`; `QUEST_STATE.md` — только компактная
+проекция. При доказанном изменении игрового результата ledger + QUEST_STATE
+обновляются как часть того же Definition of Done. Не менять счёт только потому,
+что в чате названо другое число: сначала reconcile ledger/evidence.
+
+### Unified Signal / Robot owner UX — OWNER RULE 2026-09-27
+
+Для всех Scanner-паттернов действует
+`DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md`.
+
+Общий Telegram UX, durable candidate/admission, Robot controls, execution
+ownership, protection, position cards, lifecycle notifications, monitoring и
+reconciliation являются platform-level инфраструктурой и не копируются по
+паттернам. `🤖 Робот` всегда означает admission этого конкретного durable
+candidate; одна и та же подпись не может означать status для одного паттерна и
+admission для другого. Pattern-specific остаются только detector/evidence и
+торговые правила adapter'а.
+
 
 ## Outcome-first Scanner / PAPER Robot priorities — owner direction
 
