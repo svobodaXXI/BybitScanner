@@ -70,7 +70,7 @@ def build_scan_finished_message(
     )
 
 
-def run_scan_pass(*, box_robot_sink=None, control_checkpoint=None):
+def run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
     """Run exactly one Scanner scan pass over all discovered symbols.
 
     Extracted from main() as a reusable, throttled-repeatable unit (mirroring
@@ -153,7 +153,8 @@ def run_scan_pass(*, box_robot_sink=None, control_checkpoint=None):
 
                 # Experimental Box observations are explicitly opt-in and use
                 # the same fetched OHLC snapshot even when no Wedge exists.
-                # A Box photo never enters the Wedge quality/Robot admission path.
+                # A CONFIRMED Box is only frozen as BOX_PLAN_ONLY for the owner's
+                # 🤖 Робот tap; the Scanner itself never admits it into the Robot.
                 if (
                     os.environ.get("BYBITSCANNER_IKIGAI_BOX_SIGNALS") == "1"
                     and analysis_result.get("data") is not None
@@ -169,33 +170,12 @@ def run_scan_pass(*, box_robot_sink=None, control_checkpoint=None):
                             analysis_result["data"],
                             timeframe=timeframe,
                             test_mode=config.TELEGRAM_TEST_MODE,
+                            robot_plan_preparer=box_plan_preparer,
                         )
                         if box_sent:
                             box_observation_count += 1
                             sent_to_telegram_count += 1
                             print(f"{symbol:<15} {timeframe}m IKIGAI BOX observation SENT")
-
-                        if box_robot_sink is not None:
-                            from geometry.ikigai_box import detect_ikigai_box
-
-                            closed = analysis_result["data"].iloc[:-1]
-                            formation = detect_ikigai_box(closed)
-                            if formation is not None:
-                                box_robot_sink(
-                                    symbol,
-                                    timeframe,
-                                    {
-                                        "direction": formation.direction,
-                                        "a_time_ms": int(closed.iloc[formation.anchor_start_index]["time"]),
-                                        "b_time_ms": int(closed.iloc[formation.anchor_end_index]["time"]),
-                                        "decision_time_ms": int(closed.iloc[formation.as_of_index]["time"]),
-                                        "anchor_a_price": str(formation.anchor_start_price),
-                                        "anchor_b_price": str(formation.anchor_end_price),
-                                        "f1": str(formation.fibonacci_1_0),
-                                        "f1618": str(formation.fibonacci_1_618),
-                                        "f2618": str(formation.fibonacci_2_618),
-                                    },
-                                )
                     except Exception as box_error:
                         # An experimental pattern must not suppress the existing
                         # Wedge Scanner signal on the same market.

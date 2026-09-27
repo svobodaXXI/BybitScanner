@@ -75,10 +75,10 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         ) as robot:
             # Actual Scanner integration; temporary chart root can be passed by
             # patching the module's default function call below.
-            def send_under_test(symbol, candles, *, timeframe, test_mode=False):
+            def send_under_test(symbol, candles, *, timeframe, test_mode=False, **kwargs):
                 return real_sender(
                     symbol, candles, timeframe=timeframe,
-                    test_mode=test_mode, chart_dir=folder,
+                    test_mode=test_mode, chart_dir=folder, **kwargs,
                 )
 
             with patch.object(box, "send_ikigai_box_observation", side_effect=send_under_test):
@@ -333,6 +333,134 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         self.assertEqual(
             photo.call_args_list[0].args[2],
             photo.call_args_list[1].args[2],
+        )
+
+
+SOURCE_ID = "box-plan-" + "ab12" * 16
+
+
+def _markup_callbacks(call):
+    return [
+        (button["text"], button.get("callback_data"))
+        for row in call.kwargs["reply_markup"]["inline_keyboard"]
+        for button in row
+    ]
+
+
+class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
+    """CONFIRMED Box: frozen BOX_PLAN_ONLY before the keyboard; owner tap admits."""
+
+    def _deliver(self, *, preparer, recipients=("owner", "guest"), test_mode=False):
+        from contextlib import ExitStack
+
+        with ExitStack() as stack, tempfile.TemporaryDirectory() as folder:
+            stack.enter_context(patch.object(box, "get_telegram_chat_ids", return_value=recipients))
+            stack.enter_context(patch.object(box, "get_telegram_owner_chat_id", return_value="owner"))
+            stack.enter_context(patch.object(box, "load_memory", return_value={}))
+            stack.enter_context(patch.object(box, "save_memory"))
+            stack.enter_context(patch.object(box, "render_ikigai_box_chart"))
+            stack.enter_context(patch.object(box, "send_message", return_value={"ok": True}))
+            photo = stack.enter_context(patch.object(box, "send_photo", return_value={"ok": True}))
+            warn = stack.enter_context(patch.object(box, "warn_owner_robot_candidate_failed"))
+            result = box.send_ikigai_box_observation(
+                "TESTUSDT", _candles(), timeframe="5", test_mode=test_mode,
+                chart_dir=folder, robot_plan_preparer=preparer,
+            )
+            return result, photo, warn
+
+    def test_owner_photo_gets_robot_admission_for_the_frozen_source_plan(self):
+        calls = []
+
+        def preparer(symbol, timeframe, formation):
+            calls.append((symbol, timeframe, formation))
+            return SOURCE_ID
+
+        result, photo, warn = self._deliver(preparer=preparer)
+        self.assertTrue(result)
+        self.assertEqual(len(calls), 1)
+        symbol, timeframe, formation = calls[0]
+        closed = _candles().iloc[:-1]
+        expected = detect_ikigai_box(closed)
+        self.assertEqual((symbol, timeframe), ("TESTUSDT", "5"))
+        self.assertEqual(formation, box.box_robot_formation(closed, expected))
+        self.assertEqual(formation["direction"], expected.direction)
+        owner, guest = photo.call_args_list
+        handle = "bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]
+        self.assertIn(("🤖 Робот", f"robot:approve:{handle}"), _markup_callbacks(owner))
+        self.assertLessEqual(len(f"robot:approve:{handle}".encode("utf-8")), 64)
+        self.assertFalse(any(
+            (data or "").startswith("robot:") for _text, data in _markup_callbacks(guest)
+        ))
+        self.assertNotIn("🤖 Статус робота", [text for text, _ in _markup_callbacks(owner)])
+        warn.assert_not_called()
+
+    def test_test_mode_never_prepares_or_shows_robot(self):
+        preparer = unittest.mock.Mock(return_value=SOURCE_ID)
+        result, photo, warn = self._deliver(preparer=preparer, test_mode=True)
+        self.assertTrue(result)
+        preparer.assert_not_called()
+        for call in photo.call_args_list:
+            self.assertFalse(any((data or "").startswith("robot:") for _t, data in _markup_callbacks(call)))
+        warn.assert_not_called()
+
+    def test_no_owner_recipient_never_prepares(self):
+        preparer = unittest.mock.Mock(return_value=SOURCE_ID)
+        result, photo, _warn = self._deliver(preparer=preparer, recipients=("guest",))
+        self.assertTrue(result)
+        preparer.assert_not_called()
+        self.assertFalse(any(
+            (data or "").startswith("robot:") for _t, data in _markup_callbacks(photo.call_args)
+        ))
+
+    def test_preparation_failure_still_delivers_without_false_button_and_warns_owner(self):
+        for preparer in (
+            unittest.mock.Mock(side_effect=ValueError("1 WV is below the instrument minimum")),
+            unittest.mock.Mock(return_value=None),
+            unittest.mock.Mock(return_value="box-robot-" + "ab12" * 16),
+        ):
+            with self.subTest(preparer=preparer):
+                result, photo, warn = self._deliver(preparer=preparer)
+                self.assertTrue(result)
+                self.assertEqual(photo.call_count, 2)
+                for call in photo.call_args_list:
+                    self.assertFalse(any(
+                        (data or "").startswith("robot:") for _t, data in _markup_callbacks(call)
+                    ))
+                warn.assert_called_once_with("owner", "TESTUSDT", "5")
+
+    def test_scanner_pass_prepares_only_through_the_owner_card_and_never_admits(self):
+        source = _candles()
+        history = {}
+        preparer = unittest.mock.Mock(return_value=SOURCE_ID)
+        with tempfile.TemporaryDirectory() as folder, patch.dict(
+            os.environ, {"BYBITSCANNER_IKIGAI_BOX_SIGNALS": "1"}
+        ), patch.object(main, "get_symbols", return_value=["TESTUSDT"]), patch.object(
+            main, "analyze_symbol",
+            side_effect=lambda symbol, *, timeframe: {
+                "symbol": symbol, "result": None, "data": source if timeframe == "5" else None,
+            },
+        ), patch.object(main, "send_message", return_value=True), patch.object(
+            box, "render_ikigai_box_chart",
+        ), patch.object(box, "send_message", return_value={"ok": True}), patch.object(
+            box, "send_photo", return_value={"ok": True},
+        ) as photo, patch.object(
+            box, "load_memory", side_effect=lambda: dict(history),
+        ), patch.object(
+            box, "save_memory", side_effect=lambda record: history.update(record),
+        ), patch.object(box, "get_telegram_chat_ids", return_value=("owner",)), patch.object(
+            box, "get_telegram_owner_chat_id", return_value="owner",
+        ), patch(
+            "terminal.persistence.sqlite_store.SQLiteStore.handoff_box_plan_to_robot",
+            side_effect=AssertionError("Scanner must never admit a Box"),
+        ) as handoff:
+            main.run_scan_pass(box_plan_preparer=preparer)
+            main.run_scan_pass(box_plan_preparer=preparer)
+        preparer.assert_called_once()
+        handoff.assert_not_called()
+        photo.assert_called_once()
+        self.assertIn(
+            ("🤖 Робот", "robot:approve:bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]),
+            _markup_callbacks(photo.call_args),
         )
 
 

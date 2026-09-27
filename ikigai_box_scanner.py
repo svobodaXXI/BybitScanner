@@ -1,7 +1,9 @@
-"""Opt-in observational Scanner -> Telegram bridge for Ikigai Box.
+"""Opt-in Scanner -> Telegram bridge for Ikigai Box.
 
-No Robot candidate, orders, or Wedge signal-memory key can be created here.
-The existing Scanner owns candle acquisition; the newest Bybit kline is skipped
+A CONFIRMED Box may be frozen as an immutable BOX_PLAN_ONLY plan through a
+caller-supplied preparer so the owner card can offer ``🤖 Робот``; admission
+itself only happens on that owner tap. No orders or Wedge signal-memory key are
+created here, and WATCH stays observational. The newest Bybit kline is skipped
 because it can still be open. See DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md.
 """
 
@@ -16,6 +18,7 @@ from notification import (
     get_telegram_owner_chat_id,
     send_message,
     send_photo,
+    warn_owner_robot_candidate_failed,
 )
 from signal_memory import load_memory, save_memory
 
@@ -25,13 +28,43 @@ import config
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]+$")
 
 
-def send_ikigai_box_observation(
-    symbol, candles, *, timeframe, test_mode=False, chart_dir="charts"
-):
-    """Deliver observational text then photo per frozen first-impulse pair.
+def box_robot_formation(closed, formation):
+    """Frozen CONFIRMED-formation facts the Robot Box planner consumes."""
+    return {
+        "direction": formation.direction,
+        "a_time_ms": int(closed.iloc[formation.anchor_start_index]["time"]),
+        "b_time_ms": int(closed.iloc[formation.anchor_end_index]["time"]),
+        "decision_time_ms": int(closed.iloc[formation.as_of_index]["time"]),
+        "anchor_a_price": str(formation.anchor_start_price),
+        "anchor_b_price": str(formation.anchor_end_price),
+        "f1": str(formation.fibonacci_1_0),
+        "f1618": str(formation.fibonacci_1_618),
+        "f2618": str(formation.fibonacci_2_618),
+    }
 
-    Returns True only if every configured recipient received both parts.
-    Never posts a Telegram text card pointing at a stale wedge image.
+
+def _prepare_owner_robot_handle(robot_plan_preparer, symbol, timeframe, closed, formation):
+    """(callback handle, failed). Failure never blocks ordinary Box delivery."""
+    try:
+        from terminal.application.robot_admission import box_plan_admission_handle
+
+        source_id = robot_plan_preparer(symbol, timeframe, box_robot_formation(closed, formation))
+        return box_plan_admission_handle(str(source_id)), False
+    except Exception as exc:
+        print(f"[ROBOT CANDIDATE ERROR] symbol={symbol} pattern=IKIGAI_BOX error={exc}")
+        return None, True
+
+
+def send_ikigai_box_observation(
+    symbol, candles, *, timeframe, test_mode=False, chart_dir="charts",
+    robot_plan_preparer=None,
+):
+    """Deliver text then photo per frozen first-impulse pair.
+
+    With ``robot_plan_preparer`` (production owner delivery only) the exact
+    CONFIRMED formation is frozen as BOX_PLAN_ONLY first and the owner photo gets
+    ``🤖 Робот`` -> ``robot:approve:<bp-handle>``. Returns True only if every
+    configured recipient received both parts. Never posts a stale wedge image.
     """
     if not getattr(config, "TELEGRAM_ENABLED", False) or candles is None:
         return False
@@ -70,13 +103,19 @@ def send_ikigai_box_observation(
     )
     message = ikigai_box_signal_text(symbol, timeframe, formation)
     owner_chat_id = get_telegram_owner_chat_id()
+    robot_handle, robot_failed = None, False
+    if (robot_plan_preparer is not None and not test_mode
+            and owner_chat_id and owner_chat_id in recipients):
+        robot_handle, robot_failed = _prepare_owner_robot_handle(
+            robot_plan_preparer, symbol, timeframe, closed, formation,
+        )
     delivered = True
     for chat_id in recipients:
         is_owner = chat_id == owner_chat_id and bool(owner_chat_id)
         markup = build_tradingview_keyboard(
             symbol, timeframe,
             include_review_actions=is_owner,
-            robot_candidate_id=None,
+            robot_candidate_id=robot_handle if is_owner else None,
         )
         try:
             text_response = send_message(config.TELEGRAM_TOKEN, chat_id, message)
@@ -95,6 +134,10 @@ def send_ikigai_box_observation(
         except Exception as exc:
             print(f"[IKIGAI BOX TELEGRAM] {symbol}: {exc}")
             delivered = False
+
+    # Same owner-only notice as the common Wedge/L-shape handoff failure path.
+    if robot_failed:
+        warn_owner_robot_candidate_failed(owner_chat_id, symbol, timeframe)
 
     # A failed delivery remains retryable. Keep Box history namespaced so the
     # old symbol-only Wedge memory is not changed.
