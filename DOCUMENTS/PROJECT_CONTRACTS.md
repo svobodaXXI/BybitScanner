@@ -2,11 +2,11 @@
 
 Version:
 
-3.9
+3.10
 
 Date:
 
-2026-08-17
+2026-09-27
 
 Document Type:
 
@@ -2618,3 +2618,71 @@ Previous version reason preserved — PROJECT_CONTRACTS v3.3:
 * версия документа обновлена до 3.3.
 
 # END_OF_DOCUMENT
+
+
+---
+
+# CONTRACT-PATTERN-ROBOT-001
+
+type:
+
+INTEGRATION_CONTRACT
+
+status:
+
+ACTIVE
+
+name:
+
+Unified Pattern → Robot Integration Contract
+
+owner_layer:
+
+Robot Platform / Owner UX
+
+authority:
+
+DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md
+
+producer:
+
+Pattern Strategy Adapters
+
+consumer:
+
+* Telegram Owner Surface
+* Robot Candidate Admission
+* Robot Execution / Protection
+* Position Lifecycle / Monitoring / Reconciliation
+
+purpose:
+
+All Scanner patterns share one owner-facing signal-to-trade workflow while
+preserving pattern-specific trading semantics behind adapters.
+
+shared_platform_invariants:
+
+* one Telegram signal/control surface
+* one durable candidate/admission mechanism
+* one execution ownership model
+* one protection/reconciliation model
+* one position/lifecycle notification surface
+* one monitoring/history surface
+* same label means same owner action across patterns
+
+pattern_adapter_owns:
+
+* immutable pattern evidence
+* direction semantics
+* executability
+* entry plan
+* stop plan
+* take/exit plan
+* invalidation/re-entry rules
+
+forbidden:
+
+* per-pattern duplicate Telegram control path
+* per-pattern duplicate candidate/admission engine
+* second execution engine for a new pattern
+* using "🤖 Робот" for status when it means candidate admission elsewhere
