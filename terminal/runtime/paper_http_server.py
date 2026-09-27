@@ -2126,10 +2126,15 @@ class RobotProtectionCoverageManager:
             )
         except ProtectionIngressOverflow:
             self._mark_unhealthy(symbol, "ingress_overflow")
+            metrics = (
+                self._runtime.protection_ingress_metrics()
+                if hasattr(self._runtime, "protection_ingress_metrics")
+                else {}
+            )
             LOGGER.error(
                 "Robot protection ingress overflow -- coverage is unhealthy; "
-                "symbol=%s event=%s",
-                symbol, book_update_id,
+                "symbol=%s role=%s event=%s metrics=%s",
+                symbol, coverage_role, book_update_id, metrics,
             )
             return
         except Exception:
