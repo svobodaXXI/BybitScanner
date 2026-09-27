@@ -83,10 +83,17 @@ the commands and prompts itself; it does not shorten a response by moving work o
 The owner's canonical manual runtime UX is the existing desktop shortcut surface.
 Do not make the owner re-discover or re-explain this path in future sessions.
 
-Current owner-facing surface:
-- `start_scanner` — desktop Scanner shortcut;
-- `Запуск робота` — desktop Robot/prototype shortcut;
-- companion desktop stop shortcut — same operational surface.
+Current owner-facing surface (resolved 2026-09-27; do not rediscover):
+- shortcut directory: `C:\\Users\\svobo\\OneDrive\\Рабочий стол`;
+- `start_scanner.lnk` -> `C:\\BybitScanner\\start_scanner.bat`, Start In `C:\\BybitScanner`;
+- `Запуск робота.lnk` -> `C:\\BybitScanner\\start_robot.bat`, Start In `C:\\BybitScanner`;
+- `Остановить робота.lnk` -> `C:\\BybitScanner\\stop_robot.bat`, Start In `C:\\BybitScanner`.
+
+Current wiring detail at this checkpoint:
+- tracked `start_scanner.bat` delegates to tracked `start_robot_runtime.bat` and therefore reaches the canonical readiness/identity/protection/ScannerControlRuntime path;
+- local `start_robot.bat` delegates to `C:\\BybitScanner-box-robot-run\\start_robot_all.cmd`;
+- local `start_robot_all.cmd` is legacy wiring and MUST be upgraded before it is treated as acceptance-ready: it checks only port ownership/readiness, starts Scanner before Telegram readiness, and bypasses current canonical health/identity/admission/protection gates;
+- local `stop_robot.bat` is also legacy wiring and MUST NOT be treated as a safe canonical shutdown path: it kills windows by title and still references the obsolete `Telegram Review` title.
 
 Assistant obligations:
 
