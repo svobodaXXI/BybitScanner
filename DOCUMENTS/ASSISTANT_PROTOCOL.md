@@ -2,7 +2,7 @@
 
 Version:
 
-4.45
+4.46
 
 Date:
 
@@ -91,9 +91,11 @@ Current owner-facing surface (resolved 2026-09-27; do not rediscover):
 
 Current wiring detail at this checkpoint:
 - tracked `start_scanner.bat` delegates to tracked `start_robot_runtime.bat` and therefore reaches the canonical readiness/identity/protection/ScannerControlRuntime path;
-- local `start_robot.bat` delegates to `C:\\BybitScanner-box-robot-run\\start_robot_all.cmd`;
-- local `start_robot_all.cmd` is legacy wiring and MUST be upgraded before it is treated as acceptance-ready: it checks only port ownership/readiness, starts Scanner before Telegram readiness, and bypasses current canonical health/identity/admission/protection gates;
-- local `stop_robot.bat` is also legacy wiring and MUST NOT be treated as a safe canonical shutdown path: it kills windows by title and still references the obsolete `Telegram Review` title.
+- local `C:\\BybitScanner\\start_robot.bat` is a thin stable desktop wrapper to tracked `C:\\BybitScanner\\start_robot_runtime.bat`;
+- local `C:\\BybitScanner\\stop_robot.bat` is a thin stable desktop wrapper to tracked `C:\\BybitScanner\\stop_robot_runtime.bat`;
+- owner runtime-check on 2026-09-27 proved the canonical start path and, after PR #280, the canonical safe-stop path end-to-end;
+- PR #280 (`adcd44e1580a1f7648abb79c20a84c6980859660`) fixed Windows safe-stop helper invocation to `python -m tools.stop_robot_runtime`; final owner-run stop returned exit 0 and persisted `ROBOT_STOPPED / ROBOT_STOPPED`, while backend/Telegram remained alive by design;
+- the previous `C:\\BybitScanner-box-robot-run\\start_robot_all.cmd` wiring is historical/legacy and is no longer the owner desktop Robot start authority.
 
 Assistant obligations:
 
@@ -264,6 +266,39 @@ Apply the same task-scoped trace when recommending test/build commands (actual h
 (branch → host → runtime). This rule requires no new skill, global inventory, full Project Sync or repeated checks
 when the relevant trace has already been verified and its source/host state has not changed.
 
+
+### 2.2.3A KNOWN-FAILURE FAST-PATH — HARD RULE
+
+For Scanner / PAPER Robot / Telegram / desktop-runtime incidents, do not begin
+as if the subsystem were unfamiliar. Before asking the owner for diagnostic
+actions:
+
+1. read `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md`;
+2. read the current committed entrypoint/helper for the failing owner action;
+3. match the symptom against documented failure signatures and canonical
+   recovery routes;
+4. use repository tools to recover everything that is not host-local;
+5. if host evidence is still required, request one bounded read-only snapshot
+   containing the decisive facts for that class rather than a sequence of
+   speculative probes;
+6. use the documented recovery/repair path immediately when the signature
+   matches; broaden investigation only when current evidence contradicts it.
+
+A known/repeating incident should normally require no more than **one owner
+diagnostic round-trip before the known repair/recovery action**. More steps are
+allowed only when a concrete new unknown blocks the fast path; name that unknown
+before requesting another owner action.
+
+Never hand-edit durable Robot/Scanner state merely to clear an error. Prefer
+the canonical state-machine/API recovery transition already implemented by the
+project. After resolving a new repeatable failure, add only its stable
+`symptom -> decisive evidence -> canonical action` path to the fast-path
+document so future sessions do not rediscover it.
+
+This rule implements the project's primary efficiency objective: owner time is
+the scarcest resource. It overrides exploratory one-command-at-a-time diagnosis
+when a documented known path already exists, while preserving fail-closed
+safety and the user-action preflight.
 
 ### 2.2.4 MULTI-COMPONENT READINESS CLAIM GATE — HARD RULE
 
