@@ -124,10 +124,12 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #266 merged (`90b8559`): stale FLOCK synthetic fixture приведён к owner rule 2026-09-23 — A теперь actual local reversal origin; detector не менялся, red-core и 55%/12% box-boundary coverage сохранены; Ikigai Box detector CI SUCCESS;
 - [x] 2026-09-27 owner desktop launch доказал backend READY, PAPER/LIVE safety, Robot RUNNING/READY, admission/protection READY, Telegram Monitoring на той же DB и реальный Scanner traversal;
 - [x] Scanner Pause/Continue state semantics подтверждены owner-run: пауза реально остановила новые сигналы, повторный вход показал ту же `/scanner` как `▶ Продолжить сканер`;
-- [ ] закрыть общий дефект исчезающей Telegram Menu button (draft PR #271), затем загрузить fix в canonical runtime;
-- [ ] реализовать общий Pattern → Robot adapter/platform contract вместо per-pattern Telegram/Robot wiring;
-- [ ] убрать ложный Ikigai Box `🤖 Робот` status-affordance и подключать Box/L-shape к реальному candidate admission только через общий lifecycle;
-- [ ] после этих P0 изменений провести один чистый полный owner-run PAPER acceptance.
+- [x] PR #271 merged (`e0afeee`): общий Telegram Menu reassert после owner messages/callbacks;
+- [x] PR #274 merged (`878d18d`): общий Pattern → Robot pre-admission handoff для Wedge/L-shape;
+- [x] PR #275 merged (`03d19cb`): у non-executable Ikigai Box убран ложный `🤖 Робот` status-affordance; Box execution остаётся fail-closed до authoritative executable contract;
+- [x] PR #276 merged (`0f72355`): canonical tracked safe-stop path без process-title kills/forced close;
+- [ ] owner-PC: загрузить current `main`, перенаправить постоянные Robot start/stop shortcuts на canonical tracked launchers и runtime-check safe stop;
+- [ ] после загрузки P0 изменений провести один чистый полный owner-run PAPER acceptance.
 
 **Награда:** без XP за документацию/рефакторинг; награда только за доказанный
 полный запуск без ручного кризисного восстановления.
@@ -144,8 +146,9 @@ Owner-run 2026-09-27 подтвердил Scanner Pause/Continue semantics, но
 из уже открытого чата и появиться только после повторного входа. Dynamic
 `/scanner` label при этом корректно меняется на `▶ Продолжить сканер`.
 
-Draft PR #271 чинит именно common menu-button lifecycle. До merge + загрузки
-этого кода текущий runtime остаётся доказательством RED, а не acceptance fix.
+PR #271 merged as `e0afeee`; common menu-button lifecycle исправлен в
+repository state. До загрузки current `main` на owner PC прежний runtime всё
+ещё остаётся pre-fix evidence, а не acceptance исправления.
 
 ### «Один портал для всех зверей»
 
@@ -157,10 +160,12 @@ lifecycle не должен заново проектироваться для �
 Канонический стандарт:
 `DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md`.
 
-Следующий platform slice должен вынести общий Signal → durable candidate →
-admission → execution/protection → position → lifecycle notifications →
-reconcile контракт; Wedge остаётся reference adapter, Box/L-shape подключаются
-через тот же boundary со своими strategy rules.
+PR #274 merged as `878d18d`: общий pre-admission handoff вынесен в
+`pattern_robot_integration.py`; Wedge и L-shape используют один boundary.
+L-shape дальше уже идёт через общий admission/monitor/execution/protection/
+reconcile lifecycle. PR #275 merged as `03d19cb`: Box больше не показывает
+ложный Robot status-action. Box execution остаётся намеренно закрытым до
+authoritative executable contract.
 
 ### «Переполненный шлюз»
 
@@ -205,9 +210,9 @@ Binding owner order:
    - не изобретать недостающие strategy parameters.
 
 4. 🖥️ **P0 — Закрыть desktop runtime debt**
-   - свести постоянные Scanner/Robot shortcuts к одной intended PAPER runtime/DB identity;
-   - убрать drift от копирования canonical launcher gates;
-   - отдельно доказать safe stop path.
+   - GitHub-side safe stop закрыт PR #276 (`0f72355`);
+   - remaining owner-PC step: загрузить current `main`, перенаправить постоянные Robot start/stop shortcuts на canonical tracked launchers;
+   - затем runtime-check safe stop; GitHub-side safe-stop work не повторять.
 
 5. 👹 **P1 — Ikigai Box «Кривой первый импульс»**
    - продолжить уже доказанный AIGENSYN RED на Opus 5.5;
