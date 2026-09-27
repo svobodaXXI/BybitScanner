@@ -28,7 +28,12 @@ from typing import Callable, Mapping
 
 import requests
 
+from urllib.parse import urlsplit
+
 from terminal.application.robot_control import RobotControlRejected, stop_robot
+from tools.legacy_runtime_process import (
+    BACKEND, TELEGRAM, LegacyOwnerUnproven, resolve_legacy_chain, terminate_exact_pids,
+)
 from tools.runtime_intent import PROJECT_ROOT, expected_database_identity
 
 SCOPE_ALL = "all"
@@ -135,13 +140,18 @@ class RuntimeShutdown:
         stop_robot_fn: Callable[[], object] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        legacy_resolver: Callable[[str, str, int, Path], tuple[int, ...]] = resolve_legacy_chain,
+        legacy_terminator: Callable[[tuple[int, ...]], None] = terminate_exact_pids,
     ) -> None:
         env = dict(os.environ if env is None else env)
         database_path = _database_path(root, env)
+        self._root = root
         self._expected = expected_database_identity(root, env)
         self._backend = (env.get("BYBITSCANNER_PAPER_BACKEND_URL") or DEFAULT_BACKEND_URL).rstrip("/")
         port = env.get("BYBITSCANNER_TELEGRAM_MONITORING_PORT") or DEFAULT_TELEGRAM_PORT
         self._telegram = f"http://127.0.0.1:{port}"
+        self._legacy_resolver = legacy_resolver
+        self._legacy_terminator = legacy_terminator
         self._get = get
         self._post = post
         self._robot_state = robot_state or (lambda: read_robot_state(database_path))
@@ -197,13 +207,15 @@ class RuntimeShutdown:
             raise SafeStopError("Robot protection coverage is still active; runtime kept alive")
 
         if telegram == PRESENT:
-            self._shutdown(self._telegram + "/shutdown", self._telegram + "/health", "Telegram monitoring")
-            steps.append("telegram:shutdown")
+            steps.append(self._shutdown(
+                self._telegram + "/shutdown", self._telegram + "/health", "Telegram monitoring",
+                TELEGRAM, "telegram",
+            ))
         if backend == PRESENT:
-            self._shutdown(
-                self._backend + "/api/runtime/shutdown", self._backend + "/api/health", "PAPER backend",
-            )
-            steps.append("backend:shutdown")
+            steps.append(self._shutdown(
+                self._backend + "/api/runtime/shutdown", self._backend + "/api/health",
+                "PAPER backend", BACKEND, "backend",
+            ))
         return ShutdownResult(scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True)
 
     def _probe_backend(self) -> str:
@@ -249,18 +261,38 @@ class RuntimeShutdown:
             and health.get("covered_symbols") == [] and health.get("unhealthy_symbols") == {}
         )
 
-    def _shutdown(self, shutdown_url: str, health_url: str, name: str) -> None:
+    def _shutdown(self, shutdown_url: str, health_url: str, name: str, kind: str, step: str) -> str:
         try:
             status, body = self._post(shutdown_url, {"database_identity": self._expected}, MUTATION_TIMEOUT_S)
         except Exception as exc:
             raise SafeStopError(f"{name} shutdown outcome is unknown; not retried") from exc
         if status in (404, 501):
-            raise SafeStopError(
-                f"{name} is a legacy process without a shutdown endpoint; close its window once"
-            )
-        if status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
+            # Identity was proven by health and the graceful endpoint is absent: legacy process.
+            step = f"{step}:legacy-terminate"
+            self._terminate_legacy(health_url, name, kind)
+        elif status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
             reason = body.get("error") if isinstance(body, dict) else None
             raise SafeStopError(f"{name} refused shutdown: {reason or status}")
+        else:
+            step = f"{step}:shutdown"
+        self._wait_gone(health_url, name)
+        return step
+
+    def _terminate_legacy(self, health_url: str, name: str, kind: str) -> None:
+        location = urlsplit(health_url)
+        try:
+            chain = self._legacy_resolver(kind, location.hostname or "", location.port or 0, self._root)
+        except LegacyOwnerUnproven as exc:
+            raise SafeStopError(
+                f"{name} is a legacy process without a shutdown endpoint and its ownership "
+                f"could not be proven ({exc}); nothing was terminated"
+            ) from exc
+        try:
+            self._legacy_terminator(tuple(chain))
+        except Exception as exc:
+            raise SafeStopError(f"{name} legacy termination failed: {type(exc).__name__}") from exc
+
+    def _wait_gone(self, health_url: str, name: str) -> None:
         deadline = self._monotonic() + EXIT_WAIT_S
         while self._monotonic() < deadline:
             try:

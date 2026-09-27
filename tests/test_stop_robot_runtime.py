@@ -6,6 +6,8 @@ import unittest
 from unittest import mock
 
 from terminal.application.robot_control import RobotControlRejected
+import tools.legacy_runtime_process as legacy
+from tools.legacy_runtime_process import LegacyOwnerUnproven, ProcessInfo, select_legacy_chain
 import tools.stop_robot_runtime as shutdown
 from tools.runtime_intent import expected_database_identity
 
@@ -82,11 +84,29 @@ class FakeRuntime:
     def sleep(self, seconds):
         self.now += seconds
 
+    legacy_chains = None
+
+    def resolve_legacy(self, kind, host, port, root):
+        self.calls.append(f"resolve:{kind}:{host}:{port}")
+        chains = self.legacy_chains or {}
+        if kind not in chains:
+            raise LegacyOwnerUnproven("no proven owner")
+        return chains[kind]
+
+    def terminate_legacy(self, pids):
+        self.calls.append(f"terminate:{list(pids)}")
+        chains = self.legacy_chains or {}
+        if tuple(pids) == chains.get("telegram"):
+            self.telegram_alive = False
+        if tuple(pids) == chains.get("backend"):
+            self.backend_alive = False
+
     def orchestrator(self):
         return shutdown.RuntimeShutdown(
             root=ROOT, env={}, get=self.get, post=self.post,
             robot_state=lambda: self.robot, stop_robot_fn=self.stop_robot,
             sleep=self.sleep, monotonic=lambda: self.now,
+            legacy_resolver=self.resolve_legacy, legacy_terminator=self.terminate_legacy,
         )
 
 
@@ -179,16 +199,18 @@ class OwnershipTests(unittest.TestCase):
                 self.assertEqual(runtime.calls, [])
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
-    def test_legacy_worker_without_shutdown_endpoint_fails_closed_before_backend(self):
+    def test_unprovable_legacy_owner_fails_closed_without_terminate(self):
         for status in (404, 501):
             with self.subTest(status=status):
                 runtime = FakeRuntime(robot=STOPPED)
                 runtime.shutdown_replies["telegram"] = (status, None)
                 result = runtime.orchestrator().run("all")
                 self.assertFalse(result.ok)
-                self.assertIn("legacy", result.message)
+                self.assertIn("nothing was terminated", result.message)
+                self.assertNotIn("close its window", result.message)
+                self.assertFalse(any(c.startswith("terminate") for c in runtime.calls))
                 self.assertNotIn("backend:shutdown", runtime.calls)
-                self.assertTrue(runtime.backend_alive)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_refused_backend_shutdown_is_not_retried(self):
         runtime = FakeRuntime(robot=STOPPED)
@@ -218,8 +240,207 @@ class OwnershipTests(unittest.TestCase):
     def test_no_broad_process_kill_exists(self):
         source = Path(shutdown.__file__).read_text(encoding="utf-8").lower()
         for forbidden in ("taskkill", "os.kill", "psutil", "terminate(", ".kill(", "netstat",
-                          "_exit("):
+                          "_exit(", "stop-process"):
             self.assertNotIn(forbidden, source)
+        fallback = Path(legacy.__file__).read_text(encoding="utf-8").lower()
+        for forbidden in ("/im", '"/t"', "os.kill", "psutil", "stop-process", "killall", "pkill",
+                          "_exit(", "get-process", "win32_process\"", "shell=true"):
+            self.assertNotIn(forbidden, fallback)
+        self.assertEqual(fallback.count("taskkill"), 1)  # only the exact /PID call
+
+    def test_exact_pid_termination_uses_one_pid_per_call_without_tree_or_name(self):
+        with mock.patch.object(legacy.subprocess, "run") as run:
+            legacy.terminate_exact_pids((4321, 1234))
+        self.assertEqual(
+            [c.args[0] for c in run.call_args_list],
+            [["taskkill", "/PID", "4321", "/F"], ["taskkill", "/PID", "1234", "/F"]],
+        )
+        for c in run.call_args_list:
+            self.assertNotIn("shell", c.kwargs)
+
+
+def _p(pid, ppid, name, command_line, executable="", created=None):
+    return ProcessInfo(pid, ppid, name, command_line, executable, created if created is not None else pid)
+
+
+VENV_PY = str(ROOT / "venv" / "Scripts" / "python.exe")
+BASE_PY = r"C:\Users\owner\AppData\Local\Programs\Python\Python312\python.exe"
+BAT = str(ROOT / "start_paper_backend.bat")
+TG = str(ROOT / "telegram_monitoring.py")
+
+
+def _backend_cmd_k_shape():
+    # P0.5 bootstrap: cmd.exe /k start_paper_backend.bat -> venv redirector -> base Python.
+    return {
+        10: _p(10, 1, "cmd.exe", f"cmd.exe /k {BAT}"),
+        20: _p(20, 10, "python.exe", f'"{VENV_PY}" -m terminal.runtime.paper_http_server', VENV_PY),
+        30: _p(30, 20, "python.exe", f'"{BASE_PY}" -m terminal.runtime.paper_http_server', BASE_PY),
+    }
+
+
+def _backend_powershell_shape():
+    # Pre-P0.5 launcher: powershell -NoExit -> cmd /c bat -> venv redirector -> base Python.
+    processes = _backend_cmd_k_shape()
+    processes[5] = _p(5, 1, "powershell.exe",
+                      f"powershell.exe -NoExit -Command \"Set-Location '{ROOT}\\'; & '{BAT}'\"")
+    processes[10] = _p(10, 5, "cmd.exe", f'C:\\WINDOWS\\system32\\cmd.exe /c ""{BAT}""')
+    return processes
+
+
+def _telegram_cmd_k_shape():
+    return {
+        10: _p(10, 1, "cmd.exe", f"cmd.exe /k {VENV_PY} {TG}"),
+        20: _p(20, 10, "python.exe", f'"{VENV_PY}" {TG}', VENV_PY),
+        30: _p(30, 20, "python.exe", f'"{BASE_PY}" {TG}', BASE_PY),
+    }
+
+
+def _telegram_powershell_shape():
+    processes = _telegram_cmd_k_shape()
+    processes[10] = _p(10, 1, "powershell.exe",
+                       f"powershell.exe -NoExit -Command \"Set-Location '{ROOT}\\'; & '{VENV_PY}' '{TG}'\"")
+    return processes
+
+
+class LegacyOwnershipProofTests(unittest.TestCase):
+    def test_current_legacy_console_shapes_prove_exact_chains(self):
+        self.assertEqual(select_legacy_chain("backend", [30], _backend_cmd_k_shape(), ROOT), (30, 20, 10))
+        self.assertEqual(
+            select_legacy_chain("backend", [30], _backend_powershell_shape(), ROOT), (30, 20, 10, 5),
+        )
+        self.assertEqual(select_legacy_chain("telegram", [30], _telegram_cmd_k_shape(), ROOT), (30, 20, 10))
+        self.assertEqual(
+            select_legacy_chain("telegram", [30], _telegram_powershell_shape(), ROOT), (30, 20, 10),
+        )
+
+    def test_wrong_command_line_is_unproven(self):
+        cases = []
+        backend = _backend_cmd_k_shape()
+        backend[30] = _p(30, 20, "python.exe", f'"{BASE_PY}" -m some.other.module', BASE_PY)
+        cases.append(("backend", backend))
+        telegram = _telegram_cmd_k_shape()
+        telegram[30] = _p(30, 20, "python.exe", f'"{BASE_PY}" {ROOT / "main.py"}', BASE_PY)
+        cases.append(("telegram", telegram))
+        no_k = _backend_cmd_k_shape()
+        no_k[10] = _p(10, 1, "cmd.exe", f"cmd.exe /s {BAT}")
+        cases.append(("backend", no_k))
+        not_noexit = _telegram_powershell_shape()
+        not_noexit[10] = _p(10, 1, "powershell.exe", f"powershell.exe -Command \"& '{VENV_PY}' '{TG}'\"")
+        cases.append(("telegram", not_noexit))
+        foreign_parent = _backend_cmd_k_shape()
+        foreign_parent[10] = _p(10, 1, "explorer.exe", BAT)
+        cases.append(("backend", foreign_parent))
+        for kind, processes in cases:
+            with self.subTest(kind=kind, owner=processes[10].command_line):
+                with self.assertRaises(LegacyOwnerUnproven):
+                    select_legacy_chain(kind, [30], processes, ROOT)
+
+    def test_wrong_project_root_is_unproven(self):
+        other = Path(str(ROOT) + "-runtime-intent")
+        for kind, shape in (("backend", _backend_cmd_k_shape), ("telegram", _telegram_cmd_k_shape)):
+            with self.subTest(kind=kind):
+                with self.assertRaises(LegacyOwnerUnproven):
+                    select_legacy_chain(kind, [30], shape(), other)
+
+    def test_ambiguous_listener_or_reused_ancestor_pid_is_unproven(self):
+        for listeners in ([], [30, 31]):
+            with self.subTest(listeners=listeners):
+                with self.assertRaises(LegacyOwnerUnproven):
+                    select_legacy_chain("backend", listeners, _backend_cmd_k_shape(), ROOT)
+        reused = _backend_cmd_k_shape()
+        reused[10] = _p(10, 1, "cmd.exe", f"cmd.exe /k {BAT}", created=999)
+        with self.assertRaises(LegacyOwnerUnproven):
+            select_legacy_chain("backend", [30], reused, ROOT)
+
+    def test_resolver_is_unavailable_off_windows_or_off_localhost(self):
+        with mock.patch.object(legacy.os, "name", "posix"), \
+                mock.patch.object(legacy.subprocess, "run") as run:
+            with self.assertRaises(LegacyOwnerUnproven):
+                legacy.resolve_legacy_chain("backend", "127.0.0.1", 8765, ROOT)
+        run.assert_not_called()
+        with mock.patch.object(legacy.os, "name", "nt"), \
+                mock.patch.object(legacy.subprocess, "run") as run:
+            with self.assertRaises(LegacyOwnerUnproven):
+                legacy.resolve_legacy_chain("backend", "0.0.0.0", 8765, ROOT)
+        run.assert_not_called()
+
+
+class LegacyFallbackOrchestrationTests(unittest.TestCase):
+    def test_legacy_telegram_then_backend_exact_chains_are_terminated_in_order(self):
+        for telegram_status, backend_status in ((501, 404), (501, 501)):
+            with self.subTest(telegram=telegram_status, backend=backend_status):
+                runtime = FakeRuntime(robot=READY)
+                runtime.shutdown_replies = {"telegram": (telegram_status, None),
+                                            "backend": (backend_status, {"ok": False})}
+                runtime.legacy_chains = {"telegram": (30, 20, 10), "backend": (130, 120, 110, 105)}
+                result = runtime.orchestrator().run("all")
+                self.assertTrue(result.ok, result.message)
+                self.assertEqual(runtime.calls, [
+                    "scanner:stop", "robot:stop",
+                    "telegram:shutdown", "resolve:telegram:127.0.0.1:8766", "terminate:[30, 20, 10]",
+                    "backend:shutdown", "resolve:backend:127.0.0.1:8765", "terminate:[130, 120, 110, 105]",
+                ])
+                self.assertEqual(result.steps[-2:], ("telegram:legacy-terminate", "backend:legacy-terminate"))
+                self.assertFalse(runtime.telegram_alive or runtime.backend_alive)
+
+    def test_legacy_telegram_with_graceful_backend(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.shutdown_replies = {"telegram": (501, None)}
+        runtime.legacy_chains = {"telegram": (30, 20, 10)}
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.calls[-2:], ["terminate:[30, 20, 10]", "backend:shutdown"])
+
+    def test_non_legacy_refusals_never_reach_the_fallback(self):
+        for reply in ((409, {"ok": False, "error": "database_identity_mismatch"}),
+                      (500, None), (400, {"ok": False}), TimeoutError("timed out")):
+            with self.subTest(reply=reply):
+                runtime = FakeRuntime(robot=STOPPED)
+                runtime.legacy_chains = {"telegram": (30, 20, 10), "backend": (130, 120, 110)}
+                original = runtime.post
+
+                def post(url, payload, timeout, reply=reply, original=original):
+                    if url == TELEGRAM + "/shutdown":
+                        runtime.calls.append("telegram:shutdown")
+                        if isinstance(reply, Exception):
+                            raise reply
+                        return reply
+                    return original(url, payload, timeout)
+
+                runtime.post = post
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
+                self.assertTrue(runtime.telegram_alive and runtime.backend_alive)
+
+    def test_identity_mismatch_never_reaches_resolver_or_terminator(self):
+        for target in ("backend", "telegram"):
+            with self.subTest(target=target):
+                runtime = FakeRuntime(robot=STOPPED)
+                runtime.legacy_chains = {"telegram": (30,), "backend": (130,)}
+                runtime.shutdown_replies = {"telegram": (404, None), "backend": (404, None)}
+                getattr(runtime, f"{target}_health")["database_identity"] = "0" * 64
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(runtime.calls, [])
+
+    def test_graceful_endpoints_are_preferred_and_never_invoke_fallback(self):
+        runtime = FakeRuntime(robot=READY)
+        runtime.legacy_chains = {"telegram": (30,), "backend": (130,)}
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok)
+        self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
+        self.assertEqual(result.steps[-2:], ("telegram:shutdown", "backend:shutdown"))
+
+    def test_legacy_process_that_survives_termination_is_reported(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.shutdown_replies = {"telegram": (501, None)}
+        runtime.legacy_chains = {"telegram": (30, 20, 10)}
+        runtime.terminate_legacy = lambda pids: runtime.calls.append(f"terminate:{list(pids)}")
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("did not exit", result.message)
+        self.assertNotIn("backend:shutdown", runtime.calls)
 
 
 class ScannerScopeTests(unittest.TestCase):
