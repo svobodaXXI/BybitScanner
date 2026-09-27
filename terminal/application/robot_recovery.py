@@ -157,7 +157,12 @@ class RobotRecoveryCoordinator:
         return self._reconcile_running(runtime, open_positions, approved, was_paused=False)
 
     def _load_candidate_sets(self):
-        candidates = self._store.load_robot_candidates(self._account_id)
+        # Recovery depends only on active APPROVED/OPEN candidates. Avoid
+        # scanning and deserializing the full historical candidate table on
+        # the serialized owner thread.
+        candidates = self._store.load_robot_candidates_by_status(
+            self._account_id, ("APPROVED", "OPEN"),
+        )
         open_positions = tuple(
             {"candidate_id": item.candidate_id, "symbol": item.symbol.value}
             for item in candidates
