@@ -2,11 +2,11 @@
 
 Version:
 
-4.44
+4.45
 
 Date:
 
-2026-09-22
+2026-09-27
 
 Document Type:
 
@@ -77,6 +77,40 @@ discipline, or productivity.
 
 Priority: saving the user's time and manual effort outranks the assistant's response brevity. The assistant prepares
 the commands and prompts itself; it does not shorten a response by moving work onto the user (see `2.2.2` and `8.11`).
+
+### Owner desktop launch surface — HARD UX CONTRACT (OWNER RULE 2026-09-27)
+
+The owner's canonical manual runtime UX is the existing desktop shortcut surface.
+Do not make the owner re-discover or re-explain this path in future sessions.
+
+Current owner-facing surface:
+- `start_scanner` — desktop Scanner shortcut;
+- `Запуск робота` — desktop Robot/prototype shortcut;
+- companion desktop stop shortcut — same operational surface.
+
+Assistant obligations:
+
+1. Treat these shortcuts as the stable owner-facing entrypoint. The user should continue
+   launching Scanner/Robot manually from the desktop, not from assistant-provided terminal
+   commands as the normal workflow.
+2. When development changes canonical runtime scripts, startup composition, ownership,
+   readiness gates, or acceptance behavior, update/retarget the implementation behind
+   this desktop surface as part of the same task. New development must flow into this
+   path automatically.
+3. Do not repeatedly ask which launcher/shortcut the owner uses once this rule is loaded.
+4. Do not invent a parallel owner launch path. If a migration is technically required,
+   preserve compatibility or update the existing shortcuts and document the resulting
+   target; do not leave the owner with multiple ambiguous launch methods.
+5. Before declaring a runtime-related change complete, trace and verify that the desktop
+   surface reaches the current canonical runtime path and preserves required safety,
+   singleton, identity, admission and protection gates.
+6. Agent ownership restriction remains unchanged: ChatGPT/Codex/Claude may inspect,
+   repair or upgrade the shortcut path, but only the owner manually starts the real
+   Scanner/Robot runtime.
+
+Terminal commands are acceptable only for bounded diagnosis or a one-time repair when the
+desktop path itself is broken or its local target must be established. Such diagnosis is
+not a replacement owner workflow.
 
 ### Scanner runtime is owner-manual, never an agent job — OWNER RULE 2026-09-23
 
