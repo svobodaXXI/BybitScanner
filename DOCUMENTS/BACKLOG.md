@@ -65,11 +65,23 @@ Authoritative standard:
   Reuse `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` for future runtime
   incidents and broaden only when new evidence does not match a known path.
 
-### P1 — Ikigai Box «Кривой первый импульс»
+### P1 — Ikigai Box «Кривой первый импульс» — COMPLETE
 
-Continue the already-proven AIGENSYNUSDT 5m RED/architecture checkpoint on
-Opus 5.5. Do not repeat diagnosis. Keep the existing narrow production
-boundary and structural-pivot semantics recorded below.
+- The required first production slice was completed on Opus 5.5 as commit
+  `1ce2aaa12920d1e6a407fe2268173299ce69fdb6`
+  (`fix: end Ikigai first impulse at its confirmed terminal pivot`).
+- The fix reuses the mirrored existing
+  `REVERSAL_LEFT_BARS=3 / REVERSAL_RIGHT_BARS=3` pivot semantics and rejects
+  malformed A..B candidates before ranking when an earlier confirmed terminal
+  pivot already exists.
+- A short opposite-colour pause remains allowed when it does not form a
+  confirmed counter-swing; the old colour-only veto is not restored.
+- AIGENSYNUSDT 5m no longer re-anchors historical B from 19:05 to 20:00 when
+  later second-leg progress appears.
+- `Ikigai Box detector` CI run #82 on that commit completed **SUCCESS**.
+- The production fix and regression now live in current `main`; do not repeat
+  the RED gate, Opus implementation, or first-impulse diagnosis unless new
+  evidence contradicts this result.
 
 ### P1 final gate — one clean owner-run full acceptance
 
@@ -116,52 +128,25 @@ launcher he uses. Terminal commands are diagnostic/repair-only, not the normal s
 Before runtime acceptance, verify that this desktop surface reaches the current canonical
 implementation and all readiness/safety gates. The actual start remains owner-manual.
 
-## NEXT WORK SESSION — IKIGAI FIRST-IMPULSE IMPLEMENTATION — OWNER QUEUE 2026-09-27
+## IKIGAI FIRST-IMPULSE IMPLEMENTATION — COMPLETED 2026-09-27
 
-Owner direction: make **Ikigai Box — «Кривой первый импульс»** the first task
-or one of the first tasks of the next work session. Do not repeat the already
-completed diagnosis/RED gate.
+Historical RED checkpoint #268 is retained for provenance only.
 
-**Required model for the first production implementation slice: Opus 5.5.**
-This is task-specific and mandatory because the remaining change is a
-geometry/algorithm construction rule with competing invariants. Do not begin
-the production edit on another model; once the architectural questions are
-closed by the Opus slice, later bounded/mechanical follow-up may be routed
-according to `DOCUMENTS/ASSISTANT_PROTOCOL.md`.
+Final implementation evidence:
+- production commit: `1ce2aaa12920d1e6a407fe2268173299ce69fdb6`;
+- implementation model recorded in commit metadata: Claude Opus 5.5;
+- touched production boundary remained the intended Ikigai detector/test scope;
+- AIGENSYN regression is present in current `main`;
+- terminal first-impulse B is frozen by the first confirmed mirrored structural
+  pivot, preventing later progress from retrospectively relocating B;
+- legacy colour-only stopping semantics were removed in favor of structural
+  counter-swing confirmation;
+- `Ikigai Box detector` workflow run #82: **SUCCESS**.
 
-Accepted checkpoint before implementation:
-
-- authoritative base: `ac677620a5b02735a6704eac9c41cf3a4b43c120`;
-- test branch: `test/ikigai-aigensyn-first-impulse-regression`;
-- test-only HEAD: `b027000f2119a2cbee4753f709e2b4a2bc8fdd82`;
-- draft PR #268, production code still untouched;
-- objective `Ikigai Box detector` CI run #81: **55 tests, exactly 1 FAIL**;
-- the sole failure is
-  `test_aigensyn_first_impulse_b_is_not_reanchored_by_later_leg_progress`;
-- proven defect: AIGENSYNUSDT 5m historical B moves from **19:05 MSK** to
-  **20:00 MSK** when later second-leg progress appears;
-- architecture is already defined: reject a malformed long first-impulse
-  candidate **before ranking** when an earlier confirmed terminal structural
-  pivot exists;
-- reuse the existing mirrored
-  `REVERSAL_LEFT_BARS=3 / REVERSAL_RIGHT_BARS=3` pivot semantics; do not add
-  a new arbitrary percent/ATR/coin-specific threshold;
-- preserve 1–2 small opposite-colour pause candles when they do not form a
-  confirmed counter-swing;
-- replace/correct the legacy
-  `test_first_down_leg_stops_at_any_green_or_doji_candle` semantics rather
-  than reintroducing “any opposite candle ends the impulse”;
-- inspect `test_mixed_body_down_wick_leg_is_not_one_red_impulse` so its
-  rejection remains structural rather than colour-only;
-- allowed production boundary remains only
-  `geometry/ikigai_box.py` and `tests/test_ikigai_box_detector.py`;
-- do not reopen FLOCK #266 without new common-cause evidence;
-- do not touch Robot/PAPER/Telegram/DB/Scanner runtime, PR #267, or
-  reconciliation/worktree cleanup for this slice.
-
-Next objective gate: on **Opus 5.5**, implement the minimal upstream
-construction fix, make the AIGENSYN regression GREEN, and run only targeted
-Ikigai detector tests first. Scanner/Robot/Telegram runtime must not be run.
+Do not resurrect the pre-implementation wording
+`Opus implementation pending`, do not repeat the RED diagnosis, and do not
+create another Opus slice for the same AIGENSYN defect without new failing
+evidence.
 
 ## TODAY — 2026-09-26
 

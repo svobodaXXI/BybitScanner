@@ -41,40 +41,23 @@ left alive by design. Future recurring runtime incidents must use
 Baseline ledger зафиксирован на **140 XP**. Планирование, документация,
 количество коммитов и тестов сами по себе XP не добавляют.
 
-## 💾 Сохранённый geometry-checkpoint — Opus 5.5
+## ✅ Побеждённый босс — Ikigai Box «Кривой первый импульс»
 
-👹 **Ikigai Box — «Кривой первый импульс»** поставлен владельцем первой задачей
-или одной из первых задач следующей рабочей сессии.
+AIGENSYNUSDT 5m geometry defect закрыт.
 
-**Для первого production implementation slice обязателен именно `Opus 5.5`.**
-Не начинать production-edit на другой модели: это geometry/algorithm change с
-конкурирующими invariants. Уже выполненные diagnosis/RED/architecture gate
-не повторять.
+- required first production slice выполнен на **Opus 5.5**;
+- implementation commit:
+  `1ce2aaa12920d1e6a407fe2268173299ce69fdb6`;
+- first impulse теперь заканчивается на первом подтверждённом terminal structural
+  pivot по существующей mirrored 3/3 pivot semantics;
+- later second-leg progress больше не переносит исторический B с 19:05 на 20:00;
+- harmless 1–2 opposite-colour pause candles не обрывают импульс без confirmed
+  counter-swing;
+- AIGENSYN regression находится в current `main`;
+- `Ikigai Box detector` workflow #82: **SUCCESS**.
 
-Сохранённый checkpoint:
-
-- base `ac677620a5b02735a6704eac9c41cf3a4b43c120`;
-- branch `test/ikigai-aigensyn-first-impulse-regression`;
-- HEAD `b027000f2119a2cbee4753f709e2b4a2bc8fdd82`;
-- draft PR #268 остаётся test-only, production untouched;
-- `Ikigai Box detector` run #81: **55 tests / 1 expected FAIL**;
-- единственный FAIL подтверждает AIGENSYNUSDT 5m B-reanchor:
-  historical B `19:05 MSK` ошибочно переезжает на `20:00 MSK` при later progress;
-- следующий slice: минимальный upstream fix в
-  `geometry/ikigai_box.py::_qualified_first_impulse_and_box()`;
-- использовать существующую mirrored structural pivot semantics
-  (`REVERSAL_LEFT_BARS=3`, `REVERSAL_RIGHT_BARS=3`), без нового arbitrary
-  `%`/ATR/coin-specific threshold;
-- 1–2 small opposite candles остаются допустимой паузой, пока не образуют
-  confirmed material counter-swing;
-- legacy test `test_first_down_leg_stops_at_any_green_or_doji_candle` должен
-  быть приведён к новому owner invariant, а не сохранять color-only veto;
-- FLOCK #266 не переоткрывать без новой общей причины;
-- boundary: только `geometry/ikigai_box.py` +
-  `tests/test_ikigai_box_detector.py`; PR #267 и runtime не трогать.
-
-Следующий объективный gate: **Opus 5.5 implementation → AIGENSYN GREEN →
-targeted Ikigai detector tests GREEN**. Scanner/Robot/Telegram runtime не запускать.
+RED/diagnosis/Opus implementation этого дефекта повторять нельзя без нового
+противоречащего evidence.
 
 ## Последний reconciliation checkpoint — 2026-09-26
 
@@ -104,7 +87,7 @@ cleanup. Следующий активный этап — один полный 
 ### Рейд «Один запуск — весь прототип»
 
 **Приоритет:** P0  
-**Статус:** АКТИВЕН  
+**Статус:** IMPLEMENTATION/SAFE-STOP GATES COMPLETE; FINAL FULL OWNER ACCEPTANCE PENDING  
 **Цель:** сделать один канонический owner-start путь, после которого PAPER
 backend, Robot protection/admission, Telegram callbacks/menu и Scanner имеют
 по одному владельцу, одну runtime authority и проверенную readiness-цепочку.
@@ -134,7 +117,7 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #274 merged (`878d18d`): общий Pattern → Robot pre-admission handoff для Wedge/L-shape;
 - [x] PR #275 merged (`03d19cb`): у non-executable Ikigai Box убран ложный `🤖 Робот` status-affordance; Box execution остаётся fail-closed до authoritative executable contract;
 - [x] PR #276 merged (`0f72355`): canonical tracked safe-stop path без process-title kills/forced close;
-- [ ] owner-PC: загрузить current `main`, перенаправить постоянные Robot start/stop shortcuts на canonical tracked launchers и runtime-check safe stop;
+- [x] owner-PC: current `main` загружен, desktop Robot start/stop path перенаправлен на canonical tracked launchers и safe-stop owner-run подтверждён;
 - [ ] после загрузки P0 изменений провести один чистый полный owner-run PAPER acceptance.
 
 **Награда:** без XP за документацию/рефакторинг; награда только за доказанный
@@ -341,6 +324,7 @@ Telegram open-position card:
   Robot admission/protection, Telegram same-DB readiness и canonical safe-stop;
 - `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` — короткие повторно используемые
   пути диагностики/recovery, чтобы не расследовать известные runtime-сбои с нуля;
+- Opus 5.5 structural terminal-pivot fix для AIGENSYN first impulse, подтверждённый Ikigai Box detector CI #82;
 - `DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md` — общий Signal → Robot
   integration/UX контракт для всех паттернов;
 - `DOCUMENTS/QUEST_REWARD_LEDGER.md` — append-only authority для XP,
