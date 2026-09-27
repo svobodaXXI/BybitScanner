@@ -32,14 +32,29 @@ left alive by design. Future recurring runtime incidents must use
 
 ## Текущий уровень
 
-- XP: **140**
-- Уровень: **2 — Охотник за пивотами**
+- XP: **285**
+- Уровень: **3 — Следопыт клиньев**
 - Серия: **Комбо переиспользования ×1**
 
 Канонический XP/ачивки/loot теперь восстанавливаются из
 `DOCUMENTS/QUEST_REWARD_LEDGER.md`; этот файл — только текущая проекция.
-Baseline ledger зафиксирован на **140 XP**. Планирование, документация,
-количество коммитов и тестов сами по себе XP не добавляют.
+Baseline ledger был зафиксирован на **140 XP**; затем reward reconciliation
+2026-09-27 добавил только доказанные post-baseline outcomes. Текущий
+канонический итог: **285 XP**. Планирование, документация, количество коммитов
+и тестов сами по себе XP не добавляют.
+
+## 🏆 Reward reconciliation — 2026-09-27
+
+После baseline 140 XP были пропущены шесть доказанных post-baseline outcomes:
+Telegram Menu (+25), shared Pattern → Robot handoff (+25), truthful Box Robot
+affordance (+25), ingress-overflow evidence (+10), dual-timeframe contract
+proof (+10) и завершённый owner-verified desktop runtime composition (+50).
+
+Итого: **285 XP, уровень 3 — «Следопыт клиньев»**.
+
+AIGENSYN не начислен повторно, потому что его production fix/merge предшествует
+migration baseline. Draft PR #267 по карточке позиции также не начислен:
+реальная Telegram acceptance/merge boundary ещё не закрыта.
 
 ## ✅ Побеждённый босс — Ikigai Box «Кривой первый импульс»
 
@@ -307,7 +322,7 @@ Telegram open-position card:
   валидные pre-disconnect события из-за задержки owner FIFO.
 - ✅ **«Феникс»** — reconcile восстановил корректный Robot lifecycle без ручных
   правок БД; затем владелец штатно вернул Robot в READY через Telegram.
-- ⬜ **«Новый монстр, старый движок»** — цель текущего L-shape рейда.
+- ✅ **«Новый монстр, старый движок»** — #274: L-shape/Wedge идут через общий Pattern → Robot handoff без второго execution engine.
 - ⬜ **«Один тикер — много зверей»** — будущий multi-pattern Scanner.
 - ⬜ **«Оба этажа зачищены»** — будущий полный 5m+1m per-symbol traversal.
 - ⬜ **«Ночной дозор»** — будущий FocusedPatternMonitor.
