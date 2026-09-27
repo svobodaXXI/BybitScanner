@@ -40,6 +40,21 @@ parser_version:
 
 ---
 
+# CURRENT_DEVELOPMENT_PRIORITY
+
+authority:
+
+DOCUMENTS/BACKLOG.md
+
+purpose:
+
+Compatibility authority anchor for task-scoped context routing. The current
+owner execution order and next dependent work are defined by the top active
+priority sections of `DOCUMENTS/BACKLOG.md`; this section must not duplicate or
+override that queue.
+
+---
+
 # CURRENT_OPERATIONAL_CHECKPOINT_2026_09_26
 
 active_owner_goal:
