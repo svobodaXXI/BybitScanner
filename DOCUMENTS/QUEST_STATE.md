@@ -210,7 +210,7 @@ audit решений. Никаких order/admission mutations в этом slice
 ### Рейд «Один запуск — весь прототип»
 
 **Приоритет:** P0  
-**Статус:** ONE-ACTION INTENT GATE OPEN; FINAL FULL OWNER ACCEPTANCE BLOCKED ON P0.5  
+**Статус:** ONE-ACTION INTENT COMPLETE; FINAL FULL OWNER ACCEPTANCE RUNNING / NOT YET COMPLETE  
 **Цель:** сделать один канонический owner-start путь, после которого PAPER
 backend, Robot protection/admission, Telegram callbacks/menu и Scanner имеют
 по одному владельцу, одну runtime authority и проверенную readiness-цепочку.
@@ -241,8 +241,8 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #275 merged (`03d19cb`): у non-executable Ikigai Box убран ложный `🤖 Робот` status-affordance; Box execution остаётся fail-closed до authoritative executable contract;
 - [x] PR #276 merged (`0f72355`): canonical tracked safe-stop path без process-title kills/forced close;
 - [x] owner-PC: current `main` загружен, desktop Robot start/stop path перенаправлен на canonical tracked launchers и safe-stop owner-run подтверждён;
-- [ ] P0.5: реализовать `DOCUMENTS/RUNTIME_INTENT_RECONCILER_PLAN.md` — один owner intent автоматически готовит/reconcile'ит backend, Telegram, Robot и/или Scanner через канонические safe transitions;
-- [ ] после P0.5 провести один чистый полный owner-run PAPER acceptance **без** подготовительных Telegram/terminal действий.
+- [x] P0.5: PR #285 (`543168420afaab3b0dde9be083969ff867b69263`) реализовал общий Runtime Intent Reconciler; owner-run desktop `Запуск робота` доказал one-action ALL до Robot READY + Scanner RUNNING;
+- [ ] завершить текущий чистый полный owner-run PAPER acceptance. Частичный checkpoint уже доказал реальный CONFIRMED AKEUSDT 5m -> `🤖 Робот` -> `Сигнал принят`; server-side Telegram Menu также подтверждён Bot API, хотя текущий desktop client визуально кнопку Menu не показывает.
 
 **Награда:** без XP за документацию/рефакторинг; награда только за доказанный
 полный запуск без ручного кризисного восстановления.
