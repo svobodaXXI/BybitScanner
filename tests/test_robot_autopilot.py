@@ -101,6 +101,17 @@ class RobotAutopilotPersistenceTests(unittest.TestCase):
         self.assertEqual(state.mode, "SHADOW")
         return store
 
+    def test_paper_runtime_startup_materializes_autopilot_off(self):
+        from tests.test_terminal_paper_runtime import _runtime
+
+        runtime = _runtime(self.db)
+        try:
+            state = runtime.store.get_robot_autopilot_state(ACCOUNT)
+            self.assertIsNotNone(state)
+            self.assertEqual((state.mode, state.version), ("OFF", 1))
+        finally:
+            runtime.close()
+
     def test_state_defaults_off_and_persists_mode_across_restart(self):
         with self._open() as store:
             state = store.initialize_robot_autopilot_state(ACCOUNT, updated_at_ms=1000)
