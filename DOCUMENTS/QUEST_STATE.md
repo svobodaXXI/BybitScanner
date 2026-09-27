@@ -1,3 +1,24 @@
+## 🌙 CHECKPOINT НА НОЧЬ — 2026-09-28
+
+Сегодняшний Box/Runtime acceptance сохранён, повторять пройденное не нужно.
+
+Закрыто:
+- no-WATCH owner contract;
+- PR #300 tick-normalized Box grid/TAKE;
+- frozen `2ZUSDT 1m` regression PASS;
+- focused Box planner 11/11 PASS;
+- one-action desktop start proof;
+- реальный `AKEUSDT 5m -> 🤖 Робот -> Сигнал принят`;
+- server-side Telegram Menu/8 commands подтверждены Bot API.
+
+Открыт один новый Box-blocker:
+`ARUSDT 1m -> plan_ikigai_box() -> no tick-aligned STOP beyond P4 satisfies net RR >= 2`.
+
+Следующее действие разработки: математически разложить frozen ARUSDT STOP interval
+(RR-bound, P4, соседние ticks, комиссии) и доказать: bug в search/rounding либо
+корректный fail-closed non-executable setup. До этого не ослаблять risk contract
+и не тратить новый полный owner acceptance.
+
 ## 🎯 АКТИВНЫЙ РЕЙД — «Две лаборатории»
 
 **Приоритет:** P0  
