@@ -79,6 +79,20 @@ class CachedClosedCandleProvider:
                 LOGGER.warning("candle cache miss on owner thread symbol=%s", symbol)
         return self._fetch_and_store(symbol)
 
+    def require_cached(self, symbol: str) -> Candle:
+        """Recovery evidence only: never fall back to network on the owner.
+
+        Missing/stale evidence keeps canonical recovery fail-closed. The HTTP
+        command boundary warms this same cache before submitting owner work.
+        """
+        with self._lock:
+            entry = self._entries.get(symbol)
+            if entry is not None and self._clock() - entry[0] <= self._max_age_s:
+                self._hits += 1
+                return entry[1]
+            self._owner_misses += 1
+        raise RuntimeError(f"Robot recovery closed candle cache unavailable: {symbol}")
+
     def warm(self, symbols: Iterable[str], *, max_workers: int = WARM_MAX_WORKERS) -> None:
         """Fetch ``symbols`` in parallel on the calling (non-owner) thread's pool.
 

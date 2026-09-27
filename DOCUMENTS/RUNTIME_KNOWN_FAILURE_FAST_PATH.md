@@ -96,3 +96,22 @@ Whenever a new runtime failure is resolved and is reasonably repeatable:
 - do not turn this document into an incident diary.
 
 The goal is fewer owner round-trips, not more documentation.
+
+## Repeated ingress overflow during canonical reconcile — 2026-09-27
+
+A successful reconcile to PAUSED followed by renewed coverage loss is not a
+stale-latch-only incident. Do not repeat reconcile/resume as the repair.
+Observed: ENTRY_PENDING on 2ZUSDT/ARBUSDT/ARKUSDT, no orders/exposure;
+capacity/high-watermark 64/64, max queue latency 9620.0137 ms,
+max protection processing 666.6149 ms, slowest owner call
+`BackendRuntimeIntentPorts.reconcile_robot.<locals>.<lambda>` 9065.2912 ms.
+Trace: robot_reconcile -> RobotRecoveryCoordinator._latest_geometry_indices
+-> default ScannerGeometryCursorProvider -> latest_scanner_closed_candle_time_ms
+-> candle REST. This bypassed the warmed candle cache (owner cache misses = 0).
+Recovery geometry must use the same pre-warmed closed-candle evidence; a
+missing/stale cache entry fails recovery closed instead of performing owner REST.
+Bootstrap recovery before subscriptions retains its original evidence path.
+Do not enlarge ingress capacity, weaken continuity checks or infer a need to
+remove pre-entry coverage solely because its LIMIT has not yet been created.
+Patch/runtime acceptance remains separate: no runtime restart or recovery retry
+is authorized by a successful developer test.

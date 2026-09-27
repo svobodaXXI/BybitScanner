@@ -332,6 +332,9 @@ class BackendRuntimeIntentPorts:
         return self._runtime.call(lambda runtime: runtime.scanner_status()).mode
 
     def start_robot(self):
+        warm = getattr(self._runtime, "warm_robot_closed_candles", None)
+        if warm is not None:
+            warm()
         return self._runtime.call(lambda runtime: runtime.robot_start())
 
     def resume_robot(self):

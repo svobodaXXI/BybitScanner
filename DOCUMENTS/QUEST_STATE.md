@@ -26,6 +26,21 @@ final stop persisted `ROBOT_STOPPED / ROBOT_STOPPED` with backend/Telegram
 left alive by design. Future recurring runtime incidents must use
 `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` before exploratory diagnosis.
 
+## P0 interruption — Robot protection ingress, 2026-09-27
+
+Активный квест: устранить повторный `ingress_overflow` без ослабления защиты.
+Autopilot и PR #291 заморожены по текущей команде владельца.
+Один bounded snapshot: 2ZUSDT/ARBUSDT/ARKUSDT = ENTRY_PENDING,
+APPROVED/RETEST_DETECTED без ордеров/позиций/обязательств; durable version 91,
+RECONCILIATION_REQUIRED. Slowest owner: canonical reconcile, 9065.29 ms.
+Подтверждён обход candle cache в default recovery geometry provider.
+Минимальный fix реализован в `codex/robot-recovery-ingress` от dedf1fd:
+recovery geometry читает прогретый cache, missing/stale evidence fail-closed.
+Focused evidence: 36 existing unittest checks PASS; после исправления test fixture
+11 pytest checks + 2 subtests PASS (production provider, burst, FIFO, crossing,
+duplicate fill, real overflow). Runtime не обновлялся; PR/merge не создавались.
+Приём кандидатов и live acceptance пока не восстановлены; XP без изменений.
+
 ## Кампания
 
 **«PAPER Robot: Гильдия паттернов»**
