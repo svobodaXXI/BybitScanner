@@ -57,6 +57,7 @@ from .schema import (
     SCHEMA_V21_MIGRATION_STATEMENTS,
     SCHEMA_V22_MIGRATION_STATEMENTS,
     SCHEMA_V23_MIGRATION_STATEMENTS,
+    SCHEMA_V24_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -102,6 +103,8 @@ ROBOT_RUNTIME_STATE_PAIRS = {
     ("ROBOT_RUNNING", "PAUSED"),
 }
 SCANNER_MODES = {"SCANNER_STOPPED", "SCANNER_RUNNING", "SCANNER_PAUSED"}
+ROBOT_AUTOPILOT_MODES = {"OFF", "SHADOW", "PAPER_AUTO"}
+ROBOT_AUTO_DECISION_OUTCOMES = {"ALLOW", "WAIT", "REJECT"}
 ROBOT_CANDIDATE_TRANSITIONS = {
     "BOX_PLAN_ONLY": set(),
     "APPROVED": {"APPROVED", "EXPIRED", "INVALIDATED"},
@@ -504,6 +507,33 @@ class ScannerRuntimeStateRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class RobotAutopilotStateRecord:
+    trading_account_id: TradingAccountId
+    mode: str
+    reason: str | None
+    version: int
+    updated_at_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class RobotAutoDecisionRecord:
+    decision_id: str
+    trading_account_id: TradingAccountId
+    candidate_ref: str
+    pattern: str
+    symbol: Symbol
+    timeframe: str
+    source_identity: str
+    snapshot_sha256: str | None
+    mode: str
+    policy_version: str
+    outcome: str
+    reason_code: str
+    evaluated_at_ms: int
+    resulting_candidate_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class RobotCandidateRecord:
     candidate_id: str
     trading_account_id: TradingAccountId
@@ -612,6 +642,25 @@ def _load_decimal(value: str) -> Decimal:
     if not result.is_finite():
         raise SchemaError("persisted Decimal value must be finite")
     return result
+
+
+def _robot_auto_decision_from_row(row: sqlite3.Row) -> RobotAutoDecisionRecord:
+    return RobotAutoDecisionRecord(
+        decision_id=row["decision_id"],
+        trading_account_id=TradingAccountId(row["trading_account_id"]),
+        candidate_ref=row["candidate_ref"],
+        pattern=row["pattern"],
+        symbol=Symbol(row["symbol"]),
+        timeframe=row["timeframe"],
+        source_identity=row["source_identity"],
+        snapshot_sha256=row["snapshot_sha256"],
+        mode=row["mode"],
+        policy_version=row["policy_version"],
+        outcome=row["outcome"],
+        reason_code=row["reason_code"],
+        evaluated_at_ms=int(row["evaluated_at_ms"]),
+        resulting_candidate_id=row["resulting_candidate_id"],
+    )
 
 
 def _paper_limit_from_row(row: sqlite3.Row) -> PaperLimitOrderRecord:
@@ -999,6 +1048,11 @@ class SQLiteStore:
     def _initialize_or_validate_schema(connection: sqlite3.Connection) -> None:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 23:
+            SQLiteStore._validate_required_tables(connection, version=23)
+            SQLiteStore._migrate_v23_to_v24(connection)
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
         if version == 22:
@@ -1434,6 +1488,19 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v23_to_v24(connection)
+
+    @staticmethod
+    def _migrate_v23_to_v24(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V24_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 24")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -1484,6 +1551,8 @@ class SQLiteStore:
             required.add("scanner_runtime_state")
         if version >= 23:
             required.update({"box_attempt_ownership", "box_order_ownership"})
+        if version >= 24:
+            required.update({"robot_autopilot_state", "robot_auto_decisions"})
         actual = {
             row[0]
             for row in connection.execute(
@@ -3962,6 +4031,134 @@ class SQLiteStore:
             if cursor.rowcount != 1:
                 raise ConcurrentUpdate("Robot runtime state changed or timestamp regressed")
         return self.get_robot_runtime_state(trading_account_id)  # type: ignore[return-value]
+
+    def initialize_robot_autopilot_state(
+        self, trading_account_id: TradingAccountId, *, updated_at_ms: int,
+    ) -> RobotAutopilotStateRecord:
+        self._assert_owner()
+        if updated_at_ms < 0:
+            raise ValueError("Robot Autopilot timestamp must not be negative")
+        with self._transaction():
+            self._connection.execute(
+                """INSERT OR IGNORE INTO robot_autopilot_state VALUES (?, 'OFF', NULL, 1, ?)""",
+                (trading_account_id.value, updated_at_ms),
+            )
+        return self.get_robot_autopilot_state(trading_account_id)  # type: ignore[return-value]
+
+    def get_robot_autopilot_state(
+        self, trading_account_id: TradingAccountId,
+    ) -> RobotAutopilotStateRecord | None:
+        self._assert_owner()
+        row = self._connection.execute(
+            "SELECT * FROM robot_autopilot_state WHERE trading_account_id=?",
+            (trading_account_id.value,),
+        ).fetchone()
+        if row is None:
+            return None
+        return RobotAutopilotStateRecord(
+            TradingAccountId(row["trading_account_id"]), row["mode"], row["reason"],
+            int(row["version"]), int(row["updated_at_ms"]),
+        )
+
+    def update_robot_autopilot_state(
+        self, trading_account_id: TradingAccountId, *, mode: str,
+        reason: str | None = None, expected_version: int, updated_at_ms: int,
+    ) -> RobotAutopilotStateRecord:
+        self._assert_owner()
+        if mode not in ROBOT_AUTOPILOT_MODES:
+            raise ValueError("unsupported Robot Autopilot mode")
+        if expected_version < 1 or updated_at_ms < 0:
+            raise ValueError("invalid Robot Autopilot revision or timestamp")
+        with self._transaction():
+            cursor = self._connection.execute(
+                """UPDATE robot_autopilot_state
+                   SET mode=?, reason=?, version=version+1, updated_at_ms=?
+                   WHERE trading_account_id=? AND version=? AND updated_at_ms<=?""",
+                (mode, reason, updated_at_ms, trading_account_id.value,
+                 expected_version, updated_at_ms),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Robot Autopilot state changed or timestamp regressed")
+        return self.get_robot_autopilot_state(trading_account_id)  # type: ignore[return-value]
+
+    def append_robot_auto_decision(
+        self, record: RobotAutoDecisionRecord,
+    ) -> tuple[RobotAutoDecisionRecord, bool]:
+        self._assert_owner()
+        if (
+            not record.decision_id.strip()
+            or not record.candidate_ref.strip()
+            or not record.pattern.strip()
+            or not record.timeframe.strip()
+            or not record.source_identity.strip()
+            or not record.policy_version.strip()
+            or not record.reason_code.strip()
+        ):
+            raise ValueError("Robot auto decision identity fields must be non-empty")
+        if record.mode not in {"SHADOW", "PAPER_AUTO"}:
+            raise ValueError("Robot auto decision requires SHADOW or PAPER_AUTO mode")
+        if record.outcome not in ROBOT_AUTO_DECISION_OUTCOMES:
+            raise ValueError("unsupported Robot auto decision outcome")
+        if record.evaluated_at_ms < 0:
+            raise ValueError("Robot auto decision timestamp must not be negative")
+        if record.snapshot_sha256 is not None and (
+            len(record.snapshot_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in record.snapshot_sha256)
+        ):
+            raise ValueError("Robot auto decision snapshot hash is invalid")
+        state = self.get_robot_autopilot_state(record.trading_account_id)
+        if state is None or state.mode != record.mode:
+            raise PersistenceError("Robot auto decision mode does not match durable Autopilot state")
+        existing = self.get_robot_auto_decision(record.decision_id)
+        if existing is not None:
+            if existing != record:
+                raise DuplicateIdentity("Robot auto decision identity conflicts with durable audit")
+            return existing, False
+        with self._transaction():
+            try:
+                self._connection.execute(
+                    """INSERT INTO robot_auto_decisions (
+                        decision_id, trading_account_id, candidate_ref, pattern, symbol,
+                        timeframe, source_identity, snapshot_sha256, mode, policy_version,
+                        outcome, reason_code, evaluated_at_ms, resulting_candidate_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        record.decision_id, record.trading_account_id.value,
+                        record.candidate_ref, record.pattern, record.symbol.value,
+                        record.timeframe, record.source_identity, record.snapshot_sha256,
+                        record.mode, record.policy_version, record.outcome,
+                        record.reason_code, record.evaluated_at_ms,
+                        record.resulting_candidate_id,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateIdentity("Robot auto decision identity conflicts with durable audit") from exc
+        persisted = self.get_robot_auto_decision(record.decision_id)
+        if persisted is None:
+            raise PersistenceError("Robot auto decision disappeared after commit")
+        return persisted, True
+
+    def get_robot_auto_decision(self, decision_id: str) -> RobotAutoDecisionRecord | None:
+        self._assert_owner()
+        if not isinstance(decision_id, str) or not decision_id.strip():
+            raise ValueError("decision_id must be non-empty")
+        row = self._connection.execute(
+            "SELECT * FROM robot_auto_decisions WHERE decision_id=?",
+            (decision_id.strip(),),
+        ).fetchone()
+        return _robot_auto_decision_from_row(row) if row is not None else None
+
+    def load_robot_auto_decisions(
+        self, trading_account_id: TradingAccountId,
+    ) -> tuple[RobotAutoDecisionRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            """SELECT * FROM robot_auto_decisions
+               WHERE trading_account_id=?
+               ORDER BY evaluated_at_ms, decision_id""",
+            (trading_account_id.value,),
+        ).fetchall()
+        return tuple(_robot_auto_decision_from_row(row) for row in rows)
 
     def initialize_scanner_runtime_state(
         self, trading_account_id: TradingAccountId, *, updated_at_ms: int,
