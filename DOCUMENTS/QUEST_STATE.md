@@ -102,7 +102,7 @@ cleanup. Следующий активный этап — один полный 
 ### Рейд «Автопилот — охотник без рук»
 
 **Приоритет:** P0  
-**Статус:** IMPLEMENTATION PLAN FROZEN; NEXT = STAGE A SHADOW FOUNDATION  
+**Статус:** STAGE A MERGED (#290); NEXT = SHARED ASSESSMENT → MULTI-PATTERN SHADOW DISCOVERY  
 **Канонический план:** `DOCUMENTS/ROBOT_AUTOPILOT_IMPLEMENTATION_PLAN.md`
 
 **Цель:** Robot сам находит поддерживаемые кандидаты, проверяет их через
@@ -111,7 +111,11 @@ cleanup. Следующий активный этап — один полный 
 владельцем `🤖 Робот`.
 
 Архитектурный контракт:
-- discovery/selection — новый слой;
+- discovery собирает ВСЕ поддерживаемые паттерны независимо: клин, L-shape,
+  Ikigai Box могут одновременно существовать на одном symbol/timeframe;
+- Telegram/наблюдение показывает каждый валидный паттерн; найденная Box не
+  имеет права скрыть Wedge и наоборот;
+- selection/arbitration — отдельный слой ПОСЛЕ полного discovery и policy;
 - immutable candidate/plan — существующие pattern adapters;
 - admission — только существующий canonical boundary;
 - execution/protection/reconcile — только существующий Robot;
@@ -122,14 +126,19 @@ cleanup. Следующий активный этап — один полный 
 - portfolio/risk значения для unattended PAPER не изобретаются кодом и должны
   быть явно заморожены до Stage D.
 
-Последняя подготовленная добыча: PR #288 merged as
-`6e865536cd1cd1a5cf7a7211576e1fe5d8b57be8`; Box manual admission boundary
-теперь отделён от Scanner, поэтому поверх него можно строить Autopilot без
-скрытого auto-admission.
+Подготовленная добыча:
+- PR #288: Box manual admission boundary отделён от Scanner;
+- PR #290 merged as `dedf1fd5d27b6446cb94d176c213452c2961ed33`:
+  durable OFF/SHADOW/PAPER_AUTO + pure read-only policy + immutable decision
+  audit; Stage A закрыт.
 
-**Следующий кодовый slice:** Stage A — durable Autopilot
-`OFF/SHADOW/PAPER_AUTO` state + pure read-only SHADOW policy + минимальный
-audit решений. Никаких order/admission mutations в этом slice.
+Новый owner rule 2026-09-27:
+**сначала найти и показать ВСЕ подходящие паттерны, потом решать, какой из них
+приоритетнее торговать.** Никакого winner-takes-discovery.
+
+**Следующий кодовый slice:** Stage B — общий read-only admission assessment,
+затем Stage C multi-pattern SHADOW discovery/candidate pool. CandidateArbiter
+включается только после полного набора кандидатов и не влияет на их показ.
 
 ## 🕓 Предыдущий активный квест — acceptance остаётся в очереди
 

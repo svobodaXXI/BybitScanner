@@ -21,19 +21,27 @@ Binding implementation order:
 2. **Stage B — shared read-only admission assessment** so manual and automatic
    admission cannot diverge.
 3. **Stage C — RobotDiscoveryController in SHADOW**, reusing existing detectors,
-   source-time OHLC and per-symbol 5m→1m traversal.
-4. **Stage D — PAPER_AUTO canonical admission**, only after explicit
-   portfolio/risk limits are frozen; auto path must call the same canonical
-   admission boundary as the owner button.
+   source-time OHLC and per-symbol 5m→1m traversal. It MUST collect/show all
+   valid patterns; one found pattern never suppresses another.
+4. **Stage D — deterministic CandidateArbiter + PAPER_AUTO canonical admission**,
+   only after explicit portfolio/risk limits are frozen. Same-symbol Wedge /
+   L-shape / Box candidates remain independently visible, then compete for the
+   existing single Robot owner using common cross-pattern trading facts rather
+   than raw pattern scores.
 5. **Stage E/F — portfolio protections + Telegram Autopilot controls/status.**
-6. **Stage G — ranking/expectancy only after sufficient PAPER evidence.**
+6. **Stage G — evidence-driven expectancy refinement after sufficient PAPER
+   history; it improves the arbiter rather than replacing complete discovery.**
 
 Hard constraints:
 - no second execution engine, order journal, protection system or recovery
   coordinator;
 - discovery never submits orders;
 - WATCH is never executable;
-- do not invent cross-pattern score comparability or risk thresholds;
+- never suppress detection/display of one pattern because another exists;
+- trade prioritization happens only AFTER all candidates are collected and
+  independently evaluated;
+- do not compare raw Wedge/L-shape/Box scores as if they were universal;
+  arbitration uses common auditable trading facts and later PAPER expectancy;
 - unset required portfolio limits fail closed;
 - OFF stops new automatic admissions but never abandons an already-open trade;
 - LIVE mutations remain prohibited.

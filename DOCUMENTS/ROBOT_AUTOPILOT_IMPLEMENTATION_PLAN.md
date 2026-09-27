@@ -12,9 +12,10 @@ The target workflow is:
 
 ```text
 market
-→ autonomous discovery
-→ immutable/frozen candidate
-→ common eligibility + portfolio/risk gates
+→ autonomous discovery of ALL supported patterns
+→ immutable/frozen candidate set
+→ common eligibility + portfolio/risk gates per candidate
+→ cross-candidate arbitration / trade priority
 → automatic canonical admission
 → existing Robot execution
 → existing protection / position / recovery lifecycle
@@ -107,9 +108,30 @@ It evaluates only facts needed before canonical admission:
 
 It must not alter the candidate or trading state.
 
+#### CandidatePool / RobotCandidateArbiter
+
+Discovery never stops because one supported pattern was already found.
+
+For each decision cycle, preserve every independent executable candidate keyed
+by `symbol × timeframe × pattern × formation`. A single market snapshot may
+therefore legitimately produce, for example, both a Wedge and an Ikigai Box.
+
+Presentation and trading selection are separate concerns:
+
+- Scanner/Telegram shows every independently admitted pattern card;
+- one pattern must never suppress another pattern's detection or delivery;
+- Robot policy evaluates every frozen candidate independently;
+- only AFTER that evaluation does `RobotCandidateArbiter` decide which
+  eligible candidate(s) receive scarce trading capacity;
+- losing arbitration never rewrites, deletes or hides the candidate.
+
+For the same symbol, the existing one-owner-per-symbol rule means multiple
+simultaneous eligible patterns compete for one trading owner unless that
+ownership contract is deliberately changed later.
+
 #### RobotAutoAdmissionController
 
-Consumes frozen candidates and policy decisions.
+Consumes the full frozen candidate set, policy decisions and arbitration result.
 
 In `SHADOW`:
 - records what would happen;
@@ -204,11 +226,15 @@ Required behavior:
 
 1. maintain a closed-candle cursor per `symbol × timeframe`;
 2. evaluate only when a new closed source candle can change the decision;
-3. for each symbol: 5m all patterns → 1m all patterns → next symbol;
-4. reuse one fetched candle snapshot across all compatible pattern detectors;
-5. preserve independent `symbol × timeframe × pattern × formation` identity;
-6. on one pattern failure, record it and continue other patterns/symbols;
-7. respect existing API/rate-limit/backoff infrastructure rather than adding a
+3. for each symbol: 5m ALL patterns → collect every result → 1m ALL patterns
+   → collect every result → next symbol;
+4. never short-circuit the remaining detectors because one pattern was found;
+5. reuse one fetched candle snapshot across all compatible pattern detectors;
+6. preserve independent `symbol × timeframe × pattern × formation` identity;
+7. deliver/show every independently valid owner-visible pattern, even when
+   another pattern on the same symbol/timeframe also exists;
+8. on one pattern failure, record it and continue other patterns/symbols;
+9. respect existing API/rate-limit/backoff infrastructure rather than adding a
    second uncontrolled request loop.
 
 The final implementation may share a lower-level discovery function with the
@@ -255,20 +281,52 @@ Default behavior for an unset required limit is fail-closed.
 Do not infer a universal cross-pattern ranking from current Scanner scores.
 Wedge, L-shape and Ikigai Box scores are not assumed comparable.
 
+This does NOT mean "do not choose". It means the chooser must operate on
+common, auditable trading facts rather than comparing unrelated raw pattern
+scores. Detection/display remains complete; arbitration decides only which
+eligible candidate gets trading capacity.
+
 ## 9. Candidate selection and ranking
 
-### Initial version
+### Initial version — deterministic multi-candidate arbitration
 
-Do not build an ML/ranking system.
+Do not build an ML system, but DO build an explicit deterministic arbiter.
 
-The first version should:
+The first version must:
 
-- independently evaluate every frozen candidate;
-- reject or wait on unsafe/ambiguous candidates;
-- use deterministic arbitration only where the policy has explicit authority;
-- when two otherwise-eligible candidates compete for a constrained global slot
-  and no approved comparator exists, leave them unadmitted rather than invent
-  a ranking.
+- independently discover, freeze, display and evaluate EVERY supported pattern;
+- never let Box/Wedge/L-shape suppress each other at discovery or Telegram
+  presentation time;
+- remove REJECT/WAIT candidates from the executable competition without hiding
+  them from observation/audit;
+- arbitrate only among candidates that individually reached `ALLOW`;
+- rank using common trading/execution facts that are genuinely comparable
+  across patterns, not their native Scanner scores.
+
+Initial comparable inputs, where proven for every competing candidate:
+
+1. executable-now / entry-readiness state;
+2. normalized freshness relative to that pattern's own validity window;
+3. net planned reward/risk after known fees/costs;
+4. distance to invalidation / adverse entry distance;
+5. required portfolio capacity / engaged WV;
+6. liquidity/slippage evidence when the existing market-data path can prove it;
+7. deterministic stable identity as the final tie-break only, never as a
+   quality signal.
+
+If a required common value cannot be proven, that candidate must not receive an
+invented advantage. The arbiter must expose the missing-comparator reason.
+
+Same-symbol collision rule for v0.1:
+- show ALL valid pattern candidates to the owner;
+- audit ALL of them;
+- because Robot ownership is exclusive per symbol, admit at most one active
+  candidate for that symbol;
+- choose the highest-priority `ALLOW` candidate using the explicit common
+  comparator above.
+
+Across different symbols, portfolio capacity may admit more than one candidate
+when the explicit global risk/concurrency budget permits it.
 
 ### Later evidence-based selector
 
@@ -342,9 +400,9 @@ Acceptance:
 - SHADOW gives the same legality result without mutation;
 - stale/invalid/duplicate/ownership conflicts have stable reasons.
 
-### Stage C — Autonomous discovery
+### Stage C — Autonomous multi-pattern discovery
 
-Goal: Robot finds candidates without owner input.
+Goal: Robot finds the complete candidate set without owner input.
 
 Implement `RobotDiscoveryController` using existing analyzers/detectors and
 closed-candle cursors.
@@ -353,18 +411,26 @@ Start in SHADOW only.
 
 Acceptance:
 - no direct order calls exist from discovery;
+- one found pattern never short-circuits another detector;
+- Wedge + L-shape + Ikigai Box may coexist on one symbol/timeframe;
+- all independently valid owner-visible patterns are shown/logged;
 - no duplicate candidate per frozen formation identity;
-- 5m→1m per-symbol order preserved;
+- 5m all patterns → 1m all patterns per-symbol order preserved;
 - WATCH never enters executable candidate flow;
 - restart does not replay old formations as new opportunities.
 
-### Stage D — PAPER_AUTO canonical admission
+### Stage D — arbitration + PAPER_AUTO canonical admission
 
-Goal: remove owner tap while preserving the same execution boundary.
+Goal: remove owner tap while preserving the same execution boundary and
+choosing among simultaneous eligible patterns.
 
 Only after explicit portfolio/risk policy values are frozen:
 
-- `ALLOW` → canonical `admit_robot_candidate()`;
+- collect all `ALLOW` candidates for the decision cycle;
+- run the deterministic `RobotCandidateArbiter`;
+- for a same-symbol collision, select at most one winner under existing symbol
+  ownership while keeping every losing pattern visible/auditable;
+- selected candidate → canonical `admit_robot_candidate()`;
 - downstream existing Robot monitor owns all order/protection mutations;
 - idempotent retries never double-admit.
 
@@ -450,8 +516,12 @@ the existing Robot safety lifecycle independently requires that action.
 
 Autopilot v0.1 PAPER is complete only when:
 
-- Robot finds supported pattern candidates without owner input;
+- Robot finds ALL supported pattern candidates without owner input;
+- simultaneous Wedge/L-shape/Ikigai candidates are preserved independently and
+  remain owner-visible;
 - every auto candidate is a frozen immutable source;
+- trade priority is chosen only after complete candidate collection and
+  per-candidate policy evaluation;
 - SHADOW and PAPER_AUTO use the same policy;
 - automatic admission uses the same canonical boundary as manual approval;
 - no discovery code submits orders directly;
