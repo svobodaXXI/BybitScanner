@@ -1,3 +1,20 @@
+## 🎯 Активный процессный квест — «Каждый баг оставляет карту»
+
+**Статус:** OWNER-APPROVED / DOCUMENTED 2026-09-27  
+**Канон:** `DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md`
+
+После повторного реального `ingress_overflow` меняется не safety, а путь разработки:
+каждый воспроизводимый реальный дефект сначала превращается в детерминированный fixture/replay, затем исправляется локально и только после GREEN нижних ворот снова тратит время владельца на реальную acceptance.
+
+Два главных босса проекта до отдельного owner reprioritization:
+- 🛡️ **Robot Stability** — «Переполненный шлюз» остаётся RED: #293 сократил reconcile примерно с 9.1 с до 1.4 с, но очередь снова достигла 64/64 и 2ZUSDT получил `ingress_overflow` при `ENTRY_PENDING` coverage;
+- 📐 **Geometry Quality** — клинья/треугольники/анкеры переводятся на compact geometry golden set из реальных candles + expected anchors/negative cases.
+
+Новые ворота разработки: **FAST → REPLAY → PAPER CI → OWNER ACCEPTANCE**.
+Replay — developer regression, а не замена полного owner Scanner pass. Полный Scanner acceptance по-прежнему только один complete eligible-universe run с обычным Telegram и всеми integrated patterns.
+
+Следующий технический slice для текущего P0: создать первый continuous multi-symbol `ENTRY_PENDING` runtime replay без искусственных drain barriers и доказать текущий overflow как RED до следующего production fix.
+
 # BybitScanner — состояние кампании
 
 Статус: ACTIVE  

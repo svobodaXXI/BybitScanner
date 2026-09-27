@@ -1,3 +1,21 @@
+## NOW — 2026-09-27 — PROCESS OPTIMIZATION: REPLAY + GEOMETRY GOLDEN SET
+
+Owner-approved development-loop improvement:
+`DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md`.
+
+Current product focus is reduced to two blocking quality fronts:
+1. **P0 Robot Stability** — current protection ingress overflow remains RED. PR #293 reduced reconcile stall materially but runtime still reached 64/64 and later marked 2ZUSDT unhealthy with `ingress_overflow` while covered symbols were `ENTRY_PENDING`.
+2. **Geometry Quality** — Wedge/Triangle geometry and anchor fidelity, developed against deterministic saved real cases before the mandatory full Scanner acceptance.
+
+Process change:
+- real incident -> deterministic fixture -> RED -> bounded fix -> replay GREEN -> minimum PAPER CI -> owner acceptance;
+- first runtime replay must model continuous multi-symbol `ENTRY_PENDING` traffic without artificial drain barriers;
+- establish `tests/fixtures/runtime_replays/` and `tests/fixtures/geometry_gold/` as developer evidence surfaces;
+- use FAST / REPLAY / PAPER CI / OWNER ACCEPTANCE cost tiers;
+- replay/local fixtures never replace the permanent full-universe Telegram Scanner acceptance rule;
+- preserve FIFO protection evidence, fail-closed semantics, PAPER/LIVE boundaries and owner-manual runtime ownership;
+- Autopilot and other feature expansion remain preserved but deferred behind Robot Stability and Geometry Quality unless the owner explicitly reprioritizes.
+
 ## NOW — 2026-09-27 — NEW BINDING OWNER PRIORITY: ROBOT AUTOPILOT
 
 Owner direction: begin development of autonomous candidate discovery and PAPER
