@@ -253,11 +253,11 @@ Binding owner order:
    - для каждого symbol сначала 5m, затем сразу 1m;
    - независимые symbol × timeframe × pattern × formation identity/dedup/evidence.
 
-Этот порядок действует на сегодня и имеет приоритет над более старыми next-step формулировками, пока владелец явно его не изменит.
+Этот порядок действовал 2026-09-26 и теперь сохранён только как исторический checkpoint.
 
 ## 📜 Historical owner order — 2026-09-26 (superseded 2026-09-27)
 
-Текущий порядок работ от владельца:
+Исторический порядок работ владельца:
 
 1. 🧹 **Разобрать старые открытые PR недели** — triage открытых PR: закрыть superseded/obsolete, оставить только реально нужные; ничего не merge'ить механически.
 2. 🎨 **Карточка открытой позиции Robot** — Telegram position card refinement без изменения торговой логики; добавить под карточкой кнопку **«Открыть в Trading View»** для её symbol и унифицировать подпись соответствующей TradingView-кнопки под **всеми Scanner-сигналами** на **«Открыть в Trading View»** (сейчас signal-кнопка подписана `📈 Open TradingView`).
@@ -320,23 +320,25 @@ Telegram open-position card:
 - ✅ **«Контекст не потерян»** — 2026-09-27 новый чат без ручного handoff
   восстановил из репозитория актуальный проектный state и видимый игровой
   режим; зафиксировано в `QUEST_REWARD_LEDGER.md` без дополнительного XP.
-- ⬜ **«Контекст не потерян» (повторная проверка bootstrap после будущих изменений)** — не отдельная награда;
-  игровой response-mode.
+
 
 ## Последняя доказанная добыча
 
 - ordered disconnect/reconnect continuity barrier;
 - regression/acceptance proof для protection continuity;
-- Ikigai Box owner Robot status/control button;
+- единый owner desktop runtime start-path с доказанными PAPER/LIVE safety,
+  Robot admission/protection и Telegram same-DB readiness gates;
+- `DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md` — общий Signal → Robot
+  integration/UX контракт для всех паттернов;
+- `DOCUMENTS/QUEST_REWARD_LEDGER.md` — append-only authority для XP,
+  ачивок и reusable loot;
 - два утверждённых архитектурных плана:
   multi-pattern Scanner и FocusedPatternMonitor;
 - русская GTD Quest System;
 - стабильный Custom Instructions bootstrap для автоматического нового-чата и
   быстрого освежения контекста;
-- глобальные ChatGPT Custom Instructions установлены владельцем 2026-09-25;
-  проверка нового чата 2026-09-26 восстановила технический state, но потеряла
-  user-visible игровой response-mode; bootstrap-contract усилен, а ачивка
-  «Контекст не потерян» остаётся закрытой до повторной проверки в новом чате.
+- 2026-09-27 новый чат подтвердил полный repository-driven bootstrap вместе с
+  видимым игровым response-mode; ачивка «Контекст не потерян» открыта.
 
 ## Response-mode contract
 
