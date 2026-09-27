@@ -1,3 +1,100 @@
+## TODAY — 2026-09-27 — BINDING OWNER ORDER
+
+This order is the current owner priority and supersedes older 2026-09-26
+"today"/next-step ordering until the owner changes it again.
+
+### P0.1 — Fix the permanent Telegram control surface
+
+- Draft PR #271: Menu button persistence after owner Scanner/Robot controls.
+- Preserve one state-aware `/scanner` command:
+  RUNNING → Pause, PAUSED → Continue, STOPPED → Start.
+- Menu must remain visible without leaving/re-entering the bot.
+- The fix is platform-level: Scanner commands, Robot callbacks and other
+  owner callbacks must not each grow separate menu repair logic.
+- Current running acceptance instance uses pre-#271 code, so its disappearing
+  Menu is evidence, not acceptance of the fix.
+
+### P0.2 — Implement one Pattern → Robot integration platform
+
+Authoritative standard:
+`DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md`.
+
+Goal: stop developing candidate buttons, admission feedback, position
+notifications, cards, protection/reconcile and controls separately for every
+pattern.
+
+Required architecture:
+
+- common Signal/Telegram shell;
+- common durable candidate + admission;
+- common execution ownership / protection / position lifecycle;
+- common open/close notifications, cards, monitoring and recovery;
+- pattern strategy adapters contain only pattern-specific evidence and trading
+  rules;
+- Wedge becomes the reference adapter, not the owner of platform behavior;
+- no second execution engine and no same-label/different-action Telegram UX.
+
+### P0.3 — Migrate current pattern families to the common adapter boundary
+
+- Wedge: preserve existing proven behavior through the common contract.
+- Ikigai Box: remove the misleading `🤖 Робот` status affordance; when Box
+  trading rules are authoritative/executable, the shared `🤖 Робот` action
+  must admit the real durable Box candidate and use the common lifecycle.
+- L-shape: connect through the same common adapter/lifecycle, preserving its
+  own strategy rules.
+- Triangle/future patterns must use the same route rather than a new Telegram
+  or Robot subsystem.
+
+Do not invent missing strategy parameters merely to complete an adapter.
+Unresolved trading semantics stay blocked/fail-closed while the common owner UX
+remains truthful.
+
+### P0.4 — Close remaining desktop-runtime composition debt
+
+- make the permanent `start_scanner` and `Запуск робота` surfaces converge
+  on one intended PAPER database/runtime identity;
+- remove maintenance drift from copied canonical launcher gate logic where a
+  reusable canonical composition boundary can replace it;
+- runtime-check the safe stop shortcut after the code path is ready;
+- preserve owner-manual runtime ownership and all LIVE-off gates.
+
+### P1 — Ikigai Box «Кривой первый импульс»
+
+Continue the already-proven AIGENSYNUSDT 5m RED/architecture checkpoint on
+Opus 5.5. Do not repeat diagnosis. Keep the existing narrow production
+boundary and structural-pivot semantics recorded below.
+
+### P1 final gate — one clean owner-run full acceptance
+
+After the P0 fixes that affect the owner/runtime surface are merged and loaded
+into the canonical desktop path:
+
+- one complete eligible-universe Scanner pass;
+- normal Telegram delivery;
+- all integrated patterns;
+- verify Menu persistence and Scanner Pause/Continue on the same traversal;
+- verify real Robot candidate admission where a pattern is Robot-capable;
+- verify common monitoring/position/lifecycle surfaces as real events become
+  available;
+- no partial/subset run may replace this acceptance.
+
+The currently running pre-fix pass remains useful exploratory evidence but
+cannot accept code that was merged/loaded after it started.
+
+### P2 — Full dual-timeframe Scanner 5m→1m
+
+Per symbol: all 5m pattern work, then all 1m pattern work, with independent
+symbol × timeframe × pattern × formation identity/dedup/evidence.
+
+### Process standard completed today
+
+- `DOCUMENTS/QUEST_REWARD_LEDGER.md` introduced as append-only canonical
+  authority for XP/achievements/loot.
+- `QUEST_STATE.md` becomes a projection; future verified quest outcomes must
+  update both automatically as part of Definition of Done.
+- `DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md` defines the shared product
+  and integration contract.
+
 ## OWNER RUNTIME ENTRYPOINT — DESKTOP SHORTCUTS — 2026-09-27
 
 Permanent owner UX rule: Scanner/Robot are started manually from the existing desktop
