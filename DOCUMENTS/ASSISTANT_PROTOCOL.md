@@ -119,6 +119,41 @@ Terminal commands are acceptable only for bounded diagnosis or a one-time repair
 desktop path itself is broken or its local target must be established. Such diagnosis is
 not a replacement owner workflow.
 
+### Unified Signal / Robot integration — HARD UX CONTRACT (OWNER RULE 2026-09-27)
+
+The owner operates all Scanner patterns through one Telegram/Robot product surface.
+The canonical detailed standard is
+`DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md`.
+
+Assistant obligations:
+
+1. Treat Telegram signal shell, Robot candidate/admission, control menu,
+   execution ownership, protection, position cards, lifecycle notifications,
+   monitoring and reconciliation as shared platform behavior.
+2. Do not implement a second per-pattern copy of those mechanisms.
+3. `🤖 Робот` means admission of the exact durable candidate under that signal.
+   It must never silently mean "show Robot status" for another pattern.
+4. If a pattern is not Robot-capable, do not present a deceptive admission
+   affordance; use the explicitly named common status surface instead.
+5. A new pattern contributes a strategy adapter: its immutable evidence,
+   direction, executability, entry/protection/exit/invalidation rules. Shared
+   owner UX and safety remain common.
+6. A common UX/control fix must be checked at the platform boundary and applied
+   to every Robot-capable adapter, not re-fixed one pattern at a time.
+7. The Telegram Menu button is a permanent owner control surface and must remain
+   available after owner commands/callbacks; `/scanner` is the state-aware
+   Pause/Resume/Start toggle.
+
+### Game reward ledger — HARD PROCESS CONTRACT (OWNER RULE 2026-09-27)
+
+`DOCUMENTS/QUEST_REWARD_LEDGER.md` is the canonical append-only authority for
+XP, achievements and reusable loot. `QUEST_STATE.md` is its current projection.
+
+When verified work changes game state, append the reward event and update
+QUEST_STATE in the same Definition of Done before announcing the new total as
+canonical. A conflicting number stated in chat triggers reconciliation; it is
+not sufficient by itself to rewrite the scoreboard.
+
 ### Scanner runtime is owner-manual, never an agent job — OWNER RULE 2026-09-23
 
 A real Scanner pass, especially the full eligible-universe Telegram acceptance
