@@ -65,6 +65,61 @@ Authoritative standard:
   Reuse `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` for future runtime
   incidents and broaden only when new evidence does not match a known path.
 
+### P0.5 — One-action Runtime Intent Reconciler — PLANNED / NEXT
+
+Owner runtime UX override from 2026-09-27:
+
+> The owner states the desired outcome once; BybitScanner must inspect,
+> prepare, reconcile and verify the required PAPER runtime automatically.
+
+Authoritative plan:
+`DOCUMENTS/RUNTIME_INTENT_RECONCILER_PLAN.md`.
+
+Triggering evidence:
+- after the proven canonical safe-stop, Robot correctly remained
+  `ROBOT_STOPPED / ROBOT_STOPPED`;
+- the normal desktop `Запуск робота` path then reused backend/Telegram but
+  failed on `robot_admission_ready=false` before Scanner start;
+- the current launcher therefore requires a separate Telegram
+  `Робот -> ▶ Старт` transition and then a repeated launcher action;
+- this is safe but violates the owner's one-action runtime intent.
+
+Required product contract:
+- desktop and Telegram express `SCANNER`, `ROBOT`, `ALL` (plus stop intents);
+- one canonical intent reconciler observes actual state and applies only
+  existing legal/fail-closed transitions;
+- STOPPED -> start, PAUSED -> resume, already-ready -> no-op;
+- canonical reconciliation may be used automatically when its own evidence
+  proves the state recoverable;
+- wrong DB identity, ambiguous ownership/protection, unknown state or failed
+  canonical reconciliation remain hard blockers;
+- no direct SQLite repair, no LIVE mutation, no second runtime/state machine;
+- existing desktop shortcuts remain stable and become thin intent entrypoints;
+- Telegram calls the same intent contract instead of duplicating preparation
+  logic;
+- SCANNER-only must not start Robot; ROBOT-only must not start Scanner;
+- `ALL` must prepare/reuse backend + Telegram, reach Robot READY/protection
+  healthy, then start/resume one Scanner pass;
+- repeated/double intent must be idempotent and duplicate-safe.
+
+Implementation order:
+1. freeze the intent/state transition matrix with focused tests;
+2. add backend `RuntimeIntentReconciler` using existing Robot/Scanner
+   control/recovery primitives;
+3. add a compact PAPER-only intent/status boundary;
+4. consolidate desktop bootstrap into one tracked Python intent entrypoint and
+   reduce .bat launchers to thin wrappers;
+5. route Telegram intent actions through the same contract and add one
+   explicit **«▶ Всё»** action;
+6. fold stop composition into the same contract without regressing canonical
+   safe-stop;
+7. perform the single full owner acceptance from an intentionally non-prepared
+   safe state.
+
+**Priority effect:** the existing P1 final full owner acceptance is blocked
+behind P0.5. Do not work around this gap by asking the owner to manually start
+Robot first, query health, toggle states, or repeat the launcher.
+
 ### P1 — Ikigai Box «Кривой первый импульс» — COMPLETE
 
 - The required first production slice was completed on Opus 5.5 as commit
