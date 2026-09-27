@@ -1,11 +1,27 @@
 # Ikigai Box — two-impulse Fibonacci reversal (user-defined PAPER strategy)
 
-Status: **Ikigai Box Scanner detection/WATCH, immutable BOX_PLAN_ONLY planning/persistence, Scanner→Robot bridge, four-order PAPER entry, shared Robot fill/protection/recovery lifecycle, and aggregate top-up attestation are implemented. PAPER Robot execution for Ikigai Box v0.1 is owner-authorized as of 2026-09-25. LIVE execution remains prohibited.**
+Status: **Ikigai Box Scanner detection, immutable BOX_PLAN_ONLY planning/persistence, Scanner→Robot bridge, four-order PAPER entry, shared Robot fill/protection/recovery lifecycle, and aggregate top-up attestation are implemented. PAPER Robot execution for Ikigai Box v0.1 is owner-authorized as of 2026-09-25. LIVE execution remains prohibited.**
 Scope: Scanner recognition, Telegram observation charts, and owner-authorized
 PAPER Robot execution through the existing shared Robot lifecycle. This is **not** the
 ordinary horizontal-range breakout/rectangle pattern. The 2026-09-20 user screenshot and
 explicit trading decisions in the current conversation take precedence over the obsolete
 `DOCUMENTS/BACKLOG.md` G5 "horizontal range / breakout" text.
+
+## Owner correction — no Ikigai Box WATCH product mode (2026-09-27)
+
+The owner did **not** request a separate Ikigai Box `WATCH` signal mode and does not want
+one in the product UX. The supported owner-facing Box flow is:
+
+`CONFIRMED Ikigai Box -> normal Telegram signal -> durable Robot candidate when executable -> 🤖 Робот admission`.
+
+Consequences:
+- do not emit separate Ikigai Box WATCH Telegram cards;
+- do not use WATCH as an explanation for a missing `🤖 Робот` button on a normal Box signal;
+- WATCH must not participate in Robot admission, Autopilot discovery or acceptance;
+- existing WATCH-specific detector/sender/stream/feature-flag code is legacy implementation debt, not owner-approved product behavior, and should be disabled/removed in a bounded cleanup rather than expanded;
+- acceptance for Ikigai Box concerns normal CONFIRMED signals only.
+
+Historical WATCH references below are retained only as implementation/history context and are superseded by this owner correction for current product behavior.
 
 ## Completed implementation and no-repeat checkpoint (2026-09-24)
 

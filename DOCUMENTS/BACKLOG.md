@@ -1,3 +1,19 @@
+## NOW — 2026-09-27 — OWNER CORRECTION: IKIGAI BOX HAS NO WATCH USER MODE
+
+Binding owner decision: Ikigai Box uses the normal CONFIRMED signal path only.
+A separate Box WATCH mode was not requested and is not part of the product UX.
+
+Implementation implications:
+- no separate WATCH Telegram cards;
+- no WATCH-based explanation for a missing Robot button;
+- WATCH is excluded from Robot admission, Autopilot discovery and owner acceptance;
+- existing Box WATCH-specific code/flags are legacy cleanup debt and must not be expanded;
+- current acceptance checks only normal CONFIRMED Ikigai Box signals and their Robot affordance.
+
+Owning strategy authority:
+`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`, section
+"Owner correction — no Ikigai Box WATCH product mode (2026-09-27)".
+
 ## NOW — 2026-09-27 — BINDING IMPLEMENTATION QUEUE: ROBOT STABILITY -> GEOMETRY QUALITY
 
 Authoritative execution plan:
@@ -88,7 +104,7 @@ Hard constraints:
 - no second execution engine, order journal, protection system or recovery
   coordinator;
 - discovery never submits orders;
-- WATCH is never executable;
+- Ikigai Box WATCH is not an owner-approved product mode and must not participate in discovery or admission; only normal CONFIRMED Box signals are in scope;
 - do not invent cross-pattern score comparability or risk thresholds;
 - unset required portfolio limits fail closed;
 - OFF stops new automatic admissions but never abandons an already-open trade;
