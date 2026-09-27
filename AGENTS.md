@@ -440,7 +440,7 @@ Use the durable governance path only when its distinct value is needed:
 
 Before the first project-specific user action in a session, load the relevant communication/user-action rules from `DOCUMENTS/ASSISTANT_PROTOCOL.md`. Reload only changed/uncertain sections.
 
-If user action is objectively required, follow the protocol’s exact `Сейчас сделай:` and copy-ready rules. Do not ask the user to run read-only repository inspection that an available repository connector can perform.
+If user action is objectively required, follow the protocol’s exact `Сейчас сделай:` and copy-ready rules. Do not ask the user to run read-only repository inspection that an available repository connector can perform. Never use the owner as a human search/filter/parser for diagnostics: if decisive evidence is host-local, give one bounded ready command or delegated prompt that collects, searches, filters and formats it automatically; manual log/console/file hunting is last-resort and opt-in only.
 
 ## Active Scanner geometry course
 
