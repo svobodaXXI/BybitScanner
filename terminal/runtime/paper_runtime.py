@@ -62,7 +62,10 @@ from terminal.application.robot_recovery import (
     RobotRecoveryCoordinator,
 )
 from robot_flat_closure import CandidateOwnership, prove_flat_closure
-from scanner_geometry_cursor import latest_scanner_closed_candle, load_scanner_catchup_closed_candles
+from scanner_geometry_cursor import (
+    default_scanner_geometry_cursor_provider, latest_scanner_closed_candle,
+    load_scanner_catchup_closed_candles, project_latest_geometry_index,
+)
 from terminal.runtime.closed_candle_cache import CachedClosedCandleProvider
 from terminal.domain.models import (
     Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
@@ -739,7 +742,9 @@ class PaperRuntime:
         self._robot_recovery = RobotRecoveryCoordinator(
             self.store,
             self._paper_account_id,
-            latest_geometry_index_provider=robot_latest_geometry_index_provider,
+            latest_geometry_index_provider=(
+                robot_latest_geometry_index_provider or self._robot_latest_geometry_index
+            ),
             clock_ms=lambda: int(time.time() * 1000),
         )
         self._robot_recovery.recover()
@@ -1695,6 +1700,17 @@ class PaperRuntime:
         if not sep or not symbol or not reason:
             return None
         return symbol, reason
+
+    def _robot_latest_geometry_index(self, symbol: str, snapshot: Mapping[str, object]) -> int:
+        cache = getattr(self, "robot_closed_candle_cache", None)
+        if cache is None:
+            # Initial construction runs before subscriptions/owner dispatch exist.
+            # Preserve bootstrap recovery and explicitly injected non-cache providers.
+            return default_scanner_geometry_cursor_provider()(symbol, snapshot)
+        candle = cache.require_cached(symbol)
+        return project_latest_geometry_index(
+            snapshot, latest_closed_candle_time_ms=candle["time_ms"],
+        )
 
     def robot_approved_candidate_symbols(self) -> tuple[str, ...]:
         """Symbols of APPROVED candidates (light read) for the candle cache warm-up."""
