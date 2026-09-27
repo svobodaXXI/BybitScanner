@@ -312,6 +312,93 @@ class TelegramMonitoringTests(unittest.TestCase):
         self.assertTrue(monitoring._process_message(message))
         stop.assert_called_once_with(123)
 
+    @patch("telegram_monitoring._scanner_request")
+    @patch("telegram_monitoring._send_text")
+    def test_scanner_stop_acknowledges_then_hands_off_scanner_shutdown(self, send, request):
+        order = []
+        send.side_effect = lambda *a, **k: order.append("ack")
+        with patch.object(
+            monitoring.stop_robot_runtime, "launch_detached",
+            side_effect=lambda *a, **k: order.append("launch"),
+        ) as launch:
+            monitoring._send_scanner_stop(123)
+        launch.assert_called_once_with("scanner", notify_chat=123)
+        self.assertEqual(order, ["ack", "launch"])
+        send.assert_called_once_with(123, "⏹ Останавливаю сканер…")
+        request.assert_not_called()
+
+    @patch("telegram_monitoring._send_text")
+    def test_scanner_stop_handoff_failure_is_reported_once(self, send):
+        with patch.object(
+            monitoring.stop_robot_runtime, "launch_detached", side_effect=OSError("no python"),
+        ) as launch:
+            monitoring._send_scanner_stop(123)
+        launch.assert_called_once()
+        self.assertEqual(send.call_args_list[-1], call(123, "⚠ Остановка сканера не запущена."))
+
+    def _shutdown_listener(self):
+        monitoring._SHUTDOWN_REQUESTED.clear()
+        self.addCleanup(monitoring._SHUTDOWN_REQUESTED.clear)
+        identity_patch = patch.object(monitoring, "_DATABASE_IDENTITY", "a" * 64)
+        identity_patch.start()
+        self.addCleanup(identity_patch.stop)
+        server = monitoring.acquire_worker_singleton(port=0)
+        self.assertIsNotNone(server)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return server.server_address[1]
+
+    def _post_shutdown(self, port, body):
+        import http.client
+
+        raw = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        try:
+            connection.request("POST", "/shutdown", body=raw,
+                               headers={"Content-Length": str(len(raw))})
+            response = connection.getresponse()
+            return response.status, json.loads(response.read().decode("utf-8"))
+        finally:
+            connection.close()
+
+    def test_shutdown_endpoint_rejects_wrong_or_missing_identity(self):
+        port = self._shutdown_listener()
+        for body, status in (
+            ({"database_identity": "0" * 64}, 409),
+            ({"database_identity": ("a" * 64).upper()}, 409),
+            ({}, 400),
+            ({"database_identity": ""}, 400),
+            ({"database_identity": "a" * 64, "force": True}, 400),
+            (b"not json", 400),
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self._post_shutdown(port, body)[0], status)
+                self.assertFalse(monitoring._SHUTDOWN_REQUESTED.is_set())
+
+    def test_shutdown_endpoint_accepts_exact_identity_and_signals_the_loop(self):
+        port = self._shutdown_listener()
+        status, payload = self._post_shutdown(port, {"database_identity": "a" * 64})
+        self.assertEqual((status, payload["ok"]), (200, True))
+        self.assertTrue(monitoring._SHUTDOWN_REQUESTED.is_set())
+
+    def test_run_loop_exits_normally_after_shutdown_and_releases_singleton(self):
+        monitoring._SHUTDOWN_REQUESTED.clear()
+        self.addCleanup(monitoring._SHUTDOWN_REQUESTED.clear)
+        server = SimpleNamespace(server_address=("127.0.0.1", 8766))
+
+        def poll(offset):
+            monitoring._SHUTDOWN_REQUESTED.set()
+            return offset
+
+        with patch.object(monitoring, "database_identity", return_value="a" * 64), \
+                patch.object(monitoring, "acquire_worker_singleton", return_value=server), \
+                patch.object(monitoring, "_load_offset", return_value=None), \
+                patch.object(monitoring, "poll_updates_once", side_effect=poll) as polled, \
+                patch.object(monitoring, "_release_worker_singleton") as release:
+            self.assertEqual(monitoring.run(), 0)
+        polled.assert_called_once()
+        release.assert_called_once_with(server)
+
     @patch("telegram_monitoring._send_text")
     def test_positions_preserves_workspace_context(self, send):
         from urllib.parse import parse_qs, urlsplit

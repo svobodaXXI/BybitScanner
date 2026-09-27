@@ -407,7 +407,9 @@ class ProductionPrimitivesTests(unittest.TestCase):
         with mock.patch("tools.runtime_intent.subprocess.Popen") as popen:
             runtime_intent.spawn_console(["start_paper_backend.bat"], ROOT)
         args, kwargs = popen.call_args
-        self.assertEqual(args[0], ["cmd.exe", "/k", "start_paper_backend.bat"])
+        # /c: the managed window closes itself once the runtime child exits normally.
+        self.assertEqual(args[0], ["cmd.exe", "/c", "start_paper_backend.bat"])
+        self.assertNotIn("/k", args[0])
         self.assertEqual(kwargs["cwd"], str(ROOT))
         self.assertEqual(kwargs["creationflags"], getattr(subprocess, "CREATE_NEW_CONSOLE", 0))
         self.assertNotIn("shell", kwargs)

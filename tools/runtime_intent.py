@@ -139,9 +139,9 @@ def paper_safe_backend_env(env: Mapping[str, str]) -> dict[str, str]:
 
 
 def spawn_console(argv: list[str], cwd: Path, env: Mapping[str, str] | None = None) -> None:
-    """Start a dependency in its own visible console that stays open after exit."""
+    """Start a dependency in its own visible console that closes when the child exits."""
     subprocess.Popen(
-        ["cmd.exe", "/k", *argv], cwd=str(cwd),
+        ["cmd.exe", "/c", *argv], cwd=str(cwd),
         env=None if env is None else dict(env),
         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
     )

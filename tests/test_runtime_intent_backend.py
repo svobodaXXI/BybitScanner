@@ -38,8 +38,10 @@ class FakePaperRuntime:
         "live_limit_acceptance_notional_ceiling": "0",
     }
 
+    database_identity = "a" * 64
+
     def live_limit_acceptance_diagnostics(self):
-        return {"live_gates": dict(self.live_gates)}
+        return {"live_gates": dict(self.live_gates), "database_identity": self.database_identity}
 
     def robot_runtime_state(self):
         return SimpleNamespace(mode=self.robot[0], recovery_status=self.robot[1])
@@ -113,7 +115,7 @@ class RecordingLock:
         return False
 
 
-class RuntimeIntentBackendTests(unittest.TestCase):
+class _BackendServerMixin:
     def setUp(self):
         patcher = mock.patch(
             "terminal.runtime.paper_http_server._scanner_acceptance_ready", return_value=True,
@@ -130,17 +132,18 @@ class RuntimeIntentBackendTests(unittest.TestCase):
         server.runtime_intent_lock = lock or threading.Lock()
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
+        server.serving_thread = thread
         self.addCleanup(thread.join, 5)
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         return server
 
-    def _post(self, server, body):
+    def _post(self, server, body, path="/api/runtime/intent"):
         raw = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
         connection = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=10)
         try:
             connection.request(
-                "POST", "/api/runtime/intent", body=raw,
+                "POST", path, body=raw,
                 headers={"Content-Type": "application/json", "Content-Length": str(len(raw))},
             )
             response = connection.getresponse()
@@ -148,6 +151,8 @@ class RuntimeIntentBackendTests(unittest.TestCase):
         finally:
             connection.close()
 
+
+class RuntimeIntentBackendTests(_BackendServerMixin, unittest.TestCase):
     def test_exact_safe_stop_state_converges_through_all(self):
         runtime = FakePaperRuntime(robot=STOPPED, scanner="SCANNER_STOPPED")
         status, payload = self._post(self._serve(runtime), {"intent": "ALL"})
@@ -296,6 +301,51 @@ class RuntimeIntentBackendTests(unittest.TestCase):
         self.assertEqual(results["first"][1]["changed"], ["robot:start"])
         self.assertEqual(results["second"][0], 200)
         self.assertEqual(results["second"][1]["changed"], [])
+
+
+class RuntimeShutdownBackendTests(_BackendServerMixin, unittest.TestCase):
+    SHUTDOWN = "/api/runtime/shutdown"
+
+    def test_shutdown_rejects_wrong_or_missing_identity_and_keeps_serving(self):
+        runtime = FakePaperRuntime(robot=STOPPED, scanner="SCANNER_STOPPED")
+        server = self._serve(runtime)
+        for body, status in (
+            ({"database_identity": "0" * 64}, 409),
+            ({"database_identity": ("a" * 64).upper()}, 409),
+            ({}, 400),
+            ({"database_identity": ""}, 400),
+            ({"database_identity": 1}, 400),
+            ({"database_identity": "a" * 64, "force": True}, 400),
+            (b"not json", 400),
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self._post(server, body, self.SHUTDOWN)[0], status)
+                self.assertTrue(server.serving_thread.is_alive())
+
+    def test_shutdown_refuses_while_robot_scanner_or_protection_still_need_backend(self):
+        for robot, scanner, protection in (
+            (READY, "SCANNER_STOPPED", FakeProtection()),
+            (PAUSED, "SCANNER_STOPPED", FakeProtection()),
+            (RECON, "SCANNER_STOPPED", FakeProtection()),
+            (STOPPED, "SCANNER_RUNNING", FakeProtection()),
+            (STOPPED, "SCANNER_STOPPED", FakeProtection(healthy=False)),
+            (STOPPED, "SCANNER_STOPPED", FakeProtection(unhealthy_symbols={"BTCUSDT": "x"})),
+        ):
+            with self.subTest(robot=robot, scanner=scanner):
+                runtime = FakePaperRuntime(robot=robot, scanner=scanner)
+                server = self._serve(runtime, protection)
+                status, payload = self._post(server, {"database_identity": "a" * 64}, self.SHUTDOWN)
+                self.assertEqual((status, payload["error"]), (409, "runtime_still_required"))
+                self.assertTrue(server.serving_thread.is_alive())
+
+    def test_exact_identity_on_quiescent_runtime_stops_serving_after_reply(self):
+        runtime = FakePaperRuntime(robot=STOPPED, scanner="SCANNER_STOPPED")
+        server = self._serve(runtime)
+        status, payload = self._post(server, {"database_identity": "a" * 64}, self.SHUTDOWN)
+        self.assertEqual((status, payload), (200, {"ok": True, "shutdown": "scheduled"}))
+        server.serving_thread.join(5)
+        self.assertFalse(server.serving_thread.is_alive())
+        self.assertEqual(runtime.calls, [])
 
 
 if __name__ == "__main__":

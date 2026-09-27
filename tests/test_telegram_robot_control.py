@@ -63,7 +63,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         ) as intent_mock, patch.object(
             telegram_review, "pause_robot",
         ) as pause_mock, patch.object(
-            telegram_review, "stop_robot",
+            telegram_review.stop_robot_runtime, "launch_detached",
         ) as stop_mock, patch.object(
             telegram_review, "_answer_callback",
         ) as answer_mock, patch.object(
@@ -114,7 +114,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         ) as intent_mock, patch.object(
             telegram_review, "pause_robot",
         ) as pause_mock, patch.object(
-            telegram_review, "stop_robot",
+            telegram_review.stop_robot_runtime, "launch_detached",
         ) as stop_mock, patch.object(
             telegram_review, "_answer_callback",
         ) as answer_mock, patch.object(
@@ -180,28 +180,52 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         self.assertEqual(admit_mock.call_args.args[0], "cand-1")
         intent_mock.assert_not_called()
 
-    def test_owner_stop_callback_invokes_stop_robot(self):
+    def test_owner_stop_callback_hands_off_to_shared_full_runtime_shutdown(self):
+        self.assertFalse(hasattr(telegram_review, "stop_robot"))
         callback_query = _owner_callback("cb-4", "stop")
+        order = []
         with patch.object(
             telegram_review.config, "TELEGRAM_CHAT_ID", "42",
         ), patch.object(
-            telegram_review, "stop_robot", return_value=_state("ROBOT_STOPPED", "ROBOT_STOPPED"),
-        ) as stop_mock, patch.object(
+            telegram_review.stop_robot_runtime, "launch_detached",
+            side_effect=lambda *a, **k: order.append("launch"),
+        ) as launch_mock, patch.object(
+            telegram_review, "pause_robot",
+        ) as pause_mock, patch.object(
+            telegram_review.telegram_runtime_intent, "execute",
+        ) as intent_mock, patch.object(
             telegram_review, "_answer_callback",
+            side_effect=lambda *a, **k: order.append("ack"),
         ) as answer_mock, patch.object(
-            telegram_review, "get_robot_runtime_status",
-            return_value=_state("ROBOT_STOPPED", "ROBOT_STOPPED"),
-        ), patch.object(
             telegram_review.telegram_bot, "send_message",
         ) as send_mock:
             telegram_review._process_callback(callback_query)
 
-        stop_mock.assert_called_once_with(
-            http_post=telegram_review._post_robot_synchronize_pending_entries,
-        )
-        answer_mock.assert_called_once_with("cb-4", "🤖 Робот: остановлен ⏹")
+        launch_mock.assert_called_once_with("all", notify_chat=42)
+        self.assertEqual(order, ["ack", "launch"])
+        answer_mock.assert_called_once_with("cb-4", "🤖 Робот: остановка…")
         send_mock.assert_called_once()
-        self.assertIn("Статус робота: Остановлен", send_mock.call_args.args[2])
+        self.assertEqual(
+            send_mock.call_args.args[2], "⏹ Останавливаю сканер, робота, Telegram и backend…",
+        )
+        pause_mock.assert_not_called()
+        intent_mock.assert_not_called()
+
+    def test_stop_handoff_failure_is_one_message_without_retry(self):
+        callback_query = _owner_callback("cb-4b", "stop")
+        with patch.object(
+            telegram_review.config, "TELEGRAM_CHAT_ID", "42",
+        ), patch.object(
+            telegram_review.stop_robot_runtime, "launch_detached", side_effect=OSError("no python"),
+        ) as launch_mock, patch.object(
+            telegram_review, "_answer_callback",
+        ), patch.object(
+            telegram_review.telegram_bot, "send_message",
+        ) as send_mock:
+            telegram_review._process_callback(callback_query)
+        launch_mock.assert_called_once()
+        send_mock.assert_called_once()
+        self.assertEqual(send_mock.call_args.args[2], "⚠ Остановка не запущена.")
 
     def test_rejected_command_answers_with_reason_and_does_not_raise(self):
         callback_query = _owner_callback("cb-5", "pause")
@@ -314,7 +338,7 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         with patch.object(
             telegram_review.config, "TELEGRAM_CHAT_ID", "42",
         ), patch.object(
-            telegram_review, "stop_robot",
+            telegram_review.stop_robot_runtime, "launch_detached",
         ) as stop_mock, patch.object(
             telegram_review, "_answer_callback",
         ) as answer_mock:
