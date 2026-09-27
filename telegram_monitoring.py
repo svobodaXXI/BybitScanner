@@ -687,13 +687,14 @@ def refresh_command_menu() -> None:
         _published_commands = commands
 
 
-def _ensure_commands_menu_button() -> None:
+def _ensure_commands_menu_button(*, force: bool = False) -> None:
     owner = _owner_id()
     if not owner:
         return
-    current = _telegram_request("getChatMenuButton", chat_id=owner)
-    if current.get("ok") and (current.get("result") or {}).get("type") == "commands":
-        return
+    if not force:
+        current = _telegram_request("getChatMenuButton", chat_id=owner)
+        if current.get("ok") and (current.get("result") or {}).get("type") == "commands":
+            return
     response = _telegram_request(
         "setChatMenuButton",
         chat_id=owner,
@@ -701,6 +702,12 @@ def _ensure_commands_menu_button() -> None:
     )
     if not response.get("ok"):
         raise RuntimeError(f"setChatMenuButton failed: {response}")
+
+
+def _refresh_owner_menu_surface() -> None:
+    """Republish dynamic commands and reassert the visible owner Menu button."""
+    refresh_command_menu()
+    _ensure_commands_menu_button(force=True)
 
 
 def configure_monitoring_menu() -> None:
@@ -803,11 +810,21 @@ def poll_updates_once(offset):
                 import telegram_review
 
                 telegram_review._process_callback(callback_query)
+            callback_user_id = (callback_query.get("from") or {}).get("id")
+            callback_chat_id = (
+                ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+            )
+            if _is_owner(callback_user_id) and str(callback_chat_id) == _owner_id():
+                _refresh_owner_menu_surface()
             continue
 
         message = update.get("message")
         if message:
             _process_message(message)
+            message_user_id = (message.get("from") or {}).get("id")
+            message_chat_id = (message.get("chat") or {}).get("id")
+            if _is_owner(message_user_id) and str(message_chat_id) == _owner_id():
+                _refresh_owner_menu_surface()
     return offset
 
 
