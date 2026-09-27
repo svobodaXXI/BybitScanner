@@ -139,24 +139,39 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             + 1.618 * (found.anchor_end_price - found.anchor_start_price),
         )
 
-    def test_first_down_leg_stops_at_any_green_or_doji_candle(self):
+    def test_first_down_leg_pause_candle_kept_but_counter_swing_ends_it(self):
         frame, first_end, shelf_end = _two_impulses(-1)
         self.assertEqual(first_end, 27)
+
+        def qualified(modified):
+            rows = list(modified[["open", "high", "low", "close"]]
+                        .itertuples(index=False, name=None))
+            box = rows[first_end + 1:shelf_end + 1]
+            return _qualified_first_impulse_and_box(
+                rows, 20, first_end,
+                min(row[2] for row in box),
+                max(row[1] for row in box),
+                -1, IkigaiBoxParameters(),
+            )
+
         for candle_close in (198.05, 198.0):
             with self.subTest(close=candle_close):
                 modified = frame.copy(deep=True)
-                # Candle 22 opens at 198.0; a green or doji inside the
-                # otherwise bearish 20..27 run must break that run.
+                # Candle 22 opens at 198.0; a green or doji pause that forms
+                # no confirmed reversal LOW does not end the 20..27 impulse.
                 modified.loc[22, "close"] = candle_close
-                rows = list(modified[["open", "high", "low", "close"]]
-                            .itertuples(index=False, name=None))
-                box = rows[first_end + 1:shelf_end + 1]
-                self.assertIsNone(_qualified_first_impulse_and_box(
-                    rows, 20, first_end,
-                    min(row[2] for row in box),
-                    max(row[1] for row in box),
-                    -1, IkigaiBoxParameters(),
-                ))
+                self.assertIsNotNone(qualified(modified))
+
+        # A confirmed counter-swing does: 24..26 hold above candle 23's low,
+        # so 23 is a strict reversal LOW and B cannot move past it to 27.
+        swing = frame.copy(deep=True)
+        for index, (start, finish) in zip(
+            (24, 25, 26, 27),
+            ((196.1, 196.6), (196.6, 196.9), (196.9, 196.3), (196.3, 192.0)),
+        ):
+            swing.loc[index] = _bar(start, finish)
+        self.assertEqual(swing.loc[27, "low"], frame.loc[27, "low"])
+        self.assertIsNone(qualified(swing))
 
     def test_flock_style_green_wick_anchors_red_core_and_55pct_box_gate(self):
         # Synthetic OHLC around the user-supplied FLOCK 986..994 pattern.
@@ -325,19 +340,19 @@ class IkigaiBoxDetectorTests(unittest.TestCase):
             detect_ikigai_box(future, as_of_index=len(frame) - 1), found
         )
 
-    def test_mixed_body_down_wick_leg_is_not_one_red_impulse(self):
+    def test_mixed_body_down_wick_leg_mirrors_up_wick_impulse(self):
         frame, box_end = _terminal_wick_two_impulses(
             direction=-1, second=False,
         )
         first = frame.iloc[20:24]
         self.assertTrue((first["close"] >= first["open"]).any())
+        # No confirmed counter-swing lies inside A..B, so the green pause
+        # candle alone does not split it: the exact mirror of the SHORT case.
         watches = detect_ikigai_box_watches(frame, as_of_index=box_end)
-        self.assertNotIn(
+        self.assertIn(
             ("LONG", 20, 23),
             {watch.anchor_identity for watch in watches},
         )
-        # A longer or later red-only leg may remain eligible; only the
-        # mixed-body first-impulse boundaries are forbidden.
 
     def test_wick_box_is_watch_before_second_impulse_and_full_extension(self):
         frame, box_end = _terminal_wick_two_impulses()
