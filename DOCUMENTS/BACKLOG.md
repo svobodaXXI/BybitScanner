@@ -9,7 +9,7 @@ explicitly reprioritizes.
 
 | Order | ID | Priority | Task | Exit gate |
 |---:|---|---|---|---|
-| 1 | RVL-R1 | P0 | Minimal Runtime Replay contract + deterministic runner | continuous events can be replayed through real SerializedPaperRuntime with deterministic order/metrics |
+| 1 | RVL-R1 | P0 | **DONE** — Minimal Runtime Replay contract + deterministic runner (PR #296; Robot PAPER acceptance #226 PASS) | continuous events replay through real SerializedPaperRuntime with deterministic FIFO/metric surface |
 | 2 | RVL-R2 | P0 | Reproduce 2026-09-27 continuous multi-symbol ENTRY_PENDING overflow as RED | current main reliably reaches the real overload class without artificial drain barriers |
 | 3 | RVL-R3 | P0 | Freeze exact ENTRY_PENDING coverage boundary | tests prove when coverage begins/ends and first-fill evidence cannot be missed |
 | 4 | RVL-R4 | P0 | Minimal production ingress fix | R2 GREEN without queue enlargement, coalescing or weakened protection |
@@ -25,7 +25,7 @@ explicitly reprioritizes.
 | 14 | RVL-V2 | P2 conditional | Bounded normalized incident capture | only if production-shape replay fidelity proves insufficient |
 | 15 | RVL-V3 | P2 | Tier-aware CI routing | focused FAST/REPLAY automatic; broader PAPER CI remains bounded |
 
-**Active task:** RVL-R1.
+**Active task:** RVL-R2 — reproduce the 2026-09-27 continuous multi-symbol `ENTRY_PENDING` overflow as deterministic RED.
 
 Hard sequencing:
 - no new production ingress fix before RVL-R2 RED and RVL-R3 boundary proof;
