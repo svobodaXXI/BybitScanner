@@ -58,6 +58,13 @@ class TerminalPersistenceTests(unittest.TestCase):
     def open_store(self):
         return SQLiteStore.open(self.database_path, busy_timeout_ms=2500)
 
+    @staticmethod
+    def drop_v24_autopilot_objects(connection):
+        # Downgrade fixtures that start from today's schema must remove v24
+        # objects before replaying an older -> current migration chain.
+        connection.execute("DROP TABLE IF EXISTS robot_auto_decisions")
+        connection.execute("DROP TABLE IF EXISTS robot_autopilot_state")
+
     def create_v1_database(self):
         connection = sqlite3.connect(self.database_path)
         for statement in SCHEMA_V1_STATEMENTS:
@@ -349,6 +356,7 @@ class TerminalPersistenceTests(unittest.TestCase):
         # user_version=15, then reopen through SQLiteStore to exercise the
         # actual v15->v16 rebuild-table migration rather than a fresh create.
         connection = sqlite3.connect(self.database_path)
+        self.drop_v24_autopilot_objects(connection)
         connection.execute("DROP TABLE paper_protection_obligations")
         connection.execute("DROP TABLE robot_runtime_state")
         # scanner_runtime_state is v20-shaped from the fresh open_store()
@@ -705,6 +713,7 @@ class TerminalPersistenceTests(unittest.TestCase):
         with self.open_store():
             pass
         connection = sqlite3.connect(self.database_path)
+        self.drop_v24_autopilot_objects(connection)
         # A real v14 database has none of the v15+ tables either -- drop
         # scanner_runtime_state (now v20) too, or the v19->v20 step in this
         # same migration chain would try to recreate a table that (in this
@@ -750,6 +759,7 @@ class TerminalPersistenceTests(unittest.TestCase):
         # user_version=16 so SQLiteStore exercises the actual v16->v17
         # migration rather than a fresh create.
         connection = sqlite3.connect(self.database_path)
+        self.drop_v24_autopilot_objects(connection)
         connection.execute("DROP TABLE paper_protection_obligations")
         # scanner_runtime_state is v20-shaped from the fresh open_store()
         # above; drop it too, or the v19->v20 step later in the chain hits
@@ -816,6 +826,7 @@ class TerminalPersistenceTests(unittest.TestCase):
         # pin user_version=17 so SQLiteStore exercises the actual v17->v18
         # migration rather than a fresh create.
         connection = sqlite3.connect(self.database_path)
+        self.drop_v24_autopilot_objects(connection)
         connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_quantity")
         connection.execute("ALTER TABLE robot_trades DROP COLUMN entry_position_version")
         # paper_protection_obligations is v19-shaped from the fresh
@@ -853,6 +864,7 @@ class TerminalPersistenceTests(unittest.TestCase):
         with self.open_store():
             pass
         connection = sqlite3.connect(self.database_path)
+        self.drop_v24_autopilot_objects(connection)
         connection.execute("DROP TABLE scanner_runtime_state")
         connection.execute("PRAGMA user_version = 19")
         connection.commit()
@@ -924,6 +936,7 @@ class TerminalPersistenceTests(unittest.TestCase):
         # pin user_version=20. This exercises the real v20->v21 table rebuild
         # instead of merely opening a fresh v21 schema.
         connection = sqlite3.connect(self.database_path)
+        self.drop_v24_autopilot_objects(connection)
         current_sql = connection.execute(
             "SELECT sql FROM sqlite_master "
             "WHERE type='table' AND name='paper_protection_obligations'"
