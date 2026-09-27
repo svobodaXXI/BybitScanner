@@ -2353,6 +2353,48 @@ def test_robot_protection_coverage_manager_marks_unhealthy_until_authoritative_s
     manager.close()
 
 
+def test_robot_protection_overflow_log_includes_runtime_metrics(caplog):
+    hub = MarketDataHub(
+        _CoverageRegistry(["BTCUSDT"]), _coverage_context,
+        connection_factory=lambda *args, **kwargs: None,
+    )
+    runtime = _FakeCoverageRuntime(["BTCUSDT"])
+    runtime.protection_ingress_metrics = lambda: {
+        "capacity": 64,
+        "current_pending": 64,
+        "high_watermark": 64,
+        "slowest_task_kind": "call",
+        "slowest_task_label": "slow_owner",
+        "slowest_task_ms": 1250.0,
+        "candle_cache_hits": 10,
+        "candle_cache_misses_owner": 3,
+        "last_overflow_symbol": "BTCUSDT",
+        "last_overflow_role": "EXPOSURE",
+    }
+    manager = RobotProtectionCoverageManager(hub, runtime, resync_interval_s=60)
+    manager.resync()
+    context = hub.get("BTCUSDT")
+    runtime.fail_next_enqueue = ProtectionIngressOverflow("saturated")
+
+    try:
+        with caplog.at_level("ERROR", logger="terminal.runtime.paper_http_server"):
+            _apply_book_snapshot(
+                context.public_orderbook, bid="100", ask="101", update_id=1,
+            )
+        messages = [record.getMessage() for record in caplog.records]
+        overflow = next(
+            message for message in messages
+            if "Robot protection ingress overflow" in message
+        )
+        assert "symbol=BTCUSDT" in overflow
+        assert "role=" in overflow
+        assert "current_pending" in overflow
+        assert "slow_owner" in overflow
+        assert "candle_cache_misses_owner" in overflow
+    finally:
+        manager.close()
+
+
 def test_robot_protection_coverage_manager_orders_disconnect_barrier_after_admitted_event():
     """Owner-queue latency must not retroactively invalidate a book event
     already admitted before a real disconnect. The disconnect itself is the
