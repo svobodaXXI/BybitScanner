@@ -20,6 +20,12 @@ workflow. Ассистент обязан апгрейдить target/scripts з
 их соответствие текущему canonical runtime перед acceptance. Сам запуск
 остаётся ручным действием владельца.
 
+Runtime checkpoint 2026-09-27: desktop Robot start/stop path migrated and
+owner-verified end-to-end. PR #280 fixed canonical safe-stop module invocation;
+final stop persisted `ROBOT_STOPPED / ROBOT_STOPPED` with backend/Telegram
+left alive by design. Future recurring runtime incidents must use
+`DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` before exploratory diagnosis.
+
 ## Кампания
 
 **«PAPER Robot: Гильдия паттернов»**
@@ -331,8 +337,10 @@ Telegram open-position card:
 
 - ordered disconnect/reconnect continuity barrier;
 - regression/acceptance proof для protection continuity;
-- единый owner desktop runtime start-path с доказанными PAPER/LIVE safety,
-  Robot admission/protection и Telegram same-DB readiness gates;
+- единый owner desktop runtime start/stop path с доказанными PAPER/LIVE safety,
+  Robot admission/protection, Telegram same-DB readiness и canonical safe-stop;
+- `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md` — короткие повторно используемые
+  пути диагностики/recovery, чтобы не расследовать известные runtime-сбои с нуля;
 - `DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md` — общий Signal → Robot
   integration/UX контракт для всех паттернов;
 - `DOCUMENTS/QUEST_REWARD_LEDGER.md` — append-only authority для XP,
