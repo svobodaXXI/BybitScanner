@@ -623,6 +623,14 @@ class PaperRuntime:
             updated_at_ms=int(time.time() * 1000),
         )
 
+        # Autopilot is independently durable and always defaults OFF. Stage A
+        # creates no autonomous admission/execution path; this row only makes
+        # restart semantics explicit for later SHADOW/PAPER_AUTO control.
+        self.store.initialize_robot_autopilot_state(
+            account_id,
+            updated_at_ms=int(time.time() * 1000),
+        )
+
         context_provider = PaperCommandContextProvider(
             store=self.store,
             account_id=account_id,
