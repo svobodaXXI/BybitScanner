@@ -109,7 +109,7 @@ class LShapeObserverTests(unittest.TestCase):
             prepare = stack.enter_context(patch.object(main, "prepare_signal", return_value={"score": 90}))
             update = stack.enter_context(patch.object(main, "update_signal", return_value="NEW"))
             stack.enter_context(patch.object(main, "record_scanner_diary_observation", return_value=SimpleNamespace(setup_instance_id=None)))
-            robot = stack.enter_context(patch("notification.create_signal_snapshot"))
+            robot = stack.enter_context(patch("notification.prepare_robot_handoff"))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             main.run_scan_pass()
             robot.assert_not_called()
@@ -151,7 +151,7 @@ class LShapeObserverTests(unittest.TestCase):
             deliver = stack.enter_context(patch.object(observer, "send_l_shape_observation", return_value=True))
             send_wedge = stack.enter_context(patch.object(main, "send_signal"))
             stack.enter_context(patch.object(main, "send_message"))
-            robot = stack.enter_context(patch("notification.create_signal_snapshot"))
+            robot = stack.enter_context(patch("notification.prepare_robot_handoff"))
             stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             main.run_scan_pass()
         deliver.assert_called_once_with("TESTUSDT", candidate, timeframe=main.config.TIMEFRAME, test_mode=False)
@@ -189,8 +189,11 @@ class LShapeTelegramTests(unittest.TestCase):
                 patch.object(observer, "save_memory") as save, \
                 patch.object(observer, "send_photo", return_value={"ok": True}) as photo, \
                 patch.object(
-                    observer, "create_signal_snapshot",
-                    return_value={"candidate_id": "candidate-lshape"},
+                    observer, "prepare_robot_handoff",
+                    return_value=SimpleNamespace(
+                        candidate_id="candidate-lshape",
+                        persistence_failed=False,
+                    ),
                 ) as robot:
             self.assertTrue(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
             self.assertFalse(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
@@ -222,8 +225,11 @@ class LShapeTelegramTests(unittest.TestCase):
                 patch.object(observer, "load_memory", return_value=memory), \
                 patch.object(observer, "save_memory"), \
                 patch.object(
-                    observer, "create_signal_snapshot",
-                    return_value={"candidate_id": "candidate-lshape"},
+                    observer, "prepare_robot_handoff",
+                    return_value=SimpleNamespace(
+                        candidate_id="candidate-lshape",
+                        persistence_failed=False,
+                    ),
                 ) as robot, \
                 patch.object(observer, "send_photo", side_effect=[
                     {"ok": True}, {"ok": False}, {"ok": True},

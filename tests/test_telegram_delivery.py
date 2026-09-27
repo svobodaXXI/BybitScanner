@@ -305,8 +305,11 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
                 return_value={"ok": True},
             ) as photo_mock, patch.object(
                 notification,
-                "create_signal_snapshot",
-                return_value={"candidate_id": "candidate-ready"},
+                "prepare_robot_handoff",
+                return_value=types.SimpleNamespace(
+                    candidate_id="candidate-ready",
+                    persistence_failed=False,
+                ),
             ) as create_mock:
                 delivered = notification.send_signal(ready)
 
@@ -340,13 +343,17 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
             ), patch.object(
                 notification, "send_photo", return_value={"ok": True},
             ) as photo_mock, patch.object(
-                notification, "create_signal_snapshot",
-                return_value={"candidate_id": "candidate-x"},
+                notification, "prepare_robot_handoff",
+                return_value=types.SimpleNamespace(
+                    candidate_id=None,
+                    persistence_failed=False,
+                ),
             ) as create_mock:
                 delivered = notification.send_signal(signal)
 
         self.assertTrue(delivered)
-        create_mock.assert_not_called()
+        create_mock.assert_called_once()
+        self.assertTrue(create_mock.call_args.kwargs["enabled"])
         keyboard = photo_mock.call_args.kwargs["reply_markup"]["inline_keyboard"]
         self.assertNotIn(
             "🤖 Робот", [button["text"] for row in keyboard for button in row],
@@ -366,9 +373,17 @@ class TelegramSignalDeliveryTests(unittest.TestCase):
                     patch.object(notification, "CHARTS_DIR", directory), \
                     patch.object(notification, "send_message", return_value={"ok": True}), \
                     patch.object(notification, "send_photo", return_value={"ok": True}) as photo, \
-                    patch.object(notification, "create_signal_snapshot") as candidate:
+                    patch.object(
+                        notification,
+                        "prepare_robot_handoff",
+                        return_value=types.SimpleNamespace(
+                            candidate_id=None,
+                            persistence_failed=False,
+                        ),
+                    ) as candidate:
                 self.assertTrue(notification.send_signal(signal))
-            candidate.assert_not_called()
+            candidate.assert_called_once()
+            self.assertTrue(candidate.call_args.kwargs["enabled"])
             buttons = [
                 button["text"]
                 for row in photo.call_args.kwargs["reply_markup"]["inline_keyboard"]

@@ -29,12 +29,9 @@ from tradingview_bridge import (
     create_tradingview_url
 )
 
-from robot_candidate_store import (
-    create_signal_snapshot,
-)
+from pattern_robot_integration import prepare_robot_handoff
 
 from timeframe_format import format_timeframe_ru
-from robot_state_machine import is_supported_pattern
 
 import config
 from telegram_labels import SCANNER_EMOJI
@@ -488,30 +485,13 @@ def send_signal(
         return all_delivered
 
     owner_chat_id = get_telegram_owner_chat_id()
-    robot_candidate_id = None
-    robot_candidate_failed = False
-
-    # Only production Scanner signals can be handed to Robot.  Persist the
-    # complete signal payload first; a failed persistence simply withholds the
-    # Robot button and does not break ordinary Scanner notification delivery.
-    # Patterns without a Robot lifecycle get no candidate and no Robot button.
-    robot_handoff_ready = not result.get("scanner_observational_only", False) and (
-        timeframe == "1"
-        or result.get("robot_handoff_ready") is True
-    ) and is_supported_pattern(result.get("pattern"))
-    if owner_chat_id and not test_mode and robot_handoff_ready:
-        try:
-            candidate = create_signal_snapshot(
-                result,
-                timeframe=timeframe,
-            )
-            robot_candidate_id = candidate["candidate_id"]
-        except Exception as error:
-            robot_candidate_failed = True
-            print(
-                "[ROBOT CANDIDATE ERROR] "
-                f"symbol={symbol} error={error}"
-            )
+    handoff = prepare_robot_handoff(
+        result,
+        timeframe=timeframe,
+        enabled=bool(owner_chat_id) and not test_mode,
+    )
+    robot_candidate_id = handoff.candidate_id
+    robot_candidate_failed = handoff.persistence_failed
 
     for chat_id in get_telegram_chat_ids():
         try:

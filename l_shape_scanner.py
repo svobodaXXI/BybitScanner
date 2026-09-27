@@ -10,7 +10,7 @@ import re
 import config
 from geometry.l_shape import detect_l_shape, l_shape_signal_plan
 from geometry.l_shape_preview import l_shape_caption, render_l_shape_preview
-from robot_candidate_store import create_signal_snapshot
+from pattern_robot_integration import prepare_robot_handoff
 from notification import (
     build_tradingview_keyboard,
     get_telegram_chat_ids,
@@ -137,12 +137,13 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
     if owner_chat_id and not test_mode:
         robot_candidate_id = str(seen.get("robot_candidate_id", "")).strip() or None
         if robot_candidate_id is None:
-            try:
-                candidate = create_signal_snapshot(
-                    _robot_signal_snapshot(symbol, timeframe, observation),
-                    timeframe=timeframe,
-                )
-                robot_candidate_id = candidate["candidate_id"]
+            handoff = prepare_robot_handoff(
+                _robot_signal_snapshot(symbol, timeframe, observation),
+                timeframe=timeframe,
+                enabled=True,
+            )
+            robot_candidate_id = handoff.candidate_id
+            if robot_candidate_id is not None:
                 memory[memory_key] = {
                     **seen,
                     "delivered_to": sorted(already_sent),
@@ -151,11 +152,6 @@ def send_l_shape_observation(symbol, observation, *, timeframe, test_mode=False)
                 }
                 save_memory(memory)
                 seen = memory[memory_key]
-            except Exception as error:
-                print(
-                    "[ROBOT CANDIDATE ERROR] "
-                    f"symbol={symbol} pattern=L-shape error={error}"
-                )
 
     caption = l_shape_caption(symbol, timeframe, formation)
     if test_mode:
