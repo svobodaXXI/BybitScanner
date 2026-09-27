@@ -211,7 +211,8 @@ not start later slices merely because they are documented here.
 ### Phase R — Robot Runtime Lab (current P0)
 
 #### RVL-R1 — Replay contract and minimal runner
-**Priority:** P0 / next
+**Status:** COMPLETE — PR #296, Robot PAPER acceptance #226 PASS
+**Priority:** P0 / completed
 
 **Goal:** create the smallest reusable replay boundary for ordered Robot market
 events without creating a second runtime or simulator.
@@ -232,6 +233,14 @@ no capacity change, no coalescing.
 
 **Done when:** one trivial fixture runs deterministically twice with identical
 event order and metrics shape.
+
+**Completion evidence (2026-09-27):**
+- `tests/runtime_replay.py` provides the versioned replay loader/runner;
+- `tests/fixtures/runtime_replays/smoke_ordered_entry_pending_v1.json` is the first fixture;
+- events are enqueued continuously, with only one final completion fence after producer delivery;
+- `tests/test_runtime_replay.py` proves FIFO event order and stable metric surface across two runs;
+- Robot PAPER acceptance workflow run #226 completed SUCCESS;
+- no production runtime behavior changed in this slice.
 
 #### RVL-R2 — Freeze the 2026-09-27 ingress overflow as RED
 **Priority:** P0 / immediately after R1
