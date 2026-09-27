@@ -34,6 +34,7 @@ on:
       - "tests/test_signal_admission.py"
       - "tests/test_telegram_delivery.py"
       - "tests/test_scanner_control_runtime.py"
+      - "tests/test_dual_timeframe_scanner.py"
       - "stop_robot_runtime.bat"
       - "tools/stop_robot_runtime.py"
       - "tests/test_stop_robot_runtime.py"
@@ -153,6 +154,7 @@ jobs:
         run: >-
           python -m unittest -v
           tests.test_scanner_control_runtime
+          tests.test_dual_timeframe_scanner
           tests.test_stop_robot_runtime
           tests.test_telegram_monitoring
 
