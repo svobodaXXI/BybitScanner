@@ -201,3 +201,321 @@ The process improvement is considered implemented when:
   applicable;
 - project docs/quest state point to this plan;
 - no existing safety/acceptance contract was weakened.
+
+
+## 10. Implementation roadmap and queued work
+
+The process change is implemented as a sequence of small dependent slices. Do
+not start later slices merely because they are documented here.
+
+### Phase R — Robot Runtime Lab (current P0)
+
+#### RVL-R1 — Replay contract and minimal runner
+**Priority:** P0 / next
+
+**Goal:** create the smallest reusable replay boundary for ordered Robot market
+events without creating a second runtime or simulator.
+
+**Deliverables:**
+- `tests/fixtures/runtime_replays/`;
+- one versioned event-envelope schema containing only the fields actually needed
+  by `process_robot_market_event` / protection ingress;
+- a deterministic test helper/runner that feeds events into the existing
+  `SerializedPaperRuntime` and real Robot/PAPER code;
+- explicit support for continuous delivery with no artificial queue-drain call
+  inserted between producer bursts;
+- metrics/result object sufficient to assert pending/high-watermark/overflow,
+  durable continuity latch, processed event order and owner processing stats.
+
+**Non-goals:** no generic exchange simulator, no new production queue, no UI,
+no capacity change, no coalescing.
+
+**Done when:** one trivial fixture runs deterministically twice with identical
+event order and metrics shape.
+
+#### RVL-R2 — Freeze the 2026-09-27 ingress overflow as RED
+**Priority:** P0 / immediately after R1
+
+**Goal:** reproduce the current real failure before changing production logic.
+
+**Fixture/model:** five `ENTRY_PENDING` symbols from the observed incident
+(`2ZUSDT`, `ARBUSDT`, `ARIAUSDT`, `ARKUSDT`, `CFGUSDT`) with
+continuous order-book events and the same serialized owner boundary.
+
+**Requirements:**
+- no `owner.call(lambda: None)` or equivalent drain barrier between batches;
+- producer cadence must be independent from owner completion;
+- preserve distinct FIFO events;
+- prove that current main can hit capacity 64 and fail closed;
+- prove that the failure marks protection unhealthy and produces the durable
+  continuity-loss behavior expected by the real runtime.
+
+If exact raw production deltas are unavailable, use a deterministic
+production-shape fixture for the first RED, clearly labelled as such. A future
+bounded capture may replace/enrich it; do not block the current P0 on building
+general telemetry infrastructure.
+
+**Done when:** current main reliably REDs for the same class of overload without
+wall-clock flakiness or sleeps used as correctness assertions.
+
+#### RVL-R3 — Define the ENTRY_PENDING coverage boundary
+**Priority:** P0 / architecture micro-slice
+
+**Goal:** establish exactly when a pre-entry candidate starts needing per-book
+FIFO protection ingress.
+
+Answer and freeze with focused tests:
+- whether `RETEST_DETECTED` without a durable `limit_order_id` needs
+  continuous protection coverage at all;
+- the exact transition that creates a resting PAPER entry limit;
+- how coverage becomes active before any book event capable of filling that
+  resting order can be missed;
+- what happens for partial fill, cancelled/inactive order, missing order and
+  restart/reconcile;
+- how multiple approved candidates on one symbol are handled fail-closed.
+
+**Preferred direction to evaluate:** do not subscribe a pre-limit candidate to
+high-rate `ENTRY_PENDING` traffic merely because it is `RETEST_DETECTED`.
+Coverage should begin at the durable resting-order ownership boundary, while
+preserving first-fill evidence.
+
+**Done when:** the lifecycle boundary is encoded in tests and no production
+mutation has yet been made beyond any minimal testability seam.
+
+#### RVL-R4 — Implement the smallest ingress fix
+**Priority:** P0
+
+**Goal:** make RVL-R2 GREEN by removing unnecessary producer load at the
+correct lifecycle boundary, not by masking overload.
+
+**Hard constraints:**
+- queue capacity remains 64 unless a separate evidence-backed decision changes it;
+- no event coalescing/dropping for covered symbols;
+- `EXPOSURE` and `OBLIGATION` protection paths remain distinct FIFO;
+- no LIVE changes;
+- no second execution/protection engine;
+- fail-closed semantics preserved.
+
+**Expected implementation class:** coverage-role selection/subscription timing
+around the durable entry-limit lifecycle. Exact code location is chosen only
+after RVL-R3 proves the boundary.
+
+**Done when:** focused tests + the exact continuous replay pass, and the fix does
+not weaken first-fill/protection continuity.
+
+#### RVL-R5 — Runtime regression pack and focused PAPER CI
+**Priority:** P0 gate
+
+Run once after R4:
+- current ingress replay;
+- disconnect/reconnect barrier replay/tests;
+- recovery candle-cache regression;
+- duplicate ownership/reconcile idempotency checks relevant to touched code;
+- existing Robot PAPER CI gate.
+
+Do not expand this into an unrelated broad campaign.
+
+**Done when:** all applicable lower-tier gates are GREEN and no known runtime
+incident fixture remains RED.
+
+#### RVL-R6 — One real owner PAPER acceptance
+**Priority:** P0 final gate / owner-manual
+
+Use the canonical desktop runtime path only after R1-R5 are green.
+
+Acceptance evidence:
+- new backend process on current main;
+- Robot reaches legal READY state;
+- protection remains healthy under real multi-symbol traffic;
+- no `ingress_overflow`;
+- owner candle-cache misses remain zero;
+- queue drains under steady operation rather than repeatedly latching 64/64;
+- normal reconcile/restart path does not recreate the incident.
+
+This is the only step in Phase R that requires real owner runtime.
+
+**Exit condition for Robot Stability boss:** R6 PASS. Until then the boss remains
+open even if CI is green.
+
+### Phase G — Geometry Lab (starts after Robot Stability is contained)
+
+#### RVL-G1 — Golden fixture schema and inventory
+**Priority:** P1 after RVL-R6
+
+Create `tests/fixtures/geometry_gold/` and a compact case manifest.
+
+Required case types:
+- valid Wedge with expected upper/lower anchors;
+- valid Triangle with expected anchors;
+- false-positive / no-admissible-pair;
+- stale structure / END case;
+- locality or historical-anchor stability case.
+
+Inventory already documented historical candidates before asking the owner for
+new examples. Candidate pool includes AEVO/HIMS/QQQ/CHIP/POL negative cases,
+INJ anchor movement, WLD triangle, AZTEC stale selection and XRP/PONS/AAVE
+unchanged baselines where exact saved candles are available.
+
+**Done when:** available source-time OHLC evidence is mapped to candidate cases
+and gaps are explicit; no invented expected anchors.
+
+#### RVL-G2 — Seed the first compact Geometry Gold set
+**Priority:** P1
+
+Freeze the first useful set, target roughly 8–15 real cases, but use the number
+actually supported by exact saved candles and authoritative expected outcomes.
+
+Each case includes:
+- immutable OHLC;
+- symbol/timeframe/source time;
+- expected pattern/no-pattern;
+- anchor/START expectations or allowed interval;
+- reason/provenance.
+
+**Done when:** detector output can be compared in one local run and existing
+baseline behavior is recorded without tuning.
+
+#### RVL-G3 — Geometry baseline report
+**Priority:** P1
+
+Produce one concise machine-readable/text report:
+- cases passed/failed;
+- anchor deltas;
+- false positive / false negative;
+- changed cases versus baseline.
+
+No aggregate vanity score is allowed to hide a structurally wrong case.
+
+**Done when:** a geometry code change can immediately show which real cases
+improved and which regressed.
+
+#### RVL-G4 — Fix geometry defect classes one at a time
+**Priority:** P1
+
+Order:
+1. demonstrably false structures / impossible anchor pairs;
+2. wrong anchor locality / historical re-anchoring;
+3. missed valid structures;
+4. score/ranking refinement only after structural correctness.
+
+Each code slice must name the failing gold cases, turn only that class GREEN,
+and preserve already-green cases. Do not threshold-tune a single screenshot.
+
+#### RVL-G5 — Geometry invariants / property tests
+**Priority:** P1 support gate
+
+Add only high-value invariants:
+- deterministic identical input;
+- irrelevant later candles cannot move frozen historical anchors;
+- inadmissible pivots cannot become anchors;
+- explicit boundary/body-integrity rules remain enforced;
+- remote history outside the allowed selection window cannot silently alter a
+  local structure.
+
+Property tests complement, never replace, the real golden fixtures.
+
+#### RVL-G6 — One full owner Scanner acceptance
+**Priority:** P1 final gate / owner-manual
+
+Exactly the existing permanent rule:
+one complete eligible-universe real Scanner pass, normal Telegram delivery,
+all integrated patterns. The golden set is implementation evidence only.
+
+**Exit condition for Geometry Quality boss:** G6 PASS with no owner-observed
+systematic geometry defect requiring reopening the gold set.
+
+### Phase V — Lightweight validation tooling (after both labs exist)
+
+#### RVL-V1 — Single validation report command
+**Priority:** P2
+
+Add one small command/report that summarizes:
+- FAST;
+- Runtime Replay;
+- Geometry Gold;
+- focused PAPER CI status when available;
+- owner acceptance state as PENDING/PASS.
+
+Do not build a service, web dashboard or persistent scheduler.
+
+#### RVL-V2 — Bounded incident capture, only if replay fidelity still needs it
+**Priority:** P2 / conditional
+
+If production-shape fixtures are insufficient, add an opt-in bounded capture at
+the normalized Robot protection boundary. It must:
+- contain no secrets;
+- have explicit size/time bounds;
+- be disabled by default;
+- preserve ordered event identity/timestamps/role;
+- impose negligible work on the serialized owner thread;
+- write outside the safety-critical event processing path where possible.
+
+Do not implement this task merely because it is listed.
+
+#### RVL-V3 — CI routing by validation tier
+**Priority:** P2
+
+Wire changed-path CI so focused FAST/REPLAY checks run automatically and PAPER
+CI remains the broader gate. Avoid a monolithic always-run campaign.
+
+## 11. Queue and dependency graph
+
+The authoritative execution queue for this initiative is:
+
+```text
+P0 Robot Stability
+R1 Replay contract/runner
+  -> R2 Continuous ENTRY_PENDING RED
+  -> R3 Coverage-boundary contract
+  -> R4 Minimal production fix
+  -> R5 Replay pack + focused PAPER CI
+  -> R6 One owner PAPER acceptance
+
+P1 Geometry Quality
+G1 Inventory/schema
+  -> G2 First Geometry Gold set
+  -> G3 Baseline report
+  -> G4 Defect-class fixes (repeat bounded slices as needed)
+  -> G5 High-value invariants
+  -> G6 One owner full Scanner acceptance
+
+P2 Process tooling
+V1 Compact validation report
+V2 Bounded capture (conditional only)
+V3 Tier-aware CI routing
+```
+
+Autopilot, secondary UX work, additional pattern families and nonessential
+refactors stay behind this queue unless the owner explicitly reprioritizes.
+
+## 12. Task-size and stop rules
+
+Every RVL task is a separately finishable slice.
+
+For each implementation task:
+- load only its owning code/tests and this plan;
+- do not combine Robot Runtime Lab and Geometry Lab mutations in one PR;
+- one focused changed-behavior check is enough before the next applicable gate;
+- if a task uncovers a different defect, record it and keep the active slice
+  bounded unless that defect blocks the current invariant;
+- no owner runtime action before the lower-tier gate for that slice is green;
+- no XP merely for creating harnesses/docs; reward only verified technical
+  outcomes under the existing quest ledger.
+
+## 13. v0.1 completion gates after this plan
+
+For development planning purposes, v0.1 has two blocking quality gates:
+
+**Robot Stability gate**
+- all known runtime replay incidents GREEN;
+- canonical PAPER lifecycle remains fail-closed;
+- real owner acceptance runs without ingress/recovery failure.
+
+**Geometry Quality gate**
+- compact real golden set is GREEN for the accepted behavior;
+- no known false-structure class is knowingly shipped;
+- one complete real Scanner/Telegram acceptance passes.
+
+Once both gates are green, the feature freeze may be reviewed and queued
+Autopilot/dual-timeframe/secondary pattern work can be resumed in owner priority
+order. Green lower-tier tests alone do not declare v0.1 finished.
