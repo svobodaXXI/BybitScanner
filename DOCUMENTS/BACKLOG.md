@@ -223,6 +223,26 @@ intent implementation.
   the RED gate, Opus implementation, or first-impulse diagnosis unless new
   evidence contradicts this result.
 
+### Ikigai Box Robot candidate blocker — ARUSDT 1m — OPEN 2026-09-28
+
+Real acceptance evidence from the current run:
+- normal CONFIRMED `ARUSDT 1m` Telegram signal was delivered without
+  `🤖 Робот` and with the owner warning that the Robot candidate was not created;
+- exact saved production anchors were recovered from `signals_history.json`
+  and replayed through the real 199-candle detector window on current merged code;
+- the Box now passes the PR #300 grid/TAKE tick-normalization stage;
+- failure occurs later in `plan_ikigai_box()` while choosing the fixed STOP:
+  `ValueError: no tick-aligned STOP beyond P4 satisfies net RR >= 2`;
+- therefore the previous `2ZUSDT 1m` tick-alignment bug remains closed, while
+  ARUSDT exposes a separate STOP/RR feasibility defect or policy-boundary issue.
+
+Required next technical step:
+characterize the exact feasible STOP interval and tick rounding for the frozen
+ARUSDT case, then decide whether the implementation search is wrong or the
+approved RR/P4 constraints genuinely make the setup non-executable. Do not
+weaken RR >= 2:1, move STOP inside P4, or invent a fallback merely to create a
+Robot button.
+
 ### P1 final gate — one clean owner-run full acceptance
 
 **Current checkpoint — 2026-09-28 (partial evidence only, full-pass gate still open):**
@@ -241,6 +261,13 @@ intent implementation.
   unless new evidence changes;
 - this checkpoint **does not** satisfy the permanent acceptance rule because the
   current full eligible-universe pass has not yet been reported complete.
+- subsequent real-run evidence exposed a second, distinct Ikigai Box Robot
+  candidate blocker on `ARUSDT 1m`: the saved CONFIRMED Box replays on current
+  merged code past `approved_first_grid()`, but `plan_ikigai_box()` fails with
+  `ValueError: no tick-aligned STOP beyond P4 satisfies net RR >= 2`.
+  This is **not** the PR #300 tick-alignment defect. Treat it as a separate
+  STOP/risk-planning defect class and do not regress the already-verified
+  tick-normalized grid fix while diagnosing it.
 
 After the P0 fixes that affect the owner/runtime surface are merged and loaded
 into the canonical desktop path:
