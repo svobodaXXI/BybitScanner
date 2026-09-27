@@ -1,3 +1,35 @@
+## END-OF-DAY CHECKPOINT — 2026-09-28
+
+Stop here for the night. Preserve the current evidence and do not repeat already-closed diagnostics.
+
+Completed / proven today:
+- PR #299: Ikigai Box WATCH is not an owner-facing product mode; local WATCH flags were disabled for acceptance;
+- PR #300: fixed raw Fibonacci grid/TAKE tick-alignment rejection by deterministic instrument-tick normalization;
+- exact frozen production case `2ZUSDT 1m` replays GREEN on the fix:
+  grid `0.06726 / 0.06720 / 0.06714 / 0.06708`, TAKE `0.06765`;
+- focused `tests.test_ikigai_box_plan`: 11/11 PASS on the fix branch before merge;
+- one-action desktop runtime path reached Robot READY + Scanner RUNNING on current code;
+- real CONFIRMED `AKEUSDT 5m` showed `🤖 Робот`; owner admission returned
+  `Сигнал принят: AKEUSDT ✅`;
+- Telegram Bot API proved owner `menu_button.type=commands` and all eight expected commands. The desktop client still did not visibly render Menu; do not repeat server-side menu checks without new evidence.
+
+Open blocker:
+- real CONFIRMED `ARUSDT 1m` delivered without `🤖 Робот`;
+- exact saved A/B historical replay passes the PR #300 grid/TAKE stage but fails in
+  `plan_ikigai_box()` with
+  `ValueError: no tick-aligned STOP beyond P4 satisfies net RR >= 2`;
+- this is a distinct STOP/RR feasibility issue, not a recurrence of the tick-normalization bug.
+
+Next technical step when work resumes:
+1. reconstruct the frozen ARUSDT plan inputs;
+2. calculate P1..P4, full-grid average, common TAKE, fee-aware reward, analytical RR-bound and adjacent ticks;
+3. prove whether at least one valid STOP tick exists strictly beyond P4;
+4. only then classify the case as either an implementation/rounding defect or a correctly non-executable setup under the approved constraints.
+
+Do not weaken net RR >= 2:1, move STOP inside P4, invent a fallback STOP, re-open PR #300, or spend owner time on another full Scanner acceptance until this blocker is classified and, if needed, fixed.
+
+Runtime state at this checkpoint is not re-asserted here; verify actual host state before any future mutation or restart.
+
 ## NOW — 2026-09-27 — OWNER CORRECTION: IKIGAI BOX HAS NO WATCH USER MODE
 
 Binding owner decision: Ikigai Box uses the normal CONFIRMED signal path only.
