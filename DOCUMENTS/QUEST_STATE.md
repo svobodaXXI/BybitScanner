@@ -1,3 +1,45 @@
+## 🎯 АКТИВНЫЙ РЕЙД — «Две лаборатории»
+
+**Приоритет:** P0  
+**Канон:** `DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md` §§10–13  
+**Активный квест:** **RVL-R1 — Runtime Replay contract + runner**
+
+Цель рейда: закрыть два главных блокирующих босса v0.1 без повторных длинных
+циклов ручной проверки.
+
+### 👹 Босс 1 — «Переполненный шлюз» / Robot Stability
+
+Очередь:
+1. RVL-R1 — replay contract/runner;
+2. RVL-R2 — реальный класс continuous `ENTRY_PENDING` overflow как RED;
+3. RVL-R3 — точная граница ENTRY_PENDING coverage;
+4. RVL-R4 — минимальный production fix;
+5. RVL-R5 — replay pack + focused PAPER CI;
+6. RVL-R6 — один реальный owner PAPER acceptance.
+
+Босс не считается поверженным до RVL-R6 PASS.
+
+### 📐 Босс 2 — Geometry Quality
+
+После Robot Stability:
+RVL-G1 inventory/schema → G2 first gold set → G3 baseline report → G4
+defect-class fixes → G5 invariants → G6 один полный owner Scanner acceptance.
+
+### 🧰 После боссов
+
+RVL-V1 compact validation report; RVL-V2 bounded capture только при доказанной
+необходимости; RVL-V3 tier-aware CI.
+
+Autopilot и остальной feature expansion сохранены в документации, но находятся
+в Таверне ожидания до прохождения двух quality gates либо явного нового решения
+владельца.
+
+**Следующий технический outcome:** deterministic Runtime Replay boundary,
+который принимает непрерывные ordered market events через существующий
+SerializedPaperRuntime и не вставляет искусственные drain barriers.
+
+XP за сам план/очередь не начисляется.
+
 ## 🎯 Активный процессный квест — «Каждый баг оставляет карту»
 
 **Статус:** OWNER-APPROVED / DOCUMENTED 2026-09-27  
