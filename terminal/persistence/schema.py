@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -862,6 +862,40 @@ SCHEMA_V23_MIGRATION_STATEMENTS = (
         BEGIN SELECT RAISE(ABORT, 'Box ownership cannot be forgotten'); END""",
 )
 
+SCHEMA_V24_MIGRATION_STATEMENTS = (
+    """CREATE TABLE robot_autopilot_state (
+        trading_account_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL CHECK (mode IN ('OFF', 'SHADOW', 'PAPER_AUTO')),
+        reason TEXT,
+        version INTEGER NOT NULL CHECK (version >= 1),
+        updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+    ) WITHOUT ROWID""",
+    """CREATE TABLE robot_auto_decisions (
+        decision_id TEXT PRIMARY KEY CHECK (length(trim(decision_id)) > 0),
+        trading_account_id TEXT NOT NULL,
+        candidate_ref TEXT NOT NULL CHECK (length(trim(candidate_ref)) > 0),
+        pattern TEXT NOT NULL CHECK (length(trim(pattern)) > 0),
+        symbol TEXT NOT NULL CHECK (length(trim(symbol)) > 0),
+        timeframe TEXT NOT NULL CHECK (length(trim(timeframe)) > 0),
+        source_identity TEXT NOT NULL CHECK (length(trim(source_identity)) > 0),
+        snapshot_sha256 TEXT,
+        mode TEXT NOT NULL CHECK (mode IN ('SHADOW', 'PAPER_AUTO')),
+        policy_version TEXT NOT NULL CHECK (length(trim(policy_version)) > 0),
+        outcome TEXT NOT NULL CHECK (outcome IN ('ALLOW', 'WAIT', 'REJECT')),
+        reason_code TEXT NOT NULL CHECK (length(trim(reason_code)) > 0),
+        evaluated_at_ms INTEGER NOT NULL CHECK (evaluated_at_ms >= 0),
+        resulting_candidate_id TEXT,
+        FOREIGN KEY (trading_account_id)
+            REFERENCES robot_autopilot_state(trading_account_id)
+    ) WITHOUT ROWID""",
+    """CREATE INDEX robot_auto_decisions_account_time
+       ON robot_auto_decisions(trading_account_id, evaluated_at_ms, decision_id)""",
+    """CREATE TRIGGER robot_auto_decision_immutable BEFORE UPDATE ON robot_auto_decisions
+       BEGIN SELECT RAISE(ABORT, 'Robot auto decision audit is immutable'); END""",
+    """CREATE TRIGGER robot_auto_decision_no_delete BEFORE DELETE ON robot_auto_decisions
+       BEGIN SELECT RAISE(ABORT, 'Robot auto decision audit cannot be deleted'); END""",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -886,4 +920,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V21_MIGRATION_STATEMENTS
     + SCHEMA_V22_MIGRATION_STATEMENTS
     + SCHEMA_V23_MIGRATION_STATEMENTS
+    + SCHEMA_V24_MIGRATION_STATEMENTS
 )
