@@ -1,3 +1,46 @@
+## NOW — 2026-09-27 — NEW BINDING OWNER PRIORITY: ROBOT AUTOPILOT
+
+Owner direction: begin development of autonomous candidate discovery and PAPER
+trading without per-candidate human approval, while reusing the existing Robot
+execution/protection/recovery machinery.
+
+Authoritative plan:
+`DOCUMENTS/ROBOT_AUTOPILOT_IMPLEMENTATION_PLAN.md`.
+
+Foundation already proven:
+- PR #288 merged to main as `6e865536cd1cd1a5cf7a7211576e1fe5d8b57be8`;
+- CONFIRMED Ikigai Box now freezes `BOX_PLAN_ONLY` and crosses into
+  `BOX_ENTRY_READY` only through canonical admission;
+- Wedge/L-shape already use the shared candidate/admission lifecycle;
+- existing Robot execution, protection, ownership and reconciliation remain the
+  only trading engine.
+
+Binding implementation order:
+1. **Stage A — OFF/SHADOW/PAPER_AUTO durable state + pure auto-admission policy.**
+   Default OFF. SHADOW must be read-only and auditable.
+2. **Stage B — shared read-only admission assessment** so manual and automatic
+   admission cannot diverge.
+3. **Stage C — RobotDiscoveryController in SHADOW**, reusing existing detectors,
+   source-time OHLC and per-symbol 5m→1m traversal.
+4. **Stage D — PAPER_AUTO canonical admission**, only after explicit
+   portfolio/risk limits are frozen; auto path must call the same canonical
+   admission boundary as the owner button.
+5. **Stage E/F — portfolio protections + Telegram Autopilot controls/status.**
+6. **Stage G — ranking/expectancy only after sufficient PAPER evidence.**
+
+Hard constraints:
+- no second execution engine, order journal, protection system or recovery
+  coordinator;
+- discovery never submits orders;
+- WATCH is never executable;
+- do not invent cross-pattern score comparability or risk thresholds;
+- unset required portfolio limits fail closed;
+- OFF stops new automatic admissions but never abandons an already-open trade;
+- LIVE mutations remain prohibited.
+
+This priority supersedes the previous "next task" ordering. Older incomplete
+acceptance/geometry/dual-timeframe work remains queued and is not deleted.
+
 ## TODAY — 2026-09-27 — BINDING OWNER ORDER
 
 This order is the current owner priority and supersedes older 2026-09-26
