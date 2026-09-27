@@ -1,3 +1,16 @@
+## OWNER RUNTIME ENTRYPOINT — DESKTOP SHORTCUTS — 2026-09-27
+
+Permanent owner UX rule: Scanner/Robot are started manually from the existing desktop
+shortcut surface, currently `start_scanner`, `Запуск робота`, and the companion stop
+shortcut. This is the stable user-facing path.
+
+Future runtime/Scanner/Robot development must upgrade the scripts/targets behind these
+shortcuts so newly merged behavior is available through the same owner workflow.
+Do not create a parallel normal launch path and do not ask the owner to rediscover which
+launcher he uses. Terminal commands are diagnostic/repair-only, not the normal start UX.
+Before runtime acceptance, verify that this desktop surface reaches the current canonical
+implementation and all readiness/safety gates. The actual start remains owner-manual.
+
 ## NEXT WORK SESSION — IKIGAI FIRST-IMPULSE IMPLEMENTATION — OWNER QUEUE 2026-09-27
 
 Owner direction: make **Ikigai Box — «Кривой первый импульс»** the first task
