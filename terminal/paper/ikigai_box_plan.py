@@ -62,8 +62,10 @@ def approved_first_grid(
 ) -> tuple[tuple[Decimal, ...], Decimal]:
     """Owner-approved equal-step first grid and one common TAKE; no orders.
 
-    Reject levels that cannot be represented exactly on the instrument tick
-    grid rather than silently breaking equal spacing or midpoint geometry.
+    The Fibonacci anchors stay frozen, while executable prices are normalized
+    to the instrument tick grid. P1 and TAKE round toward the entry side. The
+    common grid step rounds outward to the next whole tick so all four LIMITs
+    remain exactly equally spaced and P4 stays strictly beyond F(1.618).
     """
     if direction not in ("LONG", "SHORT"):
         raise ValueError("direction must be LONG or SHORT")
@@ -78,16 +80,28 @@ def approved_first_grid(
         direction == "SHORT" and displacement <= 0
     ):
         raise ValueError("frozen Fibonacci levels contradict the trade direction")
-    prices = tuple(
-        frozen_f1 + fraction * displacement
-        for fraction in (
-            Decimal("0.75"), Decimal("0.85"),
-            Decimal("0.95"), Decimal("1.05"),
-        )
-    )
-    take = frozen_f1 + Decimal("0.10") * displacement
+
+    entry_side = OrderSide.BUY if direction == "LONG" else OrderSide.SELL
+    raw_p1 = frozen_f1 + Decimal("0.75") * displacement
+    p1 = normalize_limit_price(raw_p1, tick_size, entry_side)
+
+    raw_step = abs(displacement) / Decimal("10")
+    step = normalize_limit_price(raw_step, tick_size, OrderSide.SELL)
+    signed_step = -step if direction == "LONG" else step
+    prices = tuple(p1 + index * signed_step for index in range(4))
+
+    raw_take = frozen_f1 + Decimal("0.10") * displacement
+    take = normalize_limit_price(raw_take, tick_size, entry_side)
+
     if any(value <= 0 or value % tick_size != 0 for value in (*prices, take)):
-        raise ValueError("approved first grid/TAKE is not exactly tick-aligned")
+        raise ValueError("approved first grid/TAKE cannot be tick-normalized")
+    if any(prices[index] - prices[index - 1] != signed_step for index in (1, 2, 3)):
+        raise ValueError("approved first grid cannot preserve equal tick spacing")
+    if (
+        (direction == "LONG" and prices[3] >= frozen_f1618)
+        or (direction == "SHORT" and prices[3] <= frozen_f1618)
+    ):
+        raise ValueError("approved first grid cannot place P4 beyond F(1.618)")
     return prices, take
 
 
