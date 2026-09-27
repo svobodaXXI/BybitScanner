@@ -189,8 +189,11 @@ class LShapeTelegramTests(unittest.TestCase):
                 patch.object(observer, "save_memory") as save, \
                 patch.object(observer, "send_photo", return_value={"ok": True}) as photo, \
                 patch.object(
-                    observer, "create_signal_snapshot",
-                    return_value={"candidate_id": "candidate-lshape"},
+                    observer, "prepare_robot_handoff",
+                    return_value=SimpleNamespace(
+                        candidate_id="candidate-lshape",
+                        persistence_failed=False,
+                    ),
                 ) as robot:
             self.assertTrue(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
             self.assertFalse(observer.send_l_shape_observation("TESTUSDT", candidate, timeframe="5"))
@@ -222,8 +225,11 @@ class LShapeTelegramTests(unittest.TestCase):
                 patch.object(observer, "load_memory", return_value=memory), \
                 patch.object(observer, "save_memory"), \
                 patch.object(
-                    observer, "create_signal_snapshot",
-                    return_value={"candidate_id": "candidate-lshape"},
+                    observer, "prepare_robot_handoff",
+                    return_value=SimpleNamespace(
+                        candidate_id="candidate-lshape",
+                        persistence_failed=False,
+                    ),
                 ) as robot, \
                 patch.object(observer, "send_photo", side_effect=[
                     {"ok": True}, {"ok": False}, {"ok": True},
