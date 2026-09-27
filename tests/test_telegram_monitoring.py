@@ -166,6 +166,64 @@ class TelegramMonitoringTests(unittest.TestCase):
             self.assertEqual(commands[-1]["description"], "Мониторинг кандидатов")
         self.assertEqual(telegram.call_count, 2)
 
+    @patch("telegram_monitoring._telegram_request", return_value={"ok": True})
+    def test_force_menu_button_republishes_without_trusting_stale_get_state(self, telegram):
+        monitoring._ensure_commands_menu_button(force=True)
+
+        telegram.assert_called_once()
+        self.assertEqual(telegram.call_args.args[0], "setChatMenuButton")
+        self.assertEqual(telegram.call_args.kwargs["chat_id"], "123")
+        self.assertEqual(
+            json.loads(telegram.call_args.kwargs["menu_button"]),
+            {"type": "commands"},
+        )
+
+    @patch("telegram_monitoring._refresh_owner_menu_surface")
+    @patch("telegram_monitoring._process_message")
+    @patch("telegram_monitoring._telegram_request")
+    def test_owner_message_reasserts_menu_surface_after_processing(self, telegram, process, refresh):
+        telegram.return_value = {
+            "ok": True,
+            "result": [{
+                "update_id": 42,
+                "message": {"from": {"id": 123}, "chat": {"id": 123}, "text": "/scanner"},
+            }],
+        }
+
+        monitoring.poll_updates_once(None)
+
+        process.assert_called_once()
+        refresh.assert_called_once_with()
+
+    @patch("telegram_monitoring._refresh_owner_menu_surface")
+    @patch("telegram_monitoring._process_monitor_callback", return_value=False)
+    @patch("telegram_monitoring._process_positions_callback", return_value=False)
+    @patch("telegram_monitoring._telegram_request")
+    def test_owner_robot_callback_reasserts_menu_surface_after_processing(
+        self, telegram, positions, monitor, refresh,
+    ):
+        telegram.return_value = {
+            "ok": True,
+            "result": [{
+                "update_id": 43,
+                "callback_query": {
+                    "id": "cb-1",
+                    "from": {"id": 123},
+                    "message": {"chat": {"id": 123}},
+                    "data": "robot:cmd:pause",
+                },
+            }],
+        }
+        review_calls = []
+        fake_review = ModuleType("telegram_review")
+        fake_review._process_callback = lambda callback: review_calls.append(callback)
+
+        with patch.dict(sys.modules, {"telegram_review": fake_review}):
+            monitoring.poll_updates_once(None)
+
+        self.assertEqual(len(review_calls), 1)
+        refresh.assert_called_once_with()
+
     @patch("telegram_monitoring._send_scanner_control")
     @patch("telegram_monitoring._send_candidate_list")
     def test_authorization_and_existing_monitoring(self, monitor, scanner):
