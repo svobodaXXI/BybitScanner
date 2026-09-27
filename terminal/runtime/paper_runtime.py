@@ -2287,9 +2287,14 @@ class PaperRuntime:
         still_pending_protection: list[str] = []
         unresolved_candidate_ids: list[str] = []
 
-        for record in self.store.load_robot_candidates(self._account_id):
-            prior = before.get(record.candidate_id)
-            if prior is None:
+        # Only candidates that were APPROVED at the start of this safety
+        # pass can contribute to its result. Resolve those rows by primary key
+        # after the monitor tick instead of scanning/deserializing all Robot
+        # candidate history on the owner thread.
+        for candidate_id, prior in before.items():
+            record = self.store.get_robot_candidate(candidate_id)
+            if record is None:
+                unresolved_candidate_ids.append(candidate_id)
                 continue
 
             if record.status == "OPEN":
