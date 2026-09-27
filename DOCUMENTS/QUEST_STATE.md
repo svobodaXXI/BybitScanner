@@ -242,7 +242,7 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #276 merged (`0f72355`): canonical tracked safe-stop path без process-title kills/forced close;
 - [x] owner-PC: current `main` загружен, desktop Robot start/stop path перенаправлен на canonical tracked launchers и safe-stop owner-run подтверждён;
 - [x] P0.5: PR #285 (`543168420afaab3b0dde9be083969ff867b69263`) реализовал общий Runtime Intent Reconciler; owner-run desktop `Запуск робота` доказал one-action ALL до Robot READY + Scanner RUNNING;
-- [ ] завершить текущий чистый полный owner-run PAPER acceptance. Частичный checkpoint уже доказал реальный CONFIRMED AKEUSDT 5m -> `🤖 Робот` -> `Сигнал принят`; server-side Telegram Menu также подтверждён Bot API, хотя текущий desktop client визуально кнопку Menu не показывает.
+- [ ] завершить текущий чистый полный owner-run PAPER acceptance. Частичный checkpoint доказал реальный CONFIRMED AKEUSDT 5m -> `🤖 Робот` -> `Сигнал принят`; server-side Telegram Menu подтверждён Bot API. Но acceptance снова RED на отдельном `ARUSDT 1m` Box blocker: grid/TAKE tick-normalization уже проходит, затем `plan_ikigai_box()` не находит tick-aligned STOP за P4 с net RR >= 2. Это отдельный STOP/RR defect class, не повтор PR #300.
 
 **Награда:** без XP за документацию/рефакторинг; награда только за доказанный
 полный запуск без ручного кризисного восстановления.
