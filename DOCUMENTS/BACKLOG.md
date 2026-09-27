@@ -1,3 +1,41 @@
+## NOW — 2026-09-27 — BINDING IMPLEMENTATION QUEUE: ROBOT STABILITY -> GEOMETRY QUALITY
+
+Authoritative execution plan:
+`DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md` §§10–13.
+
+This queue supersedes older "next" wording, including immediate Autopilot
+continuation, until the two blocking quality gates are green or the owner
+explicitly reprioritizes.
+
+| Order | ID | Priority | Task | Exit gate |
+|---:|---|---|---|---|
+| 1 | RVL-R1 | P0 | Minimal Runtime Replay contract + deterministic runner | continuous events can be replayed through real SerializedPaperRuntime with deterministic order/metrics |
+| 2 | RVL-R2 | P0 | Reproduce 2026-09-27 continuous multi-symbol ENTRY_PENDING overflow as RED | current main reliably reaches the real overload class without artificial drain barriers |
+| 3 | RVL-R3 | P0 | Freeze exact ENTRY_PENDING coverage boundary | tests prove when coverage begins/ends and first-fill evidence cannot be missed |
+| 4 | RVL-R4 | P0 | Minimal production ingress fix | R2 GREEN without queue enlargement, coalescing or weakened protection |
+| 5 | RVL-R5 | P0 | Runtime replay pack + focused PAPER CI | all applicable runtime fixtures/checks GREEN once |
+| 6 | RVL-R6 | P0 | One canonical owner PAPER acceptance | no ingress_overflow; protection healthy; real queue sustains traffic |
+| 7 | RVL-G1 | P1 | Geometry Gold schema + inventory of saved real cases | exact available OHLC/evidence mapped; gaps explicit |
+| 8 | RVL-G2 | P1 | Seed first compact Geometry Gold set | real Wedge/Triangle positive/negative/anchor/stale cases replayable |
+| 9 | RVL-G3 | P1 | Geometry baseline report | per-case PASS/FAIL and anchor deltas visible in one run |
+| 10 | RVL-G4 | P1 | Fix geometry defect classes one bounded slice at a time | targeted gold failures turn GREEN without regressing accepted cases |
+| 11 | RVL-G5 | P1 | Add high-value geometry/state invariants | invariants complement gold cases without broad test inflation |
+| 12 | RVL-G6 | P1 | One complete owner Scanner/Telegram acceptance | full eligible universe, normal Telegram, all integrated patterns |
+| 13 | RVL-V1 | P2 | Compact validation report command | one report shows FAST/REPLAY/Geometry/PAPER/owner gate states |
+| 14 | RVL-V2 | P2 conditional | Bounded normalized incident capture | only if production-shape replay fidelity proves insufficient |
+| 15 | RVL-V3 | P2 | Tier-aware CI routing | focused FAST/REPLAY automatic; broader PAPER CI remains bounded |
+
+**Active task:** RVL-R1.
+
+Hard sequencing:
+- no new production ingress fix before RVL-R2 RED and RVL-R3 boundary proof;
+- no real owner PAPER acceptance before R1-R5 are green;
+- Geometry Lab begins after Robot Stability owner gate R6, unless the owner
+  explicitly runs it in parallel;
+- Autopilot, new pattern families, secondary UX and nonessential refactors are
+  preserved but parked behind these gates;
+- replay/golden fixtures never replace existing owner acceptance contracts.
+
 ## NOW — 2026-09-27 — PROCESS OPTIMIZATION: REPLAY + GEOMETRY GOLDEN SET
 
 Owner-approved development-loop improvement:
