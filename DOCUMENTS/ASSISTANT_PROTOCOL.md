@@ -77,6 +77,9 @@ discipline, or productivity.
 
 Priority: saving the user's time and manual effort outranks the assistant's response brevity. The assistant prepares
 the commands and prompts itself; it does not shorten a response by moving work onto the user (see `2.2.2` and `8.11`).
+The owner is never used as a human search/filter/parser when the same diagnostic result can be produced automatically.
+If host-local evidence is required, the assistant supplies one ready command or delegated prompt that performs the
+search, filtering and parsing itself and returns only the decisive result.
 
 ### Owner desktop launch surface — HARD UX CONTRACT (OWNER RULE 2026-09-27)
 
@@ -213,8 +216,9 @@ restart, and expected outcome. Never require the user to infer missing setup.
 Immediately before sending any response that requires user action, verify that:
 
 1. the action is objectively necessary now;
-2. the same required fact or read-only repository inspection cannot be obtained directly by the assistant through an
-   available repository/file connector or other non-user tool;
+2. the same required fact cannot be obtained directly by the assistant through an available repository/file connector
+   or other non-user tool; and if the fact is host-local, the requested action is an automated collector rather than
+   a request for the owner to manually search, inspect, filter, correlate or transcribe diagnostic evidence;
 3. it is the next dependent step, not a premature later step;
 4. required terminal, process, directory, and runtime state is known;
 5. every command, text, or payload intended for copying is alone in a dedicated code block;
@@ -234,10 +238,18 @@ One response contains at most 2 commands or blocks for the user to execute (Powe
 A chain joined with `;` or `&&`, and a multi-line script, each count as several commands. Dependent steps are given one
 per message, per `2.2`.
 
-Everything the assistant can do automatically — Git operations, process restarts, checks, file edits — is delegated to
-Claude Code (or Codex) through a prompt, not handed to the user as commands. A prompt for Claude Code counts as 1
+Everything the assistant can do automatically — Git operations, process restarts, checks, file edits, log/error search,
+diagnostic filtering, state collection and evidence correlation — is done directly with available tools or delegated to
+Claude Code (or Codex) through a prompt, not handed to the user as manual work. A prompt for Claude Code counts as 1
 block. The batching allowance in `2.2` ("Independent safe commands may be batched.") applies only within this limit.
 Preflight `2.2.1` also verifies this limit before sending a response that requires user action.
+
+**No manual diagnostic hunting:** do not ask the owner to open a console/window/file and visually find a line, scroll
+through logs, grep by eye, compare rows/screens, or transcribe fragments when a command, script, repository connector,
+runtime/API query, or delegated agent can perform that work. When the decisive evidence exists only on the owner's host
+and cannot be read directly, provide one copy-ready bounded command or agent prompt that collects, searches, filters and
+formats the needed evidence automatically. Manual visual inspection of diagnostic text is a last resort only when no
+automatable interface exists, and requires the owner's explicit agreement.
 
 ### 2.2.3 OPERATIONAL ENTRYPOINT TRACE — HARD RULE
 
@@ -278,9 +290,10 @@ actions:
 3. match the symptom against documented failure signatures and canonical
    recovery routes;
 4. use repository tools to recover everything that is not host-local;
-5. if host evidence is still required, request one bounded read-only snapshot
-   containing the decisive facts for that class rather than a sequence of
-   speculative probes;
+5. if host evidence is still required, request one bounded automated read-only
+   collector (ready command or delegated prompt) that searches/filters/parses the
+   decisive facts for that class; never make the owner manually hunt through
+   consoles, logs, files, database rows or process output;
 6. use the documented recovery/repair path immediately when the signature
    matches; broaden investigation only when current evidence contradicts it.
 
@@ -1163,6 +1176,8 @@ extends `8.7` (no user as file transport) and `8.8` (machine-applied file change
 ---
 
 # 9. CURRENT REVISION RECORD
+
+`4.45` strengthens the owner-time/user-action rules: the owner must never be used as a human search/filter/parser for diagnostics; host-local evidence must be collected by one bounded automated command or delegated prompt whenever direct assistant access is unavailable. Manual diagnostic hunting is last-resort and opt-in only.
 
 `4.44` adds §3.2.1a: compact delegated prompts, one necessary focused check per changed behavior, no automatic verification/research loops or agent waiting; mandatory safety gates remain intact.
 
