@@ -28,6 +28,19 @@ class FakePaperRuntime:
         self.calls = []
         self.start_gate = None
 
+    live_gates = {
+        "live_market_mutations_enabled": False,
+        "live_mainnet_authorized": False,
+        "live_market_acceptance_single_flight": False,
+        "live_parity_mutations_enabled": False,
+        "live_limit_mutations_enabled": False,
+        "live_market_acceptance_notional_ceiling": "0",
+        "live_limit_acceptance_notional_ceiling": "0",
+    }
+
+    def live_limit_acceptance_diagnostics(self):
+        return {"live_gates": dict(self.live_gates)}
+
     def robot_runtime_state(self):
         return SimpleNamespace(mode=self.robot[0], recovery_status=self.robot[1])
 
@@ -101,8 +114,17 @@ class RecordingLock:
 
 
 class RuntimeIntentBackendTests(unittest.TestCase):
-    def _serve(self, runtime, protection=None, lock=None):
+    def setUp(self):
+        patcher = mock.patch(
+            "terminal.runtime.paper_http_server._scanner_acceptance_ready", return_value=True,
+        )
+        self.acceptance_ready = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _serve(self, runtime, protection=None, lock=None, operator_token=None):
         server = ThreadingHTTPServer(("127.0.0.1", 0), PaperHttpHandler)
+        if operator_token is not None:
+            server.operator_token = operator_token
         server.runtime = FakeSerializedRuntime(runtime)
         server.robot_protection_coverage = protection or FakeProtection()
         server.runtime_intent_lock = lock or threading.Lock()
@@ -209,6 +231,37 @@ class RuntimeIntentBackendTests(unittest.TestCase):
         session_request.assert_not_called()
         requests_post.assert_not_called()
         urlopen.assert_not_called()
+
+    def test_effective_live_gates_block_every_intent_with_409(self):
+        unsafe = (
+            ("live_limit_mutations_enabled", True, None),
+            ("live_market_acceptance_notional_ceiling", "5", None),
+            (None, None, "x" * 32),
+        )
+        for gate, value, token in unsafe:
+            for intent in ("SCANNER", "ROBOT", "ALL"):
+                with self.subTest(gate=gate, token=bool(token), intent=intent):
+                    runtime = FakePaperRuntime(robot=STOPPED, scanner="SCANNER_STOPPED")
+                    if gate is not None:
+                        runtime.live_gates = {**FakePaperRuntime.live_gates, gate: value}
+                    server = self._serve(runtime, operator_token=token)
+                    status, payload = self._post(server, {"intent": intent})
+                    self.assertEqual(status, 409)
+                    self.assertEqual(payload["blocked_by"], ["PAPER_LIVE_UNSAFE"])
+                    self.assertEqual(runtime.calls, [])
+
+    def test_scanner_acceptance_config_gates_scanner_and_all_but_not_robot(self):
+        self.acceptance_ready.return_value = False
+        for intent, expected in (("SCANNER", 409), ("ALL", 409), ("ROBOT", 200)):
+            with self.subTest(intent=intent):
+                runtime = FakePaperRuntime(robot=STOPPED, scanner="SCANNER_STOPPED")
+                status, payload = self._post(self._serve(runtime), {"intent": intent})
+                self.assertEqual(status, expected)
+                if expected == 409:
+                    self.assertEqual(payload["blocked_by"], ["SCANNER_ACCEPTANCE_NOT_READY"])
+                    self.assertEqual(runtime.calls, [])
+                else:
+                    self.assertEqual(runtime.calls, ["robot:start"])
 
     def test_concurrent_intents_never_overlap_mutation_sections(self):
         runtime = FakePaperRuntime(robot=STOPPED, scanner="SCANNER_STOPPED")

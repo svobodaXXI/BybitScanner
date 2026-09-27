@@ -44,6 +44,8 @@ SCANNER_STATE_UNKNOWN = "SCANNER_STATE_UNKNOWN"
 SCANNER_START_FAILED = "SCANNER_START_FAILED"
 SCANNER_RESUME_FAILED = "SCANNER_RESUME_FAILED"
 SCANNER_NOT_RUNNING = "SCANNER_NOT_RUNNING"
+PAPER_LIVE_UNSAFE = "PAPER_LIVE_UNSAFE"
+SCANNER_ACCEPTANCE_NOT_READY = "SCANNER_ACCEPTANCE_NOT_READY"
 
 
 class RuntimeIntent(str, Enum):
@@ -53,6 +55,8 @@ class RuntimeIntent(str, Enum):
 
 
 class RuntimeIntentPorts(Protocol):
+    def paper_live_safe(self) -> bool | None: ...
+    def scanner_acceptance_ready(self) -> bool | None: ...
     def robot_state(self) -> tuple[str, str] | None: ...
     def protection_healthy(self) -> bool | None: ...
     def scanner_state(self) -> str | None: ...
@@ -86,7 +90,11 @@ class RuntimeIntentReconciler:
         changed: list[str] = []
 
         blocker = None
-        if needs_scanner and self._read_scanner() not in _SCANNER_STATES:
+        if self._read_predicate(self._ports.paper_live_safe) is not True:
+            blocker = PAPER_LIVE_UNSAFE
+        elif needs_scanner and self._read_predicate(self._ports.scanner_acceptance_ready) is not True:
+            blocker = SCANNER_ACCEPTANCE_NOT_READY
+        elif needs_scanner and self._read_scanner() not in _SCANNER_STATES:
             blocker = SCANNER_STATE_UNKNOWN
         if blocker is None and needs_robot:
             blocker = self._ensure_robot_ready(changed)
@@ -167,6 +175,13 @@ class RuntimeIntentReconciler:
                 scanner.removeprefix("SCANNER_") if scanner in _SCANNER_STATES else "UNKNOWN"
             )
         return final
+
+    @staticmethod
+    def _read_predicate(predicate) -> object:
+        try:
+            return predicate()
+        except Exception:
+            return None
 
     def _read_robot(self) -> tuple[str, str] | None:
         try:

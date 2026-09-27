@@ -300,9 +300,19 @@ class BackendRuntimeIntentPorts:
     ``runtime.call``; nothing here makes an HTTP request or owns state.
     """
 
-    def __init__(self, runtime, protection_coverage) -> None:
+    def __init__(self, runtime, protection_coverage, *, operator_token: object) -> None:
         self._runtime = runtime
         self._protection = protection_coverage
+        self._operator_token = operator_token
+
+    def paper_live_safe(self):
+        diagnostics = self._runtime.call(
+            lambda runtime: runtime.live_limit_acceptance_diagnostics()
+        )
+        return _paper_live_safe(diagnostics.get("live_gates"), self._operator_token)
+
+    def scanner_acceptance_ready(self):
+        return _scanner_acceptance_ready()
 
     def robot_state(self):
         state = self._runtime.call(lambda runtime: runtime.robot_runtime_state())
@@ -3160,7 +3170,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 self._json_response(503, {"ok": False, "error": "runtime_intent_unavailable"})
                 return
             try:
-                ports = BackendRuntimeIntentPorts(self.server.runtime, coverage)
+                ports = BackendRuntimeIntentPorts(
+                    self.server.runtime, coverage,
+                    operator_token=getattr(self.server, "operator_token", ""),
+                )
                 with lock:
                     result = RuntimeIntentReconciler(ports).reconcile(intent)
             except Exception:

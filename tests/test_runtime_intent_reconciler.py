@@ -39,7 +39,11 @@ class FakeRuntimePorts:
         start_lands=ROBOT_READY,
         reconcile_lands=ROBOT_PAUSED,
         reconcile_raises=False,
+        paper_safe=True,
+        acceptance_ready=True,
     ):
+        self.paper_safe = paper_safe
+        self.acceptance_ready = acceptance_ready
         self.robot = robot
         self.scanner = scanner
         self.protection = protection
@@ -47,6 +51,16 @@ class FakeRuntimePorts:
         self.reconcile_lands = reconcile_lands
         self.reconcile_raises = reconcile_raises
         self.calls = []
+
+    def paper_live_safe(self):
+        if isinstance(self.paper_safe, Exception):
+            raise self.paper_safe
+        return self.paper_safe
+
+    def scanner_acceptance_ready(self):
+        if isinstance(self.acceptance_ready, Exception):
+            raise self.acceptance_ready
+        return self.acceptance_ready
 
     def robot_state(self):
         return self.robot
@@ -281,6 +295,43 @@ class AllIntentContractTests(unittest.TestCase):
         self.assertTrue(second.ok)
         self.assertEqual(tuple(second.changed), ())
         self.assertEqual(ports.calls, ["robot:start", "scanner:start"])
+
+
+class SafetyPreflightContractTests(unittest.TestCase):
+    NOT_PROVEN = (False, None, "true", 1, _Rejected("unavailable"))
+
+    def test_paper_live_unsafe_blocks_every_intent_before_any_mutation(self):
+        for intent in (RuntimeIntent.SCANNER, RuntimeIntent.ROBOT, RuntimeIntent.ALL):
+            for value in self.NOT_PROVEN:
+                with self.subTest(intent=intent, value=value):
+                    ports = FakeRuntimePorts(
+                        robot=ROBOT_STOPPED, scanner=SCANNER_STOPPED, paper_safe=value,
+                    )
+                    result = _reconcile(ports, intent)
+                    self.assertFalse(result.ok)
+                    self.assertEqual(tuple(result.blocked_by), ("PAPER_LIVE_UNSAFE",))
+                    self.assertEqual(ports.calls, [])
+
+    def test_scanner_acceptance_not_ready_blocks_scanner_and_all_before_any_mutation(self):
+        for intent in (RuntimeIntent.SCANNER, RuntimeIntent.ALL):
+            for value in self.NOT_PROVEN:
+                with self.subTest(intent=intent, value=value):
+                    ports = FakeRuntimePorts(
+                        robot=ROBOT_STOPPED, scanner=SCANNER_STOPPED, acceptance_ready=value,
+                    )
+                    result = _reconcile(ports, intent)
+                    self.assertFalse(result.ok)
+                    self.assertEqual(tuple(result.blocked_by), ("SCANNER_ACCEPTANCE_NOT_READY",))
+                    self.assertEqual(ports.calls, [])
+                    self.assertEqual(ports.robot, ROBOT_STOPPED)
+
+    def test_robot_intent_ignores_scanner_acceptance(self):
+        for value in self.NOT_PROVEN:
+            with self.subTest(value=value):
+                ports = FakeRuntimePorts(robot=ROBOT_STOPPED, scanner=None, acceptance_ready=value)
+                result = _reconcile(ports, RuntimeIntent.ROBOT)
+                self.assertTrue(result.ok)
+                self.assertEqual(tuple(result.changed), ("robot:start",))
 
 
 if __name__ == "__main__":
