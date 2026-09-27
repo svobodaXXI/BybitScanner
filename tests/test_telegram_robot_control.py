@@ -32,6 +32,12 @@ def _owner_callback(callback_id, command):
     }
 
 
+def _intent_result(outcome, blocked_by=()):
+    from tools.runtime_intent import BootstrapResult
+
+    return BootstrapResult("ROBOT", outcome, outcome, blocked_by=blocked_by)
+
+
 def _state(mode, recovery_status):
     return RobotRuntimeStateRecord(
         trading_account_id=TradingAccountId("paper"),
@@ -53,12 +59,10 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         with patch.object(
             telegram_review.config, "TELEGRAM_CHAT_ID", "42",
         ), patch.object(
-            telegram_review, "start_robot",
-        ) as start_mock, patch.object(
+            telegram_review.telegram_runtime_intent, "execute",
+        ) as intent_mock, patch.object(
             telegram_review, "pause_robot",
         ) as pause_mock, patch.object(
-            telegram_review, "resume_robot",
-        ) as resume_mock, patch.object(
             telegram_review, "stop_robot",
         ) as stop_mock, patch.object(
             telegram_review, "_answer_callback",
@@ -70,9 +74,8 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         ) as send_mock:
             telegram_review._process_callback(callback_query)
 
-        start_mock.assert_not_called()
+        intent_mock.assert_not_called()
         pause_mock.assert_not_called()
-        resume_mock.assert_not_called()
         stop_mock.assert_not_called()
         answer_mock.assert_called_once_with("cb-status", "🤖 Робот")
         send_mock.assert_called_once()
@@ -102,13 +105,17 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
         self.assertIn("🤖 Робот: на паузе ⏸", send_mock.call_args.args[2])
         self.assertIn("Статус робота: Запущен / Пауза", send_mock.call_args.args[2])
 
-    def test_owner_resume_callback_invokes_resume_robot(self):
-        callback_query = _owner_callback("cb-2", "resume")
+    def _run_intent_callback(self, command, result):
+        callback_query = _owner_callback(f"cb-{command}", command)
         with patch.object(
             telegram_review.config, "TELEGRAM_CHAT_ID", "42",
         ), patch.object(
-            telegram_review, "resume_robot", return_value=_state("ROBOT_RUNNING", "READY"),
-        ) as resume_mock, patch.object(
+            telegram_review.telegram_runtime_intent, "execute", return_value=result,
+        ) as intent_mock, patch.object(
+            telegram_review, "pause_robot",
+        ) as pause_mock, patch.object(
+            telegram_review, "stop_robot",
+        ) as stop_mock, patch.object(
             telegram_review, "_answer_callback",
         ) as answer_mock, patch.object(
             telegram_review, "get_robot_runtime_status",
@@ -117,31 +124,61 @@ class TelegramRobotControlDispatchTests(unittest.TestCase):
             telegram_review.telegram_bot, "send_message",
         ) as send_mock:
             telegram_review._process_callback(callback_query)
+        pause_mock.assert_not_called()
+        stop_mock.assert_not_called()
+        intent_mock.assert_called_once_with("ROBOT")
+        answer_mock.assert_called_once()
+        return send_mock
 
-        resume_mock.assert_called_once_with()
-        answer_mock.assert_called_once_with("cb-2", "🤖 Робот: возобновлён ▶")
-        send_mock.assert_called_once()
-        self.assertIn("Статус робота: Запущен / Готов", send_mock.call_args.args[2])
+    def test_owner_start_and_resume_callbacks_run_the_robot_runtime_intent(self):
+        self.assertFalse(hasattr(telegram_review, "start_robot"))
+        self.assertFalse(hasattr(telegram_review, "resume_robot"))
+        for command, prefix in (("start", "🤖 Робот: запущен ▶"), ("resume", "🤖 Робот: возобновлён ▶")):
+            with self.subTest(command=command):
+                send_mock = self._run_intent_callback(command, _intent_result("READY"))
+                send_mock.assert_called_once()
+                self.assertIn(prefix, send_mock.call_args.args[2])
+                self.assertIn("Статус робота: Запущен / Готов", send_mock.call_args.args[2])
 
-    def test_owner_start_callback_invokes_start_robot(self):
-        callback_query = _owner_callback("cb-3", "start")
+    def test_blocked_or_unconfirmed_robot_intent_sends_one_message_without_retry(self):
+        for result, text in (
+            (_intent_result("BLOCKED", blocked_by=("ROBOT_PROTECTION_UNHEALTHY",)),
+             "⛔ Запуск заблокирован: ROBOT_PROTECTION_UNHEALTHY"),
+            (_intent_result("ERROR"), "⚠ Запуск не подтверждён."),
+            (_intent_result("FAILED"), "⚠ Запуск не подтверждён."),
+        ):
+            with self.subTest(outcome=result.outcome):
+                send_mock = self._run_intent_callback("start", result)
+                send_mock.assert_called_once()
+                self.assertEqual(send_mock.call_args.args[2], text)
+
+    def test_candidate_approval_stays_on_admission_not_runtime_intent(self):
+        callback_query = {
+            "id": "cb-approve",
+            "data": "robot:approve:cand-1",
+            "from": {"id": 42, "username": "owner"},
+            "message": {"message_id": 100, "chat": {"id": 42}},
+        }
+        record = types.SimpleNamespace(candidate_id="cand-1", symbol=types.SimpleNamespace(value="BTCUSDT"))
         with patch.object(
             telegram_review.config, "TELEGRAM_CHAT_ID", "42",
         ), patch.object(
-            telegram_review, "start_robot", return_value=_state("ROBOT_RUNNING", "READY"),
-        ) as start_mock, patch.object(
+            telegram_review, "admit_robot_candidate", return_value=(record, True),
+        ) as admit_mock, patch.object(
+            telegram_review.telegram_runtime_intent, "execute",
+        ) as intent_mock, patch.object(
             telegram_review, "_answer_callback",
-        ) as answer_mock, patch.object(
+        ), patch.object(
             telegram_review, "get_robot_runtime_status",
             return_value=_state("ROBOT_RUNNING", "READY"),
         ), patch.object(
             telegram_review.telegram_bot, "send_message",
-        ) as send_mock:
+        ):
             telegram_review._process_callback(callback_query)
 
-        start_mock.assert_called_once_with()
-        answer_mock.assert_called_once_with("cb-3", "🤖 Робот: запущен ▶")
-        send_mock.assert_called_once()
+        admit_mock.assert_called_once()
+        self.assertEqual(admit_mock.call_args.args[0], "cand-1")
+        intent_mock.assert_not_called()
 
     def test_owner_stop_callback_invokes_stop_robot(self):
         callback_query = _owner_callback("cb-4", "stop")

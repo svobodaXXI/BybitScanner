@@ -10,6 +10,7 @@ Usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT]
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import hashlib
 import json
 import os
@@ -40,6 +41,39 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ABSENT = "absent"
 STARTING = "starting"
 READY = "ready"
+
+
+OUTCOME_READY = "READY"
+OUTCOME_BLOCKED = "BLOCKED"
+OUTCOME_FAILED = "FAILED"
+OUTCOME_ERROR = "ERROR"
+OUTCOME_USAGE = "USAGE"
+
+_EXIT_CODES = {
+    OUTCOME_READY: EXIT_OK,
+    OUTCOME_BLOCKED: EXIT_BLOCKED,
+    OUTCOME_FAILED: EXIT_BOOTSTRAP_FAILED,
+    OUTCOME_ERROR: EXIT_INTENT_ERROR,
+    OUTCOME_USAGE: EXIT_USAGE,
+}
+
+
+@dataclass(frozen=True)
+class BootstrapResult:
+    intent: str
+    outcome: str
+    message: str
+    changed: tuple[str, ...] = ()
+    final: Mapping[str, str] = field(default_factory=dict)
+    blocked_by: tuple[str, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return self.outcome == OUTCOME_READY
+
+    @property
+    def exit_code(self) -> int:
+        return _EXIT_CODES[self.outcome]
 
 
 class Unreachable(Exception):
@@ -125,7 +159,9 @@ class RuntimeIntentBootstrap:
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         out: Callable[[str], None] = lambda line: print(line, flush=True),
+        require_telegram: bool = True,
     ) -> None:
+        self._require_telegram = require_telegram
         self._root = root
         self._env = dict(os.environ if env is None else env)
         self._get = get
@@ -143,18 +179,28 @@ class RuntimeIntentBootstrap:
         self._telegram_health = f"http://127.0.0.1:{port}/health"
 
     def run(self, intent: str) -> int:
+        result = self.execute(intent)
+        self._out(result.message)
+        return result.exit_code
+
+    def execute(self, intent: str) -> BootstrapResult:
         if intent not in INTENTS:
-            self._out(f"ERROR: unknown intent {intent!r}; expected one of {', '.join(INTENTS)}")
-            return EXIT_USAGE
+            return BootstrapResult(
+                intent, OUTCOME_USAGE,
+                f"ERROR: unknown intent {intent!r}; expected one of {', '.join(INTENTS)}",
+            )
         try:
             self._ensure("PAPER backend", self._probe_backend, backend_argv(self._root))
-            self._ensure(
-                "Telegram monitoring", self._probe_telegram,
-                telegram_argv(self._root, self._python),
-            )
+            # A Telegram caller is itself the proven getUpdates owner; never probe/spawn over it.
+            if self._require_telegram:
+                self._ensure(
+                    "Telegram monitoring", self._probe_telegram,
+                    telegram_argv(self._root, self._python),
+                )
         except (Mismatch, TimeoutError, OSError) as error:
-            self._out(f"FAILED: {error}. Runtime intent {intent} was not sent.")
-            return EXIT_BOOTSTRAP_FAILED
+            return BootstrapResult(
+                intent, OUTCOME_FAILED, f"FAILED: {error}. Runtime intent {intent} was not sent.",
+            )
         return self._send_intent(intent)
 
     def _ensure(self, name: str, probe: Callable[[], str], argv: list[str]) -> None:
@@ -210,16 +256,16 @@ class RuntimeIntentBootstrap:
             return STARTING
         raise Mismatch(f"{self._telegram_health} answered with an unknown worker status")
 
-    def _send_intent(self, intent: str) -> int:
+    def _send_intent(self, intent: str) -> BootstrapResult:
         url = self._backend + "/api/runtime/intent"
         try:
             response = self._post(url, {"intent": intent}, INTENT_TIMEOUT_S)
         except Exception as error:
-            self._out(
+            return BootstrapResult(
+                intent, OUTCOME_ERROR,
                 f"ERROR: intent={intent} outcome unknown ({type(error).__name__}); "
-                "not retried. Check the PAPER backend window."
+                "not retried. Check the PAPER backend window.",
             )
-            return EXIT_INTENT_ERROR
         result = _json_or_none(response)
         if not (
             isinstance(result, dict)
@@ -229,21 +275,38 @@ class RuntimeIntentBootstrap:
             and isinstance(result.get("final"), dict)
             and isinstance(result.get("blocked_by"), list)
         ):
-            self._out(f"ERROR: intent={intent} HTTP {response.status} without a runtime intent result")
-            return EXIT_INTENT_ERROR
-        final = " ".join(f"{key}={value}" for key, value in result["final"].items())
-        changed = ",".join(result["changed"]) or "none"
-        if response.status == 200 and result["ok"] is True and not result["blocked_by"]:
-            self._out(f"READY: intent={intent} changed={changed} {final}".rstrip())
-            return EXIT_OK
-        if response.status == 409 and result["ok"] is False and result["blocked_by"]:
-            self._out(
-                f"BLOCKED: intent={intent} blocked_by={','.join(result['blocked_by'])} "
+            return BootstrapResult(
+                intent, OUTCOME_ERROR,
+                f"ERROR: intent={intent} HTTP {response.status} without a runtime intent result",
+            )
+        changed_items = tuple(str(item) for item in result["changed"])
+        blocked_by = tuple(str(item) for item in result["blocked_by"])
+        final_map = {str(key): str(value) for key, value in result["final"].items()}
+        final = " ".join(f"{key}={value}" for key, value in final_map.items())
+        changed = ",".join(changed_items) or "none"
+        if response.status == 200 and result["ok"] is True and not blocked_by:
+            outcome = OUTCOME_READY
+            message = f"READY: intent={intent} changed={changed} {final}".rstrip()
+        elif response.status == 409 and result["ok"] is False and blocked_by:
+            outcome = OUTCOME_BLOCKED
+            message = (
+                f"BLOCKED: intent={intent} blocked_by={','.join(blocked_by)} "
                 f"changed={changed} {final}".rstrip()
             )
-            return EXIT_BLOCKED
-        self._out(f"ERROR: intent={intent} HTTP {response.status} with an inconsistent result")
-        return EXIT_INTENT_ERROR
+        else:
+            return BootstrapResult(
+                intent, OUTCOME_ERROR,
+                f"ERROR: intent={intent} HTTP {response.status} with an inconsistent result",
+            )
+        return BootstrapResult(intent, outcome, message, changed_items, final_map, blocked_by)
+
+
+def execute_runtime_intent(
+    intent: str, *, require_telegram: bool, out: Callable[[str], None] | None = None,
+) -> BootstrapResult:
+    """Programmatic bootstrap + one intent POST; ``out`` receives progress lines only."""
+    kwargs = {} if out is None else {"out": out}
+    return RuntimeIntentBootstrap(require_telegram=require_telegram, **kwargs).execute(intent)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -251,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) > 1:
         print("usage: python -m tools.runtime_intent [ALL|SCANNER|ROBOT]", flush=True)
         return EXIT_USAGE
-    return RuntimeIntentBootstrap().run(args[0] if args else "ALL")
+    return RuntimeIntentBootstrap(require_telegram=True).run(args[0] if args else "ALL")
 
 
 if __name__ == "__main__":

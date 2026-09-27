@@ -8,6 +8,7 @@ import requests
 
 import config
 import telegram_bot
+import telegram_runtime_intent
 from telegram_labels import ROBOT_EMOJI
 from robot_candidate_store import RobotCandidateNotFound
 from robot_telegram_feed import (
@@ -25,8 +26,6 @@ from terminal.application.robot_control import (
     close_all_now,
     get_robot_runtime_status,
     pause_robot,
-    resume_robot,
-    start_robot,
     stop_robot,
 )
 
@@ -349,12 +348,8 @@ def _call_robot_control_command(command):
     # Dispatched by name (not a dict of pre-bound functions) so tests can
     # patch telegram_review.<name>_robot the same way they already patch
     # admit_robot_candidate, instead of a reference captured at import time.
-    if command == "start":
-        return start_robot()
     if command == "pause":
         return pause_robot(http_post=_post_robot_synchronize_pending_entries)
-    if command == "resume":
-        return resume_robot()
     if command == "stop":
         return stop_robot(http_post=_post_robot_synchronize_pending_entries)
     raise ValueError(f"unsupported Robot control command: {command}")
@@ -446,6 +441,8 @@ def _run_robot_control_command(
         _answer_callback(callback_query.get("id"), prefix)
         _send_robot_status_panel(callback_query, prefix)
         return None
+    if command in ("start", "resume"):
+        return _run_robot_intent(callback_query, command)
 
     try:
         state = _call_robot_control_command(command)
@@ -485,6 +482,26 @@ def _run_robot_control_command(
         state.recovery_status,
     )
     return state
+
+
+def _run_robot_intent(callback_query, command):
+    # START/RESUME are the owner's ROBOT runtime intent; the shared bootstrap may
+    # need to start the PAPER backend first, so the callback is answered up front.
+    _answer_callback(callback_query.get("id"), f"{ROBOT_EMOJI} Робот: запуск…")
+    result = telegram_runtime_intent.execute("ROBOT")
+    if result.ok:
+        _send_robot_status_panel(callback_query, _ROBOT_CONTROL_SUCCESS_TEXT[command])
+    else:
+        chat_id = ((callback_query.get("message") or {}).get("chat") or {}).get("id")
+        if chat_id is not None:
+            try:
+                telegram_bot.send_message(
+                    config.TELEGRAM_TOKEN, chat_id, telegram_runtime_intent.failure_text(result),
+                )
+            except Exception as exc:
+                print("[ROBOT CONTROL ERROR]", command, exc)
+    print("[ROBOT CONTROL]", command, result.message)
+    return result
 
 
 def _approve_robot_candidate(

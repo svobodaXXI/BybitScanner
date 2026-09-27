@@ -31,6 +31,7 @@ import requests
 
 import config
 import telegram_bot
+import telegram_runtime_intent
 from telegram_labels import SCANNER_EMOJI, ROBOT_EMOJI
 from robot_lifecycle_posts import (
     build_lifecycle_keyboard, collect_new_lifecycle_events, format_lifecycle_caption,
@@ -98,16 +99,27 @@ def _send_text(chat_id, text, **kwargs):
 
 
 def _send_scanner_control(chat_id):
-    """Backward-compatible pause/resume/start toggle."""
+    """RUNNING pauses the live pass; anything else is the SCANNER runtime intent."""
     try:
         state = _scanner_request()
-        # One dispatch only. Never retry a mutation after an ambiguous response.
-        _scanner_request(SCANNER_ACTIONS[state["mode"]][1])
     except Exception:
-        _send_text(
-            chat_id,
-            "Команда сканера не подтверждена. Состояние будет проверено; автоматического повтора нет.",
-        )
+        state = None
+    if state is not None and state["mode"] == "SCANNER_RUNNING":
+        try:
+            # One dispatch only. Never retry a mutation after an ambiguous response.
+            _scanner_request("pause")
+        except Exception:
+            _send_text(
+                chat_id,
+                "Команда сканера не подтверждена. Состояние будет проверено; автоматического повтора нет.",
+            )
+    else:
+        # STOPPED/PAUSED, or an absent backend: the shared bootstrap prepares and routes.
+        result = telegram_runtime_intent.execute("SCANNER")
+        if not result.ok:
+            _send_text(chat_id, telegram_runtime_intent.failure_text(result))
+            refresh_command_menu()
+            return
     try:
         state = _scanner_request()
         _send_text(
@@ -167,6 +179,26 @@ def _send_robot_status(chat_id):
         )
     except Exception:
         _send_text(chat_id, "Состояние робота и число открытых позиций недоступны.")
+
+
+def _send_robot_start(chat_id):
+    result = telegram_runtime_intent.execute("ROBOT")
+    if result.ok:
+        _send_robot_status(chat_id)
+    else:
+        _send_text(chat_id, telegram_runtime_intent.failure_text(result))
+
+
+def _send_all(chat_id):
+    result = telegram_runtime_intent.execute("ALL")
+    if result.ok:
+        _send_text(
+            chat_id,
+            f"✅ Всё готово · Робот {result.final.get('robot', '?')} "
+            f"· Сканер {result.final.get('scanner', '?')}",
+        )
+    else:
+        _send_text(chat_id, telegram_runtime_intent.failure_text(result))
 
 
 def _workspace_url(*, positions=False):
@@ -625,6 +657,8 @@ def _process_message(message) -> bool:
         "/scanner": _send_scanner_control,
         "/scanner_stop": _send_scanner_stop,
         "/robot": _send_robot_status,
+        "/robot_start": _send_robot_start,
+        "/all": _send_all,
         "/positions": _send_paper_positions,
         "/monitoring": _send_candidate_list,
         "Мониторинг": _send_candidate_list,
@@ -674,6 +708,8 @@ def refresh_command_menu() -> None:
             {"command": "scanner", "description": scanner_label},
             {"command": "scanner_stop", "description": "⏹ Остановить сканер"},
             {"command": "robot", "description": "Робот"},
+            {"command": "robot_start", "description": "▶ Запустить робота"},
+            {"command": "all", "description": "▶ Запустить всё"},
             {"command": "positions", "description": "Все открытые позиции"},
             {"command": "monitoring", "description": "Мониторинг кандидатов"},
         ],
