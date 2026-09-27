@@ -3,60 +3,52 @@
 This order is the current owner priority and supersedes older 2026-09-26
 "today"/next-step ordering until the owner changes it again.
 
-### P0.1 — Fix the permanent Telegram control surface
+### P0.1 — Fix the permanent Telegram control surface — MERGED
 
-- Draft PR #271: Menu button persistence after owner Scanner/Robot controls.
-- Preserve one state-aware `/scanner` command:
+- PR #271 merged as `e0afeee`.
+- One state-aware `/scanner` command remains:
   RUNNING → Pause, PAUSED → Continue, STOPPED → Start.
-- Menu must remain visible without leaving/re-entering the bot.
-- The fix is platform-level: Scanner commands, Robot callbacks and other
-  owner callbacks must not each grow separate menu repair logic.
-- Current running acceptance instance uses pre-#271 code, so its disappearing
-  Menu is evidence, not acceptance of the fix.
+- Owner Menu is reasserted after owner messages/callbacks through the common
+  Telegram update loop.
+- Runtime acceptance still requires loading current `main` on the owner PC;
+  the earlier pre-fix run is evidence only.
 
-### P0.2 — Implement one Pattern → Robot integration platform
+### P0.2 — Implement one Pattern → Robot integration platform — MERGED
 
 Authoritative standard:
 `DOCUMENTS/PATTERN_ROBOT_INTEGRATION_STANDARD.md`.
 
-Goal: stop developing candidate buttons, admission feedback, position
-notifications, cards, protection/reconcile and controls separately for every
-pattern.
+- PR #274 merged as `878d18d`.
+- Wedge and L-shape now share `pattern_robot_integration.py` for executable
+  capability + durable pre-admission candidate handoff.
+- Existing common admission, execution ownership, protection, position,
+  lifecycle and restart/reconcile paths remain authoritative.
+- Pattern-specific strategy stays in adapters; no second execution engine was
+  introduced.
 
-Required architecture:
+### P0.3 — Migrate current pattern families to the common adapter boundary — SAFE BOUNDARY COMPLETE
 
-- common Signal/Telegram shell;
-- common durable candidate + admission;
-- common execution ownership / protection / position lifecycle;
-- common open/close notifications, cards, monitoring and recovery;
-- pattern strategy adapters contain only pattern-specific evidence and trading
-  rules;
-- Wedge becomes the reference adapter, not the owner of platform behavior;
-- no second execution engine and no same-label/different-action Telegram UX.
+- Wedge remains the reference adapter through the shared handoff/lifecycle.
+- L-shape already uses the common admission, monitor, execution/protection and
+  restart/reconcile lifecycle; only its strategy rules remain pattern-specific.
+- PR #275 merged as `03d19cb`: non-executable Ikigai Box signals no longer show
+  the misleading `🤖 Робот` status affordance.
+- Box execution remains intentionally fail-closed: current Box plan is
+  `execution_authorized=False` and admission rejects `IKIGAI_BOX / BOX_PLAN_ONLY`.
+  Real Box admission requires a separate authoritative executable contract;
+  do not invent strategy parameters to force it through.
+- Triangle/future patterns must use the same shared route.
 
-### P0.3 — Migrate current pattern families to the common adapter boundary
+### P0.4 — Close remaining desktop-runtime composition debt — GITHUB SIDE COMPLETE / LOCAL LOAD PENDING
 
-- Wedge: preserve existing proven behavior through the common contract.
-- Ikigai Box: remove the misleading `🤖 Робот` status affordance; when Box
-  trading rules are authoritative/executable, the shared `🤖 Робот` action
-  must admit the real durable Box candidate and use the common lifecycle.
-- L-shape: connect through the same common adapter/lifecycle, preserving its
-  own strategy rules.
-- Triangle/future patterns must use the same route rather than a new Telegram
-  or Robot subsystem.
-
-Do not invent missing strategy parameters merely to complete an adapter.
-Unresolved trading semantics stay blocked/fail-closed while the common owner UX
-remains truthful.
-
-### P0.4 — Close remaining desktop-runtime composition debt
-
-- make the permanent `start_scanner` and `Запуск робота` surfaces converge
-  on one intended PAPER database/runtime identity;
-- remove maintenance drift from copied canonical launcher gate logic where a
-  reusable canonical composition boundary can replace it;
-- runtime-check the safe stop shortcut after the code path is ready;
-- preserve owner-manual runtime ownership and all LIVE-off gates.
+- Canonical tracked start path remains `start_robot_runtime.bat` with PAPER DB
+  identity, backend/Telegram readiness, admission/protection and Scanner gates.
+- PR #276 merged as `0f72355`: tracked `stop_robot_runtime.bat` now provides
+  fail-closed safe stop (canonical backend/DB proof → Scanner stop → durable
+  Robot stop), without process-title kills or forced position close.
+- Remaining work is owner-PC-only: load current `main`, point the existing
+  desktop Robot start/stop surfaces at the tracked canonical launchers, then
+  runtime-check the shortcuts. Do not redo GitHub-side safe-stop work.
 
 ### P1 — Ikigai Box «Кривой первый импульс»
 
