@@ -2,7 +2,7 @@
 
 **Приоритет:** P0  
 **Канон:** `DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md` §§10–13  
-**Активный квест:** **RVL-R1 — Runtime Replay contract + runner**
+**Активный квест:** **RVL-R2 — Continuous ENTRY_PENDING overflow → deterministic RED**
 
 Цель рейда: закрыть два главных блокирующих босса v0.1 без повторных длинных
 циклов ручной проверки.
@@ -10,8 +10,8 @@
 ### 👹 Босс 1 — «Переполненный шлюз» / Robot Stability
 
 Очередь:
-1. RVL-R1 — replay contract/runner;
-2. RVL-R2 — реальный класс continuous `ENTRY_PENDING` overflow как RED;
+1. ✅ RVL-R1 — replay contract/runner: PR #296, Robot PAPER acceptance #226 PASS;
+2. ▶ RVL-R2 — реальный класс continuous `ENTRY_PENDING` overflow как RED;
 3. RVL-R3 — точная граница ENTRY_PENDING coverage;
 4. RVL-R4 — минимальный production fix;
 5. RVL-R5 — replay pack + focused PAPER CI;
@@ -34,9 +34,9 @@ Autopilot и остальной feature expansion сохранены в доку
 в Таверне ожидания до прохождения двух quality gates либо явного нового решения
 владельца.
 
-**Следующий технический outcome:** deterministic Runtime Replay boundary,
-который принимает непрерывные ordered market events через существующий
-SerializedPaperRuntime и не вставляет искусственные drain barriers.
+**Следующий технический outcome:** deterministic production-shape fixture для
+пяти наблюдавшихся `ENTRY_PENDING` symbols, который на current main
+воспроизводит saturation/overflow без искусственных mid-stream drain barriers.
 
 XP за сам план/очередь не начисляется.
 
