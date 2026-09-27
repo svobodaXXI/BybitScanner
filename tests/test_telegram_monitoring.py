@@ -196,12 +196,11 @@ class TelegramMonitoringTests(unittest.TestCase):
         refresh.assert_called_once_with()
 
     @patch("telegram_monitoring._refresh_owner_menu_surface")
-    @patch("telegram_review._process_callback")
     @patch("telegram_monitoring._process_monitor_callback", return_value=False)
     @patch("telegram_monitoring._process_positions_callback", return_value=False)
     @patch("telegram_monitoring._telegram_request")
     def test_owner_robot_callback_reasserts_menu_surface_after_processing(
-        self, telegram, positions, monitor, review, refresh,
+        self, telegram, positions, monitor, refresh,
     ):
         telegram.return_value = {
             "ok": True,
@@ -215,10 +214,14 @@ class TelegramMonitoringTests(unittest.TestCase):
                 },
             }],
         }
+        review_calls = []
+        fake_review = ModuleType("telegram_review")
+        fake_review._process_callback = lambda callback: review_calls.append(callback)
 
-        monitoring.poll_updates_once(None)
+        with patch.dict(sys.modules, {"telegram_review": fake_review}):
+            monitoring.poll_updates_once(None)
 
-        review.assert_called_once()
+        self.assertEqual(len(review_calls), 1)
         refresh.assert_called_once_with()
 
     @patch("telegram_monitoring._send_scanner_control")
