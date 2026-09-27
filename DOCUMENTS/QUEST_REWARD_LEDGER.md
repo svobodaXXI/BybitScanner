@@ -62,3 +62,117 @@ Do not invent a retroactive decomposition.
 - XP after: 140
 - Achievement opened: **«Контекст не потерян»**
 - Loot: verified repository-driven game bootstrap
+
+## Reward reconciliation — 2026-09-27
+
+The migration baseline above was written before several later verified outcomes
+landed on the same day. The entries below restore those missed rewards from
+repository/runtime evidence. They are outcome-based; PR count, commit count,
+test count and documentation do not earn XP by themselves.
+
+### REWARD-TELEGRAM-MENU-20260927
+
+- Date: 2026-09-27
+- Type: quest stage
+- Outcome: permanent owner Telegram Menu control surface repaired after
+  owner messages/callbacks while preserving the state-aware Scanner action
+- Evidence: merged PR #271, merge commit
+  `e0afeee776e274b617cae3fa48641d84953779dd`
+- XP before: 140
+- XP delta: +25
+- XP after: 165
+- Achievement changes: none
+- Loot: reusable owner-menu reassert path
+
+### REWARD-SHARED-PATTERN-HANDOFF-20260927
+
+- Date: 2026-09-27
+- Type: quest stage
+- Outcome: Wedge and L-shape durable Scanner candidates now cross one shared
+  Pattern -> Robot pre-admission boundary without a second execution engine
+- Evidence: merged PR #274, merge commit
+  `878d18d8a25d71c8b20c832549d53e892563f0f3`
+- XP before: 165
+- XP delta: +25
+- XP after: 190
+- Achievement opened: **«Новый монстр, старый движок»**
+- Loot: shared `pattern_robot_integration.py` handoff boundary
+
+### REWARD-BOX-TRUTHFUL-AFFORDANCE-20260927
+
+- Date: 2026-09-27
+- Type: quest stage
+- Outcome: non-executable Ikigai Box signals no longer expose a misleading
+  `🤖 Робот` action; unsupported Box execution remains fail-closed
+- Evidence: merged PR #275, merge commit
+  `03d19cb82b52741d38ec053ab09d66c820f5ac3f`
+- XP before: 190
+- XP delta: +25
+- XP after: 215
+- Achievement changes: none
+- Loot: truthful capability-bound Telegram action contract
+
+### REWARD-INGRESS-OVERFLOW-EVIDENCE-20260927
+
+- Date: 2026-09-27
+- Type: reconnaissance
+- Outcome: a future protection `ingress_overflow` preserves current ingress
+  metrics and lifecycle role in the fail-closed log, reducing postmortem
+  uncertainty without changing recovery/trading semantics
+- Evidence: merged PR #278, merge commit
+  `188e68b92ead15475031c717706e1546b70bcaae`
+- XP before: 215
+- XP delta: +10
+- XP after: 225
+- Achievement changes: none
+- Loot: reusable overflow postmortem evidence snapshot
+
+### REWARD-DUAL-TIMEFRAME-CONTRACT-20260927
+
+- Date: 2026-09-27
+- Type: reconnaissance
+- Outcome: existing Scanner behavior is now regression-proven to process each
+  symbol in strict 5m -> 1m order and keep Wedge signal state independent by
+  symbol x timeframe x pattern x formation
+- Evidence: merged PR #279, merge commit
+  `0037b9218900001d2f8a6e9f4ad44b7230ef0d4a`
+- XP before: 225
+- XP delta: +10
+- XP after: 235
+- Achievement changes: none; this focused contract proof is not the full
+  owner-run acceptance required for «Оба этажа зачищены»
+- Loot: dual-timeframe regression contract in Robot PAPER acceptance
+
+### REWARD-DESKTOP-RUNTIME-COMPOSITION-20260927
+
+- Date: 2026-09-27
+- Type: big quest
+- Outcome: canonical desktop PAPER Robot start/stop composition is complete and
+  owner-verified end-to-end; safe-stop now reaches the repository module,
+  returns exit code 0 and persists `ROBOT_STOPPED / ROBOT_STOPPED` while
+  intentionally leaving backend/Telegram alive
+- Evidence: merged PR #276
+  (`0f72355eca73be2981d5e406614467fe7e27c7ff`), launcher fix PR #280
+  (`adcd44e1580a1f7648abb79c20a84c6980859660`), Robot PAPER acceptance #218
+  SUCCESS, and owner real-run safe-stop evidence
+- XP before: 235
+- XP delta: +50
+- XP after: 285
+- Level after: **3 — Следопыт клиньев**
+- Achievement opened: **«Малый патч — большая добыча»**
+- Loot: canonical desktop start/stop surface + known safe-stop recovery path
+
+### REWARD-RECONCILIATION-NOTE-20260927
+
+- Date: 2026-09-27
+- Type: accounting correction
+- Outcome: reward ledger caught up with verified post-baseline outcomes
+- Evidence: repository history and the runtime evidence referenced above
+- XP before: 285
+- XP delta: 0
+- **Canonical XP after reconciliation: 285**
+- Level: **3 — Следопыт клиньев**
+- Note: AIGENSYN PR #270 predates the 140-XP migration baseline and is not
+  counted again; open draft PR #267 (position-card presentation) is not
+  reward-eligible until its required acceptance/merge boundary is satisfied.
+
