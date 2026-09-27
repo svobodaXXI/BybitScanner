@@ -56,6 +56,7 @@ from terminal.application.live_account_reconciliation import (
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
 from terminal.paper.ikigai_box_plan import approved_first_grid, plan_ikigai_box
+from terminal.application.robot_control import resume_robot_in_store, start_robot_in_store
 from terminal.application.robot_recovery import (
     PAUSED, READY, RECONCILING, RECONCILIATION_REQUIRED, ROBOT_RUNNING,
     RobotRecoveryCoordinator,
@@ -967,6 +968,19 @@ class PaperRuntime:
     def robot_admission_ready(self) -> bool:
         """Return durable Robot startup admission; never infer readiness locally."""
         return self._robot_recovery.admission_ready()
+
+    def robot_runtime_state(self):
+        return self.store.get_robot_runtime_state(self._paper_account_id)
+
+    def robot_start(self):
+        return start_robot_in_store(
+            self.store,
+            coordinator_factory=lambda: self._robot_recovery,
+            clock_ms=lambda: int(time.time() * 1000),
+        )
+
+    def robot_resume(self):
+        return resume_robot_in_store(self.store, clock_ms=lambda: int(time.time() * 1000))
 
     def account_catalog(self) -> dict[str, object]:
         return self._account_manager.catalog_projection()

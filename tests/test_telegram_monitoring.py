@@ -21,6 +21,12 @@ finally:
         sys.modules["config"] = _previous_config
 
 
+def _intent_result(intent, outcome, blocked_by=(), final=None):
+    from tools.runtime_intent import BootstrapResult
+
+    return BootstrapResult(intent, outcome, outcome, final=final or {}, blocked_by=blocked_by)
+
+
 class TelegramMonitoringTests(unittest.TestCase):
     def setUp(self):
         monitoring._published_commands = None
@@ -110,42 +116,100 @@ class TelegramMonitoringTests(unittest.TestCase):
 
     @patch("telegram_monitoring.refresh_command_menu")
     @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring.telegram_runtime_intent.execute")
     @patch("telegram_monitoring._scanner_request")
-    def test_fresh_authority_selects_action_and_result_is_reread(self, request, send, refresh):
-        for mode, action in (
-            ("SCANNER_RUNNING", "pause"),
-            ("SCANNER_PAUSED", "resume"),
-            ("SCANNER_STOPPED", "start"),
-        ):
-            request.reset_mock()
-            request.side_effect = [
-                {"mode": mode},
-                {"mode": "SCANNER_PAUSED"},
-                {"mode": "SCANNER_STOPPED"},
-            ]
-            monitoring._send_scanner_control(123)
-            self.assertEqual(request.call_args_list, [call(), call(action), call()])
-            self.assertEqual(send.call_args.args[1], "📡 Сканер: остановлен")
-
-    @patch("telegram_monitoring.refresh_command_menu")
-    @patch("telegram_monitoring._send_text")
-    @patch("telegram_monitoring._scanner_request")
-    def test_ambiguous_dispatch_is_not_retried(self, request, send, refresh):
-        request.side_effect = [
-            {"mode": "SCANNER_STOPPED"},
-            TimeoutError(),
-            {"mode": "SCANNER_RUNNING"},
-        ]
+    def test_running_scanner_pauses_directly_without_intent(self, request, intent, send, refresh):
+        request.side_effect = [{"mode": "SCANNER_RUNNING"}, {"mode": "SCANNER_PAUSED"},
+                               {"mode": "SCANNER_PAUSED"}]
         monitoring._send_scanner_control(123)
-        self.assertEqual(request.call_args_list, [call(), call("start"), call()])
-        self.assertEqual(send.call_args.args[1], "📡 Сканер: запущен")
+        self.assertEqual(request.call_args_list, [call(), call("pause"), call()])
+        intent.assert_not_called()
+        self.assertEqual(send.call_args.args[1], "📡 Сканер: на паузе")
 
     @patch("telegram_monitoring.refresh_command_menu")
     @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring.telegram_runtime_intent.execute")
+    @patch("telegram_monitoring._scanner_request")
+    def test_stopped_paused_or_unavailable_scanner_runs_scanner_intent(
+        self, request, intent, send, refresh,
+    ):
+        intent.return_value = _intent_result("SCANNER", "READY")
+        for first in ({"mode": "SCANNER_STOPPED"}, {"mode": "SCANNER_PAUSED"}, TimeoutError()):
+            with self.subTest(first=first):
+                request.reset_mock()
+                intent.reset_mock()
+                request.side_effect = [first, {"mode": "SCANNER_RUNNING"}]
+                monitoring._send_scanner_control(123)
+                intent.assert_called_once_with("SCANNER")
+                # No direct Scanner mutation: only the pre-read and the presentation re-read.
+                self.assertEqual(request.call_args_list, [call(), call()])
+                self.assertEqual(send.call_args.args[1], "📡 Сканер: запущен")
+
+    @patch("telegram_monitoring.refresh_command_menu")
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring.telegram_runtime_intent.execute")
     @patch("telegram_monitoring._scanner_request", side_effect=TimeoutError)
-    def test_unknown_state_never_dispatches(self, request, send, refresh):
-        monitoring._send_scanner_control(123)
-        self.assertTrue(all(not item.args for item in request.call_args_list))
+    def test_failed_scanner_intent_sends_one_message_without_retry(
+        self, request, intent, send, refresh,
+    ):
+        for result, text in (
+            (_intent_result("SCANNER", "BLOCKED", ("SCANNER_ACCEPTANCE_NOT_READY",)),
+             "⛔ Запуск заблокирован: SCANNER_ACCEPTANCE_NOT_READY"),
+            (_intent_result("SCANNER", "FAILED"), "⚠ Запуск не подтверждён."),
+        ):
+            with self.subTest(outcome=result.outcome):
+                send.reset_mock()
+                intent.reset_mock()
+                intent.return_value = result
+                monitoring._send_scanner_control(123)
+                intent.assert_called_once_with("SCANNER")
+                send.assert_called_once_with(123, text)
+
+    @patch("telegram_monitoring._send_robot_status")
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring.telegram_runtime_intent.execute")
+    def test_robot_start_command_runs_robot_intent_then_shows_status(self, intent, send, status):
+        intent.return_value = _intent_result("ROBOT", "READY")
+        self.assertTrue(monitoring._process_message(
+            {"from": {"id": 123}, "chat": {"id": 123}, "text": "/robot_start"}
+        ))
+        intent.assert_called_once_with("ROBOT")
+        status.assert_called_once_with(123)
+        send.assert_not_called()
+
+        intent.reset_mock()
+        status.reset_mock()
+        intent.return_value = _intent_result("ROBOT", "BLOCKED", ("ROBOT_PROTECTION_UNHEALTHY",))
+        monitoring._send_robot_start(123)
+        intent.assert_called_once_with("ROBOT")
+        status.assert_not_called()
+        send.assert_called_once_with(123, "⛔ Запуск заблокирован: ROBOT_PROTECTION_UNHEALTHY")
+
+    @patch("telegram_monitoring._send_robot_status")
+    @patch("telegram_monitoring.telegram_runtime_intent.execute")
+    def test_robot_command_stays_status_only(self, intent, status):
+        self.assertTrue(monitoring._process_message(
+            {"from": {"id": 123}, "chat": {"id": 123}, "text": "/robot"}
+        ))
+        status.assert_called_once_with(123)
+        intent.assert_not_called()
+
+    @patch("telegram_monitoring._send_text")
+    @patch("telegram_monitoring.telegram_runtime_intent.execute")
+    def test_all_command_runs_all_intent_with_one_compact_result(self, intent, send):
+        intent.return_value = _intent_result(
+            "ALL", "READY", final={"robot": "READY", "scanner": "RUNNING", "protection": "HEALTHY"},
+        )
+        self.assertTrue(monitoring._process_message(
+            {"from": {"id": 123}, "chat": {"id": 123}, "text": "/all"}
+        ))
+        intent.assert_called_once_with("ALL")
+        send.assert_called_once_with(123, "✅ Всё готово · Робот READY · Сканер RUNNING")
+
+        send.reset_mock()
+        intent.return_value = _intent_result("ALL", "ERROR")
+        monitoring._send_all(123)
+        send.assert_called_once_with(123, "⚠ Запуск не подтверждён.")
 
     @patch("telegram_monitoring._telegram_request", return_value={"ok": True})
     @patch("telegram_monitoring._scanner_request")
@@ -159,10 +223,14 @@ class TelegramMonitoringTests(unittest.TestCase):
             commands = json.loads(telegram.call_args.kwargs["commands"])
             self.assertEqual(
                 [item["command"] for item in commands],
-                ["terminal", "scanner", "scanner_stop", "robot", "positions", "monitoring"],
+                ["terminal", "scanner", "scanner_stop", "robot", "robot_start", "all",
+                 "positions", "monitoring"],
             )
             self.assertEqual(commands[1]["description"], label)
             self.assertEqual(commands[2]["description"], "⏹ Остановить сканер")
+            self.assertEqual(commands[3]["description"], "Робот")
+            self.assertEqual(commands[4]["description"], "▶ Запустить робота")
+            self.assertEqual(commands[5]["description"], "▶ Запустить всё")
             self.assertEqual(commands[-1]["description"], "Мониторинг кандидатов")
         self.assertEqual(telegram.call_count, 2)
 
