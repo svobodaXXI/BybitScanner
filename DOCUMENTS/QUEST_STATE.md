@@ -99,6 +99,40 @@ cleanup. Следующий активный этап — один полный 
 
 ## 🎯 Активный квест
 
+### Рейд «Автопилот — охотник без рук»
+
+**Приоритет:** P0  
+**Статус:** IMPLEMENTATION PLAN FROZEN; NEXT = STAGE A SHADOW FOUNDATION  
+**Канонический план:** `DOCUMENTS/ROBOT_AUTOPILOT_IMPLEMENTATION_PLAN.md`
+
+**Цель:** Robot сам находит поддерживаемые кандидаты, проверяет их через
+единые admission/risk gates и в PAPER_AUTO передаёт разрешённые сделки в уже
+существующий Robot execution/protection/recovery lifecycle без нажатия
+владельцем `🤖 Робот`.
+
+Архитектурный контракт:
+- discovery/selection — новый слой;
+- immutable candidate/plan — существующие pattern adapters;
+- admission — только существующий canonical boundary;
+- execution/protection/reconcile — только существующий Robot;
+- сначала `OFF → SHADOW`, затем `PAPER_AUTO`;
+- SHADOW ничего не торгует и должен объяснять WOULD_ADMIT / WAIT / REJECT;
+- WATCH не торгуется;
+- LIVE запрещён;
+- portfolio/risk значения для unattended PAPER не изобретаются кодом и должны
+  быть явно заморожены до Stage D.
+
+Последняя подготовленная добыча: PR #288 merged as
+`6e865536cd1cd1a5cf7a7211576e1fe5d8b57be8`; Box manual admission boundary
+теперь отделён от Scanner, поэтому поверх него можно строить Autopilot без
+скрытого auto-admission.
+
+**Следующий кодовый slice:** Stage A — durable Autopilot
+`OFF/SHADOW/PAPER_AUTO` state + pure read-only SHADOW policy + минимальный
+audit решений. Никаких order/admission mutations в этом slice.
+
+## 🕓 Предыдущий активный квест — acceptance остаётся в очереди
+
 ### Рейд «Один запуск — весь прототип»
 
 **Приоритет:** P0  
