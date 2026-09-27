@@ -60,9 +60,18 @@ class RobotCandidateFailureWarningTests(unittest.TestCase):
             ))
             photos = stack.enter_context(patch.object(
                 notification, "send_photo", return_value={"ok": True}))
+            candidate_id = (
+                candidate.get("candidate_id")
+                if isinstance(candidate, dict)
+                else None
+            )
+            handoff_result = types.SimpleNamespace(
+                candidate_id=candidate_id,
+                persistence_failed=candidate_error is not None,
+            )
             create = stack.enter_context(patch.object(
-                notification, "create_signal_snapshot",
-                return_value=candidate, side_effect=candidate_error,
+                notification, "prepare_robot_handoff",
+                return_value=handoff_result,
             ))
             delivered = notification.send_signal(_signal())
         return delivered, messages, photos, create
@@ -76,6 +85,7 @@ class RobotCandidateFailureWarningTests(unittest.TestCase):
             candidate={"candidate_id": "candidate-1"})
         self.assertTrue(delivered)
         create.assert_called_once()
+        self.assertTrue(create.call_args.kwargs["enabled"])
         self.assertEqual(self._warnings(messages), [])
         self.assertIn("🤖 Робот", _buttons(photos.call_args))
 
