@@ -77,7 +77,6 @@ def send_ikigai_box_observation(
             symbol, timeframe,
             include_review_actions=is_owner,
             robot_candidate_id=None,
-            robot_status_button=(is_owner and not test_mode),
         )
         try:
             text_response = send_message(config.TELEGRAM_TOKEN, chat_id, message)
