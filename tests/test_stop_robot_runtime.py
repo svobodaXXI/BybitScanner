@@ -783,17 +783,18 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
             connection.executescript(
                 """
                 CREATE TABLE robot_candidates (
-                    trading_account_id TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT NOT NULL
                 );
                 CREATE TABLE robot_trades (
-                    trading_account_id TEXT NOT NULL, exit_time_ms INTEGER
+                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, exit_time_ms INTEGER
                 );
                 CREATE TABLE paper_limit_orders (
-                    trading_account_id TEXT NOT NULL, status TEXT NOT NULL
+                    trading_account_id TEXT NOT NULL, symbol TEXT NOT NULL, status TEXT NOT NULL
                 );
                 CREATE TABLE position_projections (
                     trading_account_id TEXT NOT NULL, category TEXT NOT NULL,
-                    position_idx INTEGER NOT NULL, side TEXT NOT NULL, quantity TEXT NOT NULL
+                    symbol TEXT NOT NULL, position_idx INTEGER NOT NULL,
+                    side TEXT NOT NULL, quantity TEXT NOT NULL
                 );
                 CREATE TABLE paper_protection_obligations (
                     trading_account_id TEXT NOT NULL, status TEXT NOT NULL
@@ -801,16 +802,33 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 """
             )
             if blocker == "approved_candidate":
-                connection.execute("INSERT INTO robot_candidates VALUES ('paper', 'APPROVED')")
-            elif blocker == "open_candidate":
-                connection.execute("INSERT INTO robot_candidates VALUES ('paper', 'OPEN')")
-            elif blocker == "trade":
-                connection.execute("INSERT INTO robot_trades VALUES ('paper', NULL)")
-            elif blocker == "limit":
-                connection.execute("INSERT INTO paper_limit_orders VALUES ('paper', 'open')")
-            elif blocker == "exposure":
                 connection.execute(
-                    "INSERT INTO position_projections VALUES ('paper', 'linear', 0, 'Long', '1')"
+                    "INSERT INTO robot_candidates VALUES ('paper', 'ROBOTUSDT', 'APPROVED')"
+                )
+            elif blocker == "open_candidate":
+                connection.execute(
+                    "INSERT INTO robot_candidates VALUES ('paper', 'ROBOTUSDT', 'OPEN')"
+                )
+            elif blocker == "trade":
+                connection.execute(
+                    "INSERT INTO robot_trades VALUES ('paper', 'ROBOTUSDT', NULL)"
+                )
+            elif blocker == "limit":
+                connection.execute(
+                    "INSERT INTO paper_limit_orders VALUES ('paper', 'LIMITUSDT', 'open')"
+                )
+            elif blocker == "manual_exposure":
+                connection.execute(
+                    "INSERT INTO position_projections VALUES "
+                    "('paper', 'linear', 'MANUALUSDT', 0, 'Long', '1')"
+                )
+            elif blocker == "approved_exposure":
+                connection.execute(
+                    "INSERT INTO robot_candidates VALUES ('paper', 'ROBOTUSDT', 'APPROVED')"
+                )
+                connection.execute(
+                    "INSERT INTO position_projections VALUES "
+                    "('paper', 'linear', 'ROBOTUSDT', 0, 'Long', '1')"
                 )
             elif blocker == "obligation":
                 connection.execute(
@@ -820,22 +838,24 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_read_only_durable_proof_accepts_inert_approved_candidate(self):
+    def test_read_only_durable_proof_accepts_inert_approved_and_manual_exposure(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "approved.sqlite3"
-            self.make_db(path, "approved_candidate")
-            shutdown.prove_legacy_paper_quiescence(path)
+            for state in ("approved_candidate", "manual_exposure"):
+                with self.subTest(state=state):
+                    path = Path(directory) / f"{state}.sqlite3"
+                    self.make_db(path, state)
+                    shutdown.prove_legacy_paper_quiescence(path)
 
-    def test_read_only_durable_proof_rejects_live_robot_ownership(self):
+    def test_read_only_durable_proof_rejects_live_or_ambiguous_robot_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             clean = Path(directory) / "clean.sqlite3"
             self.make_db(clean)
             shutdown.prove_legacy_paper_quiescence(clean)
             for blocker, phrase in (
-                ("open_candidate", "OPEN Robot candidates"),
-                ("trade", "open Robot trades"),
+                ("open_candidate", "OPEN Robot candidates: ROBOTUSDT"),
+                ("trade", "open Robot trades: ROBOTUSDT"),
                 ("limit", "working PAPER limits"),
-                ("exposure", "open PAPER exposure"),
+                ("approved_exposure", "pending Robot exposure: ROBOTUSDT"),
                 ("obligation", "unresolved protection obligations"),
             ):
                 with self.subTest(blocker=blocker):
@@ -854,7 +874,7 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 try:
                     with self.assertRaises(sqlite3.OperationalError):
                         competitor.execute(
-                            "INSERT INTO robot_candidates VALUES ('paper', 'APPROVED')"
+                            "INSERT INTO robot_candidates VALUES ('paper', 'RACEUSDT', 'APPROVED')"
                         )
                 finally:
                     competitor.close()

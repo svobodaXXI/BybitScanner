@@ -134,25 +134,45 @@ def read_robot_state(database_path: Path) -> tuple[str, str] | None:
 
 
 def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
-    # APPROVED is not itself live ownership. Canonical stop_robot() may finish
-    # with an APPROVED row after it has synchronously proven that no working
-    # entry LIMIT or real exposure remains. Blocking on the label alone made
-    # legacy shutdown stricter than the authoritative Robot stop contract.
-    open_candidates = int(connection.execute(
-        """SELECT COUNT(*) FROM robot_candidates
-           WHERE trading_account_id='paper' AND status='OPEN'"""
-    ).fetchone()[0])
-    open_robot_trades = int(connection.execute(
-        """SELECT COUNT(*) FROM robot_trades
+    # Full runtime shutdown is Robot-scoped, not account-flattening. Manual or
+    # otherwise non-Robot PAPER positions may persist durably across a process
+    # restart and must never be liquidated merely because the Robot is stopped.
+    #
+    # APPROVED alone is also not live ownership: canonical stop_robot() may
+    # leave an inert APPROVED row after synchronously proving that no working
+    # entry LIMIT or exposure remains. But a non-flat position on the same
+    # symbol as an APPROVED candidate is ambiguous partial-fill ownership and
+    # therefore still blocks fail-closed.
+    active_candidates = connection.execute(
+        """SELECT symbol, status FROM robot_candidates
+           WHERE trading_account_id='paper' AND status IN ('APPROVED', 'OPEN')"""
+    ).fetchall()
+    open_candidate_symbols = {
+        str(symbol).strip().upper()
+        for symbol, status in active_candidates
+        if str(status) == "OPEN"
+    }
+    approved_candidate_symbols = {
+        str(symbol).strip().upper()
+        for symbol, status in active_candidates
+        if str(status) == "APPROVED"
+    }
+
+    open_trade_rows = connection.execute(
+        """SELECT symbol FROM robot_trades
            WHERE trading_account_id='paper' AND exit_time_ms IS NULL"""
-    ).fetchone()[0])
+    ).fetchall()
+    open_trade_symbols = {
+        str(row[0]).strip().upper() for row in open_trade_rows
+    }
+
     active_limits = int(connection.execute(
         """SELECT COUNT(*) FROM paper_limit_orders
            WHERE trading_account_id='paper'
              AND status IN ('open', 'partially_filled')"""
     ).fetchone()[0])
     positions = connection.execute(
-        """SELECT side, quantity FROM position_projections
+        """SELECT symbol, side, quantity FROM position_projections
            WHERE trading_account_id='paper' AND category='linear' AND position_idx=0"""
     ).fetchall()
     unresolved_obligations = int(connection.execute(
@@ -160,24 +180,40 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
            WHERE trading_account_id='paper' AND status!='RESOLVED'"""
     ).fetchone()[0])
 
-    open_exposure = 0
-    for side, raw_quantity in positions:
+    non_flat_symbols: set[str] = set()
+    for symbol, side, raw_quantity in positions:
         quantity = Decimal(str(raw_quantity))
         if not quantity.is_finite() or quantity < 0:
             raise InvalidOperation
         if str(side) != "Flat" and quantity > 0:
-            open_exposure += 1
+            normalized = str(symbol).strip().upper()
+            if not normalized:
+                raise ValueError("blank PAPER position symbol")
+            non_flat_symbols.add(normalized)
 
-    blockers = (
-        ("OPEN Robot candidates", open_candidates),
-        ("open Robot trades", open_robot_trades),
-        ("working PAPER limits", active_limits),
-        ("open PAPER exposure", open_exposure),
-        ("unresolved protection obligations", unresolved_obligations),
+    ambiguous_approved_exposure = sorted(
+        non_flat_symbols & approved_candidate_symbols
     )
-    for label, count in blockers:
-        if count:
-            raise SafeStopError(f"legacy PAPER shutdown blocked by {label}")
+
+    if open_candidate_symbols:
+        raise SafeStopError(
+            "legacy PAPER shutdown blocked by OPEN Robot candidates: "
+            + ",".join(sorted(open_candidate_symbols))
+        )
+    if open_trade_symbols:
+        raise SafeStopError(
+            "legacy PAPER shutdown blocked by open Robot trades: "
+            + ",".join(sorted(open_trade_symbols))
+        )
+    if active_limits:
+        raise SafeStopError("legacy PAPER shutdown blocked by working PAPER limits")
+    if ambiguous_approved_exposure:
+        raise SafeStopError(
+            "legacy PAPER shutdown blocked by pending Robot exposure: "
+            + ",".join(ambiguous_approved_exposure)
+        )
+    if unresolved_obligations:
+        raise SafeStopError("legacy PAPER shutdown blocked by unresolved protection obligations")
 
 
 def prove_legacy_paper_quiescence(database_path: Path) -> None:
