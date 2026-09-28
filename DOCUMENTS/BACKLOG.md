@@ -133,6 +133,72 @@ These two tasks are intentionally separate defect classes:
 **BSV = false positive / malformed first impulse**;
 **CARV = possible false negative / missed later Box**.
 
+### G-BOX-3 — recurring post-breakdown secondary Box family
+
+Owner feedback from the same real run shows this is broader than CARV alone.
+
+Observed examples include:
+- `CARVUSDT 5m`;
+- `CPUSDT 5m`;
+- `CROSSUSDT 5m`;
+- `CLOUSDT 5m`;
+- additional similar signals may be added from the same acceptance run when
+  source-time evidence is available.
+
+Recurring visual structure:
+**compression / wedge / triangle → downside break of the active sloping
+boundary → separate compact post-breakdown consolidation / Box**.
+
+Owner trading intent:
+- these are the kinds of setups the owner would manually pick for a later entry
+  if trading them by hand;
+- therefore treat them as a candidate recurring edge/family to investigate,
+  not merely as isolated screenshots.
+
+Required investigation:
+- recover exact source-time OHLC + detection cutoff for representative examples;
+- determine whether the later compact structure satisfies the existing Ikigai
+  Box contract or requires an explicitly new `post-breakdown secondary Box`
+  subtype;
+- inspect candidate enumeration/windowing/ranking/dedup so an earlier
+  Wedge/Triangle does not suppress a later independent Box;
+- distinguish a genuine secondary Box from ordinary continuation/noisy rebound;
+- preserve negative controls and do not make "triangle broke down" sufficient
+  by itself for Box admission.
+
+Acceptance:
+- one general structural contract explains the representative positives and
+  negatives;
+- valid later Boxes can coexist with the earlier compression signal;
+- no symbol-specific exceptions or screenshot tuning.
+
+### FUTURE EPIC — Manual Chart → Autopilot Handoff / Position Adoption
+
+Authoritative design:
+`DOCUMENTS/MANUAL_CHART_AUTOPILOT_HANDOFF_DECISION.md`.
+
+Owner UX direction:
+- one context-aware **Autopilot** action in the terminal;
+- if a manual position is open on the current symbol, ask:
+  **«Хотите передать эту сделку роботу?» — Да / Нет**;
+- `Нет` leaves the manual position untouched and opens the normal Robot
+  workspace / Robot-owned open-position list;
+- `Да` performs an explicit fail-closed Position Adoption Gate and, only on
+  success, opens the same Robot workspace focused on the adopted trade;
+- if the current symbol is already Robot-owned, do not ask for adoption: show
+  that the coin is already traded by Robot and route directly to that position;
+- this Robot-owned awareness must trigger on **every symbol transition** in the
+  terminal, including navigation from a free ticker to a ticker already in
+  Robot work;
+- manual chart/Fibonacci markup intended for Robot must be machine-readable
+  (`Manual Pattern Draft`), not an arbitrary drawing that Robot has to guess;
+- Scanner, future Autopilot discovery and manual chart markup should converge
+  into the same immutable candidate/admission/execution/protection lifecycle;
+- already-open manual positions remain manual unless explicit adoption succeeds.
+
+This epic is **queued only**. Do not pre-empt RVL-R6 or Geometry Quality, do not
+enable LIVE, and do not create a second execution/protection/reconcile stack.
+
 ## NOW — 2026-09-27 — OWNER CORRECTION: IKIGAI BOX HAS NO WATCH USER MODE
 
 Binding owner decision: Ikigai Box uses the normal CONFIRMED signal path only.
