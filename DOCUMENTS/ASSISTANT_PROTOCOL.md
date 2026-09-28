@@ -86,19 +86,19 @@ search, filtering and parsing itself and returns only the decisive result.
 The owner's canonical manual runtime UX is the existing desktop shortcut surface.
 Do not make the owner re-discover or re-explain this path in future sessions.
 
-Current owner-facing surface (resolved 2026-09-27; do not rediscover):
+Current owner-facing surface (canonicalized 2026-09-28; do not rediscover):
 - shortcut directory: `C:\\Users\\svobo\\OneDrive\\Рабочий стол`;
-- `start_scanner.lnk` -> `C:\\BybitScanner\\start_scanner.bat`, Start In `C:\\BybitScanner`;
-- `Запуск робота.lnk` -> `C:\\BybitScanner\\start_robot.bat`, Start In `C:\\BybitScanner`;
-- `Остановить робота.lnk` -> `C:\\BybitScanner\\stop_robot.bat`, Start In `C:\\BybitScanner`.
+- `start_scanner.lnk` -> tracked `C:\\BybitScanner\\start_scanner.bat`, Start In `C:\\BybitScanner`;
+- `Запуск робота.lnk` -> tracked `C:\\BybitScanner\\start_robot_runtime.bat`, Start In `C:\\BybitScanner`;
+- `Остановить робота.lnk` -> tracked `C:\\BybitScanner\\stop_robot_runtime.bat`, Start In `C:\\BybitScanner`.
 
-Current wiring detail at this checkpoint:
+Current wiring contract:
+- desktop shortcuts must target tracked canonical launchers directly; local/untracked `start_robot.bat` and `stop_robot.bat` are not runtime authority and must not sit in the owner-critical path;
+- tracked `tools/sync_owner_shortcuts.ps1` repairs/verifies these three targets without renaming the owner-facing buttons;
 - tracked `start_scanner.bat` delegates to tracked `start_robot_runtime.bat` and therefore reaches the canonical readiness/identity/protection/ScannerControlRuntime path;
-- local `C:\\BybitScanner\\start_robot.bat` is a thin stable desktop wrapper to tracked `C:\\BybitScanner\\start_robot_runtime.bat`;
-- local `C:\\BybitScanner\\stop_robot.bat` is a thin stable desktop wrapper to tracked `C:\\BybitScanner\\stop_robot_runtime.bat`;
-- owner runtime-check on 2026-09-27 proved the canonical start path and, after PR #280, the canonical safe-stop path end-to-end;
-- PR #280 (`adcd44e1580a1f7648abb79c20a84c6980859660`) fixed Windows safe-stop helper invocation to `python -m tools.stop_robot_runtime`; final owner-run stop returned exit 0 and persisted `ROBOT_STOPPED / ROBOT_STOPPED`, while backend/Telegram remained alive by design;
-- the previous `C:\\BybitScanner-box-robot-run\\start_robot_all.cmd` wiring is historical/legacy and is no longer the owner desktop Robot start authority.
+- tracked `start_robot_runtime.bat` owns the one-action runtime-intent start path;
+- tracked `stop_robot_runtime.bat` owns the canonical full safe-stop path through `python -m tools.stop_robot_runtime`;
+- the previous local wrapper and `C:\\BybitScanner-box-robot-run\\start_robot_all.cmd` wiring are historical/legacy and are not owner desktop runtime authority.
 
 Assistant obligations:
 
