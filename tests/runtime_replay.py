@@ -523,6 +523,9 @@ class ManagerStallReplayResult:
     health_after_producer: Mapping[str, object]
     final_health: Mapping[str, object]
     event_errors: tuple[str, ...]
+    # Facts reported by the lifecycle setup, and manager health right before the stream.
+    setup_facts: Mapping[str, object] | None = None
+    health_before_stream: Mapping[str, object] | None = None
 
 
 def run_manager_stall_replay(
@@ -530,8 +533,10 @@ def run_manager_stall_replay(
     *,
     stall_events_per_lookup: int,
     protection_ingress_capacity: int = 64,
+    setup: Callable[[SerializedPaperRuntime, RobotProtectionCoverageManager, Path], Mapping[str, object]]
+    | None = None,
 ) -> ManagerStallReplayResult:
-    """Replay pre-LIMIT lifecycle candidates across a bounded owner stall, via the manager.
+    """Replay lifecycle candidates across a bounded owner stall, via the manager.
 
     Production path under test:
     ``RobotProtectionCoverageManager.resync()`` role discovery -> hub subscription ->
@@ -540,6 +545,11 @@ def run_manager_stall_replay(
     recovery session are offline doubles. The producer models the exchange stream: every
     fixture event happens, but only events for symbols the manager subscribed reach it.
     There is no mid-stream drain or fence; one fence follows producer completion.
+
+    By default every fixture symbol is seeded as a pre-LIMIT RETEST_DETECTED candidate.
+    ``setup(owner, manager, database_path)`` replaces that seeding with another durable
+    lifecycle (and may drive the production monitor); it returns facts about it. It must
+    leave the Robot runtime state at RECONCILIATION_REQUIRED for the reconcile stall.
     """
     symbols = tuple(dict.fromkeys(event.symbol for event in fixture.events))
     stall = _BoundedReconcileStall(stall_events_per_lookup)
@@ -567,12 +577,7 @@ def run_manager_stall_replay(
         )
         reconciler: threading.Thread | None = None
         try:
-            def seed(runtime: PaperRuntime) -> bool:
-                _seed_pre_limit_candidates(
-                    runtime, symbols, fixture.name,
-                    recovery_status="RECONCILIATION_REQUIRED",
-                    reason="maintenance reconciliation requested",
-                )
+            def install_recording(runtime: PaperRuntime) -> None:
                 original = runtime.process_robot_market_event
 
                 def recording(symbol, book, *, event_id, received_at_ms):
@@ -587,15 +592,27 @@ def run_manager_stall_replay(
                     return result
 
                 runtime.process_robot_market_event = recording
+
+            def seed_pre_limit(runtime: PaperRuntime) -> dict[str, object]:
+                _seed_pre_limit_candidates(
+                    runtime, symbols, fixture.name,
+                    recovery_status="RECONCILIATION_REQUIRED",
+                    reason="maintenance reconciliation requested",
+                )
                 account = TradingAccountId("paper")
-                return all(
+                return {"seeded_pre_limit": all(
                     (state.robot_state or {}).get("phase") == "RETEST_DETECTED"
                     and not ((state.robot_state or {}).get("execution") or {}).get("limit_order_id")
                     and not runtime.store.load_active_paper_limits(account, state.symbol)
                     for state in runtime.store.load_active_robot_candidate_states(account)
-                )
+                )}
 
-            seeded_pre_limit = owner.call(seed, timeout=30.0)
+            owner.call(install_recording, timeout=30.0)
+            if setup is None:
+                setup_facts = owner.call(seed_pre_limit, timeout=30.0)
+            else:
+                setup_facts = dict(setup(owner, manager, Path(temp) / "paper_runtime.sqlite3"))
+            seeded_pre_limit = bool(setup_facts.get("seeded_pre_limit", False))
 
             production_enqueue = owner.enqueue
 
@@ -615,7 +632,8 @@ def run_manager_stall_replay(
             owner.enqueue = observed_enqueue
 
             manager.resync()
-            covered_roles = dict(manager.health()["coverage_roles"])
+            health_before_stream = manager.health()
+            covered_roles = dict(health_before_stream["coverage_roles"])
 
             reconciler = stall.start(owner)
 
@@ -659,6 +677,8 @@ def run_manager_stall_replay(
                 health_after_producer=health_after_producer,
                 final_health=manager.health(),
                 event_errors=tuple(errors),
+                setup_facts=setup_facts,
+                health_before_stream=health_before_stream,
             )
         finally:
             stall.release_all()
