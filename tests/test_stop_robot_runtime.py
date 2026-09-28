@@ -1,6 +1,14 @@
 """Unified owner runtime shutdown with fake HTTP, Robot state and clock; no real process."""
 
+from contextlib import nullcontext
 from pathlib import Path
+import io
+import json
+import sqlite3
+import tempfile
+import threading
+from types import SimpleNamespace
+from decimal import Decimal
 import subprocess
 import unittest
 from unittest import mock
@@ -9,6 +17,10 @@ from terminal.application.robot_control import RobotControlRejected
 import tools.legacy_runtime_process as legacy
 from tools.legacy_runtime_process import LegacyOwnerUnproven, ProcessInfo, select_legacy_chain
 import tools.stop_robot_runtime as shutdown
+from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+from terminal.runtime.paper_runtime import PaperRuntime
+from terminal.runtime.paper_http_server import PaperHttpHandler, RobotProtectionCoverageManager
+from terminal.domain.models import TradingAccountId
 from tools.runtime_intent import expected_database_identity
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,12 +39,21 @@ class FakeRuntime:
         self.robot = robot
         self.backend_alive = backend
         self.telegram_alive = telegram
-        self.backend_health = {"ok": True, "component": "paper_backend", "mode": "paper",
-                               "database_identity": IDENTITY}
+        self.backend_health = {
+            "ok": True, "component": "paper_backend", "mode": "paper",
+            "database_identity": IDENTITY, "process_instance_id": "fake-paper-process",
+            "build_sha": "legacy-build",
+        }
         self.telegram_health = {"component": "telegram_monitoring", "status": "ready",
                                 "database_identity": IDENTITY}
-        self.protection = {"ok": True, "healthy": True, "covered_symbols": [],
-                           "unhealthy_symbols": {}}
+        self.scanner_mode = "SCANNER_RUNNING"
+        self.protection = {
+            "ok": True, "healthy": True, "covered_symbols": [], "coverage_roles": {},
+            "armed_symbols": [], "unhealthy_symbols": {},
+        }
+        self.retire_reply = (409, {"ok": False, "error": "durable_protection_required"})
+        self.legacy_paper_blocker = "legacy durable evidence not configured"
+        self.legacy_evidence_checks = 0
         self.shutdown_replies = {}
         self.reconcile_reply = (200, {"ok": True, "success": True})
         self.reconcile_state = PAUSED
@@ -47,6 +68,8 @@ class FakeRuntime:
             return 200, dict(self.backend_health)
         if url == BACKEND + "/api/robot/protection-health":
             return 200, dict(self.protection)
+        if url == BACKEND + "/api/scanner/status":
+            return 200, {"ok": True, "mode": self.scanner_mode}
         if url == TELEGRAM + "/health":
             if not self.telegram_alive:
                 raise shutdown.Unreachable("refused")
@@ -65,7 +88,12 @@ class FakeRuntime:
             return self.reconcile_reply
         if url == BACKEND + "/api/scanner/stop":
             self.calls.append("scanner:stop")
+            self.scanner_mode = "SCANNER_STOPPED"
             return 200, {"ok": True, "mode": "SCANNER_STOPPED"}
+        if url == BACKEND + "/api/runtime/retire-entry-coverage":
+            self.calls.append("protection:retire-entry-arms")
+            self._check_identity(payload)
+            return self.retire_reply
         if url == TELEGRAM + "/shutdown":
             self.calls.append("telegram:shutdown")
             self._check_identity(payload)
@@ -112,12 +140,19 @@ class FakeRuntime:
         if tuple(pids) == chains.get("backend"):
             self.backend_alive = False
 
+    def prove_legacy_paper_quiescence(self):
+        self.legacy_evidence_checks += 1
+        if self.legacy_paper_blocker is not None:
+            raise shutdown.SafeStopError(self.legacy_paper_blocker)
+
     def orchestrator(self):
         return shutdown.RuntimeShutdown(
             root=ROOT, env={}, get=self.get, post=self.post,
             robot_state=lambda: self.robot, stop_robot_fn=self.stop_robot,
             sleep=self.sleep, monotonic=lambda: self.now,
             legacy_resolver=self.resolve_legacy, legacy_terminator=self.terminate_legacy,
+            legacy_paper_quiescence=self.prove_legacy_paper_quiescence,
+            legacy_paper_guard=lambda: nullcontext(),
         )
 
 
@@ -177,7 +212,7 @@ class FullShutdownTests(unittest.TestCase):
         runtime.protection["covered_symbols"] = ["BTCUSDT"]
         result = runtime.orchestrator().run("all")
         self.assertFalse(result.ok)
-        self.assertEqual(runtime.calls, ["scanner:stop", "robot:stop"])
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:stop", "protection:retire-entry-arms"])
         self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
     def test_robot_running_with_absent_backend_is_blocked_without_shutdown(self):
@@ -257,6 +292,364 @@ class ReconciliationShutdownTests(unittest.TestCase):
                 self.assertNotIn("telegram:shutdown", runtime.calls)
                 self.assertNotIn("backend:shutdown", runtime.calls)
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+
+class ShutdownArmFixture:
+    """Real manager + HTTP handler + orchestrator; fake owner/hub, no runtime threads/network."""
+    path = "/api/runtime/retire-entry-coverage"
+
+    def __init__(self, robot=STOPPED):
+        self.runtime = FakeRuntime(robot=robot)
+        self.durable = {}
+        self.store = mock.Mock()
+        self.store.load_active_robot_candidate_states.return_value = ()
+        self.store.load_active_paper_limits.return_value = ()
+        self.store.load_open_position_projections.return_value = ()
+        self.monitor = RobotBreakoutMonitor(
+            lambda: self.store, TradingAccountId("paper"),
+            get_closed_candle=lambda symbol: None, action_executor=mock.Mock(),
+            tick_size_provider=lambda symbol: Decimal("0.01"), clock_ms=lambda: 1,
+        )
+        self.owner = SimpleNamespace(
+            store=self.store, _robot_breakout_monitor=self.monitor,
+            live_limit_acceptance_diagnostics=lambda: {"database_identity": IDENTITY},
+            robot_runtime_state=lambda: SimpleNamespace(
+                mode=self.runtime.robot[0], recovery_status=self.runtime.robot[1]),
+            scanner_status=lambda: SimpleNamespace(mode="SCANNER_STOPPED"),
+            robot_protection_coverage_symbols=lambda: tuple(self.durable),
+            robot_protection_coverage_roles=lambda: dict(self.durable),
+        )
+        self.owner.robot_shutdown_idle_guard = lambda: PaperRuntime.robot_shutdown_idle_guard(self.owner)
+        self.serialized = SimpleNamespace(call=lambda operation: operation(self.owner))
+        self.hub = mock.Mock()
+        self.hub.subscribe.side_effect = lambda symbol: mock.Mock(symbol=symbol)
+        self.manager = RobotProtectionCoverageManager(self.hub, self.serialized)
+        self.manager.arm_entry_coverage("AKEUSDT")
+        self.manager.arm_entry_coverage("BLASTUSDT")
+        original_get, original_post = self.runtime.get, self.runtime.post
+
+        def get(url, timeout):
+            if url == BACKEND + "/api/robot/protection-health":
+                return 200, json.loads(json.dumps(self.manager.health()))
+            return original_get(url, timeout)
+
+        def post(url, payload, timeout):
+            if url == BACKEND + self.path:
+                self.runtime.calls.append("protection:retire-entry-arms")
+                return self.request(payload)
+            return original_post(url, payload, timeout)
+
+        self.runtime.get, self.runtime.post = get, post
+
+    def request(self, payload=None):
+        payload = {"database_identity": IDENTITY} if payload is None else payload
+        handler = object.__new__(PaperHttpHandler)
+        handler.path = self.path
+        handler.server = SimpleNamespace(robot_protection_coverage=self.manager)
+        raw = json.dumps(payload).encode()
+        handler.headers = {"Content-Length": str(len(raw))}
+        handler.rfile = io.BytesIO(raw)
+        replies = []
+        handler._json_response = lambda status, body: replies.append((status, json.loads(json.dumps(body))))
+        handler.do_POST()
+        return replies[0]
+
+
+class ShutdownArmRetirementTests(unittest.TestCase):
+    def test_orphan_arms_retire_after_stop_and_full_shutdown_completes(self):
+        for state in (STOPPED, READY, PAUSED, RECON):
+            with self.subTest(state=state):
+                f = ShutdownArmFixture(state)
+                result = f.runtime.orchestrator().run("all")
+                self.assertTrue(result.ok, result.message)
+                expected = ["scanner:stop"]
+                if state == RECON:
+                    expected.append("robot:reconcile")
+                if state != STOPPED:
+                    expected.append("robot:stop")
+                expected += ["protection:retire-entry-arms", "telegram:shutdown", "backend:shutdown"]
+                self.assertEqual(f.runtime.calls, expected)
+                self.assertEqual(f.manager.health()["armed_symbols"], ())
+                self.assertEqual(f.manager.health()["covered_symbols"], ())
+                self.assertEqual(f.hub.discard.call_count, 2)
+                for call in f.hub.discard.call_args_list:
+                    call.args[0].remove_update_listener.assert_called_once_with("robot-protection")
+                    call.args[0].remove_disconnect_listener.assert_called_once_with("robot-protection")
+                self.assertFalse(f.runtime.backend_alive or f.runtime.telegram_alive)
+                # Clean repeat is idempotent and never invents a second recovery.
+                self.assertEqual(f.request()[0], 200)
+                self.assertEqual(f.hub.discard.call_count, 2)
+
+    def test_durable_roles_block_retirement_without_losing_coverage(self):
+        for role in ("EXPOSURE", "OBLIGATION", "ENTRY_PENDING"):
+            with self.subTest(role=role):
+                f = ShutdownArmFixture()
+                f.durable["AKEUSDT"] = role
+                before = f.manager.health()
+                result = f.runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(f.manager.health(), before)
+                f.hub.discard.assert_not_called()
+                self.assertEqual(f.runtime.calls, ["scanner:stop", "protection:retire-entry-arms"])
+                self.assertTrue(f.runtime.backend_alive and f.runtime.telegram_alive)
+
+    def test_not_stopped_or_wrong_identity_rejected_before_arm_mutation(self):
+        for state in (READY, PAUSED, RECON, ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED")):
+            with self.subTest(state=state):
+                f = ShutdownArmFixture(state)
+                self.assertEqual(f.request()[0], 409)
+                self.assertEqual(len(f.manager.health()["armed_symbols"]), 2)
+                f.hub.discard.assert_not_called()
+        for payload, status in (({}, 400), ({"database_identity": "0" * 64}, 409),
+                                ({"database_identity": IDENTITY, "force": True}, 400)):
+            with self.subTest(payload=payload):
+                f = ShutdownArmFixture()
+                self.assertEqual(f.request(payload)[0], status)
+                self.assertEqual(len(f.manager.health()["armed_symbols"]), 2)
+                f.hub.discard.assert_not_called()
+
+    def test_uncertain_entry_ownership_working_orders_or_unlinked_fill_block(self):
+        for evidence in ("candidate", "order", "position", "unreadable"):
+            with self.subTest(evidence=evidence):
+                f = ShutdownArmFixture()
+                if evidence == "candidate":
+                    f.store.load_active_robot_candidate_states.return_value = (object(),)
+                elif evidence == "order":
+                    f.store.load_active_paper_limits.return_value = (object(),)
+                elif evidence == "position":
+                    f.store.load_open_position_projections.return_value = (
+                        SimpleNamespace(position_key=SimpleNamespace(symbol=SimpleNamespace(value="AKEUSDT"))),)
+                else:
+                    f.store.load_active_paper_limits.side_effect = RuntimeError("unreadable")
+                self.assertIn(f.request()[0], (409, 503))
+                self.assertEqual(len(f.manager.health()["armed_symbols"]), 2)
+                f.hub.discard.assert_not_called()
+
+    def test_inflight_monitor_tick_blocks_retirement_without_wait_or_mutation(self):
+        f = ShutdownArmFixture()
+        entered, release = threading.Event(), threading.Event()
+        def tick():
+            entered.set()
+            release.wait(5)
+            return ()
+        f.monitor._tick = tick
+        thread = threading.Thread(target=f.monitor.tick)
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            self.assertEqual(f.request()[0], 503)
+            self.assertEqual(len(f.manager.health()["armed_symbols"]), 2)
+            f.hub.discard.assert_not_called()
+        finally:
+            release.set()
+            thread.join(2)
+        self.assertFalse(thread.is_alive())
+
+    def test_timed_out_owner_callback_cannot_retire_arms_later(self):
+        f = ShutdownArmFixture()
+        pending = []
+        calls = 0
+        def call(operation):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                pending.append(operation)
+                raise TimeoutError("owner reply timed out")
+            return operation(f.owner)
+        f.serialized.call = call
+        self.assertEqual(f.request()[0], 503)
+        self.assertEqual(len(pending), 1)
+        pending[0](f.owner)  # queued work finishes after the HTTP guard has exited
+        self.assertEqual(len(f.manager.health()["armed_symbols"]), 2)
+        f.hub.discard.assert_not_called()
+
+    def test_strict_resync_failure_is_not_reported_as_quiescent(self):
+        for failure in ("read", "discard"):
+            with self.subTest(failure=failure):
+                f = ShutdownArmFixture()
+                if failure == "read":
+                    reads = 0
+                    def symbols():
+                        nonlocal reads
+                        reads += 1
+                        if reads > 1:
+                            raise RuntimeError("resync unavailable")
+                        return ()
+                    f.owner.robot_protection_coverage_symbols = symbols
+                else:
+                    f.hub.discard.side_effect = RuntimeError("unsubscribe unavailable")
+                result = f.runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(f.runtime.calls, ["scanner:stop", "protection:retire-entry-arms"])
+                self.assertTrue(f.manager.health()["covered_symbols"])
+                self.assertTrue(f.runtime.backend_alive and f.runtime.telegram_alive)
+
+    def test_ambiguous_transport_missing_endpoint_or_invalid_health_fails_closed_once(self):
+        for reply in (TimeoutError("lost response"), (404, None), (503, {"ok": False}),
+                      (200, {"ok": True}), (200, {"ok": True, "protection": {
+                          "healthy": True, "covered_symbols": [], "armed_symbols": ["AKEUSDT"],
+                          "unhealthy_symbols": {}}})):
+            with self.subTest(reply=reply):
+                f = ShutdownArmFixture()
+                def request(payload):
+                    if isinstance(reply, Exception):
+                        raise reply
+                    return reply
+                f.request = request
+                result = f.runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(f.runtime.calls, ["scanner:stop", "protection:retire-entry-arms"])
+                self.assertTrue(f.runtime.backend_alive and f.runtime.telegram_alive)
+                f.hub.discard.assert_not_called()
+
+
+
+class LegacyEntryCoverageBridgeTests(unittest.TestCase):
+    @staticmethod
+    def stale_arm_runtime(status=404):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.retire_reply = (status, None)
+        runtime.legacy_paper_blocker = None
+        runtime.protection.update({
+            "covered_symbols": ["AKEUSDT", "BLASTUSDT"],
+            "armed_symbols": ["AKEUSDT", "BLASTUSDT"],
+            "coverage_roles": {"AKEUSDT": "ENTRY_PENDING", "BLASTUSDT": "ENTRY_PENDING"},
+        })
+        runtime.legacy_chains = {"backend": (130, 120, 110, 105)}
+        return runtime
+
+    def test_old_backend_without_retire_endpoint_stops_once_after_full_proof(self):
+        for status in (404, 501):
+            with self.subTest(status=status):
+                runtime = self.stale_arm_runtime(status)
+                result = runtime.orchestrator().run("all")
+                self.assertTrue(result.ok, result.message)
+                self.assertTrue(result.runtime_stopped)
+                self.assertEqual(result.steps, (
+                    "scanner:stop", "protection:legacy-entry-proof",
+                    "telegram:shutdown", "backend:legacy-terminate",
+                ))
+                self.assertEqual(runtime.calls, [
+                    "scanner:stop", "protection:retire-entry-arms",
+                    "resolve:backend:127.0.0.1:8765", "telegram:shutdown",
+                    "resolve:backend:127.0.0.1:8765",
+                    "terminate:[130, 120, 110, 105]",
+                ])
+                self.assertEqual(runtime.legacy_evidence_checks, 1)
+                self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+
+    def test_durable_candidate_limit_exposure_or_obligation_blocks_legacy_termination(self):
+        for blocker in (
+            "legacy PAPER shutdown blocked by active Robot candidates",
+            "legacy PAPER shutdown blocked by working PAPER limits",
+            "legacy PAPER shutdown blocked by open PAPER exposure",
+            "legacy PAPER shutdown blocked by unresolved protection obligations",
+        ):
+            with self.subTest(blocker=blocker):
+                runtime = self.stale_arm_runtime()
+                runtime.legacy_paper_blocker = blocker
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertIn(blocker, result.message)
+                self.assertEqual(
+                    runtime.calls, ["scanner:stop", "protection:retire-entry-arms"],
+                )
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
+
+    def test_only_exact_temporary_entry_shape_is_eligible_for_legacy_bridge(self):
+        cases = (
+            {"armed_symbols": ["AKEUSDT"]},
+            {"coverage_roles": {"AKEUSDT": "EXPOSURE", "BLASTUSDT": "ENTRY_PENDING"}},
+            {"unhealthy_symbols": {"AKEUSDT": "ingress_overflow"}, "healthy": False},
+        )
+        for override in cases:
+            with self.subTest(override=override):
+                runtime = self.stale_arm_runtime()
+                runtime.protection.update(override)
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+                self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
+
+
+class LegacyPaperQuiescenceTests(unittest.TestCase):
+    @staticmethod
+    def make_db(path: Path, blocker: str | None = None) -> None:
+        connection = sqlite3.connect(path)
+        try:
+            connection.executescript(
+                """
+                CREATE TABLE robot_candidates (
+                    trading_account_id TEXT NOT NULL, status TEXT NOT NULL
+                );
+                CREATE TABLE paper_limit_orders (
+                    trading_account_id TEXT NOT NULL, status TEXT NOT NULL
+                );
+                CREATE TABLE position_projections (
+                    trading_account_id TEXT NOT NULL, category TEXT NOT NULL,
+                    position_idx INTEGER NOT NULL, side TEXT NOT NULL, quantity TEXT NOT NULL
+                );
+                CREATE TABLE paper_protection_obligations (
+                    trading_account_id TEXT NOT NULL, status TEXT NOT NULL
+                );
+                """
+            )
+            if blocker == "candidate":
+                connection.execute("INSERT INTO robot_candidates VALUES ('paper', 'APPROVED')")
+            elif blocker == "limit":
+                connection.execute("INSERT INTO paper_limit_orders VALUES ('paper', 'open')")
+            elif blocker == "exposure":
+                connection.execute(
+                    "INSERT INTO position_projections VALUES ('paper', 'linear', 0, 'Long', '1')"
+                )
+            elif blocker == "obligation":
+                connection.execute(
+                    "INSERT INTO paper_protection_obligations VALUES ('paper', 'LATCHED')"
+                )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def test_read_only_durable_proof_accepts_empty_state_and_rejects_each_blocker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            clean = Path(directory) / "clean.sqlite3"
+            self.make_db(clean)
+            shutdown.prove_legacy_paper_quiescence(clean)
+            for blocker, phrase in (
+                ("candidate", "active Robot candidates"),
+                ("limit", "working PAPER limits"),
+                ("exposure", "open PAPER exposure"),
+                ("obligation", "unresolved protection obligations"),
+            ):
+                with self.subTest(blocker=blocker):
+                    path = Path(directory) / f"{blocker}.sqlite3"
+                    self.make_db(path, blocker)
+                    with self.assertRaisesRegex(shutdown.SafeStopError, phrase):
+                        shutdown.prove_legacy_paper_quiescence(path)
+
+
+    def test_final_guard_blocks_competing_writes_without_editing_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "guard.sqlite3"
+            self.make_db(path)
+            with shutdown.hold_legacy_paper_quiescence(path):
+                competitor = sqlite3.connect(path, timeout=0.0)
+                try:
+                    with self.assertRaises(sqlite3.OperationalError):
+                        competitor.execute(
+                            "INSERT INTO robot_candidates VALUES ('paper', 'APPROVED')"
+                        )
+                finally:
+                    competitor.close()
+            verify = sqlite3.connect(path)
+            try:
+                self.assertEqual(
+                    verify.execute("SELECT COUNT(*) FROM robot_candidates").fetchone()[0], 0,
+                )
+            finally:
+                verify.close()
 
 
 class OwnershipTests(unittest.TestCase):
