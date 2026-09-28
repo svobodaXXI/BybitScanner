@@ -16,13 +16,17 @@ from terminal.runtime.paper_runtime import PaperRuntime
 from tests.runtime_replay import (
     RuntimeReplayEvent,
     RuntimeReplayFixture,
+    BOX_OWNERSHIP_ERROR,
     _make_runtime,
     _OfflineRecoverySession,
     _ReplayHub,
+    box_candidate_facts,
     run_coverage_manager_replay,
     run_manager_stall_replay,
     run_owner_stall_replay,
     run_runtime_replay,
+    seed_unowned_box_candidates,
+    tick_box_monitor,
 )
 from tests.test_robot_paper_execution_threading import (
     ACCOUNT_ID as TOPOLOGY_ACCOUNT_ID,
@@ -632,6 +636,73 @@ class RuntimeReplayEntryPendingCoverageStartBoundaryTests(unittest.TestCase):
             finally:
                 manager.close()
                 owner.close()
+
+
+class RuntimeReplayBoxArmLeakTests(unittest.TestCase):
+    """RVL-R6 RED: a failed Box pre-creation attempt must not keep its temporary arm.
+
+    Incident (2026-09-28 owner PAPER): six APPROVED / BOX_ENTRY_READY Box candidates with
+    no position-projection row kept failing ``begin_box_attempt_ownership`` ("Box
+    ownership requires reconciled FLAT position and journal", up to 48 attempts) while
+    staying subscribed as ENTRY_PENDING arms, restoring the pre-LIMIT ingress load that
+    RVL-R4 removed until protection ingress overflowed.
+
+    Production ordering in RobotBreakoutMonitor._advance_box_entry_ready():
+    arm_entry_coverage -> begin_box_attempt_ownership raises -> tick() catches it ->
+    no LIMIT/grid exists, the arm is never released, and resync() covers
+    durable roles UNION arms. Product code is not changed here; these tests are RED.
+    """
+
+    def test_failed_box_pre_creation_attempt_releases_its_temporary_coverage_arm(self):
+        symbol = "AKEUSDT"
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "paper_runtime.sqlite3"
+            owner = SerializedPaperRuntime(lambda: _make_runtime(path))
+            hub = _ReplayHub()
+            manager = RobotProtectionCoverageManager(
+                hub, owner, resync_interval_s=3600.0, recovery_session=_OfflineRecoverySession(),
+            )
+            try:
+                seed_unowned_box_candidates(path, (symbol,))
+                self.assertEqual(manager.health()["armed_symbols"], ())
+
+                advanced = tick_box_monitor(path, manager)
+                facts = box_candidate_facts(path, (symbol,))[symbol]
+                after_tick = manager.health()
+                manager.resync()  # the production watchdog pass
+                after_resync = manager.health()
+                contexts = tuple(hub.contexts)
+            finally:
+                manager.close()
+                owner.close()
+
+        # Replay invariants, valid before and after a fix: the tick hit the production
+        # ownership failure before any LIMIT/grid could exist.
+        self.assertEqual(advanced, ())
+        self.assertEqual(facts["phase"], "BOX_ENTRY_READY")
+        self.assertEqual(facts["error"], BOX_OWNERSHIP_ERROR)
+        self.assertEqual(facts["attempts"], 1)
+        self.assertIsNone(facts["grid_ids"])
+        self.assertEqual(facts["active_limits"], 0)
+
+        evidence = (
+            f"no LIMIT/grid (active_limits={facts['active_limits']}, grid_ids={facts['grid_ids']}); "
+            f"after tick: armed={after_tick['armed_symbols']} covered={after_tick['covered_symbols']}; "
+            f"after resync: armed={after_resync['armed_symbols']} covered={after_resync['covered_symbols']} "
+            f"roles={dict(after_resync['coverage_roles'])} hub_contexts={contexts}"
+        )
+        # Target contract (RED on current code): once the attempt is proven to have
+        # created no resting LIMIT/grid, the symbol has no independent durable protection
+        # role, so it must be neither armed nor covered -- immediately and after resync.
+        violations = []
+        for label, health in (("after tick", after_tick), ("after resync", after_resync)):
+            if health["armed_symbols"]:
+                violations.append(f"{label}: temporary arm leaked {health['armed_symbols']}")
+            if health["covered_symbols"]:
+                violations.append(f"{label}: symbol still covered {health['covered_symbols']}")
+        if contexts:
+            violations.append(f"hub still subscribed {contexts}")
+        self.assertEqual(violations, [], evidence)
 
 
 if __name__ == "__main__":

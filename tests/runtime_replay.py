@@ -666,6 +666,145 @@ def run_manager_stall_replay(
             owner.close()
 
 
+BOX_OWNERSHIP_ERROR = "Box ownership requires reconciled FLAT position and journal"
+
+
+def _box_plan_snapshot(symbol: str) -> dict[str, object]:
+    """Frozen Ikigai Box plan (LONG, 4-LIMIT first grid), as the Robot handoff expects."""
+    return {
+        "contract_version": 1,
+        "planner_version": "runtime-test",
+        "pattern": "IKIGAI_BOX",
+        "environment": "PAPER",
+        "execution_authorized": False,
+        "attempt": 1,
+        "identity": {
+            "venue": "bybit", "market": "linear", "symbol": symbol,
+            "timeframe": "5", "direction": "LONG",
+            "a_time_ms": 1000, "b_time_ms": 2000,
+        },
+        "decision_time_ms": 3000,
+        "anchors": {"a_price": "112.94498381877023", "b_price": "100"},
+        "fibonacci": {"f1": "100", "f1618": "92", "f2618": "79.05501618122977"},
+        "inputs": {
+            "working_quantity": "8", "tick_size": "0.01",
+            "entry_fee_rate": "0", "target_fee_rate": "0",
+            "stop_fee_rate": "0", "structural_stop": None,
+        },
+        "plan": {
+            "direction": "LONG",
+            "limit_prices": ["94", "93.2", "92.4", "91.6"],
+            "limit_quantities": ["2", "2", "2", "2"],
+            "frozen_f1": "100", "frozen_f1618": "92",
+            "take_price": "99.2", "grid_spacing": "0.8",
+            "stop_price": "89.6", "stop_basis": "FULL_GRID_RR_CAP",
+            "environment": "PAPER", "execution_authorized": False,
+            "full_position": {
+                "quantity": "8", "average_entry": "92.8",
+                "net_target_profit": "51.2", "net_stop_loss": "25.6",
+                "reward_risk": "2",
+            },
+            "slices": [
+                {"quantity": "2", "average_entry": "94", "net_target_profit": "10.4",
+                 "net_stop_loss": "8.8", "reward_risk": "1.181818181818181818181818182"},
+                {"quantity": "2", "average_entry": "93.2", "net_target_profit": "12",
+                 "net_stop_loss": "7.2", "reward_risk": "1.666666666666666666666666667"},
+                {"quantity": "2", "average_entry": "92.4", "net_target_profit": "13.6",
+                 "net_stop_loss": "5.6", "reward_risk": "2.428571428571428571428571429"},
+                {"quantity": "2", "average_entry": "91.6", "net_target_profit": "15.2",
+                 "net_stop_loss": "4", "reward_risk": "3.8"},
+            ],
+            "partial_fill_loss_upper_bound": "25.6",
+            "minimum_partial_fill_rr": "1.181818181818181818181818182",
+        },
+    }
+
+
+def seed_unowned_box_candidates(database_path: Path, symbols: tuple[str, ...]) -> None:
+    """RVL-R6 incident state: APPROVED / BOX_ENTRY_READY Box candidates that can never
+    take Box ownership (no position-projection row), Robot runtime READY.
+
+    Uses a store on the calling thread, like the Robot monitor's own store; the owner
+    runtime only has to have created the database.
+    """
+    from terminal.persistence.sqlite_store import SQLiteStore
+
+    account = TradingAccountId("paper")
+    store = SQLiteStore.open(database_path)
+    try:
+        for symbol in symbols:
+            source, _ = store.save_box_plan_only(
+                snapshot=_box_plan_snapshot(symbol), created_at_ms=3001,
+            )
+            store.handoff_box_plan_to_robot(
+                source.candidate_id, symbol=source.symbol,
+                expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=3002,
+            )
+        state = store.get_robot_runtime_state(account)
+        store.update_robot_runtime_state(
+            account, mode="ROBOT_RUNNING", recovery_status="READY", reason=None,
+            expected_version=state.version, updated_at_ms=max(3_000, state.updated_at_ms + 1),
+        )
+    finally:
+        store.close()
+
+
+def tick_box_monitor(
+    database_path: Path, manager: RobotProtectionCoverageManager, *, now_ms: int = 4_000,
+) -> tuple[str, ...]:
+    """One production RobotBreakoutMonitor tick wired to the real coverage manager's arm.
+
+    Same wiring as ``PaperRuntime`` (arm/release callbacks bound to the manager), driven
+    synchronously on the calling thread. The executor is a tripwire: a Box grid must
+    never be created through it in this scenario.
+    """
+    from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
+    from terminal.persistence.sqlite_store import SQLiteStore
+
+    class _NoExecution:
+        def __getattr__(self, name):
+            raise AssertionError(f"unexpected Robot execution call: {name}")
+
+    monitor = RobotBreakoutMonitor(
+        lambda: SQLiteStore.open(database_path),
+        TradingAccountId("paper"),
+        get_closed_candle=lambda symbol: None,
+        action_executor=_NoExecution(),
+        tick_size_provider=lambda symbol: Decimal("0.01"),
+        clock_ms=lambda: now_ms,
+        arm_entry_coverage=manager.arm_entry_coverage,
+        release_entry_coverage=manager.release_entry_coverage,
+    )
+    try:
+        return monitor.tick()
+    finally:
+        monitor.close()
+
+
+def box_candidate_facts(database_path: Path, symbols: tuple[str, ...]) -> dict[str, dict[str, object]]:
+    """Durable facts per Box symbol: phase, execution error/attempts, LIMIT/grid existence."""
+    from terminal.persistence.sqlite_store import SQLiteStore
+
+    account = TradingAccountId("paper")
+    store = SQLiteStore.open(database_path)
+    try:
+        facts: dict[str, dict[str, object]] = {}
+        for record in store.load_robot_candidates_by_status(account, ("APPROVED",)):
+            if record.symbol.value not in symbols or record.robot_state is None:
+                continue
+            execution = record.robot_state.get("execution") or {}
+            facts[record.symbol.value] = {
+                "phase": record.robot_state.get("phase"),
+                "error": execution.get("last_execution_error"),
+                "attempts": execution.get("attempt_count"),
+                "grid_ids": execution.get("limit_order_ids"),
+                "active_limits": len(store.load_active_paper_limits(account, record.symbol)),
+            }
+        return facts
+    finally:
+        store.close()
+
+
 @dataclass(frozen=True)
 class OwnerStallReplayResult:
     processed_event_ids: tuple[str, ...]
