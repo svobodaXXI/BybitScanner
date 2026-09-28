@@ -747,6 +747,25 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 verify.close()
 
 
+    def test_final_guard_uses_bounded_writer_wait(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "guard.sqlite3"
+            self.make_db(path)
+            real_connect = sqlite3.connect
+            with mock.patch.object(
+                shutdown.sqlite3, "connect", wraps=real_connect,
+            ) as connect:
+                with shutdown.hold_legacy_paper_quiescence(path):
+                    pass
+
+            self.assertEqual(
+                connect.call_args.kwargs["timeout"],
+                shutdown.LEGACY_WRITER_BARRIER_TIMEOUT_S,
+            )
+            self.assertGreater(shutdown.LEGACY_WRITER_BARRIER_TIMEOUT_S, 0)
+            self.assertLessEqual(shutdown.LEGACY_WRITER_BARRIER_TIMEOUT_S, 5.0)
+
+
 class OwnershipTests(unittest.TestCase):
     def test_wrong_backend_identity_blocks_every_mutation_and_shutdown(self):
         for override in ({"database_identity": "0" * 64}, {"component": "telegram_monitoring"},
