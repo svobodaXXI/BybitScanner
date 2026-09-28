@@ -191,14 +191,28 @@ def probe_listener_pids(host: str, port: int) -> tuple[int, ...]:
     return tuple(sorted(set(listeners)))
 
 
-def resolve_legacy_chain(kind: str, host: str, port: int, root: Path) -> tuple[int, ...]:
-    """Exact listener + ancestry for ``host:port`` (read-only query), proven by command line."""
+def resolve_legacy_process_chain(
+    kind: str, host: str, port: int, root: Path,
+) -> tuple[ProcessInfo, ...]:
+    """Exact listener ancestry including PID creation identity, in kill order."""
     if os.name != "nt":
         raise LegacyOwnerUnproven("legacy process fallback is available only on Windows")
     if host != "127.0.0.1" or not isinstance(port, int) or not 0 < port < 65536:
         raise LegacyOwnerUnproven(f"legacy listener {host}:{port} is not an exact localhost port")
     listeners, processes = _query_listener_chain(port)
-    return select_legacy_chain(kind, listeners, processes, root)
+    pids = select_legacy_chain(kind, listeners, processes, root)
+    try:
+        return tuple(processes[pid] for pid in pids)
+    except KeyError as exc:
+        raise LegacyOwnerUnproven("proven process chain became incomplete") from exc
+
+
+def resolve_legacy_chain(kind: str, host: str, port: int, root: Path) -> tuple[int, ...]:
+    """Exact listener + ancestry for ``host:port`` (read-only query), proven by command line."""
+    return tuple(
+        process.pid
+        for process in resolve_legacy_process_chain(kind, host, port, root)
+    )
 
 
 def terminate_exact_pids(pids: Iterable[int]) -> None:
