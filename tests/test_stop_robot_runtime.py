@@ -34,6 +34,8 @@ class FakeRuntime:
         self.protection = {"ok": True, "healthy": True, "covered_symbols": [],
                            "unhealthy_symbols": {}}
         self.shutdown_replies = {}
+        self.reconcile_reply = (200, {"ok": True, "success": True})
+        self.reconcile_state = PAUSED
         self.exit_after_polls = {"telegram": 1, "backend": 1}
         self.calls = []
         self.now = 0.0
@@ -52,6 +54,15 @@ class FakeRuntime:
         raise AssertionError(f"unexpected GET {url}")
 
     def post(self, url, payload, timeout):
+        if url == BACKEND + "/api/robot/reconcile":
+            self.calls.append("robot:reconcile")
+            assert payload == {}
+            assert timeout == shutdown.MUTATION_TIMEOUT_S
+            # Even a lost response may follow a committed recovery transition.
+            self.robot = self.reconcile_state
+            if isinstance(self.reconcile_reply, Exception):
+                raise self.reconcile_reply
+            return self.reconcile_reply
         if url == BACKEND + "/api/scanner/stop":
             self.calls.append("scanner:stop")
             return 200, {"ok": True, "mode": "SCANNER_STOPPED"}
@@ -144,7 +155,7 @@ class FullShutdownTests(unittest.TestCase):
         self.assertEqual(runtime.calls, ["telegram:shutdown"])
 
     def test_robot_needing_backend_authority_keeps_runtime_alive(self):
-        for robot in (RECON, ("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"), ("ROBOT_WEIRD", "X")):
+        for robot in (("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"), ("ROBOT_WEIRD", "X")):
             with self.subTest(robot=robot):
                 runtime = FakeRuntime(robot=robot)
                 result = runtime.orchestrator().run("all")
@@ -175,6 +186,77 @@ class FullShutdownTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(runtime.calls, [])
         self.assertTrue(runtime.telegram_alive)
+
+
+class ReconciliationShutdownTests(unittest.TestCase):
+    def test_reconcile_then_canonical_stop_then_protection_then_shutdown(self):
+        runtime = FakeRuntime(robot=RECON)
+        original_get = runtime.get
+
+        def get(url, timeout):
+            if url == BACKEND + "/api/robot/protection-health":
+                self.assertEqual(runtime.robot, STOPPED)
+                runtime.calls.append("protection:quiescent")
+            return original_get(url, timeout)
+
+        runtime.get = get
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "robot:reconcile", "robot:stop", "protection:quiescent",
+            "telegram:shutdown", "backend:shutdown",
+        ])
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_unresolved_or_failed_reconcile_keeps_runtime_alive(self):
+        for reply, state in (
+            ((409, {"ok": False, "success": False}), RECON),
+            ((503, {"ok": False, "error": "robot_reconcile_unavailable"}), RECON),
+            ((200, {"ok": True, "success": False}), RECON),
+            ((200, {"ok": True, "success": True}), RECON),
+            ((200, {"ok": True, "success": True}), STOPPED),
+            ((200, {"ok": True, "success": True}), None),
+        ):
+            with self.subTest(reply=reply, state=state):
+                runtime = FakeRuntime(robot=RECON)
+                runtime.reconcile_reply, runtime.reconcile_state = reply, state
+                self.assert_blocked_after_one_reconcile(runtime)
+
+    def test_ambiguous_reconcile_is_not_retried_even_if_state_became_paused(self):
+        for reply in (TimeoutError("timed out"), ConnectionError("lost response"),
+                      (200, None), (200, {"ok": True}),
+                      (200, {"ok": False, "success": True})):
+            with self.subTest(reply=reply):
+                runtime = FakeRuntime(robot=RECON)
+                runtime.reconcile_reply = reply
+                result = self.assert_blocked_after_one_reconcile(runtime)
+                self.assertIn("not retried", result.message)
+
+    def assert_blocked_after_one_reconcile(self, runtime):
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertFalse(result.runtime_stopped)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:reconcile"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+        self.assertIn("runtime kept alive", result.message)
+        return result
+
+    def test_recovered_robot_still_requires_normal_stop_and_protection_gates(self):
+        for gate in ("stop", "protection"):
+            with self.subTest(gate=gate):
+                runtime = FakeRuntime(robot=RECON)
+                if gate == "stop":
+                    runtime.stop_robot = mock.Mock(side_effect=RobotControlRejected("open position"))
+                else:
+                    runtime.protection["covered_symbols"] = ["BTCUSDT"]
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(runtime.calls.count("robot:reconcile"), 1)
+                self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
+                self.assertNotIn("telegram:shutdown", runtime.calls)
+                self.assertNotIn("backend:shutdown", runtime.calls)
+                self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
 
 
 class OwnershipTests(unittest.TestCase):
