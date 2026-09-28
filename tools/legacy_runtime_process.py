@@ -104,14 +104,29 @@ def select_legacy_chain(
             if _has_flag(parent.command_line, "/k"):
                 return (*chain, parent.pid)
             if _has_flag(parent.command_line, "/c"):
-                owner = _parent(parent, processes)
-                if (_is(owner, "powershell.exe") and _has_flag(owner.command_line, "-noexit")
-                        and _has_path(owner.command_line, script)):
+                # Canonical tools.runtime_intent launches a visible console as
+                # cmd.exe /c start_paper_backend.bat.  Older launchers wrapped
+                # that same exact cmd in PowerShell -NoExit.  In both cases the
+                # cmd process is already a fully proven project owner because
+                # the listener is this venv/module and cmd names this exact bat.
+                owner = processes.get(parent.ppid)
+                if (
+                    owner is not None and owner.created <= parent.created
+                    and _is(owner, "powershell.exe")
+                    and _has_flag(owner.command_line, "-noexit")
+                    and _has_path(owner.command_line, script)
+                ):
                     return (*chain, parent.pid, owner.pid)
+                return (*chain, parent.pid)
     else:
-        if _is(parent, "cmd.exe") and _has_flag(parent.command_line, "/k") \
-                and _has_path(parent.command_line, script):
-            return (*chain, parent.pid)
+        if _is(parent, "cmd.exe") and _has_path(parent.command_line, script):
+            if _has_flag(parent.command_line, "/k"):
+                return (*chain, parent.pid)
+            if _has_flag(parent.command_line, "/c") \
+                    and _has_path(parent.command_line, root / "venv" / "Scripts" / "python.exe"):
+                # Canonical tools.runtime_intent uses
+                # cmd.exe /c <venv-python> telegram_monitoring.py.
+                return (*chain, parent.pid)
         if _is(parent, "powershell.exe") and _has_flag(parent.command_line, "-noexit") \
                 and _has_path(parent.command_line, script):
             return (*chain, parent.pid)
