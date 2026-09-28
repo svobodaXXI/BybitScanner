@@ -519,10 +519,14 @@ class RobotBreakoutMonitor:
             ):
                 raise RobotBreakoutMonitorError("Box source plan is unavailable or mismatched")
 
-            if not self._arm_entry_coverage(record.symbol.value):
-                return False
+            # Baseline and spec building cannot create a LIMIT, so they run before the
+            # arm: a failure there never subscribes the symbol. Only the grid creation
+            # that follows makes fill-capable LIMITs durable, and its outcome may be
+            # ambiguous, so an arm taken for it is deliberately not released on error.
             self._store().begin_box_attempt_ownership(source.candidate_id)
             specs = build_box_first_grid_specs(source, created_at_ms=self._now_ms())
+            if not self._arm_entry_coverage(record.symbol.value):
+                return False
             orders = self._store().create_box_owned_paper_grid(
                 source.candidate_id,
                 trading_account_id=self._account_id,

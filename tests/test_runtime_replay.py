@@ -14,15 +14,20 @@ from terminal.runtime.paper_http_server import (
 )
 from terminal.runtime.paper_runtime import PaperRuntime
 from tests.runtime_replay import (
+    BOX_OWNERSHIP_ERROR,
     RuntimeReplayEvent,
     RuntimeReplayFixture,
     _make_runtime,
     _OfflineRecoverySession,
     _ReplayHub,
+    _seed_pre_limit_candidates,
+    box_candidate_facts,
     run_coverage_manager_replay,
     run_manager_stall_replay,
     run_owner_stall_replay,
     run_runtime_replay,
+    seed_unowned_box_candidates,
+    tick_box_monitor,
 )
 from tests.test_robot_paper_execution_threading import (
     ACCOUNT_ID as TOPOLOGY_ACCOUNT_ID,
@@ -632,6 +637,168 @@ class RuntimeReplayEntryPendingCoverageStartBoundaryTests(unittest.TestCase):
             finally:
                 manager.close()
                 owner.close()
+
+
+BOX_ARM_LEAK_SYMBOLS = ("AKEUSDT", "ARKMUSDT", "BATUSDT", "BLASTUSDT", "BOMEUSDT", "BRETTUSDT")
+
+
+class RuntimeReplayBoxArmLeakTests(unittest.TestCase):
+    """RVL-R6 RED: a failed Box pre-creation attempt must not keep its temporary arm.
+
+    Incident (2026-09-28 owner PAPER): six APPROVED / BOX_ENTRY_READY Box candidates with
+    no position-projection row kept failing ``begin_box_attempt_ownership`` ("Box
+    ownership requires reconciled FLAT position and journal", up to 48 attempts) while
+    staying subscribed as ENTRY_PENDING arms, restoring the pre-LIMIT ingress load that
+    RVL-R4 removed until protection ingress overflowed.
+
+    Production ordering in RobotBreakoutMonitor._advance_box_entry_ready():
+    arm_entry_coverage -> begin_box_attempt_ownership raises -> tick() catches it ->
+    no LIMIT/grid exists, the arm is never released, and resync() covers
+    durable roles UNION arms. Product code is not changed here; these tests are RED.
+    """
+
+    CAPACITY = 64
+
+    def test_failed_box_pre_creation_attempt_releases_its_temporary_coverage_arm(self):
+        symbol = "AKEUSDT"
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "paper_runtime.sqlite3"
+            owner = SerializedPaperRuntime(lambda: _make_runtime(path))
+            hub = _ReplayHub()
+            manager = RobotProtectionCoverageManager(
+                hub, owner, resync_interval_s=3600.0, recovery_session=_OfflineRecoverySession(),
+            )
+            try:
+                seed_unowned_box_candidates(path, (symbol,))
+                self.assertEqual(manager.health()["armed_symbols"], ())
+
+                advanced = tick_box_monitor(path, manager)
+                facts = box_candidate_facts(path, (symbol,))[symbol]
+                after_tick = manager.health()
+                manager.resync()  # the production watchdog pass
+                after_resync = manager.health()
+                contexts = tuple(hub.contexts)
+            finally:
+                manager.close()
+                owner.close()
+
+        # Replay invariants, valid before and after a fix: the tick hit the production
+        # ownership failure before any LIMIT/grid could exist.
+        self.assertEqual(advanced, ())
+        self.assertEqual(facts["phase"], "BOX_ENTRY_READY")
+        self.assertEqual(facts["error"], BOX_OWNERSHIP_ERROR)
+        self.assertEqual(facts["attempts"], 1)
+        self.assertIsNone(facts["grid_ids"])
+        self.assertEqual(facts["active_limits"], 0)
+
+        evidence = (
+            f"no LIMIT/grid (active_limits={facts['active_limits']}, grid_ids={facts['grid_ids']}); "
+            f"after tick: armed={after_tick['armed_symbols']} covered={after_tick['covered_symbols']}; "
+            f"after resync: armed={after_resync['armed_symbols']} covered={after_resync['covered_symbols']} "
+            f"roles={dict(after_resync['coverage_roles'])} hub_contexts={contexts}"
+        )
+        # Target contract (RED on current code): once the attempt is proven to have
+        # created no resting LIMIT/grid, the symbol has no independent durable protection
+        # role, so it must be neither armed nor covered -- immediately and after resync.
+        violations = []
+        for label, health in (("after tick", after_tick), ("after resync", after_resync)):
+            if health["armed_symbols"]:
+                violations.append(f"{label}: temporary arm leaked {health['armed_symbols']}")
+            if health["covered_symbols"]:
+                violations.append(f"{label}: symbol still covered {health['covered_symbols']}")
+        if contexts:
+            violations.append(f"hub still subscribed {contexts}")
+        self.assertEqual(violations, [], evidence)
+
+    def test_leaked_box_arms_put_pre_limit_traffic_into_ingress_and_break_real_coverage(self):
+        # Incident class: six failed Box arms + one legitimate linked ENTRY_PENDING
+        # symbol (ARUSDT), continuous round-robin traffic across a bounded owner stall.
+        # ARUSDT sits at cycle index 1 of 7, so stream event 65 (index 64), the first one
+        # past capacity while the owner is stalled, is ARUSDT's own event.
+        legit = "ARUSDT"
+        cycle = ("BATUSDT", legit, "BLASTUSDT", "BOMEUSDT", "BRETTUSDT", "AKEUSDT", "ARKMUSDT")
+        events = tuple(
+            RuntimeReplayEvent(
+                event_id=f"{cycle[i % 7]}:{100 + i}:{5000 + i}", symbol=cycle[i % 7],
+                coverage_role="ENTRY_PENDING", bid=Decimal("0.5000"), ask=Decimal("0.5001"),
+                bid_size=Decimal("100"), ask_size=Decimal("100"),
+                received_at_ms=1_790_524_000_000 + i, source_generation=0,
+                source_sequence=100 + i, source_update_id=5000 + i,
+                source_event_at_ms=1_790_524_000_000 + i,
+            )
+            for i in range(84)
+        )
+        fixture = RuntimeReplayFixture(name="leaked_box_arms_round_robin_generated", events=events)
+        ids = tuple(event.event_id for event in events)
+        self.assertEqual(events[self.CAPACITY].symbol, legit)
+
+        def setup(owner, manager, database_path):
+            seed_unowned_box_candidates(database_path, BOX_ARM_LEAK_SYMBOLS)
+            advanced = tick_box_monitor(database_path, manager)
+            box = box_candidate_facts(database_path, BOX_ARM_LEAK_SYMBOLS)
+            # The one legitimate durable ENTRY_PENDING: a linked, open, unfilled LIMIT;
+            # also leaves the Robot runtime at RECONCILIATION_REQUIRED for the stall.
+            owner.call(
+                lambda runtime: _seed_pre_limit_candidates(
+                    runtime, (legit,), fixture.name,
+                    recovery_status="RECONCILIATION_REQUIRED",
+                    reason="maintenance reconciliation requested", resting_limit=True,
+                ),
+                timeout=30.0,
+            )
+            return {"advanced": advanced, "box": box}
+
+        # One reconcile lookup (the only non-Box candidate), held for capacity + 1 events.
+        result = run_manager_stall_replay(
+            fixture, stall_events_per_lookup=self.CAPACITY + 1,
+            protection_ingress_capacity=self.CAPACITY, setup=setup,
+        )
+
+        # Replay invariants, valid before and after a fix.
+        facts = result.setup_facts
+        self.assertEqual(facts["advanced"], ())
+        self.assertEqual(set(facts["box"]), set(BOX_ARM_LEAK_SYMBOLS))
+        for symbol, box in facts["box"].items():
+            self.assertEqual(
+                (box["phase"], box["error"], box["grid_ids"], box["active_limits"]),
+                ("BOX_ENTRY_READY", BOX_OWNERSHIP_ERROR, None, 0), symbol,
+            )
+        self.assertEqual(result.stall_event_ids, (ids[:self.CAPACITY + 1],))
+        self.assertEqual(result.lookup_threads, ("paper-runtime-owner",))
+        self.assertEqual(set(result.unsubscribed_event_ids) | set(result.delivered_event_ids), set(ids))
+        self.assertEqual(result.processed_event_ids, result.admitted_event_ids)
+        self.assertEqual(result.event_errors, ())
+        self.assertEqual(result.health_after_producer["ingress"]["capacity"], self.CAPACITY)
+        self.assertEqual(result.final_health["ingress"]["current_pending"], 0)
+
+        before = result.health_before_stream
+        after = result.health_after_producer
+        box_ids = {event_id for event_id in ids if event_id.split(":", 1)[0] in BOX_ARM_LEAK_SYMBOLS}
+        box_in_ingress = sorted(box_ids & set(result.admitted_event_ids + result.overflow_event_ids))
+        evidence = (
+            f"armed={before['armed_symbols']} covered={before['covered_symbols']} "
+            f"delivered={len(result.delivered_event_ids)}/{len(ids)} "
+            f"box_events_in_ingress={len(box_in_ingress)} admitted={len(result.admitted_event_ids)} "
+            f"pending_at_stall_release={result.pending_at_stall_release}/{self.CAPACITY} "
+            f"first_overflow={result.overflow_event_ids[:1]} unhealthy={dict(after['unhealthy_symbols'])} "
+            f"fence_overflows={result.fence_overflows} reconcile={result.reconcile_outcome}"
+        )
+        # Target contract (RED on current code): the failed Box candidates contribute zero
+        # protection-ingress events, only the legitimate ARUSDT stays subscribed, nothing
+        # overflows, and no symbol is unhealthy. Capacity stays 64 and no event is dropped
+        # to get there: those events are simply not protection-critical.
+        violations = []
+        if before["armed_symbols"]:
+            violations.append(f"temporary arms leaked {before['armed_symbols']}")
+        if before["covered_symbols"] != (legit,):
+            violations.append(f"covered {before['covered_symbols']} != {(legit,)}")
+        if box_in_ingress:
+            violations.append(f"{len(box_in_ingress)} pre-LIMIT Box events entered protection ingress")
+        if result.overflow_event_ids:
+            violations.append(f"ingress overflow starting at {result.overflow_event_ids[0]}")
+        if after["unhealthy_symbols"]:
+            violations.append(f"unhealthy symbols {dict(after['unhealthy_symbols'])}")
+        self.assertEqual(violations, [], evidence)
 
 
 if __name__ == "__main__":
