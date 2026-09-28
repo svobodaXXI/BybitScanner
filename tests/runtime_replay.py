@@ -5,13 +5,17 @@ from decimal import Decimal
 import json
 from pathlib import Path
 import tempfile
-from typing import Mapping
+import threading
+from typing import Callable, Mapping
 
-from terminal.domain.models import Category, Price, Quantity, Symbol
+import requests
+
+from terminal.domain.models import Category, Price, Quantity, Symbol, TradingAccountId
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_http_server import (
     ProtectionIngressOverflow,
+    RobotProtectionCoverageManager,
     SerializedPaperRuntime,
 )
 from terminal.runtime.paper_runtime import PaperRuntime
@@ -161,13 +165,48 @@ def _instrument() -> InstrumentSnapshot:
     )
 
 
-def _make_runtime(database_path: Path) -> PaperRuntime:
+def _make_runtime(database_path: Path, *, geometry_index_provider=None) -> PaperRuntime:
     primary = _instrument()
     return PaperRuntime(
         database_path,
         book_provider=_ReplayBookProvider(),
         instrument_snapshot=primary,
         instrument_provider=lambda symbol: replace(primary, symbol=symbol),
+        robot_latest_geometry_index_provider=geometry_index_provider,
+    )
+
+
+def _seed_pre_limit_candidates(
+    runtime: PaperRuntime,
+    symbols: tuple[str, ...],
+    fixture_name: str,
+    *,
+    recovery_status: str,
+    reason: str | None = None,
+) -> None:
+    """Durable APPROVED / RETEST_DETECTED candidates with NO limit_order_id.
+
+    This is the incident's lifecycle state: no resting entry LIMIT exists, so no
+    book event can fill anything yet.
+    """
+    account = TradingAccountId("paper")
+    for index, symbol in enumerate(symbols):
+        record, _ = runtime.store.create_robot_candidate(
+            candidate_id=f"replay-pre-limit-{symbol.lower()}",
+            trading_account_id=account, symbol=Symbol(symbol), status="APPROVED",
+            signal_snapshot={"symbol": symbol, "pattern": "Falling Wedge",
+                             "replay_fixture": fixture_name},
+            approved_at_ms=1_000 + index, updated_at_ms=1_000 + index,
+        )
+        runtime.store.save_robot_candidate_state(
+            record.candidate_id, status="APPROVED",
+            robot_state={"phase": "RETEST_DETECTED", "execution": {}},
+            expected_revision=record.state_revision, updated_at_ms=2_000 + index,
+        )
+    state = runtime.store.get_robot_runtime_state(account)
+    runtime.store.update_robot_runtime_state(
+        account, mode="ROBOT_RUNNING", recovery_status=recovery_status, reason=reason,
+        expected_version=state.version, updated_at_ms=max(3_000, state.updated_at_ms + 1),
     )
 
 
@@ -237,4 +276,331 @@ def run_runtime_replay(
                 continuity_loss=continuity_loss,
             )
         finally:
+            owner.close()
+
+
+class _ReplayOrderBook:
+    def __init__(self) -> None:
+        self.payload: dict[str, object] = {}
+
+    def snapshot(self) -> dict[str, object]:
+        return dict(self.payload)
+
+
+class _ReplaySymbolContext:
+    """Test-only stand-in for a hub SymbolContext: no websocket, no network."""
+
+    def __init__(self, symbol: str) -> None:
+        self.symbol = symbol
+        self.reconnect_count = 0
+        self.public_orderbook = _ReplayOrderBook()
+        self._update_listeners: dict[str, object] = {}
+        self._disconnect_listeners: dict[str, object] = {}
+
+    def add_update_listener(self, name, listener) -> None:
+        self._update_listeners[name] = listener
+
+    def remove_update_listener(self, name) -> None:
+        self._update_listeners.pop(name, None)
+
+    def add_disconnect_listener(self, name, listener) -> None:
+        self._disconnect_listeners[name] = listener
+
+    def remove_disconnect_listener(self, name) -> None:
+        self._disconnect_listeners.pop(name, None)
+
+    def publish(self, event: RuntimeReplayEvent) -> None:
+        self.public_orderbook.payload = {
+            "state": "READY",
+            "symbol": event.symbol,
+            "bids": [{"price": str(event.bid), "size": str(event.bid_size)}],
+            "asks": [{"price": str(event.ask), "size": str(event.ask_size)}],
+            "receivedAt": event.received_at_ms,
+            "sequence": event.source_sequence,
+            "updateId": event.source_update_id,
+            "timestamp": event.source_event_at_ms,
+            "messageType": "delta",
+        }
+        for listener in tuple(self._update_listeners.values()):
+            listener(event.event_id)
+
+
+class _ReplayHub:
+    def __init__(self) -> None:
+        self.contexts: dict[str, _ReplaySymbolContext] = {}
+
+    def subscribe(self, symbol: str) -> _ReplaySymbolContext:
+        return self.contexts.setdefault(symbol, _ReplaySymbolContext(symbol))
+
+    def discard(self, context: _ReplaySymbolContext) -> None:
+        self.contexts.pop(context.symbol, None)
+
+
+class _OfflineRecoverySession:
+    """Refuses every REST recovery snapshot request; nothing leaves the process."""
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, dict]] = []
+
+    def get(self, url, params=None, timeout=None):
+        self.requests.append((url, dict(params or {})))
+        raise requests.ConnectionError("runtime replay is offline")
+
+
+class _BoundedReconcileStall:
+    """Condition-driven bounded stall of the production ``robot_reconcile()`` owner task.
+
+    The long owner task is ``PaperRuntime.robot_reconcile()`` submitted through
+    ``SerializedPaperRuntime.call()`` exactly as ``BackendRuntimeIntentPorts`` does.
+    Its per-candidate geometry lookup (the 2026-09-27 incident's 9 s owner step) is the
+    injected ``robot_latest_geometry_index_provider``: each lookup stays blocked until
+    the producer has offered ``events_per_lookup`` more stream events. Handshakes only,
+    never sleeps. The producer waits neither for ingress processing nor for the owner:
+    between lookups it waits only for the long task to reach its next lookup or finish.
+    """
+
+    def __init__(self, events_per_lookup: int) -> None:
+        if events_per_lookup <= 0:
+            raise ValueError("events_per_lookup must be positive")
+        self.events_per_lookup = events_per_lookup
+        self.lookup_threads: list[str] = []
+        self.stall_event_ids: list[tuple[str, ...]] = []
+        self.pending_at_release = 0
+        self.outcome = "not started"
+        self._progress = threading.Condition()
+        self._started = 0
+        self._released = 0
+        self._done = False
+
+    def geometry_index(self, _symbol: str, _snapshot: Mapping[str, object]) -> int:
+        with self._progress:
+            index = self._started
+            self._started += 1
+            self.lookup_threads.append(threading.current_thread().name)
+            self._progress.notify_all()
+            if not self._progress.wait_for(lambda: self._released > index, timeout=30.0):
+                raise RuntimeError("runtime replay stall was never released")
+        return 0
+
+    def release_all(self) -> None:
+        with self._progress:
+            self._released = 1 << 30
+            self._progress.notify_all()
+
+    def start(self, owner: SerializedPaperRuntime) -> threading.Thread:
+        def run() -> None:
+            try:
+                result = owner.call(lambda runtime: runtime.robot_reconcile(), timeout=60.0)
+                self.outcome = f"success={result.success} reason={result.reason}"
+            except BaseException as exc:
+                self.outcome = f"{type(exc).__name__}:{exc}"
+            finally:
+                with self._progress:
+                    self._done = True
+                    self._progress.notify_all()
+
+        thread = threading.Thread(target=run, name="runtime-replay-reconcile", daemon=True)
+        thread.start()
+        return thread
+
+    def _next_stall(self) -> bool:
+        with self._progress:
+            if not self._progress.wait_for(
+                lambda: self._done or self._started > self._released, timeout=30.0,
+            ):
+                raise RuntimeError("runtime replay reconcile never reached a lookup")
+            return self._started > self._released
+
+    def drive(
+        self,
+        events: tuple[RuntimeReplayEvent, ...],
+        offer: Callable[[RuntimeReplayEvent], None],
+        pending: Callable[[], int],
+    ) -> None:
+        """Offer every stream event continuously across the stalls; no drain between."""
+        stalled = self._next_stall()
+        current: list[str] = []
+
+        def close_stall() -> None:
+            self.pending_at_release = max(self.pending_at_release, pending())
+            self.stall_event_ids.append(tuple(current))
+
+        for event in events:
+            if stalled and len(current) == self.events_per_lookup:
+                close_stall()
+                current = []
+                with self._progress:
+                    self._released += 1
+                    self._progress.notify_all()
+                stalled = self._next_stall()
+            offer(event)
+            if stalled:
+                current.append(event.event_id)
+        if current:
+            close_stall()
+
+
+@dataclass(frozen=True)
+class ManagerStallReplayResult:
+    # Durable lifecycle state the replay started from.
+    seeded_pre_limit: bool
+    # Manager view right after the first production resync().
+    covered_roles: Mapping[str, str]
+    # Stall mechanism.
+    stall_event_ids: tuple[tuple[str, ...], ...]
+    lookup_threads: tuple[str, ...]
+    pending_at_stall_release: int
+    reconcile_outcome: str
+    # Producer stream, partitioned by what the production manager did with each event.
+    unsubscribed_event_ids: tuple[str, ...]
+    delivered_event_ids: tuple[str, ...]
+    admitted_event_ids: tuple[str, ...]
+    overflow_event_ids: tuple[str, ...]
+    suppressed_event_ids: tuple[str, ...]
+    fence_overflows: int
+    processed_event_ids: tuple[str, ...]
+    # Health when the producer completed, and after the single final fence.
+    health_after_producer: Mapping[str, object]
+    final_health: Mapping[str, object]
+    event_errors: tuple[str, ...]
+
+
+def run_manager_stall_replay(
+    fixture: RuntimeReplayFixture,
+    *,
+    stall_events_per_lookup: int,
+    protection_ingress_capacity: int = 64,
+) -> ManagerStallReplayResult:
+    """Replay pre-LIMIT lifecycle candidates across a bounded owner stall, via the manager.
+
+    Production path under test:
+    ``RobotProtectionCoverageManager.resync()`` role discovery -> hub subscription ->
+    ``_on_update`` -> ``SerializedPaperRuntime.enqueue`` -> ``PaperRuntime.
+    process_robot_market_event``. Only the hub, its symbol contexts and the REST
+    recovery session are offline doubles. The producer models the exchange stream: every
+    fixture event happens, but only events for symbols the manager subscribed reach it.
+    There is no mid-stream drain or fence; one fence follows producer completion.
+    """
+    symbols = tuple(dict.fromkeys(event.symbol for event in fixture.events))
+    stall = _BoundedReconcileStall(stall_events_per_lookup)
+    unsubscribed: list[str] = []
+    delivered: list[str] = []
+    admitted: list[str] = []
+    overflowed: list[str] = []
+    suppressed: list[str] = []
+    processed: list[str] = []
+    errors: list[str] = []
+    fence_overflows = 0
+    current_event: list[str | None] = [None]
+
+    with tempfile.TemporaryDirectory() as temp:
+        owner = SerializedPaperRuntime(
+            lambda: _make_runtime(
+                Path(temp) / "paper_runtime.sqlite3",
+                geometry_index_provider=stall.geometry_index,
+            ),
+            protection_ingress_capacity=protection_ingress_capacity,
+        )
+        hub = _ReplayHub()
+        manager = RobotProtectionCoverageManager(
+            hub, owner, resync_interval_s=3600.0, recovery_session=_OfflineRecoverySession(),
+        )
+        reconciler: threading.Thread | None = None
+        try:
+            def seed(runtime: PaperRuntime) -> bool:
+                _seed_pre_limit_candidates(
+                    runtime, symbols, fixture.name,
+                    recovery_status="RECONCILIATION_REQUIRED",
+                    reason="maintenance reconciliation requested",
+                )
+                original = runtime.process_robot_market_event
+
+                def recording(symbol, book, *, event_id, received_at_ms):
+                    try:
+                        result = original(
+                            symbol, book, event_id=event_id, received_at_ms=received_at_ms,
+                        )
+                    except BaseException as exc:
+                        errors.append(f"{event_id}:{type(exc).__name__}:{exc}")
+                        raise
+                    processed.append(event_id)
+                    return result
+
+                runtime.process_robot_market_event = recording
+                account = TradingAccountId("paper")
+                return all(
+                    (state.robot_state or {}).get("phase") == "RETEST_DETECTED"
+                    and not ((state.robot_state or {}).get("execution") or {}).get("limit_order_id")
+                    and not runtime.store.load_active_paper_limits(account, state.symbol)
+                    for state in runtime.store.load_active_robot_candidate_states(account)
+                )
+
+            seeded_pre_limit = owner.call(seed, timeout=30.0)
+
+            production_enqueue = owner.enqueue
+
+            def observed_enqueue(operation, *, symbol="", coverage_role="UNKNOWN"):
+                nonlocal fence_overflows
+                try:
+                    production_enqueue(operation, symbol=symbol, coverage_role=coverage_role)
+                except ProtectionIngressOverflow:
+                    if symbol:
+                        overflowed.append(current_event[0])
+                    else:
+                        fence_overflows += 1
+                    raise
+                if symbol:
+                    admitted.append(current_event[0])
+
+            owner.enqueue = observed_enqueue
+
+            manager.resync()
+            covered_roles = dict(manager.health()["coverage_roles"])
+
+            reconciler = stall.start(owner)
+
+            def offer(event: RuntimeReplayEvent) -> None:
+                context = hub.contexts.get(event.symbol)
+                if context is None:
+                    unsubscribed.append(event.event_id)
+                    return
+                delivered.append(event.event_id)
+                current_event[0] = event.event_id
+                seen = len(admitted) + len(overflowed)
+                context.publish(event)
+                if len(admitted) + len(overflowed) == seen:
+                    suppressed.append(event.event_id)
+
+            stall.drive(
+                fixture.events, offer,
+                lambda: int(owner.protection_ingress_metrics()["current_pending"]),
+            )
+            current_event[0] = None
+            health_after_producer = manager.health()
+
+            stall.release_all()
+            reconciler.join(timeout=60.0)
+            # One fence after producer completion, as in run_runtime_replay().
+            owner.call(lambda runtime: None, timeout=30.0)
+            return ManagerStallReplayResult(
+                seeded_pre_limit=seeded_pre_limit,
+                covered_roles=covered_roles,
+                stall_event_ids=tuple(stall.stall_event_ids),
+                lookup_threads=tuple(stall.lookup_threads),
+                pending_at_stall_release=stall.pending_at_release,
+                reconcile_outcome=stall.outcome,
+                unsubscribed_event_ids=tuple(unsubscribed),
+                delivered_event_ids=tuple(delivered),
+                admitted_event_ids=tuple(admitted),
+                overflow_event_ids=tuple(overflowed),
+                suppressed_event_ids=tuple(suppressed),
+                fence_overflows=fence_overflows,
+                processed_event_ids=tuple(processed),
+                health_after_producer=health_after_producer,
+                final_health=manager.health(),
+                event_errors=tuple(errors),
+            )
+        finally:
+            stall.release_all()
+            manager.close()
             owner.close()
