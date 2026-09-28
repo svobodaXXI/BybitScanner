@@ -690,14 +690,14 @@ def refresh_command_menu() -> None:
         scanner_label = f"{SCANNER_EMOJI} Сканер: состояние недоступно"
     commands = json.dumps(
         [
-            {"command": "terminal", "description": "Терминал"},
-            {"command": "scanner", "description": scanner_label},
-            {"command": "scanner_stop", "description": "⏹ Остановить сканер"},
+            {"command": "positions", "description": "Все открытые позиции"},
+            {"command": "monitoring", "description": "Мониторинг кандидатов"},
             {"command": "robot", "description": "Робот"},
             {"command": "robot_start", "description": "▶ Запустить робота"},
             {"command": "all", "description": "▶ Запустить всё"},
-            {"command": "positions", "description": "Все открытые позиции"},
-            {"command": "monitoring", "description": "Мониторинг кандидатов"},
+            {"command": "scanner", "description": scanner_label},
+            {"command": "scanner_stop", "description": "⏹ Остановить сканер"},
+            {"command": "terminal", "description": "Терминал"},
         ],
         ensure_ascii=False,
     )
