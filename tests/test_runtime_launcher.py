@@ -105,7 +105,7 @@ class StopRuntimeLauncherTests(unittest.TestCase):
             launcher,
         )
 
-    def test_safe_stop_persists_last_run_and_keeps_failures_visible(self):
+    def test_safe_stop_persists_last_run_without_leaking_failed_shells(self):
         launcher = (ROOT / "stop_robot_runtime.bat").read_text()
         self.assertIn(
             'set "STOP_LOG=%TEMP%\\BybitScanner-stop-last.log"',
@@ -118,7 +118,7 @@ class StopRuntimeLauncherTests(unittest.TestCase):
         self.assertIn('echo [STOP BAT] EXIT_CODE=%STOP_RC%', launcher)
         self.assertIn('if not "%STOP_RC%"=="0" (', launcher)
         self.assertIn('type "%STOP_LOG%"', launcher)
-        self.assertIn("pause", launcher)
+        self.assertNotIn("pause", launcher.lower())
 
 
 if __name__ == "__main__":

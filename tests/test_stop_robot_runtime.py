@@ -123,6 +123,14 @@ class FakeRuntime:
     def sleep(self, seconds):
         self.now += seconds
 
+    def probe_listener(self, host, port):
+        assert host == "127.0.0.1"
+        if port == 8765:
+            return (700,) if self.backend_alive else ()
+        if port == 8766:
+            return (701,) if self.telegram_alive else ()
+        raise AssertionError(f"unexpected listener probe {host}:{port}")
+
     legacy_chains = None
 
     def resolve_legacy(self, kind, host, port, root):
@@ -150,7 +158,8 @@ class FakeRuntime:
             root=ROOT, env={}, get=self.get, post=self.post,
             robot_state=lambda: self.robot, stop_robot_fn=self.stop_robot,
             sleep=self.sleep, monotonic=lambda: self.now,
-            legacy_resolver=self.resolve_legacy, legacy_terminator=self.terminate_legacy,
+            legacy_resolver=self.resolve_legacy, listener_probe=self.probe_listener,
+            legacy_terminator=self.terminate_legacy,
             legacy_paper_quiescence=self.prove_legacy_paper_quiescence,
             legacy_paper_guard=lambda: nullcontext(),
         )
@@ -188,6 +197,50 @@ class FullShutdownTests(unittest.TestCase):
         result = runtime.orchestrator().run("all")
         self.assertTrue(result.ok)
         self.assertEqual(runtime.calls, ["telegram:shutdown"])
+
+    def test_unreachable_health_with_live_backend_listener_is_never_absent(self):
+        runtime = LegacyEntryCoverageBridgeTests.stale_arm_runtime()
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {"capacity": 64, "current_pending": 63, "high_watermark": 64},
+        })
+        original_get = runtime.get
+        health_calls = 0
+
+        def delayed_health(url, timeout):
+            nonlocal health_calls
+            if url == BACKEND + "/api/health":
+                health_calls += 1
+                if health_calls == 1:
+                    raise shutdown.Unreachable("owner queue timeout")
+            return original_get(url, timeout)
+
+        runtime.get = delayed_health
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertGreaterEqual(health_calls, 2)
+        self.assertIn("resolve:backend:127.0.0.1:8765", runtime.calls)
+        self.assertIn("backend:legacy-starvation-terminate", result.steps)
+        self.assertFalse(runtime.backend_alive)
+
+    def test_unreachable_health_with_unowned_live_listener_blocks_false_absence(self):
+        runtime = FakeRuntime(robot=STOPPED)
+        runtime.legacy_chains = {}
+        original_get = runtime.get
+
+        def dead_health(url, timeout):
+            if url == BACKEND + "/api/health":
+                raise shutdown.Unreachable("timeout")
+            return original_get(url, timeout)
+
+        runtime.get = dead_health
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("listener is alive but exact ownership cannot be proven", result.message)
+        self.assertTrue(runtime.backend_alive)
 
     def test_robot_needing_backend_authority_keeps_runtime_alive(self):
         for robot in (("ROBOT_STOPPED", "RECONCILIATION_REQUIRED"), ("ROBOT_WEIRD", "X")):
@@ -1123,6 +1176,14 @@ def _telegram_runtime_intent_shape():
 
 
 class LegacyOwnershipProofTests(unittest.TestCase):
+    def test_listener_probe_distinguishes_empty_and_live_exact_port(self):
+        with mock.patch.object(legacy.os, "name", "nt"), \
+                mock.patch.object(legacy, "_query_listener_chain", return_value=([], {})):
+            self.assertEqual(legacy.probe_listener_pids("127.0.0.1", 8765), ())
+        with mock.patch.object(legacy.os, "name", "nt"), \
+                mock.patch.object(legacy, "_query_listener_chain", return_value=([700, 700], {})):
+            self.assertEqual(legacy.probe_listener_pids("127.0.0.1", 8765), (700,))
+
     def test_current_legacy_console_shapes_prove_exact_chains(self):
         self.assertEqual(select_legacy_chain("backend", [30], _backend_cmd_k_shape(), ROOT), (30, 20, 10))
         self.assertEqual(

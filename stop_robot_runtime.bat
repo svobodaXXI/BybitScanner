@@ -15,7 +15,6 @@ if errorlevel 1 (
     echo.
     type "%STOP_LOG%"
     echo.
-    pause
     exit /b 1
 )
 
@@ -28,7 +27,6 @@ if not exist "%~dp0venv\Scripts\python.exe" (
     echo.
     type "%STOP_LOG%"
     echo.
-    pause
     exit /b 1
 )
 
@@ -45,7 +43,6 @@ if not "%STOP_RC%"=="0" (
     echo.
     type "%STOP_LOG%"
     echo.
-    pause
     exit /b %STOP_RC%
 )
 
