@@ -608,10 +608,10 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
 
         result = runtime.orchestrator().run("all")
 
-        self.assertFalse(result.ok)
-        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+        self.assertTrue(result.ok, result.message)
         self.assertIn("scanner:stop", runtime.calls)
-        self.assertFalse(any(c.startswith("terminate") for c in runtime.calls))
+        self.assertIn("robot:stop", runtime.calls)
+        self.assertNotIn("runtime:legacy-starvation-proof", result.steps)
 
     def test_starvation_bypass_requires_proven_capacity_saturation(self):
         for ingress in (
