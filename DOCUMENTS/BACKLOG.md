@@ -1,3 +1,27 @@
+## NOW — 2026-09-28 — DEFERRED RESEARCH QUEST: MARKET MICROSTRUCTURE / FORCED FLOW
+
+The full research/design architecture is documented in
+`DOCUMENTS/MARKET_MICROSTRUCTURE_FORCED_FLOW_RESEARCH_ARCHITECTURE.md`.
+
+Research thesis:
+- detect forced-flow exhaustion/absorption from liquidation + aggressive flow +
+  OI/context + collapsing marginal price impact + liquidity refill/resilience;
+- add cross-venue confirmation only after a valid Bybit-only capture/replay path;
+- preserve exchange-native semantics, dual exchange/receive timestamps and
+  fail-closed book/data-quality state;
+- prove or reject net expectancy after spread/fees/slippage before any Robot
+  candidate/admission work.
+
+Deferred implementation ladder:
+`MML-1 capture/replay -> MML-2 features -> MML-3 SHADOW state machine ->
+MML-4 Binance witness -> MML-5 conditional Hyperliquid -> MML-6 outcomes ->
+MML-7 Diary/pattern overlay -> MML-8 candidate/admission research`.
+
+**Priority:** TAVERN / DEFERRED. This does not replace active `RVL-R6`, the
+Geometry Quality queue, or existing acceptance contracts. No Scanner/Robot/risk
+parameter/runtime/LIVE change is authorized by this design. No XP is awarded
+for the design/documentation itself.
+
 ## END-OF-DAY CHECKPOINT — 2026-09-28
 
 Stop here for the night. Preserve the current evidence and do not repeat already-closed diagnostics.
