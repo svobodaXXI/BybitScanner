@@ -134,9 +134,17 @@ def read_robot_state(database_path: Path) -> tuple[str, str] | None:
 
 
 def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
-    active_candidates = int(connection.execute(
+    # APPROVED is not itself live ownership. Canonical stop_robot() may finish
+    # with an APPROVED row after it has synchronously proven that no working
+    # entry LIMIT or real exposure remains. Blocking on the label alone made
+    # legacy shutdown stricter than the authoritative Robot stop contract.
+    open_candidates = int(connection.execute(
         """SELECT COUNT(*) FROM robot_candidates
-           WHERE trading_account_id='paper' AND status IN ('APPROVED', 'OPEN')"""
+           WHERE trading_account_id='paper' AND status='OPEN'"""
+    ).fetchone()[0])
+    open_robot_trades = int(connection.execute(
+        """SELECT COUNT(*) FROM robot_trades
+           WHERE trading_account_id='paper' AND exit_time_ms IS NULL"""
     ).fetchone()[0])
     active_limits = int(connection.execute(
         """SELECT COUNT(*) FROM paper_limit_orders
@@ -161,7 +169,8 @@ def _assert_legacy_paper_quiescence(connection: sqlite3.Connection) -> None:
             open_exposure += 1
 
     blockers = (
-        ("active Robot candidates", active_candidates),
+        ("OPEN Robot candidates", open_candidates),
+        ("open Robot trades", open_robot_trades),
         ("working PAPER limits", active_limits),
         ("open PAPER exposure", open_exposure),
         ("unresolved protection obligations", unresolved_obligations),
