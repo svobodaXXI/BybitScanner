@@ -21,6 +21,28 @@ real sustained owner PAPER acceptance proves protection healthy, no
 `ingress_overflow`, queue drain under multi-symbol traffic, and normal
 reconcile/restart without recurrence.
 
+## 🧭 OWNER SIGNAL FEEDBACK QUEUED — 2026-09-28
+
+Two Geometry Quality tasks were captured from the current real Scanner run
+without interrupting RVL-R6:
+
+- **BSVUSDT 5m** — Ikigai Box false positive: first impulse contains a real
+  internal corrective swing/zigzag, not just harmless opposite-colour pause
+  candles. Queue as a negative Geometry Gold case and fix the general
+  structural first-impulse rule.
+- **CARVUSDT 5m** — possible missed Ikigai Box after an independently detected
+  Compression Triangle. Queue as a source-time evidence recovery + positive
+  missed-detection investigation; an earlier Triangle must not by itself
+  suppress a later independent Box.
+
+Detailed tasks and acceptance conditions are in `DOCUMENTS/BACKLOG.md`;
+Geometry Gold inventory is updated in
+`DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md`.
+
+Active gate remains **RVL-R6**. Do not interrupt the current owner PAPER
+acceptance for these geometry findings unless the owner explicitly
+reprioritizes.
+
 ## 🤖 ROBOT STABILITY CHECKPOINT — 2026-09-28
 
 PR #305 merged as `76a89efa1d48f7821b16fb5fcddf8f6de6fda60b`.
