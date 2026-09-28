@@ -161,12 +161,7 @@ def _as_list(value) -> list:
     return value if isinstance(value, list) else [value]
 
 
-def resolve_legacy_chain(kind: str, host: str, port: int, root: Path) -> tuple[int, ...]:
-    """Exact listener + ancestry for ``host:port`` (read-only query), proven by command line."""
-    if os.name != "nt":
-        raise LegacyOwnerUnproven("legacy process fallback is available only on Windows")
-    if host != "127.0.0.1" or not isinstance(port, int) or not 0 < port < 65536:
-        raise LegacyOwnerUnproven(f"legacy listener {host}:{port} is not an exact localhost port")
+def _query_listener_chain(port: int) -> tuple[list[int], dict[int, ProcessInfo]]:
     try:
         completed = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", _QUERY.format(port=port)],
@@ -183,6 +178,26 @@ def resolve_legacy_chain(kind: str, host: str, port: int, root: Path) -> tuple[i
         }
     except Exception as exc:
         raise LegacyOwnerUnproven(f"listener ownership query failed: {type(exc).__name__}") from exc
+    return listeners, processes
+
+
+def probe_listener_pids(host: str, port: int) -> tuple[int, ...]:
+    """Read-only localhost listener probe; empty means exact port has no listener."""
+    if os.name != "nt":
+        raise LegacyOwnerUnproven("legacy process fallback is available only on Windows")
+    if host != "127.0.0.1" or not isinstance(port, int) or not 0 < port < 65536:
+        raise LegacyOwnerUnproven(f"legacy listener {host}:{port} is not an exact localhost port")
+    listeners, _processes = _query_listener_chain(port)
+    return tuple(sorted(set(listeners)))
+
+
+def resolve_legacy_chain(kind: str, host: str, port: int, root: Path) -> tuple[int, ...]:
+    """Exact listener + ancestry for ``host:port`` (read-only query), proven by command line."""
+    if os.name != "nt":
+        raise LegacyOwnerUnproven("legacy process fallback is available only on Windows")
+    if host != "127.0.0.1" or not isinstance(port, int) or not 0 < port < 65536:
+        raise LegacyOwnerUnproven(f"legacy listener {host}:{port} is not an exact localhost port")
+    listeners, processes = _query_listener_chain(port)
     return select_legacy_chain(kind, listeners, processes, root)
 
 
