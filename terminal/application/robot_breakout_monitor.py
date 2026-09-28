@@ -168,7 +168,14 @@ class RobotBreakoutMonitor:
         market_preflight: Callable[[MarketCommandRequest, CommandIdentityCandidate], object] | None = None,
         submit_market: Callable[[MarketCommandRequest, CommandIdentityCandidate], object] | None = None,
         late_market_max_book_age_ms: int = DEFAULT_LATE_MARKET_MAX_BOOK_AGE_MS,
+        arm_entry_coverage: Callable[[str], bool] | None = None,
+        release_entry_coverage: Callable[[str], None] | None = None,
     ) -> None:
+        # Resting entry LIMITs become fill-capable the moment they are durable, so
+        # protection coverage for the symbol must already be listening. Without a
+        # bound arm this monitor never creates a resting entry LIMIT (fail closed).
+        self._arm_entry_coverage_callback = arm_entry_coverage
+        self._release_entry_coverage_callback = release_entry_coverage
         self._store_factory = store_factory
         self._local = threading.local()
         self._account_id = trading_account_id
@@ -512,6 +519,8 @@ class RobotBreakoutMonitor:
             ):
                 raise RobotBreakoutMonitorError("Box source plan is unavailable or mismatched")
 
+            if not self._arm_entry_coverage(record.symbol.value):
+                return False
             self._store().begin_box_attempt_ownership(source.candidate_id)
             specs = build_box_first_grid_specs(source, created_at_ms=self._now_ms())
             orders = self._store().create_box_owned_paper_grid(
@@ -678,11 +687,14 @@ class RobotBreakoutMonitor:
                     record, reason=reason, details=details,
                 )
                 return True
+            if not self._arm_entry_coverage(record.symbol.value):
+                return False
             result = robot_entry_limit.submit_initial_retest_limit(
                 self._action_executor, plan,
             )
             order_id = getattr(result, "order_id", None)
             if not order_id:
+                self._release_entry_coverage(record.symbol.value)
                 return False
             execution["limit_order_id"] = order_id
             execution["l_shape_retest_time_ms"] = plan.retest_time_ms
@@ -862,9 +874,12 @@ class RobotBreakoutMonitor:
                 reason, details = rr_skip
                 self._invalidate_pre_entry_candidate(record, reason=reason, details=details)
                 return True
+            if not self._arm_entry_coverage(record.symbol.value):
+                return False
             result = robot_entry_limit.submit_initial_retest_limit(self._action_executor, plan)
             order_id = getattr(result, "order_id", None)
             if not order_id:
+                self._release_entry_coverage(record.symbol.value)
                 return False
             execution["limit_order_id"] = order_id
             execution["last_limit_index"] = geometry_index
@@ -1664,6 +1679,27 @@ class RobotBreakoutMonitor:
             )
             return ENTRY_RR_SKIP_POOR_RR, details
         return None
+
+    def _arm_entry_coverage(self, symbol: str) -> bool:
+        """True only once protection coverage for ``symbol`` is listening."""
+        arm = self._arm_entry_coverage_callback
+        if arm is None:
+            return False
+        try:
+            return arm(symbol) is True
+        except Exception as error:
+            print(f"[ROBOT ENTRY COVERAGE ARM ERROR] symbol={symbol} error={error}")
+            return False
+
+    def _release_entry_coverage(self, symbol: str) -> None:
+        """Drop an arm whose resting LIMIT was proven not created."""
+        release = self._release_entry_coverage_callback
+        if release is None:
+            return
+        try:
+            release(symbol)
+        except Exception as error:
+            print(f"[ROBOT ENTRY COVERAGE RELEASE ERROR] symbol={symbol} error={error}")
 
     def _read_admission_gate(self) -> tuple[bool, bool]:
         state = self._store().get_robot_runtime_state(self._account_id)

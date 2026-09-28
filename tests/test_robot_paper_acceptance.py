@@ -206,6 +206,15 @@ def _wait_until(predicate, *, timeout: float = POLL_TIMEOUT_S, interval: float =
     raise AssertionError(f"condition was not met within {timeout:.1f}s; last={last!r}")
 
 
+def _start_robot_monitor(runtime: SerializedPaperRuntime) -> None:
+    # These acceptance flows have no market-data hub: bind an always-on entry-coverage
+    # arm (RVL-R4 arming itself is covered by tests/test_runtime_replay.py).
+    runtime.call(lambda owner: owner.bind_robot_entry_coverage(
+        lambda symbol: True, lambda symbol: None,
+    ))
+    runtime.start_robot_monitor()
+
+
 class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
     def test_late_admission_market_entry_protection_and_restart_exactly_once(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -294,7 +303,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                     expected_revision=admitted.state_revision, updated_at_ms=int(time.time() * 1000),
                 ))
                 self.assertEqual(runtime.call(lambda owner: owner.store.load_executions()), ())
-                runtime.start_robot_monitor()
+                _start_robot_monitor(runtime)
 
                 def open_trade():
                     return runtime.call(lambda owner: owner.store.get_open_robot_trade_for_symbol(
@@ -361,7 +370,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 runtime.close()
                 runtime = SerializedPaperRuntime(factory)
                 self.assertTrue(runtime.call(lambda owner: owner.robot_admission_ready()))
-                runtime.start_robot_monitor()
+                _start_robot_monitor(runtime)
                 prior_ticks = len(ticks)
                 _wait_until(lambda: len(ticks) >= prior_ticks + 3)
                 self.assertEqual(runtime.call(durable_evidence), before)
@@ -432,7 +441,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 self.assertEqual(admitted.status, "APPROVED")
                 self.assertIsNone(admitted.robot_state)
 
-                runtime.start_robot_monitor()
+                _start_robot_monitor(runtime)
 
                 def candidate_record():
                     return runtime.call(lambda owner: owner.store.get_robot_candidate(CANDIDATE_ID))
@@ -586,7 +595,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 self.assertTrue(created)
                 self.assertEqual(admitted.status, "APPROVED")
 
-                runtime.start_robot_monitor()
+                _start_robot_monitor(runtime)
 
                 def candidate_record():
                     return runtime.call(
@@ -744,7 +753,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                     database_path=database_path,
                     store_dir=candidate_dir,
                 )
-                runtime.start_robot_monitor()
+                _start_robot_monitor(runtime)
 
                 def candidate_record():
                     return runtime.call(
@@ -912,7 +921,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 )
                 self.assertTrue(created)
                 self.assertEqual(admitted.status, "APPROVED")
-                runtime.start_robot_monitor()
+                _start_robot_monitor(runtime)
 
                 def candidate_record():
                     return runtime.call(

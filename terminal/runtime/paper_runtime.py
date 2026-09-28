@@ -516,6 +516,11 @@ class PaperRuntime:
         # start_robot_monitor() once a real one exists -- see the class
         # docstring note on RobotBreakoutMonitor's thread ownership below.
         self._robot_command_dispatcher = robot_command_dispatcher
+        # (arm, release) of RobotProtectionCoverageManager, bound by the composition
+        # root before the monitor may create a resting entry LIMIT.
+        self._robot_entry_coverage: tuple[
+            Callable[[str], bool], Callable[[str], None]
+        ] | None = None
         self._account_manager = account_manager or paper_account_manager()
         self._paper_account_id = TradingAccountId("paper")
         self._credential_store = credential_store
@@ -792,6 +797,8 @@ class PaperRuntime:
             market_preflight=self._dispatch_robot_market_preflight,
             submit_market=self._dispatch_robot_market_submit,
             tick_interval_s=robot_tick_interval_s,
+            arm_entry_coverage=self._arm_robot_entry_coverage,
+            release_entry_coverage=self._release_robot_entry_coverage,
         )
         if self._robot_command_dispatcher is not None:
             self._robot_breakout_monitor.start()
@@ -821,6 +828,26 @@ class PaperRuntime:
             raise RuntimeError("Robot command dispatcher is already bound")
         self._robot_command_dispatcher = dispatcher
         self._robot_breakout_monitor.start()
+
+    def bind_robot_entry_coverage(
+        self, arm: Callable[[str], bool], release: Callable[[str], None],
+    ) -> None:
+        """Bind the synchronous protection-coverage arm used before entry LIMITs."""
+        self._robot_entry_coverage = (arm, release)
+
+    def _arm_robot_entry_coverage(self, symbol: str) -> bool:
+        # Fail closed when unbound, and never arm from the owner thread: the
+        # owner-thread one-shot monitors (robot_synchronize_pending_entries,
+        # continuity recovery) must not create resting entry LIMITs at all.
+        binding = self._robot_entry_coverage
+        if binding is None or self.store.is_owned_by_current_thread():
+            return False
+        return binding[0](symbol) is True
+
+    def _release_robot_entry_coverage(self, symbol: str) -> None:
+        binding = self._robot_entry_coverage
+        if binding is not None:
+            binding[1](symbol)
 
     def _dispatch_ikigai_box_plan_preparation(
         self, symbol: str, timeframe: str, formation: Mapping[str, object],
@@ -1735,25 +1762,33 @@ class PaperRuntime:
         for obligation in unresolved:
             roles[obligation.symbol.value] = "OBLIGATION"
 
+        # ENTRY_PENDING starts at the durable resting-LIMIT ownership boundary: a
+        # linked entry LIMIT that is still active or already (partly) filled. Before
+        # that nothing can fill, so pre-LIMIT book traffic is not protection-critical;
+        # RobotProtectionCoverageManager.arm_entry_coverage() covers the symbol
+        # before the LIMIT is created and hands over to this durable role.
         for candidate in candidates:
             if candidate.status != "APPROVED" or candidate.robot_state is None:
                 continue
-            if candidate.robot_state.get("phase") != "RETEST_DETECTED":
-                continue
+            phase = candidate.robot_state.get("phase")
             execution = candidate.robot_state.get("execution") or {}
-            order_id = execution.get("limit_order_id")
-            needs_coverage = not order_id
-            if order_id:
+            if phase == "RETEST_DETECTED":
+                order_ids = (execution.get("limit_order_id"),)
+            elif phase == "BOX_ENTRY_READY":
+                raw_order_ids = execution.get("limit_order_ids")
+                order_ids = tuple(raw_order_ids) if isinstance(raw_order_ids, (tuple, list)) else ()
+            else:
+                continue
+            for order_id in order_ids:
+                if not isinstance(order_id, str) or not order_id.strip():
+                    continue
                 order = self.store.get_paper_limit(order_id, self._paper_account_id)
-                needs_coverage = (
-                    order is not None
-                    and (
-                        order.status not in INACTIVE_LIMIT_STATUSES
-                        or order.filled_quantity > 0
-                    )
-                )
-            if needs_coverage:
-                roles.setdefault(candidate.symbol.value, "ENTRY_PENDING")
+                if order is not None and (
+                    order.status not in INACTIVE_LIMIT_STATUSES
+                    or order.filled_quantity > 0
+                ):
+                    roles.setdefault(candidate.symbol.value, "ENTRY_PENDING")
+                    break
         return dict(sorted(roles.items()))
 
     def robot_protection_coverage_symbols(self) -> tuple[str, ...]:

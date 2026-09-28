@@ -1076,7 +1076,9 @@ def test_evaluate_robot_protection_crossing_fails_closed_on_ambiguous_open_trade
             runtime.close()
 
 
-def test_retest_detected_candidate_is_covered_before_entry_limit_submission():
+def test_retest_detected_candidate_without_entry_limit_has_no_durable_coverage():
+    # RVL-R4: nothing can fill before a resting entry LIMIT exists; the monitor arms
+    # coverage synchronously before creating one (see tests/test_runtime_replay.py).
     with tempfile.TemporaryDirectory() as temp:
         runtime = _runtime(Path(temp) / "paper.sqlite3")
         try:
@@ -1092,7 +1094,7 @@ def test_retest_detected_candidate_is_covered_before_entry_limit_submission():
                 robot_state={"phase": "RETEST_DETECTED", "execution": {}},
                 expected_revision=0, updated_at_ms=1001,
             )
-            assert runtime.robot_protection_coverage_symbols() == ("BTCUSDT",)
+            assert runtime.robot_protection_coverage_symbols() == ()
         finally:
             runtime.close()
 
@@ -2512,7 +2514,7 @@ def test_robot_market_event_skips_fill_finalization_when_no_limit_execution():
 
 
 def _legacy_coverage_roles(runtime) -> dict[str, str]:
-    """Verbatim copy of robot_protection_coverage_roles before the light read."""
+    """Full-read copy of robot_protection_coverage_roles (RVL-R4 resting-LIMIT boundary)."""
     from terminal.runtime.paper_runtime import INACTIVE_LIMIT_STATUSES
 
     account = TradingAccountId("paper")
@@ -2531,7 +2533,7 @@ def _legacy_coverage_roles(runtime) -> dict[str, str]:
             continue
         execution = candidate.robot_state.get("execution") or {}
         order_id = execution.get("limit_order_id")
-        needs_coverage = not order_id
+        needs_coverage = False
         if order_id:
             order = runtime.store.get_paper_limit(order_id, account)
             needs_coverage = (
@@ -2603,12 +2605,12 @@ def _seed_mixed_coverage_fixture(runtime) -> None:
         realized_pnl_pct=Decimal("-2"), fees_costs_usdt=Decimal("0.1"),
         updated_at_ms=3000,
     )
-    # RETEST_DETECTED with a resting entry LIMIT / with no LIMIT yet -> ENTRY_PENDING
+    # RETEST_DETECTED with a resting entry LIMIT -> ENTRY_PENDING
     _seed_pending_candidate_with_resting_limit(
         runtime, candidate_id="candidate-mixed-limit", order_id="mixed-limit", symbol="SOLUSDT",
     )
+    # Not covered (RVL-R4): no LIMIT yet, unknown LIMIT, still waiting for breakout, no state yet
     _seed_candidate(runtime, "candidate-mixed-prelimit", "XRPUSDT", state=retest)
-    # Not covered: unknown LIMIT, still waiting for breakout, no state yet
     _seed_candidate(
         runtime, "candidate-mixed-unknown-limit", "ADAUSDT",
         state={"phase": "RETEST_DETECTED", "execution": {"limit_order_id": "missing"}},
@@ -2640,7 +2642,6 @@ def test_coverage_roles_from_light_read_match_the_previous_full_read():
                 "BTCUSDT": "EXPOSURE",
                 "ETHUSDT": "OBLIGATION",
                 "SOLUSDT": "ENTRY_PENDING",
-                "XRPUSDT": "ENTRY_PENDING",
             }
             assert runtime.robot_protection_coverage_symbols() == tuple(roles)
         finally:
@@ -2694,9 +2695,8 @@ def test_coverage_roles_do_not_parse_finished_candidate_history():
                     final_status=("EXPIRED", "INVALIDATED")[index % 2],
                     snapshot={**big_snapshot, "n": index},  # snapshot hashes are unique
                 )
-            _seed_candidate(
-                runtime, "candidate-live", "XRPUSDT",
-                state={"phase": "RETEST_DETECTED", "execution": {}},
+            _seed_pending_candidate_with_resting_limit(
+                runtime, candidate_id="candidate-live", order_id="live-limit", symbol="XRPUSDT",
             )
 
             with patch.object(

@@ -94,8 +94,10 @@ class RecoveryIngressTests(unittest.TestCase):
             owner = SerializedPaperRuntime(lambda: make_runtime(Path(temp) / "paper.sqlite3", cache))
             warmer = threading.Thread(target=owner.warm_robot_closed_candles)
             try:
-                roles = owner.call(lambda runtime: runtime.robot_protection_coverage_roles())
-                self.assertEqual(roles, dict.fromkeys(SYMBOLS, "ENTRY_PENDING"))
+                # RVL-R4: pre-LIMIT candidates are no longer durable ENTRY_PENDING; this
+                # test drives the ordered ingress directly with the covered-role label.
+                self.assertEqual(owner.call(lambda runtime: runtime.robot_protection_coverage_roles()), {})
+                roles = dict.fromkeys(SYMBOLS, "ENTRY_PENDING")
                 warmer.start()
                 self.assertTrue(fetching.wait(2))
                 observed = []
