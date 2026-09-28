@@ -206,6 +206,39 @@ Use this exact order; do not restart the two-day investigation tree.
 Do not reopen #310-#322 individually unless new evidence contradicts one of
 these recorded invariants.
 
+## Telegram monitoring silent candidate list — 2026-09-29
+
+Known signature:
+- `/robot` reports APPROVED candidates;
+- owner sends `/monitoring`;
+- Telegram update offset advances;
+- monitoring health remains `ready`;
+- no candidate-list reply appears;
+- no loop exception is printed.
+
+Root cause proven in the 2026-09-28 owner run:
+- Ikigai Box handoff candidate IDs use `box-robot-<64hex>`;
+- old monitoring buttons embedded the full durable ID in
+  `monitor:candidate:<candidate_id>`;
+- this exceeded Telegram's 64-byte `callback_data` limit;
+- Telegram returned `ok:false`, and the old list path did not validate the
+  response, so failure was silent.
+
+Canonical repair:
+- PR #325, merged as `4ab838857519adbacfa8fb4d780b3461f2717851`;
+- new buttons use a bounded deterministic callback token;
+- token resolution is restricted to current APPROVED candidates and fails
+  closed on ambiguity;
+- legacy short callbacks remain accepted;
+- monitoring send failures are surfaced instead of silently ignored.
+
+Fast path if this symptom reappears:
+1. confirm current checkout includes #325 or later;
+2. confirm Telegram Monitoring health is `ready`;
+3. send `/monitoring` once;
+4. if it still fails, inspect the now-surfaced runtime error instead of
+   re-investigating update ownership/offset or candidate persistence first.
+
 ## Maintenance rule
 
 Whenever a new runtime failure is resolved and is reasonably repeatable:
