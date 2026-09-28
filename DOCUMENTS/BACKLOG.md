@@ -40,6 +40,34 @@ Runtime is currently fully down after the clean stop proof. Verify actual host
 state before any future mutation or restart rather than assuming this snapshot
 remains current.
 
+## OWNER TELEGRAM UX FEEDBACK — 2026-09-28 — MENU STILL NOT VISIBLE
+
+Current real owner run again shows no visible Telegram Menu button in the desktop
+client.
+
+Known prior evidence:
+- Bot API previously proved owner `menu_button.type=commands`;
+- all eight expected commands were published;
+- therefore do not assume missing client UI means missing server configuration.
+
+Queued task **TG-MENU-1**:
+- after the current RVL-R6 run, perform one bounded server-side re-check of the
+  owner chat menu/button + command list;
+- if server-side state is still correct, do **not** repeat Bot API/menu wiring
+  work already proven;
+- isolate the owner-visible client/UX failure and determine whether Telegram
+  desktop client behavior, menu-button presentation semantics, or the current
+  bot control surface requires a reliable fallback;
+- preserve the existing single Telegram update owner and Scanner/Robot runtime
+  authority; do not restart or duplicate Telegram monitoring merely to make a
+  button appear;
+- acceptance is owner-visible access to the permanent control surface after
+  ordinary runtime start/restart, not merely a successful Bot API response.
+
+This is a UI/control-surface debt discovered during acceptance. It does not
+invalidate the current Robot Stability traffic evidence and must not interrupt
+RVL-R6 unless Telegram command handling itself is shown broken.
+
 ## OWNER SIGNAL FEEDBACK — 2026-09-28 — GEOMETRY TASKS QUEUED
 
 Two owner-observed Scanner signals are now frozen as explicit Geometry Quality
