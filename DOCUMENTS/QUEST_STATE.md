@@ -1,3 +1,25 @@
+## 🍺 ТАВЕРНА ОЖИДАНИЯ — «Охотник за принудительным потоком»
+
+**Статус:** DESIGN DOCUMENTED / DEFERRED  
+**Канон:** `DOCUMENTS/MARKET_MICROSTRUCTURE_FORCED_FLOW_RESEARCH_ARCHITECTURE.md`
+
+Задокументирован отдельный исследовательский путь Market Microstructure Lab:
+Bybit capture/replay -> независимые microstructure factors -> SHADOW
+Forced-Flow state machine -> cross-venue witness -> outcome/expectancy ->
+Trading Diary/pattern overlay -> только при доказанном edge отдельный gate к
+canonical Robot admission.
+
+Ключевая гипотеза: искать не сам всплеск ликвидаций, а переход, где
+forced/aggressive flow остаётся сильным, но marginal price impact ослабевает,
+ликвидность повторно восстанавливается и независимые venue перестают
+подтверждать продолжение движения.
+
+Квест **не активирован**: текущие ворота остаются `RVL-R6`; после них действует
+существующая Geometry Quality очередь, если владелец отдельно не изменит
+приоритет. Никакой PAPER/LIVE execution authority новый дизайн не даёт.
+
+XP: **+0** — проектирование и документация сами по себе наградой не являются.
+
 ## 🤖 ROBOT STABILITY CHECKPOINT — 2026-09-28
 
 PR #305 merged as `76a89efa1d48f7821b16fb5fcddf8f6de6fda60b`.
