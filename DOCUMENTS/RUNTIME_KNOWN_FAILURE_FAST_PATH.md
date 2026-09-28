@@ -43,11 +43,10 @@ For Scanner / Robot / Telegram / backend incidents, classify in this order:
    - Do not hand-clear `recovery_status`.
 
 4. **Canonical safe stop**
-   - Legal Robot states: `ROBOT_RUNNING / READY` or `ROBOT_RUNNING / PAUSED`.
-   - Owner surface: desktop shortcut `Остановить робота` -> local `C:\BybitScanner\stop_robot.bat` -> tracked `stop_robot_runtime.bat`.
-   - Success text: `Scanner STOPPED; Robot STOPPED. Backend/Telegram left running.`
-   - Required durable result: `ROBOT_STOPPED / ROBOT_STOPPED`.
-   - Backend and Telegram remaining alive is intentional.
+   - Legal Robot states: `ROBOT_RUNNING / READY` or `ROBOT_RUNNING / PAUSED`; reconciliation remains fail-closed when required.
+   - Owner surface: desktop shortcut `Остановить робота` -> tracked `C:\BybitScanner\stop_robot_runtime.bat` directly.
+   - Full-stop success means Scanner STOPPED, Robot `ROBOT_STOPPED / ROBOT_STOPPED`, Telegram monitoring gone, and PAPER backend gone.
+   - Never put an untracked/local wrapper between the desktop shortcut and the tracked stop launcher.
 
 5. **Process shape on Windows venv**
    - A venv `python.exe` parent with a base Python child can be one logical interpreter launch, not two independent workers.
@@ -83,7 +82,8 @@ Observed sequence after abrupt power loss and local migration to canonical deskt
 
 - Import error from canonical stop: inspect current `stop_robot_runtime.bat` first; verify module invocation. Do not investigate Robot ownership first.
 - `RECONCILIATION_REQUIRED` with a now-flat/settled symbol: read durable evidence once, then call canonical reconciliation. Do not edit DB.
-- Stop shortcut appears ineffective: run the same wrapper once with visible stdout/stderr and exit code; do not branch into process-tree analysis unless the wrapper itself succeeds but state does not change.
+- Stop shortcut appears ineffective: first prove the shortcut's `TargetPath`. It must point directly to tracked `C:\BybitScanner\stop_robot_runtime.bat`; do not assume an untracked wrapper delegates correctly.
+- If the direct tracked launcher runs but shutdown is blocked, use its exact stdout/stderr and current health/durable evidence; do not infer failure from window presence alone.
 - venv/base-Python parent-child chain: treat as one logical launch unless independent ownership evidence proves otherwise.
 
 ## Maintenance rule
