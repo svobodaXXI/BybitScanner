@@ -48,6 +48,7 @@ EXIT_WAIT_S = 60.0
 POLL_INTERVAL_S = 0.5
 PROBE_TIMEOUT_S = 5.0
 MUTATION_TIMEOUT_S = 15.0
+LEGACY_WRITER_BARRIER_TIMEOUT_S = 5.0
 
 ROBOT_STOPPED_PAIR = ("ROBOT_STOPPED", "ROBOT_STOPPED")
 ROBOT_STOPPABLE = {("ROBOT_RUNNING", "READY"), ("ROBOT_RUNNING", "PAUSED")}
@@ -192,14 +193,16 @@ def hold_legacy_paper_quiescence(database_path: Path) -> Iterator[None]:
     BEGIN IMMEDIATE takes SQLite's writer reservation before the final legacy
     process proof. query_only is then enabled before any project query so this
     helper cannot modify rows itself. If another writer is active, acquisition
-    fails immediately and shutdown remains fail-closed.
+    waits only a bounded interval for the current transaction to finish; an
+    unresolved writer still fails closed.
     """
     if not database_path.exists():
         raise SafeStopError("legacy PAPER database is unavailable")
     connection = None
     try:
         connection = sqlite3.connect(
-            database_path.resolve().as_uri() + "?mode=rw", uri=True, timeout=0.0,
+            database_path.resolve().as_uri() + "?mode=rw", uri=True,
+            timeout=LEGACY_WRITER_BARRIER_TIMEOUT_S,
         )
         connection.execute("BEGIN IMMEDIATE")
         connection.execute("PRAGMA query_only=ON")
