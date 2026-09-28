@@ -40,6 +40,165 @@ Runtime is currently fully down after the clean stop proof. Verify actual host
 state before any future mutation or restart rather than assuming this snapshot
 remains current.
 
+## OWNER TELEGRAM UX FEEDBACK — 2026-09-28 — MENU STILL NOT VISIBLE
+
+Current real owner run again shows no visible Telegram Menu button in the desktop
+client.
+
+Known prior evidence:
+- Bot API previously proved owner `menu_button.type=commands`;
+- all eight expected commands were published;
+- therefore do not assume missing client UI means missing server configuration.
+
+Queued task **TG-MENU-1**:
+- after the current RVL-R6 run, perform one bounded server-side re-check of the
+  owner chat menu/button + command list;
+- if server-side state is still correct, do **not** repeat Bot API/menu wiring
+  work already proven;
+- isolate the owner-visible client/UX failure and determine whether Telegram
+  desktop client behavior, menu-button presentation semantics, or the current
+  bot control surface requires a reliable fallback;
+- preserve the existing single Telegram update owner and Scanner/Robot runtime
+  authority; do not restart or duplicate Telegram monitoring merely to make a
+  button appear;
+- acceptance is owner-visible access to the permanent control surface after
+  ordinary runtime start/restart, not merely a successful Bot API response.
+
+This is a UI/control-surface debt discovered during acceptance. It does not
+invalidate the current Robot Stability traffic evidence and must not interrupt
+RVL-R6 unless Telegram command handling itself is shown broken.
+
+## OWNER SIGNAL FEEDBACK — 2026-09-28 — GEOMETRY TASKS QUEUED
+
+Two owner-observed Scanner signals are now frozen as explicit Geometry Quality
+tasks. They are **not** grounds to interrupt the active RVL-R6 Robot Stability
+acceptance; they enter RVL-G1/G2 after R6 unless the owner reprioritizes.
+
+### G-BOX-1 — BSVUSDT 5m false-positive Ikigai Box first impulse
+
+Owner observation:
+- the displayed first impulse contains a clear internal correction / zigzag;
+- this is not merely one or two opposite-colour pause candles;
+- the A→B leg is therefore not one continuous structural impulse and should not
+  be admitted as a valid Ikigai Box first impulse.
+
+Required fix task:
+- freeze the exact source-time BSVUSDT 5m candles when available;
+- add BSVUSDT 5m as a **negative Geometry Gold case**;
+- encode the general rule, not a symbol-specific filter: small opposite-colour
+  candles may remain valid only while they do **not** form a confirmed internal
+  corrective swing/zigzag;
+- a confirmed internal correction inside A→B must invalidate that first impulse
+  or terminate it at the earlier structural pivot, according to the existing
+  first-impulse construction contract;
+- preserve accepted controls such as AIGENSYN/FLOCK and do not restore a
+  colour-only veto.
+
+Acceptance:
+- BSVUSDT 5m no longer produces the same malformed Box candidate;
+- already-valid first impulses with short non-structural pauses remain valid;
+- one bounded detector/gold regression proves the general rule before the final
+  full Scanner acceptance.
+
+### G-BOX-2 — CARVUSDT 5m missed post-Triangle Ikigai Box
+
+Owner observation:
+- the Scanner emitted a Compression Triangle;
+- after the triangle structure, the later right-side price action contains a
+  separate compact Box-like consolidation that was not emitted as Ikigai Box;
+- the suspected Box is later and structurally distinct from the already-found
+  Triangle.
+
+Required fix task:
+- recover/freeze the exact CARVUSDT 5m source-time candles and detection cutoff
+  before changing detector logic;
+- add CARVUSDT 5m as a **positive/missed Geometry Gold case** only after the
+  saved evidence confirms the owner-marked later Box under the authoritative
+  Ikigai rules;
+- inspect candidate enumeration/selection/dedup across pattern families and
+  time windows;
+- prove that an earlier Triangle signal does not suppress a later independent
+  Ikigai Box on the same symbol/timeframe;
+- do not weaken Box geometry gates merely to force this screenshot to PASS.
+
+Acceptance:
+- if the frozen source-time evidence satisfies the Box contract, the later Box
+  is emitted independently while the Triangle remains intact;
+- if the frozen evidence fails an existing Box invariant, document the exact
+  invariant instead of inventing a detector exception;
+- preserve independent pattern identities/dedup and existing positive/negative
+  Box controls.
+
+These two tasks are intentionally separate defect classes:
+**BSV = false positive / malformed first impulse**;
+**CARV = possible false negative / missed later Box**.
+
+### G-BOX-3 — recurring post-breakdown secondary Box family
+
+Owner feedback from the same real run shows this is broader than CARV alone.
+
+Observed examples include:
+- `CARVUSDT 5m`;
+- `CPUSDT 5m`;
+- `CROSSUSDT 5m`;
+- `CLOUSDT 5m`;
+- additional similar signals may be added from the same acceptance run when
+  source-time evidence is available.
+
+Recurring visual structure:
+**compression / wedge / triangle → downside break of the active sloping
+boundary → separate compact post-breakdown consolidation / Box**.
+
+Owner trading intent:
+- these are the kinds of setups the owner would manually pick for a later entry
+  if trading them by hand;
+- therefore treat them as a candidate recurring edge/family to investigate,
+  not merely as isolated screenshots.
+
+Required investigation:
+- recover exact source-time OHLC + detection cutoff for representative examples;
+- determine whether the later compact structure satisfies the existing Ikigai
+  Box contract or requires an explicitly new `post-breakdown secondary Box`
+  subtype;
+- inspect candidate enumeration/windowing/ranking/dedup so an earlier
+  Wedge/Triangle does not suppress a later independent Box;
+- distinguish a genuine secondary Box from ordinary continuation/noisy rebound;
+- preserve negative controls and do not make "triangle broke down" sufficient
+  by itself for Box admission.
+
+Acceptance:
+- one general structural contract explains the representative positives and
+  negatives;
+- valid later Boxes can coexist with the earlier compression signal;
+- no symbol-specific exceptions or screenshot tuning.
+
+### FUTURE EPIC — Manual Chart → Autopilot Handoff / Position Adoption
+
+Authoritative design:
+`DOCUMENTS/MANUAL_CHART_AUTOPILOT_HANDOFF_DECISION.md`.
+
+Owner UX direction:
+- one context-aware **Autopilot** action in the terminal;
+- if a manual position is open on the current symbol, ask:
+  **«Хотите передать эту сделку роботу?» — Да / Нет**;
+- `Нет` leaves the manual position untouched and opens the normal Robot
+  workspace / Robot-owned open-position list;
+- `Да` performs an explicit fail-closed Position Adoption Gate and, only on
+  success, opens the same Robot workspace focused on the adopted trade;
+- if the current symbol is already Robot-owned, do not ask for adoption: show
+  that the coin is already traded by Robot and route directly to that position;
+- this Robot-owned awareness must trigger on **every symbol transition** in the
+  terminal, including navigation from a free ticker to a ticker already in
+  Robot work;
+- manual chart/Fibonacci markup intended for Robot must be machine-readable
+  (`Manual Pattern Draft`), not an arbitrary drawing that Robot has to guess;
+- Scanner, future Autopilot discovery and manual chart markup should converge
+  into the same immutable candidate/admission/execution/protection lifecycle;
+- already-open manual positions remain manual unless explicit adoption succeeds.
+
+This epic is **queued only**. Do not pre-empt RVL-R6 or Geometry Quality, do not
+enable LIVE, and do not create a second execution/protection/reconcile stack.
+
 ## NOW — 2026-09-27 — OWNER CORRECTION: IKIGAI BOX HAS NO WATCH USER MODE
 
 Binding owner decision: Ikigai Box uses the normal CONFIRMED signal path only.

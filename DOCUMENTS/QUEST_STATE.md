@@ -21,6 +21,55 @@ real sustained owner PAPER acceptance proves protection healthy, no
 `ingress_overflow`, queue drain under multi-symbol traffic, and normal
 reconcile/restart without recurrence.
 
+## 📱 TELEGRAM MENU VISIBILITY — OWNER FEEDBACK 2026-09-28
+
+During the current real run the desktop Telegram client again shows no visible
+Menu button.
+
+Prior server-side evidence already proved `menu_button.type=commands` and all
+eight commands. Queue **TG-MENU-1** after RVL-R6: one bounded server-state
+re-check, then, if still correct, investigate owner-visible client/UX access
+rather than repeating already-proven Bot API wiring.
+
+Do not restart/duplicate Telegram monitoring for this presentation symptom.
+Current RVL-R6 continues unless command handling itself is proven broken.
+
+## 🧭 OWNER SIGNAL FEEDBACK QUEUED — 2026-09-28
+
+Two Geometry Quality tasks were captured from the current real Scanner run
+without interrupting RVL-R6:
+
+- **BSVUSDT 5m** — Ikigai Box false positive: first impulse contains a real
+  internal corrective swing/zigzag, not just harmless opposite-colour pause
+  candles. Queue as a negative Geometry Gold case and fix the general
+  structural first-impulse rule.
+- **CARVUSDT 5m** — possible missed Ikigai Box after an independently detected
+  Compression Triangle. Queue as a source-time evidence recovery + positive
+  missed-detection investigation; an earlier Triangle must not by itself
+  suppress a later independent Box.
+
+Detailed tasks and acceptance conditions are in `DOCUMENTS/BACKLOG.md`;
+Geometry Gold inventory is updated in
+`DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md`.
+
+Additional owner feedback from the same run broadened CARV into a recurring
+candidate family: `CARVUSDT / CPUSDT / CROSSUSDT / CLOUSDT 5m` show the
+visual sequence `compression -> downside sloping-boundary break -> later compact
+Box-like consolidation`. Queue this as one general Geometry Quality class, not
+ticker-specific tuning.
+
+Future terminal/Autopilot UX is also frozen as a queued design in
+`DOCUMENTS/MANUAL_CHART_AUTOPILOT_HANDOFF_DECISION.md`: one context-aware
+Autopilot action, explicit Да/Нет adoption prompt for an open manual position,
+one shared Robot workspace, immediate Robot-owned-symbol awareness on every
+terminal symbol transition, and machine-readable Manual Pattern Drafts for
+manual chart/Fibonacci handoff. Manual positions remain manual unless explicit
+fail-closed adoption succeeds.
+
+Active gate remains **RVL-R6**. Do not interrupt the current owner PAPER
+acceptance for these geometry findings unless the owner explicitly
+reprioritizes.
+
 ## 🤖 ROBOT STABILITY CHECKPOINT — 2026-09-28
 
 PR #305 merged as `76a89efa1d48f7821b16fb5fcddf8f6de6fda60b`.
