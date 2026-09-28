@@ -762,6 +762,15 @@ def _backend_powershell_shape():
     return processes
 
 
+def _backend_runtime_intent_shape():
+    # Current tools.runtime_intent: CREATE_NEW_CONSOLE + cmd.exe /c start_paper_backend.bat.
+    return {
+        10: _p(10, 1, "cmd.exe", f'cmd.exe /c "{BAT}"'),
+        20: _p(20, 10, "python.exe", f'"{VENV_PY}" -m terminal.runtime.paper_http_server', VENV_PY),
+        30: _p(30, 20, "python.exe", f'"{BASE_PY}" -m terminal.runtime.paper_http_server', BASE_PY),
+    }
+
+
 def _telegram_cmd_k_shape():
     return {
         10: _p(10, 1, "cmd.exe", f"cmd.exe /k {VENV_PY} {TG}"),
@@ -777,15 +786,30 @@ def _telegram_powershell_shape():
     return processes
 
 
+def _telegram_runtime_intent_shape():
+    # Current tools.runtime_intent: CREATE_NEW_CONSOLE + cmd.exe /c venv-python telegram_monitoring.py.
+    return {
+        10: _p(10, 1, "cmd.exe", f'cmd.exe /c "{VENV_PY}" "{TG}"'),
+        20: _p(20, 10, "python.exe", f'"{VENV_PY}" "{TG}"', VENV_PY),
+        30: _p(30, 20, "python.exe", f'"{BASE_PY}" "{TG}"', BASE_PY),
+    }
+
+
 class LegacyOwnershipProofTests(unittest.TestCase):
     def test_current_legacy_console_shapes_prove_exact_chains(self):
         self.assertEqual(select_legacy_chain("backend", [30], _backend_cmd_k_shape(), ROOT), (30, 20, 10))
         self.assertEqual(
             select_legacy_chain("backend", [30], _backend_powershell_shape(), ROOT), (30, 20, 10, 5),
         )
+        self.assertEqual(
+            select_legacy_chain("backend", [30], _backend_runtime_intent_shape(), ROOT), (30, 20, 10),
+        )
         self.assertEqual(select_legacy_chain("telegram", [30], _telegram_cmd_k_shape(), ROOT), (30, 20, 10))
         self.assertEqual(
             select_legacy_chain("telegram", [30], _telegram_powershell_shape(), ROOT), (30, 20, 10),
+        )
+        self.assertEqual(
+            select_legacy_chain("telegram", [30], _telegram_runtime_intent_shape(), ROOT), (30, 20, 10),
         )
 
     def test_wrong_command_line_is_unproven(self):
@@ -799,6 +823,12 @@ class LegacyOwnershipProofTests(unittest.TestCase):
         no_k = _backend_cmd_k_shape()
         no_k[10] = _p(10, 1, "cmd.exe", f"cmd.exe /s {BAT}")
         cases.append(("backend", no_k))
+        wrong_cmd_c_backend = _backend_runtime_intent_shape()
+        wrong_cmd_c_backend[10] = _p(10, 1, "cmd.exe", f"cmd.exe /c {ROOT / 'other_backend.bat'}")
+        cases.append(("backend", wrong_cmd_c_backend))
+        wrong_cmd_c_telegram = _telegram_runtime_intent_shape()
+        wrong_cmd_c_telegram[10] = _p(10, 1, "cmd.exe", f"cmd.exe /c {TG}")
+        cases.append(("telegram", wrong_cmd_c_telegram))
         not_noexit = _telegram_powershell_shape()
         not_noexit[10] = _p(10, 1, "powershell.exe", f"powershell.exe -Command \"& '{VENV_PY}' '{TG}'\"")
         cases.append(("telegram", not_noexit))
