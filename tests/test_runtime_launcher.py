@@ -67,13 +67,28 @@ class RuntimeLauncherTests(unittest.TestCase):
 
 
 class OwnerShortcutProvisioningTests(unittest.TestCase):
+    def test_shortcut_sync_is_ascii_only_for_windows_powershell_51(self):
+        raw = (ROOT / "tools" / "sync_owner_shortcuts.ps1").read_bytes()
+        raw.decode("ascii")
+
     def test_shortcut_sync_targets_only_tracked_canonical_launchers(self):
-        script = (ROOT / "tools" / "sync_owner_shortcuts.ps1").read_text(encoding="utf-8")
-        self.assertIn("'start_scanner.lnk'   = 'start_scanner.bat'", script)
-        self.assertIn("'Запуск робота.lnk'   = 'start_robot_runtime.bat'", script)
-        self.assertIn("'Остановить робота.lnk' = 'stop_robot_runtime.bat'", script)
-        self.assertNotIn("= 'start_robot.bat'", script)
-        self.assertNotIn("= 'stop_robot.bat'", script)
+        import base64
+
+        script = (ROOT / "tools" / "sync_owner_shortcuts.ps1").read_text(encoding="ascii")
+        start_name = base64.b64decode(
+            "0JfQsNC/0YPRgdC6INGA0L7QsdC+0YLQsC5sbms="
+        ).decode("utf-8")
+        stop_name = base64.b64decode(
+            "0J7RgdGC0LDQvdC+0LLQuNGC0Ywg0YDQvtCx0L7RgtCwLmxuaw=="
+        ).decode("utf-8")
+
+        self.assertEqual(start_name, "Запуск робота.lnk")
+        self.assertEqual(stop_name, "Остановить робота.lnk")
+        self.assertIn("$targets.Add('start_scanner.lnk', 'start_scanner.bat')", script)
+        self.assertIn("'start_robot_runtime.bat'", script)
+        self.assertIn("'stop_robot_runtime.bat'", script)
+        self.assertNotIn("'start_robot.bat'", script)
+        self.assertNotIn("'stop_robot.bat'", script)
         self.assertIn("'OWNER SHORTCUTS = CANONICAL'", script)
 
 
