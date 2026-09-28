@@ -13,20 +13,15 @@ Completed / proven today:
   `Сигнал принят: AKEUSDT ✅`;
 - Telegram Bot API proved owner `menu_button.type=commands` and all eight expected commands. The desktop client still did not visibly render Menu; do not repeat server-side menu checks without new evidence.
 
-Open blocker:
-- real CONFIRMED `ARUSDT 1m` delivered without `🤖 Робот`;
-- exact saved A/B historical replay passes the PR #300 grid/TAKE stage but fails in
-  `plan_ikigai_box()` with
-  `ValueError: no tick-aligned STOP beyond P4 satisfies net RR >= 2`;
-- this is a distinct STOP/RR feasibility issue, not a recurrence of the tick-normalization bug.
+Morning classification update:
+- `ARUSDT 1m` is **not** an implementation blocker. Frozen stop-math proves
+  `NO_VALID_STOP_EXISTS` under the approved P4 + fee-aware net RR >= 2 rules;
+- required RR tick is `4.780`, nearest tick beyond P4 is `4.777`; no overlap;
+- therefore the no-Robot-button result is correct fail-closed behavior;
+- PR #300 remains closed and no STOP-search code change is required.
 
-Next technical step when work resumes:
-1. reconstruct the frozen ARUSDT plan inputs;
-2. calculate P1..P4, full-grid average, common TAKE, fee-aware reward, analytical RR-bound and adjacent ticks;
-3. prove whether at least one valid STOP tick exists strictly beyond P4;
-4. only then classify the case as either an implementation/rounding defect or a correctly non-executable setup under the approved constraints.
-
-Do not weaken net RR >= 2:1, move STOP inside P4, invent a fallback STOP, re-open PR #300, or spend owner time on another full Scanner acceptance until this blocker is classified and, if needed, fixed.
+The next active engineering task returns to the already-authoritative queue:
+RVL-R2 continuous multi-symbol `ENTRY_PENDING` overflow deterministic RED.
 
 Runtime state at this checkpoint is not re-asserted here; verify actual host state before any future mutation or restart.
 
@@ -255,25 +250,34 @@ intent implementation.
   the RED gate, Opus implementation, or first-impulse diagnosis unless new
   evidence contradicts this result.
 
-### Ikigai Box Robot candidate blocker — ARUSDT 1m — OPEN 2026-09-28
+### Ikigai Box ARUSDT 1m STOP feasibility — CLASSIFIED / NOT A CODE DEFECT — 2026-09-28
 
-Real acceptance evidence from the current run:
+Real acceptance evidence:
 - normal CONFIRMED `ARUSDT 1m` Telegram signal was delivered without
   `🤖 Робот` and with the owner warning that the Robot candidate was not created;
 - exact saved production anchors were recovered from `signals_history.json`
-  and replayed through the real 199-candle detector window on current merged code;
-- the Box now passes the PR #300 grid/TAKE tick-normalization stage;
-- failure occurs later in `plan_ikigai_box()` while choosing the fixed STOP:
-  `ValueError: no tick-aligned STOP beyond P4 satisfies net RR >= 2`;
-- therefore the previous `2ZUSDT 1m` tick-alignment bug remains closed, while
-  ARUSDT exposes a separate STOP/RR feasibility defect or policy-boundary issue.
+  and replayed through the real 199-candle detector window;
+- the Box passes PR #300 grid/TAKE tick-normalization and reaches
+  `plan_ikigai_box()`;
+- frozen LONG inputs: tick `0.001`, grid
+  `4.790 / 4.786 / 4.782 / 4.778`, average `4.784`, TAKE `4.811`,
+  fee-aware reward/unit `0.021243`;
+- analytical RR>=2 STOP bound is `4.77912`, which must round toward entry to
+  `4.780`;
+- the nearest tick strictly beyond P4 is `4.777`;
+- therefore the valid-RR interval requires STOP >= `4.780`, while the
+  structural P4 rule requires STOP <= `4.777`: the intervals do not overlap;
+- RR is about `2.18` at `4.780` but that STOP is inside the grid; RR is about
+  `1.67` at `4.777`, which is beyond P4 but below the required minimum.
 
-Required next technical step:
-characterize the exact feasible STOP interval and tick rounding for the frozen
-ARUSDT case, then decide whether the implementation search is wrong or the
-approved RR/P4 constraints genuinely make the setup non-executable. Do not
-weaken RR >= 2:1, move STOP inside P4, or invent a fallback merely to create a
-Robot button.
+Conclusion:
+`NO_VALID_STOP_EXISTS`. The STOP search is not missing an executable tick;
+this formation is correctly fail-closed as non-executable under the approved
+rules. Absence of `🤖 Робот` on this ARUSDT card is truthful behavior, not a
+Robot-candidate bug.
+
+Do not weaken RR >= 2:1, move STOP inside P4, or invent a fallback STOP.
+Do not reopen PR #300 or ARUSDT STOP search without contradictory new evidence.
 
 ### P1 final gate — one clean owner-run full acceptance
 
@@ -293,13 +297,10 @@ Robot button.
   unless new evidence changes;
 - this checkpoint **does not** satisfy the permanent acceptance rule because the
   current full eligible-universe pass has not yet been reported complete.
-- subsequent real-run evidence exposed a second, distinct Ikigai Box Robot
-  candidate blocker on `ARUSDT 1m`: the saved CONFIRMED Box replays on current
-  merged code past `approved_first_grid()`, but `plan_ikigai_box()` fails with
-  `ValueError: no tick-aligned STOP beyond P4 satisfies net RR >= 2`.
-  This is **not** the PR #300 tick-alignment defect. Treat it as a separate
-  STOP/risk-planning defect class and do not regress the already-verified
-  tick-normalized grid fix while diagnosing it.
+- subsequent `ARUSDT 1m` stop-math classified its missing Robot button as
+  correct fail-closed behavior, not a defect: RR>=2 requires STOP >= `4.780`
+  while "strictly beyond P4" requires STOP <= `4.777`; no executable tick
+  exists. This case therefore does not block acceptance.
 
 After the P0 fixes that affect the owner/runtime surface are merged and loaded
 into the canonical desktop path:
