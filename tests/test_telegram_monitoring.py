@@ -93,7 +93,10 @@ class TelegramMonitoringTests(unittest.TestCase):
             monitoring.parse_monitor_callback("monitor:c:" + token),
             {"action": "candidate", "token": token},
         )
-        self.assertIsNone(monitoring.parse_monitor_callback("monitor:candidate:cand-1"))
+        self.assertEqual(
+            monitoring.parse_monitor_callback("monitor:candidate:cand-1"),
+            {"action": "candidate", "candidate_id": "cand-1"},
+        )
         self.assertIsNone(monitoring.parse_monitor_callback("monitor:c:short"))
         self.assertIsNone(monitoring.parse_monitor_callback("robot:approve:cand-1"))
 
