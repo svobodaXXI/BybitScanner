@@ -185,9 +185,12 @@ Authoritative standard:
 
 - Canonical tracked start path remains `start_robot_runtime.bat` with PAPER DB
   identity, backend/Telegram readiness, admission/protection and Scanner gates.
-- Existing desktop shortcuts remain the stable owner UX. Local thin wrappers now
-  route `start_robot.bat -> start_robot_runtime.bat` and
-  `stop_robot.bat -> stop_robot_runtime.bat`; no shortcut recreation required.
+- Existing desktop shortcut names remain the stable owner UX, but their targets
+  are direct tracked launchers: `Запуск робота -> start_robot_runtime.bat`,
+  `Остановить робота -> stop_robot_runtime.bat`, and
+  `start_scanner -> start_scanner.bat`. Untracked local wrappers are not authority.
+- `tools/sync_owner_shortcuts.ps1` is the canonical one-shot repair/verification
+  for those targets; it preserves the existing shortcut names.
 - Owner runtime-check on 2026-09-27 proved the canonical start path.
 - Abrupt-power recovery exposed a stale fail-closed
   `ROBOT_ENTRY_OWNERSHIP_MISMATCH` latch for BLENDUSDT after the durable
