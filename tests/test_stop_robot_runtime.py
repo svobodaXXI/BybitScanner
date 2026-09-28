@@ -530,8 +530,8 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                     "telegram:shutdown", "backend:legacy-terminate",
                 ))
                 self.assertEqual(runtime.calls, [
-                    "scanner:stop", "protection:retire-entry-arms", "telegram:shutdown",
-                    "resolve:backend:127.0.0.1:8765",
+                    "scanner:stop", "protection:retire-entry-arms",
+                    "resolve:backend:127.0.0.1:8765", "telegram:shutdown",
                     "resolve:backend:127.0.0.1:8765",
                     "terminate:[130, 120, 110, 105]",
                 ])
