@@ -784,6 +784,9 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 CREATE TABLE robot_candidates (
                     trading_account_id TEXT NOT NULL, status TEXT NOT NULL
                 );
+                CREATE TABLE robot_trades (
+                    trading_account_id TEXT NOT NULL, exit_time_ms INTEGER
+                );
                 CREATE TABLE paper_limit_orders (
                     trading_account_id TEXT NOT NULL, status TEXT NOT NULL
                 );
@@ -796,8 +799,12 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                 );
                 """
             )
-            if blocker == "candidate":
+            if blocker == "approved_candidate":
                 connection.execute("INSERT INTO robot_candidates VALUES ('paper', 'APPROVED')")
+            elif blocker == "open_candidate":
+                connection.execute("INSERT INTO robot_candidates VALUES ('paper', 'OPEN')")
+            elif blocker == "trade":
+                connection.execute("INSERT INTO robot_trades VALUES ('paper', NULL)")
             elif blocker == "limit":
                 connection.execute("INSERT INTO paper_limit_orders VALUES ('paper', 'open')")
             elif blocker == "exposure":
@@ -812,13 +819,20 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
         finally:
             connection.close()
 
-    def test_read_only_durable_proof_accepts_empty_state_and_rejects_each_blocker(self):
+    def test_read_only_durable_proof_accepts_inert_approved_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "approved.sqlite3"
+            self.make_db(path, "approved_candidate")
+            shutdown.prove_legacy_paper_quiescence(path)
+
+    def test_read_only_durable_proof_rejects_live_robot_ownership(self):
         with tempfile.TemporaryDirectory() as directory:
             clean = Path(directory) / "clean.sqlite3"
             self.make_db(clean)
             shutdown.prove_legacy_paper_quiescence(clean)
             for blocker, phrase in (
-                ("candidate", "active Robot candidates"),
+                ("open_candidate", "OPEN Robot candidates"),
+                ("trade", "open Robot trades"),
                 ("limit", "working PAPER limits"),
                 ("exposure", "open PAPER exposure"),
                 ("obligation", "unresolved protection obligations"),
