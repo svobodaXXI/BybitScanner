@@ -558,11 +558,28 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
                 self.assertFalse(any(c.startswith(("resolve", "terminate")) for c in runtime.calls))
 
+    def test_ingress_overflow_on_only_stale_temporary_arms_can_shutdown_legacy_backend(self):
+        runtime = self.stale_arm_runtime()
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+        })
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+        self.assertIn("backend:legacy-terminate", result.steps)
+
     def test_only_exact_temporary_entry_shape_is_eligible_for_legacy_bridge(self):
         cases = (
             {"armed_symbols": ["AKEUSDT"]},
             {"coverage_roles": {"AKEUSDT": "EXPOSURE", "BLASTUSDT": "ENTRY_PENDING"}},
-            {"unhealthy_symbols": {"AKEUSDT": "ingress_overflow"}, "healthy": False},
+            {"unhealthy_symbols": {"AKEUSDT": "subscribe_failed"}, "healthy": False},
+            {"unhealthy_symbols": {"OTHERUSDT": "ingress_overflow"}, "healthy": False},
+            {"unhealthy_symbols": {"AKEUSDT": "ingress_overflow"}, "healthy": True},
+            {"unhealthy_symbols": {}, "healthy": False},
         )
         for override in cases:
             with self.subTest(override=override):
