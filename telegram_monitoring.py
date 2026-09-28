@@ -615,7 +615,7 @@ def _send_candidate_card(chat_id, candidate_id: str) -> None:
     with SQLiteStore.open(DB_PATH) as store:
         record = store.get_robot_candidate(candidate_id)
     if record is None or record.status != "APPROVED":
-        telegram_bot.send_message(
+        response = telegram_bot.send_message(
             config.TELEGRAM_TOKEN,
             chat_id,
             "Кандидат больше не активен. Обновите список мониторинга.",
@@ -623,8 +623,9 @@ def _send_candidate_card(chat_id, candidate_id: str) -> None:
                 "inline_keyboard": [[{"text": "🔄 Мониторинг", "callback_data": "monitor:list"}]]
             },
         )
+        _require_monitoring_delivery(response, "candidate stale sendMessage")
         return
-    telegram_bot.send_message(
+    response = telegram_bot.send_message(
         config.TELEGRAM_TOKEN,
         chat_id,
         format_candidate_card(record),
@@ -632,6 +633,7 @@ def _send_candidate_card(chat_id, candidate_id: str) -> None:
             "inline_keyboard": [[{"text": "⬅️ К кандидатам", "callback_data": "monitor:list"}]]
         },
     )
+    _require_monitoring_delivery(response, "candidate card sendMessage")
 
 
 def _answer_callback(callback_id, text: str = "") -> None:
