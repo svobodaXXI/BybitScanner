@@ -23,6 +23,7 @@ from decimal import Decimal, InvalidOperation
 import os
 from pathlib import Path
 import sqlite3
+import traceback
 import subprocess
 import sys
 import time
@@ -49,6 +50,7 @@ POLL_INTERVAL_S = 0.5
 PROBE_TIMEOUT_S = 5.0
 MUTATION_TIMEOUT_S = 15.0
 LEGACY_WRITER_BARRIER_TIMEOUT_S = 5.0
+STOP_DIAGNOSTIC_ENV = "BYBITSCANNER_STOP_DIAGNOSTIC_LOG"
 
 ROBOT_STOPPED_PAIR = ("ROBOT_STOPPED", "ROBOT_STOPPED")
 ROBOT_STOPPABLE = {("ROBOT_RUNNING", "READY"), ("ROBOT_RUNNING", "PAUSED")}
@@ -246,6 +248,7 @@ class RuntimeShutdown:
         legacy_terminator: Callable[[tuple[int, ...]], None] = terminate_exact_pids,
         legacy_paper_quiescence: Callable[[], None] | None = None,
         legacy_paper_guard: Callable[[], ContextManager[None]] | None = None,
+        progress: Callable[[str], None] | None = None,
     ) -> None:
         env = dict(os.environ if env is None else env)
         database_path = _database_path(root, env)
@@ -272,6 +275,14 @@ class RuntimeShutdown:
         ))
         self._sleep = sleep
         self._monotonic = monotonic
+        self._progress = progress or (lambda _message: None)
+
+    def _mark(self, message: str) -> None:
+        try:
+            self._progress(message)
+        except Exception:
+            # Diagnostics must never make safe shutdown less safe.
+            pass
 
     def run(self, scope: str) -> ShutdownResult:
         if scope not in SCOPES:
@@ -284,8 +295,12 @@ class RuntimeShutdown:
 
     def _run(self, scope: str, steps: list[str]) -> ShutdownResult:
         # Both identities are proven before the first mutation of anything.
+        self._mark("probing PAPER backend identity")
         backend = self._probe_backend()
+        self._mark(f"PAPER backend: {backend}")
+        self._mark("probing Telegram monitoring identity")
         telegram = self._probe_telegram()
+        self._mark(f"Telegram monitoring: {telegram}")
 
         if (
             backend == PRESENT
@@ -293,15 +308,20 @@ class RuntimeShutdown:
             and self._robot_state() == ROBOT_STOPPED_PAIR
             and self._legacy_owner_queue_starved()
         ):
+            self._mark("using proven legacy starvation shutdown path")
             return self._shutdown_starved_legacy_runtime(telegram, steps)
 
         if backend == PRESENT:
+            self._mark("requesting Scanner STOPPED")
             self._stop_scanner()
             steps.append("scanner:stop")
+            self._mark("Scanner STOPPED confirmed")
             if scope == SCOPE_ALL:
                 state = self._robot_state()
                 if state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
+                    self._mark("requesting Robot reconciliation")
                     self._reconcile_robot()
+                    self._mark("Robot reconciliation confirmed")
                     steps.append("robot:reconcile")
                     state = self._robot_state()
                     if state not in ROBOT_STOPPABLE:
@@ -309,8 +329,10 @@ class RuntimeShutdown:
                             "Robot reconcile did not establish a legal stoppable state; runtime kept alive"
                         )
                 if state in ROBOT_STOPPABLE:
+                    self._mark("requesting Robot STOPPED")
                     self._stop_robot()
                     steps.append("robot:stop")
+                    self._mark("Robot STOPPED confirmed")
                 elif state != ROBOT_STOPPED_PAIR:
                     raise SafeStopError(f"Robot state {state} requires the PAPER backend; runtime kept alive")
 
@@ -326,12 +348,15 @@ class RuntimeShutdown:
                 )
             raise SafeStopError(f"Robot is {state} but the PAPER backend is unavailable to stop it")
 
+        if backend == PRESENT:
+            self._mark("checking Robot protection quiescence")
         if backend == PRESENT and not self._protection_quiescent():
             if scope == SCOPE_SCANNER:
                 return ShutdownResult(
                     scope, True, "Scanner STOPPED; Robot protection coverage keeps the runtime alive.",
                     tuple(steps),
                 )
+            self._mark("retiring stale entry protection coverage")
             legacy_proof = self._retire_entry_coverage()
             if legacy_proof is None:
                 steps.append("protection:retire-entry-arms")
@@ -362,6 +387,7 @@ class RuntimeShutdown:
                 TELEGRAM, "telegram",
             ))
         if backend == PRESENT:
+            self._mark("shutting down PAPER backend")
             steps.append(self._shutdown(
                 self._backend + "/api/runtime/shutdown", self._backend + "/api/health",
                 "PAPER backend", BACKEND, "backend",
@@ -591,7 +617,9 @@ class RuntimeShutdown:
         # PAUSED row is safe here: Scanner is in this backend process and fresh
         # ScannerControlRuntime startup already recovers stale process state to
         # SCANNER_STOPPED.
+        self._mark("proving legacy backend identity")
         proof = self._legacy_backend_attribution()
+        self._mark("proving durable PAPER quiescence")
         try:
             self._legacy_paper_quiescence()
         except SafeStopError:
@@ -599,10 +627,14 @@ class RuntimeShutdown:
         except Exception as exc:
             raise SafeStopError("legacy PAPER durable shutdown evidence is unavailable") from exc
 
+        self._mark("acquiring bounded SQLite writer barrier")
         with self._legacy_paper_guard():
+            self._mark("SQLite writer barrier acquired")
             backend_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
+            self._mark(f"legacy backend chain proven: {backend_chain}")
             steps.append("runtime:legacy-starvation-proof")
             if telegram == PRESENT:
+                self._mark("shutting down Telegram monitoring")
                 steps.append(self._shutdown(
                     self._telegram + "/shutdown", self._telegram + "/health",
                     "Telegram monitoring", TELEGRAM, "telegram",
@@ -615,6 +647,7 @@ class RuntimeShutdown:
             final_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
             if final_chain != backend_chain:
                 raise SafeStopError("legacy PAPER backend process chain changed; nothing was terminated")
+            self._mark(f"terminating exact legacy backend chain: {final_chain}")
             try:
                 self._legacy_terminator(final_chain)
             except Exception as exc:
@@ -781,8 +814,26 @@ def _notify(chat_id: str, text: str) -> None:
         print(f"[STOP NOTIFY ERROR] {type(exc).__name__}")
 
 
+def _diagnostic_writer(env: Mapping[str, str] | None = None) -> Callable[[str], None]:
+    env = os.environ if env is None else env
+    raw_path = str(env.get(STOP_DIAGNOSTIC_ENV) or "").strip()
+    if not raw_path:
+        return lambda _line: None
+    path = Path(raw_path)
+
+    def write(line: str) -> None:
+        try:
+            with path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(line.rstrip("\r\n") + "\n")
+        except OSError:
+            pass
+
+    return write
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    diagnostic = _diagnostic_writer()
     notify_chat = None
     if "--notify-chat" in args:
         index = args.index("--notify-chat")
@@ -794,8 +845,27 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) > 1:
         print("usage: python -m tools.stop_robot_runtime [all|scanner] [--notify-chat CHAT_ID]")
         return 64
-    result = RuntimeShutdown().run(args[0] if args else SCOPE_ALL)
-    print(result.message)
+    def progress(message: str) -> None:
+        line = f"[STOP] {message}"
+        print(line, flush=True)
+        diagnostic(line)
+
+    try:
+        progress(f"starting scope={args[0] if args else SCOPE_ALL}")
+        result = RuntimeShutdown(progress=progress).run(args[0] if args else SCOPE_ALL)
+    except Exception as exc:
+        line = f"[STOP CRASH] {type(exc).__name__}: {exc}"
+        print(line, flush=True)
+        diagnostic(line)
+        formatted = traceback.format_exc()
+        print(formatted, end="", flush=True)
+        for item in formatted.rstrip().splitlines():
+            diagnostic(item)
+        return 2
+
+    print(result.message, flush=True)
+    diagnostic(result.message)
+    diagnostic("steps=" + ",".join(result.steps))
     if notify_chat is not None:
         _notify(notify_chat, owner_text(result))
     return 0 if result.ok else 1
