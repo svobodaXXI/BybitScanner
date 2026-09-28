@@ -53,11 +53,11 @@ explicitly reprioritizes.
 | Order | ID | Priority | Task | Exit gate |
 |---:|---|---|---|---|
 | 1 | RVL-R1 | P0 | **DONE** — Minimal Runtime Replay contract + deterministic runner (PR #296; Robot PAPER acceptance #226 PASS) | continuous events replay through real SerializedPaperRuntime with deterministic FIFO/metric surface |
-| 2 | RVL-R2 | P0 | Reproduce 2026-09-27 continuous multi-symbol ENTRY_PENDING overflow as RED | current main reliably reaches the real overload class without artificial drain barriers |
-| 3 | RVL-R3 | P0 | Freeze exact ENTRY_PENDING coverage boundary | tests prove when coverage begins/ends and first-fill evidence cannot be missed |
-| 4 | RVL-R4 | P0 | Minimal production ingress fix | R2 GREEN without queue enlargement, coalescing or weakened protection |
-| 5 | RVL-R5 | P0 | Runtime replay pack + focused PAPER CI | all applicable runtime fixtures/checks GREEN once |
-| 6 | RVL-R6 | P0 | One canonical owner PAPER acceptance | no ingress_overflow; protection healthy; real queue sustains traffic |
+| 2 | RVL-R2 | P0 | **DONE** — deterministic pre-LIMIT manager-path overflow replay (PR #305) | current main reproduced the overload class without artificial drain barriers |
+| 3 | RVL-R3 | P0 | **DONE** — exact ENTRY_PENDING ingress + lifecycle boundary frozen (PR #305) | tests prove start/end boundary and first-fill ordering requirement |
+| 4 | RVL-R4 | P0 | **DONE** — temporary coverage arm + durable resting-LIMIT handoff (PR #305) | R2 GREEN; capacity 64 unchanged; no coalescing/drop/second runtime |
+| 5 | RVL-R5 | P0 | **DONE** — replay/regression pack + Robot PAPER acceptance CI | run #36400222441 SUCCESS, 385 passed; local focused gaps also green aside from pre-existing unrelated failures |
+| 6 | RVL-R6 | P0 | **ACTIVE** — one canonical owner PAPER acceptance | no ingress_overflow; protection healthy; real queue sustains traffic |
 | 7 | RVL-G1 | P1 | Geometry Gold schema + inventory of saved real cases | exact available OHLC/evidence mapped; gaps explicit |
 | 8 | RVL-G2 | P1 | Seed first compact Geometry Gold set | real Wedge/Triangle positive/negative/anchor/stale cases replayable |
 | 9 | RVL-G3 | P1 | Geometry baseline report | per-case PASS/FAIL and anchor deltas visible in one run |
@@ -68,7 +68,7 @@ explicitly reprioritizes.
 | 14 | RVL-V2 | P2 conditional | Bounded normalized incident capture | only if production-shape replay fidelity proves insufficient |
 | 15 | RVL-V3 | P2 | Tier-aware CI routing | focused FAST/REPLAY automatic; broader PAPER CI remains bounded |
 
-**Active task:** RVL-R2 — reproduce the 2026-09-27 continuous multi-symbol `ENTRY_PENDING` overflow as deterministic RED.
+**Active task:** RVL-R6 — one canonical owner PAPER acceptance on merged main `76a89efa1d48f7821b16fb5fcddf8f6de6fda60b`.
 
 Hard sequencing:
 - no new production ingress fix before RVL-R2 RED and RVL-R3 boundary proof;
