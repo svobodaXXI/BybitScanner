@@ -199,6 +199,57 @@ Owner UX direction:
 This epic is **queued only**. Do not pre-empt RVL-R6 or Geometry Quality, do not
 enable LIVE, and do not create a second execution/protection/reconcile stack.
 
+## NOW — 2026-09-29 — RVL-R6 NIGHT CHECKPOINT
+
+Preserved owner evidence:
+- one full Scanner pass completed: 778/778 symbols, 186 signals found, 200
+  Telegram deliveries reported, 43 Ikigai Box observations, 104:55 elapsed;
+- subsequent fresh backend instance: Robot admission READY, PAPER live-safe,
+  protection healthy, no covered/armed/unhealthy symbols, ingress pending 0,
+  high-watermark 0, Scanner STOPPED;
+- fresh-runtime Telegram `/robot`: Robot Running/Ready, 6 candidates, 0
+  Robot-owned open positions.
+
+Do **not** overclaim the fresh zero ingress metrics: they belong to a new backend
+process and cannot prove the previous 104-minute process never overflowed.
+RVL-R6 remains ACTIVE until same-process historical evidence is sufficient or
+one clean sustained owner run captures the required no-overflow proof.
+
+### TG-MON-1 — fixed in code, owner re-acceptance pending
+
+Real owner defect:
+- `/monitoring` update was consumed but produced no reply while `/robot`
+  showed 6 APPROVED candidates and Telegram Monitoring health remained ready.
+
+Root cause:
+- full Box durable candidate IDs made inline `callback_data` exceed Telegram's
+  64-byte limit;
+- `sendMessage` returned `ok:false`, which the old list path ignored.
+
+PR #325 merged as
+`4ab838857519adbacfa8fb4d780b3461f2717851`:
+- bounded callback token;
+- current-candidate token resolution, collision fail-closed;
+- legacy callback compatibility;
+- delivery failure no longer silent;
+- Robot PAPER acceptance GREEN.
+
+Remaining exit gate:
+- sync owner checkout to #325 or later;
+- fresh canonical runtime;
+- one `/monitoring` owner check returns the candidate list/buttons.
+
+### CELOUSDT manual PAPER reconciliation debt
+
+Current `/positions` evidence:
+- CELOUSDT Long 1.3, average entry 0.075347;
+- projection `sync_state=reconciliation_required`;
+- position card explicitly reports **not Robot-owned**;
+- Robot status reports 0 Robot-owned open positions.
+
+Do not close/adopt this exposure implicitly. Resolve later through explicit
+manual PAPER reconciliation or the future Position Adoption contract.
+
 ## NOW — 2026-09-27 — OWNER CORRECTION: IKIGAI BOX HAS NO WATCH USER MODE
 
 Binding owner decision: Ikigai Box uses the normal CONFIRMED signal path only.
