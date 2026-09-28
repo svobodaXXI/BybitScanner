@@ -1,3 +1,18 @@
+## 🤖 ROBOT STABILITY CHECKPOINT — 2026-09-28
+
+PR #305 merged as `76a89efa1d48f7821b16fb5fcddf8f6de6fda60b`.
+
+Completed:
+- RVL-R2 deterministic manager-path ENTRY_PENDING overload replay;
+- RVL-R3 ingress and lifecycle coverage boundary;
+- RVL-R4 production fix: pre-LIMIT high-rate coverage removed, temporary coverage arm established before resting LIMIT/grid creation, gap-free handoff to durable ENTRY_PENDING, Box covered too;
+- RVL-R5 regression gate GREEN: Robot PAPER acceptance workflow run `36400222441` SUCCESS with 385 passed; focused local checks green apart from two verified pre-existing unrelated failures.
+
+Active gate:
+- RVL-R6 only — one canonical owner PAPER acceptance on merged main. Required evidence: Robot legal READY, protection healthy, no ingress_overflow, queue drains under real multi-symbol traffic, normal reconcile/restart does not recreate the incident.
+
+Known non-blocking debt remains separate: W1 orphan LIMIT crash window, fence metric overwrite on empty-symbol fence overflow, and exact source of the post-#293 64/64 incident not proven to reconcile alone.
+
 ## 🌙 CHECKPOINT НА НОЧЬ — 2026-09-28
 
 Сегодняшний Box/Runtime acceptance сохранён, повторять пройденное не нужно.
