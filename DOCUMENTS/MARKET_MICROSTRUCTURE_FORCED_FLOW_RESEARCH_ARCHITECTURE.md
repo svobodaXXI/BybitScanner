@@ -758,3 +758,241 @@ ForcedFlowEngine
 ~~~
 
 No second execution engine, order journal, protection system or recovery coordinator. LIVE remains out of scope.
+
+---
+
+# 21. DATA QUALITY / FAIL-CLOSED RULES
+
+A research candidate is ineligible when required evidence is not trustworthy.
+
+Data-quality conditions include:
+- local book not VALID;
+- sequence/reset ambiguity;
+- reconnect without recovered continuity;
+- stale ticker/OI/funding beyond declared semantics;
+- timestamp regression;
+- receive-latency anomaly;
+- unhealthy cross-venue alignment;
+- symbol mapping ambiguity;
+- missing source required for the claimed state;
+- capture/replay schema incompatibility.
+
+Represent data health explicitly:
+
+~~~text
+HEALTHY
+DEGRADED
+INVALID
+~~~
+
+A degraded source may remain recordable, but transitions requiring that source fail closed.
+
+---
+
+# 22. ANTI-CURVE-FITTING RULES
+
+1. No thresholds tuned against one anecdotal symbol.
+2. No parameter search until a clean baseline dataset exists.
+3. Freeze feature definitions/version before holdout measurement.
+4. Preserve rejected/invalidated candidates, not just successful reversals.
+5. Separate discovery data from evaluation/holdout data.
+6. Report by symbol/liquidity/regime, not only aggregate averages.
+7. Include fees/spread/slippage.
+8. Compare against simple baselines.
+9. Do not promote a feature because it predicts sign if net expectancy is negative.
+10. Do not let future data enter decision-time features.
+11. No universal microstructure score before independent factor value is established.
+12. Add a new venue only for measurable incremental information.
+
+---
+
+# 23. INITIAL RESEARCH BASELINES
+
+Any future edge claim should beat:
+- volatility/regime-matched random/conditional entry;
+- liquidation burst alone;
+- extreme trade imbalance alone;
+- OFI alone;
+- price displacement alone;
+- OI flush alone;
+- Bybit-only forced-flow state without cross-venue witness.
+
+This tests whether the combined mechanism adds value rather than merely rediscovering short-term mean reversion.
+
+---
+
+# 24. IMPLEMENTATION STAGES
+
+All stages are deferred until current project priorities permit them.
+
+## MML-1 — Bybit capture + local book + replay
+
+BTCUSDT / ETHUSDT / SOLUSDT; public trades; L50 book; allLiquidation; ticker/context; immutable envelope; dual timestamps; book health; raw capture; deterministic replay. No feature-based signal.
+
+Exit gate: a bounded captured session replays through the same market-state path with identical event/state results and no silent book-integrity gaps.
+
+## MML-2 — Core feature engine
+
+Aggressive flow, OFI, depth imbalance, spread, microprice, liquidation pressure, OI change, mark/index dislocation, price impact and refill/resilience.
+
+Exit gate: deterministic replay values with explicit provenance/version/data-quality eligibility.
+
+## MML-3 — Forced-flow SHADOW state machine
+
+States: NORMAL, SHOCK, FORCED_FLOW, EXHAUSTION_CANDIDATE, ABSORPTION, REVERSAL_CONFIRMED, INVALIDATED, DATA_INVALID. No trading.
+
+Exit gate: every transition is reconstructable from stored contemporaneous factors.
+
+## MML-4 — Binance cross-venue witness
+
+Add native adapter and timing health. Do not normalize unlike liquidation feeds into fake equivalence.
+
+Exit gate: lead/lag/divergence is replayable and robust to recorded latency anomalies.
+
+## MML-5 — Hyperliquid incremental-value experiment
+
+Add only after MML-4.
+
+Exit gate: retain only if out-of-sample evidence adds information/resilience beyond Bybit+Binance.
+
+## MML-6 — Outcome / expectancy engine
+
+Measure forward returns, MAE/MFE and realizable taker outcome after costs.
+
+Exit gate: hypothesis can be accepted/rejected quantitatively by cohort without Robot involvement.
+
+## MML-7 — Trading Diary bridge / pattern overlay
+
+Attach compact decision-time factors to existing setup decisions and compare pattern-only versus pattern+microstructure cohorts.
+
+Exit gate: Diary remains observational and no high-frequency stream enters its core trade schema.
+
+## MML-8 — Candidate/admission research
+
+Only after positive stable PAPER-quality evidence and explicit owner reprioritization.
+
+Possible work: immutable microstructure candidate identity; shared read-only admission assessment; SHADOW Autopilot interaction; PAPER admission through existing canonical Robot boundary. No direct order path.
+
+---
+
+# 25. FIRST IMPLEMENTATION SLICE WHEN AUTHORIZED
+
+Do NOT begin with state machine or strategy.
+
+Begin with:
+
+> MML-1 — Bybit-only Market Microstructure Lab for BTC/ETH/SOL: correct public WebSocket capture, dual timestamps, L50 local book reconstruction, liquidation/trade/ticker events, data-quality state and deterministic replay.
+
+No BUY/SELL conclusion.
+
+Why first:
+- bad event ordering destroys every later feature;
+- bad book reconstruction creates fictional OFI/refill;
+- missing receive timestamps destroys cross-venue inference;
+- replayable evidence lets later hypotheses be tested cheaply.
+
+---
+
+# 26. WHAT IS EXPLICITLY NOT AUTHORIZED
+
+This design does NOT authorize:
+- changing Robot admission;
+- changing Scanner scoring;
+- changing Wedge/L-shape/Ikigai rules;
+- adding a new Telegram trade signal;
+- starting a new production background service;
+- PAPER/LIVE order placement from microstructure code;
+- changing risk parameters;
+- enabling Autopilot;
+- broad L2 subscriptions across the full symbol universe;
+- installing a third-party trading engine as runtime dependency;
+- ML training;
+- threshold optimization.
+
+Each requires a separate task/priority decision.
+
+---
+
+# 27. OPEN IMPLEMENTATION QUESTIONS TO RESOLVE LATER
+
+Deferred until measured event-rate/data evidence exists:
+- capture storage format;
+- file rotation/retention;
+- rolling windows for each feature;
+- L50 versus L200 incremental value;
+- broad-watch -> Focus Mode trigger;
+- lead/lag estimator;
+- clock-health tolerance;
+- normalization lookbacks;
+- significance/holdout procedure;
+- fee/slippage simulation inputs;
+- whether ticker cadence is sufficient for mark/index/OI or extra REST sampling is needed;
+- whether passive execution research is justified.
+
+Do not resolve these by intuition before MML-1 evidence exists.
+
+---
+
+# 28. SUCCESS / KILL CRITERIA
+
+Continue investment only if captured/replayed data shows:
+1. deterministic healthy market-state reconstruction;
+2. reproducible relation between forced flow, impact decay/refill and subsequent behavior;
+3. stability across more than one isolated symbol/event;
+4. improvement over simple liquidation/OFI/mean-reversion baselines;
+5. positive/useful net expectancy after realistic costs under an explicit execution assumption;
+6. acceptable frequency and data quality;
+7. cross-venue information surviving latency controls.
+
+Kill, park or simplify if:
+- apparent edge disappears after costs;
+- effect exists only in a hand-picked event;
+- effect disappears under holdout/replay;
+- cross-venue lead is explained by local latency;
+- book-dependent signals are dominated by integrity failures;
+- complexity adds no incremental predictive/execution value.
+
+A failed hypothesis is a valid research outcome and must not be rescued by uncontrolled threshold tuning.
+
+---
+
+# 29. RELATIONSHIP TO CURRENT PROJECT PRIORITY
+
+At documentation time this is a deferred research quest. It does not replace the active Robot stability/acceptance queue or Geometry Quality queue.
+
+Authoritative sequencing remains in DOCUMENTS/BACKLOG.md and DOCUMENTS/QUEST_STATE.md.
+
+No XP/reward is earned for this design/documentation alone.
+
+---
+
+# 30. REFERENCE IMPLEMENTATIONS / SOURCES
+
+External material reviewed for mechanisms, not copied as authority:
+
+- Hummingbot connector architecture / OrderBookTracker:
+  https://hummingbot.org/connectors/connectors/architecture/
+- Hummingbot V2 architecture:
+  https://hummingbot.org/strategies/v2-strategies/
+- NautilusTrader architecture:
+  https://nautilustrader.io/docs/latest/concepts/architecture/
+- Cryptofeed:
+  https://github.com/bmoscon/cryptofeed
+- Tardis.dev:
+  https://tardis.dev/
+- Bybit V5 order book:
+  https://bybit-exchange.github.io/docs/v5/websocket/public/orderbook
+- Bybit V5 all liquidations:
+  https://bybit-exchange.github.io/docs/v5/websocket/public/all-liquidation
+- Bybit V5 ticker:
+  https://bybit-exchange.github.io/docs/v5/websocket/public/ticker
+- Binance Futures WebSocket market streams:
+  https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams
+- Hyperliquid WebSocket subscriptions:
+  https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/websocket/subscriptions
+- Cont, Kukanov, Stoikov — order-flow imbalance / price impact:
+  https://arxiv.org/abs/1011.6402
+
+Project authority remains BybitScanner documentation and explicit owner decisions.
+
+# END_OF_DOCUMENT
