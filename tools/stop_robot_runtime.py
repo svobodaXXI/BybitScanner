@@ -50,7 +50,6 @@ POLL_INTERVAL_S = 0.5
 PROBE_TIMEOUT_S = 5.0
 MUTATION_TIMEOUT_S = 15.0
 LEGACY_WRITER_BARRIER_TIMEOUT_S = 5.0
-STOP_DIAGNOSTIC_ENV = "BYBITSCANNER_STOP_DIAGNOSTIC_LOG"
 
 ROBOT_STOPPED_PAIR = ("ROBOT_STOPPED", "ROBOT_STOPPED")
 ROBOT_STOPPABLE = {("ROBOT_RUNNING", "READY"), ("ROBOT_RUNNING", "PAUSED")}
@@ -814,26 +813,8 @@ def _notify(chat_id: str, text: str) -> None:
         print(f"[STOP NOTIFY ERROR] {type(exc).__name__}")
 
 
-def _diagnostic_writer(env: Mapping[str, str] | None = None) -> Callable[[str], None]:
-    env = os.environ if env is None else env
-    raw_path = str(env.get(STOP_DIAGNOSTIC_ENV) or "").strip()
-    if not raw_path:
-        return lambda _line: None
-    path = Path(raw_path)
-
-    def write(line: str) -> None:
-        try:
-            with path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line.rstrip("\r\n") + "\n")
-        except OSError:
-            pass
-
-    return write
-
-
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    diagnostic = _diagnostic_writer()
     notify_chat = None
     if "--notify-chat" in args:
         index = args.index("--notify-chat")
@@ -846,26 +827,18 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: python -m tools.stop_robot_runtime [all|scanner] [--notify-chat CHAT_ID]")
         return 64
     def progress(message: str) -> None:
-        line = f"[STOP] {message}"
-        print(line, flush=True)
-        diagnostic(line)
+        print(f"[STOP] {message}", flush=True)
 
     try:
         progress(f"starting scope={args[0] if args else SCOPE_ALL}")
         result = RuntimeShutdown(progress=progress).run(args[0] if args else SCOPE_ALL)
     except Exception as exc:
-        line = f"[STOP CRASH] {type(exc).__name__}: {exc}"
-        print(line, flush=True)
-        diagnostic(line)
-        formatted = traceback.format_exc()
-        print(formatted, end="", flush=True)
-        for item in formatted.rstrip().splitlines():
-            diagnostic(item)
+        print(f"[STOP CRASH] {type(exc).__name__}: {exc}", flush=True)
+        print(traceback.format_exc(), end="", flush=True)
         return 2
 
     print(result.message, flush=True)
-    diagnostic(result.message)
-    diagnostic("steps=" + ",".join(result.steps))
+    print("steps=" + ",".join(result.steps), flush=True)
     if notify_chat is not None:
         _notify(notify_chat, owner_text(result))
     return 0 if result.ok else 1
