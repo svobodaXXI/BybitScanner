@@ -1,3 +1,91 @@
+## 🌙 NIGHT CHECKPOINT — 2026-09-29
+
+Current owner acceptance evidence is preserved. Do not repeat completed checks.
+
+### RVL-R6 evidence captured
+
+Owner completed one full Scanner pass:
+- scanned: **778/778** symbols;
+- signals found: **186**;
+- Telegram deliveries reported: **200**;
+- Ikigai Box observations: **43**;
+- elapsed: **104:55**.
+
+After the pass, a fresh backend instance was observed with:
+- `robot_admission_ready=true`;
+- `paper_live_safe=true`;
+- Robot protection `healthy=true`;
+- no covered, armed, or unhealthy symbols;
+- ingress `current_pending=0`, `high_watermark=0`;
+- Scanner durable state `SCANNER_STOPPED`.
+
+Important limitation: ingress metrics are process-local. Because this snapshot
+came from a **new backend process instance**, zero high-watermark/overflow fields
+prove the fresh runtime is clean, but do **not** retroactively prove that the
+previous 104-minute process never overflowed.
+
+Telegram `/robot` on the fresh runtime returned:
+- Robot: **Запущен / Готов**;
+- candidates under observation: **6**;
+- Robot-owned open positions: **0**.
+
+This is strong restart/recovery non-recurrence evidence. RVL-R6 is **not yet
+declared PASS** until prior-run overflow evidence is resolved or a clean
+sustained run captures the required same-process metrics.
+
+### Telegram monitoring defect found and fixed
+
+Owner reproduced:
+- `/robot` saw 6 candidates;
+- `/monitoring` update was consumed (offset advanced) but no reply appeared;
+- Telegram Monitoring stayed `ready`;
+- no loop exception was printed.
+
+Root cause:
+- Ikigai Box durable candidate IDs are long (`box-robot-<64hex>`);
+- the old callback used the full ID in
+  `monitor:candidate:<candidate_id>`, exceeding Telegram's 64-byte
+  `callback_data` limit;
+- Telegram returned an `ok:false` response that the monitoring list path did
+  not validate, producing a silent failure.
+
+PR #325 fixed this and merged to main as
+`4ab838857519adbacfa8fb4d780b3461f2717851`:
+- bounded deterministic callback token;
+- token resolves only against current APPROVED candidates;
+- collisions fail closed;
+- legacy short callbacks remain compatible;
+- Telegram delivery rejection is no longer silent;
+- Robot PAPER acceptance GREEN.
+
+Owner acceptance of the fixed `/monitoring` path is still pending after local
+sync/restart on #325.
+
+### Manual PAPER CELOUSDT
+
+`/positions` shows `CELOUSDT Long 1.3`, average entry `0.075347`,
+`sync_state=reconciliation_required`.
+
+Its detailed card explicitly says:
+**"Позиция не от робота — график недоступен"**.
+
+Therefore:
+- CELO is not Robot-owned;
+- `/robot` correctly reports 0 Robot-owned open positions;
+- CELO is separate manual/non-Robot PAPER reconciliation debt and must not be
+  silently adopted or closed by Robot;
+- future Manual Position Adoption design already covers this class.
+
+### Owner feedback queued
+
+Already documented and preserved:
+- BSVUSDT 5m false-positive Box first impulse with internal corrective swing;
+- CARV/CPU/CROSS/CLO 5m recurring post-breakdown secondary Box family;
+- recurring Telegram Menu visibility symptom;
+- Manual Chart → Autopilot handoff / explicit Position Adoption design.
+
+Next session should begin from this checkpoint, not rediscover these items.
+
 ## ✅ SHUTDOWN INCIDENT CLOSED — 2026-09-28
 
 Canonical owner stop is now proven on a clean cycle from main
