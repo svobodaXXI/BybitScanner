@@ -572,6 +572,84 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
         self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
         self.assertIn("backend:legacy-terminate", result.steps)
 
+    def test_saturated_legacy_owner_queue_bypasses_scanner_call_after_full_durable_proof(self):
+        runtime = self.stale_arm_runtime()
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {
+                "capacity": 64,
+                "current_pending": 63,
+                "high_watermark": 64,
+            },
+        })
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(result.steps, (
+            "runtime:legacy-starvation-proof",
+            "telegram:shutdown",
+            "backend:legacy-starvation-terminate",
+        ))
+        self.assertNotIn("scanner:stop", runtime.calls)
+        self.assertEqual(runtime.legacy_evidence_checks, 1)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_starvation_bypass_requires_robot_already_stopped(self):
+        runtime = self.stale_arm_runtime()
+        runtime.robot = READY
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {"capacity": 64, "current_pending": 64, "high_watermark": 64},
+        })
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+        self.assertIn("scanner:stop", runtime.calls)
+        self.assertFalse(any(c.startswith("terminate") for c in runtime.calls))
+
+    def test_starvation_bypass_requires_proven_capacity_saturation(self):
+        for ingress in (
+            None,
+            {"capacity": 64, "current_pending": 63, "high_watermark": 63},
+            {"capacity": 0, "current_pending": 0, "high_watermark": 64},
+        ):
+            with self.subTest(ingress=ingress):
+                runtime = self.stale_arm_runtime()
+                runtime.protection.update({
+                    "healthy": False,
+                    "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+                })
+                if ingress is not None:
+                    runtime.protection["ingress"] = ingress
+
+                result = runtime.orchestrator().run("all")
+
+                self.assertTrue(result.ok, result.message)
+                self.assertIn("scanner:stop", runtime.calls)
+                self.assertNotIn("runtime:legacy-starvation-proof", result.steps)
+
+    def test_starvation_bypass_still_rejects_durable_robot_work(self):
+        runtime = self.stale_arm_runtime()
+        runtime.legacy_paper_blocker = "legacy PAPER shutdown blocked by working PAPER limits"
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {"capacity": 64, "current_pending": 64, "high_watermark": 64},
+        })
+
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("working PAPER limits", result.message)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+        self.assertFalse(any(c.startswith("terminate") for c in runtime.calls))
+
     def test_only_exact_temporary_entry_shape_is_eligible_for_legacy_bridge(self):
         cases = (
             {"armed_symbols": ["AKEUSDT"]},
