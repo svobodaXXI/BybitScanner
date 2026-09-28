@@ -21,6 +21,19 @@ real sustained owner PAPER acceptance proves protection healthy, no
 `ingress_overflow`, queue drain under multi-symbol traffic, and normal
 reconcile/restart without recurrence.
 
+## 📱 TELEGRAM MENU VISIBILITY — OWNER FEEDBACK 2026-09-28
+
+During the current real run the desktop Telegram client again shows no visible
+Menu button.
+
+Prior server-side evidence already proved `menu_button.type=commands` and all
+eight commands. Queue **TG-MENU-1** after RVL-R6: one bounded server-state
+re-check, then, if still correct, investigate owner-visible client/UX access
+rather than repeating already-proven Bot API wiring.
+
+Do not restart/duplicate Telegram monitoring for this presentation symptom.
+Current RVL-R6 continues unless command handling itself is proven broken.
+
 ## 🧭 OWNER SIGNAL FEEDBACK QUEUED — 2026-09-28
 
 Two Geometry Quality tasks were captured from the current real Scanner run
