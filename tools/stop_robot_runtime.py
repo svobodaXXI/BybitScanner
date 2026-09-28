@@ -50,6 +50,7 @@ POLL_INTERVAL_S = 0.5
 PROBE_TIMEOUT_S = 5.0
 MUTATION_TIMEOUT_S = 15.0
 LEGACY_WRITER_BARRIER_TIMEOUT_S = 5.0
+LEGACY_HEALTH_REPROOF_WAIT_S = 30.0
 
 ROBOT_STOPPED_PAIR = ("ROBOT_STOPPED", "ROBOT_STOPPED")
 ROBOT_STOPPABLE = {("ROBOT_RUNNING", "READY"), ("ROBOT_RUNNING", "PAUSED")}
@@ -466,23 +467,53 @@ class RuntimeShutdown:
         return None
 
     def _legacy_backend_attribution(self) -> LegacyBackendProof:
-        try:
-            status, health = self._get(self._backend + "/api/health", PROBE_TIMEOUT_S)
-        except Unreachable as exc:
-            raise SafeStopError("legacy PAPER backend disappeared before ownership proof") from exc
-        if not (
-            status == 200 and isinstance(health, dict) and health.get("ok") is True
-            and health.get("component") == "paper_backend" and health.get("mode") == "paper"
-            and health.get("database_identity") == self._expected
-        ):
-            raise SafeStopError("legacy PAPER backend identity changed before termination")
-        process_instance_id = health.get("process_instance_id")
-        build_sha = health.get("build_sha")
-        if not isinstance(process_instance_id, str) or not process_instance_id.strip():
-            raise SafeStopError("legacy PAPER backend process instance is unproven")
-        if not isinstance(build_sha, str):
-            raise SafeStopError("legacy PAPER backend build attribution is unproven")
-        return LegacyBackendProof(process_instance_id.strip(), build_sha.strip())
+        # The legacy /api/health handler itself runs through the serialized
+        # PAPER owner queue. During ingress saturation a read-only identity
+        # re-proof can therefore time out or return paper_runtime_unavailable
+        # even while the exact backend process is still alive. GET is safe to
+        # retry; mutations remain strictly single-attempt.
+        deadline = self._monotonic() + LEGACY_HEALTH_REPROOF_WAIT_S
+        attempts = 0
+        while True:
+            attempts += 1
+            remaining = deadline - self._monotonic()
+            timeout = min(PROBE_TIMEOUT_S, max(0.1, remaining))
+            transient = None
+            try:
+                status, health = self._get(self._backend + "/api/health", timeout)
+            except Unreachable:
+                transient = "transport unavailable"
+                status, health = None, None
+            else:
+                if (
+                    status == 200 and isinstance(health, dict) and health.get("ok") is True
+                    and health.get("component") == "paper_backend" and health.get("mode") == "paper"
+                    and health.get("database_identity") == self._expected
+                ):
+                    process_instance_id = health.get("process_instance_id")
+                    build_sha = health.get("build_sha")
+                    if not isinstance(process_instance_id, str) or not process_instance_id.strip():
+                        raise SafeStopError("legacy PAPER backend process instance is unproven")
+                    if not isinstance(build_sha, str):
+                        raise SafeStopError("legacy PAPER backend build attribution is unproven")
+                    return LegacyBackendProof(process_instance_id.strip(), build_sha.strip())
+                if (
+                    status == 503 and isinstance(health, dict)
+                    and health.get("error") == "paper_runtime_unavailable"
+                ):
+                    transient = "serialized owner unavailable"
+                else:
+                    raise SafeStopError("legacy PAPER backend identity changed before termination")
+
+            if self._monotonic() >= deadline:
+                raise SafeStopError(
+                    "legacy PAPER backend identity re-proof timed out while owner queue was overloaded"
+                )
+            self._mark(
+                f"legacy backend identity re-proof delayed ({transient}); "
+                f"retrying read-only probe attempt {attempts + 1}"
+            )
+            self._sleep(POLL_INTERVAL_S)
 
     def _require_scanner_stopped(self) -> None:
         try:
