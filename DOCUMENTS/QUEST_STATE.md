@@ -11,13 +11,12 @@
 - реальный `AKEUSDT 5m -> 🤖 Робот -> Сигнал принят`;
 - server-side Telegram Menu/8 commands подтверждены Bot API.
 
-Открыт один новый Box-blocker:
-`ARUSDT 1m -> plan_ikigai_box() -> no tick-aligned STOP beyond P4 satisfies net RR >= 2`.
+ARUSDT 1m классифицирован: это не Box-баг. Frozen stop-math дал
+`NO_VALID_STOP_EXISTS`: RR>=2 требует STOP >= 4.780, а STOP строго за P4
+требует <= 4.777. Пересечения нет, поэтому отсутствие `🤖 Робот` корректно.
 
-Следующее действие разработки: математически разложить frozen ARUSDT STOP interval
-(RR-bound, P4, соседние ticks, комиссии) и доказать: bug в search/rounding либо
-корректный fail-closed non-executable setup. До этого не ослаблять risk contract
-и не тратить новый полный owner acceptance.
+Следующее действие разработки возвращается к основному P0:
+RVL-R2 — deterministic RED для continuous multi-symbol `ENTRY_PENDING` overflow.
 
 ## 🎯 АКТИВНЫЙ РЕЙД — «Две лаборатории»
 
@@ -263,7 +262,7 @@ standalone `main.py` и backend `ScannerControlRuntime` являются раз�
 - [x] PR #276 merged (`0f72355`): canonical tracked safe-stop path без process-title kills/forced close;
 - [x] owner-PC: current `main` загружен, desktop Robot start/stop path перенаправлен на canonical tracked launchers и safe-stop owner-run подтверждён;
 - [x] P0.5: PR #285 (`543168420afaab3b0dde9be083969ff867b69263`) реализовал общий Runtime Intent Reconciler; owner-run desktop `Запуск робота` доказал one-action ALL до Robot READY + Scanner RUNNING;
-- [ ] завершить текущий чистый полный owner-run PAPER acceptance. Частичный checkpoint доказал реальный CONFIRMED AKEUSDT 5m -> `🤖 Робот` -> `Сигнал принят`; server-side Telegram Menu подтверждён Bot API. Но acceptance снова RED на отдельном `ARUSDT 1m` Box blocker: grid/TAKE tick-normalization уже проходит, затем `plan_ikigai_box()` не находит tick-aligned STOP за P4 с net RR >= 2. Это отдельный STOP/RR defect class, не повтор PR #300.
+- [ ] завершить чистый полный owner-run PAPER acceptance после текущих P0 stability gates. Частичный checkpoint уже доказал реальный CONFIRMED AKEUSDT 5m -> `🤖 Робот` -> `Сигнал принят`; server-side Telegram Menu подтверждён Bot API. ARUSDT 1m больше не считается blocker: frozen stop-math доказал корректный fail-closed non-executable setup under P4 + net RR >= 2.
 
 **Награда:** без XP за документацию/рефакторинг; награда только за доказанный
 полный запуск без ручного кризисного восстановления.
