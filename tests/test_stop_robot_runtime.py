@@ -597,6 +597,111 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
         self.assertEqual(runtime.legacy_evidence_checks, 1)
         self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
+    def test_starvation_path_retries_transient_legacy_health_reproof(self):
+        runtime = self.stale_arm_runtime()
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {"capacity": 64, "current_pending": 63, "high_watermark": 64},
+        })
+        original_get = runtime.get
+        health_calls = 0
+
+        def flaky_get(url, timeout):
+            nonlocal health_calls
+            if url == BACKEND + "/api/health":
+                health_calls += 1
+                if health_calls == 2:
+                    raise shutdown.Unreachable("owner queue timeout")
+            return original_get(url, timeout)
+
+        runtime.get = flaky_get
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertGreaterEqual(health_calls, 3)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_starvation_path_retries_503_owner_unavailable_health_reproof(self):
+        runtime = self.stale_arm_runtime()
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {"capacity": 64, "current_pending": 63, "high_watermark": 64},
+        })
+        original_get = runtime.get
+        health_calls = 0
+
+        def flaky_get(url, timeout):
+            nonlocal health_calls
+            if url == BACKEND + "/api/health":
+                health_calls += 1
+                if health_calls == 2:
+                    return 503, {"ok": False, "error": "paper_runtime_unavailable"}
+            return original_get(url, timeout)
+
+        runtime.get = flaky_get
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertGreaterEqual(health_calls, 3)
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_legacy_health_reproof_timeout_stays_fail_closed(self):
+        runtime = self.stale_arm_runtime()
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {"capacity": 64, "current_pending": 64, "high_watermark": 64},
+        })
+        original_get = runtime.get
+        health_calls = 0
+
+        def unavailable_after_initial_probe(url, timeout):
+            nonlocal health_calls
+            if url == BACKEND + "/api/health":
+                health_calls += 1
+                if health_calls >= 2:
+                    raise shutdown.Unreachable("owner queue timeout")
+            return original_get(url, timeout)
+
+        runtime.get = unavailable_after_initial_probe
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("identity re-proof timed out", result.message)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+        self.assertFalse(any(call.startswith("terminate:") for call in runtime.calls))
+
+    def test_legacy_health_identity_mismatch_is_not_retried(self):
+        runtime = self.stale_arm_runtime()
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {"capacity": 64, "current_pending": 64, "high_watermark": 64},
+        })
+        original_get = runtime.get
+        health_calls = 0
+
+        def changed_identity(url, timeout):
+            nonlocal health_calls
+            if url == BACKEND + "/api/health":
+                health_calls += 1
+                if health_calls == 2:
+                    changed = dict(runtime.backend_health)
+                    changed["database_identity"] = "other-db"
+                    return 200, changed
+            return original_get(url, timeout)
+
+        runtime.get = changed_identity
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("identity changed", result.message)
+        self.assertEqual(health_calls, 2)
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+        self.assertFalse(any(call.startswith("terminate:") for call in runtime.calls))
+
     def test_starvation_bypass_requires_robot_already_stopped(self):
         runtime = self.stale_arm_runtime()
         runtime.robot = READY
