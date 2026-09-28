@@ -1,5 +1,6 @@
 """Unified owner runtime shutdown with fake HTTP, Robot state and clock; no real process."""
 
+from contextlib import nullcontext
 from pathlib import Path
 import io
 import json
@@ -151,6 +152,7 @@ class FakeRuntime:
             sleep=self.sleep, monotonic=lambda: self.now,
             legacy_resolver=self.resolve_legacy, legacy_terminator=self.terminate_legacy,
             legacy_paper_quiescence=self.prove_legacy_paper_quiescence,
+            legacy_paper_guard=lambda: nullcontext(),
         )
 
 
@@ -626,6 +628,28 @@ class LegacyPaperQuiescenceTests(unittest.TestCase):
                     self.make_db(path, blocker)
                     with self.assertRaisesRegex(shutdown.SafeStopError, phrase):
                         shutdown.prove_legacy_paper_quiescence(path)
+
+
+    def test_final_guard_blocks_competing_writes_without_editing_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "guard.sqlite3"
+            self.make_db(path)
+            with shutdown.hold_legacy_paper_quiescence(path):
+                competitor = sqlite3.connect(path, timeout=0.0)
+                try:
+                    with self.assertRaises(sqlite3.OperationalError):
+                        competitor.execute(
+                            "INSERT INTO robot_candidates VALUES ('paper', 'APPROVED')"
+                        )
+                finally:
+                    competitor.close()
+            verify = sqlite3.connect(path)
+            try:
+                self.assertEqual(
+                    verify.execute("SELECT COUNT(*) FROM robot_candidates").fetchone()[0], 0,
+                )
+            finally:
+                verify.close()
 
 
 class OwnershipTests(unittest.TestCase):
