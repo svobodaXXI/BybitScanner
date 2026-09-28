@@ -466,23 +466,26 @@ class RuntimeShutdown:
             )
         except Unreachable as exc:
             raise SafeStopError("Robot protection health is unavailable") from exc
-        if (
-            status != 200 or not isinstance(health, dict)
-            or health.get("healthy") is not True or health.get("unhealthy_symbols") != {}
-        ):
-            raise SafeStopError("legacy Robot protection is not healthy")
+        if status != 200 or not isinstance(health, dict):
+            raise SafeStopError("legacy Robot protection shape is unavailable")
         covered = health.get("covered_symbols")
         armed = health.get("armed_symbols")
         roles = health.get("coverage_roles")
+        unhealthy = health.get("unhealthy_symbols")
+        healthy = health.get("healthy")
         if (
             not isinstance(covered, (list, tuple))
             or not isinstance(armed, (list, tuple))
             or not isinstance(roles, dict)
+            or not isinstance(unhealthy, dict)
+            or not isinstance(healthy, bool)
         ):
             raise SafeStopError("legacy Robot protection shape is unavailable")
         if (
             any(not isinstance(item, str) or not item.strip() for item in (*covered, *armed))
             or any(not isinstance(key, str) or not key.strip() for key in roles)
+            or any(not isinstance(key, str) or not key.strip() for key in unhealthy)
+            or any(not isinstance(value, str) or not value.strip() for value in unhealthy.values())
         ):
             raise SafeStopError("legacy Robot protection shape is malformed")
         covered_set = {item.strip().upper() for item in covered}
@@ -490,6 +493,10 @@ class RuntimeShutdown:
         normalized_roles = {
             str(key).strip().upper(): str(value).strip().upper()
             for key, value in roles.items()
+        }
+        normalized_unhealthy = {
+            str(key).strip().upper(): str(value).strip().lower()
+            for key, value in unhealthy.items()
         }
         if (
             not covered_set
@@ -500,6 +507,21 @@ class RuntimeShutdown:
             or any(role != "ENTRY_PENDING" for role in normalized_roles.values())
         ):
             raise SafeStopError("remaining legacy protection is not stale temporary ENTRY_PENDING coverage")
+        # A pre-retirement legacy backend can become unhealthy only because
+        # market-data admission overflowed while these orphan temporary arms
+        # were still subscribed. Once Scanner + Robot are STOPPED and the
+        # durable quiescence proof confirms no candidate/order/exposure/
+        # obligation exists, there is no trading ownership left for that lost
+        # continuity to protect. Accept only this exact transient reason.
+        if normalized_unhealthy:
+            if (
+                healthy is not False
+                or not set(normalized_unhealthy).issubset(covered_set)
+                or any(reason != "ingress_overflow" for reason in normalized_unhealthy.values())
+            ):
+                raise SafeStopError("legacy Robot protection unhealthy state is not shutdown-safe")
+        elif healthy is not True:
+            raise SafeStopError("legacy Robot protection health flag is inconsistent")
 
     def _prove_legacy_entry_coverage(self) -> LegacyBackendProof:
         if self._robot_state() != ROBOT_STOPPED_PAIR:
