@@ -35,7 +35,7 @@ class TelegramMonitoringTests(unittest.TestCase):
             fixture.start()
             self.addCleanup(fixture.stop)
 
-    def _record(self, *, phase="WAITING_RETEST", execution=None):
+    def _record(self, *, phase="WAITING_RETEST", execution=None, candidate_id="cand-1"):
         state = {
             "phase": phase,
             "pattern": "Falling Wedge",
@@ -44,7 +44,7 @@ class TelegramMonitoringTests(unittest.TestCase):
         if execution is not None:
             state["execution"] = execution
         return RobotCandidateRecord(
-            candidate_id="cand-1",
+            candidate_id=candidate_id,
             trading_account_id=TradingAccountId("paper"),
             symbol=Symbol("1000NEIROCTOUSDT"),
             status="APPROVED",
@@ -73,19 +73,49 @@ class TelegramMonitoringTests(unittest.TestCase):
         )
         self.assertEqual(monitoring._phase_label(record), "Лимитный ордер выставлен")
 
-    def test_candidate_keyboard_uses_candidate_id(self):
-        keyboard = monitoring.build_candidate_keyboard((self._record(),))
+    def test_candidate_keyboard_uses_bounded_callback_token(self):
+        record = self._record(candidate_id="box-robot-" + "a" * 64)
+        keyboard = monitoring.build_candidate_keyboard((record,))
         button = keyboard["inline_keyboard"][0][0]
-        self.assertEqual(button["callback_data"], "monitor:candidate:cand-1")
+        token = monitoring._candidate_callback_token(record.candidate_id)
+        self.assertEqual(button["callback_data"], "monitor:c:" + token)
+        self.assertLessEqual(len(button["callback_data"].encode("utf-8")), 64)
         self.assertIn("1000NEIROCTOUSDT", button["text"])
+        self.assertEqual(
+            monitoring._resolve_candidate_callback_token(token, (record,)),
+            record,
+        )
 
     def test_parse_monitor_callbacks(self):
+        token = "0123456789abcdef"
         self.assertEqual(monitoring.parse_monitor_callback("monitor:list"), {"action": "list"})
+        self.assertEqual(
+            monitoring.parse_monitor_callback("monitor:c:" + token),
+            {"action": "candidate", "token": token},
+        )
         self.assertEqual(
             monitoring.parse_monitor_callback("monitor:candidate:cand-1"),
             {"action": "candidate", "candidate_id": "cand-1"},
         )
+        self.assertIsNone(monitoring.parse_monitor_callback("monitor:c:short"))
         self.assertIsNone(monitoring.parse_monitor_callback("robot:approve:cand-1"))
+
+    def test_candidate_callback_token_collision_fails_closed(self):
+        first = self._record(candidate_id="cand-1")
+        second = self._record(candidate_id="cand-2")
+        with patch.object(monitoring, "_candidate_callback_token", return_value="0" * 16):
+            self.assertIsNone(
+                monitoring._resolve_candidate_callback_token("0" * 16, (first, second))
+            )
+
+    @patch("telegram_monitoring.telegram_bot.send_message")
+    @patch("telegram_monitoring._load_active_candidates")
+    def test_candidate_list_surfaces_telegram_rejection(self, load, send):
+        load.return_value = (self._record(candidate_id="box-robot-" + "a" * 64),)
+        send.return_value = {"ok": False, "error_code": 400, "description": "Bad Request"}
+
+        with self.assertRaisesRegex(RuntimeError, "candidate list sendMessage failed"):
+            monitoring._send_candidate_list(123)
 
     def test_robot_runtime_statuses_are_short_and_localized(self):
         cases = (
