@@ -53,14 +53,15 @@ ARUSDT 1m классифицирован: это не Box-баг. Frozen stop-ma
 `NO_VALID_STOP_EXISTS`: RR>=2 требует STOP >= 4.780, а STOP строго за P4
 требует <= 4.777. Пересечения нет, поэтому отсутствие `🤖 Робот` корректно.
 
-Следующее действие разработки возвращается к основному P0:
-RVL-R2 — deterministic RED для continuous multi-symbol `ENTRY_PENDING` overflow.
+Следующее действие разработки — основной P0 gate RVL-R6:
+одна полная owner PAPER acceptance на текущем merged main. RVL-R2..R5 уже
+закрыты и не повторяются.
 
 ## 🎯 АКТИВНЫЙ РЕЙД — «Две лаборатории»
 
 **Приоритет:** P0  
 **Канон:** `DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md` §§10–13  
-**Активный квест:** **RVL-R2 — Continuous ENTRY_PENDING overflow → deterministic RED**
+**Активный квест:** **RVL-R6 — canonical owner PAPER acceptance**
 
 Цель рейда: закрыть два главных блокирующих босса v0.1 без повторных длинных
 циклов ручной проверки.
@@ -69,11 +70,11 @@ RVL-R2 — deterministic RED для continuous multi-symbol `ENTRY_PENDING` over
 
 Очередь:
 1. ✅ RVL-R1 — replay contract/runner: PR #296, Robot PAPER acceptance #226 PASS;
-2. ▶ RVL-R2 — реальный класс continuous `ENTRY_PENDING` overflow как RED;
-3. RVL-R3 — точная граница ENTRY_PENDING coverage;
-4. RVL-R4 — минимальный production fix;
-5. RVL-R5 — replay pack + focused PAPER CI;
-6. RVL-R6 — один реальный owner PAPER acceptance.
+2. ✅ RVL-R2 — реальный класс continuous `ENTRY_PENDING` overflow воспроизведён;
+3. ✅ RVL-R3 — точная граница ENTRY_PENDING coverage;
+4. ✅ RVL-R4 — минимальный production fix;
+5. ✅ RVL-R5 — replay pack + focused PAPER CI;
+6. ▶ RVL-R6 — один реальный owner PAPER acceptance.
 
 Босс не считается поверженным до RVL-R6 PASS.
 
@@ -92,9 +93,10 @@ Autopilot и остальной feature expansion сохранены в доку
 в Таверне ожидания до прохождения двух quality gates либо явного нового решения
 владельца.
 
-**Следующий технический outcome:** deterministic production-shape fixture для
-пяти наблюдавшихся `ENTRY_PENDING` symbols, который на current main
-воспроизводит saturation/overflow без искусственных mid-stream drain barriers.
+**Следующий технический outcome:** завершить RVL-R6: sustained real
+multi-symbol PAPER traffic, protection healthy без `ingress_overflow`, queue
+drain и normal reconcile/restart без повторения инцидента. Shutdown-path уже
+отдельно доказан и не требует повторного расследования.
 
 XP за сам план/очередь не начисляется.
 
