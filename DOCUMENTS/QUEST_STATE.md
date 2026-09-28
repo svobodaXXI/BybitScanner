@@ -1,3 +1,26 @@
+## ✅ SHUTDOWN INCIDENT CLOSED — 2026-09-28
+
+Canonical owner stop is now proven on a clean cycle from main
+`d3504c695c5793dde6c41cf952276535d56a324a` (#322):
+
+- fresh desktop start reached Robot READY and Scanner RUNNING;
+- one desktop `Остановить робота` action completed;
+- backend/Telegram/stop windows closed without extra input;
+- post-stop read-only proof: no listeners on 8765/8766, no PAPER backend,
+  Telegram worker or new stop-shell process;
+- five historical idle stop-shells from the old #316 `pause` behavior were
+  separately removed after exact PID/command-line verification and did not
+  recur on the clean #322 cycle.
+
+The investigation path and recurrence fast path are recorded in
+`DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md`. Do not repeat the #310-#322
+shutdown investigation without contradictory new evidence.
+
+This closes the shutdown sub-incident only. **RVL-R6 remains ACTIVE** until a
+real sustained owner PAPER acceptance proves protection healthy, no
+`ingress_overflow`, queue drain under multi-symbol traffic, and normal
+reconcile/restart without recurrence.
+
 ## 🤖 ROBOT STABILITY CHECKPOINT — 2026-09-28
 
 PR #305 merged as `76a89efa1d48f7821b16fb5fcddf8f6de6fda60b`.
