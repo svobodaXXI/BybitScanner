@@ -579,6 +579,11 @@ def parse_monitor_callback(data: str):
         token = text[len(MONITOR_CANDIDATE_PREFIX):]
         if len(token) == MONITOR_TOKEN_HEX_LENGTH and all(char in "0123456789abcdef" for char in token):
             return {"action": "candidate", "token": token}
+    legacy_prefix = "monitor:candidate:"
+    if text.startswith(legacy_prefix):
+        candidate_id = text[len(legacy_prefix):]
+        if candidate_id:
+            return {"action": "candidate", "candidate_id": candidate_id}
     return None
 
 
@@ -653,6 +658,8 @@ def _process_monitor_callback(callback_query) -> bool:
     _answer_callback(callback_query.get("id"))
     if parsed["action"] == "list":
         _send_candidate_list(chat_id)
+    elif "candidate_id" in parsed:
+        _send_candidate_card(chat_id, parsed["candidate_id"])
     else:
         records = _load_active_candidates()
         record = _resolve_candidate_callback_token(parsed["token"], records)
