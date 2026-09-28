@@ -20,10 +20,25 @@ Morning classification update:
 - therefore the no-Robot-button result is correct fail-closed behavior;
 - PR #300 remains closed and no STOP-search code change is required.
 
-The next active engineering task returns to the already-authoritative queue:
-RVL-R2 continuous multi-symbol `ENTRY_PENDING` overflow deterministic RED.
+The active engineering gate is now RVL-R6. RVL-R2 through RVL-R5 are
+complete; do not repeat their replay/boundary/fix/CI work.
 
-Runtime state at this checkpoint is not re-asserted here; verify actual host state before any future mutation or restart.
+Shutdown sub-incident update 2026-09-28:
+- canonical stop repair chain #310-#322 is closed and documented in
+  `DOCUMENTS/RUNTIME_KNOWN_FAILURE_FAST_PATH.md`;
+- clean owner cycle on main `d3504c695c5793dde6c41cf952276535d56a324a`
+  reached Robot READY + Scanner RUNNING, then one desktop stop action left no
+  listeners on 8765/8766, no backend/Telegram process and no new stop-shell;
+- five historical #316 `pause` shells were identity-checked and removed once;
+  they did not recur;
+- this proves the canonical shutdown path, but does **not** complete RVL-R6:
+  sustained real multi-symbol traffic, healthy protection/no
+  `ingress_overflow`, queue drain and normal reconcile/restart evidence are
+  still required.
+
+Runtime is currently fully down after the clean stop proof. Verify actual host
+state before any future mutation or restart rather than assuming this snapshot
+remains current.
 
 ## NOW — 2026-09-27 — OWNER CORRECTION: IKIGAI BOX HAS NO WATCH USER MODE
 
@@ -68,7 +83,7 @@ explicitly reprioritizes.
 | 14 | RVL-V2 | P2 conditional | Bounded normalized incident capture | only if production-shape replay fidelity proves insufficient |
 | 15 | RVL-V3 | P2 | Tier-aware CI routing | focused FAST/REPLAY automatic; broader PAPER CI remains bounded |
 
-**Active task:** RVL-R6 — one canonical owner PAPER acceptance on merged main `76a89efa1d48f7821b16fb5fcddf8f6de6fda60b`.
+**Active task:** RVL-R6 — one canonical owner PAPER acceptance on current merged main. Shutdown itself is already owner-verified on `d3504c695c5793dde6c41cf952276535d56a324a`; the remaining R6 evidence is sustained real-traffic stability plus reconcile/restart non-recurrence.
 
 Hard sequencing:
 - no new production ingress fix before RVL-R2 RED and RVL-R3 boundary proof;
