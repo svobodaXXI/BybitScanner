@@ -376,6 +376,14 @@ Owner-run additions from 2026-09-28:
   cross-pattern selection/dedup or Box eligibility suppressed a valid later
   Box. Earlier Triangle presence must not by itself exclude a later independent
   Box.
+- **Recurring post-breakdown secondary Box family** — CARVUSDT, CPUSDT,
+  CROSSUSDT and CLOUSDT 5m are owner-observed examples of the broader visual
+  sequence `compression -> downside sloping-boundary break -> compact later
+  consolidation/Box`. Treat this as a candidate defect/edge family, not four
+  ticker-specific exceptions. Freeze representative source-time positives and
+  negatives and determine whether the valid implementation is existing Ikigai
+  Box detection after independent pattern completion or a separately specified
+  secondary-Box subtype.
 
 **Done when:** available source-time OHLC evidence is mapped to candidate cases
 and gaps are explicit; no invented expected anchors.
