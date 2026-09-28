@@ -83,7 +83,11 @@ class RuntimeReplayContractTests(unittest.TestCase):
 
 
 class RuntimeReplayEntryPendingOverflowTests(unittest.TestCase):
-    """RVL-R2 RED: pre-LIMIT candidates under a bounded reconcile stall, via the manager.
+    """RVL-R2: pre-LIMIT candidates under a bounded reconcile stall, via the manager.
+
+    RED before RVL-R4 (pre-LIMIT RETEST_DETECTED was ENTRY_PENDING-subscribed and the
+    stall overflowed the 64 ingress); GREEN since RVL-R4 moved ENTRY_PENDING to the
+    durable resting-LIMIT boundary.
 
     Lifecycle state: five APPROVED / RETEST_DETECTED candidates, NO limit_order_id, no
     resting LIMIT -- nothing a book event could fill. The production path under test is
@@ -142,11 +146,16 @@ class RuntimeReplayEntryPendingOverflowTests(unittest.TestCase):
             f"unhealthy={dict(health['unhealthy_symbols'])} "
             f"reconcile={result.reconcile_outcome}"
         )
-        # Target contract (RED on current code): events of symbols that have no
-        # fill-capable resting LIMIT are not protection-critical, so none of them may
-        # enter protection ingress, overflow it, or turn any symbol unhealthy. This is
-        # NOT "all 80 events processed": they should not belong to protection ingress.
+        # Target contract: events of symbols that have no fill-capable resting LIMIT are
+        # not protection-critical, so none of them may enter protection ingress,
+        # overflow it, or turn any symbol unhealthy. This is NOT "all 80 events
+        # processed": they do not belong to protection ingress at all.
+        self.assertEqual(dict(result.covered_roles), {}, evidence)
+        self.assertEqual(result.unsubscribed_event_ids, ids, evidence)
         self.assertEqual(result.admitted_event_ids + result.overflow_event_ids, (), evidence)
+        self.assertEqual(result.fence_overflows, 0, evidence)
+        self.assertEqual(health["ingress"]["high_watermark"], 0, evidence)
+        self.assertEqual(health["ingress"]["capacity"], self.CAPACITY, evidence)
         self.assertEqual(health["unhealthy_symbols"], {}, evidence)
         self.assertTrue(health["healthy"], evidence)
 
@@ -309,9 +318,47 @@ class RuntimeReplayEntryPendingLifecycleBoundaryTests(unittest.TestCase):
                 candidate("c-dup-dead", "DUPUSDT", "o-dup-dead", "cancelled", "0")
                 candidate("c-dup-live", "DUPUSDT", "o-dup-live", "open", "0")
 
+                def unlinked(candidate_id, symbol, robot_state):
+                    record, _ = runtime.store.create_robot_candidate(
+                        candidate_id=candidate_id, trading_account_id=account, symbol=Symbol(symbol),
+                        status="APPROVED",
+                        signal_snapshot={"symbol": symbol, "pattern": "IKIGAI_BOX", "case": candidate_id},
+                        approved_at_ms=1_000, updated_at_ms=1_000,
+                    )
+                    runtime.store.save_robot_candidate_state(
+                        candidate_id, status="APPROVED", robot_state=robot_state,
+                        expected_revision=record.state_revision, updated_at_ms=1_001,
+                    )
+
+                # RVL-R4 start boundary: pre-LIMIT RETEST_DETECTED is not ENTRY_PENDING.
+                unlinked("c-pre", "PREUSDT", {"phase": "RETEST_DETECTED", "execution": {}})
+                # Ikigai Box grid: the same resting-LIMIT rule over its four linked LIMITs.
+                def grid(prefix, symbol, statuses):
+                    for index, status in enumerate(statuses):
+                        runtime.store.create_paper_limit(
+                            client_action_id=f"seed-{prefix}-{index}",
+                            request_fingerprint=f"fp-{prefix}-{index}",
+                            order_id=OrderId(f"{prefix}-{index}"),
+                            order_link_id=f"link-{prefix}-{index}",
+                            trading_account_id=account, symbol=Symbol(symbol), side=OrderSide.BUY,
+                            price=Decimal("1"), quantity=Decimal("1"), created_at_ms=1_000,
+                        )
+                        runtime.store._connection.execute(
+                            "UPDATE paper_limit_orders SET status=? WHERE order_id=?",
+                            (status, f"{prefix}-{index}"),
+                        )
+
+                grid("o-box", "BOXUSDT", ("open", "cancelled", "cancelled", "cancelled"))
+                grid("o-boxc", "BOXCUSDT", ("cancelled",) * 4)
+                unlinked("c-box", "BOXUSDT", {"phase": "BOX_ENTRY_READY", "execution": {
+                    "limit_order_ids": [f"o-box-{index}" for index in range(4)]}})
+                unlinked("c-box-dead", "BOXCUSDT", {"phase": "BOX_ENTRY_READY", "execution": {
+                    "limit_order_ids": [f"o-boxc-{index}" for index in range(4)]}})
+
                 # Any fill (partial, full, or a filled-then-cancelled remainder) stays
                 # ENTRY_PENDING until finalization; a cancelled unfilled LIMIT drops out.
                 self.assertEqual(runtime.robot_protection_coverage_roles(), {
+                    "BOXUSDT": "ENTRY_PENDING",
                     "CXLFUSDT": "ENTRY_PENDING",
                     "DUPUSDT": "ENTRY_PENDING",
                     "FILLUSDT": "ENTRY_PENDING",
@@ -335,72 +382,41 @@ class RuntimeReplayEntryPendingLifecycleBoundaryTests(unittest.TestCase):
 
 
 class RuntimeReplayEntryPendingCoverageStartBoundaryTests(unittest.TestCase):
-    """RVL-R3 (C): where a resting entry LIMIT and its protection coverage start.
+    """RVL-R3 (C) / RVL-R4: where a resting entry LIMIT and its protection coverage start.
 
-    Freezes the production call order that any R4 change of the ENTRY_PENDING start
-    boundary has to respect:
+    Before RVL-R4 nothing ordered coverage before LIMIT creation: coverage came only
+    from resync() polling, and pre-LIMIT RETEST_DETECTED stayed ENTRY_PENDING-subscribed
+    purely as a timing margin. Since RVL-R4 the production order is:
 
-      robot-breakout-monitor tick (DEFAULT_TICK_INTERVAL_S = 60 s), no limit_order_id yet
-        1. owner task    _robot_create_limit -> durable 'open' paper_limit_orders row
-        2. monitor thread _persist_execution -> save_robot_candidate_state (limit_order_id)
-      robot-protection-coverage thread (resync_interval_s = 5 s)
-        3. resync() -> owner call(role discovery) -> hub.subscribe / add_update_listener
-      hub -> _on_update -> enqueue -> owner process_robot_market_event, which fills only
-         LIMITs named by a persisted limit_order_id.
+      robot-breakout-monitor thread (RETEST_DETECTED, no limit_order_id)
+        1. arm_entry_coverage(symbol): hub subscribe + listeners attached, no owner call
+           (fail closed: unbound arm, arm failure or owner thread -> no LIMIT this tick)
+        2. owner task      _robot_create_limit -> durable 'open' LIMIT          [txn #1]
+        3. monitor thread  _persist_execution  -> limit_order_id                [txn #2]
+      robot-protection-coverage resync(): wanted = durable roles | arms; an arm ends in
+        the same pass that first sees its durable ENTRY_PENDING role (gap-free hand-over).
 
-    Nothing orders 3 before 1. Today the symbol is normally covered before the LIMIT
-    exists only because the pre-LIMIT clause (RETEST_DETECTED without limit_order_id ->
-    ENTRY_PENDING) is discovered a monitor tick (60 s) ahead of LIMIT creation.
-    Simply removing that clause is therefore unsafe: the R2 fix (pre-LIMIT traffic must
-    leave protection ingress) needs a synchronous coverage-arm barrier first:
-
-      monitor thread: arm coverage for the symbol; WAIT until the hub listener is active
-                      -> create the durable resting LIMIT -> persist limit_order_id
-                      -> the durable ENTRY_PENDING role takes over from the arm.
-
-    Constraints proven below: coverage is never established by lifecycle commits, only
-    by resync(); resync() drops any subscription that has no durable role behind it, so
-    an arm must survive resync until the hand-over; and the barrier may only be called
-    from a non-owner thread (a nested SerializedPaperRuntime.call() from the owner
-    thread deadlocks, see _DirectRobotActionExecutor). W1 (create -> link) is not shown
-    to lose a first fill: the LIMIT stays open and unlinked-window events do not fill it.
+    W1 (between txn #1 and #2) remains: its events are admitted but cannot fill the
+    not-yet-linked LIMIT; the orphan-on-crash case is separate debt.
     """
 
-    def test_production_topology_creates_limit_on_owner_then_links_it_from_monitor_thread(self):
-        events: list[tuple[str, str, str]] = []
-        probes: dict[str, dict[str, object]] = {}
+    def test_production_monitor_arms_coverage_before_creating_the_resting_limit(self):
+        events: list[tuple[str, str, bool]] = []
+        probes: dict[str, object] = {}
         sequence = iter(range(1, 100))
 
-        def entry_only_book(event_id: str, limit_price: Decimal):
+        def book_event(limit_price: Decimal) -> RuntimeReplayEvent:
             # Ask exactly at the resting BUY price fills it; the bid one tick lower
-            # stays far above the not-yet-existing trade's STOP.
+            # stays far above the future trade's STOP.
             number = next(sequence)
             now_ms = int(time.time() * 1000)
             return RuntimeReplayEvent(
-                event_id=event_id, symbol=TOPOLOGY_SYMBOL, coverage_role="ENTRY_PENDING",
-                bid=limit_price - Decimal("0.1"), ask=limit_price, bid_size=Decimal("1000"),
-                ask_size=Decimal("1000"), received_at_ms=now_ms,
+                event_id=f"{TOPOLOGY_SYMBOL}:{number}:{number}", symbol=TOPOLOGY_SYMBOL,
+                coverage_role="ENTRY_PENDING", bid=limit_price - Decimal("0.1"), ask=limit_price,
+                bid_size=Decimal("1000"), ask_size=Decimal("1000"), received_at_ms=now_ms,
                 source_generation=0, source_sequence=number, source_update_id=number,
                 source_event_at_ms=now_ms,
-            ).book()
-
-        def observe(owner: PaperRuntime, order_id: str, event_id: str) -> dict[str, object]:
-            # Runs on the owner thread: durable state, coverage role, then one
-            # fill-capable book event through the production protection path.
-            before = owner.store.get_paper_limit(order_id, TOPOLOGY_ACCOUNT_ID)
-            candidate = owner.store.get_robot_candidate("candidate-1")
-            linked = ((candidate.robot_state or {}).get("execution") or {}).get("limit_order_id")
-            roles = owner.robot_protection_coverage_roles()
-            owner.process_robot_market_event(
-                TOPOLOGY_SYMBOL, entry_only_book(event_id, before.price), event_id=event_id,
-                received_at_ms=int(time.time() * 1000),
             )
-            after = owner.store.get_paper_limit(order_id, TOPOLOGY_ACCOUNT_ID)
-            return {
-                "status_before": before.status, "filled_before": before.filled_quantity,
-                "linked_order_id": linked, "roles": roles,
-                "filled_after": after.filled_quantity,
-            }
 
         with tempfile.TemporaryDirectory() as temp:
             database_path = Path(temp) / "paper.sqlite3"
@@ -414,28 +430,54 @@ class RuntimeReplayEntryPendingCoverageStartBoundaryTests(unittest.TestCase):
                 ),
                 live_adapter_factory=_PoisonLiveAdapterFactory(),
             )
+            hub = _ReplayHub()
+            manager = RobotProtectionCoverageManager(
+                hub, runtime, resync_interval_s=3600.0, recovery_session=_OfflineRecoverySession(),
+            )
+
+            def listening() -> bool:
+                context = hub.contexts.get(TOPOLOGY_SYMBOL)
+                return context is not None and "robot-protection" in context._update_listeners
+
+            def arm(symbol: str) -> bool:
+                armed = manager.arm_entry_coverage(symbol)
+                events.append(("arm", threading.current_thread().name, armed and listening()))
+                return armed
+
             original_create = PaperRuntime._robot_create_limit
             original_save = SQLiteStore.save_robot_candidate_state
 
             def create_limit(owner, request):
+                listener_active = listening()
                 result = original_create(owner, request)
-                events.append(("limit_created", threading.current_thread().name, result.order_id))
+                events.append(("limit_created", threading.current_thread().name, listener_active))
                 return result
 
             def save_state(store, *args, **kwargs):
                 order_id = ((kwargs.get("robot_state") or {}).get("execution") or {}).get("limit_order_id")
                 if (
-                    order_id and "before_link" not in probes
+                    order_id and "window_roles" not in probes
                     and threading.current_thread().name == "robot-breakout-monitor"
                 ):
-                    events.append(("link_begins", threading.current_thread().name, order_id))
-                    probes["before_link"] = runtime.call(
-                        lambda owner: observe(owner, order_id, f"{TOPOLOGY_SYMBOL}:evt-before-link"),
+                    events.append(("link_begins", threading.current_thread().name, listening()))
+                    probes["window_roles"] = runtime.call(
+                        lambda owner: owner.robot_protection_coverage_roles(),
                     )
+                    probes["window_health"] = manager.health()
+                    price = runtime.call(
+                        lambda owner: owner.store.get_paper_limit(order_id, TOPOLOGY_ACCOUNT_ID).price,
+                    )
+                    hub.contexts[TOPOLOGY_SYMBOL].publish(book_event(price))
+                    probes["window_last_symbol"] = runtime.protection_ingress_metrics()["last_symbol"]
                 return original_save(store, *args, **kwargs)
 
             try:
                 _seed_retest_detected_candidate(runtime, "candidate-1", TOPOLOGY_SYMBOL)
+                manager.resync()
+                probes["pre_limit_health"] = manager.health()
+                runtime.call(lambda owner: owner.bind_robot_entry_coverage(
+                    arm, manager.release_entry_coverage,
+                ))
                 with patch.object(PaperRuntime, "_robot_create_limit", create_limit), patch.object(
                     SQLiteStore, "save_robot_candidate_state", save_state,
                 ):
@@ -447,34 +489,52 @@ class RuntimeReplayEntryPendingCoverageStartBoundaryTests(unittest.TestCase):
                         return execution.get("limit_order_id")
 
                     order_id = _wait_until(linked)
-                    probes["after_link"] = runtime.call(
-                        lambda owner: observe(owner, order_id, f"{TOPOLOGY_SYMBOL}:evt-after-link"),
+                    context = hub.contexts[TOPOLOGY_SYMBOL]
+                    manager.resync()
+                    probes["handoff_health"] = manager.health()
+                    probes["handoff_same_listener"] = (
+                        hub.contexts.get(TOPOLOGY_SYMBOL) is context and listening()
+                    )
+                    price = runtime.call(
+                        lambda owner: owner.store.get_paper_limit(order_id, TOPOLOGY_ACCOUNT_ID).price,
+                    )
+                    hub.contexts[TOPOLOGY_SYMBOL].publish(book_event(price))
+                    runtime.call(lambda owner: None)
+                    probes["filled_after_link"] = runtime.call(
+                        lambda owner: owner.store.get_paper_limit(
+                            order_id, TOPOLOGY_ACCOUNT_ID,
+                        ).filled_quantity,
                     )
             finally:
+                manager.close()
                 runtime.close()
 
-        # Call order and thread ownership: two separate commits on two threads.
-        self.assertEqual(
-            [(label, thread) for label, thread, _ in events],
-            [("limit_created", "paper-runtime-owner"), ("link_begins", "robot-breakout-monitor")],
-        )
-        self.assertEqual({detail for _, _, detail in events}, {order_id})
+        # Pre-LIMIT RETEST_DETECTED has no durable role and no subscription.
+        self.assertEqual(probes["pre_limit_health"]["covered_symbols"], ())
+        # Order and thread ownership: arm (listener live) -> LIMIT on owner -> link.
+        self.assertEqual(events[:3], [
+            ("arm", "robot-breakout-monitor", True),
+            ("limit_created", "paper-runtime-owner", True),
+            ("link_begins", "robot-breakout-monitor", True),
+        ])
+        # W1: no durable role yet, but the arm covers the symbol and a fill-capable
+        # event is admitted to protection ingress.
+        self.assertEqual(probes["window_roles"], {})
+        window = probes["window_health"]
+        self.assertEqual(window["covered_symbols"], (TOPOLOGY_SYMBOL,))
+        self.assertEqual(window["armed_symbols"], (TOPOLOGY_SYMBOL,))
+        self.assertEqual(window["coverage_roles"], {TOPOLOGY_SYMBOL: "ENTRY_PENDING"})
+        self.assertEqual(probes["window_last_symbol"], TOPOLOGY_SYMBOL)
+        # Hand-over: the durable role takes over in one resync pass, same listener.
+        handoff = probes["handoff_health"]
+        self.assertEqual(handoff["armed_symbols"], ())
+        self.assertEqual(handoff["covered_symbols"], (TOPOLOGY_SYMBOL,))
+        self.assertEqual(handoff["coverage_roles"], {TOPOLOGY_SYMBOL: "ENTRY_PENDING"})
+        self.assertTrue(probes["handoff_same_listener"])
+        # First fill-capable event after the link is observed and fills the LIMIT.
+        self.assertGreater(probes["filled_after_link"], Decimal("0"))
 
-        # Window between the commits: a durable resting LIMIT that a fill-capable
-        # protection-grade event cannot reach, although the symbol reads as covered
-        # (only through the pre-LIMIT clause: the LIMIT is not linked yet).
-        window = probes["before_link"]
-        self.assertEqual((window["status_before"], window["filled_before"]), ("open", Decimal("0")))
-        self.assertIsNone(window["linked_order_id"])
-        self.assertEqual(window["roles"], {TOPOLOGY_SYMBOL: "ENTRY_PENDING"})
-        self.assertEqual(window["filled_after"], Decimal("0"))
-
-        # After the link commit the same kind of event does fill it.
-        linked_probe = probes["after_link"]
-        self.assertEqual(linked_probe["linked_order_id"], order_id)
-        self.assertGreater(linked_probe["filled_after"], Decimal("0"))
-
-    def test_coverage_is_only_established_by_resync_never_by_lifecycle_commits(self):
+    def test_arm_survives_resync_and_hands_over_to_the_durable_role_without_gap(self):
         symbol = "STARTUSDT"
         account = TradingAccountId("paper")
         with tempfile.TemporaryDirectory() as temp:
@@ -484,8 +544,16 @@ class RuntimeReplayEntryPendingCoverageStartBoundaryTests(unittest.TestCase):
                 hub, owner, resync_interval_s=3600.0, recovery_session=_OfflineRecoverySession(),
             )
             try:
-                manager.resync()
-                self.assertEqual(manager.health()["covered_symbols"], ())
+                runtime = owner.call(lambda owned: owned, timeout=30.0)
+                # Fail closed: unbound, and never from the owner thread even when bound.
+                self.assertFalse(runtime._arm_robot_entry_coverage(symbol))
+                owner.call(lambda owned: owned.bind_robot_entry_coverage(
+                    manager.arm_entry_coverage, manager.release_entry_coverage,
+                ), timeout=30.0)
+                self.assertFalse(owner.call(
+                    lambda owned: owned._arm_robot_entry_coverage(symbol), timeout=30.0,
+                ))
+                self.assertEqual(manager.health()["armed_symbols"], ())
 
                 def retest_detected(runtime: PaperRuntime) -> None:
                     record, _ = runtime.store.create_robot_candidate(
@@ -514,25 +582,42 @@ class RuntimeReplayEntryPendingCoverageStartBoundaryTests(unittest.TestCase):
                         expected_revision=revision, updated_at_ms=1_003,
                     )
 
-                for step in (retest_detected, resting_limit_linked):
-                    owner.call(step, timeout=30.0)
-                    # Durable ENTRY_PENDING role exists at both steps ...
-                    self.assertEqual(
-                        owner.call(lambda runtime: runtime.robot_protection_coverage_roles(), timeout=30.0),
-                        {symbol: "ENTRY_PENDING"},
-                    )
-                    # ... but no subscription: nothing is delivered until the next poll.
-                    self.assertEqual(manager.health()["covered_symbols"], ())
-                    self.assertEqual(hub.contexts, {})
+                def roles() -> dict[str, str]:
+                    return owner.call(lambda runtime: runtime.robot_protection_coverage_roles(), timeout=30.0)
 
+                # Pre-LIMIT: no durable role, and resync() does not subscribe it.
+                owner.call(retest_detected, timeout=30.0)
+                self.assertEqual(roles(), {})
+                manager.resync()
+                self.assertEqual(manager.health()["covered_symbols"], ())
+
+                # The arm subscribes synchronously and survives resync() without a role.
+                self.assertTrue(runtime._arm_robot_entry_coverage(symbol))
+                context = hub.contexts[symbol]
+                self.assertIn("robot-protection", context._update_listeners)
+                manager.resync()
+                health = manager.health()
+                self.assertEqual(health["armed_symbols"], (symbol,))
+                self.assertEqual(health["covered_symbols"], (symbol,))
+                self.assertEqual(health["coverage_roles"], {symbol: "ENTRY_PENDING"})
+
+                # Durable role appears: one resync pass ends the arm, same listener stays.
+                owner.call(resting_limit_linked, timeout=30.0)
+                self.assertEqual(roles(), {symbol: "ENTRY_PENDING"})
+                manager.resync()
+                health = manager.health()
+                self.assertEqual(health["armed_symbols"], ())
+                self.assertEqual(health["covered_symbols"], (symbol,))
+                self.assertIs(hub.contexts[symbol], context)
+                self.assertIn("robot-protection", context._update_listeners)
+
+                # A released arm (LIMIT proven not created) is dropped by the next pass.
+                self.assertTrue(manager.arm_entry_coverage("OTHERUSDT"))
+                manager.release_entry_coverage("OTHERUSDT")
                 manager.resync()
                 self.assertEqual(manager.health()["covered_symbols"], (symbol,))
-                self.assertEqual(manager.health()["coverage_roles"], {symbol: "ENTRY_PENDING"})
-                self.assertEqual(tuple(hub.contexts), (symbol,))
 
-                # A subscription is only ever as durable as its role: once the durable
-                # state stops wanting the symbol, the next resync() drops it. An arm
-                # that precedes the durable role would be dropped the same way.
+                # The subscription lasts only as long as its durable role.
                 def invalidate(runtime: PaperRuntime) -> None:
                     revision = runtime.store.get_robot_candidate("c-start").state_revision
                     runtime.store.save_robot_candidate_state(
@@ -541,7 +626,6 @@ class RuntimeReplayEntryPendingCoverageStartBoundaryTests(unittest.TestCase):
                     )
 
                 owner.call(invalidate, timeout=30.0)
-                self.assertEqual(manager.health()["covered_symbols"], (symbol,))
                 manager.resync()
                 self.assertEqual(manager.health()["covered_symbols"], ())
                 self.assertEqual(hub.contexts, {})

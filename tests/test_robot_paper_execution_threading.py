@@ -183,7 +183,7 @@ def _build_runtime(
     database_path: Path, *, book_provider, candle_provider, live_adapter_factory,
 ) -> SerializedPaperRuntime:
     instrument = _instrument()
-    return SerializedPaperRuntime(lambda: create_configured_paper_runtime(
+    runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
         database_path,
         book_provider=book_provider,
         instrument_snapshot=instrument,
@@ -195,6 +195,12 @@ def _build_runtime(
         robot_latest_geometry_index_provider=_fixed_geometry_index_provider,
         robot_tick_interval_s=ROBOT_TICK_INTERVAL_S,
     ))
+    # These tests cover thread ownership, not protection coverage: bind an always-on
+    # entry-coverage arm (RVL-R4 arming is covered by tests/test_runtime_replay.py).
+    runtime.call(lambda owner: owner.bind_robot_entry_coverage(
+        lambda symbol: True, lambda symbol: None,
+    ))
+    return runtime
 
 
 def _activate_live_account(runtime: SerializedPaperRuntime) -> None:

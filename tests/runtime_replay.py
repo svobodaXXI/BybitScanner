@@ -10,7 +10,9 @@ from typing import Callable, Mapping
 
 import requests
 
-from terminal.domain.models import Category, Price, Quantity, Symbol, TradingAccountId
+from terminal.domain.models import (
+    Category, OrderId, OrderSide, Price, Quantity, Symbol, TradingAccountId,
+)
 from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_http_server import (
@@ -186,11 +188,13 @@ def _seed_pre_limit_candidates(
     *,
     recovery_status: str,
     reason: str | None = None,
+    resting_limit: bool = False,
 ) -> None:
-    """Durable APPROVED / RETEST_DETECTED candidates with NO limit_order_id.
+    """Durable APPROVED / RETEST_DETECTED candidates, by default with NO limit_order_id.
 
-    This is the incident's lifecycle state: no resting entry LIMIT exists, so no
-    book event can fill anything yet.
+    Without ``resting_limit`` this is the incident's lifecycle state: no resting entry
+    LIMIT exists, so no book event can fill anything yet. With it, each candidate owns
+    a linked open BUY LIMIT priced far below every fixture ask (fill-capable, unfilled).
     """
     account = TradingAccountId("paper")
     for index, symbol in enumerate(symbols):
@@ -201,9 +205,19 @@ def _seed_pre_limit_candidates(
                              "replay_fixture": fixture_name},
             approved_at_ms=1_000 + index, updated_at_ms=1_000 + index,
         )
+        execution: dict[str, object] = {}
+        if resting_limit:
+            order_id = f"replay-entry-{symbol.lower()}"
+            runtime.store.create_paper_limit(
+                client_action_id=f"seed-{order_id}", request_fingerprint=f"fp-{order_id}",
+                order_id=OrderId(order_id), order_link_id=f"link-{order_id}",
+                trading_account_id=account, symbol=Symbol(symbol), side=OrderSide.BUY,
+                price=Decimal("0.0001"), quantity=Decimal("1"), created_at_ms=1_000 + index,
+            )
+            execution["limit_order_id"] = order_id
         runtime.store.save_robot_candidate_state(
             record.candidate_id, status="APPROVED",
-            robot_state={"phase": "RETEST_DETECTED", "execution": {}},
+            robot_state={"phase": "RETEST_DETECTED", "execution": execution},
             expected_revision=record.state_revision, updated_at_ms=2_000 + index,
         )
     state = runtime.store.get_robot_runtime_state(account)
@@ -754,6 +768,7 @@ def run_coverage_manager_replay(
     The owner is held (handshake-proven) while the producer publishes the whole
     stream, then released; the production resync() retry path runs once afterwards.
     Freezes the fail-closed signals of a saturated ingress, not a product scenario.
+    Candidates own linked, unfilled resting LIMITs, i.e. genuine ENTRY_PENDING coverage.
     """
     symbols = tuple(dict.fromkeys(event.symbol for event in fixture.events))
     admitted: list[str] = []
@@ -774,6 +789,7 @@ def run_coverage_manager_replay(
             def seed(runtime: PaperRuntime) -> None:
                 _seed_pre_limit_candidates(
                     runtime, symbols, fixture.name, recovery_status="READY",
+                    resting_limit=True,
                 )
                 original = runtime.process_robot_market_event
 

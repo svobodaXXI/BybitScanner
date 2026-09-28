@@ -190,6 +190,7 @@ class RobotBreakoutMonitorLateAdmissionTests(unittest.TestCase):
             get_market_book=lambda _symbol: _book(),
             market_preflight=preflight,
             submit_market=submit,
+            arm_entry_coverage=lambda symbol: True,
         )
         return self.monitor
 

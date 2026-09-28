@@ -130,6 +130,7 @@ class RobotBreakoutMonitorAdmissionCatchupTests(unittest.TestCase):
             tick_size_provider=lambda _symbol: self.fail("tick size must not be read"),
             clock_ms=self.clock,
             get_admission_catchup_candles=catchup_provider,
+            arm_entry_coverage=lambda symbol: True,
         )
         self.monitor = monitor
         return monitor
@@ -298,6 +299,7 @@ class RobotBreakoutMonitorAdmissionCatchupTests(unittest.TestCase):
                 action_executor=self.executor,
                 tick_size_provider=lambda _symbol: self.fail("tick size must not be read"),
                 clock_ms=self.clock,
+                arm_entry_coverage=lambda symbol: True,
             )
             self.monitor = monitor
             self.assertEqual(monitor.tick(), ("candidate-1",))

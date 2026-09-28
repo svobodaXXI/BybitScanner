@@ -401,7 +401,16 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         )
         self.clock.value = 4000
 
+        # RVL-R4: no Box grid LIMIT is created until protection coverage is armed.
+        self.arm_granted = False
+        self.assertEqual(self.monitor.tick(), ())
+        refused = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertNotIn("limit_order_ids", refused.robot_state.get("execution") or {})
+        self.assertEqual(self.store.load_active_paper_limits(ACCOUNT_ID, Symbol(SYMBOL)), ())
+        self.arm_granted = True
+
         self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.armed_entry_coverage, [SYMBOL, SYMBOL])
         ready = self.store.get_robot_candidate(candidate.candidate_id)
         order_ids = ready.robot_state["execution"]["limit_order_ids"]
         self.assertEqual(len(order_ids), 4)
@@ -464,6 +473,10 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.feed = _ScriptedCandleFeed()
         self.clock = _Clock()
         self.executor = _FakeActionExecutor(self.store, ACCOUNT_ID, self.clock)
+        # Entry-coverage arm (RVL-R4): granted by default; tests flip it to refuse.
+        self.arm_granted = True
+        self.armed_entry_coverage: list[str] = []
+        self.released_entry_coverage: list[str] = []
         self.monitor = RobotBreakoutMonitor(
             lambda: SQLiteStore.open(self.db_path),
             ACCOUNT_ID,
@@ -471,7 +484,13 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             action_executor=self.executor,
             tick_size_provider=lambda symbol: Decimal("0.1"),
             clock_ms=self.clock,
+            arm_entry_coverage=self._arm_entry_coverage,
+            release_entry_coverage=self.released_entry_coverage.append,
         )
+
+    def _arm_entry_coverage(self, symbol: str) -> bool:
+        self.armed_entry_coverage.append(symbol)
+        return self.arm_granted
 
     def tearDown(self):
         # tick() runs synchronously on this (the test) thread throughout, so
@@ -792,6 +811,31 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(len(self.executor.limit_calls), 1)
         record = self.store.get_robot_candidate("candidate-1")
         self.assertEqual(record.robot_state["execution"]["limit_order_id"], "test-limit-1")
+        self.assertEqual(self.armed_entry_coverage, [SYMBOL])
+        self.assertEqual(self.released_entry_coverage, [])
+
+    def test_resting_entry_limit_is_never_created_without_armed_coverage(self):
+        # RVL-R4: a refused arm, or no bound arm at all, leaves the candidate pre-LIMIT.
+        self._create_candidate()
+        self._drive_to_retest_detected()
+        self.arm_granted = False
+
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.executor.limit_calls, [])
+        self.assertEqual(self.armed_entry_coverage, [SYMBOL])
+        execution = self.store.get_robot_candidate("candidate-1").robot_state.get("execution") or {}
+        self.assertNotIn("limit_order_id", execution)
+
+        unbound = RobotBreakoutMonitor(
+            lambda: SQLiteStore.open(self.db_path), ACCOUNT_ID,
+            get_closed_candle=self.feed, action_executor=self.executor,
+            tick_size_provider=lambda symbol: Decimal("0.1"), clock_ms=self.clock,
+        )
+        try:
+            self.assertEqual(unbound.tick(), ())
+        finally:
+            unbound.close()
+        self.assertEqual(self.executor.limit_calls, [])
 
     def test_unfilled_entry_limit_reprices_same_order_after_five_closed_candles(self):
         self._create_candidate(apex_index=130)
@@ -1073,6 +1117,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             action_executor=self.executor,
             tick_size_provider=lambda symbol: Decimal("0.1"),
             clock_ms=self.clock,
+            arm_entry_coverage=lambda symbol: True,
         )
         try:
             advanced = restarted.tick()
@@ -1099,6 +1144,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             tick_size_provider=lambda symbol: Decimal("0.1"),
             clock_ms=self.clock,
             match_resting_orders=match_calls.append,
+            arm_entry_coverage=lambda symbol: True,
         )
         self._create_candidate()
         self._drive_to_retest_detected()
@@ -1598,6 +1644,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             action_executor=self.executor,
             tick_size_provider=lambda symbol: Decimal("0.1"),
             clock_ms=self.clock,
+            arm_entry_coverage=lambda symbol: True,
         )
         feed_calls_before = len(self.feed.calls)
 
@@ -1896,6 +1943,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             tick_size_provider=lambda symbol: Decimal("0.1"),
             clock_ms=self.clock,
             tick_interval_s=60.0,
+            arm_entry_coverage=lambda symbol: True,
         )
         self._create_candidate()
         monitor.start()
@@ -2451,6 +2499,7 @@ class RobotBreakoutMonitorRealThreadTests(unittest.TestCase):
                 tick_size_provider=lambda symbol: Decimal("0.1"),
                 clock_ms=lambda: int(time.time() * 1000),
                 tick_interval_s=0.05,
+                arm_entry_coverage=lambda symbol: True,
             )
             monitor.start()
             try:

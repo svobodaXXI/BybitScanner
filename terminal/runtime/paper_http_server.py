@@ -1906,6 +1906,12 @@ class RobotProtectionCoverageManager:
         # that symbol succeeds again. Never cleared by silently continuing.
         self._unhealthy: dict[str, str] = {}
         self._recovery_inflight: set[str] = set()
+        # Temporary ENTRY_PENDING arms taken before a resting entry LIMIT exists
+        # (arm_entry_coverage). resync() keeps them covered and ends each one in
+        # the pass that first sees the symbol's durable coverage role.
+        self._armed: set[str] = set()
+        # Serializes subscription changes between resync() and arm_entry_coverage().
+        self._subscription_lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, name="robot-protection-coverage", daemon=True,
@@ -1928,6 +1934,7 @@ class RobotProtectionCoverageManager:
                 "healthy": not self._unhealthy,
                 "covered_symbols": tuple(sorted(self._covered)),
                 "coverage_roles": dict(self._roles),
+                "armed_symbols": tuple(sorted(self._armed)),
                 "unhealthy_symbols": dict(self._unhealthy),
             }
         if hasattr(self._runtime, "protection_ingress_metrics"):
@@ -1960,18 +1967,18 @@ class RobotProtectionCoverageManager:
         except Exception:
             LOGGER.exception("Robot protection coverage resync failed to read coverage targets")
             return
-        wanted = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
+        durable = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
         if durable_loss is not None:
             durable_symbol, durable_reason = durable_loss
-            if durable_symbol in wanted:
+            if durable_symbol in durable:
                 with self._lock:
                     self._unhealthy.setdefault(durable_symbol, durable_reason)
         with self._lock:
-            current = set(self._covered)
-            to_add = wanted - current
-            to_drop = current - wanted
+            wanted = durable | self._armed
             self._roles = {
-                symbol: str(roles.get(symbol, "UNKNOWN")).strip().upper() or "UNKNOWN"
+                symbol: str(
+                    roles.get(symbol, "ENTRY_PENDING" if symbol in self._armed else "UNKNOWN")
+                ).strip().upper() or "UNKNOWN"
                 for symbol in wanted
             }
             unhealthy = dict(self._unhealthy)
@@ -1979,28 +1986,73 @@ class RobotProtectionCoverageManager:
             if symbol in wanted:
                 self._enqueue_runtime_fence(symbol, reason)
                 self._recover_unhealthy_symbol(symbol, reason)
-        for symbol in sorted(to_add):
-            try:
-                context = self._hub.subscribe(symbol)
-            except Exception:
-                self._mark_unhealthy(symbol, "subscribe_failed")
-                LOGGER.exception("Robot protection coverage subscribe failed; symbol=%s", symbol)
-                continue
-            context.add_update_listener(self._LISTENER, self._listener_for(symbol))
-            context.add_disconnect_listener(
-                self._LISTENER, self._disconnect_listener_for(symbol),
-            )
+        with self._subscription_lock:
             with self._lock:
-                self._covered[symbol] = context
-        for symbol in sorted(to_drop):
+                # Gap-free hand-over: an arm ends in the same pass that sees its
+                # durable role, so the symbol never leaves ``wanted`` in between.
+                self._armed -= durable
+                wanted = durable | self._armed
+                current = set(self._covered)
+                to_add = wanted - current
+                to_drop = current - wanted
+            for symbol in sorted(to_add):
+                try:
+                    self._attach(symbol)
+                except Exception:
+                    self._mark_unhealthy(symbol, "subscribe_failed")
+                    LOGGER.exception("Robot protection coverage subscribe failed; symbol=%s", symbol)
+            for symbol in sorted(to_drop):
+                with self._lock:
+                    context = self._covered.pop(symbol, None)
+                    self._unhealthy.pop(symbol, None)
+                    self._roles.pop(symbol, None)
+                if context is None:
+                    continue
+                context.remove_update_listener(self._LISTENER)
+                context.remove_disconnect_listener(self._LISTENER)
+                self._hub.discard(context)
+
+    def _attach(self, symbol: str) -> None:
+        context = self._hub.subscribe(symbol)
+        context.add_update_listener(self._LISTENER, self._listener_for(symbol))
+        context.add_disconnect_listener(
+            self._LISTENER, self._disconnect_listener_for(symbol),
+        )
+        with self._lock:
+            self._covered[symbol] = context
+
+    def arm_entry_coverage(self, symbol: str) -> bool:
+        """Synchronously cover ``symbol`` before a resting entry LIMIT is created.
+
+        Called from the Robot monitor thread, never the owner thread, and makes no
+        owner call. Returns True only once this symbol's update and disconnect
+        listeners are attached; False means the caller must not create the LIMIT.
+        Idempotent. The arm survives resync() until resync() first observes the
+        symbol's durable coverage role, or until release_entry_coverage().
+        """
+        normalized = symbol.strip().upper()
+        if not normalized or self._stop.is_set():
+            return False
+        with self._subscription_lock:
             with self._lock:
-                context = self._covered.pop(symbol, None)
-                self._unhealthy.pop(symbol, None)
-            if context is None:
-                continue
-            context.remove_update_listener(self._LISTENER)
-            context.remove_disconnect_listener(self._LISTENER)
-            self._hub.discard(context)
+                covered = normalized in self._covered
+            if not covered:
+                try:
+                    self._attach(normalized)
+                except Exception:
+                    LOGGER.exception(
+                        "Robot entry coverage arm failed; no entry LIMIT; symbol=%s", normalized,
+                    )
+                    return False
+            with self._lock:
+                self._armed.add(normalized)
+                self._roles.setdefault(normalized, "ENTRY_PENDING")
+        return True
+
+    def release_entry_coverage(self, symbol: str) -> None:
+        """End an arm whose entry LIMIT was not created; resync() drops the feed."""
+        with self._lock:
+            self._armed.discard(symbol.strip().upper())
 
     def _load_authoritative_recovery_snapshot(
         self, symbol: str, context: SymbolContext,
@@ -3584,7 +3636,6 @@ def main() -> None:
             live_limit_build_sha=os.environ.get("BYBITSCANNER_BUILD_SHA", ""),
             deployment_identity=os.environ.get("BYBITSCANNER_DEPLOYMENT_IDENTITY", "local"),
         ))
-        runtime.start_robot_monitor()
         initial_market.add_update_listener(
             WorkspaceMarketDataManager._WORKSPACE_LISTENER, runtime.enqueue_book_update,
         )
@@ -3599,6 +3650,13 @@ def main() -> None:
         market_data.ensure_initial_ready()
         robot_protection_coverage = RobotProtectionCoverageManager(hub, runtime)
         robot_protection_coverage.start()
+        # The monitor may only create a resting entry LIMIT after arming coverage,
+        # so bind the arm and start coverage before the monitor starts ticking.
+        runtime.call(lambda owned: owned.bind_robot_entry_coverage(
+            robot_protection_coverage.arm_entry_coverage,
+            robot_protection_coverage.release_entry_coverage,
+        ))
+        runtime.start_robot_monitor()
 
         server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
         server.runtime = runtime
