@@ -1176,6 +1176,14 @@ def _telegram_runtime_intent_shape():
 
 
 class LegacyOwnershipProofTests(unittest.TestCase):
+    def test_listener_probe_distinguishes_empty_and_live_exact_port(self):
+        with mock.patch.object(legacy.os, "name", "nt"), \
+                mock.patch.object(legacy, "_query_listener_chain", return_value=([], {})):
+            self.assertEqual(legacy.probe_listener_pids("127.0.0.1", 8765), ())
+        with mock.patch.object(legacy.os, "name", "nt"), \
+                mock.patch.object(legacy, "_query_listener_chain", return_value=([700, 700], {})):
+            self.assertEqual(legacy.probe_listener_pids("127.0.0.1", 8765), (700,))
+
     def test_current_legacy_console_shapes_prove_exact_chains(self):
         self.assertEqual(select_legacy_chain("backend", [30], _backend_cmd_k_shape(), ROOT), (30, 20, 10))
         self.assertEqual(
