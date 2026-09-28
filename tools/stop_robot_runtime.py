@@ -35,7 +35,8 @@ from urllib.parse import urlsplit
 
 from terminal.application.robot_control import RobotControlRejected, stop_robot
 from tools.legacy_runtime_process import (
-    BACKEND, TELEGRAM, LegacyOwnerUnproven, resolve_legacy_chain, terminate_exact_pids,
+    BACKEND, TELEGRAM, LegacyOwnerUnproven, probe_listener_pids,
+    resolve_legacy_chain, terminate_exact_pids,
 )
 from tools.runtime_intent import PROJECT_ROOT, expected_database_identity
 
@@ -290,6 +291,7 @@ class RuntimeShutdown:
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         legacy_resolver: Callable[[str, str, int, Path], tuple[int, ...]] = resolve_legacy_chain,
+        listener_probe: Callable[[str, int], tuple[int, ...]] = probe_listener_pids,
         legacy_terminator: Callable[[tuple[int, ...]], None] = terminate_exact_pids,
         legacy_paper_quiescence: Callable[[], None] | None = None,
         legacy_paper_guard: Callable[[], ContextManager[None]] | None = None,
@@ -303,6 +305,7 @@ class RuntimeShutdown:
         port = env.get("BYBITSCANNER_TELEGRAM_MONITORING_PORT") or DEFAULT_TELEGRAM_PORT
         self._telegram = f"http://127.0.0.1:{port}"
         self._legacy_resolver = legacy_resolver
+        self._listener_probe = listener_probe
         self._legacy_terminator = legacy_terminator
         self._legacy_paper_quiescence = (
             legacy_paper_quiescence
@@ -439,11 +442,56 @@ class RuntimeShutdown:
             ))
         return ShutdownResult(scope, True, "Runtime STOPPED.", tuple(steps), runtime_stopped=True)
 
+    def _listener_pids(self, base_url: str, label: str) -> tuple[int, ...]:
+        location = urlsplit(base_url)
+        host = location.hostname or ""
+        port = location.port or 0
+        try:
+            return tuple(self._listener_probe(host, port))
+        except LegacyOwnerUnproven as exc:
+            raise SafeStopError(
+                f"{label} health is unreachable and listener state cannot be proven; runtime kept alive"
+            ) from exc
+
     def _probe_backend(self) -> str:
         try:
             status, health = self._get(self._backend + "/api/health", PROBE_TIMEOUT_S)
         except Unreachable:
-            return ABSENT
+            listeners = self._listener_pids(self._backend, "PAPER backend")
+            if not listeners:
+                return ABSENT
+            self._mark(
+                "PAPER backend health unavailable but listener is alive: "
+                + ",".join(str(pid) for pid in listeners)
+            )
+            location = urlsplit(self._backend)
+            try:
+                chain = tuple(self._legacy_resolver(
+                    BACKEND, location.hostname or "", location.port or 0, self._root,
+                ))
+            except LegacyOwnerUnproven as exc:
+                raise SafeStopError(
+                    "PAPER backend listener is alive but exact ownership cannot be proven; "
+                    "runtime kept alive"
+                ) from exc
+            self._mark(f"PAPER backend exact listener chain: {chain}")
+            # Read-only health is safe to retry. A live proven listener must
+            # never be collapsed into ABSENT merely because its serialized
+            # owner queue delayed /api/health.
+            self._legacy_backend_attribution()
+            try:
+                final_chain = tuple(self._legacy_resolver(
+                    BACKEND, location.hostname or "", location.port or 0, self._root,
+                ))
+            except LegacyOwnerUnproven as exc:
+                raise SafeStopError(
+                    "PAPER backend ownership changed during identity recovery; runtime kept alive"
+                ) from exc
+            if final_chain != chain:
+                raise SafeStopError(
+                    "PAPER backend process chain changed during identity recovery; runtime kept alive"
+                )
+            return PRESENT
         if (
             status == 200 and isinstance(health, dict) and health.get("ok") is True
             and health.get("component") == "paper_backend" and health.get("mode") == "paper"
@@ -456,7 +504,22 @@ class RuntimeShutdown:
         try:
             _status, health = self._get(self._telegram + "/health", PROBE_TIMEOUT_S)
         except Unreachable:
-            return ABSENT
+            listeners = self._listener_pids(self._telegram, "Telegram monitoring")
+            if not listeners:
+                return ABSENT
+            location = urlsplit(self._telegram)
+            try:
+                chain = tuple(self._legacy_resolver(
+                    TELEGRAM, location.hostname or "", location.port or 0, self._root,
+                ))
+            except LegacyOwnerUnproven as exc:
+                raise SafeStopError(
+                    "Telegram listener is alive but exact ownership cannot be proven; runtime kept alive"
+                ) from exc
+            raise SafeStopError(
+                f"Telegram listener is alive at proven chain {chain} but health is unavailable; "
+                "runtime kept alive"
+            )
         if (
             isinstance(health, dict) and health.get("component") == "telegram_monitoring"
             and health.get("database_identity") == self._expected
