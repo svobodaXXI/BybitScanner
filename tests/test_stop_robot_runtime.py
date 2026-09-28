@@ -1120,9 +1120,24 @@ class HandoffAndCliTests(unittest.TestCase):
 
     def test_blocked_result_is_nonzero_with_owner_blocker_text(self):
         blocked = shutdown.ShutdownResult("all", False, "STOP BLOCKED: Robot is busy")
-        with mock.patch.object(shutdown.RuntimeShutdown, "run", return_value=blocked):
+        stream = io.StringIO()
+        with mock.patch.object(shutdown.RuntimeShutdown, "run", return_value=blocked), \
+                mock.patch("sys.stdout", stream):
             self.assertEqual(shutdown.main([]), 1)
+        output = stream.getvalue()
+        self.assertIn("[STOP] starting scope=all", output)
+        self.assertIn("STOP BLOCKED: Robot is busy", output)
+        self.assertIn("steps=", output)
         self.assertEqual(shutdown.owner_text(blocked), "⛔ Остановка не выполнена: Robot is busy")
+
+    def test_unexpected_cli_crash_is_printed_and_nonzero(self):
+        stream = io.StringIO()
+        with mock.patch.object(shutdown.RuntimeShutdown, "run", side_effect=RuntimeError("boom")), \
+                mock.patch("sys.stdout", stream):
+            self.assertEqual(shutdown.main([]), 2)
+        output = stream.getvalue()
+        self.assertIn("[STOP CRASH] RuntimeError: boom", output)
+        self.assertIn("Traceback", output)
 
     def test_desktop_wrapper_runs_full_scope_module(self):
         launcher = (ROOT / "stop_robot_runtime.bat").read_text()
