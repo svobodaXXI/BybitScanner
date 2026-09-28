@@ -223,15 +223,17 @@ class TelegramMonitoringTests(unittest.TestCase):
             commands = json.loads(telegram.call_args.kwargs["commands"])
             self.assertEqual(
                 [item["command"] for item in commands],
-                ["terminal", "scanner", "scanner_stop", "robot", "robot_start", "all",
-                 "positions", "monitoring"],
+                ["positions", "monitoring", "robot", "robot_start", "all",
+                 "scanner", "scanner_stop", "terminal"],
             )
-            self.assertEqual(commands[1]["description"], label)
-            self.assertEqual(commands[2]["description"], "⏹ Остановить сканер")
-            self.assertEqual(commands[3]["description"], "Робот")
-            self.assertEqual(commands[4]["description"], "▶ Запустить робота")
-            self.assertEqual(commands[5]["description"], "▶ Запустить всё")
-            self.assertEqual(commands[-1]["description"], "Мониторинг кандидатов")
+            self.assertEqual(commands[0]["description"], "Все открытые позиции")
+            self.assertEqual(commands[1]["description"], "Мониторинг кандидатов")
+            self.assertEqual(commands[2]["description"], "Робот")
+            self.assertEqual(commands[3]["description"], "▶ Запустить робота")
+            self.assertEqual(commands[4]["description"], "▶ Запустить всё")
+            self.assertEqual(commands[5]["description"], label)
+            self.assertEqual(commands[6]["description"], "⏹ Остановить сканер")
+            self.assertEqual(commands[7]["description"], "Терминал")
         self.assertEqual(telegram.call_count, 2)
 
     @patch("telegram_monitoring._telegram_request", return_value={"ok": True})
