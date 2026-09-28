@@ -40,6 +40,71 @@ Runtime is currently fully down after the clean stop proof. Verify actual host
 state before any future mutation or restart rather than assuming this snapshot
 remains current.
 
+## OWNER SIGNAL FEEDBACK — 2026-09-28 — GEOMETRY TASKS QUEUED
+
+Two owner-observed Scanner signals are now frozen as explicit Geometry Quality
+tasks. They are **not** grounds to interrupt the active RVL-R6 Robot Stability
+acceptance; they enter RVL-G1/G2 after R6 unless the owner reprioritizes.
+
+### G-BOX-1 — BSVUSDT 5m false-positive Ikigai Box first impulse
+
+Owner observation:
+- the displayed first impulse contains a clear internal correction / zigzag;
+- this is not merely one or two opposite-colour pause candles;
+- the A→B leg is therefore not one continuous structural impulse and should not
+  be admitted as a valid Ikigai Box first impulse.
+
+Required fix task:
+- freeze the exact source-time BSVUSDT 5m candles when available;
+- add BSVUSDT 5m as a **negative Geometry Gold case**;
+- encode the general rule, not a symbol-specific filter: small opposite-colour
+  candles may remain valid only while they do **not** form a confirmed internal
+  corrective swing/zigzag;
+- a confirmed internal correction inside A→B must invalidate that first impulse
+  or terminate it at the earlier structural pivot, according to the existing
+  first-impulse construction contract;
+- preserve accepted controls such as AIGENSYN/FLOCK and do not restore a
+  colour-only veto.
+
+Acceptance:
+- BSVUSDT 5m no longer produces the same malformed Box candidate;
+- already-valid first impulses with short non-structural pauses remain valid;
+- one bounded detector/gold regression proves the general rule before the final
+  full Scanner acceptance.
+
+### G-BOX-2 — CARVUSDT 5m missed post-Triangle Ikigai Box
+
+Owner observation:
+- the Scanner emitted a Compression Triangle;
+- after the triangle structure, the later right-side price action contains a
+  separate compact Box-like consolidation that was not emitted as Ikigai Box;
+- the suspected Box is later and structurally distinct from the already-found
+  Triangle.
+
+Required fix task:
+- recover/freeze the exact CARVUSDT 5m source-time candles and detection cutoff
+  before changing detector logic;
+- add CARVUSDT 5m as a **positive/missed Geometry Gold case** only after the
+  saved evidence confirms the owner-marked later Box under the authoritative
+  Ikigai rules;
+- inspect candidate enumeration/selection/dedup across pattern families and
+  time windows;
+- prove that an earlier Triangle signal does not suppress a later independent
+  Ikigai Box on the same symbol/timeframe;
+- do not weaken Box geometry gates merely to force this screenshot to PASS.
+
+Acceptance:
+- if the frozen source-time evidence satisfies the Box contract, the later Box
+  is emitted independently while the Triangle remains intact;
+- if the frozen evidence fails an existing Box invariant, document the exact
+  invariant instead of inventing a detector exception;
+- preserve independent pattern identities/dedup and existing positive/negative
+  Box controls.
+
+These two tasks are intentionally separate defect classes:
+**BSV = false positive / malformed first impulse**;
+**CARV = possible false negative / missed later Box**.
+
 ## NOW — 2026-09-27 — OWNER CORRECTION: IKIGAI BOX HAS NO WATCH USER MODE
 
 Binding owner decision: Ikigai Box uses the normal CONFIRMED signal path only.
