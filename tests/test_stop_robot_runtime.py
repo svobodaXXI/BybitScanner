@@ -598,6 +598,79 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
         self.assertEqual(runtime.legacy_evidence_checks, 1)
         self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
 
+    def test_starvation_trigger_may_recover_before_final_termination(self):
+        runtime = self.stale_arm_runtime()
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {
+                "capacity": 64,
+                "current_pending": 63,
+                "high_watermark": 64,
+            },
+        })
+        original_post = runtime.post
+
+        def post(url, payload, timeout):
+            reply = original_post(url, payload, timeout)
+            if url == TELEGRAM + "/shutdown" and reply[0] == 200:
+                runtime.protection.update({
+                    "healthy": True,
+                    "unhealthy_symbols": {},
+                    "ingress": {
+                        "capacity": 64,
+                        "current_pending": 0,
+                        "high_watermark": 64,
+                    },
+                })
+            return reply
+
+        runtime.post = post
+        result = runtime.orchestrator().run("all")
+
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(result.steps, (
+            "runtime:legacy-starvation-proof",
+            "telegram:shutdown",
+            "backend:legacy-starvation-terminate",
+        ))
+        self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
+
+    def test_starvation_path_still_blocks_if_temporary_coverage_shape_changes(self):
+        runtime = self.stale_arm_runtime()
+        runtime.protection.update({
+            "healthy": False,
+            "unhealthy_symbols": {"AKEUSDT": "ingress_overflow"},
+            "ingress": {
+                "capacity": 64,
+                "current_pending": 63,
+                "high_watermark": 64,
+            },
+        })
+        original_post = runtime.post
+
+        def post(url, payload, timeout):
+            reply = original_post(url, payload, timeout)
+            if url == TELEGRAM + "/shutdown" and reply[0] == 200:
+                runtime.protection.update({
+                    "healthy": True,
+                    "unhealthy_symbols": {},
+                    "coverage_roles": {
+                        "AKEUSDT": "ENTRY_PENDING",
+                        "BLASTUSDT": "POSITION",
+                    },
+                })
+            return reply
+
+        runtime.post = post
+        result = runtime.orchestrator().run("all")
+
+        self.assertFalse(result.ok)
+        self.assertIn("not stale temporary ENTRY_PENDING coverage", result.message)
+        self.assertTrue(runtime.backend_alive)
+        self.assertFalse(any(call.startswith("terminate:") for call in runtime.calls))
+
     def test_starvation_path_retries_transient_legacy_health_reproof(self):
         runtime = self.stale_arm_runtime()
         runtime.protection.update({
