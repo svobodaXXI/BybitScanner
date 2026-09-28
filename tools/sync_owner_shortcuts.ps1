@@ -4,6 +4,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Decode-Utf8Base64([string]$Text) {
+    return [System.Text.Encoding]::UTF8.GetString(
+        [System.Convert]::FromBase64String($Text)
+    )
+}
+
 $repo = [System.IO.Path]::GetFullPath($RepoRoot)
 if (-not (Test-Path -LiteralPath $repo -PathType Container)) {
     throw "Repository root not found: $repo"
@@ -14,11 +20,16 @@ if (-not $desktop -or -not (Test-Path -LiteralPath $desktop -PathType Container)
     throw 'Desktop directory is unavailable'
 }
 
-$targets = [ordered]@{
-    'start_scanner.lnk'   = 'start_scanner.bat'
-    'Запуск робота.lnk'   = 'start_robot_runtime.bat'
-    'Остановить робота.lnk' = 'stop_robot_runtime.bat'
-}
+$targets = [ordered]@{}
+$targets.Add('start_scanner.lnk', 'start_scanner.bat')
+$targets.Add(
+    (Decode-Utf8Base64 '0JfQsNC/0YPRgdC6INGA0L7QsdC+0YLQsC5sbms='),
+    'start_robot_runtime.bat'
+)
+$targets.Add(
+    (Decode-Utf8Base64 '0J7RgdGC0LDQvdC+0LLQuNGC0Ywg0YDQvtCx0L7RgtCwLmxuaw=='),
+    'stop_robot_runtime.bat'
+)
 
 $shell = New-Object -ComObject WScript.Shell
 

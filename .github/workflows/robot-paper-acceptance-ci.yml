@@ -41,7 +41,9 @@ on:
       - "tests/test_dual_timeframe_scanner.py"
       - "stop_robot_runtime.bat"
       - "tools/stop_robot_runtime.py"
+      - "tools/sync_owner_shortcuts.ps1"
       - "tests/test_stop_robot_runtime.py"
+      - "tests/test_runtime_launcher.py"
       - "tests/test_telegram_monitoring.py"
       - "analyzer/core.py"
       - "notification.py"
@@ -114,6 +116,7 @@ jobs:
           tests/test_telegram_delivery.py
           tests/test_scanner_control_runtime.py
           tests/test_stop_robot_runtime.py
+          tests/test_runtime_launcher.py
           tests/test_telegram_monitoring.py
           analyzer/core.py
           notification.py
@@ -170,6 +173,7 @@ jobs:
           tests.test_scanner_control_runtime
           tests.test_dual_timeframe_scanner
           tests.test_stop_robot_runtime
+          tests.test_runtime_launcher
           tests.test_telegram_monitoring
 
       - name: Run Robot scoped LIMIT amend acceptance
