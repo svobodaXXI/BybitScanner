@@ -488,12 +488,29 @@ def _candidate_button_label(record: RobotCandidateRecord) -> str:
     return f"{marker} {record.symbol.value} · {label}"
 
 
+MONITOR_CANDIDATE_PREFIX = "monitor:c:"
+MONITOR_TOKEN_HEX_LENGTH = 16
+
+
+def _candidate_callback_token(candidate_id: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(candidate_id.encode("utf-8")).hexdigest()[:MONITOR_TOKEN_HEX_LENGTH]
+
+
+def _resolve_candidate_callback_token(
+    token: str, records: tuple[RobotCandidateRecord, ...],
+) -> RobotCandidateRecord | None:
+    matches = [record for record in records if _candidate_callback_token(record.candidate_id) == token]
+    return matches[0] if len(matches) == 1 else None
+
+
 def build_candidate_keyboard(records: tuple[RobotCandidateRecord, ...]):
     rows = [
         [
             {
                 "text": _candidate_button_label(record),
-                "callback_data": f"monitor:candidate:{record.candidate_id}",
+                "callback_data": MONITOR_CANDIDATE_PREFIX + _candidate_callback_token(record.candidate_id),
             }
         ]
         for record in records
@@ -555,29 +572,38 @@ def format_candidate_card(record: RobotCandidateRecord) -> str:
 
 
 def parse_monitor_callback(data: str):
-    parts = str(data).split(":")
-    if parts == ["monitor", "list"]:
+    text = str(data)
+    if text == "monitor:list":
         return {"action": "list"}
-    if len(parts) == 3 and parts[0] == "monitor" and parts[1] == "candidate" and parts[2]:
-        return {"action": "candidate", "candidate_id": parts[2]}
+    if text.startswith(MONITOR_CANDIDATE_PREFIX):
+        token = text[len(MONITOR_CANDIDATE_PREFIX):]
+        if len(token) == MONITOR_TOKEN_HEX_LENGTH and all(char in "0123456789abcdef" for char in token):
+            return {"action": "candidate", "token": token}
     return None
+
+
+def _require_monitoring_delivery(response, operation: str) -> None:
+    if not isinstance(response, Mapping) or response.get("ok") is not True:
+        raise RuntimeError(f"{operation} failed: {response}")
 
 
 def _send_candidate_list(chat_id) -> None:
     records = _load_active_candidates()
     if not records:
-        telegram_bot.send_message(
+        response = telegram_bot.send_message(
             config.TELEGRAM_TOKEN,
             chat_id,
             "🤖 Мониторинг\n\nАктивных кандидатов сейчас нет.",
         )
+        _require_monitoring_delivery(response, "candidate list sendMessage")
         return
-    telegram_bot.send_message(
+    response = telegram_bot.send_message(
         config.TELEGRAM_TOKEN,
         chat_id,
         f"🤖 Мониторинг\n\nАктивных кандидатов: {len(records)}\nВыберите тикер:",
         reply_markup=build_candidate_keyboard(records),
     )
+    _require_monitoring_delivery(response, "candidate list sendMessage")
 
 
 def _send_candidate_card(chat_id, candidate_id: str) -> None:
@@ -628,7 +654,12 @@ def _process_monitor_callback(callback_query) -> bool:
     if parsed["action"] == "list":
         _send_candidate_list(chat_id)
     else:
-        _send_candidate_card(chat_id, parsed["candidate_id"])
+        records = _load_active_candidates()
+        record = _resolve_candidate_callback_token(parsed["token"], records)
+        if record is None:
+            _send_candidate_list(chat_id)
+        else:
+            _send_candidate_card(chat_id, record.candidate_id)
     return True
 
 
