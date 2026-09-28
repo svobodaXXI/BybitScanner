@@ -52,6 +52,20 @@ Detailed tasks and acceptance conditions are in `DOCUMENTS/BACKLOG.md`;
 Geometry Gold inventory is updated in
 `DOCUMENTS/DEVELOPMENT_VALIDATION_LOOP_PLAN.md`.
 
+Additional owner feedback from the same run broadened CARV into a recurring
+candidate family: `CARVUSDT / CPUSDT / CROSSUSDT / CLOUSDT 5m` show the
+visual sequence `compression -> downside sloping-boundary break -> later compact
+Box-like consolidation`. Queue this as one general Geometry Quality class, not
+ticker-specific tuning.
+
+Future terminal/Autopilot UX is also frozen as a queued design in
+`DOCUMENTS/MANUAL_CHART_AUTOPILOT_HANDOFF_DECISION.md`: one context-aware
+Autopilot action, explicit Да/Нет adoption prompt for an open manual position,
+one shared Robot workspace, immediate Robot-owned-symbol awareness on every
+terminal symbol transition, and machine-readable Manual Pattern Drafts for
+manual chart/Fibonacci handoff. Manual positions remain manual unless explicit
+fail-closed adoption succeeds.
+
 Active gate remains **RVL-R6**. Do not interrupt the current owner PAPER
 acceptance for these geometry findings unless the owner explicitly
 reprioritizes.
