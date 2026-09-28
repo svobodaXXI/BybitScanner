@@ -539,9 +539,10 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
                 self.assertNotIn("backend:shutdown", runtime.calls)
 
-    def test_durable_candidate_limit_exposure_or_obligation_blocks_legacy_termination(self):
+    def test_durable_live_ownership_blocks_legacy_termination(self):
         for blocker in (
-            "legacy PAPER shutdown blocked by active Robot candidates",
+            "legacy PAPER shutdown blocked by OPEN Robot candidates",
+            "legacy PAPER shutdown blocked by open Robot trades",
             "legacy PAPER shutdown blocked by working PAPER limits",
             "legacy PAPER shutdown blocked by open PAPER exposure",
             "legacy PAPER shutdown blocked by unresolved protection obligations",
