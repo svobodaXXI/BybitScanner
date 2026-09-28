@@ -488,3 +488,273 @@ oi_delta_z
 ~~~
 
 Do not initially define fixed liquidation/OI/refill thresholds without captured evidence. No tuning against one memorable chart or symbol.
+
+---
+
+# 13. FORCED-FLOW STATE MACHINE
+
+Do not begin with ML. Use an explainable deterministic research state machine backed by separately stored factors.
+
+LONG-side concept:
+
+~~~text
+NORMAL
+  |
+  v
+SHOCK
+  |
+  v
+FORCED_SELLING
+  |
+  v
+EXHAUSTION_CANDIDATE
+  |
+  v
+ABSORPTION
+  |
+  v
+REVERSAL_CONFIRMED
+~~~
+
+Any active state may transition to INVALIDATED or DATA_INVALID.
+
+Semantics:
+- NORMAL: no qualifying stress.
+- SHOCK: material short-horizon displacement / flow anomaly.
+- FORCED_SELLING: aggressive sell pressure + liquidation/deleveraging evidence + downside continuation. It is not a LONG signal.
+- EXHAUSTION_CANDIDATE: forced/aggressive sell flow remains elevated but incremental downside impact weakens.
+- ABSORPTION: consumed bid liquidity repeatedly refills and/or book resilience improves.
+- REVERSAL_CONFIRMED: research-only state with local stabilization plus independent confirmation. It authorizes no order.
+
+Core concept:
+
+~~~text
+Flow up
+Impact/Flow down
+~~~
+
+SHORT is mirrored exactly.
+
+---
+
+# 14. CROSS-VENUE CONFIRMATION
+
+Cross-venue data is an independent witness, not a permanently trusted leader.
+
+Initial addition after Bybit-only stability: Binance. Hyperliquid is a third venue only if measured incremental value justifies complexity.
+
+Maintain per-symbol rolling lead/lag estimates over bounded lag candidates and persist:
+
+~~~text
+leader_venue
+estimated_lead_ms
+confidence
+observation_count
+timing_health
+~~~
+
+Guards:
+- disable lead inference during receive-latency anomalies;
+- require enough synchronized observations;
+- do not infer direction from one stale venue;
+- preserve native liquidation/OI semantics separately;
+- do not force unlike fields into fake identical units.
+
+The useful question is:
+
+> Are independent markets still confirming the local move, or has local forced flow become increasingly idiosyncratic?
+
+---
+
+# 15. RAW CAPTURE
+
+High-frequency raw market data is NOT Trading Diary data.
+
+Create a dedicated bounded Microstructure Capture surface.
+
+Requirements:
+- append-only during capture;
+- raw or losslessly reconstructable venue payload;
+- event envelope and timestamps;
+- explicit schema/adapter versions;
+- connection/session identity;
+- ordered event identity;
+- compression/batching only if order/meaning stays unchanged;
+- no secrets/private account payloads;
+- bounded retention/configuration;
+- capture failure is observable;
+- capture must not block the serialized Robot execution owner.
+
+Storage format is deliberately deferred. Benchmark actual event rate and replay needs before choosing JSONL/Parquet/binary/other.
+
+---
+
+# 16. DETERMINISTIC REPLAY
+
+Replay is a first-class architecture requirement.
+
+~~~text
+live raw events
+     |
+     v
+same normalizer
+     |
+     v
+same MarketState
+     |
+     v
+same FeatureEngine
+     |
+     v
+same ForcedFlowEngine
+
+historical replay
+     |
+     +-----------------------> same path
+~~~
+
+Do not create separate backtest-only signal logic.
+
+Replay preserves exchange order, local receive order, relevant inter-arrival timing, reconnect/reset/data-quality events and venue identity.
+
+Determinism:
+
+> The same captured stream + same versions/configuration produces the same state transitions/features/outcomes.
+
+---
+
+# 17. OUTCOME ENGINE
+
+The first purpose is to prove/disprove edge, not create trades.
+
+For each frozen research transition/candidate, measure explicit forward horizons, initially candidate windows such as:
+
+~~~text
+1 s
+3 s
+10 s
+30 s
+1 min
+3 min
+5 min
+15 min
+~~~
+
+Persist:
+- forward return by declared price source;
+- MFE and MAE;
+- time to MFE/MAE;
+- continuation versus reversal;
+- spread/liquidity state;
+- event/sample count;
+- data-quality eligibility.
+
+Evaluate realizable execution:
+
+~~~text
+gross move
+- spread
+- actual/estimated book slippage
+- taker fee
+- latency penalty / delayed-entry sensitivity
+= net research expectancy
+~~~
+
+A directionally predictive feature that cannot clear costs is not a trading edge.
+
+Passive-entry research is a separate future cohort because fill probability/adverse selection differ fundamentally from taker entry.
+
+---
+
+# 18. TRADING DIARY BRIDGE
+
+Do NOT write every trade/book delta into Trading Diary. Microstructure Capture owns high-frequency evidence.
+
+Diary receives only decision-time factor snapshots attached to an existing setup/decision or separately authorized research setup.
+
+Candidate future keys:
+
+~~~text
+micro.market_state
+micro.data_quality
+micro.aggressive_flow_1s
+micro.aggressive_flow_5s
+micro.ofi_1s
+micro.depth_imbalance
+micro.spread_bps
+micro.liquidation_z
+micro.oi_delta
+micro.last_mark_dislocation_bps
+micro.mark_index_dislocation_bps
+micro.marginal_impact
+micro.impact_decay
+micro.bid_refill
+micro.ask_refill
+micro.recovery_time_50_ms
+micro.crossvenue_divergence_bps
+micro.leader_venue
+micro.lead_ms
+micro.lead_confidence
+~~~
+
+Every factor has stable key, version, source/provenance, observation time and applicability/data-quality semantics.
+
+Missing data stays missing; never silently convert it to zero/False.
+
+---
+
+# 19. RELATIONSHIP TO EXISTING PATTERNS
+
+Two independent research tracks are allowed.
+
+## 19.1 Standalone microstructure opportunity
+
+A ForcedFlow transition may eventually become its own frozen research candidate. Separate evidence and owner authorization are required before Robot integration.
+
+## 19.2 Pattern confirmation/filter
+
+Wedge, L-shape and Ikigai Box may later consume microstructure factors as decision-time evidence.
+
+Research comparison:
+
+~~~text
+pattern-only
+vs
+same pattern + healthy microstructure confirmation
+~~~
+
+Possible future use: reject weak setups, delay admission, prioritize evidence or improve expected value.
+
+It must NOT rewrite pattern geometry or invent cross-pattern score comparability.
+
+Geometry asks: What price structure formed?
+
+Microstructure asks: What participant/flow state is occurring now?
+
+Keep the domains separate.
+
+---
+
+# 20. ROBOT INTEGRATION BOUNDARY
+
+The laboratory has no order-placement authority.
+
+Forbidden:
+
+~~~text
+ForcedFlowEngine -> exchange order
+ForcedFlowEngine -> ActionExecutor
+ForcedFlowEngine -> protection mutation
+~~~
+
+Future permitted path, only after explicit authorization:
+
+~~~text
+ForcedFlowEngine
+-> immutable evidence/candidate
+-> shared read-only eligibility/admission assessment
+-> canonical admit_robot_candidate()
+-> existing Robot execution/protection/reconciliation
+~~~
+
+No second execution engine, order journal, protection system or recovery coordinator. LIVE remains out of scope.
