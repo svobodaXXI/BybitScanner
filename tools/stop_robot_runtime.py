@@ -212,7 +212,10 @@ class RuntimeShutdown:
                     scope, True, "Scanner STOPPED; Robot protection coverage keeps the runtime alive.",
                     tuple(steps),
                 )
-            raise SafeStopError("Robot protection coverage is still active; runtime kept alive")
+            self._retire_entry_coverage()
+            steps.append("protection:retire-entry-arms")
+            if not self._protection_quiescent():
+                raise SafeStopError("Robot protection coverage is still active; runtime kept alive")
 
         if telegram == PRESENT:
             steps.append(self._shutdown(
@@ -275,6 +278,26 @@ class RuntimeShutdown:
                 "Robot reconcile did not confirm success; not retried; runtime kept alive"
             )
 
+    def _retire_entry_coverage(self) -> None:
+        if self._robot_state() != ROBOT_STOPPED_PAIR:
+            raise SafeStopError("Robot is not fully STOPPED; runtime kept alive")
+        try:
+            status, body = self._post(
+                self._backend + "/api/runtime/retire-entry-coverage",
+                {"database_identity": self._expected}, MUTATION_TIMEOUT_S,
+            )
+        except Exception as exc:
+            raise SafeStopError("Entry coverage retirement outcome is unknown; not retried; runtime kept alive") from exc
+        if status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
+            raise SafeStopError("Entry coverage retirement was not confirmed; runtime kept alive")
+        protection = body.get("protection")
+        if (
+            not isinstance(protection, dict) or protection.get("healthy") is not True
+            or protection.get("covered_symbols") != [] or protection.get("armed_symbols") != []
+            or protection.get("unhealthy_symbols") != {}
+        ):
+            raise SafeStopError("Entry coverage is not proven quiescent; runtime kept alive")
+
     def _protection_quiescent(self) -> bool:
         try:
             status, health = self._get(self._backend + "/api/robot/protection-health", PROBE_TIMEOUT_S)
@@ -283,6 +306,7 @@ class RuntimeShutdown:
         return (
             status == 200 and isinstance(health, dict) and health.get("healthy") is True
             and health.get("covered_symbols") == [] and health.get("unhealthy_symbols") == {}
+            and health.get("armed_symbols", []) == []
         )
 
     def _shutdown(self, shutdown_url: str, health_url: str, name: str, kind: str, step: str) -> str:

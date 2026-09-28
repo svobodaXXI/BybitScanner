@@ -23,6 +23,7 @@ separate connection on the calling thread.
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 import threading
 from dataclasses import dataclass
 from decimal import Decimal
@@ -200,6 +201,7 @@ class RobotBreakoutMonitor:
             target=self._run, name="robot-breakout-monitor", daemon=True,
         )
         self._started = False
+        self._tick_lock = threading.Lock()
 
     def _store(self) -> SQLiteStore:
         store = getattr(self._local, "store", None)
@@ -239,8 +241,22 @@ class RobotBreakoutMonitor:
         finally:
             self._close_local_store()
 
+    @contextmanager
+    def shutdown_idle_guard(self):
+        """Exclude an in-flight pre-entry tick; called outside the PAPER owner thread."""
+        if not self._tick_lock.acquire(blocking=False):
+            raise RuntimeError("robot_entry_tick_busy")
+        try:
+            yield
+        finally:
+            self._tick_lock.release()
+
     def tick(self) -> tuple[str, ...]:
         """Advance every durable APPROVED candidate by at most one step."""
+        with self._tick_lock:
+            return self._tick()
+
+    def _tick(self) -> tuple[str, ...]:
         advanced: list[str] = []
         for record in self._store().load_robot_candidates_by_status(
             self._account_id, ("APPROVED",),

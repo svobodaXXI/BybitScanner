@@ -1000,6 +1000,10 @@ class PaperRuntime:
         """Return durable Robot startup admission; never infer readiness locally."""
         return self._robot_recovery.admission_ready()
 
+    def robot_shutdown_idle_guard(self):
+        # Acquire on the HTTP thread: a busy monitor may itself be waiting on this owner.
+        return self._robot_breakout_monitor.shutdown_idle_guard()
+
     def robot_runtime_state(self):
         return self.store.get_robot_runtime_state(self._paper_account_id)
 

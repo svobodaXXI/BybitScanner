@@ -1911,7 +1911,7 @@ class RobotProtectionCoverageManager:
         # the pass that first sees the symbol's durable coverage role.
         self._armed: set[str] = set()
         # Serializes subscription changes between resync() and arm_entry_coverage().
-        self._subscription_lock = threading.Lock()
+        self._subscription_lock = threading.RLock()
         self._stop = threading.Event()
         self._thread = threading.Thread(
             target=self._run, name="robot-protection-coverage", daemon=True,
@@ -1941,7 +1941,7 @@ class RobotProtectionCoverageManager:
             health["ingress"] = self._runtime.protection_ingress_metrics()
         return health
 
-    def resync(self) -> None:
+    def resync(self, *, shutdown_strict: bool = False) -> None:
         """Reconcile subscriptions with the owner's current coverage targets.
 
         Safe to call repeatedly (startup/restart and periodic watchdog); adds
@@ -1966,6 +1966,8 @@ class RobotProtectionCoverageManager:
             symbols, roles, durable_loss = self._runtime.call(_coverage_state)
         except Exception:
             LOGGER.exception("Robot protection coverage resync failed to read coverage targets")
+            if shutdown_strict:
+                raise
             return
         durable = {symbol.strip().upper() for symbol in symbols if symbol and symbol.strip()}
         if durable_loss is not None:
@@ -2002,6 +2004,19 @@ class RobotProtectionCoverageManager:
                     self._mark_unhealthy(symbol, "subscribe_failed")
                     LOGGER.exception("Robot protection coverage subscribe failed; symbol=%s", symbol)
             for symbol in sorted(to_drop):
+                if shutdown_strict:
+                    # Do not report quiescence if unsubscribe/discard fails halfway.
+                    with self._lock:
+                        context = self._covered.get(symbol)
+                    if context is not None:
+                        context.remove_update_listener(self._LISTENER)
+                        context.remove_disconnect_listener(self._LISTENER)
+                        self._hub.discard(context)
+                    with self._lock:
+                        self._covered.pop(symbol, None)
+                        self._unhealthy.pop(symbol, None)
+                        self._roles.pop(symbol, None)
+                    continue
                 with self._lock:
                     context = self._covered.pop(symbol, None)
                     self._unhealthy.pop(symbol, None)
@@ -2053,6 +2068,44 @@ class RobotProtectionCoverageManager:
         """End an arm whose entry LIMIT was not created; resync() drops the feed."""
         with self._lock:
             self._armed.discard(symbol.strip().upper())
+
+    def retire_shutdown_entry_arms(self, database_identity: str) -> dict[str, object]:
+        """Shutdown only: prove no future entry ownership before retiring temporary arms."""
+        guard = self._runtime.call(lambda runtime: runtime.robot_shutdown_idle_guard())
+        # Never acquire the monitor guard on the owner thread (monitor calls that owner).
+        with guard:
+            with self._subscription_lock:
+                def retire(runtime):
+                    identity = runtime.live_limit_acceptance_diagnostics()["database_identity"]
+                    if not isinstance(identity, str) or not hmac.compare_digest(identity, database_identity):
+                        raise RobotRouteLegalityError("database_identity_mismatch")
+                    state = runtime.robot_runtime_state()
+                    if state is None or (state.mode, state.recovery_status) != (
+                        "ROBOT_STOPPED", "ROBOT_STOPPED",
+                    ) or runtime.scanner_status().mode != "SCANNER_STOPPED":
+                        raise RobotRouteLegalityError("runtime_still_required")
+                    if runtime.robot_protection_coverage_symbols():
+                        raise RobotRouteLegalityError("durable_protection_required")
+                    account = TradingAccountId("paper")
+                    if runtime.store.load_active_robot_candidate_states(account):
+                        raise RobotRouteLegalityError("robot_entry_ownership_unresolved")
+                    with self._lock:
+                        arms = set(self._armed)
+                    # Include unlinked working orders / fills: a missing durable role
+                    # does not prove an arm is orphaned after an interrupted submission.
+                    if any(runtime.store.load_active_paper_limits(account, Symbol(symbol)) for symbol in arms):
+                        raise RobotRouteLegalityError("temporary_arm_has_working_order")
+                    if any(position.position_key.symbol.value in arms for position in
+                           runtime.store.load_open_position_projections(account)):
+                        raise RobotRouteLegalityError("temporary_arm_has_exposure")
+                    return arms
+                # Owner calls may finish after a timeout. Keep that queued callback
+                # read-only; mutate arms only after a confirmed reply, while guarded.
+                arms = self._runtime.call(retire)
+                with self._lock:
+                    self._armed.difference_update(arms)
+                self.resync(shutdown_strict=True)
+                return self.health()
 
     def _load_authoritative_recovery_snapshot(
         self, symbol: str, context: SymbolContext,
@@ -3211,6 +3264,25 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(200, {"ok": True, **payload})
             return
 
+        if self.path == "/api/runtime/retire-entry-coverage":
+            try:
+                claimed = self._payload(RUNTIME_SHUTDOWN_FIELDS)["database_identity"]
+                if not isinstance(claimed, str) or not claimed:
+                    raise ValueError("database_identity must be a non-empty string")
+            except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_runtime_shutdown"})
+                return
+            try:
+                protection = self.server.robot_protection_coverage.retire_shutdown_entry_arms(claimed)
+            except RobotRouteLegalityError as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "entry_coverage_retirement_unavailable"})
+                return
+            self._json_response(200, {"ok": True, "protection": protection})
+            return
+
         if self.path == "/api/runtime/shutdown":
             try:
                 claimed = self._payload(RUNTIME_SHUTDOWN_FIELDS)["database_identity"]
@@ -3247,6 +3319,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
                 or not isinstance(protection, Mapping)
                 or protection.get("healthy") is not True
                 or protection.get("covered_symbols")
+                or protection.get("armed_symbols")
                 or protection.get("unhealthy_symbols")
             ):
                 self._json_response(409, {"ok": False, "error": "runtime_still_required"})
