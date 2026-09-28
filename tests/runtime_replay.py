@@ -139,6 +139,9 @@ class RuntimeReplayResult:
     event_errors: tuple[str, ...]
     metrics: Mapping[str, object]
     continuity_loss: tuple[str, str] | None
+    # Ingress metrics captured after the producer finished but before the owner
+    # hold was released (only when owner_held_during_production=True).
+    saturated_metrics: Mapping[str, object] | None = None
 
     @property
     def metric_keys(self) -> tuple[str, ...]:
@@ -210,54 +213,95 @@ def _seed_pre_limit_candidates(
     )
 
 
+def _offer(
+    owner: SerializedPaperRuntime,
+    event: RuntimeReplayEvent,
+    *,
+    processed: list[str],
+    overflows: list[str],
+    errors: list[str],
+) -> None:
+    """Offer one fixture event directly to the production protection enqueue boundary."""
+    book = event.book()
+
+    def process(runtime: PaperRuntime) -> None:
+        try:
+            runtime.process_robot_market_event(
+                event.symbol,
+                book,
+                event_id=event.event_id,
+                received_at_ms=event.received_at_ms,
+            )
+        except BaseException as exc:
+            errors.append(f"{event.event_id}:{type(exc).__name__}:{exc}")
+            raise
+        else:
+            processed.append(event.event_id)
+
+    try:
+        owner.enqueue(process, symbol=event.symbol, coverage_role=event.coverage_role)
+    except ProtectionIngressOverflow:
+        overflows.append(event.event_id)
+
+
+def _hold_owner(
+    owner: SerializedPaperRuntime, name: str,
+) -> tuple[threading.Thread, threading.Event]:
+    """Hold the owner inside one ordinary call() task, proven entered by handshake."""
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hold(_runtime: PaperRuntime) -> None:
+        entered.set()
+        release.wait(timeout=60.0)
+
+    holder = threading.Thread(
+        target=owner.call, args=(hold,), kwargs={"timeout": 60.0}, name=name, daemon=True,
+    )
+    holder.start()
+    if not entered.wait(timeout=30.0):
+        release.set()
+        raise RuntimeError("runtime replay owner hold was never entered")
+    return holder, release
+
+
 def run_runtime_replay(
     fixture: RuntimeReplayFixture,
     *,
     protection_ingress_capacity: int = 64,
+    owner_held_during_production: bool = False,
 ) -> RuntimeReplayResult:
     """Replay ordered Robot market events through the production owner boundary.
 
     Producer delivery is continuous: every fixture event is offered with
     SerializedPaperRuntime.enqueue() before the single final completion fence.
     There is deliberately no owner-drain call between events or batches.
+
+    ``owner_held_during_production`` is a saturation characterization, not a
+    product scenario: the owner is held for the whole stream so the ingress
+    boundary and its fail-closed signals can be frozen exactly.
     """
     processed: list[str] = []
     overflows: list[str] = []
     errors: list[str] = []
+    saturated_metrics: Mapping[str, object] | None = None
 
     with tempfile.TemporaryDirectory() as temp:
         owner = SerializedPaperRuntime(
             lambda: _make_runtime(Path(temp) / "paper_runtime.sqlite3"),
             protection_ingress_capacity=protection_ingress_capacity,
         )
+        release = threading.Event()
         try:
+            holder = None
+            if owner_held_during_production:
+                holder, release = _hold_owner(owner, "runtime-replay-owner-hold")
             for event in fixture.events:
-                book = event.book()
-
-                def process(runtime: PaperRuntime, *, event=event, book=book) -> None:
-                    try:
-                        runtime.process_robot_market_event(
-                            event.symbol,
-                            book,
-                            event_id=event.event_id,
-                            received_at_ms=event.received_at_ms,
-                        )
-                    except BaseException as exc:
-                        errors.append(
-                            f"{event.event_id}:{type(exc).__name__}:{exc}"
-                        )
-                        raise
-                    else:
-                        processed.append(event.event_id)
-
-                try:
-                    owner.enqueue(
-                        process,
-                        symbol=event.symbol,
-                        coverage_role=event.coverage_role,
-                    )
-                except ProtectionIngressOverflow:
-                    overflows.append(event.event_id)
+                _offer(owner, event, processed=processed, overflows=overflows, errors=errors)
+            if holder is not None:
+                saturated_metrics = dict(owner.protection_ingress_metrics())
+                release.set()
+                holder.join(timeout=60.0)
 
             # One fence after producer completion is allowed. It proves that all
             # admitted FIFO events ahead of it have finished; unlike the old
@@ -274,8 +318,10 @@ def run_runtime_replay(
                 event_errors=tuple(errors),
                 metrics=metrics,
                 continuity_loss=continuity_loss,
+                saturated_metrics=saturated_metrics,
             )
         finally:
+            release.set()
             owner.close()
 
 
@@ -603,4 +649,204 @@ def run_manager_stall_replay(
         finally:
             stall.release_all()
             manager.close()
+            owner.close()
+
+
+@dataclass(frozen=True)
+class OwnerStallReplayResult:
+    processed_event_ids: tuple[str, ...]
+    overflow_event_ids: tuple[str, ...]
+    event_errors: tuple[str, ...]
+    # Fixture events offered while each stalled reconcile lookup was running.
+    stall_event_ids: tuple[tuple[str, ...], ...]
+    lookup_threads: tuple[str, ...]
+    pending_at_stall_release: int
+    reconcile_outcome: str
+    metrics: Mapping[str, object]
+
+
+def run_owner_stall_replay(
+    fixture: RuntimeReplayFixture,
+    *,
+    stall_events_per_lookup: int,
+    protection_ingress_capacity: int = 64,
+) -> OwnerStallReplayResult:
+    """Lower-level characterization: the same bounded stall, events offered DIRECTLY.
+
+    Every fixture event goes straight to ``SerializedPaperRuntime.enqueue()``,
+    bypassing the coverage manager and therefore any lifecycle/role decision. It
+    characterizes the ingress itself under a bounded stall; it is not the R2 product
+    contract because no lifecycle change can make it stop receiving these events.
+    """
+    symbols = tuple(dict.fromkeys(event.symbol for event in fixture.events))
+    stall = _BoundedReconcileStall(stall_events_per_lookup)
+    processed: list[str] = []
+    overflows: list[str] = []
+    errors: list[str] = []
+
+    with tempfile.TemporaryDirectory() as temp:
+        owner = SerializedPaperRuntime(
+            lambda: _make_runtime(
+                Path(temp) / "paper_runtime.sqlite3",
+                geometry_index_provider=stall.geometry_index,
+            ),
+            protection_ingress_capacity=protection_ingress_capacity,
+        )
+        try:
+            owner.call(
+                lambda runtime: _seed_pre_limit_candidates(
+                    runtime, symbols, fixture.name,
+                    recovery_status="RECONCILIATION_REQUIRED",
+                    reason="maintenance reconciliation requested",
+                ),
+                timeout=30.0,
+            )
+            reconciler = stall.start(owner)
+            stall.drive(
+                fixture.events,
+                lambda event: _offer(
+                    owner, event, processed=processed, overflows=overflows, errors=errors,
+                ),
+                lambda: int(owner.protection_ingress_metrics()["current_pending"]),
+            )
+            stall.release_all()
+            reconciler.join(timeout=60.0)
+
+            # One fence after producer completion, as in run_runtime_replay().
+            owner.call(lambda runtime: None, timeout=30.0)
+            return OwnerStallReplayResult(
+                processed_event_ids=tuple(processed),
+                overflow_event_ids=tuple(overflows),
+                event_errors=tuple(errors),
+                stall_event_ids=tuple(stall.stall_event_ids),
+                lookup_threads=tuple(stall.lookup_threads),
+                pending_at_stall_release=stall.pending_at_release,
+                reconcile_outcome=stall.outcome,
+                metrics=dict(owner.protection_ingress_metrics()),
+            )
+        finally:
+            stall.release_all()
+            owner.close()
+
+
+@dataclass(frozen=True)
+class CoverageManagerReplayResult:
+    covered_roles: Mapping[str, str]
+    admitted_event_ids: tuple[str, ...]
+    overflow_event_ids: tuple[str, ...]
+    suppressed_event_ids: tuple[str, ...]
+    fence_overflows: int
+    processed_event_ids: tuple[str, ...]
+    saturated_metrics: Mapping[str, object]
+    health_during_overflow: Mapping[str, object]
+    health_after_resync: Mapping[str, object]
+    durable_continuity_loss: tuple[str, str] | None
+    recovery_requests: tuple[tuple[str, dict], ...]
+
+
+def run_coverage_manager_replay(
+    fixture: RuntimeReplayFixture,
+    *,
+    protection_ingress_capacity: int = 64,
+) -> CoverageManagerReplayResult:
+    """Saturation characterization through the production RobotProtectionCoverageManager.
+
+    The owner is held (handshake-proven) while the producer publishes the whole
+    stream, then released; the production resync() retry path runs once afterwards.
+    Freezes the fail-closed signals of a saturated ingress, not a product scenario.
+    """
+    symbols = tuple(dict.fromkeys(event.symbol for event in fixture.events))
+    admitted: list[str] = []
+    overflowed: list[str] = []
+    suppressed: list[str] = []
+    fence_overflows = 0
+    processed: list[str] = []
+    current_event: list[str | None] = [None]
+
+    with tempfile.TemporaryDirectory() as temp:
+        owner = SerializedPaperRuntime(
+            lambda: _make_runtime(Path(temp) / "paper_runtime.sqlite3"),
+            protection_ingress_capacity=protection_ingress_capacity,
+        )
+        release = threading.Event()
+        manager: RobotProtectionCoverageManager | None = None
+        try:
+            def seed(runtime: PaperRuntime) -> None:
+                _seed_pre_limit_candidates(
+                    runtime, symbols, fixture.name, recovery_status="READY",
+                )
+                original = runtime.process_robot_market_event
+
+                def recording(symbol, book, *, event_id, received_at_ms):
+                    result = original(symbol, book, event_id=event_id, received_at_ms=received_at_ms)
+                    processed.append(event_id)
+                    return result
+
+                runtime.process_robot_market_event = recording
+
+            owner.call(seed, timeout=30.0)
+
+            production_enqueue = owner.enqueue
+
+            def observed_enqueue(operation, *, symbol="", coverage_role="UNKNOWN"):
+                nonlocal fence_overflows
+                try:
+                    production_enqueue(operation, symbol=symbol, coverage_role=coverage_role)
+                except ProtectionIngressOverflow:
+                    if symbol:
+                        overflowed.append(current_event[0])
+                    else:
+                        fence_overflows += 1
+                    raise
+                if symbol:
+                    admitted.append(current_event[0])
+
+            owner.enqueue = observed_enqueue
+
+            hub = _ReplayHub()
+            session = _OfflineRecoverySession()
+            manager = RobotProtectionCoverageManager(
+                hub, owner, resync_interval_s=3600.0, recovery_session=session,
+            )
+            manager.resync()
+            covered_roles = dict(manager.health()["coverage_roles"])
+
+            holder, release = _hold_owner(owner, "coverage-replay-owner-hold")
+            for event in fixture.events:
+                current_event[0] = event.event_id
+                before = len(admitted) + len(overflowed)
+                hub.contexts[event.symbol].publish(event)
+                if len(admitted) + len(overflowed) == before:
+                    suppressed.append(event.event_id)
+            current_event[0] = None
+
+            saturated_metrics = dict(owner.protection_ingress_metrics())
+            health_during = manager.health()
+            release.set()
+            holder.join(timeout=60.0)
+            owner.call(lambda runtime: None, timeout=30.0)
+
+            # Production watchdog retry: re-fence durably and attempt REST recovery.
+            manager.resync()
+            owner.call(lambda runtime: None, timeout=30.0)
+            durable = owner.call(
+                lambda runtime: runtime.robot_protection_continuity_loss(), timeout=30.0,
+            )
+            return CoverageManagerReplayResult(
+                covered_roles=covered_roles,
+                admitted_event_ids=tuple(admitted),
+                overflow_event_ids=tuple(overflowed),
+                suppressed_event_ids=tuple(suppressed),
+                fence_overflows=fence_overflows,
+                processed_event_ids=tuple(processed),
+                saturated_metrics=saturated_metrics,
+                health_during_overflow=health_during,
+                health_after_resync=manager.health(),
+                durable_continuity_loss=durable,
+                recovery_requests=tuple(session.requests),
+            )
+        finally:
+            release.set()
+            if manager is not None:
+                manager.close()
             owner.close()
