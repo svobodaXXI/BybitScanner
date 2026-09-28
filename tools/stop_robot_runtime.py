@@ -180,6 +180,14 @@ class RuntimeShutdown:
             steps.append("scanner:stop")
             if scope == SCOPE_ALL:
                 state = self._robot_state()
+                if state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
+                    self._reconcile_robot()
+                    steps.append("robot:reconcile")
+                    state = self._robot_state()
+                    if state not in ROBOT_STOPPABLE:
+                        raise SafeStopError(
+                            "Robot reconcile did not establish a legal stoppable state; runtime kept alive"
+                        )
                 if state in ROBOT_STOPPABLE:
                     self._stop_robot()
                     steps.append("robot:stop")
@@ -250,6 +258,22 @@ class RuntimeShutdown:
             raise SafeStopError("Scanner stop outcome is unknown; not retried") from exc
         if status != 200 or not isinstance(body, dict) or body.get("ok") is not True:
             raise SafeStopError("Scanner stop was rejected")
+
+    def _reconcile_robot(self) -> None:
+        # The backend owns evidence and recovery. Never retry an ambiguous mutation.
+        try:
+            status, body = self._post(self._backend + "/api/robot/reconcile", {}, MUTATION_TIMEOUT_S)
+        except Exception as exc:
+            raise SafeStopError(
+                "Robot reconcile outcome is unknown; not retried; runtime kept alive"
+            ) from exc
+        if (
+            status != 200 or not isinstance(body, dict)
+            or body.get("ok") is not True or body.get("success") is not True
+        ):
+            raise SafeStopError(
+                "Robot reconcile did not confirm success; not retried; runtime kept alive"
+            )
 
     def _protection_quiescent(self) -> bool:
         try:
