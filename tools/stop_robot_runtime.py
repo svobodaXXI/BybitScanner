@@ -35,8 +35,8 @@ from urllib.parse import urlsplit
 
 from terminal.application.robot_control import RobotControlRejected, stop_robot
 from tools.legacy_runtime_process import (
-    BACKEND, TELEGRAM, LegacyOwnerUnproven, probe_listener_pids,
-    resolve_legacy_chain, terminate_exact_pids,
+    BACKEND, TELEGRAM, LegacyOwnerUnproven, ProcessInfo, probe_listener_pids,
+    resolve_legacy_chain, resolve_legacy_process_chain, terminate_exact_pids,
 )
 from tools.runtime_intent import PROJECT_ROOT, expected_database_identity
 
@@ -291,6 +291,9 @@ class RuntimeShutdown:
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         legacy_resolver: Callable[[str, str, int, Path], tuple[int, ...]] = resolve_legacy_chain,
+        legacy_process_resolver: Callable[
+            [str, str, int, Path], tuple[ProcessInfo, ...]
+        ] = resolve_legacy_process_chain,
         listener_probe: Callable[[str, int], tuple[int, ...]] = probe_listener_pids,
         legacy_terminator: Callable[[tuple[int, ...]], None] = terminate_exact_pids,
         legacy_paper_quiescence: Callable[[], None] | None = None,
@@ -305,6 +308,7 @@ class RuntimeShutdown:
         port = env.get("BYBITSCANNER_TELEGRAM_MONITORING_PORT") or DEFAULT_TELEGRAM_PORT
         self._telegram = f"http://127.0.0.1:{port}"
         self._legacy_resolver = legacy_resolver
+        self._legacy_process_resolver = legacy_process_resolver
         self._listener_probe = listener_probe
         self._legacy_terminator = legacy_terminator
         self._legacy_paper_quiescence = (
@@ -324,6 +328,8 @@ class RuntimeShutdown:
         self._sleep = sleep
         self._monotonic = monotonic
         self._progress = progress or (lambda _message: None)
+        self._initial_backend_health_proof: LegacyBackendProof | None = None
+        self._initial_backend_process_chain: tuple[ProcessInfo, ...] | None = None
 
     def _mark(self, message: str) -> None:
         try:
