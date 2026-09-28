@@ -365,6 +365,18 @@ new examples. Candidate pool includes AEVO/HIMS/QQQ/CHIP/POL negative cases,
 INJ anchor movement, WLD triangle, AZTEC stale selection and XRP/PONS/AAVE
 unchanged baselines where exact saved candles are available.
 
+Owner-run additions from 2026-09-28:
+- **BSVUSDT 5m / Ikigai Box** — negative first-impulse case: owner marked a
+  clear internal corrective swing/zigzag inside the admitted A→B leg. Freeze
+  source-time candles and prove the structural correction rule without
+  restoring a colour-only veto.
+- **CARVUSDT 5m / Ikigai Box** — possible positive missed-detection case after
+  an independently emitted Compression Triangle. Freeze source-time
+  candles/cutoff first, then determine whether candidate enumeration,
+  cross-pattern selection/dedup or Box eligibility suppressed a valid later
+  Box. Earlier Triangle presence must not by itself exclude a later independent
+  Box.
+
 **Done when:** available source-time OHLC evidence is mapped to candidate cases
 and gaps are explicit; no invented expected anchors.
 
