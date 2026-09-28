@@ -244,3 +244,247 @@ Each venue adapter owns:
 It does NOT own OFI calculations, exhaustion thresholds, cross-venue conclusions, strategy decisions, Robot admission or order placement.
 
 A normalized event retains enough provenance to reconstruct what the venue actually meant.
+
+---
+
+# 8. BYBIT FIRST-SLICE DATA
+
+Initial research venue: Bybit USDT linear perpetuals.
+
+## 8.1 Public trades
+
+Use for taker/aggressor direction, executed price, quantity/notional, short-horizon trade imbalance and price-impact measurement.
+
+## 8.2 Order book
+
+Preferred initial depth: L50.
+
+Current Bybit documented push frequencies for linear/inverse:
+- L1: 10 ms;
+- L50: 20 ms;
+- L200: 100 ms;
+- L1000: 200 ms.
+
+L50 is an initial design compromise, not a permanent parameter.
+
+## 8.3 All liquidations
+
+Bybit allLiquidation.{symbol}:
+- covers all liquidations;
+- pushes every 500 ms;
+- provides update time, side, executed size and bankruptcy price.
+
+Do not infer unseen order-book execution detail from bankruptcy price.
+
+## 8.4 Ticker/context
+
+Use derivatives context for last, mark, index, open interest, funding and required venue context. If a field is slower or from a separate source, persist its true observation time; never forward-fill it as tick-level truth.
+
+---
+
+# 9. LOCAL ORDER BOOK STATE MACHINE
+
+Required states:
+
+~~~text
+DISCONNECTED
+    |
+    v
+WAIT_SNAPSHOT
+    |
+    v
+VALID
+    |
+    +-- integrity/reconnect/reset anomaly --> INVALID
+                                           |
+                                           v
+                                      WAIT_SNAPSHOT
+                                           |
+                                           v
+                                         VALID
+~~~
+
+Rules:
+- initial snapshot creates the book;
+- deltas apply only under valid native sequencing rules;
+- zero size deletes a level;
+- insert/update follows native semantics;
+- a new authoritative snapshot replaces the local book;
+- reset/reinitialization clears previous continuity as required;
+- no book-dependent feature claims VALID while integrity is uncertain.
+
+For Bybit standard snapshot/delta books:
+- new snapshot means reset/replace;
+- u=1 is reinitialization/reset evidence;
+- retain seq and u for integrity/debug evidence.
+
+If full-depth Bybit book is evaluated later, use the official REST snapshot + buffered-delta synchronization contract instead of transplanting L50 assumptions.
+
+Fail closed:
+
+> An invalid book suppresses book-dependent ForcedFlow transitions. It does not guess missing levels.
+
+---
+
+# 10. TWO-STAGE MARKET-DATA UNIVERSE
+
+Do not open expensive L2/trade/liquidation processing for the whole Scanner universe from day one.
+
+~~~text
+broad cheap watch universe
+          |
+          v
+shock/anomaly trigger
+          |
+          v
+focused microstructure universe
+(trades + L2 + liquidation + context)
+~~~
+
+Initial laboratory universe:
+- BTCUSDT;
+- ETHUSDT;
+- SOLUSDT.
+
+Expand to a compact liquid-alt cohort only after capture/replay integrity is proven.
+
+Future Focus Mode may activate from a cheap precursor such as volatility/turnover/liquidation anomaly, but the exact trigger remains research work and must not be tuned before a clean baseline exists.
+
+---
+
+# 11. FEATURE ENGINE
+
+Do not start with one opaque Microstructure Score. Persist independent versioned factors.
+
+## 11.1 Aggressive trade flow
+
+~~~text
+buy_notional_W
+sell_notional_W
+net_aggressive_flow_W = buy_notional_W - sell_notional_W
+trade_imbalance_W = net_aggressive_flow_W / total_notional_W
+~~~
+
+Keep raw counts/notional and derived ratios.
+
+## 11.2 Order Flow Imbalance (OFI)
+
+OFI includes changes in best/near-book supply and demand rather than only executed trades. Exact formula/version must be explicit and tested against reconstructed book semantics.
+
+## 11.3 Depth imbalance
+
+~~~text
+depth_imbalance =
+(bid_depth - ask_depth) / (bid_depth + ask_depth)
+~~~
+
+Compute at explicit depth/distance bands rather than silently aggregating arbitrary depth.
+
+## 11.4 Spread
+
+Persist spread_abs, spread_bps and spread_percentile. Spread is both a market-state factor and an execution-cost constraint.
+
+## 11.5 Microprice
+
+Use a documented imbalance-aware microprice from best bid/ask and size. It is a short-horizon state feature, not a fair-value oracle.
+
+## 11.6 Liquidation pressure
+
+Persist venue-native facts and normalized research measures:
+
+~~~text
+long_liquidation_notional_W
+short_liquidation_notional_W
+net_liquidation_pressure_W
+liquidation_percentile_or_zscore
+~~~
+
+Cross-venue liquidation values remain provenance-aware and are not blindly summed when semantics differ.
+
+## 11.7 Open-interest change
+
+Use to contextualize leverage opening/closing and liquidation bursts. OI direction alone is not proof of trader side.
+
+## 11.8 Mark / index / last dislocation
+
+Candidate factors:
+
+~~~text
+last_minus_mark_bps
+mark_minus_index_bps
+local_dislocation_percentile
+normalization_velocity
+~~~
+
+Purpose: distinguish local perp stress from broader underlying movement.
+
+## 11.9 Marginal Price Impact
+
+Core feature:
+
+~~~text
+impact =
+abs(mid_or_reference_price_change_bps)
+/
+aggressive_notional
+~~~
+
+The proposed signature is not one value but the trajectory:
+
+~~~text
+forced/aggressive flow rising
+while
+impact per unit flow falling
+~~~
+
+Persist numerator and denominator separately.
+
+## 11.10 Liquidity refill
+
+Measure response after visible liquidity is consumed:
+
+~~~text
+consumed_bid_depth
+new_bid_depth_after_consumption
+bid_refill_ratio =
+new_bid_depth_after_consumption / consumed_bid_depth
+~~~
+
+SHORT mirrors with asks. A static large order is not absorption; repeated response to consumption is the target.
+
+## 11.11 Resilience / recovery time
+
+Candidate measures RecoveryTime_25, RecoveryTime_50 and RecoveryTime_75: time required for an explicit fraction of depleted depth/spread state to recover after a shock.
+
+## 11.12 Cross-venue divergence
+
+Candidate measures:
+
+~~~text
+return_divergence
+low/high continuation disagreement
+lead_lag_ms
+leader_confidence
+cross_venue_price_gap_bps
+~~~
+
+No venue is permanently hard-coded as leader.
+
+---
+
+# 12. NORMALIZATION
+
+Prefer symbol/regime-relative rolling percentile, robust z-score, volatility scaling, depth scaling and turnover scaling.
+
+Candidate normalized factors:
+
+~~~text
+liq_z
+ofi_z
+impact_percentile
+spread_percentile
+refill_percentile
+oi_delta_z
+~~~
+
+Do not initially define fixed liquidation/OI/refill thresholds without captured evidence. No tuning against one memorable chart or symbol.
