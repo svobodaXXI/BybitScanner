@@ -664,7 +664,13 @@ class RuntimeShutdown:
     ) -> tuple[int, ...]:
         if self._robot_state() != ROBOT_STOPPED_PAIR:
             raise SafeStopError("Robot is not fully STOPPED; runtime kept alive")
-        self._require_legacy_owner_queue_starved()
+        # Starvation is only the entry trigger for this migration path. Once
+        # selected, the owner queue may recover while we are proving durable
+        # quiescence and shutting Telegram down. Recovery must not invalidate
+        # the shutdown; the stable invariant is the exact stale ENTRY_PENDING
+        # coverage shape plus Robot/process/durable ownership, not continued
+        # ingress overflow.
+        self._require_temporary_entry_arm_shape()
         if self._legacy_backend_attribution() != proof:
             raise SafeStopError("legacy PAPER backend identity changed before termination")
         location = urlsplit(self._backend)
@@ -716,7 +722,10 @@ class RuntimeShutdown:
                 ))
             if self._robot_state() != ROBOT_STOPPED_PAIR:
                 raise SafeStopError("Robot changed while legacy shutdown barrier was held")
-            self._require_legacy_owner_queue_starved()
+            # Do not require overflow to remain present after we have entered
+            # the proven starvation path. Re-prove only the stable temporary
+            # coverage shape; queue recovery is a safer state, not a blocker.
+            self._require_temporary_entry_arm_shape()
             if self._legacy_backend_attribution() != proof:
                 raise SafeStopError("legacy PAPER backend identity changed before final termination")
             final_chain = self._resolve_legacy_backend_chain_without_scanner(proof)
