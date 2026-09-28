@@ -535,7 +535,7 @@ class LegacyEntryCoverageBridgeTests(unittest.TestCase):
                     "resolve:backend:127.0.0.1:8765",
                     "terminate:[130, 120, 110, 105]",
                 ])
-                self.assertGreaterEqual(runtime.legacy_evidence_checks, 2)
+                self.assertEqual(runtime.legacy_evidence_checks, 1)
                 self.assertFalse(runtime.backend_alive or runtime.telegram_alive)
                 self.assertNotIn("backend:shutdown", runtime.calls)
 
