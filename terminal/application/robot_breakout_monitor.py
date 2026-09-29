@@ -601,8 +601,51 @@ class RobotBreakoutMonitor:
         self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
     ) -> bool:
         execution = dict(record.robot_state.get("execution") or {})
+        source = self._box_source(record, execution)
+        catchup = execution.get("box_catchup")
 
         new_entry_admitted, terminal_stop = self._read_admission_gate()
+        existing_ownership = (
+            self._store().load_box_order_ownership(source.candidate_id)
+            if isinstance(catchup, Mapping)
+            else ()
+        )
+        if existing_ownership:
+            try:
+                existing_proof = self._store().prove_box_owned_position(source.candidate_id)
+            except Exception as error:
+                self._escalate_reconciliation(
+                    "ROBOT_BOX_OWNERSHIP_MISMATCH "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                    f"reason={error}"
+                )
+                return False
+            if existing_proof.entry_quantity > 0 and existing_proof.remaining_quantity == 0:
+                return self._sync_box_trade(record, execution, create_trade=False)
+            if existing_proof.remaining_quantity > 0 and not new_entry_admitted:
+                now_ms = self._now_ms()
+                for owner in existing_ownership:
+                    if owner.role != "ENTRY":
+                        continue
+                    limit = self._store().get_paper_limit(
+                        owner.order_id.value, self._account_id,
+                    )
+                    if limit is None or limit.status in INACTIVE_LIMIT_STATUSES:
+                        continue
+                    digest = hashlib.sha256(
+                        f"{source.candidate_id}\0admission-closed-cancel\0{owner.order_id.value}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    self._store().cancel_paper_limit(
+                        client_action_id=f"box-admission-cancel-{digest}",
+                        request_fingerprint=hashlib.sha256(
+                            f"{record.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                        ).hexdigest(),
+                        order_id=owner.order_id,
+                        trading_account_id=self._account_id,
+                        updated_at_ms=now_ms,
+                    )
+                return self._sync_box_trade(record, execution, create_trade=True)
+
         if not new_entry_admitted:
             if terminal_stop and not execution.get("box_catchup"):
                 self._invalidate_pre_entry_candidate(
@@ -613,8 +656,6 @@ class RobotBreakoutMonitor:
         if self._active_other_owner_candidate_ids(record):
             return False
 
-        source = self._box_source(record, execution)
-        catchup = execution.get("box_catchup")
         if not isinstance(catchup, Mapping):
             block_reason = self._pre_entry_block_reason(record)
             if block_reason is not None:
