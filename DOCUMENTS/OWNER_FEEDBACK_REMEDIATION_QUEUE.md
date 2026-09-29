@@ -459,7 +459,7 @@ Acceptance:
 
 ### OFR-5 — Box crossed-grid late admission / catch-up execution
 **Priority:** P1
-**Status:** CONTRACT FROZEN / ready for implementation
+**Status:** IMPLEMENTED IN PR #336 / Robot PAPER acceptance #314 GREEN / awaiting merge
 
 Frozen owner intent:
 - original P1..P4 grid remains fixed;
@@ -505,6 +505,15 @@ Acceptance:
 - no-valid-STOP cases fail closed rather than weakening the contract;
 - restart/reconcile preserves slot identities, closing orders and protection
   ownership.
+
+
+Validation:
+- PR #336 head `7f3512c7f19cb4e2bd59c8057005c8babeb4aa9d`;
+- Robot PAPER acceptance run #314 completed successfully;
+- Runtime Replay contract is GREEN on the same head;
+- mixed lifecycle regression covers P1 MARKET + P2..P4 LIMIT, immediate STOP-only protection, paired P1 EXIT at frozen TAKE, and cancellation of untouched entries after realized TAKE;
+- legacy Box ENTRY_PENDING coverage remains backward compatible;
+- PR is open, mergeable and awaiting explicit owner authorization.
 
 ### OFR-6 — Telegram position-card presentation cleanup
 **Priority:** P1  
