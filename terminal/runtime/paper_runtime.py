@@ -2029,17 +2029,63 @@ class PaperRuntime:
             position_key = PositionKey(trade.trading_account_id, Category.LINEAR, trade.symbol, 0)
             position = self.store.get_position_projection(position_key)
             expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
-            # Owner-frozen D2.3 ownership attestation gate
-            # (CR-PAPER-PROTECTION-LIFECYCLE-001): autonomous close is allowed
-            # only when the CURRENT aggregate position can be proven to
-            # descend from Robot's own entry with no unknown mutation since.
-            # entry_position_version alone would miss a manual add+reduce
-            # that nets back to the original quantity; entry_quantity alone
-            # would miss a same-quantity replacement lifecycle. Together they
-            # close both gaps. Missing (legacy, pre-attestation) trades and
-            # any mismatch fail closed -- never guess which portion of a
-            # mixed/replaced aggregate belongs to the Robot.
-            if (
+            # Box has durable per-slot ownership and may legitimately have
+            # position.version > entry_position_version after paired EXIT fills.
+            # Prove its CURRENT remaining lot from the immutable Box journal.
+            if trade.pattern == "IKIGAI_BOX":
+                candidate = self.store.get_robot_candidate(trade.candidate_id)
+                source_id = (
+                    candidate.signal_snapshot.get("source_box_candidate_id")
+                    if candidate is not None else None
+                )
+                if not isinstance(source_id, str) or not source_id.strip():
+                    return obligation
+                try:
+                    box_proof = self.store.prove_box_owned_position(source_id.strip())
+                except Exception:
+                    return obligation
+                if (
+                    position is None
+                    or position.side is not expected_side
+                    or box_proof.remaining_quantity <= 0
+                    or position.quantity.value != box_proof.remaining_quantity
+                ):
+                    return obligation
+                try:
+                    self.store.reserve_box_order_identity(
+                        source_id.strip(),
+                        order_id=obligation.order_id,
+                        role="EXIT",
+                        slot=0,
+                    )
+                except Exception:
+                    return obligation
+
+                # STOP/EMERGENCY_CLOSE wins the lifecycle. No resting Box entry
+                # or paired TAKE may survive and later reverse the flat position.
+                for owner in self.store.load_box_order_ownership(source_id.strip()):
+                    if owner.order_id == obligation.order_id:
+                        continue
+                    limit = self.store.get_paper_limit(
+                        owner.order_id.value, self._paper_account_id,
+                    )
+                    if limit is None or limit.status in INACTIVE_LIMIT_STATUSES:
+                        continue
+                    digest = hashlib.sha256(
+                        f"{source_id}\0aggregate-close-cancel\0{owner.order_id.value}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    self.store.cancel_paper_limit(
+                        client_action_id=f"box-close-cancel-{digest}",
+                        request_fingerprint=hashlib.sha256(
+                            f"{trade.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                        ).hexdigest(),
+                        order_id=owner.order_id,
+                        trading_account_id=self._paper_account_id,
+                        updated_at_ms=now_ms,
+                    )
+            # Non-Box Robot positions keep the owner-frozen D2.3 aggregate
+            # attestation gate unchanged.
+            elif (
                 trade.entry_position_version is None
                 or trade.entry_quantity is None
                 or trade.entry_quantity <= 0
