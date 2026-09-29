@@ -1,3 +1,27 @@
+## NOW — 2026-09-29 — RVL-G1 GEOMETRY GOLD INVENTORY COMPLETE
+
+RVL-G1 was completed in parallel while the owner RVL-R6 Scanner run continued;
+no runtime/process state was changed.
+
+Canonical inventory:
+`DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md`.
+
+Key result:
+- exact reusable OHLC already exists for the 11-case formation-fit pack,
+  1000TOSHIUSDT/1000XECUSDT locality cases, 1000BONKUSDT anchor case, and
+  CAKEUSDT L-shape stale-signal case;
+- existing synthetic Ikigai tests remain FAST controls and are not mislabeled
+  as archived Bybit Gold;
+- BSVUSDT/COREUSDT first-impulse defects and CARV/CPU/CROSS/CLO secondary-Box
+  family are RECOVERABLE until exact source-time candles/cutoffs are frozen;
+- screenshot/annotation training material remains VISUAL_ONLY unless exact
+  candle evidence is separately available;
+- G2 seed is defined by references to existing fixtures rather than copying
+  candles.
+
+Next Geometry slice after/alongside the owner R6 gate: RVL-G2 compact manifest
+and runner only; no production detector change.
+
 ## END-OF-DAY CHECKPOINT — 2026-09-28
 
 Stop here for the night. Preserve the current evidence and do not repeat already-closed diagnostics.
