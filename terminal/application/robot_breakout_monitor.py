@@ -272,9 +272,20 @@ class RobotBreakoutMonitor:
     def _tick(self) -> tuple[str, ...]:
         advanced: list[str] = []
         for record in self._store().load_robot_candidates_by_status(
-            self._account_id, ("APPROVED",),
+            self._account_id, ("APPROVED", "OPEN"),
         ):
             try:
+                if record.status == "OPEN":
+                    if (
+                        record.robot_state is not None
+                        and record.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+                        and record.robot_state.get("phase") == "BOX_ENTRY_READY"
+                        and self._sync_box_trade(
+                            record, record.robot_state.get("execution") or {},
+                        )
+                    ):
+                        advanced.append(record.candidate_id)
+                    continue
                 if self._advance_one(record):
                     advanced.append(record.candidate_id)
             except Exception as error:
