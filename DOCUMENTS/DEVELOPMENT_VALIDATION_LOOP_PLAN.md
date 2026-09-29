@@ -349,9 +349,16 @@ open even if CI is green.
 ### Phase G — Geometry Lab (starts after Robot Stability is contained)
 
 #### RVL-G1 — Golden fixture schema and inventory
-**Priority:** P1 after RVL-R6
+**Status:** COMPLETE — repository inventory/schema map captured 2026-09-29
+**Priority:** P1; completed in parallel while RVL-R6 owner acceptance continued
 
-Create `tests/fixtures/geometry_gold/` and a compact case manifest.
+Canonical inventory:
+`DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md`.
+
+G1 intentionally did not create duplicate candle fixtures. Existing exact OHLC
+is referenced in place; `tests/fixtures/geometry_gold/` is created in G2 only
+when the compact manifest/runner is added.
+
 
 Required case types:
 - valid Wedge with expected upper/lower anchors;
