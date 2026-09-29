@@ -174,7 +174,7 @@ Acceptance:
 
 ### OFR-4A — Post-STOP reversal watch and market re-entry attempt
 **Priority:** P1  
-**Status:** OPEN strategy/lifecycle design — core contract mostly frozen
+**Status:** OPEN strategy/lifecycle design — core contract frozen except owner 5m acceleration
 
 Owner requirement:
 - when an otherwise actionable signal/candidate has **not opened a position yet**
@@ -187,24 +187,110 @@ Owner requirement:
 - this is a continuation of the same frozen setup identity/history, not a
   symbol-specific exception and not a blind immediate re-entry.
 
-Frozen reversal-confirmation families:
-- candlestick core:
-  Bullish/Bearish Engulfing;
-  Hammer/Shooting Star;
-  Morning Star/Evening Star;
-  Piercing Line/Dark Cloud Cover;
-  Inverted Hammer/Hanging Man;
-  Harami/Harami Cross;
-  Dragonfly Doji/Gravestone Doji;
-- structural:
-  Head and Shoulders / Inverse Head and Shoulders;
-  Double Top / Double Bottom;
-  lower-timeframe Rising/Falling Wedge when it confirms reversal back toward
-  the original setup potential;
-- one additional owner-defined **5m acceleration** confirmation remains to be
-  frozen separately after the owner provides its exact definition.
+### Reversal confirmation catalog
 
-Attempt budget:
+General rules:
+- confirmation uses only **closed candles / completed structures**;
+- all confirmations are direction-aware: the reversal must point back toward
+  the original source setup target;
+- the formation must occur after the adverse move that invalidated the previous
+  pre-entry attempt; an older pattern may not be reused;
+- continuous crypto markets do **not** require classic session gaps for
+  Morning/Evening Star or Piercing/Dark Cloud. Equivalent rejection through
+  candle bodies/wicks is used instead.
+
+Candlestick confirmations:
+
+1. **Hammer / Hanging Man**
+   - same candle geometry; context determines name/direction;
+   - real body must be in the upper part of the candle range;
+   - lower shadow must be at least **1.0x real-body height**;
+   - lower shadow >= **2.0x body** is treated as a stronger textbook form but
+     is not required for admission;
+   - upper shadow may be absent; when present it must not be larger than the
+     real body;
+   - Hammer is bullish after a decline; Hanging Man is bearish after an advance.
+
+2. **Inverted Hammer / Shooting Star**
+   - mirror geometry:
+     upper shadow >= **1.0x body**, >=2.0x is stronger;
+   - lower shadow may be absent and, when present, must not exceed body height;
+   - Inverted Hammer is bullish after a decline; Shooting Star is bearish after
+     an advance.
+
+3. **Bullish / Bearish Engulfing**
+   - two closed candles;
+   - second real body is opposite-direction and fully contains the first real
+     body; wicks do not need to be engulfed;
+   - equality at one body edge is allowed after tick normalization;
+   - pattern must follow an adverse move in the opposite direction.
+
+4. **Morning Star / Evening Star**
+   - three closed candles;
+   - candle 1 is a directional impulse body;
+   - candle 2 has a small body <= **50%** of candle-1 body;
+   - candle 3 is opposite-direction and closes at least **50% through candle-1
+     real body**;
+   - a session gap is preferred textbook geometry but is not required in the
+     24/7 crypto implementation.
+
+5. **Piercing Line / Dark Cloud Cover**
+   - two closed candles;
+   - candle 1 is directional with the adverse move;
+   - candle 2 rejects beyond candle-1 adverse extreme by wick or open and
+     closes past the **50% midpoint of candle-1 real body** in the reversal
+     direction;
+   - if candle 2 fully engulfs candle 1, classify it as Engulfing rather than
+     duplicate both labels.
+
+6. **Harami / Harami Cross**
+   - two closed candles;
+   - candle-2 real body is fully contained inside candle-1 real body;
+   - ordinary Harami candle-2 body <= **60%** of candle-1 body;
+   - Harami Cross uses a Doji second candle;
+   - Doji threshold: real body <= **10% of total candle range**.
+
+7. **Dragonfly Doji / Gravestone Doji**
+   - Doji body <= **10% of total range**;
+   - dominant reversal shadow >= **60% of total range**;
+   - opposite shadow <= **10% of total range**;
+   - Dragonfly is bullish at a local low; Gravestone is bearish at a local high.
+
+Structural confirmations:
+
+8. **Double Bottom / Double Top**
+   - use confirmed local pivots, not arbitrary candle highs/lows;
+   - two corresponding extrema are considered equal when their difference is
+     no greater than **min(2% of their mean price, 0.75 * ATR(14))**;
+   - the middle reaction must form a real opposite pivot, not a one-candle
+     micro-noise notch;
+   - confirmation occurs only on a **closed-candle break of the neckline/reaction
+     level** in the reversal direction.
+
+9. **Inverse Head and Shoulders / Head and Shoulders**
+   - five-pivot structure with two shoulders, a more extreme head and two
+     neckline pivots;
+   - shoulder-height difference <=
+     **min(2% of mean shoulder price, 0.75 * ATR(14))**;
+   - head must extend beyond both shoulders by at least **0.5 * ATR(14)**;
+   - neckline may slope;
+   - confirmation occurs only after a **closed candle breaks the neckline** in
+     the reversal direction.
+
+10. **Lower-timeframe Falling / Rising Wedge**
+   - reuse the existing BybitScanner Wedge geometry/detector instead of creating
+     a second wedge definition;
+   - for a 5m source setup, the lower confirmation timeframe is **1m**;
+   - Falling Wedge confirms bullish reversal; Rising Wedge confirms bearish
+     reversal;
+   - the wedge itself is not enough: its breakout must be confirmed by a
+     **closed candle in the direction of the original source target**.
+
+11. **Owner 5m acceleration**
+   - accepted as an additional reversal-confirmation family;
+   - exact machine definition remains pending the owner's next description.
+
+### Attempt budget
 - maximum **3 entry attempts per original signal**;
 - an attempt is consumed when a valid reversal confirmation closes and the
   candidate reaches the MARKET-entry decision gate;
@@ -212,7 +298,7 @@ Attempt budget:
   attempt**;
 - after attempt 3, no further re-entry attempt is permitted for that signal.
 
-Lifetime / expiry:
+### Lifetime / expiry
 - reversal-watch remains alive until the setup potential is realized, or until
   price travels beyond **50% of the distance from F(2.618) to F(3.618)** in the
   adverse extension direction;
@@ -222,42 +308,42 @@ Lifetime / expiry:
 - OFR-4 remains authoritative: if the setup has already economically completed
   by reaching its frozen TAKE, it is stale/completed and must not be revived.
 
-Frozen MARKET re-entry terms:
+### Frozen MARKET re-entry terms
 - **target remains the original frozen target** of the source setup;
-- STOP is placed beyond the relevant reversal-confirmation extremum;
-- if that structural STOP is too far, cap it by the project percentage-distance
-  limit;
-- the exact numeric percentage cap is **not yet frozen** and must be specified
-  before implementation;
-- RR is recomputed from the actual MARKET entry to the original frozen target
-  using the resulting structural/capped STOP;
-- no MARKET order is allowed when current sizing/RR/protection gates reject the
-  attempt.
+- STOP is first placed beyond the relevant reversal-confirmation extremum;
+- structural STOP distance is measured from the actual MARKET entry;
+- if that distance exceeds **2.0%**, cap the STOP at **2.0% from actual MARKET
+  entry** in the adverse direction;
+- after the structural/2% STOP is known, recompute fee-aware RR from actual
+  MARKET entry to the original frozen target;
+- the ordinary current Robot risk gate remains authoritative; a confirmation
+  rejected by risk/RR/protection still consumes one of the three attempts and
+  creates no order;
+- STOP price is normalized to instrument tick and must remain on the protective
+  side of actual entry.
 
 Safety constraints:
 - crossing the old STOP never triggers an automatic MARKET entry by itself;
-- confirmation must be based on a **closed candle / completed structural
-  formation**, never an unfinished candle;
+- confirmation must be closed/completed; no unfinished candle may trigger;
 - an already-open Robot trade remains governed by the existing STOP/protection
   lifecycle; this task does not silently convert a real stopped-out position
   into an automatic re-entry loop;
-- a TAKE-completed, expired, or 3-attempt-exhausted setup cannot revive.
-
-Remaining design gates before code:
-- exact numeric percentage cap for an over-distant new structural STOP;
-- exact machine-readable definitions/tolerances for each accepted reversal
-  formation;
-- exact owner definition of the additional 5m acceleration confirmation.
+- a TAKE-completed, midpoint-expired, or 3-attempt-exhausted setup cannot revive;
+- one underlying reversal event should not consume multiple attempts merely
+  because it matches several overlapping candle labels; deduplicate by the
+  completed reversal event/end candle.
 
 Acceptance:
-- a deterministic case that crosses the pre-entry STOP remains observable in
-  reversal-watch instead of disappearing;
-- no entry occurs before a valid confirmation has closed;
+- deterministic pre-entry STOP-crossing case remains in reversal-watch;
+- no entry before valid closed confirmation;
+- Hammer/Hanging-Man owner shadow rule is covered at 1x and stronger 2x cases;
 - confirmed but risk-rejected attempts increment the same 3-attempt budget;
-- a valid later MARKET attempt keeps the original target, computes STOP from the
-  reversal extremum with the percentage cap, recomputes RR from actual entry,
-  and uses shared protection;
-- midpoint expiry, TAKE completion, and attempt exhaustion all terminalize the
+- valid later MARKET attempt keeps original target, uses structural STOP capped
+  at 2%, recomputes RR from actual fill and enters shared protection;
+- double-top/bottom and H&S require neckline close confirmation;
+- lower-TF wedge reuses canonical Wedge detector and requires directional closed
+  breakout;
+- midpoint expiry, TAKE completion and attempt exhaustion terminalize the
   re-entry path deterministically.
 
 ### OFR-5 — Box crossed-grid late admission / catch-up execution
