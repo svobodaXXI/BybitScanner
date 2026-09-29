@@ -459,29 +459,38 @@ Acceptance:
 
 ### OFR-5 — Box crossed-grid late admission / catch-up execution
 **Priority:** P1  
-**Status:** OPEN / one strategy detail unresolved
+**Status:** OPEN / paired-close mapping frozen; STOP/RR rule still to freeze
 
 Frozen owner intent:
 - original P1..P4 grid remains fixed;
 - each entry slot already crossed before submission is acquired by MARKET for
   exactly that slot quantity;
 - not-yet-crossed slots remain at their original entry LIMIT levels;
-- each market-caught slot retains slot ownership and gets its corresponding
-  opposite/closing LIMIT;
-- shared Robot protection/recovery remains authoritative;
-- no one-shot aggregate `1 RO` market fallback.
+- each market-caught slot retains its original slot identity;
+- no one-shot aggregate `1 RO` market fallback;
+- shared Robot protection/recovery remains authoritative.
 
-Blocking decision before code:
-- exact price mapping of each paired closing LIMIT still must be frozen;
-- if real market catch-up fills conflict with existing frozen planned-average/RR
-  STOP arithmetic, freeze the precise STOP rule rather than silently moving it.
+Frozen paired closing-LIMIT contract:
+- every filled slot P1..P4 owns one separate opposite/closing LIMIT;
+- all four closing LIMITs use the same existing frozen common Box TAKE;
+- therefore slot identity/order ownership is separate, while exit price remains
+  the current single-TAKE strategy;
+- late MARKET catch-up changes entry execution only; it does not introduce
+  per-slot target ladders or a new profit-taking model.
+
+Still blocking before code:
+- freeze STOP/RR treatment when one or more MARKET catch-up fills execute at
+  prices different from the original P1..P4 plan;
+- do not silently keep a STOP whose approved RR was calculated from a planned
+  average if the authoritative filled average materially changes;
+- do not silently move the frozen TAKE.
 
 Acceptance:
 - deterministic scenarios for 0/1/2/3/4 crossed slots;
 - exact slot ownership after mixed MARKET + LIMIT entry;
-- paired close limits proven;
+- four separate paired close LIMITs proven at the same frozen TAKE;
 - familiar STOP protection active immediately for real exposure;
-- restart/reconcile preserves the same slot identities.
+- restart/reconcile preserves the same slot identities and closing orders.
 
 ### OFR-6 — Telegram position-card presentation cleanup
 **Priority:** P1  
