@@ -596,6 +596,11 @@ class RobotBreakoutMonitor:
         limit_specs = tuple(item for item in all_limits if item.slot in limit_slots)
         execution["entry_mode"] = "BOX_CATCHUP"
         execution["source_box_candidate_id"] = source.candidate_id
+        # Re-freeze is legal only before any durable Box order ownership
+        # exists. Remove markers from an earlier pre-ownership plan so a
+        # newer authoritative book cannot inherit stale dispatch identities.
+        for key in ("box_ownership_ready", "limit_order_ids", "market_order_ids"):
+            execution.pop(key, None)
         execution["box_catchup"] = {
             "market_slots": list(market_slots),
             "limit_slots": list(limit_slots),
@@ -692,6 +697,36 @@ class RobotBreakoutMonitor:
         )
         if len(market_plans) != len(raw_market_intents):
             raise RobotBreakoutMonitorError("durable Box MARKET intent is malformed")
+
+        frozen_plan = source.signal_snapshot.get("plan")
+        frozen_identity = source.signal_snapshot.get("identity")
+        if not isinstance(frozen_plan, Mapping) or not isinstance(frozen_identity, Mapping):
+            raise RobotBreakoutMonitorError("frozen Box plan is unavailable")
+        frozen_quantities = frozen_plan.get("limit_quantities")
+        direction = str(frozen_identity.get("direction", "")).strip().upper()
+        expected_side = (
+            OrderSide.BUY if direction == "LONG"
+            else OrderSide.SELL if direction == "SHORT"
+            else None
+        )
+        if (
+            not isinstance(frozen_quantities, list)
+            or len(frozen_quantities) != 4
+            or expected_side is None
+        ):
+            raise RobotBreakoutMonitorError("frozen Box MARKET terms are invalid")
+        for plan in market_plans:
+            expected_quantity = Decimal(str(frozen_quantities[plan.slot - 1]))
+            if (
+                plan.slot not in {1, 2, 3, 4}
+                or plan.request.symbol != source.symbol.value
+                or plan.request.side is not expected_side
+                or plan.quantity != expected_quantity
+            ):
+                raise RobotBreakoutMonitorError(
+                    "durable Box MARKET intent conflicts with frozen slot"
+                )
+
         market_slots = tuple(plan.slot for plan in market_plans)
         limit_slots = tuple(int(item) for item in raw_limit_slots)
         if tuple(int(item) for item in raw_market_slots) != market_slots:
