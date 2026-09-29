@@ -1,3 +1,29 @@
+## 🔁 NEW BLOCKER — ROBOT DOES NOT SELF-RECOVER — 2026-09-29
+
+After CASHCATUSDT was closed by `EMERGENCY_CLOSE`, the next owner interaction
+showed:
+
+`Робот: отклонено — Робот не готов к приёму новых сделок`
+
+and Robot status:
+
+`Запущен / Нужна сверка`.
+
+No owner evidence showed an automatic return to READY. This is now `OFR-3A`
+and is queued before Geometry. It is separate from the unknown trigger for the
+emergency close itself.
+
+Required outcome:
+- identify the durable blocker;
+- preserve fail-closed admission while state is genuinely uncertain;
+- when authoritative state is flat/consistent and reconciliation succeeds,
+  restore Robot READY automatically if that is the intended canonical flow;
+- otherwise surface one explicit durable blocker instead of leaving an opaque
+  permanent reconciliation state.
+
+Canonical queue:
+`DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
+
 ## 🚑 PRIORITY INSERT — OWNER FEEDBACK REMEDIATION — 2026-09-29
 
 The owner explicitly moved today's real feedback/blockers ahead of Geometry
