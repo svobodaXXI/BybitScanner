@@ -7,6 +7,8 @@ from terminal.application.ikigai_box_catchup import (
     build_box_exit_specs,
     build_box_market_plans,
     classify_box_catchup_slots,
+    durable_box_market_intent,
+    restore_box_market_plan,
 )
 from terminal.domain.models import Price, Quantity, Symbol
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
@@ -105,6 +107,17 @@ class BoxCatchupPlanningTests(unittest.TestCase):
         self.assertEqual([plan.request.side.value for plan in plans], ["Buy", "Buy"])
         self.assertEqual(len({plan.request.client_action_id.value for plan in plans}), 2)
         self.assertEqual(len({plan.identity.command_id.value for plan in plans}), 2)
+
+    def test_market_intent_round_trips_exact_request_identity(self):
+        plan = build_box_market_plans(
+            self.source, _book("92.8"), slots=(1,),
+        )[0]
+        intent = durable_box_market_intent(plan)
+        self.assertEqual(restore_box_market_plan(intent), plan)
+        changed = dict(intent)
+        changed["volume_amount"] = "1"
+        with self.assertRaisesRegex(ValueError, "changed"):
+            restore_box_market_plan(changed)
 
     def test_market_plan_rejects_uncrossed_slot(self):
         with self.assertRaisesRegex(ValueError, "uncrossed"):
