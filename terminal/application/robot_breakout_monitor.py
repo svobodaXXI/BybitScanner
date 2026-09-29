@@ -44,6 +44,16 @@ from scanner_geometry_cursor import (
 from terminal.api.models import ClientActionId, CommandResultStatus, MarketCommandRequest, PaperLimitCancelRequest
 from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
+from terminal.application.ikigai_box_catchup import (
+    build_box_emergency_close_market_plan,
+    build_box_exit_specs,
+    build_box_market_ownership_specs,
+    build_box_market_plans,
+    classify_box_catchup_slots,
+    durable_box_market_intent,
+    ready_box_exit_slots,
+    restore_box_market_plan,
+)
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.robot_admission_catchup import (
     LATE_ADMISSION_MARKET,
@@ -262,9 +272,20 @@ class RobotBreakoutMonitor:
     def _tick(self) -> tuple[str, ...]:
         advanced: list[str] = []
         for record in self._store().load_robot_candidates_by_status(
-            self._account_id, ("APPROVED",),
+            self._account_id, ("APPROVED", "OPEN"),
         ):
             try:
+                if record.status == "OPEN":
+                    if (
+                        record.robot_state is not None
+                        and record.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+                        and record.robot_state.get("phase") == "BOX_ENTRY_READY"
+                        and self._sync_box_trade(
+                            record, record.robot_state.get("execution") or {},
+                        )
+                    ):
+                        advanced.append(record.candidate_id)
+                    continue
                 if self._advance_one(record):
                     advanced.append(record.candidate_id)
             except Exception as error:
@@ -291,7 +312,10 @@ class RobotBreakoutMonitor:
                     continue
                 execution = record.robot_state.get("execution") or {}
                 try:
-                    if self._refresh_open_trade_entry_attestation(record, execution):
+                    if record.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                        if self._sync_box_trade(record, execution):
+                            advanced.append(record.candidate_id)
+                    elif self._refresh_open_trade_entry_attestation(record, execution):
                         advanced.append(record.candidate_id)
                 except Exception as error:
                     print(
@@ -310,16 +334,18 @@ class RobotBreakoutMonitor:
             execution = record.robot_state.get("execution") or {}
 
             if phase == "BOX_ENTRY_READY":
-                raw_order_ids = execution.get("limit_order_ids")
-                if not isinstance(raw_order_ids, (tuple, list)) or not raw_order_ids:
-                    continue
-                if not any(
-                    (order := self._store().get_paper_limit(order_id, self._account_id))
-                    is not None and order.filled_quantity > 0
-                    for order_id in raw_order_ids
-                ):
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = record.robot_state.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
                     continue
                 try:
+                    source = self._store().get_robot_candidate(source_id.strip())
+                    if source is None:
+                        continue
+                    proof = self._store().prove_box_owned_position(source.candidate_id)
+                    if proof.entry_quantity <= 0:
+                        continue
                     if self._advance_box_entry_ready(record, match_resting_orders=False):
                         advanced.append(record.candidate_id)
                 except Exception as error:
@@ -505,161 +531,559 @@ class RobotBreakoutMonitor:
         self._persist_state(record, new_state)
         return True
 
+    def _box_source(
+        self, record: RobotCandidateRecord, execution: Mapping[str, object],
+    ) -> RobotCandidateRecord:
+        source_id = execution.get("source_box_candidate_id")
+        if not isinstance(source_id, str) or not source_id.strip():
+            source_id = record.robot_state.get("source_box_candidate_id")
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise RobotBreakoutMonitorError("Box Robot handoff lacks source plan identity")
+        source = self._store().get_robot_candidate(source_id.strip())
+        if (
+            source is None
+            or source.status != "BOX_PLAN_ONLY"
+            or source.symbol != record.symbol
+        ):
+            raise RobotBreakoutMonitorError("Box source plan is unavailable or mismatched")
+        return source
+
+    def _write_box_catchup_plan(
+        self,
+        record: RobotCandidateRecord,
+        source: RobotCandidateRecord,
+        execution: dict[str, object],
+    ) -> bool:
+        if self._get_market_book is None:
+            return False
+        book = self._get_market_book(record.symbol.value)
+        if book is None:
+            return False
+        slots = classify_box_catchup_slots(source, book)
+        market_slots = tuple(item.slot for item in slots if item.entry_mode == "MARKET")
+        market_plans = build_box_market_plans(source, book, slots=market_slots)
+        if market_plans and (self._market_preflight is None or self._submit_market is None):
+            return False
+        for plan in market_plans:
+            preflight = self._market_preflight(plan.request, plan.identity)
+            if (
+                not getattr(preflight, "admitted", False)
+                or getattr(preflight, "normalized_quantity", None) != plan.quantity
+            ):
+                return False
+        if market_plans:
+            projected_quantity = sum(
+                (plan.quantity for plan in market_plans), Decimal("0")
+            )
+            projected_notional = sum(
+                (plan.quantity * plan.best_price for plan in market_plans),
+                Decimal("0"),
+            )
+            if projected_quantity <= 0:
+                return False
+            try:
+                robot_protection.box_stop_for_actual_entry(
+                    source.signal_snapshot,
+                    average_entry=projected_notional / projected_quantity,
+                )
+            except Exception:
+                # Do not create any ownership when the immediately caught
+                # MARKET exposure cannot own a valid Box STOP under RR/P4.
+                return False
+
+        all_limits = build_box_first_grid_specs(source, created_at_ms=self._now_ms())
+        limit_slots = tuple(item.slot for item in slots if item.entry_mode == "LIMIT")
+        limit_specs = tuple(item for item in all_limits if item.slot in limit_slots)
+        execution["entry_mode"] = "BOX_CATCHUP"
+        execution["source_box_candidate_id"] = source.candidate_id
+        # Re-freeze is legal only before any durable Box order ownership
+        # exists. Remove markers from an earlier pre-ownership plan so a
+        # newer authoritative book cannot inherit stale dispatch identities.
+        for key in ("box_ownership_ready", "limit_order_ids", "market_order_ids"):
+            execution.pop(key, None)
+        execution["box_catchup"] = {
+            "market_slots": list(market_slots),
+            "limit_slots": list(limit_slots),
+            "market_intents": [
+                durable_box_market_intent(plan) for plan in market_plans
+            ],
+            "limit_order_ids": [item.order_id.value for item in limit_specs],
+            "book_received_at_ms": int(book.received_at_ms),
+        }
+        self._persist_execution(record, execution)
+        return True
+
     def _advance_box_entry_ready(
         self, record: RobotCandidateRecord, *, match_resting_orders: bool = True,
     ) -> bool:
         execution = dict(record.robot_state.get("execution") or {})
-        raw_order_ids = execution.get("limit_order_ids")
+        source = self._box_source(record, execution)
+        catchup = execution.get("box_catchup")
 
-        if raw_order_ids is None:
-            new_entry_admitted, terminal_stop = self._read_admission_gate()
-            if not new_entry_admitted:
-                if terminal_stop:
-                    self._invalidate_pre_entry_candidate(
-                        record, reason="ROBOT_STOPPED before Box grid creation",
+        new_entry_admitted, terminal_stop = self._read_admission_gate()
+        existing_ownership = (
+            self._store().load_box_order_ownership(source.candidate_id)
+            if isinstance(catchup, Mapping)
+            else ()
+        )
+        if existing_ownership:
+            try:
+                existing_proof = self._store().prove_box_owned_position(source.candidate_id)
+            except Exception as error:
+                self._escalate_reconciliation(
+                    "ROBOT_BOX_OWNERSHIP_MISMATCH "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                    f"reason={error}"
+                )
+                return False
+            if existing_proof.entry_quantity > 0 and existing_proof.remaining_quantity == 0:
+                return self._sync_box_trade(record, execution, create_trade=False)
+            if existing_proof.remaining_quantity > 0 and not new_entry_admitted:
+                now_ms = self._now_ms()
+                for owner in existing_ownership:
+                    if owner.role != "ENTRY":
+                        continue
+                    limit = self._store().get_paper_limit(
+                        owner.order_id.value, self._account_id,
                     )
-                    return True
-                return False
-            if self._active_other_owner_candidate_ids(record):
-                return False
+                    if limit is None or limit.status in INACTIVE_LIMIT_STATUSES:
+                        continue
+                    digest = hashlib.sha256(
+                        f"{source.candidate_id}\0admission-closed-cancel\0{owner.order_id.value}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    self._store().cancel_paper_limit(
+                        client_action_id=f"box-admission-cancel-{digest}",
+                        request_fingerprint=hashlib.sha256(
+                            f"{record.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                        ).hexdigest(),
+                        order_id=owner.order_id,
+                        trading_account_id=self._account_id,
+                        updated_at_ms=now_ms,
+                    )
+                return self._sync_box_trade(record, execution, create_trade=True)
+
+        if not new_entry_admitted:
+            if terminal_stop and not execution.get("box_catchup"):
+                self._invalidate_pre_entry_candidate(
+                    record, reason="ROBOT_STOPPED before Box entry ownership",
+                )
+                return True
+            return False
+        if self._active_other_owner_candidate_ids(record):
+            return False
+
+        if not isinstance(catchup, Mapping):
             block_reason = self._pre_entry_block_reason(record)
             if block_reason is not None:
                 self._invalidate_pre_entry_candidate(record, reason=block_reason)
                 return True
-
-            source_id = record.robot_state.get("source_box_candidate_id")
-            if not isinstance(source_id, str) or not source_id.strip():
-                raise RobotBreakoutMonitorError("Box Robot handoff lacks source plan identity")
-            source = self._store().get_robot_candidate(source_id.strip())
-            if (
-                source is None
-                or source.status != "BOX_PLAN_ONLY"
-                or source.symbol != record.symbol
-            ):
-                raise RobotBreakoutMonitorError("Box source plan is unavailable or mismatched")
-
-            # Baseline and spec building cannot create a LIMIT, so they run before the
-            # arm: a failure there never subscribes the symbol. Only the grid creation
-            # that follows makes fill-capable LIMITs durable, and its outcome may be
-            # ambiguous, so an arm taken for it is deliberately not released on error.
+            # Prove the immutable FLAT/journal baseline before deriving any
+            # executable catch-up plan. This is not order ownership and does
+            # not require a temporary coverage arm: no order can fill yet.
+            # A bad baseline therefore fails visibly without leaking an arm.
             self._store().begin_box_attempt_ownership(source.candidate_id)
-            specs = build_box_first_grid_specs(source, created_at_ms=self._now_ms())
+            return self._write_box_catchup_plan(record, source, execution)
+
+        raw_market_intents = catchup.get("market_intents")
+        raw_market_slots = catchup.get("market_slots")
+        raw_limit_slots = catchup.get("limit_slots")
+        raw_limit_order_ids = catchup.get("limit_order_ids")
+        if (
+            not isinstance(raw_market_intents, list)
+            or not isinstance(raw_market_slots, list)
+            or not isinstance(raw_limit_slots, list)
+            or not isinstance(raw_limit_order_ids, list)
+        ):
+            raise RobotBreakoutMonitorError("durable Box catch-up plan is malformed")
+        market_plans = tuple(
+            restore_box_market_plan(item)
+            for item in raw_market_intents
+            if isinstance(item, Mapping)
+        )
+        if len(market_plans) != len(raw_market_intents):
+            raise RobotBreakoutMonitorError("durable Box MARKET intent is malformed")
+
+        frozen_plan = source.signal_snapshot.get("plan")
+        frozen_identity = source.signal_snapshot.get("identity")
+        if not isinstance(frozen_plan, Mapping) or not isinstance(frozen_identity, Mapping):
+            raise RobotBreakoutMonitorError("frozen Box plan is unavailable")
+        frozen_quantities = frozen_plan.get("limit_quantities")
+        direction = str(frozen_identity.get("direction", "")).strip().upper()
+        expected_side = (
+            OrderSide.BUY if direction == "LONG"
+            else OrderSide.SELL if direction == "SHORT"
+            else None
+        )
+        if (
+            not isinstance(frozen_quantities, list)
+            or len(frozen_quantities) != 4
+            or expected_side is None
+        ):
+            raise RobotBreakoutMonitorError("frozen Box MARKET terms are invalid")
+        for plan in market_plans:
+            expected_quantity = Decimal(str(frozen_quantities[plan.slot - 1]))
+            if (
+                plan.slot not in {1, 2, 3, 4}
+                or plan.request.symbol != source.symbol.value
+                or plan.request.side is not expected_side
+                or plan.quantity != expected_quantity
+            ):
+                raise RobotBreakoutMonitorError(
+                    "durable Box MARKET intent conflicts with frozen slot"
+                )
+
+        market_slots = tuple(plan.slot for plan in market_plans)
+        limit_slots = tuple(int(item) for item in raw_limit_slots)
+        if tuple(int(item) for item in raw_market_slots) != market_slots:
+            raise RobotBreakoutMonitorError("durable Box MARKET slots changed")
+        if (
+            set(market_slots) & set(limit_slots)
+            or set(market_slots) | set(limit_slots) != {1, 2, 3, 4}
+        ):
+            raise RobotBreakoutMonitorError("durable Box catch-up slots are incomplete")
+
+        ownership = self._store().load_box_order_ownership(source.candidate_id)
+        if not ownership:
+            if self._get_market_book is None:
+                return False
+            current_book = self._get_market_book(record.symbol.value)
+            if current_book is None:
+                return False
+            current_market_slots = tuple(
+                item.slot
+                for item in classify_box_catchup_slots(source, current_book)
+                if item.entry_mode == "MARKET"
+            )
+            if current_market_slots != market_slots:
+                # No order exists yet, so re-freeze from the newer authoritative
+                # book rather than turning a newly-crossed slot into a stale LIMIT.
+                return self._write_box_catchup_plan(record, source, execution)
+
+            self._store().begin_box_attempt_ownership(source.candidate_id)
+            all_limits = build_box_first_grid_specs(source, created_at_ms=self._now_ms())
+            limit_specs = tuple(item for item in all_limits if item.slot in set(limit_slots))
+            if [item.order_id.value for item in limit_specs] != raw_limit_order_ids:
+                raise RobotBreakoutMonitorError("durable Box LIMIT identities changed")
             if not self._arm_entry_coverage(record.symbol.value):
                 return False
-            orders = self._store().create_box_owned_paper_grid(
+            self._store().create_box_mixed_entry_ownership(
                 source.candidate_id,
                 trading_account_id=self._account_id,
                 symbol=record.symbol,
-                orders=specs,
+                market_orders=build_box_market_ownership_specs(market_plans),
+                limit_orders=limit_specs,
             )
-            execution["entry_mode"] = "BOX_GRID"
-            execution["limit_order_ids"] = [order.order_id.value for order in orders]
-            execution["source_box_candidate_id"] = source.candidate_id
+            execution["limit_order_ids"] = list(raw_limit_order_ids)
+            execution["market_order_ids"] = [plan.order_id.value for plan in market_plans]
+            execution["box_ownership_ready"] = True
             self._persist_execution(record, execution)
             return True
 
-        if (
-            not isinstance(raw_order_ids, (tuple, list))
-            or len(raw_order_ids) != 4
-            or any(not isinstance(item, str) or not item.strip() for item in raw_order_ids)
-        ):
-            raise RobotBreakoutMonitorError("Box grid order identities are invalid")
-
-        if match_resting_orders and self._match_resting_orders is not None:
-            self._match_resting_orders(record.symbol.value)
-        return self._finalize_box_trade(record, execution)
-
-    def _finalize_box_trade(
-        self,
-        record: RobotCandidateRecord,
-        execution: Mapping[str, object],
-    ) -> bool:
-        try:
-            entry_evidence = self._prove_entry_evidence(
-                record, execution, entry_path="LIMIT",
+        # Crash-safe replay: ownership may already exist even if the candidate
+        # state update immediately after it did not commit.
+        if not execution.get("box_ownership_ready"):
+            expected = {
+                ("ENTRY", plan.slot, plan.order_id.value) for plan in market_plans
+            }
+            expected.update(
+                ("ENTRY", slot, order_id)
+                for slot, order_id in zip(limit_slots, raw_limit_order_ids)
             )
-        except RobotBreakoutMonitorError as error:
+            actual = {(item.role, item.slot, item.order_id.value) for item in ownership}
+            if actual != expected:
+                raise RobotBreakoutMonitorError("durable Box entry ownership conflicts with plan")
+            execution["limit_order_ids"] = list(raw_limit_order_ids)
+            execution["market_order_ids"] = [plan.order_id.value for plan in market_plans]
+            execution["box_ownership_ready"] = True
+            self._persist_execution(record, execution)
+            return True
+
+        try:
+            current_proof = self._store().prove_box_owned_position(source.candidate_id)
+        except Exception as error:
             self._escalate_reconciliation(
-                "ROBOT_ENTRY_OWNERSHIP_MISMATCH "
+                "ROBOT_BOX_OWNERSHIP_MISMATCH "
                 f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
                 f"reason={error}"
             )
             return False
-        if entry_evidence is None:
+        if current_proof.entry_quantity > 0 and current_proof.remaining_quantity == 0:
+            return self._sync_box_trade(record, execution, create_trade=False)
+
+        for plan in market_plans:
+            command = self._store().get_command(plan.identity.command_id)
+            if command is None:
+                if self._market_preflight is None or self._submit_market is None:
+                    return False
+                preflight = self._market_preflight(plan.request, plan.identity)
+                if (
+                    not getattr(preflight, "admitted", False)
+                    or getattr(preflight, "normalized_quantity", None) != plan.quantity
+                ):
+                    return False
+            if self._submit_market is None:
+                return False
+            result = self._submit_market(plan.request, plan.identity)
+            if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+                return True
+            if not self._sync_box_trade(record, execution, create_trade=False):
+                return True
+
+        # Resting Box LIMITs are matched only on the ordered Robot market-event
+        # path, which evaluates Box ownership and protection on the same event.
+        # Do not call the legacy generic match_resting_orders path here.
+        return self._sync_box_trade(record, execution, create_trade=True)
+
+    def _sync_box_trade(
+        self,
+        record: RobotCandidateRecord,
+        execution: Mapping[str, object],
+        *,
+        create_trade: bool = True,
+    ) -> bool:
+        source = self._box_source(record, execution)
+        try:
+            proof = self._store().prove_box_owned_position(source.candidate_id)
+        except Exception as error:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_OWNERSHIP_MISMATCH "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                f"reason={error}"
+            )
             return False
+        if proof.entry_quantity <= 0:
+            return False
+        if proof.remaining_quantity == 0:
+            return self._finalize_box_take_if_flat(record, source, proof)
 
         duplicate_owners = self._active_other_owner_candidate_ids(record)
         if duplicate_owners:
             self._escalate_duplicate_ownership(record, duplicate_owners)
             return False
 
+        trade = self._store().get_open_robot_trade_for_symbol(
+            self._account_id, record.symbol,
+        )
+        position_key = PositionKey(
+            self._account_id, Category.LINEAR, record.symbol, 0,
+        )
+        projection = self._store().get_protection_projection(position_key)
+        existing_stop = (
+            trade.stop_price
+            if trade is not None
+            else projection.stop_loss
+            if projection is not None
+            else None
+        )
+        if proof.average_entry is None:
+            raise RobotBreakoutMonitorError("Box open exposure lacks average entry")
         try:
-            plan = robot_protection.build_box_protection_plan(
+            plan = robot_protection.build_box_stop_only_plan(
                 self._candidate_payload(record),
                 record.robot_state,
-                average_entry=entry_evidence.average_entry,
-                confirmed_position_quantity=entry_evidence.quantity,
+                average_entry=proof.average_entry,
+                confirmed_position_quantity=proof.remaining_quantity,
+                existing_stop=existing_stop,
             )
-            stop_result, take_result = robot_protection.submit_initial_protection(
-                self._action_executor, plan,
-            )
+            current_stop = projection.stop_loss if projection is not None else None
+            if current_stop is None:
+                stop_result = robot_protection.submit_box_stop_only(
+                    self._action_executor, plan,
+                )
+            elif current_stop != plan.stop_price:
+                stop_result = robot_protection.submit_stop_amend(
+                    self._action_executor, plan,
+                )
+            else:
+                stop_result = None
             if (
-                getattr(stop_result, "status", None) != CommandResultStatus.COMPLETED
-                or getattr(take_result, "status", None) != CommandResultStatus.COMPLETED
+                stop_result is not None
+                and getattr(stop_result, "status", None) != CommandResultStatus.COMPLETED
             ):
-                raise RobotBreakoutMonitorError("initial Box protection submission did not complete")
+                raise RobotBreakoutMonitorError("Box STOP submission did not complete")
         except Exception as error:
-            self._fail_closed_unprotected_fill(record, error)
+            self._fail_closed_box_unprotected_fill(record, source, proof, error)
             return False
 
         try:
-            confirmed_evidence = self._prove_entry_evidence(
-                record, execution, entry_path="LIMIT",
-            )
-        except RobotBreakoutMonitorError as error:
+            confirmed = self._store().prove_box_owned_position(source.candidate_id)
+        except Exception as error:
             self._escalate_reconciliation(
-                "ROBOT_ENTRY_OWNERSHIP_MISMATCH "
+                "ROBOT_BOX_OWNERSHIP_MISMATCH "
                 f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
                 f"reason={error}"
             )
             return False
-        if confirmed_evidence != entry_evidence:
+        if confirmed != proof:
             self._escalate_reconciliation(
-                "ROBOT_ENTRY_OWNERSHIP_CHANGED "
+                "ROBOT_BOX_OWNERSHIP_CHANGED "
                 f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
             )
             return False
 
-        quantities = record.signal_snapshot.get("plan", {}).get("limit_quantities")
+        quantities = source.signal_snapshot.get("plan", {}).get("limit_quantities")
         if not isinstance(quantities, list) or len(quantities) != 4:
             raise RobotBreakoutMonitorError("Box frozen grid quantities are unavailable")
         planned_quantity = sum((Decimal(str(item)) for item in quantities), Decimal("0"))
         if planned_quantity <= 0:
             raise RobotBreakoutMonitorError("Box frozen grid quantity is invalid")
-        actual_wv = min(entry_evidence.quantity / planned_quantity, Decimal("1"))
+        actual_wv = min(proof.entry_quantity / planned_quantity, Decimal("1"))
+
+        market_slots = tuple(
+            int(item)
+            for item in (execution.get("box_catchup") or {}).get("market_slots", [])
+        )
+        entry_path = (
+            "MARKET" if len(market_slots) == 4
+            else "LIMIT" if not market_slots
+            else "MIXED"
+        )
+        now_ms = self._now_ms()
+        if trade is None and create_trade:
+            if proof.average_entry is None or proof.first_execution_at_ms is None:
+                raise RobotBreakoutMonitorError("Box entry proof lacks entry economics")
+            trade, _created = self._store().create_robot_trade(
+                trade_id=f"robot-trade-{record.candidate_id}",
+                trading_account_id=self._account_id,
+                candidate_id=record.candidate_id,
+                symbol=record.symbol,
+                direction=str(record.robot_state["direction"]),
+                pattern="IKIGAI_BOX",
+                source_timeframe=str(
+                    record.signal_snapshot.get("identity", {}).get("timeframe", "5")
+                ).strip() or "5",
+                signal_time_ms=record.approved_at_ms,
+                entry_time_ms=proof.first_execution_at_ms,
+                entry_path=entry_path,
+                actual_wv=actual_wv,
+                average_entry=proof.average_entry,
+                stop_price=plan.stop_price,
+                take_price=plan.take_price,
+                entry_quantity=proof.entry_quantity,
+                entry_position_version=proof.position_version,
+                created_at_ms=max(now_ms, proof.first_execution_at_ms),
+            )
+        elif (
+            trade is not None
+            and proof.entry_quantity > (trade.entry_quantity or Decimal("0"))
+        ):
+            if proof.average_entry is None:
+                raise RobotBreakoutMonitorError("Box top-up proof lacks average entry")
+            trade, _changed = self._store().refresh_open_box_trade_terms(
+                trade.trade_id,
+                trading_account_id=self._account_id,
+                candidate_id=record.candidate_id,
+                symbol=record.symbol,
+                average_entry=proof.average_entry,
+                entry_quantity=proof.entry_quantity,
+                entry_position_version=proof.position_version,
+                stop_price=plan.stop_price,
+                updated_at_ms=now_ms,
+            )
+
+        for spec in build_box_exit_specs(
+            source,
+            slots=ready_box_exit_slots(source, proof),
+            created_at_ms=now_ms,
+        ):
+            self._store().create_box_owned_paper_limit(
+                source.candidate_id,
+                role="EXIT",
+                slot=spec.slot,
+                client_action_id=spec.client_action_id,
+                request_fingerprint=spec.request_fingerprint,
+                order_id=spec.order_id,
+                order_link_id=spec.order_link_id,
+                trading_account_id=self._account_id,
+                symbol=record.symbol,
+                side=spec.side,
+                price=spec.price,
+                quantity=spec.quantity,
+                created_at_ms=spec.created_at_ms,
+            )
+        return True
+
+    def _finalize_box_take_if_flat(
+        self, record: RobotCandidateRecord, source: RobotCandidateRecord, proof,
+    ) -> bool:
+        if proof.exit_quantity <= 0:
+            return False
 
         now_ms = self._now_ms()
-        self._store().create_robot_trade(
-            trade_id=f"robot-trade-{record.candidate_id}",
-            trading_account_id=self._account_id,
-            candidate_id=record.candidate_id,
-            symbol=record.symbol,
-            direction=str(record.robot_state["direction"]),
-            pattern="IKIGAI_BOX",
-            source_timeframe=str(
-                record.signal_snapshot.get("identity", {}).get("timeframe", "5")
-            ).strip() or "5",
-            signal_time_ms=record.approved_at_ms,
-            entry_time_ms=now_ms,
-            entry_path="LIMIT",
-            actual_wv=actual_wv,
-            average_entry=entry_evidence.average_entry,
-            stop_price=plan.stop_price,
-            take_price=plan.take_price,
-            entry_quantity=entry_evidence.quantity,
-            entry_position_version=entry_evidence.position_version,
-            created_at_ms=now_ms,
+        for owner in self._store().load_box_order_ownership(source.candidate_id):
+            order = self._store().get_paper_limit(owner.order_id.value, self._account_id)
+            if order is None or order.status in INACTIVE_LIMIT_STATUSES:
+                continue
+            digest = hashlib.sha256(
+                f"{source.candidate_id}\0take-finalize\0{owner.order_id.value}".encode("utf-8")
+            ).hexdigest()[:32]
+            self._store().cancel_paper_limit(
+                client_action_id=f"box-take-cancel-{digest}",
+                request_fingerprint=hashlib.sha256(
+                    f"{record.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                ).hexdigest(),
+                order_id=owner.order_id,
+                trading_account_id=self._account_id,
+                updated_at_ms=now_ms,
+            )
+
+        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        self._store().clear_paper_protection_for_flat(position_key)
+
+        if record.status == "APPROVED":
+            execution = dict(record.robot_state.get("execution") or {})
+            execution["box_take_realized_before_open"] = True
+            execution["box_take_realized_at_ms"] = (
+                proof.last_execution_at_ms if proof.last_execution_at_ms is not None else now_ms
+            )
+            state = dict(record.robot_state)
+            state["execution"] = execution
+            try:
+                self._store().save_robot_candidate_state(
+                    record.candidate_id,
+                    status="INVALIDATED",
+                    robot_state=state,
+                    expected_revision=record.state_revision,
+                    updated_at_ms=now_ms,
+                )
+            except ConcurrentUpdate:
+                return False
+            self._release_entry_coverage(record.symbol.value)
+            return True
+
+        if record.status != "OPEN":
+            return False
+        trade = self._store().get_open_robot_trade_for_symbol(
+            self._account_id, record.symbol,
         )
+        if trade is None or trade.candidate_id != record.candidate_id:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_TAKE_TRADE_MISSING "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return False
+        if (
+            proof.average_exit is None
+            or proof.last_execution_at_ms is None
+            or proof.entry_notional <= 0
+        ):
+            raise RobotBreakoutMonitorError("Box TAKE proof lacks exit economics")
+        realized_pct = (
+            (proof.realized_pnl - proof.accumulated_fee)
+            / proof.entry_notional
+            * Decimal("100")
+        )
+        self._store().close_robot_trade(
+            trade.trade_id,
+            exit_time_ms=proof.last_execution_at_ms,
+            exit_price=proof.average_exit,
+            exit_reason="TAKE",
+            realized_pnl_usdt=proof.realized_pnl,
+            realized_pnl_pct=realized_pct,
+            fees_costs_usdt=proof.accumulated_fee,
+            updated_at_ms=now_ms,
+        )
+        self._release_entry_coverage(record.symbol.value)
         return True
 
     def _advance_l_shape_retest_detected(
@@ -1783,6 +2207,200 @@ class RobotBreakoutMonitor:
             "[ROBOT CANDIDATE INVALIDATED] "
             f"candidate_id={record.candidate_id} reason={error}"
         )
+
+    def _fail_closed_box_unprotected_fill(
+        self,
+        record: RobotCandidateRecord,
+        source: RobotCandidateRecord,
+        proof,
+        error: Exception,
+    ) -> None:
+        duplicate_owners = self._active_other_owner_candidate_ids(record)
+        if duplicate_owners:
+            self._escalate_duplicate_ownership(record, duplicate_owners)
+            return
+        if proof.remaining_quantity <= 0:
+            return
+        if (
+            self._get_market_book is None
+            or self._market_preflight is None
+            or self._submit_market is None
+        ):
+            self._escalate_reconciliation(
+                "ROBOT_BOX_PROTECTION_FAILURE_NO_CLOSE_PATH "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+
+        if self._incident_dir is not None:
+            snapshot = record.signal_snapshot if isinstance(record.signal_snapshot, Mapping) else {}
+            record_robot_incident(
+                incident_type="ROBOT_PROTECTION_EMERGENCY_CLOSE",
+                stage="initial_protection",
+                reason_code="INITIAL_PROTECTION_FAILURE",
+                symbol=record.symbol.value,
+                timeframe=snapshot.get("timeframe"),
+                pattern=snapshot.get("pattern"),
+                candidate_id=record.candidate_id,
+                error=error,
+                facts={
+                    "stop_proven": False,
+                    "take_proven": False,
+                    "market_data_authoritative": True,
+                    "intended_stop_crossed": None,
+                    "deadline_at_ms": None,
+                    "age_ms": None,
+                },
+                selected_recovery_action="EMERGENCY_CLOSE",
+                incident_dir=self._incident_dir,
+                timestamp_ms=self._now_ms(),
+            )
+
+        execution = dict(record.robot_state.get("execution") or {})
+        raw_intent = execution.get("box_emergency_close_intent")
+        if isinstance(raw_intent, Mapping):
+            plan = restore_box_market_plan(raw_intent)
+            if plan.slot != 0 or plan.quantity != proof.remaining_quantity:
+                self._escalate_reconciliation(
+                    "ROBOT_BOX_EMERGENCY_CLOSE_INTENT_CONFLICT "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return
+        else:
+            book = self._get_market_book(record.symbol.value)
+            if book is None:
+                return
+            plan = build_box_emergency_close_market_plan(
+                source, book, quantity=proof.remaining_quantity,
+            )
+            preflight = self._market_preflight(plan.request, plan.identity)
+            if (
+                not getattr(preflight, "admitted", False)
+                or getattr(preflight, "normalized_quantity", None) != plan.quantity
+            ):
+                self._escalate_reconciliation(
+                    "ROBOT_BOX_EMERGENCY_CLOSE_PREFLIGHT_FAILED "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return
+            execution["box_emergency_close_intent"] = durable_box_market_intent(plan)
+            execution["protection_failure"] = type(error).__name__
+            fresh = self._store().get_robot_candidate(record.candidate_id)
+            if fresh is not None and fresh.status in {"APPROVED", "OPEN"}:
+                state = dict(fresh.robot_state or {})
+                state["execution"] = dict(execution)
+                try:
+                    self._store().save_robot_candidate_state(
+                        fresh.candidate_id,
+                        status=fresh.status,
+                        robot_state=state,
+                        expected_revision=fresh.state_revision,
+                        updated_at_ms=self._now_ms(),
+                    )
+                except ConcurrentUpdate:
+                    return
+
+        try:
+            self._store().reserve_box_order_identity(
+                source.candidate_id,
+                order_id=plan.order_id,
+                role="EXIT",
+                slot=0,
+            )
+        except Exception:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_EMERGENCY_CLOSE_OWNERSHIP_FAILED "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+
+        now_ms = self._now_ms()
+        for owner in self._store().load_box_order_ownership(source.candidate_id):
+            if owner.order_id == plan.order_id:
+                continue
+            limit = self._store().get_paper_limit(owner.order_id.value, self._account_id)
+            if limit is None or limit.status in INACTIVE_LIMIT_STATUSES:
+                continue
+            digest = hashlib.sha256(
+                f"{source.candidate_id}\0protection-failure-cancel\0{owner.order_id.value}".encode("utf-8")
+            ).hexdigest()[:32]
+            self._store().cancel_paper_limit(
+                client_action_id=f"box-emergency-cancel-{digest}",
+                request_fingerprint=hashlib.sha256(
+                    f"{record.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                ).hexdigest(),
+                order_id=owner.order_id,
+                trading_account_id=self._account_id,
+                updated_at_ms=now_ms,
+            )
+
+        result = self._submit_market(plan.request, plan.identity)
+        if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_EMERGENCY_CLOSE_PENDING "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+
+        try:
+            closed_proof = self._store().prove_box_owned_position(source.candidate_id)
+        except Exception:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_EMERGENCY_CLOSE_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+        if closed_proof.remaining_quantity != 0:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_EMERGENCY_CLOSE_NOT_FLAT "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+
+        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        self._store().clear_paper_protection_for_flat(position_key)
+        trade = self._store().get_open_robot_trade_for_symbol(
+            self._account_id, record.symbol,
+        )
+        if trade is not None and trade.candidate_id == record.candidate_id:
+            if (
+                closed_proof.average_exit is None
+                or closed_proof.last_execution_at_ms is None
+                or closed_proof.entry_notional <= 0
+            ):
+                self._escalate_reconciliation(
+                    "ROBOT_BOX_EMERGENCY_CLOSE_ECONOMICS_UNPROVEN "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return
+            realized_pct = (
+                (closed_proof.realized_pnl - closed_proof.accumulated_fee)
+                / closed_proof.entry_notional
+                * Decimal("100")
+            )
+            self._store().close_robot_trade(
+                trade.trade_id,
+                exit_time_ms=closed_proof.last_execution_at_ms,
+                exit_price=closed_proof.average_exit,
+                exit_reason="EMERGENCY_PROTECTION_FAILURE",
+                realized_pnl_usdt=closed_proof.realized_pnl,
+                realized_pnl_pct=realized_pct,
+                fees_costs_usdt=closed_proof.accumulated_fee,
+                updated_at_ms=self._now_ms(),
+            )
+        else:
+            fresh = self._store().get_robot_candidate(record.candidate_id)
+            if fresh is not None and fresh.status == "APPROVED":
+                state = dict(fresh.robot_state)
+                state["execution"] = execution
+                self._store().save_robot_candidate_state(
+                    fresh.candidate_id,
+                    status="INVALIDATED",
+                    robot_state=state,
+                    expected_revision=fresh.state_revision,
+                    updated_at_ms=self._now_ms(),
+                )
+        self._release_entry_coverage(record.symbol.value)
 
     def _fail_closed_unprotected_fill(
         self, record: RobotCandidateRecord, error: Exception,

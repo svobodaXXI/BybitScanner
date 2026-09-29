@@ -34,7 +34,9 @@ from terminal.domain.models import (
     Symbol,
     TradingAccountId,
 )
+from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.persistence.sqlite_store import PositionProjectionUpdate, SQLiteStore
+from tests.test_box_plan_persistence import snapshot as box_snapshot
 
 
 ACCOUNT_ID = TradingAccountId("paper")
@@ -108,6 +110,18 @@ def _l_shape_snapshot():
         },
     }
 
+
+
+def _ready_book(price="95"):
+    value = Decimal(price)
+    return NormalizedOrderBook(
+        symbol=Symbol(SYMBOL),
+        bids=(PriceLevel(Price(value - Decimal("0.1")), Quantity(Decimal("100"))),),
+        asks=(PriceLevel(Price(value), Quantity(Decimal("100"))),),
+        health=BookHealth.READY,
+        received_at_ms=4_000,
+        available_depth=1,
+    )
 
 
 def _candle_at(index, *, high, low, close):
@@ -233,23 +247,44 @@ class _FakeActionExecutor:
             request.client_action_id.value, CommandResultStatus.COMPLETED, "filled", "market filled",
         )
 
+    def _protection(self, leg, operation, request):
+        key = PositionKey(
+            self.account_id, Category.LINEAR, Symbol(request.symbol), 0,
+        )
+        self.store.mutate_paper_protection_leg(
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=(
+                f"fake-protection-{leg}-{operation}-{request.trigger_price}"
+            ),
+            operation=operation,
+            position_key=key,
+            leg=leg,
+            trigger=request.trigger_price,
+            updated_at_ms=self.clock(),
+        )
+        return PaperStopMutationResult(
+            request.client_action_id.value,
+            CommandResultStatus.COMPLETED,
+            "created" if operation == "create" else "amended",
+        )
+
     def create_stop(self, request):
         if self.fail_create_stop:
             raise RuntimeError("boom: simulated protection submission failure")
         self.protection_calls.append(("create_stop", request))
-        return PaperStopMutationResult(request.client_action_id.value, CommandResultStatus.COMPLETED, "created")
+        return self._protection("stop", "create", request)
 
     def amend_stop(self, request):
         self.protection_calls.append(("amend_stop", request))
-        return None
+        return self._protection("stop", "amend", request)
 
     def create_take(self, request):
         self.protection_calls.append(("create_take", request))
-        return PaperStopMutationResult(request.client_action_id.value, CommandResultStatus.COMPLETED, "created")
+        return self._protection("take", "create", request)
 
     def amend_take(self, request):
         self.protection_calls.append(("amend_take", request))
-        return None
+        return self._protection("take", "amend", request)
 
     def full_close(self, request):
         self.protection_calls.append(("full_close", request))
@@ -335,6 +370,159 @@ class _Clock:
 
 
 class RobotBreakoutMonitorTests(unittest.TestCase):
+    def test_box_mixed_catchup_market_then_slot_take_cancels_untouched_entries(self):
+        data = box_snapshot()
+        data["identity"]["symbol"] = SYMBOL
+        self.store._connection.execute(
+            """INSERT INTO position_projections (
+                   trading_account_id, category, symbol, position_idx, side, quantity,
+                   average_entry, realized_pnl, accumulated_fee, engaged_notional,
+                   sync_state, version, updated_at_ms
+               ) VALUES (?, ?, ?, 0, ?, '0', NULL, '0', '0', '0', 'synced', 1, ?)""",
+            (ACCOUNT_ID.value, Category.LINEAR.value, SYMBOL, PositionSide.FLAT.value, 500),
+        )
+        source, _ = self.store.save_box_plan_only(snapshot=data, created_at_ms=3001)
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id,
+            symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            approved_at_ms=3002,
+        )
+        self.clock.value = 4000
+        book = _ready_book("93.5")
+        self.monitor._get_market_book = lambda symbol: book
+
+        def preflight(request, identity):
+            return SimpleNamespace(
+                admitted=True,
+                normalized_quantity=request.volume.amount / request.sizing_reference_price,
+            )
+
+        submitted = set()
+
+        def submit_market(request, identity):
+            if identity.command_id.value not in submitted:
+                submitted.add(identity.command_id.value)
+                quantity = request.volume.amount / request.sizing_reference_price
+                self.executor._apply_fill(
+                    request.symbol,
+                    request.side,
+                    quantity,
+                    request.sizing_reference_price,
+                    order_id=OrderId(f"paper-order-{identity.order_link_id}"),
+                )
+            return CommandResult(
+                request.client_action_id.value,
+                CommandResultStatus.COMPLETED,
+                "completed",
+                "market filled",
+            )
+
+        self.monitor._market_preflight = preflight
+        self.monitor._submit_market = submit_market
+
+        # Freeze classification, then atomically own P1 MARKET + P2..P4 LIMIT.
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        planned = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(
+            planned.robot_state["execution"]["box_catchup"]["market_slots"], [1],
+        )
+        self.assertEqual(
+            planned.robot_state["execution"]["box_catchup"]["limit_slots"], [2, 3, 4],
+        )
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+
+        owned = self.store.load_box_order_ownership(source.candidate_id)
+        self.assertEqual(
+            [(item.role, item.slot) for item in owned],
+            [("ENTRY", 1), ("ENTRY", 2), ("ENTRY", 3), ("ENTRY", 4)],
+        )
+
+        # Dispatch P1 MARKET, prove it, create shared STOP + paired slot EXIT,
+        # then create the OPEN Robot trade only after immediate catch-up ends.
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        opened = self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}")
+        self.assertIsNotNone(opened)
+        self.assertEqual(opened.entry_path, "MIXED")
+        self.assertEqual(opened.entry_quantity, Decimal("2"))
+        self.assertEqual(opened.average_entry, Decimal("93.5"))
+        self.assertEqual(opened.stop_price, Decimal("90.65"))
+        self.assertEqual(opened.take_price, Decimal("99.2"))
+
+        protection = self.store.get_protection_projection(
+            PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        )
+        self.assertEqual(protection.stop_loss, Decimal("90.65"))
+        self.assertIsNone(protection.take_profit)
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop"],
+        )
+
+        ownership = self.store.load_box_order_ownership(source.candidate_id)
+        exit1 = next(item for item in ownership if item.role == "EXIT" and item.slot == 1)
+        exit_order = self.store.get_paper_limit(exit1.order_id.value, ACCOUNT_ID)
+        self.assertEqual(exit_order.price, Decimal("99.2"))
+        self.assertEqual(exit_order.quantity, Decimal("2"))
+        untouched = [
+            item for item in ownership if item.role == "ENTRY" and item.slot in {2, 3, 4}
+        ]
+        self.assertEqual(
+            [self.store.get_paper_limit(item.order_id.value, ACCOUNT_ID).price for item in untouched],
+            [Decimal("93.2"), Decimal("92.4"), Decimal("91.6")],
+        )
+
+        # Frozen TAKE fills only the actually-owned P1 lot. The setup is now
+        # realized, so untouched P2..P4 are cancelled and cannot re-enter.
+        current = self.store.get_position_projection(
+            PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        )
+        execution = Execution(
+            ExecutionDedupKey(ACCOUNT_ID, Category.LINEAR, ExecutionId("box-take-p1")),
+            exit1.order_id,
+            Symbol(SYMBOL),
+            OrderSide.SELL,
+            Price(Decimal("99.2")),
+            Quantity(Decimal("2")),
+            Decimal("0"),
+            self.clock(),
+        )
+        projection = PositionProjectionUpdate(
+            PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0),
+            PositionSide.FLAT,
+            Quantity(Decimal("0")),
+            None,
+            Decimal("11.4"),
+            Decimal("0"),
+            Notional(Decimal("0")),
+            "synced",
+            current.version,
+            self.clock(),
+        )
+        self.assertEqual(
+            self.store.apply_paper_limit_execution_once(
+                exit1.order_id, execution, projection, updated_at_ms=self.clock(),
+            ).value,
+            "applied",
+        )
+        self.assertEqual(
+            self.monitor.process_authoritative_fill(SYMBOL),
+            (candidate.candidate_id,),
+        )
+
+        closed = self.store.get_robot_trade(opened.trade_id)
+        self.assertEqual(closed.exit_reason, "TAKE")
+        self.assertEqual(closed.exit_price, Decimal("99.2"))
+        self.assertEqual(closed.realized_pnl_usdt, Decimal("11.4"))
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status, "CLOSED")
+        self.assertEqual(
+            [
+                self.store.get_paper_limit(item.order_id.value, ACCOUNT_ID).status
+                for item in untouched
+            ],
+            ["cancelled", "cancelled", "cancelled"],
+        )
+
     def test_box_entry_ready_runs_four_limit_grid_into_shared_trade(self):
         source_snapshot = {
             "contract_version": 1,
@@ -401,8 +589,12 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             approved_at_ms=3002,
         )
         self.clock.value = 4000
+        self.monitor._get_market_book = lambda symbol: _ready_book("95")
 
-        # RVL-R4: no Box grid LIMIT is created until protection coverage is armed.
+        # First tick durably freezes the current 0-MARKET / 4-LIMIT catch-up plan.
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+
+        # No Box entry ownership is created until protection coverage is armed.
         self.arm_granted = False
         self.assertEqual(self.monitor.tick(), ())
         refused = self.store.get_robot_candidate(candidate.candidate_id)
@@ -431,11 +623,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertIsNotNone(opened)
         self.assertEqual(opened.entry_quantity, Decimal("2"))
         self.assertEqual(opened.average_entry, Decimal("94"))
-        self.assertEqual(opened.stop_price, Decimal("89.6"))
+        self.assertEqual(opened.stop_price, Decimal("91.4"))
         self.assertEqual(opened.take_price, Decimal("99.2"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
-            ["create_stop", "create_take"],
+            ["create_stop"],
         )
 
         self.executor.fill_resting_limit(
@@ -449,11 +641,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(topped_up.trade_id, opened.trade_id)
         self.assertEqual(topped_up.entry_quantity, Decimal("4"))
         self.assertEqual(topped_up.average_entry, Decimal("93.6"))
-        self.assertEqual(topped_up.stop_price, Decimal("89.6"))
+        self.assertEqual(topped_up.stop_price, Decimal("91.4"))
         self.assertEqual(topped_up.take_price, Decimal("99.2"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
-            ["create_stop", "create_take"],
+            ["create_stop"],
         )
 
     def setUp(self):

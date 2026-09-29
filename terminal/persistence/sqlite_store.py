@@ -420,6 +420,20 @@ class BoxOwnedPaperLimitSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class BoxOwnedPaperMarketSpec:
+    slot: int
+    order_id: OrderId
+
+
+@dataclass(frozen=True, slots=True)
+class BoxOrderOwnershipRecord:
+    order_id: OrderId
+    candidate_id: str
+    role: str
+    slot: int
+
+
+@dataclass(frozen=True, slots=True)
 class PaperLimitOrderRecord:
     order_id: OrderId
     order_link_id: str
@@ -3031,6 +3045,57 @@ class SQLiteStore:
                 raise DuplicateIdentity("Box create action points to another PAPER limit")
             return order, created
 
+    def create_box_mixed_entry_ownership(
+        self, candidate_id: str, *, trading_account_id: TradingAccountId,
+        symbol: Symbol, market_orders: tuple[BoxOwnedPaperMarketSpec, ...],
+        limit_orders: tuple[BoxOwnedPaperLimitSpec, ...],
+    ) -> tuple[PaperLimitOrderRecord, ...]:
+        """Atomically own all P1..P4 entries before any MARKET dispatch.
+
+        MARKET order ids are deterministic future PAPER ids reserved before
+        submission. Untouched slots become resting LIMITs in the same
+        transaction. A conflict in any slot rolls back all four identities and
+        every created LIMIT.
+        """
+        self._assert_owner()
+        if trading_account_id != TradingAccountId("paper"):
+            raise ValueError("Box mixed entry ownership requires paper account")
+        market_slots = {item.slot for item in market_orders}
+        limit_slots = {item.slot for item in limit_orders}
+        if (
+            market_slots & limit_slots
+            or market_slots | limit_slots != {1, 2, 3, 4}
+            or len(market_slots) != len(market_orders)
+            or len(limit_slots) != len(limit_orders)
+        ):
+            raise ValueError("Box mixed entry ownership must cover slots 1..4 exactly once")
+        with self._transaction():
+            for item in sorted(market_orders, key=lambda value: value.slot):
+                self._reserve_box_order_identity(
+                    candidate_id, order_id=item.order_id, role="ENTRY", slot=item.slot,
+                )
+            created_orders = []
+            for item in sorted(limit_orders, key=lambda value: value.slot):
+                self._reserve_box_order_identity(
+                    candidate_id, order_id=item.order_id, role="ENTRY", slot=item.slot,
+                )
+                order, _ = self._create_paper_limit(
+                    client_action_id=item.client_action_id,
+                    request_fingerprint=item.request_fingerprint,
+                    order_id=item.order_id,
+                    order_link_id=item.order_link_id,
+                    trading_account_id=trading_account_id,
+                    symbol=symbol,
+                    side=item.side,
+                    price=item.price,
+                    quantity=item.quantity,
+                    created_at_ms=item.created_at_ms,
+                )
+                if order.order_id != item.order_id:
+                    raise DuplicateIdentity("Box create action points to another PAPER limit")
+                created_orders.append(order)
+            return tuple(created_orders)
+
     def create_box_owned_paper_grid(
         self, candidate_id: str, *, trading_account_id: TradingAccountId,
         symbol: Symbol, orders: tuple[BoxOwnedPaperLimitSpec, ...],
@@ -4285,6 +4350,23 @@ class SQLiteStore:
             raise DuplicateIdentity("Box grid slot already has a durable order identity") from exc
         return True
 
+    def load_box_order_ownership(
+        self, candidate_id: str,
+    ) -> tuple[BoxOrderOwnershipRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            "SELECT order_id, candidate_id, role, slot "
+            "FROM box_order_ownership WHERE candidate_id=? "
+            "ORDER BY CASE role WHEN 'ENTRY' THEN 0 ELSE 1 END, slot, order_id",
+            (candidate_id,),
+        ).fetchall()
+        return tuple(
+            BoxOrderOwnershipRecord(
+                OrderId(row["order_id"]), row["candidate_id"], row["role"], row["slot"],
+            )
+            for row in rows
+        )
+
     def reserve_box_order_identity(
         self, candidate_id: str, *, order_id: OrderId, role: str, slot: int,
     ) -> bool:
@@ -4680,6 +4762,72 @@ class SQLiteStore:
             )
             if cursor.rowcount != 1:
                 raise ConcurrentUpdate("Robot trade changed before entry attestation refresh")
+        return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
+
+    def refresh_open_box_trade_terms(
+        self, trade_id: str, *, trading_account_id: TradingAccountId,
+        candidate_id: str, symbol: Symbol, average_entry: Decimal,
+        entry_quantity: Decimal, entry_position_version: int,
+        stop_price: Decimal, updated_at_ms: int,
+    ) -> tuple[RobotTradeRecord, bool]:
+        """Refresh proven Box aggregate entry and STOP without widening risk."""
+        self._assert_owner()
+        for value in (average_entry, entry_quantity, stop_price):
+            _decimal_text(value)
+        if (
+            average_entry <= 0 or entry_quantity <= 0 or stop_price <= 0
+            or type(entry_position_version) is not int or entry_position_version < 1
+            or type(updated_at_ms) is not int or updated_at_ms < 0
+        ):
+            raise ValueError("invalid Box trade refresh")
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT * FROM robot_trades WHERE trade_id=?", (trade_id,),
+            ).fetchone()
+            if row is None:
+                raise PersistenceError("Robot trade does not exist")
+            trade = _robot_trade_from_row(row)
+            candidate = self.get_robot_candidate(candidate_id)
+            if (
+                trade.exit_time_ms is not None or trade.pattern != "IKIGAI_BOX"
+                or candidate is None or candidate.status != "OPEN"
+                or trade.trading_account_id != trading_account_id
+                or trade.candidate_id != candidate_id or trade.symbol != symbol
+                or candidate.trading_account_id != trading_account_id
+                or candidate.symbol != symbol
+                or trade.entry_quantity is None or trade.entry_position_version is None
+            ):
+                raise PersistenceError("Box trade or candidate is not OPEN in the expected scope")
+            if trade.direction == "LONG" and stop_price < trade.stop_price:
+                raise ImmutableExecutionConflict("LONG Box STOP cannot widen")
+            if trade.direction == "SHORT" and stop_price > trade.stop_price:
+                raise ImmutableExecutionConflict("SHORT Box STOP cannot widen")
+            if (
+                trade.average_entry == average_entry
+                and trade.entry_quantity == entry_quantity
+                and trade.entry_position_version == entry_position_version
+                and trade.stop_price == stop_price
+            ):
+                return trade, False
+            if (
+                entry_quantity < trade.entry_quantity
+                or entry_position_version <= trade.entry_position_version
+                or updated_at_ms < trade.updated_at_ms
+            ):
+                raise ImmutableExecutionConflict("Box trade refresh conflicts or regresses")
+            cursor = self._connection.execute(
+                """UPDATE robot_trades
+                   SET average_entry=?, entry_quantity=?, entry_position_version=?,
+                       stop_price=?, updated_at_ms=?, version=version+1
+                   WHERE trade_id=? AND version=? AND exit_time_ms IS NULL""",
+                (
+                    _decimal_text(average_entry), _decimal_text(entry_quantity),
+                    entry_position_version, _decimal_text(stop_price), updated_at_ms,
+                    trade_id, trade.version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Box trade changed before refresh")
         return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
 
     def close_robot_trade(

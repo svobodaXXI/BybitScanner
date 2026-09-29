@@ -19,6 +19,14 @@ class BoxExposureProof:
     exit_quantity: Decimal
     remaining_quantity: Decimal
     average_entry: Decimal | None
+    average_exit: Decimal | None
+    entry_notional: Decimal
+    realized_pnl: Decimal
+    accumulated_fee: Decimal
+    first_execution_at_ms: int | None
+    last_execution_at_ms: int | None
+    entry_by_slot: tuple[Decimal, Decimal, Decimal, Decimal]
+    exit_by_slot: tuple[Decimal, Decimal, Decimal, Decimal]
     position_version: int
     execution_ids: tuple[str, ...]
     execution_authorized: bool = field(default=False, init=False)
@@ -56,8 +64,11 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
     bound = sum(limits, Decimal(0))
     owners = {row["order_id"]: row for row in ownership}
     entry = exit_qty = remaining = Decimal(0)
+    entry_notional = exit_notional = Decimal(0)
+    lifecycle_realized = lifecycle_fees = Decimal(0)
     average = None
     by_slot = [Decimal(0)] * 4
+    exit_by_slot = [Decimal(0)] * 4
     last_time = baseline["baseline_time_ms"]
     for fill in current:
         owner = owners.get(fill.order_id.value)
@@ -70,6 +81,7 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
             raise BoxOwnershipError("execution chronology is ambiguous")
         last_time = fill.exchange_timestamp_ms
         qty = fill.quantity.value
+        lifecycle_fees += fill.fee
         if owner["role"] == "ENTRY":
             if fill.side is not entry_side:
                 raise BoxOwnershipError("owned entry direction mismatch")
@@ -77,11 +89,25 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
             if by_slot[owner["slot"] - 1] > limits[owner["slot"] - 1]:
                 raise BoxOwnershipError("owned entry exceeds its frozen grid part")
             average = ((average or Decimal(0)) * remaining + fill.price.value * qty) / (remaining + qty)
+            entry_notional += fill.price.value * qty
             entry += qty
             remaining += qty
         else:
             if fill.side is entry_side or qty > remaining:
                 raise BoxOwnershipError("owned exit reverses or exceeds the actual Box lot")
+            exit_slot = owner["slot"]
+            if exit_slot:
+                exit_by_slot[exit_slot - 1] += qty
+                if exit_by_slot[exit_slot - 1] > by_slot[exit_slot - 1]:
+                    raise BoxOwnershipError("owned slice exit exceeds its filled entry slot")
+            if average is None:
+                raise BoxOwnershipError("owned exit lacks an entry cost basis")
+            lifecycle_realized += (
+                qty * (fill.price.value - average)
+                if entry_side is OrderSide.BUY
+                else qty * (average - fill.price.value)
+            )
+            exit_notional += fill.price.value * qty
             exit_qty += qty
             remaining -= qty
             if not remaining:
@@ -93,6 +119,21 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
             or (position.average_entry.value if position.average_entry else None) != average
             or position.updated_at_ms < last_time):
         raise BoxOwnershipError("actual position does not reconcile with owned entries minus exits")
-    return BoxExposureProof(candidate.candidate_id, entry, exit_qty, remaining,
-                            average, position.version,
-                            tuple(f.dedup_key.exec_id.value for f in current))
+    average_exit = exit_notional / exit_qty if exit_qty else None
+    return BoxExposureProof(
+        candidate.candidate_id,
+        entry,
+        exit_qty,
+        remaining,
+        average,
+        average_exit,
+        entry_notional,
+        lifecycle_realized,
+        lifecycle_fees,
+        current[0].exchange_timestamp_ms if current else None,
+        last_time if current else None,
+        tuple(by_slot),
+        tuple(exit_by_slot),
+        position.version,
+        tuple(f.dedup_key.exec_id.value for f in current),
+    )

@@ -16,7 +16,7 @@ from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 from terminal.api.models import (
-    ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResultStatus,
+    ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResult, CommandResultStatus,
     FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
     PaperLimitMutationResult, PaperLimitOrderProjection, PaperOpenPositionProjection,
     PaperOpenPositionsResponse, PaperStopDeleteRequest, PaperStopMutationRequest,
@@ -55,6 +55,11 @@ from terminal.application.live_account_reconciliation import (
 )
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
+from terminal.application.ikigai_box_catchup import (
+    build_box_manual_close_market_plan,
+    durable_box_market_intent,
+    restore_box_market_plan,
+)
 from terminal.paper.ikigai_box_plan import approved_first_grid, plan_ikigai_box
 from terminal.application.robot_control import resume_robot_in_store, start_robot_in_store
 from terminal.application.robot_recovery import (
@@ -1422,7 +1427,7 @@ class PaperRuntime:
         normalized = Symbol(symbol.strip().upper())
         if book.symbol != normalized:
             raise ValueError("Robot market event symbol does not match book")
-        entry_order_ids: set[str] = set()
+        owned_limit_ids: set[str] = set()
         for candidate in self.store.load_robot_candidates_for_symbol(
             self._paper_account_id, normalized,
         ):
@@ -1433,21 +1438,35 @@ class PaperRuntime:
             if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
                 order_id = execution.get("limit_order_id")
                 if order_id:
-                    entry_order_ids.add(order_id)
+                    owned_limit_ids.add(order_id)
                 continue
             if (
                 candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
                 and candidate.status in {"APPROVED", "OPEN"}
                 and phase == "BOX_ENTRY_READY"
             ):
-                raw_order_ids = execution.get("limit_order_ids")
-                if isinstance(raw_order_ids, (tuple, list)):
-                    entry_order_ids.update(
-                        item for item in raw_order_ids
-                        if isinstance(item, str) and item.strip()
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = candidate.robot_state.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    continue
+                try:
+                    self.store.prove_box_owned_position(source_id.strip())
+                except Exception:
+                    self.fence_robot_protection_continuity_loss(
+                        normalized.value, "box_ownership_unproven_before_limit_match",
                     )
+                    continue
+                for owner in self.store.load_box_order_ownership(source_id.strip()):
+                    if owner.role == "EXIT" and owner.slot == 0:
+                        continue
+                    order = self.store.get_paper_limit(
+                        owner.order_id.value, self._paper_account_id,
+                    )
+                    if order is not None and order.status not in INACTIVE_LIMIT_STATUSES:
+                        owned_limit_ids.add(owner.order_id.value)
         matched_fills = self._match_limits_only(
-            normalized, book, event_id, allowed_order_ids=entry_order_ids,
+            normalized, book, event_id, allowed_order_ids=owned_limit_ids,
         )
         finalized: tuple[str, ...] = ()
         if matched_fills:
@@ -1581,6 +1600,30 @@ class PaperRuntime:
             ):
                 continue
             execution = candidate.robot_state.get("execution") or {}
+            if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = candidate.robot_state.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    return False
+                for owner in self.store.load_box_order_ownership(source_id.strip()):
+                    order = self.store.get_paper_limit(
+                        owner.order_id.value, self._paper_account_id,
+                    )
+                    if order is None or order.status in INACTIVE_LIMIT_STATUSES:
+                        continue
+                    digest = hashlib.sha256(
+                        f"{candidate.candidate_id}\0coverage-loss-cancel\0{owner.order_id.value}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                        ClientActionId(f"robot-coverage-loss-{digest}"),
+                        normalized.value,
+                        owner.order_id.value,
+                    ))
+                    if result.status != CommandResultStatus.COMPLETED:
+                        return False
+                continue
+
             raw_order_id = execution.get("limit_order_id")
             if not isinstance(raw_order_id, str) or not raw_order_id.strip():
                 continue
@@ -1633,16 +1676,35 @@ class PaperRuntime:
             PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
         )
         protection = self.store.get_protection_projection(position_key)
-        if (
-            trade.entry_quantity is None
-            or trade.entry_quantity <= 0
-            or trade.entry_position_version is None
-            or position is None
-            or position.side is not expected_side
-            or position.quantity.value != trade.entry_quantity
-            or position.version != trade.entry_position_version
-            or protection is None
-        ):
+        if trade.pattern == "IKIGAI_BOX":
+            candidate = self.store.get_robot_candidate(trade.candidate_id)
+            source_id = (
+                candidate.signal_snapshot.get("source_box_candidate_id")
+                if candidate is not None else None
+            )
+            if not isinstance(source_id, str) or not source_id.strip():
+                return False
+            try:
+                box_proof = self.store.prove_box_owned_position(source_id.strip())
+            except Exception:
+                return False
+            ownership_ok = (
+                position is not None
+                and position.side is expected_side
+                and box_proof.remaining_quantity > 0
+                and position.quantity.value == box_proof.remaining_quantity
+            )
+        else:
+            ownership_ok = (
+                trade.entry_quantity is not None
+                and trade.entry_quantity > 0
+                and trade.entry_position_version is not None
+                and position is not None
+                and position.side is expected_side
+                and position.quantity.value == trade.entry_quantity
+                and position.version == trade.entry_position_version
+            )
+        if not ownership_ok or protection is None:
             return False
 
         observed_bid = book.bids[0].price.value
@@ -1723,6 +1785,69 @@ class PaperRuntime:
         match_event_id: str,
         context_provider: "PaperCommandContextProvider",
     ) -> int:
+        box_candidates = tuple(
+            candidate
+            for candidate in self.store.load_robot_candidates_for_symbol(
+                self._paper_account_id, symbol,
+            )
+            if (
+                candidate.status in {"APPROVED", "OPEN"}
+                and candidate.robot_state is not None
+                and candidate.robot_state.get("phase") == "BOX_ENTRY_READY"
+                and candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+            )
+        )
+        if box_candidates:
+            if len(box_candidates) != 1:
+                self.fence_robot_protection_continuity_loss(
+                    symbol.value, "ambiguous_box_owners_in_match_fallback",
+                )
+                return 0
+            candidate = box_candidates[0]
+            execution = candidate.robot_state.get("execution") or {}
+            source_id = execution.get("source_box_candidate_id")
+            if not isinstance(source_id, str) or not source_id.strip():
+                source_id = candidate.robot_state.get("source_box_candidate_id")
+            if not isinstance(source_id, str) or not source_id.strip():
+                self.fence_robot_protection_continuity_loss(
+                    symbol.value, "box_source_missing_in_match_fallback",
+                )
+                return 0
+            try:
+                self.store.prove_box_owned_position(source_id.strip())
+            except Exception:
+                self.fence_robot_protection_continuity_loss(
+                    symbol.value, "box_ownership_unproven_in_match_fallback",
+                )
+                return 0
+            allowed = {
+                owner.order_id.value
+                for owner in self.store.load_box_order_ownership(source_id.strip())
+                if not (owner.role == "EXIT" and owner.slot == 0)
+            }
+            applied = self._match_limits_only(
+                symbol, book, match_event_id, allowed_order_ids=allowed,
+            )
+            if applied:
+                monitor = RobotBreakoutMonitor(
+                    lambda: self.store,
+                    self._paper_account_id,
+                    get_closed_candle=self._robot_closed_candle_provider,
+                    get_admission_catchup_candles=self._robot_admission_catchup_candles,
+                    action_executor=_DirectRobotActionExecutor(self),
+                    tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
+                    clock_ms=lambda: int(time.time() * 1000),
+                    incident_dir=self._robot_incident_dir,
+                )
+                monitor.process_authoritative_fill(symbol.value)
+            self.evaluate_robot_protection_crossing(
+                symbol.value,
+                book,
+                event_id=match_event_id,
+                received_at_ms=int(book.received_at_ms),
+            )
+            return applied
+
         applied = self._match_limits_only(symbol, book, match_event_id)
         context = context_provider.context_for(symbol.value)
         protection = self.store.get_protection_projection(
@@ -1855,8 +1980,31 @@ class PaperRuntime:
             if phase == "RETEST_DETECTED":
                 order_ids = (execution.get("limit_order_id"),)
             elif phase == "BOX_ENTRY_READY":
-                raw_order_ids = execution.get("limit_order_ids")
-                order_ids = tuple(raw_order_ids) if isinstance(raw_order_ids, (tuple, list)) else ()
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = candidate.robot_state.get("source_box_candidate_id")
+                order_ids = ()
+                if isinstance(source_id, str) and source_id.strip():
+                    try:
+                        box_proof = self.store.prove_box_owned_position(source_id.strip())
+                    except Exception:
+                        box_proof = None
+                    if box_proof is not None and box_proof.remaining_quantity > 0:
+                        roles[candidate.symbol.value] = "EXPOSURE"
+                        continue
+                    ownership = self.store.load_box_order_ownership(source_id.strip())
+                    order_ids = tuple(
+                        owner.order_id.value
+                        for owner in ownership
+                        if owner.role == "ENTRY"
+                    )
+                if not order_ids:
+                    # Backward-compatible recovery for pre-OFR-5 Box
+                    # candidates that durably linked the four entry LIMIT ids
+                    # directly in execution state before slot ownership existed.
+                    raw_order_ids = execution.get("limit_order_ids")
+                    if isinstance(raw_order_ids, (tuple, list)):
+                        order_ids = tuple(raw_order_ids)
             else:
                 continue
             for order_id in order_ids:
@@ -2015,17 +2163,63 @@ class PaperRuntime:
             position_key = PositionKey(trade.trading_account_id, Category.LINEAR, trade.symbol, 0)
             position = self.store.get_position_projection(position_key)
             expected_side = PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
-            # Owner-frozen D2.3 ownership attestation gate
-            # (CR-PAPER-PROTECTION-LIFECYCLE-001): autonomous close is allowed
-            # only when the CURRENT aggregate position can be proven to
-            # descend from Robot's own entry with no unknown mutation since.
-            # entry_position_version alone would miss a manual add+reduce
-            # that nets back to the original quantity; entry_quantity alone
-            # would miss a same-quantity replacement lifecycle. Together they
-            # close both gaps. Missing (legacy, pre-attestation) trades and
-            # any mismatch fail closed -- never guess which portion of a
-            # mixed/replaced aggregate belongs to the Robot.
-            if (
+            # Box has durable per-slot ownership and may legitimately have
+            # position.version > entry_position_version after paired EXIT fills.
+            # Prove its CURRENT remaining lot from the immutable Box journal.
+            if trade.pattern == "IKIGAI_BOX":
+                candidate = self.store.get_robot_candidate(trade.candidate_id)
+                source_id = (
+                    candidate.signal_snapshot.get("source_box_candidate_id")
+                    if candidate is not None else None
+                )
+                if not isinstance(source_id, str) or not source_id.strip():
+                    return obligation
+                try:
+                    box_proof = self.store.prove_box_owned_position(source_id.strip())
+                except Exception:
+                    return obligation
+                if (
+                    position is None
+                    or position.side is not expected_side
+                    or box_proof.remaining_quantity <= 0
+                    or position.quantity.value != box_proof.remaining_quantity
+                ):
+                    return obligation
+                try:
+                    self.store.reserve_box_order_identity(
+                        source_id.strip(),
+                        order_id=obligation.order_id,
+                        role="EXIT",
+                        slot=0,
+                    )
+                except Exception:
+                    return obligation
+
+                # STOP/EMERGENCY_CLOSE wins the lifecycle. No resting Box entry
+                # or paired TAKE may survive and later reverse the flat position.
+                for owner in self.store.load_box_order_ownership(source_id.strip()):
+                    if owner.order_id == obligation.order_id:
+                        continue
+                    limit = self.store.get_paper_limit(
+                        owner.order_id.value, self._paper_account_id,
+                    )
+                    if limit is None or limit.status in INACTIVE_LIMIT_STATUSES:
+                        continue
+                    digest = hashlib.sha256(
+                        f"{source_id}\0aggregate-close-cancel\0{owner.order_id.value}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    self.store.cancel_paper_limit(
+                        client_action_id=f"box-close-cancel-{digest}",
+                        request_fingerprint=hashlib.sha256(
+                            f"{trade.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                        ).hexdigest(),
+                        order_id=owner.order_id,
+                        trading_account_id=self._paper_account_id,
+                        updated_at_ms=now_ms,
+                    )
+            # Non-Box Robot positions keep the owner-frozen D2.3 aggregate
+            # attestation gate unchanged.
+            elif (
                 trade.entry_position_version is None
                 or trade.entry_quantity is None
                 or trade.entry_quantity <= 0
@@ -2086,6 +2280,51 @@ class PaperRuntime:
             # DISPATCHING for reconciliation rather than finalize from an
             # unproven position state.
             return obligation
+        if trade.pattern == "IKIGAI_BOX":
+            candidate = self.store.get_robot_candidate(trade.candidate_id)
+            source_id = (
+                candidate.signal_snapshot.get("source_box_candidate_id")
+                if candidate is not None else None
+            )
+            if not isinstance(source_id, str) or not source_id.strip():
+                return obligation
+            try:
+                proof = self.store.prove_box_owned_position(source_id.strip())
+            except Exception:
+                return obligation
+            if (
+                proof.remaining_quantity != 0
+                or proof.average_exit is None
+                or proof.last_execution_at_ms is None
+                or proof.entry_notional <= 0
+            ):
+                return obligation
+            realized_pct = (
+                (proof.realized_pnl - proof.accumulated_fee)
+                / proof.entry_notional
+                * Decimal("100")
+            )
+            self.store.close_robot_trade(
+                trade.trade_id,
+                exit_time_ms=proof.last_execution_at_ms,
+                exit_price=proof.average_exit,
+                exit_reason=obligation.winning_leg,
+                realized_pnl_usdt=proof.realized_pnl,
+                realized_pnl_pct=realized_pct,
+                fees_costs_usdt=proof.accumulated_fee,
+                updated_at_ms=now_ms,
+            )
+            self.store.clear_paper_protection_for_flat(position_key)
+            if obligation.status == "DISPATCHING":
+                obligation = self.store.transition_paper_protection_obligation(
+                    obligation.obligation_id,
+                    expected_status="DISPATCHING",
+                    next_status="RESOLVED",
+                    expected_version=obligation.version,
+                    updated_at_ms=now_ms,
+                )
+            return obligation
+
         if trade.entry_quantity is None:
             # Reached only if an exec was somehow recorded for a trade
             # lacking the ownership attestation (e.g. resuming a lifecycle
@@ -2285,6 +2524,135 @@ class PaperRuntime:
             request.client_action_id.value, tuple(results), refreshed.positions,
         )
 
+    def _robot_close_box_candidate(self, candidate) -> CommandResult:
+        """Close one OPEN Box through durable EXIT-slot-0 ownership."""
+        trade = self.store.get_open_robot_trade_for_symbol(
+            self._paper_account_id, candidate.symbol,
+        )
+        if trade is None or trade.candidate_id != candidate.candidate_id:
+            raise RuntimeError("OPEN Box candidate lacks its Robot trade")
+        source_id = candidate.signal_snapshot.get("source_box_candidate_id")
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise RuntimeError("OPEN Box candidate lacks source plan identity")
+        source = self.store.get_robot_candidate(source_id.strip())
+        if source is None or source.status != "BOX_PLAN_ONLY":
+            raise RuntimeError("OPEN Box source plan is unavailable")
+        proof = self.store.prove_box_owned_position(source.candidate_id)
+        if proof.remaining_quantity <= 0:
+            raise RuntimeError("OPEN Box has no owned exposure to close")
+
+        execution = dict((candidate.robot_state or {}).get("execution") or {})
+        raw_intent = execution.get("box_manual_close_intent")
+        if isinstance(raw_intent, Mapping):
+            plan = restore_box_market_plan(raw_intent)
+        else:
+            book = self._book_provider.get_book(candidate.symbol)
+            if book is None:
+                raise RuntimeError("authoritative Box book is unavailable")
+            plan = build_box_manual_close_market_plan(
+                source, book, quantity=proof.remaining_quantity,
+            )
+            preflight = self._robot_api.market_preflight(
+                plan.request, identity=plan.identity,
+            )
+            if (
+                not preflight.admitted
+                or preflight.normalized_quantity != plan.quantity
+            ):
+                raise RuntimeError("Box manual close preflight did not preserve quantity")
+            execution["box_manual_close_intent"] = durable_box_market_intent(plan)
+            state = dict(candidate.robot_state or {})
+            state["execution"] = execution
+            candidate = self.store.save_robot_candidate_state(
+                candidate.candidate_id,
+                status="OPEN",
+                robot_state=state,
+                expected_revision=candidate.state_revision,
+                updated_at_ms=int(time.time() * 1000),
+            )
+
+        expected_side = (
+            OrderSide.SELL
+            if trade.direction == "LONG"
+            else OrderSide.BUY
+        )
+        if (
+            plan.slot != 0
+            or plan.quantity != proof.remaining_quantity
+            or plan.request.symbol != candidate.symbol.value
+            or plan.request.side is not expected_side
+        ):
+            raise RuntimeError("durable Box manual close conflicts with current owned lot")
+
+        self.store.reserve_box_order_identity(
+            source.candidate_id,
+            order_id=plan.order_id,
+            role="EXIT",
+            slot=0,
+        )
+        now_ms = int(time.time() * 1000)
+        for owner in self.store.load_box_order_ownership(source.candidate_id):
+            if owner.order_id == plan.order_id:
+                continue
+            order = self.store.get_paper_limit(
+                owner.order_id.value, self._paper_account_id,
+            )
+            if order is None or order.status in INACTIVE_LIMIT_STATUSES:
+                continue
+            digest = hashlib.sha256(
+                f"{source.candidate_id}\0manual-close-cancel\0{owner.order_id.value}".encode("utf-8")
+            ).hexdigest()[:32]
+            self.store.cancel_paper_limit(
+                client_action_id=f"box-manual-cancel-{digest}",
+                request_fingerprint=hashlib.sha256(
+                    f"{candidate.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                ).hexdigest(),
+                order_id=owner.order_id,
+                trading_account_id=self._paper_account_id,
+                updated_at_ms=now_ms,
+            )
+
+        result = self._robot_api.market(plan.request, identity=plan.identity)
+        if result.status is not CommandResultStatus.COMPLETED:
+            return result
+
+        closed_proof = self.store.prove_box_owned_position(source.candidate_id)
+        if (
+            closed_proof.remaining_quantity != 0
+            or closed_proof.average_exit is None
+            or closed_proof.last_execution_at_ms is None
+            or closed_proof.entry_notional <= 0
+        ):
+            return CommandResult(
+                plan.request.client_action_id.value,
+                CommandResultStatus.UNKNOWN,
+                "box_manual_close_unproven",
+                "Box manual close requires reconciliation",
+                getattr(result, "command_id", None),
+                True,
+            )
+        realized_pct = (
+            (closed_proof.realized_pnl - closed_proof.accumulated_fee)
+            / closed_proof.entry_notional
+            * Decimal("100")
+        )
+        self.store.close_robot_trade(
+            trade.trade_id,
+            exit_time_ms=closed_proof.last_execution_at_ms,
+            exit_price=closed_proof.average_exit,
+            exit_reason="MANUAL",
+            realized_pnl_usdt=closed_proof.realized_pnl,
+            realized_pnl_pct=realized_pct,
+            fees_costs_usdt=closed_proof.accumulated_fee,
+            updated_at_ms=max(now_ms, closed_proof.last_execution_at_ms),
+        )
+        self.store.clear_paper_protection_for_flat(
+            PositionKey(
+                self._paper_account_id, Category.LINEAR, candidate.symbol, 0,
+            )
+        )
+        return result
+
     def robot_close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
         """Market-close exclusively Robot-owned open positions (close_all_now()).
 
@@ -2311,18 +2679,33 @@ class PaperRuntime:
         existing Robot-scoped execution path, never a second one.
         """
         candidates = self.store.load_active_robot_candidate_states(self._account_id)
-        robot_symbols = sorted({
-            item.symbol.value for item in candidates if item.status == "OPEN"
-        })
+        open_candidates = sorted(
+            (item for item in candidates if item.status == "OPEN"),
+            key=lambda item: item.symbol.value,
+        )
         results = []
         any_unconfirmed = False
-        for symbol in robot_symbols:
+        for candidate in open_candidates:
+            symbol = candidate.symbol.value
             digest = hashlib.sha256(
                 f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
             ).hexdigest()[:32]
-            result = self._robot_api.full_close(FullCloseCommandRequest(
-                ClientActionId(f"robot-close-all-{digest}"), symbol,
-            ))
+            try:
+                if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                    result = self._robot_close_box_candidate(candidate)
+                else:
+                    result = self._robot_api.full_close(FullCloseCommandRequest(
+                        ClientActionId(f"robot-close-all-{digest}"), symbol,
+                    ))
+            except Exception as error:
+                result = CommandResult(
+                    f"robot-close-all-{digest}",
+                    CommandResultStatus.UNAVAILABLE,
+                    "box_close_failed" if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX" else "close_failed",
+                    type(error).__name__,
+                    None,
+                    True,
+                )
             results.append(result)
             if result.status != CommandResultStatus.COMPLETED:
                 any_unconfirmed = True
@@ -2423,6 +2806,70 @@ class PaperRuntime:
                 continue
 
             execution = (record.robot_state or {}).get("execution") or {}
+            if record.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = (record.robot_state or {}).get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    unresolved_candidate_ids.append(record.candidate_id)
+                    continue
+
+                unresolved_box_limit = False
+                for owner in self.store.load_box_order_ownership(source_id.strip()):
+                    if owner.role != "ENTRY":
+                        continue
+                    order = self.store.get_paper_limit(
+                        owner.order_id.value, self._account_id,
+                    )
+                    if order is None or order.status in INACTIVE_LIMIT_STATUSES:
+                        continue
+                    digest = hashlib.sha256(
+                        f"{record.candidate_id}\0sync-pending-cancel\0{owner.order_id.value}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                        ClientActionId(f"robot-sync-box-{digest}"),
+                        record.symbol.value,
+                        owner.order_id.value,
+                    ))
+                    if result.status != CommandResultStatus.COMPLETED:
+                        unresolved_box_limit = True
+                    else:
+                        cancelled_order_ids.append(owner.order_id.value)
+                if unresolved_box_limit:
+                    unresolved_candidate_ids.append(record.candidate_id)
+                    continue
+
+                try:
+                    proof = self.store.prove_box_owned_position(source_id.strip())
+                except Exception:
+                    unresolved_candidate_ids.append(record.candidate_id)
+                    continue
+                if proof.remaining_quantity > 0:
+                    still_pending_protection.append(record.candidate_id)
+                    continue
+
+                runtime_state = self.store.get_robot_runtime_state(self._account_id)
+                if (
+                    runtime_state is not None
+                    and runtime_state.mode == "ROBOT_STOPPED"
+                    and record.status == "APPROVED"
+                ):
+                    state = dict(record.robot_state or {})
+                    box_execution = dict(state.get("execution") or {})
+                    box_execution["stopped_without_entry_reason"] = (
+                        "ROBOT_STOPPED after Box pending entries were cancelled"
+                    )
+                    state["execution"] = box_execution
+                    self.store.save_robot_candidate_state(
+                        record.candidate_id,
+                        status="INVALIDATED",
+                        robot_state=state,
+                        expected_revision=record.state_revision,
+                        updated_at_ms=int(time.time() * 1000),
+                    )
+                    terminalized_candidate_ids.append(record.candidate_id)
+                continue
+
             order_id = execution.get("limit_order_id")
             prior_order_id = ((prior.robot_state or {}).get("execution") or {}).get("limit_order_id")
             if order_id:
@@ -2657,10 +3104,69 @@ class PaperRuntime:
                     PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
                 )
                 if position is not None and position.side is PositionSide.FLAT:
-                    # An aggregate emergency close dispatched for a *different*
-                    # colliding candidate also flattens this trade's lot, so a
-                    # FLAT symbol is not automatically unresolved. Terminalize
-                    # only on durable evidence; the predicate fails closed.
+                    if trade.pattern == "IKIGAI_BOX":
+                        source_id = candidate.signal_snapshot.get("source_box_candidate_id")
+                        if not isinstance(source_id, str) or not source_id.strip():
+                            unresolved_trade_ids.add(trade.trade_id)
+                            continue
+                        try:
+                            box_proof = self.store.prove_box_owned_position(source_id.strip())
+                        except Exception:
+                            unresolved_trade_ids.add(trade.trade_id)
+                            continue
+                        if (
+                            box_proof.remaining_quantity != 0
+                            or box_proof.exit_quantity <= 0
+                            or box_proof.average_exit is None
+                            or box_proof.last_execution_at_ms is None
+                            or box_proof.entry_notional <= 0
+                        ):
+                            unresolved_trade_ids.add(trade.trade_id)
+                            continue
+
+                        obligation = self.store.get_paper_protection_obligation_for_trade(
+                            trade.trade_id
+                        )
+                        if obligation is not None:
+                            exit_reason = obligation.winning_leg
+                        else:
+                            execution = (candidate.robot_state or {}).get("execution") or {}
+                            if isinstance(execution.get("box_emergency_close_intent"), Mapping):
+                                exit_reason = "EMERGENCY_PROTECTION_FAILURE"
+                            elif sum(box_proof.exit_by_slot, Decimal("0")) == box_proof.entry_quantity:
+                                exit_reason = "TAKE"
+                            else:
+                                unresolved_trade_ids.add(trade.trade_id)
+                                continue
+                        if exit_reason not in {
+                            "STOP", "TAKE", "EMERGENCY_CLOSE",
+                            "EMERGENCY_PROTECTION_FAILURE",
+                        }:
+                            unresolved_trade_ids.add(trade.trade_id)
+                            continue
+
+                        realized_pct = (
+                            (box_proof.realized_pnl - box_proof.accumulated_fee)
+                            / box_proof.entry_notional
+                            * Decimal("100")
+                        )
+                        _, newly_closed = self.store.close_robot_trade(
+                            trade.trade_id,
+                            exit_time_ms=box_proof.last_execution_at_ms,
+                            exit_price=box_proof.average_exit,
+                            exit_reason=exit_reason,
+                            realized_pnl_usdt=box_proof.realized_pnl,
+                            realized_pnl_pct=realized_pct,
+                            fees_costs_usdt=box_proof.accumulated_fee,
+                            updated_at_ms=max(now_ms, box_proof.last_execution_at_ms),
+                        )
+                        self.store.clear_paper_protection_for_flat(position_key)
+                        if newly_closed:
+                            closed_trade_ids.append(trade.trade_id)
+                        continue
+
+                    # Non-Box aggregate emergency-close recovery retains the
+                    # existing flat-closure predicate.
                     evidence = self._prove_robot_flat_closure(trade, position)
                     if evidence is not None:
                         _, newly_closed = self.store.close_robot_trade(
@@ -2678,6 +3184,80 @@ class PaperRuntime:
                         continue
                     unresolved_trade_ids.add(trade.trade_id)
                     continue
+                if trade.pattern == "IKIGAI_BOX":
+                    source_id = candidate.signal_snapshot.get("source_box_candidate_id")
+                    if not isinstance(source_id, str) or not source_id.strip():
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    try:
+                        box_proof = self.store.prove_box_owned_position(source_id.strip())
+                    except Exception:
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    if (
+                        position is None
+                        or position.quantity.value <= 0
+                        or position.side is not expected_side
+                        or box_proof.remaining_quantity != position.quantity.value
+                    ):
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    protection = self.store.get_protection_projection(position_key)
+                    if protection is None:
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    instrument = self._instrument_provider(trade.symbol.value)
+                    closing_side = (
+                        OrderSide.SELL
+                        if expected_side is PositionSide.LONG
+                        else OrderSide.BUY
+                    )
+                    expected_stop = normalize_limit_price(
+                        trade.stop_price, instrument.tick_size, closing_side,
+                    )
+                    if (
+                        protection.stop_loss != expected_stop
+                        or protection.take_profit is not None
+                    ):
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+
+                    frozen_quantities = candidate.signal_snapshot.get("plan", {}).get(
+                        "limit_quantities"
+                    )
+                    if not isinstance(frozen_quantities, list) or len(frozen_quantities) != 4:
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    ownership = self.store.load_box_order_ownership(source_id.strip())
+                    exits_by_slot = {
+                        owner.slot: owner.order_id
+                        for owner in ownership
+                        if owner.role == "EXIT" and owner.slot in {1, 2, 3, 4}
+                    }
+                    paired_ok = True
+                    for slot, frozen_quantity in enumerate(frozen_quantities, start=1):
+                        planned = Decimal(str(frozen_quantity))
+                        if (
+                            box_proof.entry_by_slot[slot - 1] == planned
+                            and box_proof.exit_by_slot[slot - 1] == 0
+                        ):
+                            order_id = exits_by_slot.get(slot)
+                            order = (
+                                self.store.get_paper_limit(order_id.value, self._paper_account_id)
+                                if order_id is not None else None
+                            )
+                            if (
+                                order is None
+                                or order.status in INACTIVE_LIMIT_STATUSES
+                                or order.quantity != planned
+                                or order.price != trade.take_price
+                            ):
+                                paired_ok = False
+                                break
+                    if not paired_ok:
+                        unresolved_trade_ids.add(trade.trade_id)
+                    continue
+
                 if (
                     position is None
                     or position.quantity.value <= 0

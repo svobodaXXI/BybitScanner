@@ -15,6 +15,7 @@ from terminal.persistence import schema
 from terminal.persistence.sqlite_store import (
     SQLiteStore, PositionProjectionUpdate, DuplicateIdentity, PersistenceError,
     ExecutionApplyResult, SchemaError, BoxOwnedPaperLimitSpec,
+    BoxOwnedPaperMarketSpec,
 )
 from tests.test_box_plan_persistence import snapshot, trade_args
 
@@ -128,6 +129,56 @@ class BoxOrderOwnershipTests(unittest.TestCase):
             for item in failing_orders
         ), 0)
 
+    def test_mixed_entry_ownership_reserves_market_and_creates_limits_atomically(self):
+        data = snapshot()
+        data["identity"]["a_time_ms"] = 995
+        candidate, _ = self.store.save_box_plan_only(snapshot=data, created_at_ms=3004)
+        self.assertTrue(self.store.begin_box_attempt_ownership(candidate.candidate_id))
+
+        markets = (
+            BoxOwnedPaperMarketSpec(1, OrderId("mixed-market-1")),
+            BoxOwnedPaperMarketSpec(2, OrderId("mixed-market-2")),
+        )
+        limits = tuple(
+            BoxOwnedPaperLimitSpec(
+                slot=slot,
+                client_action_id=f"mixed-limit-{slot}",
+                request_fingerprint=f"mixed-limit-fp-{slot}",
+                order_id=OrderId(f"mixed-limit-order-{slot}"),
+                order_link_id=f"mixed-limit-link-{slot}",
+                side=OrderSide.BUY,
+                price=D(price),
+                quantity=D("2"),
+                created_at_ms=5300 + slot,
+            )
+            for slot, price in ((3, "92.4"), (4, "91.6"))
+        )
+        created = self.store.create_box_mixed_entry_ownership(
+            candidate.candidate_id,
+            trading_account_id=self.account,
+            symbol=self.key.symbol,
+            market_orders=markets,
+            limit_orders=limits,
+        )
+        self.assertEqual(
+            [item.order_id.value for item in created],
+            ["mixed-limit-order-3", "mixed-limit-order-4"],
+        )
+        rows = self.store._connection.execute(
+            "SELECT order_id, role, slot FROM box_order_ownership "
+            "WHERE candidate_id=? ORDER BY slot",
+            (candidate.candidate_id,),
+        ).fetchall()
+        self.assertEqual(
+            [(row["order_id"], row["role"], row["slot"]) for row in rows],
+            [
+                ("mixed-market-1", "ENTRY", 1),
+                ("mixed-market-2", "ENTRY", 2),
+                ("mixed-limit-order-3", "ENTRY", 3),
+                ("mixed-limit-order-4", "ENTRY", 4),
+            ],
+        )
+
     def test_owned_limit_identity_and_order_are_one_transaction(self):
         order, created = self.store.create_box_owned_paper_limit(
             self.plan.candidate_id, role="ENTRY", slot=3,
@@ -175,7 +226,12 @@ class BoxOrderOwnershipTests(unittest.TestCase):
         execution, projection = self.fill("x1", "exit-1", OrderSide.SELL, "1", "99.2", "3", "93.6", 8000)
         proof = self.proof()
         self.assertEqual((proof.entry_quantity, proof.exit_quantity, proof.remaining_quantity), (D(4), D(1), D(3)))
+        self.assertEqual(proof.entry_by_slot, (D(2), D(2), D(0), D(0)))
+        self.assertEqual(proof.exit_by_slot, (D(1), D(0), D(0), D(0)))
         self.assertEqual(proof.average_entry, D("93.6"))
+        self.assertEqual(proof.average_exit, D("99.2"))
+        self.assertEqual(proof.realized_pnl, D("5.6"))
+        self.assertEqual(proof.accumulated_fee, D("0"))
         self.assertFalse(proof.execution_authorized)
         self.assertEqual(self.store.apply_execution_once(execution, projection), ExecutionApplyResult.DUPLICATE)
         self.assertEqual(self.proof(), proof)
