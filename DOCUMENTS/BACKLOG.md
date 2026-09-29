@@ -1,3 +1,26 @@
+## NOW — 2026-09-29 — OWNER FEEDBACK PROBLEM REGISTER
+
+All currently known owner-observed product/runtime/geometry problems are now
+consolidated in:
+
+`DOCUMENTS/OWNER_FEEDBACK_PROBLEM_REGISTER.md`
+
+This register is canonical for feedback findings and their status. It includes:
+- Telegram Menu visibility debt;
+- resolved TG-MON-1 silent monitoring bug;
+- new Box Robot handoff failures on B2/BANK/BNB/BNC and the missing durable
+  failure diagnostics;
+- BSV/CORE malformed first-impulse geometry;
+- CARV/CPU/CROSS/CLO post-breakdown secondary-Box family;
+- cross-pattern coexistence invariant;
+- CELOUSDT manual PAPER reconciliation debt;
+- future manual-position adoption / Robot-owned-symbol awareness requirements;
+- current RVL-R6 same-process evidence gap;
+- resolved shutdown incident and ARUSDT correctly classified non-defect.
+
+Do not create parallel duplicate tickets for these findings; update the register
+and owning task/spec when new evidence changes classification or status.
+
 ## NOW — 2026-09-29 — RVL-G1 GEOMETRY GOLD INVENTORY COMPLETE
 
 RVL-G1 was completed in parallel while the owner RVL-R6 Scanner run continued;
