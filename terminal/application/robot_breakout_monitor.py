@@ -677,6 +677,11 @@ class RobotBreakoutMonitor:
             if block_reason is not None:
                 self._invalidate_pre_entry_candidate(record, reason=block_reason)
                 return True
+            # Prove the immutable FLAT/journal baseline before deriving any
+            # executable catch-up plan. This is not order ownership and does
+            # not require a temporary coverage arm: no order can fill yet.
+            # A bad baseline therefore fails visibly without leaking an arm.
+            self._store().begin_box_attempt_ownership(source.candidate_id)
             return self._write_box_catchup_plan(record, source, execution)
 
         raw_market_intents = catchup.get("market_intents")
