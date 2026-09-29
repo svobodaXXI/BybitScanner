@@ -1,3 +1,24 @@
+## ✅ OFR-6 / OFR-7 CLOSED — 2026-09-29
+
+PR #337 merged to `main` as
+`8b3dc4ead6443ac39ddc8d737d115fac5be68319`.
+
+Verified outcome:
+- `Размер` -> `Объем: qty (notional USDT)` on position cards;
+- compact chart labels `Entry / SL / TP` moved away from the latest candles;
+- Robot and manual position cards expose read-only TradingView navigation;
+- `⬅️ К позициям` remains available;
+- invalid symbols fail closed to Back-only navigation;
+- Robot PAPER acceptance run #316 completed SUCCESS on the final PR head.
+
+The first CI attempt failed only because the manual-position test fixture passed
+`SAGAUSDT` while asserting a `CELOUSDT` TradingView URL. The fixture was
+corrected test-only before merge; production behavior was unchanged.
+
+No Geometry implementation was started by this closure. According to the owner
+queue, the next queued development area after the completed remediation chain is
+Geometry at RVL-G2/G3/G4, subject to the owner's next command.
+
 ## 🔁 NEW BLOCKER — ROBOT DOES NOT SELF-RECOVER — 2026-09-29
 
 After CASHCATUSDT was closed by `EMERGENCY_CLOSE`, the next owner interaction

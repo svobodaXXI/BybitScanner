@@ -200,7 +200,7 @@ Acceptance:
 
 ### OFR-6 — Telegram position-card presentation cleanup
 **Priority:** P1  
-**Status:** OPEN UX
+**Status:** CLOSED — PR #337 merged as `8b3dc4ead6443ac39ddc8d737d115fac5be68319`
 
 Owner example:
 - CASHCATUSDT open/closed position card.
@@ -228,7 +228,7 @@ Acceptance:
 
 ### OFR-7 — TradingView button on position cards
 **Priority:** P1  
-**Status:** OPEN UX
+**Status:** CLOSED — PR #337 merged as `8b3dc4ead6443ac39ddc8d737d115fac5be68319`
 
 Current position-card keyboard only offers `⬅️ К позициям`.
 
@@ -273,4 +273,5 @@ ahead of Geometry under this owner priority.
 - RVL-G1 inventory/schema completed in PR #327.
 - Owner feedback problem register created in PR #328.
 - 2026-09-29 checkpoint/Box late-entry intent documented in PR #329.
+- OFR-6/OFR-7 position-card UX completed in PR #337; Robot PAPER acceptance run #316 passed.
 
