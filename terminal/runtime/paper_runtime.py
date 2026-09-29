@@ -1595,6 +1595,30 @@ class PaperRuntime:
             ):
                 continue
             execution = candidate.robot_state.get("execution") or {}
+            if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = candidate.robot_state.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    return False
+                for owner in self.store.load_box_order_ownership(source_id.strip()):
+                    order = self.store.get_paper_limit(
+                        owner.order_id.value, self._paper_account_id,
+                    )
+                    if order is None or order.status in INACTIVE_LIMIT_STATUSES:
+                        continue
+                    digest = hashlib.sha256(
+                        f"{candidate.candidate_id}\0coverage-loss-cancel\0{owner.order_id.value}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                        ClientActionId(f"robot-coverage-loss-{digest}"),
+                        normalized.value,
+                        owner.order_id.value,
+                    ))
+                    if result.status != CommandResultStatus.COMPLETED:
+                        return False
+                continue
+
             raw_order_id = execution.get("limit_order_id")
             if not isinstance(raw_order_id, str) or not raw_order_id.strip():
                 continue
@@ -1647,16 +1671,35 @@ class PaperRuntime:
             PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
         )
         protection = self.store.get_protection_projection(position_key)
-        if (
-            trade.entry_quantity is None
-            or trade.entry_quantity <= 0
-            or trade.entry_position_version is None
-            or position is None
-            or position.side is not expected_side
-            or position.quantity.value != trade.entry_quantity
-            or position.version != trade.entry_position_version
-            or protection is None
-        ):
+        if trade.pattern == "IKIGAI_BOX":
+            candidate = self.store.get_robot_candidate(trade.candidate_id)
+            source_id = (
+                candidate.signal_snapshot.get("source_box_candidate_id")
+                if candidate is not None else None
+            )
+            if not isinstance(source_id, str) or not source_id.strip():
+                return False
+            try:
+                box_proof = self.store.prove_box_owned_position(source_id.strip())
+            except Exception:
+                return False
+            ownership_ok = (
+                position is not None
+                and position.side is expected_side
+                and box_proof.remaining_quantity > 0
+                and position.quantity.value == box_proof.remaining_quantity
+            )
+        else:
+            ownership_ok = (
+                trade.entry_quantity is not None
+                and trade.entry_quantity > 0
+                and trade.entry_position_version is not None
+                and position is not None
+                and position.side is expected_side
+                and position.quantity.value == trade.entry_quantity
+                and position.version == trade.entry_position_version
+            )
+        if not ownership_ok or protection is None:
             return False
 
         observed_bid = book.bids[0].price.value
