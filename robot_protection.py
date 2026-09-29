@@ -295,6 +295,103 @@ def prepare_box_stop_terms(
     return BoxStopTerms(stop, quantity)
 
 
+
+def box_stop_for_actual_entry(
+    snapshot: Mapping[str, Any],
+    *,
+    average_entry: Decimal,
+    existing_stop: Decimal | None = None,
+) -> Decimal:
+    """Return the minimally tightened Box STOP preserving frozen TAKE and net RR>=2.
+
+    The frozen STOP remains preferred. If actual execution makes it fail the
+    approved fee-aware 2:1 contract, move it only toward entry, tick by tick in
+    effect, to the first ratio-compliant price that is still strictly beyond P4.
+    Once an active STOP exists it can never widen.
+    """
+    if snapshot.get("pattern") != "IKIGAI_BOX":
+        raise RobotProtectionError("Ikigai Box snapshot is required")
+    plan = snapshot.get("plan")
+    inputs = snapshot.get("inputs")
+    if not isinstance(plan, Mapping) or not isinstance(inputs, Mapping):
+        raise RobotProtectionError("Box plan/inputs are missing")
+    direction = str(plan.get("direction", "")).strip().upper()
+    if direction not in {DIRECTION_LONG, DIRECTION_SHORT}:
+        raise RobotProtectionError("Box direction is invalid")
+
+    levels = plan.get("limit_prices")
+    if not isinstance(levels, (tuple, list)) or len(levels) != 4:
+        raise RobotProtectionError("Box grid must contain four entries")
+    p4 = _decimal(levels[3], "Box P4")
+    take = _decimal(plan.get("take_price"), "frozen Box TAKE")
+    frozen_stop = _decimal(plan.get("stop_price"), "frozen Box STOP")
+    entry = _decimal(average_entry, "actual Box average entry")
+    tick = _decimal(inputs.get("tick_size"), "Box tick size")
+    entry_fee = _decimal(inputs.get("entry_fee_rate"), "Box entry fee", allow_zero=True)
+    target_fee = _decimal(inputs.get("target_fee_rate"), "Box target fee", allow_zero=True)
+    stop_fee = _decimal(inputs.get("stop_fee_rate"), "Box STOP fee", allow_zero=True)
+    if any(rate >= 1 for rate in (entry_fee, target_fee, stop_fee)):
+        raise RobotProtectionError("Box fee rate must be below one")
+
+    sign = Decimal(1 if direction == DIRECTION_LONG else -1)
+    if sign * (take - entry) <= 0:
+        raise RobotProtectionError("actual Box entry is not on the loss side of frozen TAKE")
+
+    current = frozen_stop if existing_stop is None else _decimal(existing_stop, "existing Box STOP")
+    if direction == DIRECTION_LONG:
+        if not current < p4 < entry:
+            raise RobotProtectionError("LONG Box STOP/P4/entry geometry is invalid")
+        if existing_stop is not None and current < frozen_stop:
+            raise RobotProtectionError("existing LONG Box STOP widens frozen risk")
+    else:
+        if not current > p4 > entry:
+            raise RobotProtectionError("SHORT Box STOP/P4/entry geometry is invalid")
+        if existing_stop is not None and current > frozen_stop:
+            raise RobotProtectionError("existing SHORT Box STOP widens frozen risk")
+
+    reward = sign * (take - entry) - entry * entry_fee - take * target_fee
+    if reward <= 0:
+        raise RobotProtectionError("actual Box entry leaves no positive net reward")
+
+    def risk(stop: Decimal) -> Decimal:
+        return sign * (entry - stop) + entry * entry_fee + stop * stop_fee
+
+    def acceptable(stop: Decimal) -> bool:
+        return (
+            stop > 0
+            and stop % tick == 0
+            and sign * (p4 - stop) > 0
+            and risk(stop) > 0
+            and Decimal(2) * risk(stop) <= reward
+        )
+
+    if acceptable(current):
+        return current
+
+    denominator = stop_fee - sign
+    if denominator == 0:
+        raise RobotProtectionError("Box STOP RR bound is undefined")
+    bound = (reward / Decimal(2) - entry * (sign + entry_fee)) / denominator
+    if bound <= 0:
+        raise RobotProtectionError("no positive Box STOP satisfies actual-fill RR")
+
+    from decimal import ROUND_CEILING, ROUND_FLOOR
+    rounding = ROUND_CEILING if direction == DIRECTION_LONG else ROUND_FLOOR
+    tightened = (bound / tick).to_integral_value(rounding=rounding) * tick
+
+    # Never widen from already-active/frozen protection.
+    if direction == DIRECTION_LONG:
+        tightened = max(tightened, current)
+    else:
+        tightened = min(tightened, current)
+
+    if not acceptable(tightened):
+        raise RobotProtectionError(
+            "no tick-aligned Box STOP beyond P4 satisfies actual-fill net RR >= 2"
+        )
+    return tightened
+
+
 def build_box_protection_plan(
     candidate: Mapping[str, Any],
     state: Mapping[str, Any],
