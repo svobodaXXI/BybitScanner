@@ -23,6 +23,7 @@ class BoxExposureProof:
     entry_notional: Decimal
     realized_pnl: Decimal
     accumulated_fee: Decimal
+    first_execution_at_ms: int | None
     last_execution_at_ms: int | None
     entry_by_slot: tuple[Decimal, Decimal, Decimal, Decimal]
     exit_by_slot: tuple[Decimal, Decimal, Decimal, Decimal]
@@ -129,6 +130,7 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
         entry_notional,
         lifecycle_realized,
         lifecycle_fees,
+        current[0].exchange_timestamp_ms if current else None,
         last_time if current else None,
         tuple(by_slot),
         tuple(exit_by_slot),
