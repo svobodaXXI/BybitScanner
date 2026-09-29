@@ -11,7 +11,7 @@ not repeated.
 
 ### OFR-1 — Durable Robot failure diagnostics
 **Priority:** P0  
-**Status:** OPEN
+**Status:** IMPLEMENTED IN PR #334 / PAPER CI GREEN / awaiting merge
 
 Two real classes now lose their exact cause after the console scrolls:
 
@@ -42,9 +42,16 @@ Required implementation:
 - bounded retention;
 - diagnostic write must not become a new safety-critical blocker.
 
-Acceptance:
-- next candidate-preparation failure can be investigated without scrolling stdout;
-- next emergency close reports the exact reason deterministically.
+Acceptance evidence:
+- PR #334 implements bounded sanitized durable incident records;
+- candidate persistence failures persist normalized diagnostic evidence;
+- protection continuity recovery emergency close persists deciding facts;
+- post-fill initial-protection failure emergency close now persists a separate
+  `INITIAL_PROTECTION_FAILURE` incident before the full-close path;
+- diagnostics IO remains best-effort/non-blocking;
+- Robot PAPER acceptance #261 at head `e53caa2bf9568d91f449e2f33e04b752addf8cc5`
+  completed successfully.
+- merge is still pending owner authorization.
 
 ### OFR-2 — CASHCATUSDT emergency-close root cause and recurrence fix
 **Priority:** P0  
