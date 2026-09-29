@@ -1,3 +1,33 @@
+## NOW — 2026-09-29 — OWNER FEEDBACK REMEDIATION MOVED AHEAD OF GEOMETRY
+
+Owner priority is now explicit: today's operational/product findings are handled
+before Geometry implementation resumes. RVL-G1 stays complete; do not repeat it.
+
+Canonical queue:
+`DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
+
+Order after the current RVL-R6 evidence capture:
+1. OFR-1 — durable sanitized diagnostics for Robot candidate/protection failures;
+2. OFR-2 — CASHCATUSDT emergency-close root cause and recurrence classification/fix;
+3. OFR-3 — B2/BANK/BNB/BNC Box Robot candidate handoff failures;
+4. OFR-4 — suppress already-completed Box setups after frozen TAKE was reached;
+5. OFR-5 — crossed-grid Box catch-up: MARKET per crossed slot, untouched LIMITs,
+   paired closing LIMITs, existing shared STOP/protection;
+6. OFR-6 — Telegram position-card cleanup: center chart better, compact SL/TP/
+   Entry labels, `Размер` -> `Объем` with USDT notional;
+7. OFR-7 — TradingView button under position cards while preserving
+   `⬅️ К позициям`.
+
+CASHCATUSDT diagnostic evidence 2026-09-29:
+- top-level log search produced no actual CASHCATUSDT emergency/protection event;
+- CASHCATUSDT appeared only in Scanner-result logs;
+- the EMERGENCY_CLOSE text hit in SQLite was schema text, not proof of the event;
+- binary SQLite must be queried structurally before blaming network lag;
+- this absence itself confirms the current protection observability gap.
+
+Geometry resumes at RVL-G2/G3/G4 only after this queue, unless the owner
+reprioritizes again.
+
 ## NOW — 2026-09-29 — OWNER FEEDBACK / ACCEPTANCE CHECKPOINT
 
 Today's owner feedback and acceptance findings are preserved; do not rediscover
