@@ -1525,7 +1525,41 @@ class PaperRuntime:
             or book.source_event_at_ms is None
         ):
             return False
+
+        source_runtime = self.store.get_robot_runtime_state(self._paper_account_id)
+        prior_recovery_status = (
+            source_runtime.recovery_status
+            if source_runtime is not None and source_runtime.mode == ROBOT_RUNNING
+            else None
+        )
         self.fence_robot_protection_continuity_loss(normalized.value, reason)
+
+        def finish(recovered: bool) -> bool:
+            if not recovered:
+                return False
+            # Only a continuity fence raised by this pass from a normal
+            # RUNNING state may be cleared automatically. A pre-existing
+            # RECONCILIATION_REQUIRED fence belongs to some other unresolved
+            # ambiguity and must remain operator-controlled.
+            if prior_recovery_status not in {READY, PAUSED}:
+                return True
+
+            reconciled = self.robot_reconcile()
+            if not reconciled.success or reconciled.recovery_status != PAUSED:
+                return False
+
+            # Preserve an owner's deliberate PAUSE. READY before the transient
+            # continuity loss means admission may reopen only after the same
+            # evidence-based reconciliation pass has succeeded globally.
+            if prior_recovery_status == PAUSED:
+                return True
+            resumed = resume_robot_in_store(
+                self.store, clock_ms=lambda: int(time.time() * 1000),
+            )
+            return (
+                resumed.mode == ROBOT_RUNNING
+                and resumed.recovery_status == READY
+            )
 
         monitor = RobotBreakoutMonitor(
             lambda: self.store,
@@ -1577,7 +1611,7 @@ class PaperRuntime:
         position = self.store.get_position_projection(position_key)
 
         if trade is None:
-            return (
+            return finish(
                 position is None
                 or position.side is PositionSide.FLAT
                 or position.quantity.value == 0
@@ -1589,7 +1623,7 @@ class PaperRuntime:
                 existing, now_ms=received_at_ms,
             )
             closed = self.store.get_robot_trade(trade.trade_id)
-            return (
+            return finish(
                 resumed.status == "RESOLVED"
                 and closed is not None
                 and closed.exit_time_ms is not None
@@ -1675,7 +1709,7 @@ class PaperRuntime:
             obligation, now_ms=received_at_ms,
         )
         closed = self.store.get_robot_trade(trade.trade_id)
-        return (
+        return finish(
             resolved.status == "RESOLVED"
             and closed is not None
             and closed.exit_time_ms is not None
