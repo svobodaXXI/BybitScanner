@@ -2243,8 +2243,19 @@ class RobotBreakoutMonitor:
             execution["box_emergency_close_intent"] = durable_box_market_intent(plan)
             execution["protection_failure"] = type(error).__name__
             fresh = self._store().get_robot_candidate(record.candidate_id)
-            if fresh is not None and fresh.status == "APPROVED":
-                self._persist_execution(fresh, execution)
+            if fresh is not None and fresh.status in {"APPROVED", "OPEN"}:
+                state = dict(fresh.robot_state or {})
+                state["execution"] = dict(execution)
+                try:
+                    self._store().save_robot_candidate_state(
+                        fresh.candidate_id,
+                        status=fresh.status,
+                        robot_state=state,
+                        expected_revision=fresh.state_revision,
+                        updated_at_ms=self._now_ms(),
+                    )
+                except ConcurrentUpdate:
+                    return
 
         try:
             self._store().reserve_box_order_identity(
