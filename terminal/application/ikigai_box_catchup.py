@@ -10,9 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import hashlib
+import uuid
 from typing import Iterable
 
-from terminal.domain.models import OrderId, OrderSide
+from terminal.api.models import ClientActionId, MarketCommandRequest, VolumeRequest, VolumeUnit
+from terminal.application.command_identity import CommandIdentityCandidate, CommandIdentityFactory
+from terminal.domain.models import CommandId, OrderId, OrderSide
 from terminal.market_data.models import BookHealth, NormalizedOrderBook
 from terminal.persistence.sqlite_store import BoxOwnedPaperLimitSpec, RobotCandidateRecord
 
@@ -103,6 +106,72 @@ def classify_box_catchup_slots(
         ))
     return tuple(result)
 
+
+
+@dataclass(frozen=True, slots=True)
+class BoxCatchupMarketPlan:
+    slot: int
+    quantity: Decimal
+    best_price: Decimal
+    request: MarketCommandRequest
+    identity: CommandIdentityCandidate
+
+
+def _market_digest(candidate_id: str, slot: int) -> str:
+    return hashlib.sha256(
+        f"box-catchup-market\\0{candidate_id}\\0{slot}".encode("utf-8")
+    ).hexdigest()[:32]
+
+
+def build_box_market_plans(
+    candidate: RobotCandidateRecord,
+    book: NormalizedOrderBook,
+    *,
+    slots: Iterable[int],
+) -> tuple[BoxCatchupMarketPlan, ...]:
+    """Build exact-slot PAPER MARKET requests; caller must preflight quantity.
+
+    MarketCommandRequest has no base-quantity volume unit. To preserve the
+    already-frozen slot quantity without widening that API, each request uses
+    USDT notional = slot_quantity * current executable price. Canonical PAPER
+    preflight must normalize back to exactly the same slot quantity; any other
+    result is a fail-closed mismatch and must not be submitted.
+    """
+
+    direction, _prices, quantities, _take = _frozen_terms(candidate)
+    classified = {item.slot: item for item in classify_box_catchup_slots(candidate, book)}
+    normalized_slots = tuple(sorted(set(slots)))
+    if any(type(slot) is not int or slot not in {1, 2, 3, 4} for slot in normalized_slots):
+        raise ValueError("Box MARKET slots must be in 1..4")
+    if any(classified[slot].entry_mode != "MARKET" for slot in normalized_slots):
+        raise ValueError("Box MARKET plan requested for an uncrossed slot")
+
+    levels = book.asks if direction == "LONG" else book.bids
+    best_price = _decimal(levels[0].price.value, "best executable price")
+    side = OrderSide.BUY if direction == "LONG" else OrderSide.SELL
+    plans = []
+    for slot in normalized_slots:
+        quantity = quantities[slot - 1]
+        digest = _market_digest(candidate.candidate_id, slot)
+        deterministic_uuid = uuid.UUID(hex=digest)
+        identity = CommandIdentityFactory(lambda value=deterministic_uuid: value).create()
+        request = MarketCommandRequest(
+            client_action_id=ClientActionId(f"box-market-{digest}"),
+            symbol=candidate.symbol.value,
+            side=side,
+            volume=VolumeRequest(VolumeUnit.USDT, quantity * best_price),
+            sizing_reference_price=best_price,
+            slippage_type="Percent",
+            slippage_value=Decimal("0.5"),
+        )
+        plans.append(BoxCatchupMarketPlan(
+            slot=slot,
+            quantity=quantity,
+            best_price=best_price,
+            request=request,
+            identity=identity,
+        ))
+    return tuple(plans)
 
 def build_box_exit_specs(
     candidate: RobotCandidateRecord,
