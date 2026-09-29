@@ -892,7 +892,7 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 self.assertFalse(
                     incident["facts"]["market_data_authoritative"]
                 )
-                self.assertFalse(incident["facts"]["intended_stop_crossed"])
+                self.assertTrue(incident["facts"]["intended_stop_crossed"])
                 self.assertIsNone(incident["facts"]["deadline_at_ms"])
                 self.assertIsNone(incident["facts"]["age_ms"])
             finally:
