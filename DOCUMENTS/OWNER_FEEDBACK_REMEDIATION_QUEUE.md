@@ -166,45 +166,55 @@ Acceptance:
 
 ### OFR-3A — Robot does not self-recover after protection/reconcile incident
 **Priority:** P0  
-**Status:** OPEN / owner-observed recovery blocker
+**Status:** IMPLEMENTED IN PR #335 / PAPER CI GREEN / awaiting merge
 
 Owner evidence 2026-09-29:
 - after CASHCATUSDT was closed by `EMERGENCY_CLOSE`, a later owner action was
   rejected with:
   `Робот: отклонено — Робот не готов к приёму новых сделок`;
 - status shown to the owner:
-  `Запущен / Нужна сверка`;
-- no evidence was seen that Robot automatically returned to READY after the
-  emergency close/reconciliation condition cleared.
+  `Запущен / Нужна сверка`.
 
-Interpretation:
-- this is a separate recovery-liveness problem from the original emergency-close
-  trigger;
-- do not assume an internet lag caused the emergency close or the stuck
-  reconciliation state until durable evidence proves it;
-- a safety-triggered emergency close may be correct, but normal PAPER operation
-  must not remain indefinitely blocked after the authoritative state is again
-  provably consistent.
+Root cause:
+- historical Robot safety contract deliberately made
+  `RECONCILIATION_REQUIRED` sticky;
+- #117 defined explicit `reconcile_robot()` as the only evidence-based escape,
+  and successful reconciliation landed `PAUSED`, never `READY`;
+- #129 intentionally preserved that fence across restart;
+- therefore a transient protection-continuity incident that fully resolved its
+  Robot-owned exposure still required operator reconcile + resume by design;
+- CELOUSDT is a separate old manual/non-Robot PAPER reconciliation debt and is
+  not part of this root cause.
 
-Required work:
-1. inspect durable runtime/reconciliation/protection state after the
-   CASHCATUSDT emergency close;
-2. determine exactly which invariant keeps `recovery_status` in
-   `RECONCILIATION_REQUIRED`;
-3. prove whether the canonical reconciler is expected to clear that condition
-   automatically and, if so, why it did not;
-4. if automatic recovery is intentionally unsupported for this state, define the
-   missing normal-flow transition instead of requiring ad-hoc owner repair;
-5. preserve fail-closed admission while recovery is genuinely unresolved;
-6. add deterministic replay/coverage for
-   `emergency close -> authoritative flat/consistent -> Robot READY` if that
-   transition is the intended contract.
+Implemented narrow contract in PR #335:
+- capture the Robot recovery state before the continuity fence;
+- after continuity recovery proves the affected Robot-owned exposure resolved,
+  run the existing global evidence-based `robot_reconcile()`;
+- if the pre-fence state was `READY`, reopen admission only after global
+  reconcile succeeds and reaches `PAUSED`, then transition to `READY`;
+- if the pre-fence state was owner `PAUSED`, preserve `PAUSED`;
+- if `RECONCILIATION_REQUIRED` already existed before this continuity event,
+  never auto-clear it;
+- any unresolved candidate/trade/protection ambiguity remains fail-closed.
+
+Safety boundaries:
+- no STOP/TAKE/emergency-close policy change;
+- no LIVE change;
+- no manual/non-Robot position adoption or mutation;
+- explicit operator `reconcile_robot()` semantics remain unchanged and still
+  land `PAUSED`.
+
+Validation:
+- deterministic regressions cover READY self-recovery, PAUSED preservation and
+  pre-existing fence preservation;
+- Robot PAPER acceptance #262 completed successfully at
+  `14717851b24d47b1d136770ca37c9dcfc2c3496b`.
 
 Acceptance:
-- after a correct emergency close and successful authoritative reconciliation,
-  Robot returns to READY without owner crisis-repair;
-- if recovery cannot be proven safe, Robot remains closed with one explicit
-  durable blocker/reason rather than an opaque permanent "Нужна сверка".
+- transient continuity-loss recovery may self-return to READY only after the
+  existing evidence-based global reconciliation proves safety;
+- deliberate PAUSE and unrelated/pre-existing reconciliation fences survive;
+- merge remains pending explicit owner authorization.
 
 ### OFR-4 — Box signal lifecycle: suppress already-completed setups
 **Priority:** P0/P1  
