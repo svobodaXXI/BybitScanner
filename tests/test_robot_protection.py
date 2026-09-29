@@ -13,6 +13,8 @@ from robot_protection import (
     RECOVERY_WAIT,
     build_protection_plan,
     box_stop_for_actual_entry,
+    build_box_stop_only_plan,
+    submit_box_stop_only,
     prepare_box_stop_terms,
     RobotProtectionError,
     frozen_take_90,
@@ -60,6 +62,39 @@ class _Submitter:
 
 
 class RobotProtectionTests(unittest.TestCase):
+    def test_box_stop_only_never_submits_aggregate_take(self):
+        snapshot = {
+            "pattern": "IKIGAI_BOX",
+            "identity": {"symbol": "TESTUSDT"},
+            "plan": {
+                "direction": "LONG",
+                "limit_prices": ["94", "93.2", "92.4", "91.6"],
+                "limit_quantities": ["2"] * 4,
+                "take_price": "99.2",
+                "stop_price": "89.6",
+            },
+            "inputs": {
+                "tick_size": "0.01",
+                "entry_fee_rate": "0",
+                "target_fee_rate": "0",
+                "stop_fee_rate": "0",
+            },
+        }
+        plan = build_box_stop_only_plan(
+            {
+                "candidate_id": "candidate-box",
+                "status": "APPROVED",
+                "signal_snapshot": snapshot,
+            },
+            {"direction": "LONG"},
+            average_entry=Decimal("94"),
+            confirmed_position_quantity=Decimal("2"),
+        )
+        submitter = _Submitter()
+        self.assertEqual(submit_box_stop_only(submitter, plan), "stop")
+        self.assertEqual([name for name, _ in submitter.calls], ["create_stop"])
+        self.assertEqual(plan.take_price, Decimal("99.2"))
+
     def test_box_actual_fill_stop_keeps_or_minimally_tightens_for_net_rr(self):
         frozen = {
             "pattern": "IKIGAI_BOX",
