@@ -1,3 +1,28 @@
+## 🚑 PRIORITY INSERT — OWNER FEEDBACK REMEDIATION — 2026-09-29
+
+The owner explicitly moved today's real feedback/blockers ahead of Geometry
+implementation.
+
+Current order:
+`RVL-R6 evidence -> OFR-1..OFR-7 -> Geometry resumes at G2`.
+
+Canonical queue:
+`DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
+
+Key findings preserved:
+- Box Robot candidate creation failures: B2/BANK/BNB/BNC;
+- exact causes currently disappear with Scanner stdout;
+- CASHCATUSDT closed via emergency protection path before ordinary STOP;
+  top-level logs do not explain why, so network lag is unproven;
+- 1INCHUSDT Box was already economically completed because frozen TAKE was
+  reached before delivery; literal F(1.0) touch is not required;
+- crossed Box grid needs per-slot MARKET catch-up + paired closing LIMITs;
+- position-card chart is right-crowded and level labels are too bulky;
+- card caption must show `Объем: qty (USDT notional)`;
+- position card needs Open TradingView plus back-to-positions.
+
+No Geometry production work should pre-empt these slices.
+
 ## ☀️ CHECKPOINT — OWNER FEEDBACK 2026-09-29
 
 Preserve today's real owner findings:

@@ -346,7 +346,34 @@ This is the only step in Phase R that requires real owner runtime.
 **Exit condition for Robot Stability boss:** R6 PASS. Until then the boss remains
 open even if CI is green.
 
-### Phase G — Geometry Lab (starts after Robot Stability is contained)
+### Phase O — Owner feedback remediation (before Geometry resumes)
+
+**Owner-prioritized 2026-09-29.**
+
+Canonical queue:
+`DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
+
+This phase was inserted after the real owner run exposed operational/product
+defects that are higher priority than Geometry implementation work. RVL-G1
+inventory remains COMPLETE and is not repeated; Geometry implementation resumes
+at G2 only after the queued owner-feedback remediation slices are handled.
+
+Ordered tasks:
+- OFR-1 durable Robot candidate/protection failure diagnostics;
+- OFR-2 CASHCATUSDT emergency-close root cause and recurrence classification/fix;
+- OFR-3 B2/BANK/BNB/BNC Box Robot handoff failures;
+- OFR-4 already-completed Box suppression using frozen TAKE, not literal F(1.0);
+- OFR-5 crossed-grid Box catch-up execution;
+- OFR-6 Telegram position-card chart/label/volume cleanup;
+- OFR-7 TradingView button under position cards.
+
+Safety:
+- do not weaken STOP-first fail-closed protection;
+- do not infer network failure without durable evidence;
+- do not change geometry merely to solve execution/UX findings;
+- LIVE remains prohibited.
+
+### Phase G — Geometry Lab (starts after Phase O owner-feedback remediation)
 
 #### RVL-G1 — Golden fixture schema and inventory
 **Status:** COMPLETE — repository inventory/schema map captured 2026-09-29
@@ -507,8 +534,17 @@ R1 Replay contract/runner
   -> R5 Replay pack + focused PAPER CI
   -> R6 One owner PAPER acceptance
 
+P0/P1 Owner feedback remediation
+OFR-1 Diagnostics
+  -> OFR-2 Emergency-close investigation/fix
+  -> OFR-3 Box Robot handoff failures
+  -> OFR-4 Completed-Box suppression
+  -> OFR-5 Box crossed-grid catch-up
+  -> OFR-6 Position-card cleanup
+  -> OFR-7 Position-card TradingView
+
 P1 Geometry Quality
-G1 Inventory/schema
+G1 Inventory/schema (already COMPLETE)
   -> G2 First Geometry Gold set
   -> G3 Baseline report
   -> G4 Defect-class fixes (repeat bounded slices as needed)
