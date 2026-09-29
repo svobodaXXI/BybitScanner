@@ -45,6 +45,7 @@ from terminal.api.models import ClientActionId, CommandResultStatus, MarketComma
 from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
 from terminal.application.ikigai_box_catchup import (
+    build_box_emergency_close_market_plan,
     build_box_exit_specs,
     build_box_market_ownership_specs,
     build_box_market_plans,
