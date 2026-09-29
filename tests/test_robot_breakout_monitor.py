@@ -1414,7 +1414,12 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.executor.fill_resting_limit(order_id, SYMBOL, OrderSide.BUY, Decimal("1"), Decimal("81"))
 
         self.executor.fail_create_stop = True
-        advanced = self.monitor.tick()
+        with patch(
+            "terminal.application.robot_breakout_monitor."
+            "robot_incident_store.try_record_robot_incident",
+            return_value=True,
+        ) as incident:
+            advanced = self.monitor.tick()
 
         self.assertEqual(advanced, ("candidate-1",))
         record = self.store.get_robot_candidate("candidate-1")
@@ -1423,6 +1428,28 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual([name for name, _ in self.executor.protection_calls], ["full_close"])
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
+        self.assertEqual(
+            record.robot_state["execution"]["protection_failure"],
+            "INITIAL_PROTECTION_SUBMISSION_FAILED",
+        )
+        self.assertEqual(
+            record.robot_state["execution"]["protection_failure_class"],
+            "RuntimeError",
+        )
+        trigger = incident.call_args_list[0]
+        self.assertEqual(trigger.kwargs["lifecycle_stage"], "PROTECTION")
+        self.assertEqual(
+            trigger.kwargs["reason_code"],
+            "INITIAL_PROTECTION_SUBMISSION_FAILED",
+        )
+        self.assertEqual(trigger.kwargs["symbol"], SYMBOL)
+        self.assertEqual(trigger.kwargs["candidate_id"], "candidate-1")
+        self.assertEqual(
+            trigger.kwargs["facts"]["SELECTED_RECOVERY_ACTION"],
+            robot_protection.RECOVERY_EMERGENCY_CLOSE,
+        )
+        self.assertIsNone(trigger.kwargs["facts"]["STOP_PROVEN"])
+        self.assertIsNone(trigger.kwargs["facts"]["TAKE_PROVEN"])
 
     def _place_legacy_unfiltered_limit(self):
         """Seed an order admitted by the pre-RR version of the Robot.
