@@ -351,11 +351,21 @@ def _unrealized_pnl(view: PositionView) -> tuple[Decimal, Decimal] | None:
 
 
 def format_position_card(view: PositionView) -> str:
+    notional = (
+        abs(view.quantity) * view.average_entry
+        if view.quantity is not None and view.average_entry is not None
+        else None
+    )
+    volume_text = (
+        f"{_format_quantity(view.quantity)} ({notional:.2f} USDT)"
+        if notional is not None
+        else _format_quantity(view.quantity)
+    )
     lines = [
         f"{view.symbol} · {view.direction}",
         "",
         f"Статус: {'открыта' if view.is_open else 'закрыта'}",
-        f"Размер: {_format_quantity(view.quantity)}",
+        f"Объем: {volume_text}",
         f"Средний вход: {format_price(view.average_entry)}",
     ]
     if view.is_open:
