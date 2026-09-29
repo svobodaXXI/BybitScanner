@@ -19,6 +19,8 @@ class BoxExposureProof:
     exit_quantity: Decimal
     remaining_quantity: Decimal
     average_entry: Decimal | None
+    entry_by_slot: tuple[Decimal, Decimal, Decimal, Decimal]
+    exit_by_slot: tuple[Decimal, Decimal, Decimal, Decimal]
     position_version: int
     execution_ids: tuple[str, ...]
     execution_authorized: bool = field(default=False, init=False)
@@ -58,6 +60,7 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
     entry = exit_qty = remaining = Decimal(0)
     average = None
     by_slot = [Decimal(0)] * 4
+    exit_by_slot = [Decimal(0)] * 4
     last_time = baseline["baseline_time_ms"]
     for fill in current:
         owner = owners.get(fill.order_id.value)
@@ -82,6 +85,11 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
         else:
             if fill.side is entry_side or qty > remaining:
                 raise BoxOwnershipError("owned exit reverses or exceeds the actual Box lot")
+            exit_slot = owner["slot"]
+            if exit_slot:
+                exit_by_slot[exit_slot - 1] += qty
+                if exit_by_slot[exit_slot - 1] > by_slot[exit_slot - 1]:
+                    raise BoxOwnershipError("owned slice exit exceeds its filled entry slot")
             exit_qty += qty
             remaining -= qty
             if not remaining:
@@ -93,6 +101,14 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
             or (position.average_entry.value if position.average_entry else None) != average
             or position.updated_at_ms < last_time):
         raise BoxOwnershipError("actual position does not reconcile with owned entries minus exits")
-    return BoxExposureProof(candidate.candidate_id, entry, exit_qty, remaining,
-                            average, position.version,
-                            tuple(f.dedup_key.exec_id.value for f in current))
+    return BoxExposureProof(
+        candidate.candidate_id,
+        entry,
+        exit_qty,
+        remaining,
+        average,
+        tuple(by_slot),
+        tuple(exit_by_slot),
+        position.version,
+        tuple(f.dedup_key.exec_id.value for f in current),
+    )
