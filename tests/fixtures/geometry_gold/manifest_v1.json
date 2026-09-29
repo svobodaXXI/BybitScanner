@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "PONS-formation-fit-positive-anchor",
+      "pattern_family": "WEDGE",
+      "symbol": "PONS",
+      "timeframe": "5",
+      "evidence_class": "READY",
+      "fixture_ref": "tests/fixtures/geometry_formation_fit/historical_cases.json",
+      "fixture_case": "PONS",
+      "as_of_index": 199,
+      "provenance": "RVL-G1 READY formation-fit historical pack; positive universal wedge-anchor control.",
+      "expectation": {
+        "kind": "POSITIVE_ANCHOR",
+        "geometry_identity": [
+          143,
+          178,
+          145,
+          186,
+          143,
+          186
+        ],
+        "detected": true
+      }
+    },
+    {
+      "case_id": "1000BONKUSDT-wrong-anchor-negative",
+      "pattern_family": "WEDGE",
+      "symbol": "1000BONKUSDT",
+      "timeframe": "5",
+      "evidence_class": "READY",
+      "fixture_ref": "tests/fixtures/geometry_universal_anchor/bonk_0_198.json",
+      "as_of_index": 198,
+      "provenance": "RVL-G1 READY recovered owner wrong-anchor incident.",
+      "expectation": {
+        "kind": "FORBIDDEN_ANCHOR_PAIR",
+        "forbidden_anchor_pair": [
+          81,
+          128
+        ],
+        "forbidden_pattern": "Rising Wedge"
+      }
+    },
+    {
+      "case_id": "1000TOSHIUSDT-locality-invariant",
+      "pattern_family": "WEDGE_TRIANGLE",
+      "symbol": "1000TOSHIUSDT",
+      "timeframe": "5",
+      "evidence_class": "READY",
+      "fixture_ref": "tests/fixtures/geometry_locality/1000TOSHIUSDT_5m_window.json",
+      "as_of_index": 199,
+      "provenance": "RVL-G1 READY 2026-09-21 Scanner locality incident.",
+      "expectation": {
+        "kind": "LOCALITY_INVARIANT",
+        "max_span": 120,
+        "forbidden_interval": [
+          30,
+          173
+        ],
+        "fresh": false
+      }
+    },
+    {
+      "case_id": "1000XECUSDT-no-local-formation",
+      "pattern_family": "WEDGE_TRIANGLE",
+      "symbol": "1000XECUSDT",
+      "timeframe": "5",
+      "evidence_class": "READY",
+      "fixture_ref": "tests/fixtures/geometry_locality/1000XECUSDT_5m_window.json",
+      "as_of_index": 199,
+      "provenance": "RVL-G1 READY 2026-09-21 Scanner locality negative.",
+      "expectation": {
+        "kind": "NO_GEOMETRY"
+      }
+    },
+    {
+      "case_id": "AEVO-formation-fit-negative",
+      "pattern_family": "WEDGE_TRIANGLE",
+      "symbol": "AEVO",
+      "timeframe": "5",
+      "evidence_class": "READY",
+      "fixture_ref": "tests/fixtures/geometry_formation_fit/historical_cases.json",
+      "fixture_case": "AEVO",
+      "as_of_index": 199,
+      "provenance": "RVL-G1 READY formation-fit body-boundary negative control.",
+      "expectation": {
+        "kind": "NO_GEOMETRY"
+      }
+    }
+  ]
+}
