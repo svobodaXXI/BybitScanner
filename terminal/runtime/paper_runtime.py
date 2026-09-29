@@ -2953,6 +2953,80 @@ class PaperRuntime:
                         continue
                     unresolved_trade_ids.add(trade.trade_id)
                     continue
+                if trade.pattern == "IKIGAI_BOX":
+                    source_id = candidate.signal_snapshot.get("source_box_candidate_id")
+                    if not isinstance(source_id, str) or not source_id.strip():
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    try:
+                        box_proof = self.store.prove_box_owned_position(source_id.strip())
+                    except Exception:
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    if (
+                        position is None
+                        or position.quantity.value <= 0
+                        or position.side is not expected_side
+                        or box_proof.remaining_quantity != position.quantity.value
+                    ):
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    protection = self.store.get_protection_projection(position_key)
+                    if protection is None:
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    instrument = self._instrument_provider(trade.symbol.value)
+                    closing_side = (
+                        OrderSide.SELL
+                        if expected_side is PositionSide.LONG
+                        else OrderSide.BUY
+                    )
+                    expected_stop = normalize_limit_price(
+                        trade.stop_price, instrument.tick_size, closing_side,
+                    )
+                    if (
+                        protection.stop_loss != expected_stop
+                        or protection.take_profit is not None
+                    ):
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+
+                    frozen_quantities = candidate.signal_snapshot.get("plan", {}).get(
+                        "limit_quantities"
+                    )
+                    if not isinstance(frozen_quantities, list) or len(frozen_quantities) != 4:
+                        unresolved_trade_ids.add(trade.trade_id)
+                        continue
+                    ownership = self.store.load_box_order_ownership(source_id.strip())
+                    exits_by_slot = {
+                        owner.slot: owner.order_id
+                        for owner in ownership
+                        if owner.role == "EXIT" and owner.slot in {1, 2, 3, 4}
+                    }
+                    paired_ok = True
+                    for slot, frozen_quantity in enumerate(frozen_quantities, start=1):
+                        planned = Decimal(str(frozen_quantity))
+                        if (
+                            box_proof.entry_by_slot[slot - 1] == planned
+                            and box_proof.exit_by_slot[slot - 1] == 0
+                        ):
+                            order_id = exits_by_slot.get(slot)
+                            order = (
+                                self.store.get_paper_limit(order_id.value, self._paper_account_id)
+                                if order_id is not None else None
+                            )
+                            if (
+                                order is None
+                                or order.status in INACTIVE_LIMIT_STATUSES
+                                or order.quantity != planned
+                                or order.price != trade.take_price
+                            ):
+                                paired_ok = False
+                                break
+                    if not paired_ok:
+                        unresolved_trade_ids.add(trade.trade_id)
+                    continue
+
                 if (
                     position is None
                     or position.quantity.value <= 0
