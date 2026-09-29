@@ -14,6 +14,39 @@ This register is descriptive only. It does not weaken any Scanner, Robot, PAPER/
 - **CLOSED / CLASSIFIED CORRECT** — reported symptom was investigated and shown to be correct fail-closed behavior, not a defect.
 - **DESIGN DEBT** — owner feedback established required future behavior, but implementation is intentionally deferred.
 
+## Strategy / execution gaps discovered from owner feedback
+
+### BOX-LATE-1 — crossed-grid late admission requires slot-preserving market catch-up
+**Status: OPEN strategy implementation gap**
+
+Owner feedback 2026-09-29:
+- the existing Box strategy did not define what Robot should do if, by the time
+  of admission/submission, price has already entered or passed part of the
+  original four-part limit grid;
+- one aggregate 1-RO late market entry is **not** the desired behavior.
+
+Required owner contract now frozen:
+- original `P1..P4` levels remain frozen;
+- each already-crossed entry slot is acquired by MARKET for that slot's equal
+  part;
+- untouched slots remain resting entry LIMITs at their original levels;
+- caught-up parts retain per-slot ownership/identity;
+- every caught-up market part must receive a corresponding opposite/closing
+  LIMIT order;
+- existing shared Robot lifecycle/protection/recovery is reused;
+- the familiar Box STOP/protection is still required and catch-up must never
+  create an unprotected interval.
+
+Still unresolved:
+- exact price mapping for each paired closing LIMIT;
+- if actual market catch-up fills conflict with the existing frozen
+  planned-average/RR STOP arithmetic, the precise STOP calculation rule must be
+  explicitly frozen before implementation.
+
+Owning strategy authority:
+`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`, section
+"Owner correction — late admission / crossed Box grid catch-up (2026-09-29)".
+
 ## Telegram / control surface
 
 ### TG-MENU-1 — Menu button intermittently absent in Telegram Desktop

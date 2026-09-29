@@ -1,3 +1,29 @@
+## ☀️ CHECKPOINT — OWNER FEEDBACK 2026-09-29
+
+Preserve today's real owner findings:
+
+- **TG-MON-1 closed by owner acceptance**: fresh `/monitoring` returned active
+  candidates/buttons on the fixed code.
+- **RVL-R6 same-process baseline**:
+  backend `be72ef65-5167-44ef-a645-5c6ce447e49d`, Scanner RUNNING,
+  protection healthy, ingress 0/64, high-watermark 0 at baseline. Final
+  same-instance post-run metrics still required.
+- **RVL-G1 complete**: Geometry Gold inventory/schema merged via PR #327.
+- **Owner feedback register complete**: PR #328 created the canonical problem
+  register.
+- **New RH-FAIL-1/RH-DIAG-1**: B2/BANK/BNB/BNC Box cards lost Robot handoff
+  while ordinary delivery succeeded; exact error cause was ephemeral console
+  output. Persist sanitized failures before changing planner behavior.
+- **New BOX-LATE-1 strategy requirement**: if current price has already crossed
+  some frozen Box grid slots before submission, catch up each crossed slot with
+  its own market part; leave untouched slots as original LIMITs; create a paired
+  closing LIMIT for each caught part; keep the existing shared protection/STOP
+  lifecycle. Exact paired closing-LIMIT price mapping remains to be decided
+  before implementation.
+
+No LIVE authorization. Current Scanner/RVL-R6 run must not be restarted merely
+to investigate these queued findings.
+
 ## 🧾 OWNER FEEDBACK REGISTER — 2026-09-29
 
 Owner feedback findings are consolidated in
