@@ -669,7 +669,7 @@ class TelegramMonitoringTests(unittest.TestCase):
         self.assertIn("Позиция не от робота — график недоступен", send.call_args.args[1])
         markup = send.call_args.kwargs["reply_markup"]["inline_keyboard"]
         self.assertEqual(markup[0][0]["text"], "📈 Open TradingView")
-        self.assertIn("symbol=BYBIT%3ACELOUSDT.P", markup[0][0]["url"])
+        self.assertIn("symbol=BYBIT:CELOUSDT.P", markup[0][0]["url"])
         self.assertEqual(markup[1][0]["callback_data"], "robot:view:positions")
 
     @patch("telegram_monitoring.render_position_chart", return_value="chart.png")
@@ -687,7 +687,7 @@ class TelegramMonitoringTests(unittest.TestCase):
         self.assertIn("PnL: ≈ +0.10 USDT (+10.00%)", caption)
         markup = photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
         self.assertEqual(markup[0][0]["text"], "📈 Open TradingView")
-        self.assertIn("symbol=BYBIT%3ASAGAUSDT.P", markup[0][0]["url"])
+        self.assertIn("symbol=BYBIT:SAGAUSDT.P", markup[0][0]["url"])
         self.assertIn("interval=5", markup[0][0]["url"])
         self.assertEqual(markup[1][0]["callback_data"], "robot:view:positions")
 
