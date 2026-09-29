@@ -1422,7 +1422,7 @@ class PaperRuntime:
         normalized = Symbol(symbol.strip().upper())
         if book.symbol != normalized:
             raise ValueError("Robot market event symbol does not match book")
-        entry_order_ids: set[str] = set()
+        owned_limit_ids: set[str] = set()
         for candidate in self.store.load_robot_candidates_for_symbol(
             self._paper_account_id, normalized,
         ):
@@ -1433,21 +1433,35 @@ class PaperRuntime:
             if candidate.status == "APPROVED" and phase == "RETEST_DETECTED":
                 order_id = execution.get("limit_order_id")
                 if order_id:
-                    entry_order_ids.add(order_id)
+                    owned_limit_ids.add(order_id)
                 continue
             if (
                 candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
                 and candidate.status in {"APPROVED", "OPEN"}
                 and phase == "BOX_ENTRY_READY"
             ):
-                raw_order_ids = execution.get("limit_order_ids")
-                if isinstance(raw_order_ids, (tuple, list)):
-                    entry_order_ids.update(
-                        item for item in raw_order_ids
-                        if isinstance(item, str) and item.strip()
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = candidate.robot_state.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    continue
+                try:
+                    self.store.prove_box_owned_position(source_id.strip())
+                except Exception:
+                    self.fence_robot_protection_continuity_loss(
+                        normalized.value, "box_ownership_unproven_before_limit_match",
                     )
+                    continue
+                for owner in self.store.load_box_order_ownership(source_id.strip()):
+                    if owner.role == "EXIT" and owner.slot == 0:
+                        continue
+                    order = self.store.get_paper_limit(
+                        owner.order_id.value, self._paper_account_id,
+                    )
+                    if order is not None and order.status not in INACTIVE_LIMIT_STATUSES:
+                        owned_limit_ids.add(owner.order_id.value)
         matched_fills = self._match_limits_only(
-            normalized, book, event_id, allowed_order_ids=entry_order_ids,
+            normalized, book, event_id, allowed_order_ids=owned_limit_ids,
         )
         finalized: tuple[str, ...] = ()
         if matched_fills:
