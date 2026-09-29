@@ -288,15 +288,20 @@ Structural confirmations:
 
 11. **Owner 5m acceleration**
    - accepted as an additional reversal-confirmation family;
-   - exact machine definition remains pending the owner's next description.
+   - **EVENING DESIGN TASK**: freeze its exact visual/price-action definition
+     from owner examples before any implementation;
+   - do not infer or implement its machine rule before that owner review.
 
 ### Attempt budget
 - maximum **3 entry attempts per original signal**;
-- an attempt is consumed when a valid reversal confirmation closes and the
-  candidate reaches the MARKET-entry decision gate;
-- a confirmed attempt that is rejected by the risk gate **still consumes one
-  attempt**;
-- after attempt 3, no further re-entry attempt is permitted for that signal.
+- an attempt is consumed **only when there is an actual Robot-owned entry fill
+  / position opening** from that re-entry attempt;
+- a valid reversal confirmation that is rejected by RR/risk/protection before
+  execution does **not** consume an attempt;
+- an order/decision that never results in actual filled exposure does **not**
+  consume an attempt;
+- after the third actual entry attempt, no further re-entry attempt is
+  permitted for that signal.
 
 ### Lifetime / expiry
 - reversal-watch remains alive until the setup potential is realized, or until
@@ -317,8 +322,8 @@ Structural confirmations:
 - after the structural/2% STOP is known, recompute fee-aware RR from actual
   MARKET entry to the original frozen target;
 - the ordinary current Robot risk gate remains authoritative; a confirmation
-  rejected by risk/RR/protection still consumes one of the three attempts and
-  creates no order;
+  rejected by risk/RR/protection creates no order and does **not** consume one
+  of the three attempts;
 - STOP price is normalized to instrument tick and must remain on the protective
   side of actual entry.
 
@@ -337,7 +342,8 @@ Acceptance:
 - deterministic pre-entry STOP-crossing case remains in reversal-watch;
 - no entry before valid closed confirmation;
 - Hammer/Hanging-Man owner shadow rule is covered at 1x and stronger 2x cases;
-- confirmed but risk-rejected attempts increment the same 3-attempt budget;
+- risk-rejected/no-fill confirmations do not increment the 3-attempt budget;
+- each actual filled re-entry increments the same 3-attempt budget;
 - valid later MARKET attempt keeps original target, uses structural STOP capped
   at 2%, recomputes RR from actual fill and enters shared protection;
 - double-top/bottom and H&S require neckline close confirmation;
