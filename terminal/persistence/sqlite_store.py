@@ -420,6 +420,12 @@ class BoxOwnedPaperLimitSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class BoxOwnedPaperMarketSpec:
+    slot: int
+    order_id: OrderId
+
+
+@dataclass(frozen=True, slots=True)
 class PaperLimitOrderRecord:
     order_id: OrderId
     order_link_id: str
@@ -3030,6 +3036,57 @@ class SQLiteStore:
             if order.order_id != order_id:
                 raise DuplicateIdentity("Box create action points to another PAPER limit")
             return order, created
+
+    def create_box_mixed_entry_ownership(
+        self, candidate_id: str, *, trading_account_id: TradingAccountId,
+        symbol: Symbol, market_orders: tuple[BoxOwnedPaperMarketSpec, ...],
+        limit_orders: tuple[BoxOwnedPaperLimitSpec, ...],
+    ) -> tuple[PaperLimitOrderRecord, ...]:
+        """Atomically own all P1..P4 entries before any MARKET dispatch.
+
+        MARKET order ids are deterministic future PAPER ids reserved before
+        submission. Untouched slots become resting LIMITs in the same
+        transaction. A conflict in any slot rolls back all four identities and
+        every created LIMIT.
+        """
+        self._assert_owner()
+        if trading_account_id != TradingAccountId("paper"):
+            raise ValueError("Box mixed entry ownership requires paper account")
+        market_slots = {item.slot for item in market_orders}
+        limit_slots = {item.slot for item in limit_orders}
+        if (
+            market_slots & limit_slots
+            or market_slots | limit_slots != {1, 2, 3, 4}
+            or len(market_slots) != len(market_orders)
+            or len(limit_slots) != len(limit_orders)
+        ):
+            raise ValueError("Box mixed entry ownership must cover slots 1..4 exactly once")
+        with self._transaction():
+            for item in sorted(market_orders, key=lambda value: value.slot):
+                self._reserve_box_order_identity(
+                    candidate_id, order_id=item.order_id, role="ENTRY", slot=item.slot,
+                )
+            created_orders = []
+            for item in sorted(limit_orders, key=lambda value: value.slot):
+                self._reserve_box_order_identity(
+                    candidate_id, order_id=item.order_id, role="ENTRY", slot=item.slot,
+                )
+                order, _ = self._create_paper_limit(
+                    client_action_id=item.client_action_id,
+                    request_fingerprint=item.request_fingerprint,
+                    order_id=item.order_id,
+                    order_link_id=item.order_link_id,
+                    trading_account_id=trading_account_id,
+                    symbol=symbol,
+                    side=item.side,
+                    price=item.price,
+                    quantity=item.quantity,
+                    created_at_ms=item.created_at_ms,
+                )
+                if order.order_id != item.order_id:
+                    raise DuplicateIdentity("Box create action points to another PAPER limit")
+                created_orders.append(order)
+            return tuple(created_orders)
 
     def create_box_owned_paper_grid(
         self, candidate_id: str, *, trading_account_id: TradingAccountId,
