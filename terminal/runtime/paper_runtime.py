@@ -2146,6 +2146,51 @@ class PaperRuntime:
             # DISPATCHING for reconciliation rather than finalize from an
             # unproven position state.
             return obligation
+        if trade.pattern == "IKIGAI_BOX":
+            candidate = self.store.get_robot_candidate(trade.candidate_id)
+            source_id = (
+                candidate.signal_snapshot.get("source_box_candidate_id")
+                if candidate is not None else None
+            )
+            if not isinstance(source_id, str) or not source_id.strip():
+                return obligation
+            try:
+                proof = self.store.prove_box_owned_position(source_id.strip())
+            except Exception:
+                return obligation
+            if (
+                proof.remaining_quantity != 0
+                or proof.average_exit is None
+                or proof.last_execution_at_ms is None
+                or proof.entry_notional <= 0
+            ):
+                return obligation
+            realized_pct = (
+                (proof.realized_pnl - proof.accumulated_fee)
+                / proof.entry_notional
+                * Decimal("100")
+            )
+            self.store.close_robot_trade(
+                trade.trade_id,
+                exit_time_ms=proof.last_execution_at_ms,
+                exit_price=proof.average_exit,
+                exit_reason=obligation.winning_leg,
+                realized_pnl_usdt=proof.realized_pnl,
+                realized_pnl_pct=realized_pct,
+                fees_costs_usdt=proof.accumulated_fee,
+                updated_at_ms=now_ms,
+            )
+            self.store.clear_paper_protection_for_flat(position_key)
+            if obligation.status == "DISPATCHING":
+                obligation = self.store.transition_paper_protection_obligation(
+                    obligation.obligation_id,
+                    expected_status="DISPATCHING",
+                    next_status="RESOLVED",
+                    expected_version=obligation.version,
+                    updated_at_ms=now_ms,
+                )
+            return obligation
+
         if trade.entry_quantity is None:
             # Reached only if an exec was somehow recorded for a trade
             # lacking the ownership attestation (e.g. resuming a lifecycle
