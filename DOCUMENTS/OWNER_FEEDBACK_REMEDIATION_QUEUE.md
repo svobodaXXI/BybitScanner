@@ -119,21 +119,50 @@ Acceptance:
 
 ### OFR-3 — Robot candidate handoff failures on valid Box cards
 **Priority:** P0  
-**Status:** OPEN
+**Status:** CLOSED / correct fail-closed risk rejection
 
 Cases:
 `B2USDT`, `BANKUSDT`, `BNBUSDT`, `BNCUSDT` 5m.
 
-Required work after OFR-1:
-- recover/classify the exact planner/persistence/admission failure from durable
-  diagnostics or deterministic reproduction;
-- keep ordinary Scanner signal delivery independent;
-- never show Robot button unless durable candidate creation succeeded;
-- fix the common root cause if one exists; no per-symbol exceptions.
+Deterministic replay evidence:
+- all four saved 2026-09-29 formation identities were recovered from Box PNG
+  names + `signals_history.json`;
+- current `detect_ikigai_box` reproduced every case with exact matching
+  anchors and direction;
+- approved first grid construction succeeded for every case;
+- current instrument price/quantity/min-notional constraints were satisfied;
+- PAPER equity was read from `paper_accounts` as 5000 USDT, therefore
+  1 WV = 250 USDT;
+- each slot was approximately 62 USDT and above minimum notional;
+- all four cases failed at the same planner gate:
+
+  `no tick-aligned STOP beyond P4 satisfies net RR >= 2`
+
+Conclusion:
+- these were valid Scanner Box detections but **not executable PAPER Robot
+  plans** under the frozen Box grid, fees and net RR >= 2 contract;
+- absence of the Robot button was therefore correct fail-closed behavior;
+- no planner/persistence/admission bug is proven for these four cases;
+- do not weaken RR, move P4, invent a per-symbol exception, or force candidate
+  creation merely to make the Robot button appear;
+- the owner warning was generic because the precise reason was previously
+  console-only; OFR-1 now provides durable diagnostics for future failures.
+
+Disposition:
+1. No production trading-logic patch for B2/BANK/BNB/BNC.
+2. Treat this failure class as `NON_EXECUTABLE_RR_STOP` conceptually in
+   investigation/reporting; any future code naming change belongs to UX/
+   diagnostics, not risk policy.
+3. Reopen only if a replay that satisfies the approved risk contract still
+   fails candidate preparation, or if the owner explicitly changes the Box
+   strategy/risk contract.
 
 Acceptance:
-- representative failing class creates a valid durable Robot candidate or is
-  rejected with an explicit, correct, durable reason.
+- representative failing class reproduced deterministically;
+- exact common rejection gate established;
+- fail-closed behavior proven correct;
+- no per-symbol workaround required;
+- no further historical replay required for these four cases.
 
 ### OFR-3A — Robot does not self-recover after protection/reconcile incident
 **Priority:** P0  
