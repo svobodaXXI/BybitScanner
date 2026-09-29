@@ -269,6 +269,32 @@ def build_box_market_ownership_specs(
         for item in ordered
     )
 
+
+def ready_box_exit_slots(
+    candidate: RobotCandidateRecord,
+    proof,
+) -> tuple[int, ...]:
+    """Return fully-filled entry slots that do not yet own any exit quantity."""
+    _direction, _prices, quantities, _take = _frozen_terms(candidate)
+    entry_by_slot = getattr(proof, "entry_by_slot", None)
+    exit_by_slot = getattr(proof, "exit_by_slot", None)
+    if (
+        not isinstance(entry_by_slot, tuple)
+        or not isinstance(exit_by_slot, tuple)
+        or len(entry_by_slot) != 4
+        or len(exit_by_slot) != 4
+    ):
+        raise ValueError("Box ownership proof lacks per-slot quantities")
+    ready = []
+    for index, planned in enumerate(quantities):
+        entered = entry_by_slot[index]
+        exited = exit_by_slot[index]
+        if entered < 0 or exited < 0 or exited > entered:
+            raise ValueError("Box ownership proof has invalid slot quantities")
+        if entered == planned and exited == 0:
+            ready.append(index + 1)
+    return tuple(ready)
+
 def build_box_exit_specs(
     candidate: RobotCandidateRecord,
     *,
