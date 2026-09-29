@@ -226,6 +226,8 @@ class BoxOrderOwnershipTests(unittest.TestCase):
         execution, projection = self.fill("x1", "exit-1", OrderSide.SELL, "1", "99.2", "3", "93.6", 8000)
         proof = self.proof()
         self.assertEqual((proof.entry_quantity, proof.exit_quantity, proof.remaining_quantity), (D(4), D(1), D(3)))
+        self.assertEqual(proof.entry_by_slot, (D(2), D(2), D(0), D(0)))
+        self.assertEqual(proof.exit_by_slot, (D(1), D(0), D(0), D(0)))
         self.assertEqual(proof.average_entry, D("93.6"))
         self.assertFalse(proof.execution_authorized)
         self.assertEqual(self.store.apply_execution_once(execution, projection), ExecutionApplyResult.DUPLICATE)
