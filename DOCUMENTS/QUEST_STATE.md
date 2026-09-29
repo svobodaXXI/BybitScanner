@@ -47,7 +47,7 @@ Key findings preserved:
 - card caption must show `Объем: qty (USDT notional)`;
 - position card needs Open TradingView plus back-to-positions.
 - candidate monitoring card needs its candidate chart plus `Открыть в Trading View`, while preserving `⬅️ К кандидатам`.
-- OFR-4A frozen core: pre-entry STOP crossing -> reversal-watch; confirmation must close; max 3 attempts per source signal; confirmed-but-risk-rejected attempts consume budget; original target remains; new STOP sits beyond reversal extremum but is percentage-capped when too far; expiry at potential realization or the adverse F(2.618)-F(3.618) midpoint; TAKE-completed setups never revive. Numeric STOP cap, machine tolerances and owner 5m-acceleration definition remain open.
+- OFR-4A frozen core: pre-entry STOP crossing -> reversal-watch; confirmation must close; max 3 **actual filled entry attempts** per source signal; risk-gate rejection/no-fill does not consume an attempt; original target remains; new STOP sits beyond reversal extremum with a 2% cap from actual MARKET entry; expiry at potential realization or the adverse F(2.618)-F(3.618) midpoint; TAKE-completed setups never revive. Candlestick/structural confirmation tolerances are documented. Owner 5m-acceleration machine definition is an explicit evening design task and must not be guessed.
 
 No Geometry production work should pre-empt these slices.
 
