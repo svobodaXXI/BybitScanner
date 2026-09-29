@@ -559,6 +559,25 @@ class RobotBreakoutMonitor:
                 or getattr(preflight, "normalized_quantity", None) != plan.quantity
             ):
                 return False
+        if market_plans:
+            projected_quantity = sum(
+                (plan.quantity for plan in market_plans), Decimal("0")
+            )
+            projected_notional = sum(
+                (plan.quantity * plan.best_price for plan in market_plans),
+                Decimal("0"),
+            )
+            if projected_quantity <= 0:
+                return False
+            try:
+                robot_protection.box_stop_for_actual_entry(
+                    source.signal_snapshot,
+                    average_entry=projected_notional / projected_quantity,
+                )
+            except Exception:
+                # Do not create any ownership when the immediately caught
+                # MARKET exposure cannot own a valid Box STOP under RR/P4.
+                return False
 
         all_limits = build_box_first_grid_specs(source, created_at_ms=self._now_ms())
         limit_slots = tuple(item.slot for item in slots if item.entry_mode == "LIMIT")
@@ -686,6 +705,18 @@ class RobotBreakoutMonitor:
             self._persist_execution(record, execution)
             return True
 
+        try:
+            current_proof = self._store().prove_box_owned_position(source.candidate_id)
+        except Exception as error:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_OWNERSHIP_MISMATCH "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                f"reason={error}"
+            )
+            return False
+        if current_proof.entry_quantity > 0 and current_proof.remaining_quantity == 0:
+            return self._sync_box_trade(record, execution, create_trade=False)
+
         for plan in market_plans:
             command = self._store().get_command(plan.identity.command_id)
             if command is None:
@@ -702,10 +733,13 @@ class RobotBreakoutMonitor:
             result = self._submit_market(plan.request, plan.identity)
             if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
                 return True
+            if not self._sync_box_trade(record, execution, create_trade=False):
+                return True
 
-        if match_resting_orders and self._match_resting_orders is not None:
-            self._match_resting_orders(record.symbol.value)
-        return self._sync_box_trade(record, execution)
+        # Resting Box LIMITs are matched only on the ordered Robot market-event
+        # path, which evaluates Box ownership and protection on the same event.
+        # Do not call the legacy generic match_resting_orders path here.
+        return self._sync_box_trade(record, execution, create_trade=True)
 
     def _sync_box_trade(
         self,
