@@ -801,6 +801,7 @@ class PaperRuntime:
             tick_interval_s=robot_tick_interval_s,
             arm_entry_coverage=self._arm_robot_entry_coverage,
             release_entry_coverage=self._release_robot_entry_coverage,
+            incident_dir=self._robot_incident_dir,
         )
         if self._robot_command_dispatcher is not None:
             self._robot_breakout_monitor.start()
@@ -1458,6 +1459,7 @@ class PaperRuntime:
                 action_executor=_DirectRobotActionExecutor(self),
                 tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
                 clock_ms=lambda: int(time.time() * 1000),
+                incident_dir=self._robot_incident_dir,
             )
             finalized = monitor.process_authoritative_fill(normalized.value)
         obligation = self.evaluate_robot_protection_crossing(
@@ -1533,6 +1535,7 @@ class PaperRuntime:
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
+            incident_dir=self._robot_incident_dir,
         )
         monitor.process_authoritative_fill(normalized.value)
 
@@ -2356,6 +2359,7 @@ class PaperRuntime:
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
+            incident_dir=self._robot_incident_dir,
         )
         monitor.tick()
 
