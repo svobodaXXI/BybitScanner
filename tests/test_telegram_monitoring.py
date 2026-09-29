@@ -660,17 +660,17 @@ class TelegramMonitoringTests(unittest.TestCase):
     def test_manual_position_card_is_text_only(self, send, photo, render):
         from dataclasses import replace
 
-        self._card_patches(replace(self._robot_view(), trade=None))
+        self._card_patches(replace(self._robot_view(), symbol="CELOUSDT", trade=None))
 
         monitoring._send_position_card(123, "CELOUSDT")
 
         render.assert_not_called()
         photo.assert_not_called()
         self.assertIn("Позиция не от робота — график недоступен", send.call_args.args[1])
-        self.assertEqual(
-            send.call_args.kwargs["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
-            "robot:view:positions",
-        )
+        markup = send.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        self.assertEqual(markup[0][0]["text"], "📈 Open TradingView")
+        self.assertIn("symbol=BYBIT:CELOUSDT.P", markup[0][0]["url"])
+        self.assertEqual(markup[1][0]["callback_data"], "robot:view:positions")
 
     @patch("telegram_monitoring.render_position_chart", return_value="chart.png")
     @patch("telegram_monitoring.telegram_bot.send_photo", return_value={"ok": True})
@@ -685,7 +685,19 @@ class TelegramMonitoringTests(unittest.TestCase):
         send.assert_not_called()
         caption = photo.call_args.kwargs["caption"]
         self.assertIn("PnL: ≈ +0.10 USDT (+10.00%)", caption)
-        self.assertEqual(photo.call_args.kwargs["reply_markup"], monitoring.POSITIONS_BACK_MARKUP)
+        markup = photo.call_args.kwargs["reply_markup"]["inline_keyboard"]
+        self.assertEqual(markup[0][0]["text"], "📈 Open TradingView")
+        self.assertIn("symbol=BYBIT:SAGAUSDT.P", markup[0][0]["url"])
+        self.assertIn("interval=5", markup[0][0]["url"])
+        self.assertEqual(markup[1][0]["callback_data"], "robot:view:positions")
+
+    def test_position_card_markup_fails_closed_for_invalid_symbol(self):
+        from dataclasses import replace
+
+        markup = monitoring.build_position_card_markup(
+            replace(self._robot_view(), symbol="BAD/USDT")
+        )
+        self.assertEqual(markup, monitoring.POSITIONS_BACK_MARKUP)
 
     def test_candle_window_follows_entry_age(self):
         import pandas as pd
