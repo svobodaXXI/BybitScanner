@@ -23,6 +23,29 @@ Consequences:
 
 Historical WATCH references below are retained only as implementation/history context and are superseded by this owner correction for current product behavior.
 
+## Owner correction — completed Box is no longer actionable (2026-09-29)
+
+Owner example: `1INCHUSDT 5m`.
+
+A Box signal is stale/completed once price has already reached the strategy's
+**frozen TAKE**, even when price did not literally touch F(1.0).
+
+The approved Box TAKE is 90% of the path from F(1.618) toward F(1.0). Therefore
+F(1.0) is not the freshness/completion threshold.
+
+Required actionable gate before new Telegram delivery and before Robot admission:
+- LONG: if authoritative post-entry-phase price history has already printed
+  `high >= frozen_take_price`, the setup is completed and must not be presented
+  as a fresh actionable signal/candidate;
+- SHORT: mirror with `low <= frozen_take_price`;
+- historical/review evidence may remain stored, but the completed setup must not
+  re-enter the active owner/Robot flow;
+- do not wait for a literal F(1.0) touch.
+
+The exact source-time 1INCHUSDT case should be frozen when recoverable and used
+as the first regression for this completion gate.
+
+
 ## Owner correction — late admission / crossed Box grid catch-up (2026-09-29)
 
 The existing four-part Box entry plan is incomplete when the owner/Robot reaches
