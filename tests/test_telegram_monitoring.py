@@ -660,7 +660,7 @@ class TelegramMonitoringTests(unittest.TestCase):
     def test_manual_position_card_is_text_only(self, send, photo, render):
         from dataclasses import replace
 
-        self._card_patches(replace(self._robot_view(), trade=None))
+        self._card_patches(replace(self._robot_view(), symbol="CELOUSDT", trade=None))
 
         monitoring._send_position_card(123, "CELOUSDT")
 
