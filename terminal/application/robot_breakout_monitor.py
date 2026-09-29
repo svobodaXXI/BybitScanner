@@ -810,7 +810,7 @@ class RobotBreakoutMonitor:
             ):
                 raise RobotBreakoutMonitorError("Box STOP submission did not complete")
         except Exception as error:
-            self._fail_closed_unprotected_fill(record, error)
+            self._fail_closed_box_unprotected_fill(record, source, proof, error)
             return False
 
         try:
@@ -2112,6 +2112,189 @@ class RobotBreakoutMonitor:
             "[ROBOT CANDIDATE INVALIDATED] "
             f"candidate_id={record.candidate_id} reason={error}"
         )
+
+    def _fail_closed_box_unprotected_fill(
+        self,
+        record: RobotCandidateRecord,
+        source: RobotCandidateRecord,
+        proof,
+        error: Exception,
+    ) -> None:
+        duplicate_owners = self._active_other_owner_candidate_ids(record)
+        if duplicate_owners:
+            self._escalate_duplicate_ownership(record, duplicate_owners)
+            return
+        if proof.remaining_quantity <= 0:
+            return
+        if (
+            self._get_market_book is None
+            or self._market_preflight is None
+            or self._submit_market is None
+        ):
+            self._escalate_reconciliation(
+                "ROBOT_BOX_PROTECTION_FAILURE_NO_CLOSE_PATH "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+
+        if self._incident_dir is not None:
+            snapshot = record.signal_snapshot if isinstance(record.signal_snapshot, Mapping) else {}
+            record_robot_incident(
+                incident_type="ROBOT_PROTECTION_EMERGENCY_CLOSE",
+                stage="initial_protection",
+                reason_code="INITIAL_PROTECTION_FAILURE",
+                symbol=record.symbol.value,
+                timeframe=snapshot.get("timeframe"),
+                pattern=snapshot.get("pattern"),
+                candidate_id=record.candidate_id,
+                error=error,
+                facts={
+                    "stop_proven": False,
+                    "take_proven": False,
+                    "market_data_authoritative": True,
+                    "intended_stop_crossed": None,
+                    "deadline_at_ms": None,
+                    "age_ms": None,
+                },
+                selected_recovery_action="EMERGENCY_CLOSE",
+                incident_dir=self._incident_dir,
+                timestamp_ms=self._now_ms(),
+            )
+
+        execution = dict(record.robot_state.get("execution") or {})
+        raw_intent = execution.get("box_emergency_close_intent")
+        if isinstance(raw_intent, Mapping):
+            plan = restore_box_market_plan(raw_intent)
+            if plan.slot != 0 or plan.quantity != proof.remaining_quantity:
+                self._escalate_reconciliation(
+                    "ROBOT_BOX_EMERGENCY_CLOSE_INTENT_CONFLICT "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return
+        else:
+            book = self._get_market_book(record.symbol.value)
+            if book is None:
+                return
+            plan = build_box_emergency_close_market_plan(
+                source, book, quantity=proof.remaining_quantity,
+            )
+            preflight = self._market_preflight(plan.request, plan.identity)
+            if (
+                not getattr(preflight, "admitted", False)
+                or getattr(preflight, "normalized_quantity", None) != plan.quantity
+            ):
+                self._escalate_reconciliation(
+                    "ROBOT_BOX_EMERGENCY_CLOSE_PREFLIGHT_FAILED "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return
+            execution["box_emergency_close_intent"] = durable_box_market_intent(plan)
+            execution["protection_failure"] = type(error).__name__
+            fresh = self._store().get_robot_candidate(record.candidate_id)
+            if fresh is not None and fresh.status == "APPROVED":
+                self._persist_execution(fresh, execution)
+
+        try:
+            self._store().reserve_box_order_identity(
+                source.candidate_id,
+                order_id=plan.order_id,
+                role="EXIT",
+                slot=0,
+            )
+        except Exception:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_EMERGENCY_CLOSE_OWNERSHIP_FAILED "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+
+        now_ms = self._now_ms()
+        for owner in self._store().load_box_order_ownership(source.candidate_id):
+            if owner.order_id == plan.order_id:
+                continue
+            limit = self._store().get_paper_limit(owner.order_id.value, self._account_id)
+            if limit is None or limit.status in INACTIVE_LIMIT_STATUSES:
+                continue
+            digest = hashlib.sha256(
+                f"{source.candidate_id}\0protection-failure-cancel\0{owner.order_id.value}".encode("utf-8")
+            ).hexdigest()[:32]
+            self._store().cancel_paper_limit(
+                client_action_id=f"box-emergency-cancel-{digest}",
+                request_fingerprint=hashlib.sha256(
+                    f"{record.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                ).hexdigest(),
+                order_id=owner.order_id,
+                trading_account_id=self._account_id,
+                updated_at_ms=now_ms,
+            )
+
+        result = self._submit_market(plan.request, plan.identity)
+        if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_EMERGENCY_CLOSE_PENDING "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+
+        try:
+            closed_proof = self._store().prove_box_owned_position(source.candidate_id)
+        except Exception:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_EMERGENCY_CLOSE_UNPROVEN "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+        if closed_proof.remaining_quantity != 0:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_EMERGENCY_CLOSE_NOT_FLAT "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return
+
+        position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+        self._store().clear_paper_protection_for_flat(position_key)
+        trade = self._store().get_open_robot_trade_for_symbol(
+            self._account_id, record.symbol,
+        )
+        if trade is not None and trade.candidate_id == record.candidate_id:
+            if (
+                closed_proof.average_exit is None
+                or closed_proof.last_execution_at_ms is None
+                or closed_proof.entry_notional <= 0
+            ):
+                self._escalate_reconciliation(
+                    "ROBOT_BOX_EMERGENCY_CLOSE_ECONOMICS_UNPROVEN "
+                    f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+                )
+                return
+            realized_pct = (
+                (closed_proof.realized_pnl - closed_proof.accumulated_fee)
+                / closed_proof.entry_notional
+                * Decimal("100")
+            )
+            self._store().close_robot_trade(
+                trade.trade_id,
+                exit_time_ms=closed_proof.last_execution_at_ms,
+                exit_price=closed_proof.average_exit,
+                exit_reason="EMERGENCY_PROTECTION_FAILURE",
+                realized_pnl_usdt=closed_proof.realized_pnl,
+                realized_pnl_pct=realized_pct,
+                fees_costs_usdt=closed_proof.accumulated_fee,
+                updated_at_ms=self._now_ms(),
+            )
+        else:
+            fresh = self._store().get_robot_candidate(record.candidate_id)
+            if fresh is not None and fresh.status == "APPROVED":
+                state = dict(fresh.robot_state)
+                state["execution"] = execution
+                self._store().save_robot_candidate_state(
+                    fresh.candidate_id,
+                    status="INVALIDATED",
+                    robot_state=state,
+                    expected_revision=fresh.state_revision,
+                    updated_at_ms=self._now_ms(),
+                )
+        self._release_entry_coverage(record.symbol.value)
 
     def _fail_closed_unprotected_fill(
         self, record: RobotCandidateRecord, error: Exception,
