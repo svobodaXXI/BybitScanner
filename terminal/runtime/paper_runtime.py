@@ -1983,6 +1983,7 @@ class PaperRuntime:
                 source_id = execution.get("source_box_candidate_id")
                 if not isinstance(source_id, str) or not source_id.strip():
                     source_id = candidate.robot_state.get("source_box_candidate_id")
+                order_ids = ()
                 if isinstance(source_id, str) and source_id.strip():
                     try:
                         box_proof = self.store.prove_box_owned_position(source_id.strip())
@@ -1997,8 +1998,13 @@ class PaperRuntime:
                         for owner in ownership
                         if owner.role == "ENTRY"
                     )
-                else:
-                    order_ids = ()
+                if not order_ids:
+                    # Backward-compatible recovery for pre-OFR-5 Box
+                    # candidates that durably linked the four entry LIMIT ids
+                    # directly in execution state before slot ownership existed.
+                    raw_order_ids = execution.get("limit_order_ids")
+                    if isinstance(raw_order_ids, (tuple, list)):
+                        order_ids = tuple(raw_order_ids)
             else:
                 continue
             for order_id in order_ids:
