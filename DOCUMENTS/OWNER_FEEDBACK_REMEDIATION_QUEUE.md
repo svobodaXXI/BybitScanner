@@ -218,33 +218,64 @@ Acceptance:
 
 ### OFR-4 — Box signal lifecycle: suppress already-completed setups
 **Priority:** P0/P1  
-**Status:** OPEN strategy/runtime correctness
+**Status:** OPEN invariant / original 1INCHUSDT example NOT PROVEN completed
 
-Owner example:
-- `1INCHUSDT 5m` Ikigai Box arrived after price had already travelled far
-  enough that the approved Box strategy would have realized the common TAKE.
+Owner concern:
+- an old Box should not be delivered/admitted as a fresh actionable setup if
+  its approved lifecycle had already become executable and subsequently
+  completed at the frozen common TAKE before delivery/admission.
 
-Important strategy fact:
-- Box TAKE is not F(1.0) itself;
-- the approved common TAKE is 90% of the path from F(1.618) toward F(1.0);
-- therefore a setup is already economically completed once price crosses the
-  frozen TAKE, even if F(1.0) was only nearly touched.
+Historical 1INCHUSDT investigation:
+- three saved 5m SHORT Box PNGs exist (21.09, 28.09, 29.09);
+- the 28.09 and 29.09 Box identities were deterministically replayed from
+  exact saved A/B anchors with the current detector and current approved grid/
+  TAKE arithmetic;
+- 28.09 Box:
+  - decision `1790615700000`;
+  - P1 `0.10139`;
+  - TAKE `0.10052`;
+  - first P1 touch occurred only at `1790664000000`;
+  - no later returned closed candle reached TAKE;
+- 29.09 Box:
+  - decision `1790664000000`;
+  - P1 `0.10165`;
+  - TAKE `0.10103`;
+  - P1 was available on the next 5m candle;
+  - no later returned closed candle reached TAKE;
+- therefore neither available replay proves `COMPLETED_STALE`;
+- notably, the old 28.09 Box first reached P1 exactly at the 29.09 Box
+  decision timestamp, so the two setups overlap in time.
 
-Required rule:
-- before owner delivery and before Robot admission, inspect source-time price
-  history after the actionable entry phase;
-- LONG: if a closed/authoritative candle high has already reached/crossed frozen
-  TAKE, the old setup is completed/stale and must not be sent as a new active
-  signal/candidate;
-- SHORT: mirror with candle low <= frozen TAKE;
-- preserve historical/review evidence separately; suppress only new actionable
-  delivery/admission;
-- do not use literal F(1.0) touch as the completion test.
+Correction:
+- do **not** use 1INCHUSDT as the regression proving completed/stale suppression;
+- the prior interpretation that this specific setup had already completed at
+  the frozen TAKE is withdrawn unless later source-time evidence proves it;
+- do not infer completion merely because price nearly reached F(1.0), moved
+  strongly after the signal, or visually looked "worked out";
+- do not infer intrabar ordering when P1 and TAKE are contained in the same
+  candle.
+
+Required rule before implementation:
+1. freeze a real source-time case where an approved Box entry became available
+   first;
+2. prove on a strictly later closed/authoritative candle that the frozen common
+   TAKE was reached before delivery/admission;
+3. only then add the suppression gate and regression;
+4. preserve still-actionable overlapping/new Box identities independently.
+
+Frozen completion predicate:
+- Box TAKE is the approved common TAKE, not literal F(1.0);
+- SHORT completion requires a later authoritative/closed price low <= frozen
+  TAKE after entry availability has already been established;
+- LONG mirrors with high >= frozen TAKE;
+- same-candle P1 + TAKE is not sufficient without authoritative intrabar order.
 
 Acceptance:
-- recovered 1INCHUSDT case no longer appears as a fresh actionable Box after its
-  frozen TAKE was already achievable;
-- valid still-actionable Box cases remain deliverable.
+- a real proven completed-before-delivery Box is suppressed from fresh
+  actionable delivery/admission;
+- the 28.09 and 29.09 1INCHUSDT cases remain deliverable unless new evidence
+  proves their frozen TAKE had already been reached after entry availability;
+- no false suppression of a still-actionable or overlapping Box.
 
 ### OFR-4A — Post-STOP reversal watch and market re-entry attempt
 **Priority:** P1  
