@@ -1780,6 +1780,55 @@ class PaperRuntime:
         match_event_id: str,
         context_provider: "PaperCommandContextProvider",
     ) -> int:
+        box_trade = self.store.get_open_robot_trade_for_symbol(
+            self._paper_account_id, symbol,
+        )
+        if box_trade is not None and box_trade.pattern == "IKIGAI_BOX":
+            candidate = self.store.get_robot_candidate(box_trade.candidate_id)
+            source_id = (
+                candidate.signal_snapshot.get("source_box_candidate_id")
+                if candidate is not None else None
+            )
+            if not isinstance(source_id, str) or not source_id.strip():
+                self.fence_robot_protection_continuity_loss(
+                    symbol.value, "box_source_missing_in_match_fallback",
+                )
+                return 0
+            try:
+                self.store.prove_box_owned_position(source_id.strip())
+            except Exception:
+                self.fence_robot_protection_continuity_loss(
+                    symbol.value, "box_ownership_unproven_in_match_fallback",
+                )
+                return 0
+            allowed = {
+                owner.order_id.value
+                for owner in self.store.load_box_order_ownership(source_id.strip())
+                if not (owner.role == "EXIT" and owner.slot == 0)
+            }
+            applied = self._match_limits_only(
+                symbol, book, match_event_id, allowed_order_ids=allowed,
+            )
+            if applied:
+                monitor = RobotBreakoutMonitor(
+                    lambda: self.store,
+                    self._paper_account_id,
+                    get_closed_candle=self._robot_closed_candle_provider,
+                    get_admission_catchup_candles=self._robot_admission_catchup_candles,
+                    action_executor=_DirectRobotActionExecutor(self),
+                    tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
+                    clock_ms=lambda: int(time.time() * 1000),
+                    incident_dir=self._robot_incident_dir,
+                )
+                monitor.process_authoritative_fill(symbol.value)
+            self.evaluate_robot_protection_crossing(
+                symbol.value,
+                book,
+                event_id=match_event_id,
+                received_at_ms=int(book.received_at_ms),
+            )
+            return applied
+
         applied = self._match_limits_only(symbol, book, match_event_id)
         context = context_provider.context_for(symbol.value)
         protection = self.store.get_protection_projection(
