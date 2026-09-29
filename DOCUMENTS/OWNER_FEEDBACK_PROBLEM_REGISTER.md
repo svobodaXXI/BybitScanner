@@ -162,6 +162,26 @@ Required result:
 - sanitized error data;
 - no effect on Scanner delivery status or Robot admission semantics.
 
+### RCV-SELF-1 — Robot remains in "Нужна сверка" after emergency close
+**Status: OPEN runtime recovery blocker**
+
+Owner evidence:
+- CASHCATUSDT SHORT was emergency-closed;
+- later Robot admission was rejected;
+- owner status displayed `Запущен / Нужна сверка`;
+- Robot did not visibly return to READY on its own.
+
+This is distinct from the emergency-close root cause itself. The emergency close
+may have been correct fail-closed behavior; the unresolved problem is that the
+runtime appears to remain non-admitting after the position is already closed.
+
+Do not attribute this to network loss without evidence. Investigate the exact
+durable reconciliation/protection state and the expected automatic transition
+back to READY.
+
+Owning queue: `OFR-3A` in
+`DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
+
 ## Geometry / pattern quality
 
 ### G-BOX-1 — malformed Ikigai Box first impulse
