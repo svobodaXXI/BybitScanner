@@ -12,6 +12,7 @@ from robot_protection import (
     RECOVERY_TAKE_ONLY,
     RECOVERY_WAIT,
     build_protection_plan,
+    box_stop_for_actual_entry,
     prepare_box_stop_terms,
     RobotProtectionError,
     frozen_take_90,
@@ -59,6 +60,82 @@ class _Submitter:
 
 
 class RobotProtectionTests(unittest.TestCase):
+    def test_box_actual_fill_stop_keeps_or_minimally_tightens_for_net_rr(self):
+        frozen = {
+            "pattern": "IKIGAI_BOX",
+            "plan": {
+                "direction": "LONG",
+                "limit_prices": ["94", "93.2", "92.4", "91.6"],
+                "take_price": "99.2",
+                "stop_price": "89.6",
+            },
+            "inputs": {
+                "tick_size": "0.01",
+                "entry_fee_rate": "0",
+                "target_fee_rate": "0",
+                "stop_fee_rate": "0",
+            },
+        }
+        self.assertEqual(
+            box_stop_for_actual_entry(
+                frozen, average_entry=Decimal("92.8"),
+            ),
+            Decimal("89.6"),
+        )
+        self.assertEqual(
+            box_stop_for_actual_entry(
+                frozen, average_entry=Decimal("93.5"),
+            ),
+            Decimal("90.65"),
+        )
+        self.assertEqual(
+            box_stop_for_actual_entry(
+                frozen,
+                average_entry=Decimal("93.5"),
+                existing_stop=Decimal("90.80"),
+            ),
+            Decimal("90.80"),
+        )
+        with self.assertRaisesRegex(RobotProtectionError, "no tick-aligned"):
+            box_stop_for_actual_entry(
+                frozen, average_entry=Decimal("98.9"),
+            )
+
+    def test_box_actual_fill_stop_mirrors_short_and_never_widens(self):
+        frozen = {
+            "pattern": "IKIGAI_BOX",
+            "plan": {
+                "direction": "SHORT",
+                "limit_prices": ["106", "106.8", "107.6", "108.4"],
+                "take_price": "100.8",
+                "stop_price": "110.4",
+            },
+            "inputs": {
+                "tick_size": "0.01",
+                "entry_fee_rate": "0",
+                "target_fee_rate": "0",
+                "stop_fee_rate": "0",
+            },
+        }
+        self.assertEqual(
+            box_stop_for_actual_entry(
+                frozen, average_entry=Decimal("107.2"),
+            ),
+            Decimal("110.4"),
+        )
+        self.assertEqual(
+            box_stop_for_actual_entry(
+                frozen, average_entry=Decimal("106.5"),
+            ),
+            Decimal("109.35"),
+        )
+        with self.assertRaisesRegex(RobotProtectionError, "widens frozen risk"):
+            box_stop_for_actual_entry(
+                frozen,
+                average_entry=Decimal("106.5"),
+                existing_stop=Decimal("110.5"),
+            )
+
     def test_box_stop_terms_are_fixed_and_follow_confirmed_exposure(self):
         def snapshot(direction):
             prices = (("94", "93", "92", "91") if direction == "LONG"
