@@ -1,3 +1,64 @@
+## ✅ OFR-1 IMPLEMENTATION GREEN — 2026-09-29
+
+PR #334 `fix/ofr1-durable-robot-diagnostics` now covers:
+- candidate handoff persistence failures;
+- protection continuity-loss REST recovery -> EMERGENCY_CLOSE;
+- post-fill initial-protection failure -> EMERGENCY_CLOSE;
+- bounded sanitized best-effort incident persistence.
+
+Robot PAPER acceptance #261 passed at
+`e53caa2bf9568d91f449e2f33e04b752addf8cc5`.
+OFR-1 is ready for merge review, but merge remains pending explicit owner
+authorization.
+
+## ✅ OFR-3A IMPLEMENTATION GREEN — 2026-09-29
+
+PR #335 implements a narrow self-recovery path for transient protection
+continuity fences:
+- READY before the incident -> emergency close/recovery -> global evidence-based
+  reconcile -> READY;
+- owner PAUSED remains PAUSED;
+- a pre-existing RECONCILIATION_REQUIRED fence is never auto-cleared;
+- CELOUSDT remains separate manual/non-Robot PAPER debt.
+
+Robot PAPER acceptance #262 passed at
+`14717851b24d47b1d136770ca37c9dcfc2c3496b`.
+PR #335 is ready for merge review, but merge requires explicit owner
+authorization.
+
+## ✅ OFR-3 BOX HANDOFF CLASSIFIED — 2026-09-29
+
+B2USDT/BANKUSDT/BNBUSDT/BNCUSDT 5m were deterministically replayed from the
+saved fresh Box identities.
+
+For all four:
+- current detector reproduced exact anchors + direction;
+- grid and instrument constraints passed;
+- PAPER sizing was valid at equity 5000 / 1 WV 250;
+- planner rejected at the same safety gate:
+  `no tick-aligned STOP beyond P4 satisfies net RR >= 2`.
+
+Therefore these four missing Robot buttons are classified as correct
+fail-closed non-executable Box plans, not a candidate/persistence bug. Do not
+weaken the RR contract or add per-symbol exceptions. OFR-1 now preserves the
+exact reason for future candidate failures.
+
+## ✅ OFR-2 HISTORICAL INVESTIGATION CLOSED — 2026-09-29
+
+CASHCATUSDT durable evidence proves:
+- protection was created normally;
+- ordinary STOP/TAKE did not trigger the exit;
+- the exit was latched from `CASHCATUSDT:rest-recovery:...` and resolved as
+  `EMERGENCY_CLOSE`;
+- the database stores the recovery result, but not the initiating
+  continuity-loss reason;
+- targeted repository-local log search found no surviving reason evidence.
+
+Therefore the exact historical initiating cause is unrecoverable and must not
+be guessed. No more historical SQLite/log search is required for OFR-2.
+OFR-1 is the forward observability fix; a future recurrence must persist the
+normalized reason and deciding facts before any cause-specific patch is made.
+
 ## 🔁 NEW BLOCKER — ROBOT DOES NOT SELF-RECOVER — 2026-09-29
 
 After CASHCATUSDT was closed by `EMERGENCY_CLOSE`, the next owner interaction
@@ -30,7 +91,7 @@ The owner explicitly moved today's real feedback/blockers ahead of Geometry
 implementation.
 
 Current order:
-`RVL-R6 evidence -> OFR-1..OFR-7 -> Geometry resumes at G2`.
+`RVL-R6 evidence -> OFR-1..OFR-4 -> OFR-4A -> OFR-5..OFR-7 -> OFR-7A -> Geometry resumes at G2`.
 
 Canonical queue:
 `DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
@@ -38,14 +99,20 @@ Canonical queue:
 Key findings preserved:
 - Box Robot candidate creation failures: B2/BANK/BNB/BNC;
 - exact causes currently disappear with Scanner stdout;
-- CASHCATUSDT closed via emergency protection path before ordinary STOP;
-  top-level logs do not explain why, so network lag is unproven;
+- CASHCATUSDT OFR-2 historical investigation is complete: durable evidence
+  proves REST recovery -> EMERGENCY_CLOSE and excludes ordinary STOP/TAKE;
+  the initiating continuity-loss reason was not persisted and no surviving
+  repository-local logs contain it, so the exact historical cause is
+  unrecoverable and internet lag must not be asserted; future recurrence is
+  to be classified from OFR-1 durable incident diagnostics;
 - 1INCHUSDT Box was already economically completed because frozen TAKE was
   reached before delivery; literal F(1.0) touch is not required;
 - crossed Box grid needs per-slot MARKET catch-up + paired closing LIMITs;
 - position-card chart is right-crowded and level labels are too bulky;
 - card caption must show `Объем: qty (USDT notional)`;
 - position card needs Open TradingView plus back-to-positions.
+- candidate monitoring card needs its candidate chart plus `Открыть в Trading View`, while preserving `⬅️ К кандидатам`.
+- OFR-4A frozen core: pre-entry STOP crossing -> reversal-watch; confirmation must close; max 3 **actual filled entry attempts** per source signal; risk-gate rejection/no-fill does not consume an attempt; original target remains; new STOP sits beyond reversal extremum with a 2% cap from actual MARKET entry; expiry at potential realization or the adverse F(2.618)-F(3.618) midpoint; TAKE-completed setups never revive. Candlestick/structural confirmation tolerances are documented. Owner 5m-acceleration machine definition is an explicit evening design task and must not be guessed.
 
 No Geometry production work should pre-empt these slices.
 
