@@ -2949,10 +2949,69 @@ class PaperRuntime:
                     PositionSide.LONG if trade.direction == "LONG" else PositionSide.SHORT
                 )
                 if position is not None and position.side is PositionSide.FLAT:
-                    # An aggregate emergency close dispatched for a *different*
-                    # colliding candidate also flattens this trade's lot, so a
-                    # FLAT symbol is not automatically unresolved. Terminalize
-                    # only on durable evidence; the predicate fails closed.
+                    if trade.pattern == "IKIGAI_BOX":
+                        source_id = candidate.signal_snapshot.get("source_box_candidate_id")
+                        if not isinstance(source_id, str) or not source_id.strip():
+                            unresolved_trade_ids.add(trade.trade_id)
+                            continue
+                        try:
+                            box_proof = self.store.prove_box_owned_position(source_id.strip())
+                        except Exception:
+                            unresolved_trade_ids.add(trade.trade_id)
+                            continue
+                        if (
+                            box_proof.remaining_quantity != 0
+                            or box_proof.exit_quantity <= 0
+                            or box_proof.average_exit is None
+                            or box_proof.last_execution_at_ms is None
+                            or box_proof.entry_notional <= 0
+                        ):
+                            unresolved_trade_ids.add(trade.trade_id)
+                            continue
+
+                        obligation = self.store.get_paper_protection_obligation_for_trade(
+                            trade.trade_id
+                        )
+                        if obligation is not None:
+                            exit_reason = obligation.winning_leg
+                        else:
+                            execution = (candidate.robot_state or {}).get("execution") or {}
+                            if isinstance(execution.get("box_emergency_close_intent"), Mapping):
+                                exit_reason = "EMERGENCY_PROTECTION_FAILURE"
+                            elif sum(box_proof.exit_by_slot, Decimal("0")) == box_proof.entry_quantity:
+                                exit_reason = "TAKE"
+                            else:
+                                unresolved_trade_ids.add(trade.trade_id)
+                                continue
+                        if exit_reason not in {
+                            "STOP", "TAKE", "EMERGENCY_CLOSE",
+                            "EMERGENCY_PROTECTION_FAILURE",
+                        }:
+                            unresolved_trade_ids.add(trade.trade_id)
+                            continue
+
+                        realized_pct = (
+                            (box_proof.realized_pnl - box_proof.accumulated_fee)
+                            / box_proof.entry_notional
+                            * Decimal("100")
+                        )
+                        _, newly_closed = self.store.close_robot_trade(
+                            trade.trade_id,
+                            exit_time_ms=box_proof.last_execution_at_ms,
+                            exit_price=box_proof.average_exit,
+                            exit_reason=exit_reason,
+                            realized_pnl_usdt=box_proof.realized_pnl,
+                            realized_pnl_pct=realized_pct,
+                            fees_costs_usdt=box_proof.accumulated_fee,
+                            updated_at_ms=max(now_ms, box_proof.last_execution_at_ms),
+                        )
+                        self.store.clear_paper_protection_for_flat(position_key)
+                        if newly_closed:
+                            closed_trade_ids.append(trade.trade_id)
+                        continue
+
+                    # Non-Box aggregate emergency-close recovery retains the
+                    # existing flat-closure predicate.
                     evidence = self._prove_robot_flat_closure(trade, position)
                     if evidence is not None:
                         _, newly_closed = self.store.close_robot_trade(
