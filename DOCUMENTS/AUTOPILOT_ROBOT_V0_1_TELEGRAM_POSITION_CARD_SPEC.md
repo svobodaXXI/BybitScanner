@@ -186,3 +186,37 @@ Decisions (implemented; change on request):
   Tapping CELOUSDT (manual dust) gives the text card without a chart.
 - Slice 3: after a robot trade opens / closes, within ~10 s one post arrives (closed: exit marker, the
   correct close reason, entry + exit fees); a restart of the listener does not re-send it.
+
+## 8. Owner UI corrections — 2026-09-29
+
+These corrections are queued as OFR-6/OFR-7 in
+`DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md` and take priority before
+Geometry implementation resumes.
+
+Position chart:
+- reduce the excessive rightward crowding/shift shown by CASHCATUSDT 5m;
+- keep the latest candles and active pattern visually balanced;
+- shorten horizontal-level labels to compact `Entry`, `SL`, `TP` style;
+- avoid labels covering current candles.
+
+Position caption:
+- replace `Размер: <quantity>` with
+  `Объем: <quantity> (<quantity × authoritative average entry> USDT)`;
+- example from owner evidence:
+  `Объем: 1410 (249.51 USDT)`;
+- same formatter is used for open and lifecycle cards where the values exist.
+
+Position-card keyboard:
+- preserve `⬅️ К позициям`;
+- add **Open TradingView** for the selected symbol, analogous to Scanner signal
+  navigation;
+- link is read-only navigation and must not mutate Robot/PAPER state;
+- valid manual/non-Robot positions also receive the TradingView link even when
+  their Robot chart is unavailable.
+
+Acceptance:
+- `/positions -> CASHCATUSDT` shows the cleaned card and both navigation
+  controls;
+- TradingView opens the selected ticker;
+- the back button still returns to the positions list.
+
