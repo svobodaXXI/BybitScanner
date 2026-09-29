@@ -155,8 +155,8 @@ def _draw_level(ax, price: float, label: str, color: str, style: str) -> None:
     ax.axhline(price, color=color, linestyle=style, linewidth=1.2, zorder=4)
     transform = mtransforms.blended_transform_factory(ax.transAxes, ax.transData)
     ax.text(
-        0.995, price, f"{label} {format_price(price)}",
-        transform=transform, color=color, fontsize=9, va="bottom", ha="right",
+        0.015, price, f"{label} {format_price(price)}",
+        transform=transform, color=color, fontsize=9, va="bottom", ha="left",
         bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.8, "pad": 1},
         zorder=7,
     )
@@ -196,9 +196,9 @@ def render_position_chart(
         ax.set_xlabel("Время (МСК)")
 
         levels = [
-            (view.average_entry, "Вход", ENTRY_COLOR, "--"),
-            (view.stop_price, "STOP", STOP_COLOR, "-"),
-            (view.take_price, "TAKE", TAKE_COLOR, "-"),
+            (view.average_entry, "Entry", ENTRY_COLOR, "--"),
+            (view.stop_price, "SL", STOP_COLOR, "-"),
+            (view.take_price, "TP", TAKE_COLOR, "-"),
         ]
         prices = [float(df["low"].min()), float(df["high"].max())]
         for price, label, color, style in levels:
