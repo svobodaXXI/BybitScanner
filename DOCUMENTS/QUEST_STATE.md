@@ -47,7 +47,7 @@ Key findings preserved:
 - card caption must show `Объем: qty (USDT notional)`;
 - position card needs Open TradingView plus back-to-positions.
 - candidate monitoring card needs its candidate chart plus `Открыть в Trading View`, while preserving `⬅️ К кандидатам`.
-- pre-entry signals that move beyond planned STOP must remain observable in a post-STOP reversal-watch state; a later MARKET entry attempt is allowed only after a frozen reversal-candle confirmation and revalidated risk/protection gates; TAKE-completed setups never revive.
+- OFR-4A frozen core: pre-entry STOP crossing -> reversal-watch; confirmation must close; max 3 attempts per source signal; confirmed-but-risk-rejected attempts consume budget; original target remains; new STOP sits beyond reversal extremum but is percentage-capped when too far; expiry at potential realization or the adverse F(2.618)-F(3.618) midpoint; TAKE-completed setups never revive. Numeric STOP cap, machine tolerances and owner 5m-acceleration definition remain open.
 
 No Geometry production work should pre-empt these slices.
 
