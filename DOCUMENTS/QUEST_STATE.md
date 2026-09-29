@@ -11,6 +11,23 @@ Robot PAPER acceptance #261 passed at
 OFR-1 is ready for merge review, but merge remains pending explicit owner
 authorization.
 
+## ✅ OFR-3 BOX HANDOFF CLASSIFIED — 2026-09-29
+
+B2USDT/BANKUSDT/BNBUSDT/BNCUSDT 5m were deterministically replayed from the
+saved fresh Box identities.
+
+For all four:
+- current detector reproduced exact anchors + direction;
+- grid and instrument constraints passed;
+- PAPER sizing was valid at equity 5000 / 1 WV 250;
+- planner rejected at the same safety gate:
+  `no tick-aligned STOP beyond P4 satisfies net RR >= 2`.
+
+Therefore these four missing Robot buttons are classified as correct
+fail-closed non-executable Box plans, not a candidate/persistence bug. Do not
+weaken the RR contract or add per-symbol exceptions. OFR-1 now preserves the
+exact reason for future candidate failures.
+
 ## ✅ OFR-2 HISTORICAL INVESTIGATION CLOSED — 2026-09-29
 
 CASHCATUSDT durable evidence proves:
