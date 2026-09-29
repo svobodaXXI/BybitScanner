@@ -1,3 +1,41 @@
+## NOW — 2026-09-29 — FINAL OWNER FEEDBACK CHECKPOINT / HANDOFF
+
+All remaining findings from today's owner run are documented and queued before
+Geometry resumes.
+
+New recovery blocker:
+- after the CASHCATUSDT emergency close, owner saw
+  `Робот: отклонено — Робот не готов к приёму новых сделок`;
+- Robot status displayed `Запущен / Нужна сверка`;
+- Robot did not visibly self-recover to READY;
+- treat this as separate from the emergency-close trigger itself;
+- do not assume internet/network loss without durable evidence;
+- queue `OFR-3A`: investigate durable reconciliation/protection state and make
+  the intended safe transition
+  `emergency close -> authoritative flat/consistent -> READY` automatic if
+  that is the canonical contract.
+
+Current owner-feedback remediation queue before Geometry:
+1. OFR-1 durable Robot failure diagnostics;
+2. OFR-2 CASHCATUSDT emergency-close exact root cause / recurrence classification;
+3. OFR-3 Box Robot handoff failures B2/BANK/BNB/BNC;
+4. OFR-3A stuck reconciliation / missing self-recovery;
+5. OFR-4 stale/completed Box suppression (1INCHUSDT; frozen TAKE reached);
+6. OFR-5 crossed-grid Box catch-up;
+7. OFR-6 Telegram position-card UI cleanup;
+8. OFR-7 TradingView button on position cards;
+9. only then resume Geometry at RVL-G2/G3/G4.
+
+Today's position-card UX corrections are already frozen:
+- visually rebalance the chart / remove excessive right-edge crowding;
+- compact Entry/SL/TP level labels;
+- `Размер` -> `Объем` and add USDT notional;
+- add TradingView navigation under position cards while retaining
+  `К позициям`.
+
+Do not repeat TG-MON-1, RVL-G1, shutdown investigation or ARUSDT analysis; those
+are already closed/classified.
+
 ## NOW — 2026-09-29 — OWNER FEEDBACK REMEDIATION MOVED AHEAD OF GEOMETRY
 
 Owner priority is now explicit: today's operational/product findings are handled
