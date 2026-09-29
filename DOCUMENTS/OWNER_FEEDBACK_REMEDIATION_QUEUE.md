@@ -1,0 +1,233 @@
+# Owner Feedback Remediation Queue — 2026-09-29
+
+Status: ACTIVE / OWNER-PRIORITIZED  
+Scope: today's real owner feedback, acceptance findings and blockers that must be handled **before Geometry implementation resumes**.
+
+This queue sits after the current RVL-R6 owner PAPER acceptance and before
+RVL-G2/G3/G4 production Geometry work. RVL-G1 inventory remains complete and is
+not repeated.
+
+## Priority order
+
+### OFR-1 — Durable Robot failure diagnostics
+**Priority:** P0  
+**Status:** OPEN
+
+Two real classes now lose their exact cause after the console scrolls:
+
+1. Box Robot handoff failure:
+   - B2USDT 5m
+   - BANKUSDT 5m
+   - BNBUSDT 5m
+   - BNCUSDT 5m
+   Ordinary signal delivered, explicit owner warning emitted, no Robot button.
+   Later BRETTUSDT succeeded, so this was not a global outage.
+
+2. Protection/emergency-close diagnosis:
+   - CASHCATUSDT SHORT closed with `EMERGENCY_CLOSE` while displayed STOP was
+     still far above the close price.
+   - top-level log search found no CASHCATUSDT protection/close event and no
+     concrete emergency-close cause.
+   - the only EMERGENCY_CLOSE string found in SQLite by line search was schema
+     text; binary line search is not authoritative.
+
+Required implementation:
+- bounded durable sanitized incident record;
+- timestamp, symbol, timeframe/pattern when applicable, lifecycle stage,
+  candidate/trade id if safe, failure/error class and normalized reason code;
+- for protection emergency close, persist the deciding facts:
+  `stop_proven`, `take_proven`, `market_data_authoritative`,
+  `intended_stop_crossed`, deadline/age and selected recovery action;
+- no secrets, credentials, raw tokens or unsafe absolute-path leakage;
+- bounded retention;
+- diagnostic write must not become a new safety-critical blocker.
+
+Acceptance:
+- next candidate-preparation failure can be investigated without scrolling stdout;
+- next emergency close reports the exact reason deterministically.
+
+### OFR-2 — CASHCATUSDT emergency-close root cause and recurrence fix
+**Priority:** P0  
+**Status:** OPEN / evidence investigation
+
+Owner evidence:
+- CASHCATUSDT Rising Wedge SHORT;
+- average entry 0.176958;
+- STOP 0.17755;
+- emergency exit 0.175125;
+- exit therefore occurred well before the ordinary STOP level;
+- trade closed profitably but for a safety reason, not by strategy TAKE/STOP.
+
+Current protection policy can emergency-close when STOP is unproven and one of
+these conditions occurs:
+- market data is not authoritative;
+- intended STOP is considered crossed;
+- 5-second protection deadline expires.
+
+The current top-level logs do not identify which condition actually fired.
+
+Required work:
+1. query the authoritative PAPER SQLite rows for CASHCATUSDT/trade/protection/
+   obligations/commands/executions before guessing;
+2. determine the exact trigger and whether network interruption was involved;
+3. if behavior was correct fail-closed, improve durable reason observability and
+   owner-facing classification;
+4. if a false protection failure/reconcile race is proven, freeze a replay and
+   fix only that class;
+5. preserve STOP-first fail-closed safety. Do not lengthen/remove the protection
+   deadline merely to prevent emergency exits.
+
+Acceptance:
+- exact root cause established from durable evidence or next deterministic
+  reproduction;
+- recurrence either proven correct safety behavior or fixed with focused replay.
+
+### OFR-3 — Robot candidate handoff failures on valid Box cards
+**Priority:** P0  
+**Status:** OPEN
+
+Cases:
+`B2USDT`, `BANKUSDT`, `BNBUSDT`, `BNCUSDT` 5m.
+
+Required work after OFR-1:
+- recover/classify the exact planner/persistence/admission failure from durable
+  diagnostics or deterministic reproduction;
+- keep ordinary Scanner signal delivery independent;
+- never show Robot button unless durable candidate creation succeeded;
+- fix the common root cause if one exists; no per-symbol exceptions.
+
+Acceptance:
+- representative failing class creates a valid durable Robot candidate or is
+  rejected with an explicit, correct, durable reason.
+
+### OFR-4 — Box signal lifecycle: suppress already-completed setups
+**Priority:** P0/P1  
+**Status:** OPEN strategy/runtime correctness
+
+Owner example:
+- `1INCHUSDT 5m` Ikigai Box arrived after price had already travelled far
+  enough that the approved Box strategy would have realized the common TAKE.
+
+Important strategy fact:
+- Box TAKE is not F(1.0) itself;
+- the approved common TAKE is 90% of the path from F(1.618) toward F(1.0);
+- therefore a setup is already economically completed once price crosses the
+  frozen TAKE, even if F(1.0) was only nearly touched.
+
+Required rule:
+- before owner delivery and before Robot admission, inspect source-time price
+  history after the actionable entry phase;
+- LONG: if a closed/authoritative candle high has already reached/crossed frozen
+  TAKE, the old setup is completed/stale and must not be sent as a new active
+  signal/candidate;
+- SHORT: mirror with candle low <= frozen TAKE;
+- preserve historical/review evidence separately; suppress only new actionable
+  delivery/admission;
+- do not use literal F(1.0) touch as the completion test.
+
+Acceptance:
+- recovered 1INCHUSDT case no longer appears as a fresh actionable Box after its
+  frozen TAKE was already achievable;
+- valid still-actionable Box cases remain deliverable.
+
+### OFR-5 — Box crossed-grid late admission / catch-up execution
+**Priority:** P1  
+**Status:** OPEN / one strategy detail unresolved
+
+Frozen owner intent:
+- original P1..P4 grid remains fixed;
+- each entry slot already crossed before submission is acquired by MARKET for
+  exactly that slot quantity;
+- not-yet-crossed slots remain at their original entry LIMIT levels;
+- each market-caught slot retains slot ownership and gets its corresponding
+  opposite/closing LIMIT;
+- shared Robot protection/recovery remains authoritative;
+- no one-shot aggregate `1 RO` market fallback.
+
+Blocking decision before code:
+- exact price mapping of each paired closing LIMIT still must be frozen;
+- if real market catch-up fills conflict with existing frozen planned-average/RR
+  STOP arithmetic, freeze the precise STOP rule rather than silently moving it.
+
+Acceptance:
+- deterministic scenarios for 0/1/2/3/4 crossed slots;
+- exact slot ownership after mixed MARKET + LIMIT entry;
+- paired close limits proven;
+- familiar STOP protection active immediately for real exposure;
+- restart/reconcile preserves the same slot identities.
+
+### OFR-6 — Telegram position-card presentation cleanup
+**Priority:** P1  
+**Status:** OPEN UX
+
+Owner example:
+- CASHCATUSDT open/closed position card.
+
+Required changes:
+- remove the excessive rightward visual shift and keep the relevant pattern/
+  latest candles visually balanced in the chart;
+- replace bulky level labels:
+  - `Вход` -> compact `Entry` or equivalent short label;
+  - `STOP` -> `SL`;
+  - `TAKE` -> `TP`;
+- labels must remain readable without covering the latest candles;
+- caption:
+  `Размер: <qty>` -> `Объем: <qty> (<notional> USDT)`;
+- USDT notional for an open card = authoritative quantity × authoritative
+  average entry, formatted compactly (e.g. CASHCATUSDT:
+  `Объем: 1410 (249.51 USDT)`);
+- retain average entry, PnL, STOP, TAKE and pattern lines in the text card.
+
+Acceptance:
+- one representative 5m position card is owner-readable without right-edge
+  crowding;
+- caption shows quantity + USDT notional;
+- lifecycle open/closed cards use the same formatter.
+
+### OFR-7 — TradingView button on position cards
+**Priority:** P1  
+**Status:** OPEN UX
+
+Current position-card keyboard only offers `⬅️ К позициям`.
+
+Owner requirement:
+- when entering a position card from `/positions`, show the same useful
+  TradingView navigation affordance used on Scanner signals;
+- button must open the selected symbol in TradingView;
+- retain `⬅️ К позициям`;
+- no trading mutation from this link;
+- manual/non-Robot position cards should get the TradingView link too when the
+  symbol is valid, even if no Robot chart can be rendered.
+
+Acceptance:
+- `/positions -> CASHCATUSDT -> position card -> Open TradingView` works;
+- back-to-positions remains available;
+- invalid symbols fail closed and do not produce malformed URLs.
+
+## Sequencing relative to Geometry
+
+Authoritative owner order:
+
+```text
+RVL-R6 current owner PAPER acceptance
+  -> OFR-1 durable diagnostics
+  -> OFR-2 CASHCATUSDT emergency-close root cause/fix
+  -> OFR-3 Box Robot handoff failure root cause/fix
+  -> OFR-4 stale/completed Box suppression
+  -> OFR-5 crossed-grid catch-up contract + implementation
+  -> OFR-6 position-card presentation cleanup
+  -> OFR-7 TradingView button on position cards
+  -> Geometry resumes at RVL-G2/G3/G4
+```
+
+Small independent UX slices (OFR-6/OFR-7) may be implemented together if they
+touch the same position-card surface and remain a bounded PR. They still stay
+ahead of Geometry under this owner priority.
+
+## Already closed today — do not repeat
+
+- TG-MON-1 fixed in PR #325 and owner-accepted on 2026-09-29.
+- RVL-G1 inventory/schema completed in PR #327.
+- Owner feedback problem register created in PR #328.
+- 2026-09-29 checkpoint/Box late-entry intent documented in PR #329.
+
