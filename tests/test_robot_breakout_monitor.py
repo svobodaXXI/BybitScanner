@@ -34,6 +34,7 @@ from terminal.domain.models import (
     Symbol,
     TradingAccountId,
 )
+from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.persistence.sqlite_store import PositionProjectionUpdate, SQLiteStore
 
 
@@ -108,6 +109,18 @@ def _l_shape_snapshot():
         },
     }
 
+
+
+def _ready_book(price="95"):
+    value = Decimal(price)
+    return NormalizedOrderBook(
+        symbol=Symbol(SYMBOL),
+        bids=(PriceLevel(Price(value - Decimal("0.1")), Quantity(Decimal("100"))),),
+        asks=(PriceLevel(Price(value), Quantity(Decimal("100"))),),
+        health=BookHealth.READY,
+        received_at_ms=4_000,
+        available_depth=1,
+    )
 
 
 def _candle_at(index, *, high, low, close):
@@ -241,7 +254,9 @@ class _FakeActionExecutor:
 
     def amend_stop(self, request):
         self.protection_calls.append(("amend_stop", request))
-        return None
+        return PaperStopMutationResult(
+            request.client_action_id.value, CommandResultStatus.COMPLETED, "amended",
+        )
 
     def create_take(self, request):
         self.protection_calls.append(("create_take", request))
@@ -401,8 +416,12 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             approved_at_ms=3002,
         )
         self.clock.value = 4000
+        self.monitor._get_market_book = lambda symbol: _ready_book("95")
 
-        # RVL-R4: no Box grid LIMIT is created until protection coverage is armed.
+        # First tick durably freezes the current 0-MARKET / 4-LIMIT catch-up plan.
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+
+        # No Box entry ownership is created until protection coverage is armed.
         self.arm_granted = False
         self.assertEqual(self.monitor.tick(), ())
         refused = self.store.get_robot_candidate(candidate.candidate_id)
@@ -431,11 +450,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertIsNotNone(opened)
         self.assertEqual(opened.entry_quantity, Decimal("2"))
         self.assertEqual(opened.average_entry, Decimal("94"))
-        self.assertEqual(opened.stop_price, Decimal("89.6"))
+        self.assertEqual(opened.stop_price, Decimal("91.4"))
         self.assertEqual(opened.take_price, Decimal("99.2"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
-            ["create_stop", "create_take"],
+            ["create_stop"],
         )
 
         self.executor.fill_resting_limit(
@@ -449,11 +468,11 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(topped_up.trade_id, opened.trade_id)
         self.assertEqual(topped_up.entry_quantity, Decimal("4"))
         self.assertEqual(topped_up.average_entry, Decimal("93.6"))
-        self.assertEqual(topped_up.stop_price, Decimal("89.6"))
+        self.assertEqual(topped_up.stop_price, Decimal("91.4"))
         self.assertEqual(topped_up.take_price, Decimal("99.2"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
-            ["create_stop", "create_take"],
+            ["create_stop"],
         )
 
     def setUp(self):
