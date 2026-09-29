@@ -246,25 +246,44 @@ class _FakeActionExecutor:
             request.client_action_id.value, CommandResultStatus.COMPLETED, "filled", "market filled",
         )
 
+    def _protection(self, leg, operation, request):
+        key = PositionKey(
+            self.account_id, Category.LINEAR, Symbol(request.symbol), 0,
+        )
+        self.store.mutate_paper_protection_leg(
+            client_action_id=request.client_action_id.value,
+            request_fingerprint=(
+                f"fake-protection-{leg}-{operation}-{request.trigger_price}"
+            ),
+            operation=operation,
+            position_key=key,
+            leg=leg,
+            trigger=request.trigger_price,
+            updated_at_ms=self.clock(),
+        )
+        return PaperStopMutationResult(
+            request.client_action_id.value,
+            CommandResultStatus.COMPLETED,
+            "created" if operation == "create" else "amended",
+        )
+
     def create_stop(self, request):
         if self.fail_create_stop:
             raise RuntimeError("boom: simulated protection submission failure")
         self.protection_calls.append(("create_stop", request))
-        return PaperStopMutationResult(request.client_action_id.value, CommandResultStatus.COMPLETED, "created")
+        return self._protection("stop", "create", request)
 
     def amend_stop(self, request):
         self.protection_calls.append(("amend_stop", request))
-        return PaperStopMutationResult(
-            request.client_action_id.value, CommandResultStatus.COMPLETED, "amended",
-        )
+        return self._protection("stop", "amend", request)
 
     def create_take(self, request):
         self.protection_calls.append(("create_take", request))
-        return PaperStopMutationResult(request.client_action_id.value, CommandResultStatus.COMPLETED, "created")
+        return self._protection("take", "create", request)
 
     def amend_take(self, request):
         self.protection_calls.append(("amend_take", request))
-        return None
+        return self._protection("take", "amend", request)
 
     def full_close(self, request):
         self.protection_calls.append(("full_close", request))
