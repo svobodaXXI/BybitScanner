@@ -101,7 +101,11 @@ class PatternRobotIntegrationTests(unittest.TestCase):
             integration,
             "create_signal_snapshot",
             side_effect=OSError("disk full"),
-        ), contextlib.redirect_stdout(io.StringIO()) as output:
+        ), patch.object(
+            integration,
+            "record_robot_incident",
+            return_value=True,
+        ) as diagnostic, contextlib.redirect_stdout(io.StringIO()) as output:
             result = integration.prepare_robot_handoff(
                 snapshot,
                 timeframe="5",
@@ -111,7 +115,17 @@ class PatternRobotIntegrationTests(unittest.TestCase):
         self.assertTrue(result.executable)
         self.assertIsNone(result.candidate_id)
         self.assertTrue(result.persistence_failed)
+        diagnostic.assert_called_once()
+        self.assertEqual(
+            diagnostic.call_args.kwargs["reason_code"],
+            "CANDIDATE_PERSISTENCE_EXCEPTION",
+        )
+        self.assertEqual(diagnostic.call_args.kwargs["symbol"], "TESTUSDT")
+        self.assertEqual(diagnostic.call_args.kwargs["timeframe"], "5")
+        self.assertEqual(diagnostic.call_args.kwargs["pattern"], "L-shape")
+        self.assertEqual(diagnostic.call_args.kwargs["error"].args, ("disk full",))
         self.assertIn("[ROBOT CANDIDATE ERROR]", output.getvalue())
+        self.assertNotIn("disk full", output.getvalue())
 
 
 if __name__ == "__main__":

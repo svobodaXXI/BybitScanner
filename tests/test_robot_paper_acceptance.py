@@ -18,6 +18,7 @@ from pathlib import Path
 
 import robot_state_machine
 from robot_candidate_store import create_signal_snapshot
+from robot_failure_diagnostics import load_recent_robot_incidents
 from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
 from terminal.api.models import (
     ClientActionId, CommandResultStatus, MarketCommandRequest, PaperStopDeleteRequest,
@@ -861,6 +862,39 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 )
                 self.assertEqual(obligation.winning_leg, "EMERGENCY_CLOSE")
                 self.assertEqual(obligation.status, "RESOLVED")
+
+                incidents = load_recent_robot_incidents(
+                    incident_dir=root / "robot_incidents",
+                    limit=10,
+                )
+                matching = [
+                    incident for incident in incidents
+                    if incident["trade_id"] == trade.trade_id
+                ]
+                self.assertEqual(len(matching), 1)
+                incident = matching[0]
+                self.assertEqual(
+                    incident["incident_type"],
+                    "ROBOT_PROTECTION_EMERGENCY_CLOSE",
+                )
+                self.assertEqual(
+                    incident["reason_code"],
+                    "MARKET_DATA_CONTINUITY_LOST",
+                )
+                self.assertEqual(
+                    incident["selected_recovery_action"],
+                    "EMERGENCY_CLOSE",
+                )
+                self.assertEqual(incident["candidate_id"], CANDIDATE_ID)
+                self.assertEqual(incident["symbol"], SYMBOL)
+                self.assertTrue(incident["facts"]["stop_proven"])
+                self.assertTrue(incident["facts"]["take_proven"])
+                self.assertFalse(
+                    incident["facts"]["market_data_authoritative"]
+                )
+                self.assertTrue(incident["facts"]["intended_stop_crossed"])
+                self.assertIsNone(incident["facts"]["deadline_at_ms"])
+                self.assertIsNone(incident["facts"]["age_ms"])
             finally:
                 runtime.close()
 

@@ -12,6 +12,7 @@ from unittest.mock import patch
 import robot_l_shape
 import robot_protection
 import robot_state_machine
+from robot_failure_diagnostics import load_recent_robot_incidents
 from scanner_geometry_cursor import build_scanner_geometry_cursor_anchor
 from terminal.api.models import (
     ClientActionId, CommandResult, CommandResultStatus, PaperLimitCancelRequest,
@@ -458,6 +459,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "terminal.db"
+        self.incident_dir = Path(self.temp_dir.name) / "robot_incidents"
         self.store = SQLiteStore.open(self.db_path)
         # Default admission state for every pre-existing test in this module:
         # (ROBOT_RUNNING, READY), matching what RobotRecoveryCoordinator.recover()
@@ -486,6 +488,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             clock_ms=self.clock,
             arm_entry_coverage=self._arm_entry_coverage,
             release_entry_coverage=self.released_entry_coverage.append,
+            incident_dir=self.incident_dir,
         )
 
     def _arm_entry_coverage(self, symbol: str) -> bool:
@@ -1423,6 +1426,33 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual([name for name, _ in self.executor.protection_calls], ["full_close"])
         position_key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         self.assertEqual(self.store.get_position_projection(position_key).side, PositionSide.FLAT)
+
+        incidents = load_recent_robot_incidents(incident_dir=self.incident_dir)
+        matching = [
+            item for item in incidents
+            if item["incident_type"] == "ROBOT_PROTECTION_EMERGENCY_CLOSE"
+            and item["candidate_id"] == "candidate-1"
+            and item["stage"] == "initial_protection"
+        ]
+        self.assertEqual(len(matching), 1)
+        incident = matching[0]
+        self.assertEqual(incident["reason_code"], "INITIAL_PROTECTION_FAILURE")
+        self.assertEqual(incident["symbol"], SYMBOL)
+        self.assertEqual(incident["pattern"], "Falling Wedge")
+        self.assertEqual(incident["error_class"], "RuntimeError")
+        self.assertEqual(incident["selected_recovery_action"], "EMERGENCY_CLOSE")
+        self.assertEqual(
+            incident["facts"],
+            {
+                "age_ms": None,
+                "deadline_at_ms": None,
+                "intended_stop_crossed": None,
+                "market_data_authoritative": None,
+                "stop_proven": False,
+                "take_proven": False,
+            },
+        )
+        self.assertNotIn("simulated protection submission failure", str(incident))
 
     def _place_legacy_unfiltered_limit(self):
         """Seed an order admitted by the pre-RR version of the Robot.
