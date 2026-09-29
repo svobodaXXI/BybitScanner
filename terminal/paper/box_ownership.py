@@ -19,6 +19,9 @@ class BoxExposureProof:
     exit_quantity: Decimal
     remaining_quantity: Decimal
     average_entry: Decimal | None
+    average_exit: Decimal | None
+    realized_pnl: Decimal
+    accumulated_fee: Decimal
     entry_by_slot: tuple[Decimal, Decimal, Decimal, Decimal]
     exit_by_slot: tuple[Decimal, Decimal, Decimal, Decimal]
     position_version: int
@@ -58,6 +61,7 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
     bound = sum(limits, Decimal(0))
     owners = {row["order_id"]: row for row in ownership}
     entry = exit_qty = remaining = Decimal(0)
+    entry_notional = exit_notional = Decimal(0)
     average = None
     by_slot = [Decimal(0)] * 4
     exit_by_slot = [Decimal(0)] * 4
@@ -80,6 +84,7 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
             if by_slot[owner["slot"] - 1] > limits[owner["slot"] - 1]:
                 raise BoxOwnershipError("owned entry exceeds its frozen grid part")
             average = ((average or Decimal(0)) * remaining + fill.price.value * qty) / (remaining + qty)
+            entry_notional += fill.price.value * qty
             entry += qty
             remaining += qty
         else:
@@ -90,6 +95,7 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
                 exit_by_slot[exit_slot - 1] += qty
                 if exit_by_slot[exit_slot - 1] > by_slot[exit_slot - 1]:
                     raise BoxOwnershipError("owned slice exit exceeds its filled entry slot")
+            exit_notional += fill.price.value * qty
             exit_qty += qty
             remaining -= qty
             if not remaining:
@@ -101,12 +107,16 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
             or (position.average_entry.value if position.average_entry else None) != average
             or position.updated_at_ms < last_time):
         raise BoxOwnershipError("actual position does not reconcile with owned entries minus exits")
+    average_exit = exit_notional / exit_qty if exit_qty else None
     return BoxExposureProof(
         candidate.candidate_id,
         entry,
         exit_qty,
         remaining,
         average,
+        average_exit,
+        position.realized_pnl,
+        position.accumulated_fee,
         tuple(by_slot),
         tuple(exit_by_slot),
         position.version,
