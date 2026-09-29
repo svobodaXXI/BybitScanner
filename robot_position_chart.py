@@ -48,6 +48,9 @@ LINE_COLOR = "#ff9800"
 # Windows up to CHART_MAX_CANDLES (see chart_candle_limit): above WIDE_WINDOW_CANDLES the
 # default canvas gives ~1 px per candle, so a wider, denser canvas keeps bodies visible.
 WIDE_WINDOW_CANDLES = 500
+RIGHT_MARGIN_MIN_CANDLES = 12
+RIGHT_MARGIN_MAX_CANDLES = 60
+RIGHT_MARGIN_FRACTION = 0.08
 
 
 class PositionChartError(RuntimeError):
@@ -138,15 +141,29 @@ def _candle_position(times: np.ndarray, time_ms: int, candle_ms: int) -> int | N
     return position
 
 
-def _draw_marker(ax, x: int, price: float, side: str, *, filled: bool) -> None:
-    color = BUY_COLOR if side == "Buy" else SELL_COLOR
+def _right_margin_candles(candle_count: int) -> int:
+    return min(
+        RIGHT_MARGIN_MAX_CANDLES,
+        max(RIGHT_MARGIN_MIN_CANDLES, math.ceil(candle_count * RIGHT_MARGIN_FRACTION)),
+    )
+
+
+def _draw_marker(
+    ax, x: int, price: float, side: str, *, filled: bool, direction: str | None = None,
+) -> None:
+    fill_color = BUY_COLOR if side == "Buy" else SELL_COLOR
+    outline_color = (
+        BUY_COLOR if direction == "LONG"
+        else SELL_COLOR if direction == "SHORT"
+        else fill_color
+    )
     ax.scatter(
         [x], [price],
         marker="^" if side == "Buy" else "v",
-        s=140,
-        facecolors=color if filled else "none",
-        edgecolors="black" if filled else color,
-        linewidths=0.8 if filled else 1.8,
+        s=80,
+        facecolors=fill_color if filled else "none",
+        edgecolors=outline_color,
+        linewidths=1.2 if filled else 1.8,
         zorder=6,
     )
 
@@ -155,7 +172,7 @@ def _draw_level(ax, price: float, label: str, color: str, style: str) -> None:
     ax.axhline(price, color=color, linestyle=style, linewidth=1.2, zorder=4)
     transform = mtransforms.blended_transform_factory(ax.transAxes, ax.transData)
     ax.text(
-        0.995, price, f"{label} {format_price(price)}",
+        0.995, price, f"{label} {format_price(price)}".strip(),
         transform=transform, color=color, fontsize=9, va="bottom", ha="right",
         bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.8, "pad": 1},
         zorder=7,
@@ -196,9 +213,9 @@ def render_position_chart(
         ax.set_xlabel("Время (МСК)")
 
         levels = [
-            (view.average_entry, "Вход", ENTRY_COLOR, "--"),
-            (view.stop_price, "STOP", STOP_COLOR, "-"),
-            (view.take_price, "TAKE", TAKE_COLOR, "-"),
+            (view.average_entry, "", ENTRY_COLOR, "--"),
+            (view.stop_price, "SL", STOP_COLOR, "-"),
+            (view.take_price, "TP", TAKE_COLOR, "-"),
         ]
         prices = [float(df["low"].min()), float(df["high"].max())]
         for price, label, color, style in levels:
@@ -221,8 +238,13 @@ def render_position_chart(
         for time_ms, price, side, filled in markers:
             x = _candle_position(times, int(time_ms), candle_ms)
             if x is not None:
-                _draw_marker(ax, x, price, side, filled=filled)
+                _draw_marker(
+                    ax, x, price, side, filled=filled, direction=view.direction,
+                )
                 prices.append(price)
+
+        left, _ = ax.get_xlim()
+        ax.set_xlim(left, len(df) - 1 + _right_margin_candles(len(df)))
 
         low, high = min(prices), max(prices)
         pad = (high - low) * 0.05 or abs(high) * 0.01 or 1.0

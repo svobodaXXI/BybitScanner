@@ -350,7 +350,7 @@ def build_tradingview_keyboard(
         [
             {
                 "text":
-                    "\U0001F4C8 Open TradingView",
+                    "Открыть в Trading View",
 
                 "url":
                     tradingview_url
