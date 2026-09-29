@@ -1,3 +1,47 @@
+## NOW — 2026-09-29 — OWNER FEEDBACK / ACCEPTANCE CHECKPOINT
+
+Today's owner feedback and acceptance findings are preserved; do not rediscover
+them in the next chat.
+
+Completed/accepted:
+- owner checkout started the fresh runtime from local `7196110`;
+- TG-MON-1 owner acceptance PASS: `/monitoring` returned the active candidate
+  list and inline buttons after PR #325;
+- RVL-G1 repository Geometry Gold inventory completed and merged in PR #327;
+- canonical owner-feedback problem register added and merged in PR #328.
+
+Active RVL-R6 evidence:
+- same-process baseline captured for backend instance
+  `be72ef65-5167-44ef-a645-5c6ce447e49d`;
+- baseline: Scanner RUNNING, Robot admission ready, PAPER live-safe, protection
+  healthy, ingress pending 0/64, high-watermark 0;
+- final same-process post-load metrics are still required before declaring R6
+  PASS.
+
+New owner-observed Robot handoff defect:
+- B2USDT/BANKUSDT/BNBUSDT/BNCUSDT 5m Box signals were delivered without
+  `🤖 Робот` and with the explicit candidate-creation failure warning;
+- later BRETTUSDT showed a normal Robot button, so this is not a global
+  Robot/Telegram outage;
+- exact failure cause was lost because it existed only in scrolling Scanner
+  stdout;
+- preserve RH-FAIL-1 and RH-DIAG-1: durable sanitized candidate-preparation
+  diagnostics before speculative planner changes.
+
+New Box execution strategy gap:
+- late admission after price has crossed part/all of P1..P4 requires
+  slot-preserving market catch-up;
+- each crossed slot is acquired by MARKET for that slot's equal quantity;
+- untouched slots remain at their frozen LIMIT levels;
+- every market-caught slot gets a corresponding closing LIMIT;
+- existing shared STOP/protection lifecycle remains authoritative;
+- exact closing-LIMIT price mapping is intentionally unresolved and must be
+  frozen before implementation;
+- do not implement one aggregate 1-RO market fallback.
+
+Canonical detail:
+`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
+
 ## NOW — 2026-09-29 — OWNER FEEDBACK PROBLEM REGISTER
 
 All currently known owner-observed product/runtime/geometry problems are now
