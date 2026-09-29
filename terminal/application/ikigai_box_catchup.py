@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 import hashlib
 import uuid
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from terminal.api.models import ClientActionId, MarketCommandRequest, VolumeRequest, VolumeUnit
 from terminal.application.command_identity import CommandIdentityCandidate, CommandIdentityFactory
@@ -179,6 +179,83 @@ def build_box_market_plans(
         ))
     return tuple(plans)
 
+
+
+def durable_box_market_intent(plan: BoxCatchupMarketPlan) -> dict[str, object]:
+    """Serialize one exact per-slot MARKET request before mutation."""
+    return {
+        "slot": plan.slot,
+        "quantity": str(plan.quantity),
+        "best_price": str(plan.best_price),
+        "order_id": plan.order_id.value,
+        "client_action_id": plan.request.client_action_id.value,
+        "command_id": plan.identity.command_id.value,
+        "order_link_id": plan.identity.order_link_id,
+        "symbol": plan.request.symbol,
+        "side": plan.request.side.value,
+        "volume_unit": plan.request.volume.unit.value,
+        "volume_amount": str(plan.request.volume.amount),
+        "sizing_reference_price": str(plan.request.sizing_reference_price),
+        "slippage_type": plan.request.slippage_type,
+        "slippage_value": str(plan.request.slippage_value),
+    }
+
+
+def restore_box_market_plan(intent: Mapping[str, object]) -> BoxCatchupMarketPlan:
+    """Restore and verify a previously persisted per-slot MARKET request."""
+    try:
+        slot = int(intent["slot"])
+    except Exception as exc:
+        raise ValueError("Box MARKET intent slot is invalid") from exc
+    if slot not in {1, 2, 3, 4}:
+        raise ValueError("Box MARKET intent slot is invalid")
+    quantity = _decimal(intent.get("quantity"), "Box MARKET quantity")
+    best_price = _decimal(intent.get("best_price"), "Box MARKET best price")
+    digest = str(intent.get("client_action_id", "")).removeprefix("box-market-")
+    if len(digest) != 32 or any(char not in "0123456789abcdef" for char in digest):
+        raise ValueError("Box MARKET client action identity is invalid")
+    deterministic_uuid = uuid.UUID(hex=digest)
+    expected_identity = CommandIdentityFactory(lambda: deterministic_uuid).create()
+    if (
+        str(intent.get("command_id", "")) != expected_identity.command_id.value
+        or str(intent.get("order_link_id", "")) != expected_identity.order_link_id
+        or str(intent.get("order_id", ""))
+        != f"paper-order-{expected_identity.order_link_id}"
+    ):
+        raise ValueError("Box MARKET durable identity changed")
+    try:
+        side = OrderSide(str(intent.get("side", "")))
+        volume_unit = VolumeUnit(str(intent.get("volume_unit", "")))
+    except ValueError as exc:
+        raise ValueError("Box MARKET enum value is invalid") from exc
+    if volume_unit is not VolumeUnit.USDT:
+        raise ValueError("Box MARKET durable volume unit changed")
+    request = MarketCommandRequest(
+        client_action_id=ClientActionId(str(intent["client_action_id"])),
+        symbol=str(intent.get("symbol", "")).strip().upper(),
+        side=side,
+        volume=VolumeRequest(volume_unit, _decimal(intent.get("volume_amount"), "Box MARKET notional")),
+        sizing_reference_price=_decimal(
+            intent.get("sizing_reference_price"), "Box MARKET sizing reference"
+        ),
+        slippage_type=str(intent.get("slippage_type", "")),
+        slippage_value=_decimal(intent.get("slippage_value"), "Box MARKET slippage"),
+    )
+    if (
+        request.sizing_reference_price != best_price
+        or request.volume.amount != quantity * best_price
+        or request.slippage_type != "Percent"
+        or request.slippage_value != Decimal("0.5")
+    ):
+        raise ValueError("Box MARKET durable request changed")
+    return BoxCatchupMarketPlan(
+        slot=slot,
+        quantity=quantity,
+        best_price=best_price,
+        order_id=OrderId(str(intent["order_id"])),
+        request=request,
+        identity=expected_identity,
+    )
 
 def build_box_market_ownership_specs(
     plans: Iterable[BoxCatchupMarketPlan],
