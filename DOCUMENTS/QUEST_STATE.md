@@ -1,3 +1,23 @@
+## 🧾 OWNER FEEDBACK REGISTER — 2026-09-29
+
+Owner feedback findings are consolidated in
+`DOCUMENTS/OWNER_FEEDBACK_PROBLEM_REGISTER.md`.
+
+New confirmed acceptance finding:
+- B2USDT/BANKUSDT/BNBUSDT/BNCUSDT 5m Box cards were delivered without
+  `🤖 Робот` and with the explicit candidate-creation failure warning;
+- later BRETTUSDT showed a normal Robot button, so this is not a global Robot
+  or Telegram outage;
+- exact exception evidence was lost because the current implementation keeps
+  the cause only in scrolling Scanner stdout;
+- queue RH-FAIL-1 (candidate preparation failures) + RH-DIAG-1 (durable
+  sanitized failure diagnostics) without interrupting the current same-process
+  RVL-R6 run.
+
+Already-known geometry, Telegram Menu, CELO manual PAPER, fixed TG-MON-1,
+shutdown closure and correctly classified ARUSDT are included in the same
+register to prevent duplicate rediscovery.
+
 ## 📐 GEOMETRY LAB — RVL-G1 COMPLETE — 2026-09-29
 
 While RVL-R6 continued on the owner's live runtime, repository-only Geometry
