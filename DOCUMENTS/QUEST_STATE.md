@@ -1,3 +1,21 @@
+## 📐 GEOMETRY LAB — RVL-G1 COMPLETE — 2026-09-29
+
+While RVL-R6 continued on the owner's live runtime, repository-only Geometry
+inventory work completed without touching runtime state.
+
+Completed:
+- mapped exact frozen OHLC already present in repository;
+- separated real archived evidence from synthetic detector controls;
+- classified BSV/CORE and CARV/CPU/CROSS/CLO owner observations as RECOVERABLE;
+- kept screenshot-only training references out of deterministic Gold;
+- defined the compact case schema and first G2 seed.
+
+Canonical document:
+`DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md`.
+
+RVL-R6 remains the active Robot gate. Geometry next = RVL-G2 manifest/runner;
+no geometry production fix has started.
+
 ## 🌙 NIGHT CHECKPOINT — 2026-09-29
 
 Current owner acceptance evidence is preserved. Do not repeat completed checks.
