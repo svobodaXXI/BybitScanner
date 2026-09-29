@@ -182,6 +182,46 @@ def build_box_market_plans(
 
 
 
+def build_box_manual_close_market_plan(
+    candidate: RobotCandidateRecord,
+    book: NormalizedOrderBook,
+    *,
+    quantity: Decimal,
+) -> BoxCatchupMarketPlan:
+    """Build one stable owner-requested aggregate Box close (EXIT slot 0)."""
+    direction, _prices, _quantities, _take = _frozen_terms(candidate)
+    quantity = _decimal(quantity, "Box manual close quantity")
+    if book.symbol != candidate.symbol or book.health is not BookHealth.READY:
+        raise ValueError("authoritative READY book for Box symbol is required")
+    levels = book.bids if direction == "LONG" else book.asks
+    if not levels:
+        raise ValueError("Box manual close executable book side is empty")
+    best_price = _decimal(levels[0].price.value, "Box manual close price")
+    side = OrderSide.SELL if direction == "LONG" else OrderSide.BUY
+    digest = hashlib.sha256(
+        f"box-manual-close\0{candidate.candidate_id}".encode("utf-8")
+    ).hexdigest()[:32]
+    deterministic_uuid = uuid.UUID(hex=digest)
+    identity = CommandIdentityFactory(lambda value=deterministic_uuid: value).create()
+    request = MarketCommandRequest(
+        client_action_id=ClientActionId(f"box-market-{digest}"),
+        symbol=candidate.symbol.value,
+        side=side,
+        volume=VolumeRequest(VolumeUnit.USDT, quantity * best_price),
+        sizing_reference_price=best_price,
+        slippage_type="Percent",
+        slippage_value=Decimal("0.5"),
+    )
+    return BoxCatchupMarketPlan(
+        slot=0,
+        quantity=quantity,
+        best_price=best_price,
+        order_id=OrderId(f"paper-order-{identity.order_link_id}"),
+        request=request,
+        identity=identity,
+    )
+
+
 def build_box_emergency_close_market_plan(
     candidate: RobotCandidateRecord,
     book: NormalizedOrderBook,
