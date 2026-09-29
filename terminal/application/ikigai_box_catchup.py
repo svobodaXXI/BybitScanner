@@ -17,7 +17,11 @@ from terminal.api.models import ClientActionId, MarketCommandRequest, VolumeRequ
 from terminal.application.command_identity import CommandIdentityCandidate, CommandIdentityFactory
 from terminal.domain.models import CommandId, OrderId, OrderSide
 from terminal.market_data.models import BookHealth, NormalizedOrderBook
-from terminal.persistence.sqlite_store import BoxOwnedPaperLimitSpec, RobotCandidateRecord
+from terminal.persistence.sqlite_store import (
+    BoxOwnedPaperLimitSpec,
+    BoxOwnedPaperMarketSpec,
+    RobotCandidateRecord,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +117,7 @@ class BoxCatchupMarketPlan:
     slot: int
     quantity: Decimal
     best_price: Decimal
+    order_id: OrderId
     request: MarketCommandRequest
     identity: CommandIdentityCandidate
 
@@ -168,10 +173,24 @@ def build_box_market_plans(
             slot=slot,
             quantity=quantity,
             best_price=best_price,
+            order_id=OrderId(f"paper-order-{identity.order_link_id}"),
             request=request,
             identity=identity,
         ))
     return tuple(plans)
+
+
+def build_box_market_ownership_specs(
+    plans: Iterable[BoxCatchupMarketPlan],
+) -> tuple[BoxOwnedPaperMarketSpec, ...]:
+    """Project deterministic future PAPER MARKET ids into ownership specs."""
+    ordered = tuple(sorted(plans, key=lambda item: item.slot))
+    if len({item.slot for item in ordered}) != len(ordered):
+        raise ValueError("duplicate Box MARKET slot")
+    return tuple(
+        BoxOwnedPaperMarketSpec(slot=item.slot, order_id=item.order_id)
+        for item in ordered
+    )
 
 def build_box_exit_specs(
     candidate: RobotCandidateRecord,
