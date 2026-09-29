@@ -448,6 +448,64 @@ def build_box_protection_plan(
 
 
 
+
+def build_box_stop_only_plan(
+    candidate: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    average_entry: Decimal,
+    confirmed_position_quantity: Decimal,
+    existing_stop: Decimal | None = None,
+) -> ProtectionPlan:
+    """Build Box aggregate STOP while TAKE is owned by per-slot EXIT LIMITs."""
+    if candidate.get("status") not in {"APPROVED", "OPEN"}:
+        raise RobotProtectionError("Box candidate must be APPROVED or OPEN")
+    snapshot = candidate.get("signal_snapshot")
+    if not isinstance(snapshot, Mapping):
+        raise RobotProtectionError("signal snapshot is missing")
+    candidate_id = str(candidate.get("candidate_id", "")).strip()
+    symbol = str(snapshot.get("identity", {}).get("symbol", "")).strip().upper()
+    direction = str(state.get("direction", "")).strip().upper()
+    if not candidate_id or not symbol:
+        raise RobotProtectionError("candidate identity and symbol are required")
+    if direction != str(snapshot.get("plan", {}).get("direction", "")).strip().upper():
+        raise RobotProtectionError("Box direction conflicts with frozen plan")
+    quantity = _decimal(confirmed_position_quantity, "confirmed position quantity")
+    entry = _decimal(average_entry, "average_entry")
+    stop = box_stop_for_actual_entry(
+        snapshot, average_entry=entry, existing_stop=existing_stop,
+    )
+    take = _decimal(snapshot["plan"].get("take_price"), "frozen Box TAKE")
+    if direction == DIRECTION_LONG and not (stop < entry < take):
+        raise RobotProtectionError("LONG Box protection geometry is invalid")
+    if direction == DIRECTION_SHORT and not (take < entry < stop):
+        raise RobotProtectionError("SHORT Box protection geometry is invalid")
+    # quantity is intentionally validated here even though the shared stop
+    # request is position-scoped: callers must prove real exposure first.
+    if quantity <= 0:
+        raise RobotProtectionError("confirmed Box exposure must be positive")
+    return ProtectionPlan(
+        candidate_id=candidate_id,
+        symbol=symbol,
+        direction=direction,
+        stop_price=stop,
+        take_price=take,
+        stop_request=PaperStopMutationRequest(
+            _action_id(candidate_id, "stop", stop), symbol, stop,
+        ),
+        # Kept structurally for ProtectionPlan compatibility; OFR-5 callers
+        # MUST NOT submit this aggregate TAKE. Slot EXIT LIMITs own TAKE.
+        take_request=PaperStopMutationRequest(
+            _action_id(candidate_id, "take", take), symbol, take,
+        ),
+    )
+
+
+def submit_box_stop_only(submitter: ProtectionSubmitter, plan: ProtectionPlan):
+    """Submit only the shared Box STOP; paired slot LIMITs own the TAKE side."""
+    return submitter.create_stop(plan.stop_request)
+
+
 def build_l_shape_protection_plan(
     candidate: Mapping[str, Any],
     state: Mapping[str, Any],
