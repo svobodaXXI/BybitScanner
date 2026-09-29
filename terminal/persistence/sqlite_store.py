@@ -426,6 +426,14 @@ class BoxOwnedPaperMarketSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class BoxOrderOwnershipRecord:
+    order_id: OrderId
+    candidate_id: str
+    role: str
+    slot: int
+
+
+@dataclass(frozen=True, slots=True)
 class PaperLimitOrderRecord:
     order_id: OrderId
     order_link_id: str
@@ -4341,6 +4349,23 @@ class SQLiteStore:
         except sqlite3.IntegrityError as exc:
             raise DuplicateIdentity("Box grid slot already has a durable order identity") from exc
         return True
+
+    def load_box_order_ownership(
+        self, candidate_id: str,
+    ) -> tuple[BoxOrderOwnershipRecord, ...]:
+        self._assert_owner()
+        rows = self._connection.execute(
+            "SELECT order_id, candidate_id, role, slot "
+            "FROM box_order_ownership WHERE candidate_id=? "
+            "ORDER BY CASE role WHEN 'ENTRY' THEN 0 ELSE 1 END, slot, order_id",
+            (candidate_id,),
+        ).fetchall()
+        return tuple(
+            BoxOrderOwnershipRecord(
+                OrderId(row["order_id"]), row["candidate_id"], row["role"], row["slot"],
+            )
+            for row in rows
+        )
 
     def reserve_box_order_identity(
         self, candidate_id: str, *, order_id: OrderId, role: str, slot: int,
