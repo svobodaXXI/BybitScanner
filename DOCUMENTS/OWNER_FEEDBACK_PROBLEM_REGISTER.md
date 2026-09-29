@@ -1,3 +1,19 @@
+## 2026-09-29 owner-prioritized remediation queue
+
+Implementation order is now canonical in:
+`DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
+
+The following owner-observed findings are queued **before Geometry resumes**:
+- RH-DIAG-1 / RH-FAIL-1 candidate handoff diagnostics + root cause;
+- CASHCATUSDT emergency-close root cause / protection observability;
+- stale/completed Box suppression using frozen TAKE;
+- BOX-LATE-1 crossed-grid catch-up;
+- position-card chart/labels/volume cleanup;
+- TradingView navigation from position cards.
+
+This priority does not reopen TG-MON-1, RVL-G1, ARUSDT or the closed shutdown
+incident.
+
 # Owner Feedback Problem Register
 
 Status: ACTIVE  
