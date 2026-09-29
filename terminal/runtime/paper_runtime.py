@@ -1780,15 +1780,29 @@ class PaperRuntime:
         match_event_id: str,
         context_provider: "PaperCommandContextProvider",
     ) -> int:
-        box_trade = self.store.get_open_robot_trade_for_symbol(
-            self._paper_account_id, symbol,
-        )
-        if box_trade is not None and box_trade.pattern == "IKIGAI_BOX":
-            candidate = self.store.get_robot_candidate(box_trade.candidate_id)
-            source_id = (
-                candidate.signal_snapshot.get("source_box_candidate_id")
-                if candidate is not None else None
+        box_candidates = tuple(
+            candidate
+            for candidate in self.store.load_robot_candidates_for_symbol(
+                self._paper_account_id, symbol,
             )
+            if (
+                candidate.status in {"APPROVED", "OPEN"}
+                and candidate.robot_state is not None
+                and candidate.robot_state.get("phase") == "BOX_ENTRY_READY"
+                and candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
+            )
+        )
+        if box_candidates:
+            if len(box_candidates) != 1:
+                self.fence_robot_protection_continuity_loss(
+                    symbol.value, "ambiguous_box_owners_in_match_fallback",
+                )
+                return 0
+            candidate = box_candidates[0]
+            execution = candidate.robot_state.get("execution") or {}
+            source_id = execution.get("source_box_candidate_id")
+            if not isinstance(source_id, str) or not source_id.strip():
+                source_id = candidate.robot_state.get("source_box_candidate_id")
             if not isinstance(source_id, str) or not source_id.strip():
                 self.fence_robot_protection_continuity_loss(
                     symbol.value, "box_source_missing_in_match_fallback",
