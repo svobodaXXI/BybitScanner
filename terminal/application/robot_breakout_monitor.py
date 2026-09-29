@@ -300,7 +300,10 @@ class RobotBreakoutMonitor:
                     continue
                 execution = record.robot_state.get("execution") or {}
                 try:
-                    if self._refresh_open_trade_entry_attestation(record, execution):
+                    if record.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                        if self._sync_box_trade(record, execution):
+                            advanced.append(record.candidate_id)
+                    elif self._refresh_open_trade_entry_attestation(record, execution):
                         advanced.append(record.candidate_id)
                 except Exception as error:
                     print(
@@ -319,16 +322,18 @@ class RobotBreakoutMonitor:
             execution = record.robot_state.get("execution") or {}
 
             if phase == "BOX_ENTRY_READY":
-                raw_order_ids = execution.get("limit_order_ids")
-                if not isinstance(raw_order_ids, (tuple, list)) or not raw_order_ids:
-                    continue
-                if not any(
-                    (order := self._store().get_paper_limit(order_id, self._account_id))
-                    is not None and order.filled_quantity > 0
-                    for order_id in raw_order_ids
-                ):
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = record.robot_state.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
                     continue
                 try:
+                    source = self._store().get_robot_candidate(source_id.strip())
+                    if source is None:
+                        continue
+                    proof = self._store().prove_box_owned_position(source.candidate_id)
+                    if proof.entry_quantity <= 0:
+                        continue
                     if self._advance_box_entry_ready(record, match_resting_orders=False):
                         advanced.append(record.candidate_id)
                 except Exception as error:
