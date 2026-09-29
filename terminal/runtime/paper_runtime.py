@@ -16,7 +16,7 @@ from typing import Callable, Mapping
 
 from terminal.api.rest import TerminalCommandApi
 from terminal.api.models import (
-    ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResultStatus,
+    ClientActionId, CloseAllCommandRequest, CloseAllCommandResponse, CommandResult, CommandResultStatus,
     FullCloseCommandRequest, LimitCommandRequest, PaperLimitAmendRequest, PaperLimitCancelRequest,
     PaperLimitMutationResult, PaperLimitOrderProjection, PaperOpenPositionProjection,
     PaperOpenPositionsResponse, PaperStopDeleteRequest, PaperStopMutationRequest,
@@ -55,6 +55,11 @@ from terminal.application.live_account_reconciliation import (
 )
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
+from terminal.application.ikigai_box_catchup import (
+    build_box_manual_close_market_plan,
+    durable_box_market_intent,
+    restore_box_market_plan,
+)
 from terminal.paper.ikigai_box_plan import approved_first_grid, plan_ikigai_box
 from terminal.application.robot_control import resume_robot_in_store, start_robot_in_store
 from terminal.application.robot_recovery import (
@@ -2513,6 +2518,135 @@ class PaperRuntime:
             request.client_action_id.value, tuple(results), refreshed.positions,
         )
 
+    def _robot_close_box_candidate(self, candidate) -> CommandResult:
+        """Close one OPEN Box through durable EXIT-slot-0 ownership."""
+        trade = self.store.get_open_robot_trade_for_symbol(
+            self._paper_account_id, candidate.symbol,
+        )
+        if trade is None or trade.candidate_id != candidate.candidate_id:
+            raise RuntimeError("OPEN Box candidate lacks its Robot trade")
+        source_id = candidate.signal_snapshot.get("source_box_candidate_id")
+        if not isinstance(source_id, str) or not source_id.strip():
+            raise RuntimeError("OPEN Box candidate lacks source plan identity")
+        source = self.store.get_robot_candidate(source_id.strip())
+        if source is None or source.status != "BOX_PLAN_ONLY":
+            raise RuntimeError("OPEN Box source plan is unavailable")
+        proof = self.store.prove_box_owned_position(source.candidate_id)
+        if proof.remaining_quantity <= 0:
+            raise RuntimeError("OPEN Box has no owned exposure to close")
+
+        execution = dict((candidate.robot_state or {}).get("execution") or {})
+        raw_intent = execution.get("box_manual_close_intent")
+        if isinstance(raw_intent, Mapping):
+            plan = restore_box_market_plan(raw_intent)
+        else:
+            book = self._book_provider.get_book(candidate.symbol)
+            if book is None:
+                raise RuntimeError("authoritative Box book is unavailable")
+            plan = build_box_manual_close_market_plan(
+                source, book, quantity=proof.remaining_quantity,
+            )
+            preflight = self._robot_api.market_preflight(
+                plan.request, identity=plan.identity,
+            )
+            if (
+                not preflight.admitted
+                or preflight.normalized_quantity != plan.quantity
+            ):
+                raise RuntimeError("Box manual close preflight did not preserve quantity")
+            execution["box_manual_close_intent"] = durable_box_market_intent(plan)
+            state = dict(candidate.robot_state or {})
+            state["execution"] = execution
+            candidate = self.store.save_robot_candidate_state(
+                candidate.candidate_id,
+                status="OPEN",
+                robot_state=state,
+                expected_revision=candidate.state_revision,
+                updated_at_ms=int(time.time() * 1000),
+            )
+
+        expected_side = (
+            OrderSide.SELL
+            if trade.direction == "LONG"
+            else OrderSide.BUY
+        )
+        if (
+            plan.slot != 0
+            or plan.quantity != proof.remaining_quantity
+            or plan.request.symbol != candidate.symbol.value
+            or plan.request.side is not expected_side
+        ):
+            raise RuntimeError("durable Box manual close conflicts with current owned lot")
+
+        self.store.reserve_box_order_identity(
+            source.candidate_id,
+            order_id=plan.order_id,
+            role="EXIT",
+            slot=0,
+        )
+        now_ms = int(time.time() * 1000)
+        for owner in self.store.load_box_order_ownership(source.candidate_id):
+            if owner.order_id == plan.order_id:
+                continue
+            order = self.store.get_paper_limit(
+                owner.order_id.value, self._paper_account_id,
+            )
+            if order is None or order.status in INACTIVE_LIMIT_STATUSES:
+                continue
+            digest = hashlib.sha256(
+                f"{source.candidate_id}\0manual-close-cancel\0{owner.order_id.value}".encode("utf-8")
+            ).hexdigest()[:32]
+            self.store.cancel_paper_limit(
+                client_action_id=f"box-manual-cancel-{digest}",
+                request_fingerprint=hashlib.sha256(
+                    f"{candidate.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                ).hexdigest(),
+                order_id=owner.order_id,
+                trading_account_id=self._paper_account_id,
+                updated_at_ms=now_ms,
+            )
+
+        result = self._robot_api.market(plan.request, identity=plan.identity)
+        if result.status is not CommandResultStatus.COMPLETED:
+            return result
+
+        closed_proof = self.store.prove_box_owned_position(source.candidate_id)
+        if (
+            closed_proof.remaining_quantity != 0
+            or closed_proof.average_exit is None
+            or closed_proof.last_execution_at_ms is None
+            or closed_proof.entry_notional <= 0
+        ):
+            return CommandResult(
+                plan.request.client_action_id.value,
+                CommandResultStatus.UNKNOWN,
+                "box_manual_close_unproven",
+                "Box manual close requires reconciliation",
+                getattr(result, "command_id", None),
+                True,
+            )
+        realized_pct = (
+            (closed_proof.realized_pnl - closed_proof.accumulated_fee)
+            / closed_proof.entry_notional
+            * Decimal("100")
+        )
+        self.store.close_robot_trade(
+            trade.trade_id,
+            exit_time_ms=closed_proof.last_execution_at_ms,
+            exit_price=closed_proof.average_exit,
+            exit_reason="MANUAL",
+            realized_pnl_usdt=closed_proof.realized_pnl,
+            realized_pnl_pct=realized_pct,
+            fees_costs_usdt=closed_proof.accumulated_fee,
+            updated_at_ms=max(now_ms, closed_proof.last_execution_at_ms),
+        )
+        self.store.clear_paper_protection_for_flat(
+            PositionKey(
+                self._paper_account_id, Category.LINEAR, candidate.symbol, 0,
+            )
+        )
+        return result
+
     def robot_close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
         """Market-close exclusively Robot-owned open positions (close_all_now()).
 
@@ -2539,18 +2673,33 @@ class PaperRuntime:
         existing Robot-scoped execution path, never a second one.
         """
         candidates = self.store.load_active_robot_candidate_states(self._account_id)
-        robot_symbols = sorted({
-            item.symbol.value for item in candidates if item.status == "OPEN"
-        })
+        open_candidates = sorted(
+            (item for item in candidates if item.status == "OPEN"),
+            key=lambda item: item.symbol.value,
+        )
         results = []
         any_unconfirmed = False
-        for symbol in robot_symbols:
+        for candidate in open_candidates:
+            symbol = candidate.symbol.value
             digest = hashlib.sha256(
                 f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
             ).hexdigest()[:32]
-            result = self._robot_api.full_close(FullCloseCommandRequest(
-                ClientActionId(f"robot-close-all-{digest}"), symbol,
-            ))
+            try:
+                if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                    result = self._robot_close_box_candidate(candidate)
+                else:
+                    result = self._robot_api.full_close(FullCloseCommandRequest(
+                        ClientActionId(f"robot-close-all-{digest}"), symbol,
+                    ))
+            except Exception as error:
+                result = CommandResult(
+                    f"robot-close-all-{digest}",
+                    CommandResultStatus.UNAVAILABLE,
+                    "box_close_failed" if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX" else "close_failed",
+                    type(error).__name__,
+                    None,
+                    True,
+                )
             results.append(result)
             if result.status != CommandResultStatus.COMPLETED:
                 any_unconfirmed = True
