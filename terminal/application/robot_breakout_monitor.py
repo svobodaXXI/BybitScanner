@@ -876,16 +876,7 @@ class RobotBreakoutMonitor:
     def _finalize_box_take_if_flat(
         self, record: RobotCandidateRecord, source: RobotCandidateRecord, proof,
     ) -> bool:
-        if record.status != "OPEN" or proof.exit_quantity <= 0:
-            return False
-        trade = self._store().get_open_robot_trade_for_symbol(
-            self._account_id, record.symbol,
-        )
-        if trade is None or trade.candidate_id != record.candidate_id:
-            self._escalate_reconciliation(
-                "ROBOT_BOX_TAKE_TRADE_MISSING "
-                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
-            )
+        if proof.exit_quantity <= 0:
             return False
 
         now_ms = self._now_ms()
@@ -908,6 +899,39 @@ class RobotBreakoutMonitor:
 
         position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
         self._store().clear_paper_protection_for_flat(position_key)
+
+        if record.status == "APPROVED":
+            execution = dict(record.robot_state.get("execution") or {})
+            execution["box_take_realized_before_open"] = True
+            execution["box_take_realized_at_ms"] = (
+                proof.last_execution_at_ms if proof.last_execution_at_ms is not None else now_ms
+            )
+            state = dict(record.robot_state)
+            state["execution"] = execution
+            try:
+                self._store().save_robot_candidate_state(
+                    record.candidate_id,
+                    status="INVALIDATED",
+                    robot_state=state,
+                    expected_revision=record.state_revision,
+                    updated_at_ms=now_ms,
+                )
+            except ConcurrentUpdate:
+                return False
+            self._release_entry_coverage(record.symbol.value)
+            return True
+
+        if record.status != "OPEN":
+            return False
+        trade = self._store().get_open_robot_trade_for_symbol(
+            self._account_id, record.symbol,
+        )
+        if trade is None or trade.candidate_id != record.candidate_id:
+            self._escalate_reconciliation(
+                "ROBOT_BOX_TAKE_TRADE_MISSING "
+                f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
+            )
+            return False
         if (
             proof.average_exit is None
             or proof.last_execution_at_ms is None
