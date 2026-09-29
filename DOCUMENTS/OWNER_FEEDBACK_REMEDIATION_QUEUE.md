@@ -458,8 +458,8 @@ Acceptance:
   re-entry path deterministically.
 
 ### OFR-5 — Box crossed-grid late admission / catch-up execution
-**Priority:** P1  
-**Status:** OPEN / paired-close mapping frozen; STOP/RR rule still to freeze
+**Priority:** P1
+**Status:** CONTRACT FROZEN / ready for implementation
 
 Frozen owner intent:
 - original P1..P4 grid remains fixed;
@@ -473,24 +473,38 @@ Frozen owner intent:
 Frozen paired closing-LIMIT contract:
 - every filled slot P1..P4 owns one separate opposite/closing LIMIT;
 - all four closing LIMITs use the same existing frozen common Box TAKE;
-- therefore slot identity/order ownership is separate, while exit price remains
-  the current single-TAKE strategy;
+- slot identity/order ownership is separate, while exit price remains the
+  current single-TAKE strategy;
 - late MARKET catch-up changes entry execution only; it does not introduce
   per-slot target ladders or a new profit-taking model.
 
-Still blocking before code:
-- freeze STOP/RR treatment when one or more MARKET catch-up fills execute at
-  prices different from the original P1..P4 plan;
-- do not silently keep a STOP whose approved RR was calculated from a planned
-  average if the authoritative filled average materially changes;
-- do not silently move the frozen TAKE.
+Frozen STOP/RR contract for actual fills:
+- frozen common TAKE never moves;
+- protection is evaluated from the authoritative actual aggregate average
+  entry and actual confirmed quantity, not merely the original planned average;
+- fee-aware net reward:risk must remain at least 2:1;
+- STOP must remain strictly beyond original P4;
+- if the original frozen STOP still satisfies those predicates from the actual
+  average entry, keep it;
+- otherwise choose the nearest tick-aligned STOP toward the entry that is still
+  strictly beyond P4 and restores fee-aware net RR >= 2;
+- after later slot fills/top-ups, STOP may stay unchanged or tighten only;
+  it must never widen relative to already-active protection;
+- if no tick-aligned STOP simultaneously satisfies beyond-P4 geometry and
+  fee-aware RR >= 2, the filled exposure is not allowed to remain unprotected:
+  fail closed through the existing protection/emergency-close lifecycle;
+- no symbol exception and no silent weakening of RR.
 
 Acceptance:
 - deterministic scenarios for 0/1/2/3/4 crossed slots;
 - exact slot ownership after mixed MARKET + LIMIT entry;
 - four separate paired close LIMITs proven at the same frozen TAKE;
-- familiar STOP protection active immediately for real exposure;
-- restart/reconcile preserves the same slot identities and closing orders.
+- actual MARKET/LIMIT fill prices drive authoritative average-entry attestation;
+- STOP remains beyond P4 and net RR >= 2 after each confirmed aggregate fill;
+- STOP never widens after protection becomes active;
+- no-valid-STOP cases fail closed rather than weakening the contract;
+- restart/reconcile preserves slot identities, closing orders and protection
+  ownership.
 
 ### OFR-6 — Telegram position-card presentation cleanup
 **Priority:** P1  
