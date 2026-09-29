@@ -95,13 +95,18 @@ class PatternRobotIntegrationTests(unittest.TestCase):
         self.assertFalse(result.persistence_failed)
         persist.assert_called_once_with(snapshot, timeframe="1")
 
-    def test_persistence_failure_is_fail_closed(self):
+    def test_persistence_failure_is_fail_closed_and_durable_reason_is_sanitized(self):
         snapshot = {"pattern": "L-shape", "symbol": "TESTUSDT", "robot_handoff_ready": True}
+        error = OSError("disk full at C:/secret/paper.sqlite3 token=abc123")
         with patch.object(
             integration,
             "create_signal_snapshot",
-            side_effect=OSError("disk full"),
-        ), contextlib.redirect_stdout(io.StringIO()) as output:
+            side_effect=error,
+        ), patch.object(
+            integration.robot_incident_store,
+            "try_record_robot_incident",
+            return_value=True,
+        ) as incident, contextlib.redirect_stdout(io.StringIO()) as output:
             result = integration.prepare_robot_handoff(
                 snapshot,
                 timeframe="5",
@@ -112,6 +117,44 @@ class PatternRobotIntegrationTests(unittest.TestCase):
         self.assertIsNone(result.candidate_id)
         self.assertTrue(result.persistence_failed)
         self.assertIn("[ROBOT CANDIDATE ERROR]", output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
+        self.assertNotIn("abc123", output.getvalue())
+        incident.assert_called_once_with(
+            lifecycle_stage="CANDIDATE_PERSISTENCE",
+            reason_code="CANDIDATE_PERSISTENCE_EXCEPTION",
+            symbol="TESTUSDT",
+            timeframe="5",
+            pattern="L-shape",
+            error=error,
+        )
+
+    def test_missing_persisted_candidate_identity_records_durable_reason(self):
+        snapshot = {"pattern": "Falling Wedge", "symbol": "TESTUSDT"}
+        with patch.object(
+            integration,
+            "create_signal_snapshot",
+            return_value={},
+        ), patch.object(
+            integration.robot_incident_store,
+            "try_record_robot_incident",
+            return_value=True,
+        ) as incident:
+            result = integration.prepare_robot_handoff(
+                snapshot,
+                timeframe="1",
+                enabled=True,
+            )
+
+        self.assertTrue(result.executable)
+        self.assertIsNone(result.candidate_id)
+        self.assertTrue(result.persistence_failed)
+        incident.assert_called_once_with(
+            lifecycle_stage="CANDIDATE_PERSISTENCE",
+            reason_code="CANDIDATE_ID_MISSING",
+            symbol="TESTUSDT",
+            timeframe="1",
+            pattern="Falling Wedge",
+        )
 
 
 if __name__ == "__main__":
