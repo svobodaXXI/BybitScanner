@@ -1975,8 +1975,25 @@ class PaperRuntime:
             if phase == "RETEST_DETECTED":
                 order_ids = (execution.get("limit_order_id"),)
             elif phase == "BOX_ENTRY_READY":
-                raw_order_ids = execution.get("limit_order_ids")
-                order_ids = tuple(raw_order_ids) if isinstance(raw_order_ids, (tuple, list)) else ()
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = candidate.robot_state.get("source_box_candidate_id")
+                if isinstance(source_id, str) and source_id.strip():
+                    try:
+                        box_proof = self.store.prove_box_owned_position(source_id.strip())
+                    except Exception:
+                        box_proof = None
+                    if box_proof is not None and box_proof.remaining_quantity > 0:
+                        roles[candidate.symbol.value] = "EXPOSURE"
+                        continue
+                    ownership = self.store.load_box_order_ownership(source_id.strip())
+                    order_ids = tuple(
+                        owner.order_id.value
+                        for owner in ownership
+                        if owner.role == "ENTRY"
+                    )
+                else:
+                    order_ids = ()
             else:
                 continue
             for order_id in order_ids:
