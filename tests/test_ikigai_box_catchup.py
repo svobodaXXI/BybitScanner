@@ -9,6 +9,7 @@ from terminal.application.ikigai_box_catchup import (
     classify_box_catchup_slots,
     durable_box_market_intent,
     restore_box_market_plan,
+    ready_box_exit_slots,
 )
 from terminal.domain.models import Price, Quantity, Symbol
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
@@ -122,6 +123,20 @@ class BoxCatchupPlanningTests(unittest.TestCase):
     def test_market_plan_rejects_uncrossed_slot(self):
         with self.assertRaisesRegex(ValueError, "uncrossed"):
             build_box_market_plans(self.source, _book("93.5"), slots=(2,))
+
+    def test_paired_exit_waits_for_full_slot_fill_and_is_idempotent_after_exit(self):
+        class Proof:
+            entry_by_slot = (
+                Decimal("2"), Decimal("1"), Decimal("2"), Decimal("0"),
+            )
+            exit_by_slot = (
+                Decimal("0"), Decimal("0"), Decimal("2"), Decimal("0"),
+            )
+
+        self.assertEqual(
+            ready_box_exit_slots(self.source, Proof()),
+            (1,),
+        )
 
     def test_exit_specs_are_per_slot_but_share_frozen_take(self):
         specs = build_box_exit_specs(
