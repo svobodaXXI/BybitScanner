@@ -29,7 +29,7 @@ MAX_INCIDENTS = 200
 _SAFE_CODE = re.compile(r"^[A-Z0-9_]{1,80}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.:-]{1,160}$")
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]{1,32}$")
-_SAFE_TEXT = re.compile(r"^[A-Za-z0-9 _./:+()-]{1,80}$")
+_SAFE_TEXT = re.compile(r"^[A-Za-z0-9 _.+()-]{1,80}$")
 
 
 class RobotIncidentError(RuntimeError):
