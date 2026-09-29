@@ -32,6 +32,7 @@ from typing import Callable, Mapping, Protocol
 import robot_entry_limit
 import robot_l_shape
 import robot_protection
+import robot_incident_store
 import robot_state_machine
 from robot_market_confirmation import risk_reward_ratio
 from scanner_geometry_cursor import (
@@ -606,7 +607,9 @@ class RobotBreakoutMonitor:
             ):
                 raise RobotBreakoutMonitorError("initial Box protection submission did not complete")
         except Exception as error:
-            self._fail_closed_unprotected_fill(record, error)
+            self._fail_closed_unprotected_fill(
+                record, error, reason_code="BOX_INITIAL_PROTECTION_FAILED",
+            )
             return False
 
         try:
@@ -1242,7 +1245,9 @@ class RobotBreakoutMonitor:
                     frozen_scanner_target_price=target_price, existing_stop=existing_stop,
                 )
         except Exception as error:
-            self._fail_closed_unprotected_fill(record, error)
+            self._fail_closed_unprotected_fill(
+                record, error, reason_code="PROTECTION_PLAN_BUILD_FAILED",
+            )
             return False
 
         entry_quantity = entry_evidence.quantity
@@ -1263,7 +1268,9 @@ class RobotBreakoutMonitor:
             ):
                 raise RobotBreakoutMonitorError("initial protection submission did not complete")
         except Exception as error:
-            self._fail_closed_unprotected_fill(record, error)
+            self._fail_closed_unprotected_fill(
+                record, error, reason_code="INITIAL_PROTECTION_SUBMISSION_FAILED",
+            )
             return False
 
         duplicate_owners = self._active_other_owner_candidate_ids(record)
@@ -1782,45 +1789,119 @@ class RobotBreakoutMonitor:
         )
 
     def _fail_closed_unprotected_fill(
-        self, record: RobotCandidateRecord, error: Exception,
+        self,
+        record: RobotCandidateRecord,
+        error: Exception,
+        *,
+        reason_code: str = "INITIAL_PROTECTION_FAILED",
     ) -> None:
+        snapshot = record.signal_snapshot or {}
+        identity = snapshot.get("identity")
+        identity = identity if isinstance(identity, Mapping) else {}
+        timeframe = (
+            snapshot.get("scanner_source_timeframe")
+            or snapshot.get("timeframe")
+            or identity.get("timeframe")
+        )
+        pattern = snapshot.get("pattern")
         duplicate_owners = self._active_other_owner_candidate_ids(record)
+
+        base_facts = {
+            "STOP_PROVEN": None,
+            "TAKE_PROVEN": None,
+            "MARKET_DATA_AUTHORITATIVE": None,
+            "INTENDED_STOP_CROSSED": None,
+            "DEADLINE_AT_MS": None,
+            "AGE_MS": None,
+        }
+        selected_action = (
+            "RECONCILIATION_REQUIRED"
+            if duplicate_owners
+            else robot_protection.RECOVERY_EMERGENCY_CLOSE
+        )
+        robot_incident_store.try_record_robot_incident(
+            lifecycle_stage="PROTECTION",
+            reason_code=reason_code,
+            symbol=record.symbol.value,
+            timeframe=timeframe,
+            pattern=pattern,
+            candidate_id=record.candidate_id,
+            error=error,
+            facts={
+                **base_facts,
+                "SELECTED_RECOVERY_ACTION": selected_action,
+            },
+        )
+
+        execution = dict(record.robot_state.get("execution") or {})
+        execution["protection_failure"] = reason_code
+        execution["protection_failure_class"] = type(error).__name__
+
         if duplicate_owners:
-            execution = dict(record.robot_state.get("execution") or {})
-            execution["protection_failure"] = str(error)
             execution["duplicate_owner_candidate_ids"] = list(duplicate_owners)
             execution["duplicate_ownership_detected_at_ms"] = self._now_ms()
             self._persist_execution(record, execution)
             self._escalate_duplicate_ownership(record, duplicate_owners)
             return
 
-        request = robot_protection.emergency_close_request(record.candidate_id, record.symbol.value)
-        execution = dict(record.robot_state.get("execution") or {})
-        execution["protection_failure"] = str(error)
+        request = robot_protection.emergency_close_request(
+            record.candidate_id, record.symbol.value,
+        )
         execution["emergency_close_attempted_at_ms"] = self._now_ms()
 
         try:
             result = self._action_executor.full_close(request)
         except Exception as close_error:
             execution["emergency_close_pending"] = True
-            execution["emergency_close_error"] = str(close_error)
+            execution["emergency_close_error_class"] = type(close_error).__name__
             self._persist_execution(record, execution)
+            robot_incident_store.try_record_robot_incident(
+                lifecycle_stage="PROTECTION",
+                reason_code="EMERGENCY_CLOSE_SUBMISSION_EXCEPTION",
+                symbol=record.symbol.value,
+                timeframe=timeframe,
+                pattern=pattern,
+                candidate_id=record.candidate_id,
+                error=close_error,
+                facts={
+                    **base_facts,
+                    "SELECTED_RECOVERY_ACTION": "EMERGENCY_CLOSE_PENDING",
+                },
+            )
             return
 
         authoritative_flat = False
         completed = getattr(result, "status", None) == CommandResultStatus.COMPLETED
         if completed:
-            position_key = PositionKey(self._account_id, Category.LINEAR, record.symbol, 0)
+            position_key = PositionKey(
+                self._account_id, Category.LINEAR, record.symbol, 0,
+            )
             projection = self._store().get_position_projection(position_key)
-            authoritative_flat = projection is None or projection.quantity.value <= 0
+            authoritative_flat = (
+                projection is None or projection.quantity.value <= 0
+            )
 
         if not (completed and authoritative_flat):
             execution["emergency_close_pending"] = True
             self._persist_execution(record, execution)
+            robot_incident_store.try_record_robot_incident(
+                lifecycle_stage="PROTECTION",
+                reason_code="EMERGENCY_CLOSE_UNCONFIRMED",
+                symbol=record.symbol.value,
+                timeframe=timeframe,
+                pattern=pattern,
+                candidate_id=record.candidate_id,
+                facts={
+                    **base_facts,
+                    "SELECTED_RECOVERY_ACTION": "EMERGENCY_CLOSE_PENDING",
+                    "COMMAND_COMPLETED": completed,
+                    "AUTHORITATIVE_FLAT": authoritative_flat,
+                },
+            )
             return
 
         execution.pop("emergency_close_pending", None)
-        execution.pop("emergency_close_error", None)
+        execution.pop("emergency_close_error_class", None)
         execution["emergency_close_outcome"] = robot_protection.RECOVERY_CLOSED
         execution["emergency_closed_at_ms"] = self._now_ms()
         new_state = dict(record.robot_state)
