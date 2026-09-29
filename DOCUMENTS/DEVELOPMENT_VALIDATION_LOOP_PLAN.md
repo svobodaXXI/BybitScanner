@@ -423,6 +423,7 @@ Owner-run additions from 2026-09-28:
 and gaps are explicit; no invented expected anchors.
 
 #### RVL-G2 — Seed the first compact Geometry Gold set
+**Status:** COMPLETE — PR #338 merged as `6efeba677b30965a026b05f82284260280c60db3`
 **Priority:** P1
 
 Freeze the first useful set, target roughly 8–15 real cases, but use the number
@@ -437,6 +438,14 @@ Each case includes:
 
 **Done when:** detector output can be compared in one local run and existing
 baseline behavior is recorded without tuning.
+
+**Completion evidence (2026-09-29):**
+- first compact seed contains 5 READY cases: PONS, 1000BONKUSDT,
+  1000TOSHIUSDT, 1000XECUSDT and AEVO;
+- manifest references existing frozen OHLC fixtures without duplication;
+- runner executes the real production geometry engine;
+- focused owner-machine run: 3 tests in 504.794 s, PASS;
+- no production detector thresholds or Scanner/Robot/runtime behavior changed.
 
 #### RVL-G3 — Geometry baseline report
 **Priority:** P1

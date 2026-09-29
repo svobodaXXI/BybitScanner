@@ -1,3 +1,24 @@
+## ✅ RVL-G2 COMPLETE — 2026-09-29
+
+PR #338 merged to `main` as
+`6efeba677b30965a026b05f82284260280c60db3`.
+
+Geometry Gold seed:
+- PONS — positive anchor control;
+- 1000BONKUSDT — forbidden wrong-anchor negative;
+- 1000TOSHIUSDT — locality invariant;
+- 1000XECUSDT — no-local-geometry negative;
+- AEVO — formation-fit negative.
+
+The seed references existing frozen OHLC; no candles were duplicated and no
+production detector code or thresholds changed.
+
+Focused owner-machine validation on PR head `ba4d6c9`:
+`Ran 3 tests in 504.794s — OK`.
+
+Next Geometry task is RVL-G3 baseline report. Do not start G3 automatically
+without the next owner command.
+
 ## ✅ OFR-6 / OFR-7 CLOSED — 2026-09-29
 
 PR #337 merged to `main` as
