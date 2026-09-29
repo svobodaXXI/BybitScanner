@@ -2571,6 +2571,70 @@ class PaperRuntime:
                 continue
 
             execution = (record.robot_state or {}).get("execution") or {}
+            if record.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                source_id = execution.get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    source_id = (record.robot_state or {}).get("source_box_candidate_id")
+                if not isinstance(source_id, str) or not source_id.strip():
+                    unresolved_candidate_ids.append(record.candidate_id)
+                    continue
+
+                unresolved_box_limit = False
+                for owner in self.store.load_box_order_ownership(source_id.strip()):
+                    if owner.role != "ENTRY":
+                        continue
+                    order = self.store.get_paper_limit(
+                        owner.order_id.value, self._account_id,
+                    )
+                    if order is None or order.status in INACTIVE_LIMIT_STATUSES:
+                        continue
+                    digest = hashlib.sha256(
+                        f"{record.candidate_id}\0sync-pending-cancel\0{owner.order_id.value}".encode("utf-8")
+                    ).hexdigest()[:32]
+                    result = self._robot_cancel_limit(PaperLimitCancelRequest(
+                        ClientActionId(f"robot-sync-box-{digest}"),
+                        record.symbol.value,
+                        owner.order_id.value,
+                    ))
+                    if result.status != CommandResultStatus.COMPLETED:
+                        unresolved_box_limit = True
+                    else:
+                        cancelled_order_ids.append(owner.order_id.value)
+                if unresolved_box_limit:
+                    unresolved_candidate_ids.append(record.candidate_id)
+                    continue
+
+                try:
+                    proof = self.store.prove_box_owned_position(source_id.strip())
+                except Exception:
+                    unresolved_candidate_ids.append(record.candidate_id)
+                    continue
+                if proof.remaining_quantity > 0:
+                    still_pending_protection.append(record.candidate_id)
+                    continue
+
+                runtime_state = self.store.get_robot_runtime_state(self._account_id)
+                if (
+                    runtime_state is not None
+                    and runtime_state.mode == "ROBOT_STOPPED"
+                    and record.status == "APPROVED"
+                ):
+                    state = dict(record.robot_state or {})
+                    box_execution = dict(state.get("execution") or {})
+                    box_execution["stopped_without_entry_reason"] = (
+                        "ROBOT_STOPPED after Box pending entries were cancelled"
+                    )
+                    state["execution"] = box_execution
+                    self.store.save_robot_candidate_state(
+                        record.candidate_id,
+                        status="INVALIDATED",
+                        robot_state=state,
+                        expected_revision=record.state_revision,
+                        updated_at_ms=int(time.time() * 1000),
+                    )
+                    terminalized_candidate_ids.append(record.candidate_id)
+                continue
+
             order_id = execution.get("limit_order_id")
             prior_order_id = ((prior.robot_state or {}).get("execution") or {}).get("limit_order_id")
             if order_id:
