@@ -461,6 +461,121 @@ def _open_robot_position_with_confirmed_protection(
     )
 
 
+def test_continuity_recovery_from_ready_self_recovers_to_ready():
+    """A transient protection-continuity fence raised from READY may reopen
+    admission only after the emergency close and the global evidence-based
+    reconciliation pass both complete successfully."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-continuity-ready",
+                candidate_id="candidate-continuity-ready",
+            )
+            _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="READY")
+            recovery_book = _crossing_book("BTCUSDT", bid="64100", ask="64101")
+            provider.set_book("BTCUSDT", recovery_book)
+
+            recovered = runtime.recover_robot_protection_continuity_loss(
+                "BTCUSDT", recovery_book,
+                event_id="BTCUSDT:rest-recovery:1",
+                received_at_ms=recovery_book.received_at_ms,
+                reason="ingress_overflow",
+            )
+
+            assert recovered is True
+            state = runtime.store.get_robot_runtime_state(TradingAccountId("paper"))
+            assert state.mode == "ROBOT_RUNNING"
+            assert state.recovery_status == "READY"
+            assert runtime.robot_admission_ready() is True
+            trade = runtime.store.get_robot_trade("trade-continuity-ready")
+            assert trade.exit_reason == "EMERGENCY_CLOSE"
+            assert trade.exit_time_ms is not None
+            assert runtime.paper_state("BTCUSDT")["position_side"] == "Flat"
+            assert runtime.store.load_unresolved_paper_protection_obligations(
+                TradingAccountId("paper")
+            ) == ()
+        finally:
+            runtime.close()
+
+
+def test_continuity_recovery_preserves_owner_pause():
+    """Safety recovery may reconcile automatically while PAUSED, but must
+    never turn an owner's deliberate pause into READY admission."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-continuity-paused",
+                candidate_id="candidate-continuity-paused",
+            )
+            _set_admission(runtime, mode="ROBOT_RUNNING", recovery_status="PAUSED")
+            recovery_book = _crossing_book("BTCUSDT", bid="64100", ask="64101")
+            provider.set_book("BTCUSDT", recovery_book)
+
+            recovered = runtime.recover_robot_protection_continuity_loss(
+                "BTCUSDT", recovery_book,
+                event_id="BTCUSDT:rest-recovery:2",
+                received_at_ms=recovery_book.received_at_ms,
+                reason="websocket_disconnect:OSError",
+            )
+
+            assert recovered is True
+            state = runtime.store.get_robot_runtime_state(TradingAccountId("paper"))
+            assert state.mode == "ROBOT_RUNNING"
+            assert state.recovery_status == "PAUSED"
+            assert runtime.robot_admission_ready() is False
+            assert runtime.store.get_robot_trade(
+                "trade-continuity-paused"
+            ).exit_reason == "EMERGENCY_CLOSE"
+        finally:
+            runtime.close()
+
+
+def test_continuity_recovery_does_not_clear_preexisting_reconciliation_fence():
+    """A continuity event observed while some earlier ambiguity is already
+    fenced may resolve its own exposure, but it must not auto-clear the older
+    RECONCILIATION_REQUIRED state."""
+    with tempfile.TemporaryDirectory() as temp:
+        provider = MutableBookProvider("BTCUSDT", _entry_book())
+        runtime = _runtime_with_provider(Path(temp) / "paper.sqlite3", provider)
+        try:
+            _open_robot_position_with_confirmed_protection(
+                runtime, symbol="BTCUSDT", entry_price=Decimal("64250.5"),
+                stop_price=Decimal("64000"), take_price=Decimal("64600"),
+                trade_id="trade-continuity-existing-fence",
+                candidate_id="candidate-continuity-existing-fence",
+            )
+            _set_admission(
+                runtime, mode="ROBOT_RUNNING",
+                recovery_status="RECONCILIATION_REQUIRED",
+            )
+            before = runtime.store.get_robot_runtime_state(TradingAccountId("paper"))
+            recovery_book = _crossing_book("BTCUSDT", bid="64100", ask="64101")
+            provider.set_book("BTCUSDT", recovery_book)
+
+            recovered = runtime.recover_robot_protection_continuity_loss(
+                "BTCUSDT", recovery_book,
+                event_id="BTCUSDT:rest-recovery:3",
+                received_at_ms=recovery_book.received_at_ms,
+                reason="ingress_overflow",
+            )
+
+            assert recovered is True
+            state = runtime.store.get_robot_runtime_state(TradingAccountId("paper"))
+            assert state.recovery_status == "RECONCILIATION_REQUIRED"
+            assert state.version == before.version
+            assert runtime.robot_admission_ready() is False
+        finally:
+            runtime.close()
+
+
 def test_robot_reconcile_accepts_tick_normalized_protection_prices():
     """Reconciliation compares the durable normalized protection, not raw strategy prices."""
     with tempfile.TemporaryDirectory() as temp:
@@ -2487,6 +2602,9 @@ def load_tests(loader, tests, pattern):
             test_paper_sell_limit_uses_shared_sizing_and_gtc,
             test_paper_limit_amend_reprices_in_place_and_is_durable_idempotent,
             test_paper_limit_amend_missing_or_inactive_fails_closed,
+            test_continuity_recovery_from_ready_self_recovers_to_ready,
+            test_continuity_recovery_preserves_owner_pause,
+            test_continuity_recovery_does_not_clear_preexisting_reconciliation_fence,
         )
     )
     suite.addTests(loader.loadTestsFromTestCase(IkigaiBoxPlanPreparationTests))
