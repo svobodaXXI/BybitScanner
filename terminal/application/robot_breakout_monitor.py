@@ -44,6 +44,15 @@ from scanner_geometry_cursor import (
 from terminal.api.models import ClientActionId, CommandResultStatus, MarketCommandRequest, PaperLimitCancelRequest
 from terminal.application.command_identity import CommandIdentityCandidate
 from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
+from terminal.application.ikigai_box_catchup import (
+    build_box_exit_specs,
+    build_box_market_ownership_specs,
+    build_box_market_plans,
+    classify_box_catchup_slots,
+    durable_box_market_intent,
+    ready_box_exit_slots,
+    restore_box_market_plan,
+)
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.robot_admission_catchup import (
     LATE_ADMISSION_MARKET,
