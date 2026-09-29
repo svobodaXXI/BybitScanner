@@ -5,6 +5,7 @@ import unittest
 
 from terminal.application.ikigai_box_catchup import (
     build_box_exit_specs,
+    build_box_market_plans,
     classify_box_catchup_slots,
 )
 from terminal.domain.models import Price, Quantity, Symbol
@@ -85,6 +86,29 @@ class BoxCatchupPlanningTests(unittest.TestCase):
                     sum(slot.entry_mode == "MARKET" for slot in slots),
                     market_count,
                 )
+
+    def test_market_plans_preserve_slot_quantity_by_notional_identity(self):
+        plans = build_box_market_plans(
+            self.source, _book("92.8"), slots=(1, 2),
+        )
+        self.assertEqual([plan.slot for plan in plans], [1, 2])
+        self.assertEqual([plan.quantity for plan in plans], [Decimal("2")] * 2)
+        self.assertEqual([plan.best_price for plan in plans], [Decimal("92.8")] * 2)
+        self.assertEqual(
+            [plan.request.volume.amount for plan in plans],
+            [Decimal("185.6")] * 2,
+        )
+        self.assertEqual(
+            [plan.request.volume.unit.value for plan in plans],
+            ["usdt", "usdt"],
+        )
+        self.assertEqual([plan.request.side.value for plan in plans], ["Buy", "Buy"])
+        self.assertEqual(len({plan.request.client_action_id.value for plan in plans}), 2)
+        self.assertEqual(len({plan.identity.command_id.value for plan in plans}), 2)
+
+    def test_market_plan_rejects_uncrossed_slot(self):
+        with self.assertRaisesRegex(ValueError, "uncrossed"):
+            build_box_market_plans(self.source, _book("93.5"), slots=(2,))
 
     def test_exit_specs_are_per_slot_but_share_frozen_take(self):
         specs = build_box_exit_specs(
