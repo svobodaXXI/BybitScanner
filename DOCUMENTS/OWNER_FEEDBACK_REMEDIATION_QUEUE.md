@@ -246,6 +246,28 @@ Acceptance:
 - back-to-positions remains available;
 - invalid symbols fail closed and do not produce malformed URLs.
 
+
+### OFR-7A — Candidate monitoring card: chart + TradingView
+**Priority:** P1  
+**Status:** OPEN UX
+
+Owner requirement:
+- when opening a candidate from `/monitoring`, show the candidate chart in
+  addition to the text card;
+- add an **`Открыть в Trading View`** button for the candidate symbol/timeframe;
+- retain **`⬅️ К кандидатам`** navigation;
+- this surface is navigation/observability only and must not introduce a trading
+  mutation;
+- if the chart is unavailable or the symbol/timeframe cannot produce a valid
+  TradingView target, fail closed without breaking the candidate detail view.
+
+Acceptance:
+- `/monitoring -> candidate -> candidate card` shows the candidate chart when
+  available;
+- **`Открыть в Trading View`** opens the correct symbol/timeframe;
+- **`⬅️ К кандидатам`** remains functional;
+- missing chart or invalid navigation data does not break the text detail card.
+
 ## Sequencing relative to Geometry
 
 Authoritative owner order:
@@ -260,6 +282,7 @@ RVL-R6 current owner PAPER acceptance
   -> OFR-5 crossed-grid catch-up contract + implementation
   -> OFR-6 position-card presentation cleanup
   -> OFR-7 TradingView button on position cards
+  -> OFR-7A candidate monitoring card chart + TradingView
   -> Geometry resumes at RVL-G2/G3/G4
 ```
 
