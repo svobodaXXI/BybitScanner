@@ -11,6 +11,21 @@ Robot PAPER acceptance #261 passed at
 OFR-1 is ready for merge review, but merge remains pending explicit owner
 authorization.
 
+## ✅ OFR-3A IMPLEMENTATION GREEN — 2026-09-29
+
+PR #335 implements a narrow self-recovery path for transient protection
+continuity fences:
+- READY before the incident -> emergency close/recovery -> global evidence-based
+  reconcile -> READY;
+- owner PAUSED remains PAUSED;
+- a pre-existing RECONCILIATION_REQUIRED fence is never auto-cleared;
+- CELOUSDT remains separate manual/non-Robot PAPER debt.
+
+Robot PAPER acceptance #262 passed at
+`14717851b24d47b1d136770ca37c9dcfc2c3496b`.
+PR #335 is ready for merge review, but merge requires explicit owner
+authorization.
+
 ## ✅ OFR-3 BOX HANDOFF CLASSIFIED — 2026-09-29
 
 B2USDT/BANKUSDT/BNBUSDT/BNCUSDT 5m were deterministically replayed from the
