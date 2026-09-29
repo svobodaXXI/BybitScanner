@@ -48,39 +48,67 @@ Acceptance:
 
 ### OFR-2 — CASHCATUSDT emergency-close root cause and recurrence fix
 **Priority:** P0  
-**Status:** OPEN / evidence investigation
+**Status:** HISTORICAL INVESTIGATION COMPLETE / exact initiating reason unrecoverable
 
-Owner evidence:
+Owner/runtime evidence:
 - CASHCATUSDT Rising Wedge SHORT;
-- average entry 0.176958;
+- average entry approximately 0.176958;
 - STOP 0.17755;
-- emergency exit 0.175125;
-- exit therefore occurred well before the ordinary STOP level;
-- trade closed profitably but for a safety reason, not by strategy TAKE/STOP.
+- emergency exit approximately 0.175125;
+- Stop and Take were created at 07:17:02 UTC / 10:17:02 MSK;
+- recovery event arrived at 07:53:14.472 UTC through REST recovery;
+- the protection obligation latched about 325 ms later and the exit execution
+  completed about 2.935 s after that;
+- `market_event_id` contains `CASHCATUSDT:rest-recovery:...`;
+- emergency trigger price 0.17509 was neither STOP 0.17755 nor TAKE 0.163840;
+- durable lifecycle is internally consistent:
+  candidate -> trade -> command history -> execution -> protection actions /
+  obligation -> final Flat/synced position;
+- protection obligation resolved with winning leg `EMERGENCY_CLOSE`.
 
-Current protection policy can emergency-close when STOP is unproven and one of
-these conditions occurs:
-- market data is not authoritative;
-- intended STOP is considered crossed;
-- 5-second protection deadline expires.
+Conclusion:
+- ordinary strategy STOP/TAKE did **not** cause this exit;
+- the exit was initiated on the protection continuity REST-recovery path;
+- the historical database preserved the recovery outcome but not the
+  continuity-loss reason that caused recovery;
+- targeted searches of repository-local 2026-09-29 `.log/.txt/.out/.err`
+  artifacts found no CASHCATUSDT, `ROBOT_PROTECTION_COVERAGE_LOST`,
+  `rest-recovery` or related reason marker;
+- therefore the exact initiating cause (for example a real WebSocket
+  disconnect, `ingress_overflow`, identity mismatch, subscription/admission
+  failure or another continuity-loss reason) is **not recoverable from the
+  surviving historical evidence**;
+- do not claim that an internet lag caused CASHCATUSDT specifically.
 
-The current top-level logs do not identify which condition actually fired.
+Relevant repository history:
+- #237 removed a false-positive stale-generation path while preserving genuine
+  disconnect fail-closed recovery;
+- #293 documented a real 64/64 protection-ingress overflow that produced
+  `ROBOT_PROTECTION_COVERAGE_LOST ... ingress_overflow`;
+- #305 fixed one proven source of excessive ENTRY_PENDING coverage while noting
+  that other slow-owner causes were not yet excluded;
+- these prove plausible classes of continuity loss, but none identifies the
+  historical CASHCATUSDT reason.
 
-Required work:
-1. query the authoritative PAPER SQLite rows for CASHCATUSDT/trade/protection/
-   obligations/commands/executions before guessing;
-2. determine the exact trigger and whether network interruption was involved;
-3. if behavior was correct fail-closed, improve durable reason observability and
-   owner-facing classification;
-4. if a false protection failure/reconcile race is proven, freeze a replay and
-   fix only that class;
-5. preserve STOP-first fail-closed safety. Do not lengthen/remove the protection
-   deadline merely to prevent emergency exits.
+Disposition:
+1. **Stop historical digging here.** Repeating SQLite-wide or filesystem log
+   searches is not expected to recover the missing reason.
+2. Do not add a speculative recurrence fix for CASHCATUSDT without a proven
+   trigger.
+3. Preserve current STOP-first/fail-closed protection semantics.
+4. OFR-1 is the forward fix: the next protection continuity emergency close
+   must persist the normalized initiating reason and deciding facts durably.
+5. If the same class recurs after OFR-1 is deployed, use that incident record
+   to freeze the exact deterministic replay and fix only the proven cause.
 
 Acceptance:
-- exact root cause established from durable evidence or next deterministic
-  reproduction;
-- recurrence either proven correct safety behavior or fixed with focused replay.
+- historical CASHCATUSDT exit path classified as
+  `REST recovery -> EMERGENCY_CLOSE`;
+- normal STOP/TAKE excluded by durable evidence;
+- exact initiating continuity-loss reason explicitly classified as unavailable
+  rather than guessed;
+- no further historical-search loop required;
+- future recurrence becomes deterministically diagnosable through OFR-1.
 
 ### OFR-3 — Robot candidate handoff failures on valid Box cards
 **Priority:** P0  
