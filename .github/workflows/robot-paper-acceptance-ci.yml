@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "robot_candidate_store.py"
+      - "robot_incident_store.py"
       - "pattern_robot_integration.py"
       - "robot_l_shape.py"
       - "l_shape_scanner.py"
@@ -33,6 +34,7 @@ on:
       - "tests/test_robot_admission.py"
       - "tests/test_robot_autopilot.py"
       - "tests/test_pattern_robot_integration.py"
+      - "tests/test_robot_incident_store.py"
       - "tests/test_robot_l_shape.py"
       - "tests/test_l_shape_scanner.py"
       - "tests/test_signal_admission.py"
@@ -110,6 +112,7 @@ jobs:
           tests/test_robot_admission.py
           tests/test_robot_autopilot.py
           tests/test_pattern_robot_integration.py
+          tests/test_robot_incident_store.py
           tests/test_robot_l_shape.py
           tests/test_l_shape_scanner.py
           tests/test_signal_admission.py
@@ -121,6 +124,7 @@ jobs:
           analyzer/core.py
           notification.py
           pattern_robot_integration.py
+          robot_incident_store.py
           robot_l_shape.py
           l_shape_scanner.py
           tools/stop_robot_runtime.py
@@ -160,6 +164,7 @@ jobs:
           tests.test_scanner_geometry_cursor
           tests.test_robot_admission
           tests.test_pattern_robot_integration
+          tests.test_robot_incident_store
           tests.test_signal_admission
           tests.test_telegram_delivery
           tests.test_l_shape_scanner.LShapeTelegramTests
