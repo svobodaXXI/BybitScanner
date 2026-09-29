@@ -327,11 +327,18 @@ def box_stop_for_actual_entry(
     frozen_stop = _decimal(plan.get("stop_price"), "frozen Box STOP")
     entry = _decimal(average_entry, "actual Box average entry")
     tick = _decimal(inputs.get("tick_size"), "Box tick size")
-    entry_fee = _decimal(inputs.get("entry_fee_rate"), "Box entry fee", allow_zero=True)
-    target_fee = _decimal(inputs.get("target_fee_rate"), "Box target fee", allow_zero=True)
-    stop_fee = _decimal(inputs.get("stop_fee_rate"), "Box STOP fee", allow_zero=True)
-    if any(rate >= 1 for rate in (entry_fee, target_fee, stop_fee)):
-        raise RobotProtectionError("Box fee rate must be below one")
+    def fee(value: object, name: str) -> Decimal:
+        try:
+            rate = value if isinstance(value, Decimal) else Decimal(str(value))
+        except Exception as exc:
+            raise RobotProtectionError(f"{name} must be decimal-compatible") from exc
+        if not rate.is_finite() or not Decimal(0) <= rate < Decimal(1):
+            raise RobotProtectionError(f"{name} must be finite in [0, 1)")
+        return rate
+
+    entry_fee = fee(inputs.get("entry_fee_rate"), "Box entry fee")
+    target_fee = fee(inputs.get("target_fee_rate"), "Box target fee")
+    stop_fee = fee(inputs.get("stop_fee_rate"), "Box STOP fee")
 
     sign = Decimal(1 if direction == DIRECTION_LONG else -1)
     if sign * (take - entry) <= 0:
