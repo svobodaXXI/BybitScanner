@@ -100,6 +100,48 @@ Acceptance:
 - representative failing class creates a valid durable Robot candidate or is
   rejected with an explicit, correct, durable reason.
 
+### OFR-3A — Robot does not self-recover after protection/reconcile incident
+**Priority:** P0  
+**Status:** OPEN / owner-observed recovery blocker
+
+Owner evidence 2026-09-29:
+- after CASHCATUSDT was closed by `EMERGENCY_CLOSE`, a later owner action was
+  rejected with:
+  `Робот: отклонено — Робот не готов к приёму новых сделок`;
+- status shown to the owner:
+  `Запущен / Нужна сверка`;
+- no evidence was seen that Robot automatically returned to READY after the
+  emergency close/reconciliation condition cleared.
+
+Interpretation:
+- this is a separate recovery-liveness problem from the original emergency-close
+  trigger;
+- do not assume an internet lag caused the emergency close or the stuck
+  reconciliation state until durable evidence proves it;
+- a safety-triggered emergency close may be correct, but normal PAPER operation
+  must not remain indefinitely blocked after the authoritative state is again
+  provably consistent.
+
+Required work:
+1. inspect durable runtime/reconciliation/protection state after the
+   CASHCATUSDT emergency close;
+2. determine exactly which invariant keeps `recovery_status` in
+   `RECONCILIATION_REQUIRED`;
+3. prove whether the canonical reconciler is expected to clear that condition
+   automatically and, if so, why it did not;
+4. if automatic recovery is intentionally unsupported for this state, define the
+   missing normal-flow transition instead of requiring ad-hoc owner repair;
+5. preserve fail-closed admission while recovery is genuinely unresolved;
+6. add deterministic replay/coverage for
+   `emergency close -> authoritative flat/consistent -> Robot READY` if that
+   transition is the intended contract.
+
+Acceptance:
+- after a correct emergency close and successful authoritative reconciliation,
+  Robot returns to READY without owner crisis-repair;
+- if recovery cannot be proven safe, Robot remains closed with one explicit
+  durable blocker/reason rather than an opaque permanent "Нужна сверка".
+
 ### OFR-4 — Box signal lifecycle: suppress already-completed setups
 **Priority:** P0/P1  
 **Status:** OPEN strategy/runtime correctness
@@ -213,6 +255,7 @@ RVL-R6 current owner PAPER acceptance
   -> OFR-1 durable diagnostics
   -> OFR-2 CASHCATUSDT emergency-close root cause/fix
   -> OFR-3 Box Robot handoff failure root cause/fix
+  -> OFR-3A Robot self-recovery after emergency/reconcile incident
   -> OFR-4 stale/completed Box suppression
   -> OFR-5 crossed-grid catch-up contract + implementation
   -> OFR-6 position-card presentation cleanup
