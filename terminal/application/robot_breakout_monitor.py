@@ -33,6 +33,7 @@ import robot_entry_limit
 import robot_l_shape
 import robot_protection
 import robot_state_machine
+from robot_failure_diagnostics import record_robot_incident
 from robot_market_confirmation import risk_reward_ratio
 from scanner_geometry_cursor import (
     ScannerGeometryCursorError,
@@ -171,12 +172,14 @@ class RobotBreakoutMonitor:
         late_market_max_book_age_ms: int = DEFAULT_LATE_MARKET_MAX_BOOK_AGE_MS,
         arm_entry_coverage: Callable[[str], bool] | None = None,
         release_entry_coverage: Callable[[str], None] | None = None,
+        incident_dir=None,
     ) -> None:
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
         # bound arm this monitor never creates a resting entry LIMIT (fail closed).
         self._arm_entry_coverage_callback = arm_entry_coverage
         self._release_entry_coverage_callback = release_entry_coverage
+        self._incident_dir = incident_dir
         self._store_factory = store_factory
         self._local = threading.local()
         self._account_id = trading_account_id
@@ -1793,6 +1796,30 @@ class RobotBreakoutMonitor:
             self._persist_execution(record, execution)
             self._escalate_duplicate_ownership(record, duplicate_owners)
             return
+
+        if self._incident_dir is not None:
+            snapshot = record.signal_snapshot if isinstance(record.signal_snapshot, Mapping) else {}
+            record_robot_incident(
+                incident_type="ROBOT_PROTECTION_EMERGENCY_CLOSE",
+                stage="initial_protection",
+                reason_code="INITIAL_PROTECTION_FAILURE",
+                symbol=record.symbol.value,
+                timeframe=snapshot.get("timeframe"),
+                pattern=snapshot.get("pattern"),
+                candidate_id=record.candidate_id,
+                error=error,
+                facts={
+                    "stop_proven": False,
+                    "take_proven": False,
+                    "market_data_authoritative": None,
+                    "intended_stop_crossed": None,
+                    "deadline_at_ms": None,
+                    "age_ms": None,
+                },
+                selected_recovery_action="EMERGENCY_CLOSE",
+                incident_dir=self._incident_dir,
+                timestamp_ms=self._now_ms(),
+            )
 
         request = robot_protection.emergency_close_request(record.candidate_id, record.symbol.value)
         execution = dict(record.robot_state.get("execution") or {})
