@@ -62,6 +62,7 @@ from terminal.application.robot_recovery import (
     RobotRecoveryCoordinator,
 )
 from robot_flat_closure import CandidateOwnership, prove_flat_closure
+from robot_failure_diagnostics import record_robot_incident
 from scanner_geometry_cursor import (
     default_scanner_geometry_cursor_provider, latest_scanner_closed_candle,
     load_scanner_catchup_closed_candles, project_latest_geometry_index,
@@ -571,6 +572,7 @@ class PaperRuntime:
         ):
             raise RuntimeError("PAPER runtime requires the authoritative paper account")
         account_id = self._paper_account_id
+        self._robot_incident_dir = Path(database_path).parent / "robot_incidents"
 
         self.store = SQLiteStore.open(database_path)
         runtime_process_identity = RuntimeProcessIdentity.capture(
@@ -1610,6 +1612,43 @@ class PaperRuntime:
         observed_ask = book.asks[0].price.value
         exit_market = (
             observed_bid if expected_side is PositionSide.LONG else observed_ask
+        )
+        intended_stop_crossed = bool(
+            protection.stop_loss is not None
+            and (
+                exit_market <= protection.stop_loss
+                if expected_side is PositionSide.LONG
+                else exit_market >= protection.stop_loss
+            )
+        )
+        candidate = self.store.get_robot_candidate(trade.candidate_id)
+        snapshot = (
+            candidate.signal_snapshot
+            if candidate is not None and isinstance(candidate.signal_snapshot, Mapping)
+            else {}
+        )
+        record_robot_incident(
+            incident_type="ROBOT_PROTECTION_EMERGENCY_CLOSE",
+            stage="protection_recovery",
+            reason_code="MARKET_DATA_CONTINUITY_LOST",
+            symbol=normalized.value,
+            timeframe=snapshot.get("timeframe"),
+            pattern=snapshot.get("pattern"),
+            candidate_id=trade.candidate_id,
+            trade_id=trade.trade_id,
+            facts={
+                "stop_proven": protection.stop_loss is not None,
+                "take_proven": protection.take_profit is not None,
+                "market_data_authoritative": False,
+                "intended_stop_crossed": intended_stop_crossed,
+                "deadline_at_ms": None,
+                "age_ms": None,
+                "source_received_at_ms": received_at_ms,
+                "source_event_at_ms": book.source_event_at_ms,
+            },
+            selected_recovery_action="EMERGENCY_CLOSE",
+            incident_dir=self._robot_incident_dir,
+            timestamp_ms=received_at_ms,
         )
         obligation, _created = self.store.latch_paper_protection_obligation(
             trade_id=trade.trade_id,
