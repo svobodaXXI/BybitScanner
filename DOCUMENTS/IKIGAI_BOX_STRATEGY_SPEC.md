@@ -23,6 +23,62 @@ Consequences:
 
 Historical WATCH references below are retained only as implementation/history context and are superseded by this owner correction for current product behavior.
 
+## Owner correction — late admission / crossed Box grid catch-up (2026-09-29)
+
+The existing four-part Box entry plan is incomplete when the owner/Robot reaches
+admission after price has already moved into or through one or more frozen entry
+levels. The owner explicitly requires **slot-preserving catch-up**, not one
+aggregate late market order and not a shifted/recalculated grid.
+
+Authoritative intent:
+
+1. The original Box plan remains frozen with four equal entry parts `P1..P4`.
+   Do not move those levels after the fact merely because current price advanced.
+2. Immediately before entry submission, read authoritative current market state
+   and determine which original grid slots have already been crossed/reached.
+3. For **each already-crossed slot**, Robot must acquire that slot's equal part
+   **by MARKET**. Example: if price has already crossed P1 and P2, acquire two
+   equal parts by market; if it has crossed P1..P3, acquire three; if the whole
+   grid has been crossed, acquire all four slot quantities by market.
+4. Any original slots not yet crossed remain normal resting entry LIMITs at
+   their frozen `P` prices.
+5. Every market-caught-up slot must retain its own slot identity/ownership. Do
+   not collapse several missed slots into one anonymous aggregate entry.
+6. For each market-caught-up slot, Robot must also place the corresponding
+   **opposite/closing LIMIT order** ("ответная лимитка на закрытие"). This is
+   part of the intended catch-up behavior, not an optional presentation detail.
+7. The trade continues to use the existing shared Robot execution, ownership,
+   protection and recovery machinery. No second Box execution engine or journal.
+8. The owner's familiar Box STOP/protection remains required for the resulting
+   actual exposure; catch-up must never create an unprotected interval. Do not
+   invent a new stop model merely because one or more entry slots were caught by
+   market.
+
+Important distinction:
+- this catch-up branch applies when those entry slots had **not yet been
+  submitted/filled as Robot-owned grid orders** and current price has already
+  crossed their frozen levels at admission/submission time;
+- it must not masquerade as a normal partial-fill lifecycle for an already
+  resting grid;
+- already submitted/filling Robot-owned grid orders continue through the normal
+  existing Box fill/top-up lifecycle.
+
+### Still unresolved before implementation
+
+The owner has **not yet frozen the exact price mapping for each corresponding
+closing LIMIT**. For example, do not assume without a separate decision that a
+caught P2 slot exits at P1, or that all caught slots exit at the shared TAKE.
+That mapping must be specified explicitly before code is written.
+
+Likewise, preserve the existing Box STOP semantics as the intended protection
+model; if market catch-up fill prices create an arithmetic conflict with the
+currently frozen planned-average/RR calculation, resolve that contract
+explicitly before implementation rather than silently repricing protection.
+
+This is a strategy-spec correction. It does not authorize LIVE trading and does
+not by itself change current PAPER runtime behavior.
+
+
 ## Completed implementation and no-repeat checkpoint (2026-09-24)
 
 - PR #215: pure PAPER first-grid planner; merged into main.
