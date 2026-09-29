@@ -963,7 +963,10 @@ class RobotBreakoutMonitor:
                 entry_position_version=proof.position_version,
                 created_at_ms=max(now_ms, proof.first_execution_at_ms),
             )
-        elif proof.entry_quantity > (trade.entry_quantity or Decimal("0")):
+        elif (
+            trade is not None
+            and proof.entry_quantity > (trade.entry_quantity or Decimal("0"))
+        ):
             if proof.average_entry is None:
                 raise RobotBreakoutMonitorError("Box top-up proof lacks average entry")
             trade, _changed = self._store().refresh_open_box_trade_terms(
