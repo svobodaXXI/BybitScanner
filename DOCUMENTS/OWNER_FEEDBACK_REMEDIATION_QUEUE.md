@@ -174,7 +174,7 @@ Acceptance:
 
 ### OFR-4A — Post-STOP reversal watch and market re-entry attempt
 **Priority:** P1  
-**Status:** OPEN strategy/lifecycle design
+**Status:** OPEN strategy/lifecycle design — core contract mostly frozen
 
 Owner requirement:
 - when an otherwise actionable signal/candidate has **not opened a position yet**
@@ -182,45 +182,83 @@ Owner requirement:
   terminalize the signal as dead;
 - transition it into a dedicated reversal-watch state and continue monitoring
   source-time price action;
-- if a valid reversal candlestick formation later appears, allow a **new
-  attempt to enter by MARKET**, subject to the normal Robot admission,
-  ownership, sizing, RR and protection gates that are authoritative at that
-  later decision time;
+- allow a new **MARKET-entry attempt only after a valid reversal confirmation
+  has fully closed**;
 - this is a continuation of the same frozen setup identity/history, not a
   symbol-specific exception and not a blind immediate re-entry.
 
-Interaction with stale/completed suppression:
-- OFR-4 remains authoritative: if the setup has already economically completed
-  by reaching its frozen TAKE, it is stale/completed and must not be revived by
-  reversal-watch;
-- post-STOP watch applies only while the underlying setup is still eligible for
-  another entry attempt under the final lifecycle contract.
+Frozen reversal-confirmation families:
+- candlestick core:
+  Bullish/Bearish Engulfing;
+  Hammer/Shooting Star;
+  Morning Star/Evening Star;
+  Piercing Line/Dark Cloud Cover;
+  Inverted Hammer/Hanging Man;
+  Harami/Harami Cross;
+  Dragonfly Doji/Gravestone Doji;
+- structural:
+  Head and Shoulders / Inverse Head and Shoulders;
+  Double Top / Double Bottom;
+  lower-timeframe Rising/Falling Wedge when it confirms reversal back toward
+  the original setup potential;
+- one additional owner-defined **5m acceleration** confirmation remains to be
+  frozen separately after the owner provides its exact definition.
 
-Design gates that must be frozen before implementation:
-- exact candlestick/structural definition of a valid reversal confirmation;
-- maximum age / expiry of the reversal-watch state;
-- whether the later MARKET attempt keeps the original target or requires a
-  newly validated target;
-- exact STOP used for the new MARKET attempt and how RR is recomputed from the
-  actual market fill;
-- whether one signal may receive only one reversal re-entry attempt or multiple
-  attempts after repeated invalidations.
+Attempt budget:
+- maximum **3 entry attempts per original signal**;
+- an attempt is consumed when a valid reversal confirmation closes and the
+  candidate reaches the MARKET-entry decision gate;
+- a confirmed attempt that is rejected by the risk gate **still consumes one
+  attempt**;
+- after attempt 3, no further re-entry attempt is permitted for that signal.
+
+Lifetime / expiry:
+- reversal-watch remains alive until the setup potential is realized, or until
+  price travels beyond **50% of the distance from F(2.618) to F(3.618)** in the
+  adverse extension direction;
+- LONG: expiry extension threshold =
+  `F2.618 + 0.5 * (F3.618 - F2.618)`;
+- SHORT: mirror the same geometric midpoint in the opposite direction;
+- OFR-4 remains authoritative: if the setup has already economically completed
+  by reaching its frozen TAKE, it is stale/completed and must not be revived.
+
+Frozen MARKET re-entry terms:
+- **target remains the original frozen target** of the source setup;
+- STOP is placed beyond the relevant reversal-confirmation extremum;
+- if that structural STOP is too far, cap it by the project percentage-distance
+  limit;
+- the exact numeric percentage cap is **not yet frozen** and must be specified
+  before implementation;
+- RR is recomputed from the actual MARKET entry to the original frozen target
+  using the resulting structural/capped STOP;
+- no MARKET order is allowed when current sizing/RR/protection gates reject the
+  attempt.
 
 Safety constraints:
 - crossing the old STOP never triggers an automatic MARKET entry by itself;
-- no entry unless the reversal confirmation and all current risk/protection
-  gates pass;
+- confirmation must be based on a **closed candle / completed structural
+  formation**, never an unfinished candle;
 - an already-open Robot trade remains governed by the existing STOP/protection
   lifecycle; this task does not silently convert a real stopped-out position
-  into an automatic re-entry loop.
+  into an automatic re-entry loop;
+- a TAKE-completed, expired, or 3-attempt-exhausted setup cannot revive.
+
+Remaining design gates before code:
+- exact numeric percentage cap for an over-distant new structural STOP;
+- exact machine-readable definitions/tolerances for each accepted reversal
+  formation;
+- exact owner definition of the additional 5m acceleration confirmation.
 
 Acceptance:
-- a deterministic case that crosses the pre-entry STOP remains observable in a
-  reversal-watch state instead of disappearing;
-- no entry occurs before the frozen reversal confirmation;
-- on valid confirmation, the market-entry attempt uses current authoritative
-  price/risk facts and shared protection;
-- completed/TAKE-reached setups and expired/invalid setups do not revive.
+- a deterministic case that crosses the pre-entry STOP remains observable in
+  reversal-watch instead of disappearing;
+- no entry occurs before a valid confirmation has closed;
+- confirmed but risk-rejected attempts increment the same 3-attempt budget;
+- a valid later MARKET attempt keeps the original target, computes STOP from the
+  reversal extremum with the percentage cap, recomputes RR from actual entry,
+  and uses shared protection;
+- midpoint expiry, TAKE completion, and attempt exhaustion all terminalize the
+  re-entry path deterministically.
 
 ### OFR-5 — Box crossed-grid late admission / catch-up execution
 **Priority:** P1  
