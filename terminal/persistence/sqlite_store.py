@@ -4764,6 +4764,72 @@ class SQLiteStore:
                 raise ConcurrentUpdate("Robot trade changed before entry attestation refresh")
         return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
 
+    def refresh_open_box_trade_terms(
+        self, trade_id: str, *, trading_account_id: TradingAccountId,
+        candidate_id: str, symbol: Symbol, average_entry: Decimal,
+        entry_quantity: Decimal, entry_position_version: int,
+        stop_price: Decimal, updated_at_ms: int,
+    ) -> tuple[RobotTradeRecord, bool]:
+        """Refresh proven Box aggregate entry and STOP without widening risk."""
+        self._assert_owner()
+        for value in (average_entry, entry_quantity, stop_price):
+            _decimal_text(value)
+        if (
+            average_entry <= 0 or entry_quantity <= 0 or stop_price <= 0
+            or type(entry_position_version) is not int or entry_position_version < 1
+            or type(updated_at_ms) is not int or updated_at_ms < 0
+        ):
+            raise ValueError("invalid Box trade refresh")
+        with self._transaction():
+            row = self._connection.execute(
+                "SELECT * FROM robot_trades WHERE trade_id=?", (trade_id,),
+            ).fetchone()
+            if row is None:
+                raise PersistenceError("Robot trade does not exist")
+            trade = _robot_trade_from_row(row)
+            candidate = self.get_robot_candidate(candidate_id)
+            if (
+                trade.exit_time_ms is not None or trade.pattern != "IKIGAI_BOX"
+                or candidate is None or candidate.status != "OPEN"
+                or trade.trading_account_id != trading_account_id
+                or trade.candidate_id != candidate_id or trade.symbol != symbol
+                or candidate.trading_account_id != trading_account_id
+                or candidate.symbol != symbol
+                or trade.entry_quantity is None or trade.entry_position_version is None
+            ):
+                raise PersistenceError("Box trade or candidate is not OPEN in the expected scope")
+            if trade.direction == "LONG" and stop_price < trade.stop_price:
+                raise ImmutableExecutionConflict("LONG Box STOP cannot widen")
+            if trade.direction == "SHORT" and stop_price > trade.stop_price:
+                raise ImmutableExecutionConflict("SHORT Box STOP cannot widen")
+            if (
+                trade.average_entry == average_entry
+                and trade.entry_quantity == entry_quantity
+                and trade.entry_position_version == entry_position_version
+                and trade.stop_price == stop_price
+            ):
+                return trade, False
+            if (
+                entry_quantity < trade.entry_quantity
+                or entry_position_version <= trade.entry_position_version
+                or updated_at_ms < trade.updated_at_ms
+            ):
+                raise ImmutableExecutionConflict("Box trade refresh conflicts or regresses")
+            cursor = self._connection.execute(
+                """UPDATE robot_trades
+                   SET average_entry=?, entry_quantity=?, entry_position_version=?,
+                       stop_price=?, updated_at_ms=?, version=version+1
+                   WHERE trade_id=? AND version=? AND exit_time_ms IS NULL""",
+                (
+                    _decimal_text(average_entry), _decimal_text(entry_quantity),
+                    entry_position_version, _decimal_text(stop_price), updated_at_ms,
+                    trade_id, trade.version,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ConcurrentUpdate("Box trade changed before refresh")
+        return self.get_robot_trade(trade_id), True  # type: ignore[return-value]
+
     def close_robot_trade(
         self, trade_id: str, *, exit_time_ms: int, exit_price: Decimal, exit_reason: str,
         realized_pnl_usdt: Decimal, realized_pnl_pct: Decimal,
