@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from robot_candidate_store import create_signal_snapshot
+import robot_incident_store
 from robot_state_machine import is_supported_pattern
 
 
@@ -99,10 +100,18 @@ def prepare_robot_handoff(
             if isinstance(signal_snapshot, Mapping)
             else ""
         )
+        robot_incident_store.try_record_robot_incident(
+            lifecycle_stage="CANDIDATE_PERSISTENCE",
+            reason_code="CANDIDATE_PERSISTENCE_EXCEPTION",
+            symbol=symbol or None,
+            timeframe=str(timeframe).strip() or None,
+            pattern=pattern or None,
+            error=error,
+        )
         print(
             "[ROBOT CANDIDATE ERROR] "
             f"symbol={symbol or 'UNKNOWN'} pattern={pattern or 'UNKNOWN'} "
-            f"error={error}"
+            f"error_class={type(error).__name__}"
         )
         return RobotHandoffResult(
             executable=True,
@@ -111,9 +120,26 @@ def prepare_robot_handoff(
 
     candidate_id = str(candidate.get("candidate_id", "")).strip()
     if not candidate_id:
+        symbol = (
+            str(signal_snapshot.get("symbol", "")).strip()
+            if isinstance(signal_snapshot, Mapping)
+            else ""
+        )
+        pattern = (
+            str(signal_snapshot.get("pattern", "")).strip()
+            if isinstance(signal_snapshot, Mapping)
+            else ""
+        )
+        robot_incident_store.try_record_robot_incident(
+            lifecycle_stage="CANDIDATE_PERSISTENCE",
+            reason_code="CANDIDATE_ID_MISSING",
+            symbol=symbol or None,
+            timeframe=str(timeframe).strip() or None,
+            pattern=pattern or None,
+        )
         print(
             "[ROBOT CANDIDATE ERROR] "
-            "persisted candidate has no candidate_id"
+            "reason_code=CANDIDATE_ID_MISSING"
         )
         return RobotHandoffResult(
             executable=True,
