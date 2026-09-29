@@ -30,7 +30,7 @@ The owner explicitly moved today's real feedback/blockers ahead of Geometry
 implementation.
 
 Current order:
-`RVL-R6 evidence -> OFR-1..OFR-7 -> OFR-7A -> Geometry resumes at G2`.
+`RVL-R6 evidence -> OFR-1..OFR-4 -> OFR-4A -> OFR-5..OFR-7 -> OFR-7A -> Geometry resumes at G2`.
 
 Canonical queue:
 `DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
@@ -47,6 +47,7 @@ Key findings preserved:
 - card caption must show `Объем: qty (USDT notional)`;
 - position card needs Open TradingView plus back-to-positions.
 - candidate monitoring card needs its candidate chart plus `Открыть в Trading View`, while preserving `⬅️ К кандидатам`.
+- pre-entry signals that move beyond planned STOP must remain observable in a post-STOP reversal-watch state; a later MARKET entry attempt is allowed only after a frozen reversal-candle confirmation and revalidated risk/protection gates; TAKE-completed setups never revive.
 
 No Geometry production work should pre-empt these slices.
 
