@@ -62,6 +62,7 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
     owners = {row["order_id"]: row for row in ownership}
     entry = exit_qty = remaining = Decimal(0)
     entry_notional = exit_notional = Decimal(0)
+    lifecycle_realized = lifecycle_fees = Decimal(0)
     average = None
     by_slot = [Decimal(0)] * 4
     exit_by_slot = [Decimal(0)] * 4
@@ -77,6 +78,7 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
             raise BoxOwnershipError("execution chronology is ambiguous")
         last_time = fill.exchange_timestamp_ms
         qty = fill.quantity.value
+        lifecycle_fees += fill.fee
         if owner["role"] == "ENTRY":
             if fill.side is not entry_side:
                 raise BoxOwnershipError("owned entry direction mismatch")
@@ -95,6 +97,13 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
                 exit_by_slot[exit_slot - 1] += qty
                 if exit_by_slot[exit_slot - 1] > by_slot[exit_slot - 1]:
                     raise BoxOwnershipError("owned slice exit exceeds its filled entry slot")
+            if average is None:
+                raise BoxOwnershipError("owned exit lacks an entry cost basis")
+            lifecycle_realized += (
+                qty * (fill.price.value - average)
+                if entry_side is OrderSide.BUY
+                else qty * (average - fill.price.value)
+            )
             exit_notional += fill.price.value * qty
             exit_qty += qty
             remaining -= qty
@@ -115,8 +124,8 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
         remaining,
         average,
         average_exit,
-        position.realized_pnl,
-        position.accumulated_fee,
+        lifecycle_realized,
+        lifecycle_fees,
         tuple(by_slot),
         tuple(exit_by_slot),
         position.version,
