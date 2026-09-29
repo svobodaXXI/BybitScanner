@@ -172,6 +172,56 @@ Acceptance:
   frozen TAKE was already achievable;
 - valid still-actionable Box cases remain deliverable.
 
+### OFR-4A — Post-STOP reversal watch and market re-entry attempt
+**Priority:** P1  
+**Status:** OPEN strategy/lifecycle design
+
+Owner requirement:
+- when an otherwise actionable signal/candidate has **not opened a position yet**
+  and price moves beyond its currently planned STOP level, do not automatically
+  terminalize the signal as dead;
+- transition it into a dedicated reversal-watch state and continue monitoring
+  source-time price action;
+- if a valid reversal candlestick formation later appears, allow a **new
+  attempt to enter by MARKET**, subject to the normal Robot admission,
+  ownership, sizing, RR and protection gates that are authoritative at that
+  later decision time;
+- this is a continuation of the same frozen setup identity/history, not a
+  symbol-specific exception and not a blind immediate re-entry.
+
+Interaction with stale/completed suppression:
+- OFR-4 remains authoritative: if the setup has already economically completed
+  by reaching its frozen TAKE, it is stale/completed and must not be revived by
+  reversal-watch;
+- post-STOP watch applies only while the underlying setup is still eligible for
+  another entry attempt under the final lifecycle contract.
+
+Design gates that must be frozen before implementation:
+- exact candlestick/structural definition of a valid reversal confirmation;
+- maximum age / expiry of the reversal-watch state;
+- whether the later MARKET attempt keeps the original target or requires a
+  newly validated target;
+- exact STOP used for the new MARKET attempt and how RR is recomputed from the
+  actual market fill;
+- whether one signal may receive only one reversal re-entry attempt or multiple
+  attempts after repeated invalidations.
+
+Safety constraints:
+- crossing the old STOP never triggers an automatic MARKET entry by itself;
+- no entry unless the reversal confirmation and all current risk/protection
+  gates pass;
+- an already-open Robot trade remains governed by the existing STOP/protection
+  lifecycle; this task does not silently convert a real stopped-out position
+  into an automatic re-entry loop.
+
+Acceptance:
+- a deterministic case that crosses the pre-entry STOP remains observable in a
+  reversal-watch state instead of disappearing;
+- no entry occurs before the frozen reversal confirmation;
+- on valid confirmation, the market-entry attempt uses current authoritative
+  price/risk facts and shared protection;
+- completed/TAKE-reached setups and expired/invalid setups do not revive.
+
 ### OFR-5 — Box crossed-grid late admission / catch-up execution
 **Priority:** P1  
 **Status:** OPEN / one strategy detail unresolved
@@ -279,6 +329,7 @@ RVL-R6 current owner PAPER acceptance
   -> OFR-3 Box Robot handoff failure root cause/fix
   -> OFR-3A Robot self-recovery after emergency/reconcile incident
   -> OFR-4 stale/completed Box suppression
+  -> OFR-4A post-STOP reversal watch / MARKET re-entry attempt
   -> OFR-5 crossed-grid catch-up contract + implementation
   -> OFR-6 position-card presentation cleanup
   -> OFR-7 TradingView button on position cards
