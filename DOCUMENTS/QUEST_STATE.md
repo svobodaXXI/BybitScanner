@@ -1,3 +1,19 @@
+## ✅ OFR-2 HISTORICAL INVESTIGATION CLOSED — 2026-09-29
+
+CASHCATUSDT durable evidence proves:
+- protection was created normally;
+- ordinary STOP/TAKE did not trigger the exit;
+- the exit was latched from `CASHCATUSDT:rest-recovery:...` and resolved as
+  `EMERGENCY_CLOSE`;
+- the database stores the recovery result, but not the initiating
+  continuity-loss reason;
+- targeted repository-local log search found no surviving reason evidence.
+
+Therefore the exact historical initiating cause is unrecoverable and must not
+be guessed. No more historical SQLite/log search is required for OFR-2.
+OFR-1 is the forward observability fix; a future recurrence must persist the
+normalized reason and deciding facts before any cause-specific patch is made.
+
 ## 🔁 NEW BLOCKER — ROBOT DOES NOT SELF-RECOVER — 2026-09-29
 
 After CASHCATUSDT was closed by `EMERGENCY_CLOSE`, the next owner interaction
@@ -38,8 +54,12 @@ Canonical queue:
 Key findings preserved:
 - Box Robot candidate creation failures: B2/BANK/BNB/BNC;
 - exact causes currently disappear with Scanner stdout;
-- CASHCATUSDT closed via emergency protection path before ordinary STOP;
-  top-level logs do not explain why, so network lag is unproven;
+- CASHCATUSDT OFR-2 historical investigation is complete: durable evidence
+  proves REST recovery -> EMERGENCY_CLOSE and excludes ordinary STOP/TAKE;
+  the initiating continuity-loss reason was not persisted and no surviving
+  repository-local logs contain it, so the exact historical cause is
+  unrecoverable and internet lag must not be asserted; future recurrence is
+  to be classified from OFR-1 durable incident diagnostics;
 - 1INCHUSDT Box was already economically completed because frozen TAKE was
   reached before delivery; literal F(1.0) touch is not required;
 - crossed Box grid needs per-slot MARKET catch-up + paired closing LIMITs;
