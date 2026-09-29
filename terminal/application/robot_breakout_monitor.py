@@ -711,6 +711,8 @@ class RobotBreakoutMonitor:
         self,
         record: RobotCandidateRecord,
         execution: Mapping[str, object],
+        *,
+        create_trade: bool = True,
     ) -> bool:
         source = self._box_source(record, execution)
         try:
@@ -735,7 +737,19 @@ class RobotBreakoutMonitor:
         trade = self._store().get_open_robot_trade_for_symbol(
             self._account_id, record.symbol,
         )
-        existing_stop = trade.stop_price if trade is not None else None
+        position_key = PositionKey(
+            self._account_id, Category.LINEAR, record.symbol, 0,
+        )
+        projection = self._store().get_protection_projection(position_key)
+        existing_stop = (
+            trade.stop_price
+            if trade is not None
+            else projection.stop_loss
+            if projection is not None
+            else None
+        )
+        if proof.average_entry is None:
+            raise RobotBreakoutMonitorError("Box open exposure lacks average entry")
         try:
             plan = robot_protection.build_box_stop_only_plan(
                 self._candidate_payload(record),
@@ -744,10 +758,6 @@ class RobotBreakoutMonitor:
                 confirmed_position_quantity=proof.remaining_quantity,
                 existing_stop=existing_stop,
             )
-            position_key = PositionKey(
-                self._account_id, Category.LINEAR, record.symbol, 0,
-            )
-            projection = self._store().get_protection_projection(position_key)
             current_stop = projection.stop_loss if projection is not None else None
             if current_stop is None:
                 stop_result = robot_protection.submit_box_stop_only(
@@ -802,7 +812,7 @@ class RobotBreakoutMonitor:
             else "MIXED"
         )
         now_ms = self._now_ms()
-        if trade is None:
+        if trade is None and create_trade:
             if proof.average_entry is None or proof.first_execution_at_ms is None:
                 raise RobotBreakoutMonitorError("Box entry proof lacks entry economics")
             trade, _created = self._store().create_robot_trade(
