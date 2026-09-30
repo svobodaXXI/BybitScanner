@@ -156,7 +156,7 @@ Acceptance:
 
 ### OFR-3A — Robot does not self-recover after protection/reconcile incident
 **Priority:** P0  
-**Status:** OPEN / owner-observed recovery blocker
+**Status:** IMPLEMENTED / OWNER REAL-RUNTIME REACCEPTANCE PENDING
 
 Owner evidence 2026-09-29:
 - after CASHCATUSDT was closed by `EMERGENCY_CLOSE`, a later owner action was
@@ -166,6 +166,19 @@ Owner evidence 2026-09-29:
   `Запущен / Нужна сверка`;
 - no evidence was seen that Robot automatically returned to READY after the
   emergency close/reconciliation condition cleared.
+
+Repository reconciliation 2026-09-30:
+- production commit `8a66daaf15ad2563ac85480d8357a4238977d8a1` already implemented
+  evidence-based self-recovery after a transient protection continuity close;
+- `recover_robot_protection_continuity_loss(...)` records the prior Robot state,
+  performs the emergency-close/recovery path, runs canonical `robot_reconcile()`,
+  preserves an intentional PAUSE, and resumes to `READY` only when the prior
+  state was `READY` and reconciliation succeeds;
+- a pre-existing unrelated `RECONCILIATION_REQUIRED` fence is deliberately not
+  auto-cleared;
+- focused deterministic PAPER coverage now explicitly asserts
+  `EMERGENCY_CLOSE -> authoritative reconciliation -> ROBOT_RUNNING/READY` and
+  `robot_admission_ready() == True`.
 
 Interpretation:
 - this is a separate recovery-liveness problem from the original emergency-close
