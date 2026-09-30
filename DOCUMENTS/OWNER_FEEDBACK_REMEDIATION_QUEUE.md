@@ -150,6 +150,20 @@ Owner example:
 - `1INCHUSDT 5m` Ikigai Box arrived after price had already travelled far
   enough that the approved Box strategy would have realized the common TAKE.
 
+Additional owner-frozen visual case — 2026-09-30:
+- `SOMIUSDT 5m` LONG Ikigai Box, owner screenshot captioned approximately
+  `+1.18%`;
+- the displayed 5m Box had already completed its actionable move upward: price
+  had progressed beyond the common frozen TAKE area and continued into the
+  upper extension of the old formation;
+- the owner then observed a **new, separate 1m Ikigai Box** forming on the same
+  symbol;
+- therefore lifecycle ownership must be timeframe/setup-specific: the completed
+  5m Box becomes stale for fresh delivery/admission, while the later 1m Box is
+  evaluated independently from its own frozen anchors/plan;
+- this case is retained as a future regression/evidence example for OFR-4 and
+  must not be collapsed into dedup suppression of the new 1m setup.
+
 Important strategy fact:
 - Box TAKE is not F(1.0) itself;
 - the approved common TAKE is 90% of the path from F(1.618) toward F(1.0);
