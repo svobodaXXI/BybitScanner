@@ -512,6 +512,54 @@ def build_box_market_ownership_specs(
     )
 
 
+BOX_TERMINAL_RULE = "P1_P3_FILLED_THEN_COMMON_TAKE"
+
+
+def box_take_completed(proof) -> bool:
+    """True when owned exposure went FLAT solely through slot EXIT LIMITs.
+
+    Slot EXIT orders are priced at the frozen common TAKE. Any slot-0 exit
+    (STOP obligation, emergency close, manual close) is not a TAKE completion.
+    """
+    exit_by_slot = getattr(proof, "exit_by_slot", None)
+    if not isinstance(exit_by_slot, tuple) or len(exit_by_slot) != 4:
+        raise ValueError("Box ownership proof lacks per-slot exit quantities")
+    return (
+        proof.entry_quantity > 0
+        and proof.remaining_quantity == 0
+        and proof.exit_quantity == proof.entry_quantity
+        and sum(exit_by_slot, Decimal(0)) == proof.exit_quantity
+    )
+
+
+def box_fully_worked_terminal(
+    candidate: RobotCandidateRecord,
+    proof,
+) -> dict[str, object] | None:
+    """OFR-5 terminal evidence: P1..P3 each fully filled, then common TAKE.
+
+    Uses the historical owned ENTRY quantities per slot from the immutable
+    execution journal (entry_by_slot never decreases on exits), not the current
+    remaining position. Returns None when the rule does not apply.
+    """
+    _direction, _prices, quantities, _take = _frozen_terms(candidate)
+    entry_by_slot = getattr(proof, "entry_by_slot", None)
+    if not isinstance(entry_by_slot, tuple) or len(entry_by_slot) != 4:
+        raise ValueError("Box ownership proof lacks per-slot entry quantities")
+    if not box_take_completed(proof):
+        return None
+    if any(entry_by_slot[index] != quantities[index] for index in range(3)):
+        return None
+    return {
+        "rule": BOX_TERMINAL_RULE,
+        "filled_entry_slots": [
+            index + 1 for index in range(4) if entry_by_slot[index] == quantities[index]
+        ],
+        "take_completed_at_ms": proof.last_execution_at_ms,
+        "execution_ids": list(proof.execution_ids),
+    }
+
+
 def ready_box_exit_slots(
     candidate: RobotCandidateRecord,
     proof,

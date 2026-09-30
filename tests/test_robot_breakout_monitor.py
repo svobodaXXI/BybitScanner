@@ -18,7 +18,12 @@ from terminal.api.models import (
     ClientActionId, CommandResult, CommandResultStatus, PaperLimitCancelRequest,
     PaperLimitMutationResult, PaperStopMutationResult,
 )
-from terminal.application.ikigai_box_catchup import translate_box_catchup_stop
+from terminal.application.ikigai_box_catchup import (
+    BOX_TERMINAL_RULE, translate_box_catchup_stop,
+)
+from terminal.application.robot_admission import (
+    _admit_box_plan_candidate, box_plan_admission_handle,
+)
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 from terminal.domain.models import (
     Category,
@@ -832,6 +837,234 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
         self.assertEqual(runtime.recovery_status, "RECONCILIATION_REQUIRED")
         self.assertTrue(runtime.reason.startswith("ROBOT_BOX_EMERGENCY_CLOSE_PENDING"))
+
+    # ---- OFR-5 Slice C: P1..P3 + common TAKE terminal lifecycle ----------
+
+    def _fill_box_entry(self, order_ids, slot, price):
+        self.executor.fill_resting_limit(
+            order_ids[slot - 1], SYMBOL, OrderSide.BUY, Decimal("2"), Decimal(price),
+        )
+
+    def _fill_box_exit(self, source, slot, price="99.2", quantity="2"):
+        owner = next(
+            item for item in self.store.load_box_order_ownership(source.candidate_id)
+            if item.role == "EXIT" and item.slot == slot
+        )
+        key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        current = self.store.get_position_projection(key)
+        quantity, price = Decimal(quantity), Decimal(price)
+        remaining = current.quantity.value - quantity
+        self.executor._exec_counter += 1
+        execution = Execution(
+            ExecutionDedupKey(
+                ACCOUNT_ID, Category.LINEAR,
+                ExecutionId(f"box-exit-{slot}-{self.executor._exec_counter}"),
+            ),
+            owner.order_id, Symbol(SYMBOL), OrderSide.SELL,
+            Price(price), Quantity(quantity), Decimal("0"), self.clock(),
+        )
+        projection = PositionProjectionUpdate(
+            key,
+            PositionSide.LONG if remaining else PositionSide.FLAT,
+            Quantity(remaining),
+            current.average_entry if remaining else None,
+            current.realized_pnl + quantity * (price - current.average_entry.value),
+            Decimal("0"),
+            Notional(remaining * current.average_entry.value if remaining else Decimal("0")),
+            "synced",
+            current.version,
+            self.clock(),
+        )
+        self.store.apply_paper_limit_execution_once(
+            owner.order_id, execution, projection, updated_at_ms=self.clock(),
+        )
+
+    def _box_grid_after_entries(self, fills):
+        source, candidate = self._open_box_candidate(box_snapshot(), book_price="95")
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))  # 0 MARKET
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))  # own 4 LIMIT
+        order_ids = self.store.get_robot_candidate(
+            candidate.candidate_id
+        ).robot_state["execution"]["limit_order_ids"]
+        for slot, price in fills:
+            self._fill_box_entry(order_ids, slot, price)
+            self.assertEqual(
+                self.monitor.process_authoritative_fill(SYMBOL), (candidate.candidate_id,),
+            )
+        return source, candidate, order_ids
+
+    def _p1_p3_filled(self):
+        return self._box_grid_after_entries(((1, "94"), (2, "93.2"), (3, "92.4")))
+
+    def _execution(self, candidate):
+        return self.store.get_robot_candidate(candidate.candidate_id).robot_state["execution"]
+
+    def test_box_p1_p3_then_common_take_terminalizes_cancels_p4_and_survives_restart(self):
+        source, candidate, order_ids = self._p1_p3_filled()
+        self.assertEqual(self._box_stop(), Decimal("90.0"))  # owned VWAP 93.2 - 3.2
+        for slot in (1, 2, 3):
+            self._fill_box_exit(source, slot)
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), (candidate.candidate_id,))
+
+        trade = self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}")
+        self.assertEqual(trade.exit_reason, "TAKE")
+        self.assertEqual(trade.exit_price, Decimal("99.2"))
+        closed = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(closed.status, "CLOSED")
+        terminal = closed.robot_state["execution"]["box_setup_terminal"]
+        self.assertEqual(terminal["rule"], BOX_TERMINAL_RULE)
+        self.assertEqual(terminal["filled_entry_slots"], [1, 2, 3])
+        self.assertEqual(self.store.get_paper_limit(order_ids[3], ACCOUNT_ID).status, "cancelled")
+        self.assertEqual(self.store.load_active_paper_limits(ACCOUNT_ID, Symbol(SYMBOL)), ())
+
+        # Restart: nothing is resurrected and the same setup is not re-admitted.
+        self.monitor.close()
+        self.monitor = RobotBreakoutMonitor(
+            lambda: SQLiteStore.open(self.db_path),
+            ACCOUNT_ID,
+            get_closed_candle=self.feed,
+            action_executor=self.executor,
+            tick_size_provider=lambda symbol: Decimal("0.1"),
+            clock_ms=self.clock,
+            arm_entry_coverage=self._arm_entry_coverage,
+            release_entry_coverage=self.released_entry_coverage.append,
+            incident_dir=self.incident_dir,
+        )
+        self.monitor._get_market_book = lambda symbol: _ready_book("95")
+        self.assertEqual(self.monitor.tick(), ())
+        self.assertEqual(self.store.load_active_paper_limits(ACCOUNT_ID, Symbol(SYMBOL)), ())
+        again, created = self.store.handoff_box_plan_to_robot(
+            source.candidate_id, symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=9_000,
+        )
+        self.assertFalse(created)
+        self.assertEqual((again.candidate_id, again.status), (candidate.candidate_id, "CLOSED"))
+        admitted, created = _admit_box_plan_candidate(
+            box_plan_admission_handle(source.candidate_id),
+            database_path=self.db_path, clock_ms=lambda: 9_001,
+        )
+        self.assertFalse(created)
+        self.assertEqual((admitted.candidate_id, admitted.status), (candidate.candidate_id, "CLOSED"))
+
+        # Repeating terminal reconciliation creates no new cancel or state write.
+        p4_before = self.store.get_paper_limit(order_ids[3], ACCOUNT_ID)
+        revision_before = self.store.get_robot_candidate(candidate.candidate_id).state_revision
+        self.assertFalse(self.monitor._finalize_box_take_if_flat(
+            self.store.get_robot_candidate(candidate.candidate_id),
+            source,
+            self.store.prove_box_owned_position(source.candidate_id),
+        ))
+        self.assertEqual(self.store.get_paper_limit(order_ids[3], ACCOUNT_ID), p4_before)
+        self.assertEqual(
+            self.store.get_robot_candidate(candidate.candidate_id).state_revision,
+            revision_before,
+        )
+
+    def test_box_p1_p2_take_does_not_apply_p1_p3_terminal_rule(self):
+        source, candidate, order_ids = self._box_grid_after_entries(((1, "94"), (2, "93.2")))
+        for slot in (1, 2):
+            self._fill_box_exit(source, slot)
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), (candidate.candidate_id,))
+        # The pre-existing first-attempt TAKE closure still ends this attempt,
+        # but it is not recorded as the OFR-5 fully-worked terminal rule.
+        trade = self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}")
+        self.assertEqual(trade.exit_reason, "TAKE")
+        self.assertNotIn("box_setup_terminal", self._execution(candidate))
+
+    def test_box_p1_p3_terminal_uses_historical_fills_after_earlier_slot_exit(self):
+        source, candidate, order_ids = self._box_grid_after_entries(((1, "94"), (2, "93.2")))
+        self._fill_box_exit(source, 1)  # P1 lot exits before P3 ever fills
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), (candidate.candidate_id,))
+        self._fill_box_entry(order_ids, 3, "92.4")
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), (candidate.candidate_id,))
+        for slot in (2, 3):
+            self._fill_box_exit(source, slot)
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), (candidate.candidate_id,))
+
+        terminal = self._execution(candidate)["box_setup_terminal"]
+        self.assertEqual(terminal["filled_entry_slots"], [1, 2, 3])
+        self.assertEqual(self.store.get_paper_limit(order_ids[3], ACCOUNT_ID).status, "cancelled")
+
+    def test_box_stop_close_after_p1_p3_is_not_take_terminalization(self):
+        source, candidate, _order_ids = self._p1_p3_filled()
+        stop_order = OrderId("box-stop-close")
+        self.store.reserve_box_order_identity(
+            source.candidate_id, order_id=stop_order, role="EXIT", slot=0,
+        )
+        key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        current = self.store.get_position_projection(key)
+        self.store.apply_execution_once(
+            Execution(
+                ExecutionDedupKey(ACCOUNT_ID, Category.LINEAR, ExecutionId("box-stop-exec")),
+                stop_order, Symbol(SYMBOL), OrderSide.SELL,
+                Price(Decimal("90.0")), Quantity(Decimal("6")), Decimal("0"), self.clock(),
+            ),
+            PositionProjectionUpdate(
+                key, PositionSide.FLAT, Quantity(Decimal("0")), None,
+                Decimal("-19.2"), Decimal("0"), Notional(Decimal("0")),
+                "synced", current.version, self.clock(),
+            ),
+        )
+        self.monitor.process_authoritative_fill(SYMBOL)
+
+        trade = self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}")
+        self.assertIsNone(trade.exit_time_ms)  # left to the STOP finalizer
+        self.assertIsNone(trade.exit_reason)
+        self.assertNotIn("box_setup_terminal", self._execution(candidate))
+
+    def test_distinct_later_box_on_same_symbol_remains_eligible_after_terminal(self):
+        source, candidate, _order_ids = self._p1_p3_filled()
+        for slot in (1, 2, 3):
+            self._fill_box_exit(source, slot)
+        self.monitor.process_authoritative_fill(SYMBOL)
+        self.assertEqual(self.store.get_robot_candidate(candidate.candidate_id).status, "CLOSED")
+
+        later = box_snapshot()
+        later["identity"]["symbol"] = SYMBOL
+        later["identity"]["a_time_ms"] = 1500
+        later["identity"]["b_time_ms"] = 2500
+        later_source, _ = self.store.save_box_plan_only(snapshot=later, created_at_ms=9_000)
+        self.assertNotEqual(later_source.candidate_id, source.candidate_id)
+        later_candidate, created = self.store.handoff_box_plan_to_robot(
+            later_source.candidate_id, symbol=later_source.symbol,
+            expected_snapshot_sha256=later_source.snapshot_sha256, approved_at_ms=9_001,
+        )
+        self.assertTrue(created)
+        self.clock.value = 9_100
+        self.assertEqual(self.monitor.tick(), (later_candidate.candidate_id,))
+        self.assertIn(
+            "box_catchup",
+            self.store.get_robot_candidate(later_candidate.candidate_id).robot_state["execution"],
+        )
+
+    def test_restart_reconcile_cancels_p4_and_records_terminal_after_unfinalized_take(self):
+        from tests.runtime_replay import _make_runtime
+
+        source, candidate, order_ids = self._p1_p3_filled()
+        for slot in (1, 2, 3):
+            self._fill_box_exit(source, slot)  # crash: monitor never finalized
+        state = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.store.update_robot_runtime_state(
+            ACCOUNT_ID, mode="ROBOT_RUNNING", recovery_status="RECONCILIATION_REQUIRED",
+            reason="restart after unfinalized Box TAKE",
+            expected_version=state.version, updated_at_ms=self.clock(),
+        )
+        runtime = _make_runtime(self.db_path)
+        try:
+            response = runtime.robot_reconcile()
+        finally:
+            runtime.close()
+
+        self.assertTrue(response.success, response)
+        trade = self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}")
+        self.assertEqual(trade.exit_reason, "TAKE")
+        self.assertEqual(self.store.get_paper_limit(order_ids[3], ACCOUNT_ID).status, "cancelled")
+        closed = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(closed.status, "CLOSED")
+        self.assertEqual(
+            closed.robot_state["execution"]["box_setup_terminal"]["filled_entry_slots"],
+            [1, 2, 3],
+        )
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
