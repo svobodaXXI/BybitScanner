@@ -1,3 +1,9 @@
+## 2026-09-30 owner proposals preservation checkpoint
+
+The owner's current proposal set is now explicitly cross-linked in `DOCUMENTS/BACKLOG.md` under `OWNER PROPOSALS CHECKPOINT — 2026-09-30`. It preserves GEO-U1 pivot-consensus geometry, GEO-U2 Broadening/«Рупор», full 5m→1m multi-signal traversal, cross-pattern coexistence, simultaneous 1.618+2.618 Box grids, stale/completed Box lifecycle with SOMIUSDT evidence, and the STORJUSDT 5m-parent→1m-child confirmed re-entry/position-card relation.
+
+Do not collapse these into one feature: Scanner discovery, geometry classification, passive dual-grid execution, and confirmation-based child re-entry have distinct contracts and acceptance gates.
+
 ## 2026-09-29 owner-prioritized remediation queue
 
 Implementation order is now canonical in:
