@@ -160,6 +160,22 @@ class EnvelopePairConsensusTests(unittest.TestCase):
             ("BOUNDARY_ORDER_INVALID_AT_EPISODE_START",
              "BOUNDARY_ORDER_INVALID_AT_EPISODE_END"),
         )
+        self.assertIsNone(inverted.width_change_ratio)
+        self.assertIsNone(inverted.compression_ratio)
+
+    def test_mid_channel_move_is_not_a_traversal(self):
+        # Price hugs the upper line; a 3-point dip near 35 never reaches the
+        # lower band, so the labelled lower clusters prove no two-sided use.
+        frame = _candles((("upper", 20), ("upper", 50), ("upper", 80)))
+        frame.loc[30:40, ["open", "high", "low", "close"]] -= 3.0
+        pair = _build(
+            frame,
+            (_boundary("upper", ((20,), (50,), (80,))),),
+            (_boundary("lower", ((35,), (65,))),),
+        )[0]
+        self.assertEqual(pair.cross_boundary_traversal_count, 0)
+        self.assertEqual(pair.opposite_boundary_reach_fraction, 0.0)
+        self.assertIsNone(pair.first_two_sided_interaction)
 
     def test_compression_and_expansion_width_metrics_have_no_family_label(self):
         events = (("upper", 20), ("lower", 35), ("upper", 50), ("lower", 65))

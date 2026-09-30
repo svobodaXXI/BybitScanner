@@ -130,11 +130,25 @@ def _segment_evidence(
     frame, atr, upper, lower, source, destination, *,
     touch_band_atr, minimum_swing_width_fraction, minimum_swing_atr,
 ):
-    source_side, source_index, _ = source
+    source_side, source_index, source_cluster = source
     destination_side, destination_index, _ = destination
     if destination_index <= source_index:
         return False, False
 
+    def in_zone(side, index):
+        width = _signed_width(upper, lower, index)
+        atr_value = atr[index]
+        if width <= 0 or atr_value is None:
+            return False
+        value = _line_value(upper if side == "upper" else lower, index)
+        if side == "upper":
+            return float(frame.high.iloc[index]) >= value - touch_band_atr * atr_value
+        return float(frame.low.iloc[index]) <= value + touch_band_atr * atr_value
+
+    # A traversal needs a real start zone too: the source cluster must touch
+    # its own boundary band before the destination, not merely be labelled so.
+    source_in_zone = any(in_zone(source_side, index) for index in source_cluster
+                         if index < destination_index)
     departed = False
     reached_opposite = False
     for index in range(source_index, destination_index + 1):
@@ -156,19 +170,8 @@ def _segment_evidence(
             departed = True
 
         if destination_side != source_side:
-            destination_value = _line_value(
-                upper if destination_side == "upper" else lower, index
-            )
-            if destination_side == "upper":
-                reached = float(frame.high.iloc[index]) >= (
-                    destination_value - touch_band_atr * atr_value
-                )
-            else:
-                reached = float(frame.low.iloc[index]) <= (
-                    destination_value + touch_band_atr * atr_value
-                )
-            reached_opposite = reached_opposite or reached
-    return departed, reached_opposite
+            reached_opposite = reached_opposite or in_zone(destination_side, index)
+    return departed, source_in_zone and reached_opposite
 
 
 def _build_pair(
@@ -266,10 +269,12 @@ def _build_pair(
         common_episode_end=episode_end_index,
         width_at_start=start_width,
         width_at_end=end_width,
+        # A non-positive start width has no meaningful ratio (its sign would
+        # report widening as compression); the order reason carries it.
         width_change_ratio=(end_width - start_width) / start_width
-        if start_width != 0 else None,
+        if start_width > 0 else None,
         compression_ratio=end_width / start_width
-        if start_width != 0 else None,
+        if start_width > 0 else None,
         pair_valid=pair_valid,
         pair_invalid_reasons=tuple(reasons),
         boundaries_cross_inside_episode=crossing,
