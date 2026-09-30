@@ -398,6 +398,8 @@ defect-class fixes → G5 invariants → G6 один полный owner Scanner 
 
 Новая очередь владельца после текущего G6: **GEO-U1 — Universal Pivot-Consensus Envelope Geometry**. Общая геометрия клина/треугольника/поджатия должна строить границы по детерминированному consensus множества пивотов, различать distinct touch clusters, учитывать реальные переходы между обеими границами и terminal compression. Дизайн: `DOCUMENTS/UNIVERSAL_PIVOT_CONSENSUS_GEOMETRY_DESIGN.md`. Текущий G6 ради этого не прерывать.
 
+Следом: **GEO-U2 — «Рупор» / Broadening Formation**. ENAUSDT 1m — visual reference: текущий Scanner выбрал ложную сжимающуюся геометрию из-за плохих anchors, тогда как owner-разметка показывает расходящиеся границы. GEO-U2 зависит от GEO-U1 и добавит Broadening Formation как отдельное Scanner-семейство с обычной Telegram-доставкой; Robot/торговая стратегия пока не авторизованы. План: `DOCUMENTS/BROADENING_FORMATION_SCANNER_PLAN.md`.
+
 ### 🧰 После боссов
 
 RVL-V1 compact validation report; RVL-V2 bounded capture только при доказанной
