@@ -116,6 +116,8 @@ Owner feedback from APRUSDT 5m during the 2026-09-30 G6 run: a sharp second
 impulse can traverse the 1.618 area and continue toward 2.618 too quickly for a
 strictly sequential "STOP first grid, then create second grid" workflow.
 
+Primary visual reference clarified by the owner: `APPSTOCKUSDT 5m` from the same G6 run shows this fast-through behavior more clearly and is the preferred chart example for the dual-grid requirement.
+
 Required strategy outcome:
 - place/arm both frozen Box grids up front, at F(1.618) and F(2.618);
 - allow the first grid to stop normally while the already-resting second grid
