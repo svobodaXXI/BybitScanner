@@ -171,6 +171,27 @@ Partial-fill RR rule — owner-frozen 2026-09-30:
   after an executed fill;
 - TAKE remains frozen and the STOP offset remains unchanged.
 
+Tick-rounding semantics — owner-frozen 2026-09-30:
+
+- validate the applicable RR floor against the **raw translated STOP** derived
+  from actual filled-owned VWAP and the frozen stop offset;
+- then normalize that STOP outward to the instrument tick for the executable
+  protective order;
+- the outward normalization may worsen executable RR by less than one tick and
+  may therefore leave the normalized RR microscopically below the continuous
+  floor; this rounding artifact alone must not trigger fail-closed behavior;
+- this is not a general RR tolerance and must not permit any extra widening
+  beyond the single mandatory outward tick-normalization step;
+- structural P4 / positive-price / TAKE-side checks continue to apply to the
+  executable normalized STOP.
+
+Terminal fill semantics — owner-frozen 2026-09-30:
+
+- `P1..P3 filled` means each of slots P1, P2 and P3 reached its full frozen
+  slot quantity in durable owned ENTRY executions;
+- a partial fill of one of those slots does not satisfy the fully-worked
+  terminal rule.
+
 Safety invariants remain:
 - the translated STOP must remain structurally beyond the relevant far entry
   side and satisfy the applicable RR floor/protection contract after tick

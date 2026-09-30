@@ -328,6 +328,12 @@ Owner-frozen STOP rule — 2026-09-30:
 - partial filled exposure uses the plan's frozen `minimum_partial_fill_rr` as
   its RR floor; do not require RR >= 2 on each P1/P2/P3 partial VWAP and do not
   remove RR validation entirely;
+- apply the RR floor to the raw translated STOP before mandatory outward
+  tick-normalization; a sub-one-tick RR degradation caused solely by that
+  normalization is allowed and must not emergency-close an otherwise valid
+  fill; no additional tolerance/widening is allowed;
+- for the terminal rule, P1/P2/P3 each count only after the full frozen slot
+  quantity has been filled; partial slot fills do not qualify;
 - pre-entry catch-up must fail closed if executable market state cannot support a
   translated STOP at or above that frozen partial-fill RR floor;
 - if an already-executed fill falls below the same floor or otherwise cannot be
