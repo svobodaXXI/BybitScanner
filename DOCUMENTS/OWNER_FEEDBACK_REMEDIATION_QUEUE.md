@@ -11,7 +11,7 @@ not repeated.
 
 ### OFR-1 — Durable Robot failure diagnostics
 **Priority:** P0  
-**Status:** BOX PATH GAP FOUND / FIX IN PROGRESS
+**Status:** IMPLEMENTED / NEXT REAL READBACK PENDING
 
 Two real classes now lose their exact cause after the console scrolls:
 
@@ -84,7 +84,7 @@ Acceptance:
 
 ### OFR-2 — CASHCATUSDT emergency-close root cause and recurrence fix
 **Priority:** P0  
-**Status:** OPEN / evidence investigation
+**Status:** ROOT CLASS PROVEN / PRIMARY REASON HISTORICALLY UNRECOVERABLE
 
 Owner evidence:
 - CASHCATUSDT Rising Wedge SHORT;
@@ -101,6 +101,24 @@ these conditions occurs:
 - 5-second protection deadline expires.
 
 The current top-level logs do not identify which condition actually fired.
+
+2026-09-30 evidence result:
+- authoritative `C:\BybitScanner\paper_runtime.sqlite3` proves the CASHCATUSDT
+  trade closed through `paper_protection_obligations.winning_leg = EMERGENCY_CLOSE`;
+- the durable event id is `CASHCATUSDT:rest-recovery:<sequence>:<update_id>`,
+  which is emitted only by `RobotProtectionCoverageManager` active recovery of
+  a symbol already marked unhealthy for protection continuity;
+- the recovery snapshot observed bid/ask near 0.17502/0.17509 while STOP was
+  0.17755 and TAKE 0.16384, so the close was not an ordinary STOP/TAKE crossing;
+- exhaustive text-log search across all local `C:\BybitScanner*` trees found no
+  surviving continuity reason. The historical primary trigger among
+  `ingress_overflow`, `websocket_disconnect:*`, `event_identity_mismatch`,
+  `admission_failed`, or `subscribe_failed` is therefore not recoverable;
+- current durable protection incident diagnostics record the broad reason
+  `MARKET_DATA_CONTINUITY_LOST` but omitted the specific `reason` passed into
+  `recover_robot_protection_continuity_loss(...)`; this is the remaining
+  observability gap. The bounded fix is to persist sanitized `continuity_reason`
+  in incident facts without changing fail-closed behavior.
 
 Required work:
 1. query the authoritative PAPER SQLite rows for CASHCATUSDT/trade/protection/
