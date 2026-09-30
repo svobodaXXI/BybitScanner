@@ -30,6 +30,7 @@ class IkigaiBoxParameters:
     min_wick_close_progress_fraction: float = 0.30
     min_second_progress: float = 0.30
     max_second_progress: float = 1.90
+    max_internal_counter_close_fraction: float = 0.25
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,7 @@ def _validate_parameters(p):
         and 0 < p.min_terminal_rejection_fraction < 1
         and 0 < p.min_wick_close_progress_fraction < 0.60
         and 0 < p.min_second_progress < p.max_second_progress
+        and 0 < p.max_internal_counter_close_fraction < 1
     ):
         raise ValueError("Invalid Ikigai Box geometry thresholds")
 
@@ -162,6 +164,37 @@ def _is_reversal_origin(rows, index, sign):
     return all(high > row[1] for row in before + after)
 
 
+def _has_material_internal_counter_close(
+    rows, first_start, first_end, sign, p,
+):
+    """Reject a real intraleg zigzag without using candle colour as a veto."""
+    anchor = rows[first_start][2 if sign == 1 else 1]
+    best_close = rows[first_start][3]
+
+    for index in range(first_start + 1, first_end):
+        close = rows[index][3]
+        if sign == 1:
+            progress = best_close - anchor
+            counter = best_close - close
+            if (
+                progress > 0
+                and counter > p.max_internal_counter_close_fraction * progress
+            ):
+                return True
+            best_close = max(best_close, close)
+        else:
+            progress = anchor - best_close
+            counter = close - best_close
+            if (
+                progress > 0
+                and counter > p.max_internal_counter_close_fraction * progress
+            ):
+                return True
+            best_close = min(best_close, close)
+
+    return False
+
+
 def _qualified_first_impulse_and_box(
     rows, first_start, first_end, box_low, box_high, sign, p,
 ):
@@ -183,6 +216,10 @@ def _qualified_first_impulse_and_box(
     if any(
         _is_reversal_origin(rows, index, -sign)
         for index in range(first_start + 1, first_end)
+    ):
+        return None
+    if _has_material_internal_counter_close(
+        rows, first_start, first_end, sign, p,
     ):
         return None
     atr =_pre_impulse_atr(rows, first_start)
