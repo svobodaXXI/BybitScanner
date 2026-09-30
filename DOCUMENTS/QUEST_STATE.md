@@ -396,6 +396,8 @@ ARUSDT 1m классифицирован: это не Box-баг. Frozen stop-ma
 RVL-G1 inventory/schema → G2 first gold set → G3 baseline report → G4
 defect-class fixes → G5 invariants → G6 один полный owner Scanner acceptance.
 
+Новая очередь владельца после текущего G6: **GEO-U1 — Universal Pivot-Consensus Envelope Geometry**. Общая геометрия клина/треугольника/поджатия должна строить границы по детерминированному consensus множества пивотов, различать distinct touch clusters, учитывать реальные переходы между обеими границами и terminal compression. Дизайн: `DOCUMENTS/UNIVERSAL_PIVOT_CONSENSUS_GEOMETRY_DESIGN.md`. Текущий G6 ради этого не прерывать.
+
 ### 🧰 После боссов
 
 RVL-V1 compact validation report; RVL-V2 bounded capture только при доказанной
