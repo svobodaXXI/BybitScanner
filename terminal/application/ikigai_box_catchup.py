@@ -147,6 +147,7 @@ class BoxTranslatedStop:
     raw_stop_price: Decimal
     stop_price: Decimal
     take_price: Decimal
+    minimum_rr: Decimal
 
 
 def _fee_rate(value: object, name: str) -> Decimal:
@@ -160,7 +161,7 @@ def _fee_rate(value: object, name: str) -> Decimal:
 
 
 def _frozen_stop_terms(candidate: RobotCandidateRecord):
-    direction, prices, _quantities, take = _frozen_terms(candidate)
+    direction, prices, quantities, take = _frozen_terms(candidate)
     snapshot = candidate.signal_snapshot
     plan = snapshot["plan"]
     inputs = snapshot.get("inputs")
@@ -178,7 +179,11 @@ def _frozen_stop_terms(candidate: RobotCandidateRecord):
         _fee_rate(inputs.get(key), key)
         for key in ("entry_fee_rate", "target_fee_rate", "stop_fee_rate")
     )
-    return direction, prices, take, planned_average, planned_stop, stop_offset, tick, fees
+    partial_rr = _decimal(plan.get("minimum_partial_fill_rr"), "frozen minimum partial-fill RR")
+    return (
+        direction, prices, take, planned_average, planned_stop, stop_offset, tick, fees,
+        sum(quantities, Decimal(0)), partial_rr,
+    )
 
 
 def plan_box_catchup(
@@ -193,7 +198,7 @@ def plan_box_catchup(
     from the VWAP of actually filled, Robot-owned entry exposure.
     """
 
-    direction, _prices, take, average, stop, offset, tick, _fees = _frozen_stop_terms(candidate)
+    direction, _prices, take, average, stop, offset, tick, *_rest = _frozen_stop_terms(candidate)
     return BoxCatchupPlan(
         candidate_id=candidate.candidate_id,
         direction=direction,
@@ -211,28 +216,36 @@ def translate_box_catchup_stop(
     candidate: RobotCandidateRecord,
     *,
     actual_average_entry: Decimal,
+    filled_quantity: Decimal,
 ) -> BoxTranslatedStop:
     """Move the frozen stop offset to the actual filled-exposure VWAP.
 
     actual_average_entry is the authoritative VWAP of ONLY already-filled,
-    Robot-owned Box entry exposure; resting/unfilled slots never contribute
-    their planned LIMIT prices. Callers re-invoke this after every additional
-    owned fill. It is stateless on purpose: the absolute STOP may widen after a
-    later fill (owner-frozen exception to never-widen), while the distance from
-    VWAP stays the frozen offset.
+    Robot-owned Box entry exposure and filled_quantity is that exposure's
+    quantity; resting/unfilled slots never contribute their planned LIMIT
+    prices. Callers re-invoke this after every additional owned fill. It is
+    stateless on purpose: the absolute STOP may widen after a later fill
+    (owner-frozen exception to never-widen), while the distance from VWAP stays
+    the frozen offset.
 
     LONG: actual_average - offset; SHORT: actual_average + offset, where the
     offset comes from the frozen planned average and planned STOP. The result
-    is tick-normalized outward. TAKE never moves. If the STOP is not strictly
-    beyond P4 or fails the existing fee-aware net RR >= 2 contract at the
-    actual average, fail closed; no alternative STOP rule is applied.
+    is tick-normalized outward. TAKE never moves. The fee-aware net RR floor is
+    2 for the full four-slot quantity and the plan's frozen
+    minimum_partial_fill_rr for partial exposure. If the STOP is not strictly
+    beyond P4 or fails that floor, fail closed; the STOP is never tightened to
+    recover RR and no alternative STOP rule is applied.
     """
 
     (
         direction, prices, take, _average, _stop, offset, tick,
-        (entry_fee, target_fee, stop_fee),
+        (entry_fee, target_fee, stop_fee), total_quantity, partial_rr,
     ) = _frozen_stop_terms(candidate)
     entry = _decimal(actual_average_entry, "actual Box average entry")
+    quantity = _decimal(filled_quantity, "filled Box quantity")
+    if quantity > total_quantity:
+        raise ValueError("filled Box quantity exceeds the frozen grid")
+    rr_floor = Decimal(2) if quantity == total_quantity else partial_rr
     sign = Decimal(1 if direction == "LONG" else -1)
 
     if sign * (take - entry) <= 0:
@@ -247,9 +260,9 @@ def translate_box_catchup_stop(
 
     reward = sign * (take - entry) - entry * entry_fee - take * target_fee
     risk = sign * (entry - stop) + entry * entry_fee + stop * stop_fee
-    if reward <= 0 or risk <= 0 or Decimal(2) * risk > reward:
+    if reward <= 0 or risk <= 0 or rr_floor * risk > reward:
         raise BoxCatchupStopRejected(
-            "translated Box STOP fails net RR >= 2 at the actual average"
+            f"translated Box STOP fails net RR >= {rr_floor} at the actual average"
         )
     return BoxTranslatedStop(
         actual_average_entry=entry,
@@ -257,6 +270,7 @@ def translate_box_catchup_stop(
         raw_stop_price=raw_stop,
         stop_price=stop,
         take_price=take,
+        minimum_rr=rr_floor,
     )
 
 

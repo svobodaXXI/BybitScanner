@@ -231,9 +231,17 @@ class BoxCatchupPlanAndStopTranslationTests(unittest.TestCase):
                         self.assertEqual(limit_specs[slot].price, frozen[slot - 1])
                         self.assertEqual(limit_specs[slot].quantity, Decimal("2"))
 
+    def _source_with_partial_floor(self, direction, floor):
+        # The floor is read from the frozen plan, never invented at runtime;
+        # this fixture only raises it so it binds inside the valid P4 range.
+        data = snapshot() if direction == "LONG" else _short_snapshot()
+        data["plan"]["minimum_partial_fill_rr"] = floor
+        data["identity"]["a_time_ms"] = 1100  # distinct setup identity
+        return self.store.save_box_plan_only(snapshot=data, created_at_ms=3100)[0]
+
     def test_stop_translates_frozen_offset_to_actual_average_and_rounds_outward(self):
         cases = [
-            # direction, actual average, raw translated STOP, tick-normalized STOP
+            # direction, full-grid VWAP, raw translated STOP, tick-normalized STOP
             ("LONG", "92.8", "89.6", "89.6"),      # planned average -> frozen STOP
             ("LONG", "91.0", "87.8", "87.8"),      # all four caught at 91.0
             ("LONG", "92.555", "89.355", "89.35"),  # outward = down one tick
@@ -244,13 +252,32 @@ class BoxCatchupPlanAndStopTranslationTests(unittest.TestCase):
         for direction, average, raw, stop in cases:
             with self.subTest(direction=direction, average=average):
                 result = translate_box_catchup_stop(
-                    self.sources[direction], actual_average_entry=Decimal(average),
+                    self.sources[direction],
+                    actual_average_entry=Decimal(average),
+                    filled_quantity=Decimal("8"),
                 )
                 self.assertEqual(result.stop_offset, Decimal("3.2"))
                 self.assertEqual(result.raw_stop_price, Decimal(raw))
                 self.assertEqual(result.stop_price, Decimal(stop))
                 self.assertEqual(result.stop_price % Decimal("0.01"), 0)
                 self.assertEqual(result.take_price, Decimal(self.CASES[direction][1]))
+                self.assertEqual(result.minimum_rr, Decimal("2"))
+
+    def test_partial_fill_uses_frozen_partial_rr_floor_without_tightening(self):
+        # P1 alone has net RR 5.2/3.2 = 1.625: below 2 but above the frozen
+        # minimum_partial_fill_rr (1.1818...), so the translated STOP stands.
+        cases = {"LONG": ("94", "90.8"), "SHORT": ("106", "109.2")}
+        for direction, (vwap, stop) in cases.items():
+            with self.subTest(direction=direction):
+                result = translate_box_catchup_stop(
+                    self.sources[direction],
+                    actual_average_entry=Decimal(vwap),
+                    filled_quantity=Decimal("2"),
+                )
+                self.assertEqual(result.stop_price, Decimal(stop))
+                self.assertEqual(
+                    result.minimum_rr, Decimal("1.181818181818181818181818182"),
+                )
 
     def test_later_fill_retranslates_from_filled_vwap_and_may_widen_stop(self):
         # Two slots caught by MARKET, then the far P4 LIMIT fills. VWAP covers
@@ -264,11 +291,15 @@ class BoxCatchupPlanAndStopTranslationTests(unittest.TestCase):
                 source = self.sources[direction]
                 filled = [Decimal(price) for price in market_fills]
                 first = translate_box_catchup_stop(
-                    source, actual_average_entry=sum(filled) / len(filled),
+                    source,
+                    actual_average_entry=sum(filled) / len(filled),
+                    filled_quantity=Decimal("2") * len(filled),
                 )
                 filled.append(Decimal(p4_fill))
                 second = translate_box_catchup_stop(
-                    source, actual_average_entry=sum(filled) / len(filled),
+                    source,
+                    actual_average_entry=sum(filled) / len(filled),
+                    filled_quantity=Decimal("2") * len(filled),
                 )
                 self.assertEqual(first.stop_price, Decimal(first_stop))
                 self.assertEqual(second.stop_price, Decimal(second_stop))
@@ -280,22 +311,34 @@ class BoxCatchupPlanAndStopTranslationTests(unittest.TestCase):
 
     def test_invalid_translated_stop_fails_closed(self):
         cases = [
-            # Only P1 filled: offset preserved, but net RR 5.2/3.2 < 2.
-            ("LONG", "94", "RR"),
-            ("SHORT", "106", "RR"),
+            # Full four-slot quantity keeps net RR >= 2: 5.2/3.2 fails.
+            (self.sources["LONG"], "94", "8", "RR >= 2"),
+            (self.sources["SHORT"], "106", "8", "RR >= 2"),
+            # Partial exposure below the frozen partial-fill floor (1.625 < 1.7).
+            (self._source_with_partial_floor("LONG", "1.7"), "94", "2", "RR >= 1.7"),
+            (self._source_with_partial_floor("SHORT", "1.7"), "106", "2", "RR >= 1.7"),
             # Translated STOP no longer strictly beyond P4.
-            ("LONG", "95", "P4"),
-            ("SHORT", "105", "P4"),
+            (self.sources["LONG"], "95", "2", "P4"),
+            (self.sources["SHORT"], "105", "2", "P4"),
             # Average on the profit side of the frozen TAKE.
-            ("LONG", "99.2", "TAKE"),
-            ("SHORT", "100.8", "TAKE"),
+            (self.sources["LONG"], "99.2", "2", "TAKE"),
+            (self.sources["SHORT"], "100.8", "2", "TAKE"),
         ]
-        for direction, average, reason in cases:
-            with self.subTest(direction=direction, average=average):
+        for source, average, quantity, reason in cases:
+            with self.subTest(direction=source.signal_snapshot["plan"]["direction"],
+                              average=average, quantity=quantity):
                 with self.assertRaisesRegex(BoxCatchupStopRejected, reason):
                     translate_box_catchup_stop(
-                        self.sources[direction], actual_average_entry=Decimal(average),
+                        source,
+                        actual_average_entry=Decimal(average),
+                        filled_quantity=Decimal(quantity),
                     )
+        with self.assertRaisesRegex(ValueError, "exceeds the frozen grid"):
+            translate_box_catchup_stop(
+                self.sources["LONG"],
+                actual_average_entry=Decimal("92.8"),
+                filled_quantity=Decimal("10"),
+            )
 
 
 if __name__ == "__main__":

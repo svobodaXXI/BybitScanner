@@ -4769,8 +4769,15 @@ class SQLiteStore:
         candidate_id: str, symbol: Symbol, average_entry: Decimal,
         entry_quantity: Decimal, entry_position_version: int,
         stop_price: Decimal, updated_at_ms: int,
+        translated_catchup_stop: bool = False,
     ) -> tuple[RobotTradeRecord, bool]:
-        """Refresh proven Box aggregate entry and STOP without widening risk."""
+        """Refresh proven Box aggregate entry and STOP without widening risk.
+
+        Exception (OFR-5, owner-frozen): translated_catchup_stop=True accepts a
+        wider absolute STOP, because the frozen stop offset is re-translated to
+        the new owned filled VWAP. It is honoured only for an OPEN candidate on
+        the BOX_CATCHUP entry path; every other refresh keeps never-widen.
+        """
         self._assert_owner()
         for value in (average_entry, entry_quantity, stop_price):
             _decimal_text(value)
@@ -4798,9 +4805,15 @@ class SQLiteStore:
                 or trade.entry_quantity is None or trade.entry_position_version is None
             ):
                 raise PersistenceError("Box trade or candidate is not OPEN in the expected scope")
-            if trade.direction == "LONG" and stop_price < trade.stop_price:
+            if translated_catchup_stop:
+                execution = (candidate.robot_state or {}).get("execution") or {}
+                if execution.get("entry_mode") != "BOX_CATCHUP":
+                    raise ImmutableExecutionConflict(
+                        "translated Box STOP requires the BOX_CATCHUP entry path"
+                    )
+            elif trade.direction == "LONG" and stop_price < trade.stop_price:
                 raise ImmutableExecutionConflict("LONG Box STOP cannot widen")
-            if trade.direction == "SHORT" and stop_price > trade.stop_price:
+            elif trade.direction == "SHORT" and stop_price > trade.stop_price:
                 raise ImmutableExecutionConflict("SHORT Box STOP cannot widen")
             if (
                 trade.average_entry == average_entry
