@@ -30,6 +30,7 @@ sys.modules["config"] = config_stub
 bybit_api_stub = types.ModuleType("bybit_api")
 bybit_api_stub.get_candles = lambda *args, **kwargs: None
 bybit_api_stub.get_symbols = lambda *args, **kwargs: []
+bybit_api_stub.get_instrument_tick_size = lambda *args, **kwargs: None
 sys.modules["bybit_api"] = bybit_api_stub
 
 charts_stub = types.ModuleType("analyzer.charts")
