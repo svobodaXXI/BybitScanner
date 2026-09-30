@@ -86,17 +86,64 @@ Important distinction:
 - already submitted/filling Robot-owned grid orders continue through the normal
   existing Box fill/top-up lifecycle.
 
-### Still unresolved before implementation
+### Owner-frozen catch-up exit mapping and terminal lifecycle — 2026-09-30
 
-The owner has **not yet frozen the exact price mapping for each corresponding
-closing LIMIT**. For example, do not assume without a separate decision that a
-caught P2 slot exits at P1, or that all caught slots exit at the shared TAKE.
-That mapping must be specified explicitly before code is written.
+The owner selected the shared-TAKE mapping for late catch-up execution:
 
-Likewise, preserve the existing Box STOP semantics as the intended protection
-model; if market catch-up fill prices create an arithmetic conflict with the
-currently frozen planned-average/RR calculation, resolve that contract
-explicitly before implementation rather than silently repricing protection.
+- every market-caught slot keeps its original slot identity and quantity;
+- its closing target is the **same frozen common Box TAKE** used by the original
+  Box plan;
+- do not invent per-slot mini-TP levels, previous-slot exits, or a shifted
+  catch-up target;
+- not-yet-crossed entry slots remain at their original frozen LIMIT prices while
+  the setup is still active.
+
+Additional terminal rule:
+
+- if the three nearest original entry slots `P1..P3` have been filled and the
+  resulting position is then closed at the frozen common TAKE, the Box setup is
+  considered **fully worked / terminal**;
+- any still-resting entry LIMITs for that same setup, including an unfilled
+  farther `P4`, must be cancelled;
+- Robot must not enter that same Box setup again after this terminal TAKE;
+- this is setup-identity-specific and does not suppress a later independent Box
+  with different anchors/timeframe/identity.
+
+The paired closing behavior therefore does not create a new target ladder:
+caught slots participate in the same frozen TAKE objective as the rest of the
+Box exposure. Preserve durable per-slot ownership/recovery evidence even though
+the target price is shared.
+
+### Owner-frozen catch-up STOP translation — 2026-09-30
+
+For late MARKET catch-up, keep the same STOP distance that the original frozen
+four-slot Box grid would have produced, but translate that distance to the
+**actual aggregate average entry** after the catch-up fills.
+
+Define the original planned stop offset from the frozen planned average:
+- LONG: `stop_offset = planned_average - planned_stop`;
+- SHORT: `stop_offset = planned_stop - planned_average`.
+
+After the actual MARKET/LIMIT entry mix is known:
+- LONG: `actual_stop = actual_average - stop_offset`;
+- SHORT: `actual_stop = actual_average + stop_offset`.
+
+Then normalize the resulting STOP to the instrument tick in the protective
+(outward) direction. Do not keep the stale absolute STOP anchored to the old
+planned average, and do not recalculate a completely new Box geometry.
+
+This preserves the original grid-derived risk distance while allowing the STOP
+to move proportionally with the real average price actually obtained.
+
+Safety invariants remain:
+- the translated STOP must remain structurally beyond the relevant far entry
+  side and satisfy the existing minimum RR/protection contract after tick
+  normalization;
+- if no valid translated STOP exists, fail closed rather than silently moving
+  TAKE, shrinking/expanding risk by another rule, or inventing a second STOP
+  model;
+- shared Robot protection/recovery remains authoritative and must cover actual
+  exposure immediately.
 
 This is a strategy-spec correction. It does not authorize LIVE trading and does
 not by itself change current PAPER runtime behavior.

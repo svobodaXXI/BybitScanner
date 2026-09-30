@@ -285,7 +285,7 @@ Acceptance:
 
 ### OFR-5 — Box crossed-grid late admission / catch-up execution
 **Priority:** P1  
-**Status:** OPEN / one strategy detail unresolved
+**Status:** STRATEGY FROZEN / implementation pending
 
 Frozen owner intent:
 - original P1..P4 grid remains fixed;
@@ -297,17 +297,42 @@ Frozen owner intent:
 - shared Robot protection/recovery remains authoritative;
 - no one-shot aggregate `1 RO` market fallback.
 
-Blocking decision before code:
-- exact price mapping of each paired closing LIMIT still must be frozen;
-- if real market catch-up fills conflict with existing frozen planned-average/RR
-  STOP arithmetic, freeze the precise STOP rule rather than silently moving it.
+Owner-frozen 2026-09-30:
+- choose the **shared frozen TAKE** mapping (variant D): every market-caught slot
+  closes at the same common Box TAKE; no separate mini-TP ladder is introduced;
+- keep each caught slot's durable ownership/identity even though target price is
+  shared;
+- if nearest slots `P1..P3` are filled and the exposure then closes at that
+  common TAKE, the Box setup is terminal/fully worked;
+- cancel every remaining entry LIMIT for that same setup, including an unfilled
+  farther slot such as `P4`;
+- after that terminal TAKE, do not re-enter the same Box setup; a later distinct
+  setup/timeframe remains independently eligible.
+
+Owner-frozen STOP rule — 2026-09-30:
+- derive the original stop distance from the frozen planned average and planned
+  STOP;
+- after actual MARKET/LIMIT fills establish the real aggregate average entry,
+  translate that same stop distance to the real average:
+  LONG moves STOP below actual average by the original offset; SHORT moves STOP
+  above actual average by the original offset;
+- tick-normalize outward;
+- keep the frozen common TAKE unchanged;
+- if the translated STOP cannot satisfy structural placement and the existing
+  minimum RR/protection contract, fail closed rather than silently inventing a
+  different risk model.
 
 Acceptance:
 - deterministic scenarios for 0/1/2/3/4 crossed slots;
 - exact slot ownership after mixed MARKET + LIMIT entry;
-- paired close limits proven;
+- all caught slots target the shared frozen TAKE;
+- STOP translation uses actual aggregate average plus the original frozen
+  grid-derived stop offset;
+- `P1..P3 filled -> common TAKE hit` terminalizes the setup, cancels remaining
+  entry LIMITs and forbids same-setup re-entry;
 - familiar STOP protection active immediately for real exposure;
-- restart/reconcile preserves the same slot identities.
+- restart/reconcile preserves the same slot identities, translated STOP facts
+  and terminal state.
 
 ### OFR-6 — Telegram position-card presentation cleanup
 **Priority:** P1  
