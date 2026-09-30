@@ -432,6 +432,28 @@ Exit evidence still required after the current pass:
 - high-watermark below saturation;
 - no incident recreated through normal restart/reconcile.
 
+### G6-FULL-1 — 2026-09-30 full owner Scanner traversal completed
+**Status: FULL TRAVERSAL COMPLETE / GEOMETRY ACCEPTANCE NOT PASSED**
+
+Owner completion screenshot:
+- `Сканирование завершено`;
+- 112 signals found;
+- 128 sent to Telegram;
+- 28 Ikigai Box observations;
+- 782 tickers scanned;
+- elapsed 73:39.
+
+Interpretation:
+- full eligible-universe traversal completed naturally;
+- ordinary Telegram delivery was operational through completion;
+- the previously observed one-off `WinError 10053` did not prevent completion;
+- Geometry Quality cannot be marked accepted because the owner identified
+  systematic anchor/shape-classification defects during the same run, now
+  owned by GEO-U1/GEO-U2.
+
+Do not repeat this full pass for traversal evidence. A future owner pass is
+needed only after geometry changes reach their own acceptance gate.
+
 ### G6-NET-1 — transient HTTP client disconnect during Geometry acceptance
 **Status: OBSERVED / UNCLASSIFIED**
 
