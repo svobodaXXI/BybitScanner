@@ -325,6 +325,30 @@ Exit evidence still required after the current pass:
 - high-watermark below saturation;
 - no incident recreated through normal restart/reconcile.
 
+### G6-NET-1 — transient HTTP client disconnect during Geometry acceptance
+**Status: OBSERVED / UNCLASSIFIED**
+
+Owner evidence from the 2026-09-30 RVL-G6 full Scanner/Telegram acceptance run:
+- runtime checkout was on `adfb50b758181c3ed9bc3670b00fe842ffa8d08a`;
+- Scanner launched through the canonical owner `start_scanner` shortcut;
+- Scanner universe reported **782 symbols**;
+- during an HTTP GET handled by `terminal/runtime/paper_http_server.py`, the
+  server printed `ConnectionAbortedError: [WinError 10053]` while writing the
+  JSON response;
+- after that traceback the Scanner continued processing and ordinary Telegram
+  delivery was still working (for example, a 5m `0GUSDT` Falling Wedge card was
+  delivered).
+
+Current classification:
+- this single traceback is **not evidence of Scanner failure**;
+- do **not** attribute it to internet/network loss without durable evidence;
+- do **not** interrupt or restart the active G6 run merely to investigate it;
+- treat it as a follow-up anomaly only if it repeats, affects Telegram/runtime
+  delivery, causes readiness/health degradation, or prevents the full run from
+  completing normally;
+- final G6 evidence should record whether any additional `WinError 10053` or
+  related HTTP disconnects occurred and whether they had observable impact.
+
 ### SHUTDOWN-1 — canonical stop chain failures
 **Status: FIXED / OWNER ACCEPTED**
 
