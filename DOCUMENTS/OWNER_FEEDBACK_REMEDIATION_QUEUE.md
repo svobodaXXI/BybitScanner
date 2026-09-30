@@ -11,7 +11,7 @@ not repeated.
 
 ### OFR-1 — Durable Robot failure diagnostics
 **Priority:** P0  
-**Status:** OPEN
+**Status:** IMPLEMENTED / LIVE INCIDENT HARVEST PENDING
 
 Two real classes now lose their exact cause after the console scrolls:
 
@@ -41,6 +41,30 @@ Required implementation:
 - no secrets, credentials, raw tokens or unsafe absolute-path leakage;
 - bounded retention;
 - diagnostic write must not become a new safety-critical blocker.
+
+Implementation evidence already present on main:
+- `robot_failure_diagnostics.py` provides bounded sanitized JSON incident records
+  with fail-open diagnostic persistence and bounded retention;
+- candidate handoff failures persist normalized evidence from
+  `pattern_robot_integration.py` (including persistence exception / missing id);
+- initial-protection emergency close persists
+  `INITIAL_PROTECTION_FAILURE` from `RobotBreakoutMonitor`;
+- market-data continuity emergency close persists
+  `MARKET_DATA_CONTINUITY_LOST` and deciding facts from `PaperRuntime`;
+- focused tests cover sanitization/retention/write failure, initial protection
+  incident persistence, and PAPER acceptance continuity-loss incident persistence.
+
+Relevant implementation commits already in main:
+- `ce923729` — bounded Robot incident diagnostics;
+- `d6ea8c8c` — candidate handoff failure persistence;
+- `1cd3a8ab` — emergency-close deciding facts;
+- `140ff5a3` + `2351b302` — initial protection incident + runtime wiring.
+
+Remaining OFR-1 gate:
+- harvest the next real incident from the owner's active runtime after G6
+  completes (APRUSDT candidate failure is the first expected candidate) and
+  confirm the durable record is practically sufficient for OFR-3 diagnosis.
+- do not restart/interrupt G6 just to perform that read.
 
 Acceptance:
 - next candidate-preparation failure can be investigated without scrolling stdout;

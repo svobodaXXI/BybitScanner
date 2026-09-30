@@ -237,21 +237,37 @@ Required work:
 
 Do not guess that these four symbols share one planner/math defect until exact error evidence proves it.
 
-### RH-DIAG-1 — candidate-preparation failure evidence is console-only
-**Status: OPEN observability debt**
+### RH-DIAG-1 — durable candidate/protection incident diagnostics
+**Status: IMPLEMENTED / REAL-INCIDENT READBACK PENDING**
 
-This is the enabling defect exposed by RH-FAIL-1.
+The original console-only observability gap is implemented on current main:
+- bounded sanitized incident files are written by `robot_failure_diagnostics.py`;
+- candidate persistence failures record normalized stage/reason/error class;
+- initial protection failure and market-data continuity emergency-close paths
+  also persist normalized durable evidence;
+- diagnostic write failure is explicitly non-blocking for Scanner/Robot safety.
 
-Current behavior:
-- exact failure cause is printed to transient Scanner stdout;
-- Telegram owner warning intentionally hides exception details;
-- no durable diagnostic record remains for later investigation.
+Focused tests already cover the durable sink and both protection incident paths.
+The remaining practical gate is to read the next real owner incident after the
+active G6 run (APRUSDT is the expected candidate-handoff recurrence) and use it
+to drive OFR-3. Do not ask the owner to reconstruct transient console text.
 
-Required result:
-- one small persistent/runtime diagnostic sink sufficient to investigate the next failure without asking the owner to scroll a busy Scanner window;
-- bounded retention;
-- sanitized error data;
-- no effect on Scanner delivery status or Robot admission semantics.
+### PROT-DIAG-1 — protection/emergency-close durable reason evidence
+**Status: IMPLEMENTED / NEXT REAL READBACK PENDING**
+
+Current main persists protection emergency-close diagnostics for at least the
+two production paths that previously lost their reason:
+- initial protection failure -> `INITIAL_PROTECTION_FAILURE`;
+- protection market-data continuity loss -> `MARKET_DATA_CONTINUITY_LOST`.
+
+Records include bounded deciding facts such as STOP/TAKE proof state,
+market-data authority, intended-STOP-crossed state where known, source timing,
+selected recovery action, candidate/trade identity, symbol and pattern context.
+The sink is best-effort and cannot block protection/recovery.
+
+This closes the implementation portion of OFR-1. OFR-2 still owns the separate
+CASHCATUSDT root-cause investigation, and OFR-3 still owns the Box handoff root
+cause after the next real diagnostic record is harvested.
 
 ### RCV-SELF-1 — Robot remains in "Нужна сверка" after emergency close
 **Status: OPEN runtime recovery blocker**
