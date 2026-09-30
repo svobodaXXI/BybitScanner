@@ -134,6 +134,18 @@ remote branch is unknown, stop before editing and reconcile the states
 explicitly while preserving all user-owned work. A read-only repository
 inspection does not require synchronization by itself.
 
+## Owner action vs delegated prompt labeling — OWNER RULE 2026-09-30
+
+Use `DOCUMENTS/ASSISTANT_PROTOCOL.md` §2.1.1 for every user-facing copy-ready block.
+
+- `Сейчас сделай:` is reserved for a real action the owner must perform now.
+- A Claude Code / Codex task must be explicitly introduced as `Промт для агента:`;
+  never leave the owner to infer where a block should be pasted.
+- A task intended for ChatGPT itself must not be placed under `Сейчас сделай:`.
+- If the owner must immediately delegate the task, say exactly
+  `Сейчас сделай: передай агенту этот промт` and then label the payload
+  `Промт для агента:`.
+
 ## Delegated prompt budget — NO REDUNDANT TEST/ITERATION LOOPS (OWNER RULE 2026-09-23)
 
 For EVERY subsequent Codex/Claude Code prompt, apply

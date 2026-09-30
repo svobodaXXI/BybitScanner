@@ -2,11 +2,11 @@
 
 Version:
 
-4.46
+4.47
 
 Date:
 
-2026-09-27
+2026-09-30
 
 Document Type:
 
@@ -190,6 +190,28 @@ If work cannot continue without a user action, introduce it exactly with:
 
 Then provide the exact command, text, path, button, or action sequence. Do not disguise required actions as
 optional suggestions such as “можно”, “имеет смысл”, or “следует”. Mark genuinely optional advice as optional.
+
+### 2.1.1 OWNER ACTION / AGENT PROMPT / ASSISTANT TASK LABELING — HARD RULE
+
+Before any copy-ready block, classify who is expected to act.
+
+1. **Owner action** — use exactly `Сейчас сделай:` only when the owner must perform a real external action now
+   (run a command, click a control, paste/send a payload, or return an exact required reply). The block must state
+   where to paste/run/send it and whether the result must be returned.
+2. **Delegated agent prompt** — when the owner is expected to paste a task into Claude Code, Codex, or another
+   coding agent, introduce it explicitly as `Промт для агента:` (optionally naming the target agent). Do **not**
+   introduce an agent prompt with `Сейчас сделай:` alone; if immediate owner action is required, write
+   `Сейчас сделай: передай агенту этот промт` and then label the block `Промт для агента:`.
+3. **Assistant task / discussion** — text intended for ChatGPT itself, including analysis requests, design choices,
+   comparisons, or questions the assistant should answer, must never be placed under `Сейчас сделай:`. State the
+   task directly in prose and perform it in the current chat when possible.
+4. Never give the owner a block that requires guessing whether it belongs in PowerShell, Telegram, Claude/Codex,
+   or back into ChatGPT. The destination and expected action must be explicit immediately before the block.
+5. A prompt that the assistant could execute itself with available tools is not an owner action. Do the work
+   directly unless delegation is objectively necessary or the owner explicitly asks to use an agent.
+
+This labeling rule is part of the user-action preflight. If a response could plausibly be interpreted in more than
+one of these three ways, rewrite it before sending.
 
 ## 2.2 COPY_READY_ACTION_BLOCK_RULE
 
