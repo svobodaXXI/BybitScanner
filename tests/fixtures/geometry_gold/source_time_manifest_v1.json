@@ -1,0 +1,843 @@
+{
+ "schema_version": 1,
+ "description": "GEO-U1 Slice E exact source-time Geometry Gold (separate from the pinned five-case manifest_v1).",
+ "cases": [
+  {
+   "case_id": "CASHCATUSDT-1m-src1789850340000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "CASHCATUSDT",
+   "timeframe": "1",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/CASHCATUSDT_1m_src1789850340000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1789850280000,
+   "cutoff_candle_open_utc": "2026-09-19T20:38:00Z",
+   "provenance": "Scanner candidate 01e2039fbba5bdf956cf2ccd.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": null,
+    "production_pattern": null,
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     81,
+     175,
+     77,
+     153,
+     77,
+     193
+    ],
+    "recorded_runtime_pattern": "Falling Wedge",
+    "note": "production_* observed deterministically from this fixture with current main; recorded_runtime_* is a historical fact that included the forming candle and older code, never asserted equal"
+   }
+  },
+  {
+   "case_id": "CASHCATUSDT-1m-src1790590380000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "CASHCATUSDT",
+   "timeframe": "1",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/CASHCATUSDT_1m_src1790590380000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1790590320000,
+   "cutoff_candle_open_utc": "2026-09-28T10:12:00Z",
+   "provenance": "Scanner candidate dac0cc81f2623ff36c6ab6f7.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": [
+     141,
+     183,
+     136,
+     182,
+     136,
+     183
+    ],
+    "production_pattern": "Falling Wedge",
+    "production_detected": true,
+    "recorded_runtime_geometry_identity": [
+     141,
+     190,
+     136,
+     182,
+     136,
+     190
+    ],
+    "recorded_runtime_pattern": "Falling Wedge",
+    "note": "production_* observed deterministically from this fixture with current main; recorded_runtime_* is a historical fact that included the forming candle and older code, never asserted equal"
+   }
+  },
+  {
+   "case_id": "CASHCATUSDT-5m-src1790002800000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "CASHCATUSDT",
+   "timeframe": "5",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/CASHCATUSDT_5m_src1790002800000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1790002500000,
+   "cutoff_candle_open_utc": "2026-09-21T14:55:00Z",
+   "provenance": "Scanner candidate d8d4b9cb0b7946b9dfcb928b.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": [
+     61,
+     94,
+     42,
+     99,
+     42,
+     99
+    ],
+    "production_pattern": "No wedge",
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     35,
+     172,
+     111,
+     183,
+     35,
+     188
+    ],
+    "recorded_runtime_pattern": "Rising Wedge",
+    "note": "production_* observed deterministically from this fixture with current main; recorded_runtime_* is a historical fact that included the forming candle and older code, never asserted equal"
+   }
+  },
+  {
+   "case_id": "CASHCATUSDT-5m-src1790272200000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "CASHCATUSDT",
+   "timeframe": "5",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/CASHCATUSDT_5m_src1790272200000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1790271900000,
+   "cutoff_candle_open_utc": "2026-09-24T17:45:00Z",
+   "provenance": "Scanner candidate 408fd48d2dc4b2ee22c05579.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": [
+     17,
+     47,
+     5,
+     37,
+     5,
+     47
+    ],
+    "production_pattern": "No wedge",
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     93,
+     192,
+     111,
+     163,
+     93,
+     192
+    ],
+    "recorded_runtime_pattern": "Rising Wedge",
+    "note": "production_* observed deterministically from this fixture with current main; recorded_runtime_* is a historical fact that included the forming candle and older code, never asserted equal"
+   }
+  },
+  {
+   "case_id": "CASHCATUSDT-5m-src1790665800000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "CASHCATUSDT",
+   "timeframe": "5",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/CASHCATUSDT_5m_src1790665800000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1790665500000,
+   "cutoff_candle_open_utc": "2026-09-29T07:05:00Z",
+   "provenance": "Scanner candidate a28abc20c8361f958aff8423.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": [
+     134,
+     166,
+     142,
+     188,
+     134,
+     194
+    ],
+    "production_pattern": "Rising Wedge",
+    "production_detected": true,
+    "recorded_runtime_geometry_identity": [
+     134,
+     166,
+     142,
+     188,
+     134,
+     194
+    ],
+    "recorded_runtime_pattern": "Rising Wedge",
+    "note": "production_* observed deterministically from this fixture with current main; recorded_runtime_* is a historical fact that included the forming candle and older code, never asserted equal"
+   }
+  },
+  {
+   "case_id": "ENAUSDT-1m-src1789759320000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "ENAUSDT",
+   "timeframe": "1",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/ENAUSDT_1m_src1789759320000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1789759260000,
+   "cutoff_candle_open_utc": "2026-09-18T19:21:00Z",
+   "provenance": "Scanner candidate efeed8ef514a535515d1f2f2.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": null,
+    "production_pattern": null,
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     39,
+     183,
+     59,
+     182,
+     39,
+     195
+    ],
+    "recorded_runtime_pattern": "Rising Wedge",
+    "note": "production_* observed deterministically from this fixture with current main; recorded_runtime_* is a historical fact that included the forming candle and older code, never asserted equal"
+   }
+  },
+  {
+   "case_id": "ENAUSDT-1m-src1789850520000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "ENAUSDT",
+   "timeframe": "1",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/ENAUSDT_1m_src1789850520000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1789850460000,
+   "cutoff_candle_open_utc": "2026-09-19T20:41:00Z",
+   "provenance": "Scanner candidate 3f6aca4e002cb92d4b58cf29.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": [
+     146,
+     183,
+     137,
+     184,
+     137,
+     190
+    ],
+    "production_pattern": "Rising Wedge",
+    "production_detected": true,
+    "recorded_runtime_geometry_identity": [
+     146,
+     183,
+     137,
+     184,
+     137,
+     190
+    ],
+    "recorded_runtime_pattern": "Rising Wedge",
+    "note": "production_* observed deterministically from this fixture with current main; recorded_runtime_* is a historical fact that included the forming candle and older code, never asserted equal"
+   }
+  },
+  {
+   "case_id": "ENAUSDT-5m-src1790098200000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "ENAUSDT",
+   "timeframe": "5",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/ENAUSDT_5m_src1790098200000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1790097900000,
+   "cutoff_candle_open_utc": "2026-09-22T17:25:00Z",
+   "provenance": "Scanner candidate a1c4607e1ed30d35f0106c46.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": null,
+    "production_pattern": null,
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     144,
+     188,
+     113,
+     165,
+     113,
+     188
+    ],
+    "recorded_runtime_pattern": "Falling Wedge",
+    "note": "production_* observed deterministically from this fixture with current main; recorded_runtime_* is a historical fact that included the forming candle and older code, never asserted equal"
+   }
+  }
+ ],
+ "unrecoverable_targets": [
+  {
+   "target": "CASHCATUSDT-1m-owner-comparison-2026-09-30",
+   "status": "UNRECOVERABLE_EXACT_CUTOFF",
+   "reason": "Owner Scanner-vs-TradingView screenshot; no laptop artifact records its Scanner decision/source candle time. Laptop signals_history/candidate/report artifacts end 2026-09-29 and the last CASHCATUSDT 1m report (2026-09-29T07:13Z) was a rejected 'No wedge'. Visual timing not used."
+  },
+  {
+   "target": "ENAUSDT-1m-owner-comparison-2026-09-30",
+   "status": "UNRECOVERABLE_EXACT_CUTOFF",
+   "reason": "Owner broadening re-markup screenshot; no laptop Scanner ENAUSDT 1m compression signal/candidate with a source candle time matches it (last ENAUSDT 1m report 2026-09-29T07:27Z was 'No wedge'). Visual timing not used."
+  },
+  {
+   "target": "robot_candidates without scanner_source_candle_time_ms (CASHCATUSDT 1m x3, ENAUSDT 1m x1, 2026-09-12..14)",
+   "status": "UNRECOVERABLE_EXACT_CUTOFF",
+   "reason": "Records predate source-candle-time provenance; created_at is only an approximate scan time, not an exact cutoff."
+  }
+ ],
+ "observed_evidence_run": {
+  "note": "One-off Slice D evidence run on main cc0970e (SHADOW code unchanged); full expanded recompute takes ~51 min (~60k SHADOW pairs), so compact facts are pinned here and one cheap case is recomputed in tests.",
+  "shadow_parameters": {
+   "compression_max_ratio": 0.9,
+   "expansion_min_ratio": 1.1,
+   "inlier_band_atr": 0.2,
+   "max_support_gap_fraction": 0.5,
+   "min_alternating_touches": 3,
+   "min_cross_boundary_traversals": 1,
+   "min_shared_support_coverage": 0.25,
+   "min_touch_balance": 0.25,
+   "minimum_side_touch_clusters": 2,
+   "minimum_swing_atr": 0.5,
+   "minimum_swing_width_fraction": 0.3,
+   "segment_tolerance": 0.05,
+   "separation_atr": 0.75,
+   "single_bar_narrow_ratio": 0.5,
+   "terminal_segments": 3,
+   "terminal_window_bars": 30,
+   "touch_band_atr": 0.2
+  },
+  "source_time_run_minutes": 42.6
+ },
+ "observed_slice_d_case_facts": [
+  {
+   "admissible_count": 25,
+   "candidate_count": 3510,
+   "case_id": "PONS-formation-fit-positive-anchor",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": true,
+   "production_geometry_present": true,
+   "production_identity": [
+    143,
+    178,
+    145,
+    186,
+    143,
+    186
+   ],
+   "production_pattern": "Falling Wedge",
+   "realized_contraction_ratio": 0.8951048951048918,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      126,
+      178
+     ]
+    ],
+    [
+     "lower",
+     [
+      107,
+      145,
+      186
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "PONS",
+   "terminal_compression_ratio": 0.40493349530501155,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 46,
+   "candidate_count": 6916,
+   "case_id": "1000BONKUSDT-wrong-anchor-negative",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": false,
+   "production_geometry_present": true,
+   "production_identity": [
+    64,
+    150,
+    95,
+    139,
+    64,
+    175
+   ],
+   "production_pattern": "No wedge",
+   "realized_contraction_ratio": 0.6030534351145043,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      64,
+      164
+     ]
+    ],
+    [
+     "lower",
+     [
+      54,
+      139
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "1000BONKUSDT",
+   "terminal_compression_ratio": 0.9865385653370758,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 22,
+   "candidate_count": 624,
+   "case_id": "1000TOSHIUSDT-locality-invariant",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": false,
+   "production_geometry_present": true,
+   "production_identity": [
+    128,
+    173,
+    108,
+    165,
+    108,
+    173
+   ],
+   "production_pattern": "No wedge",
+   "realized_contraction_ratio": 2.374999999999972,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      14,
+      78,
+      137
+     ]
+    ],
+    [
+     "lower",
+     [
+      45,
+      108
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "1000TOSHIUSDT",
+   "terminal_compression_ratio": 1.0975024148503576,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 0,
+   "candidate_count": 245,
+   "case_id": "1000XECUSDT-no-local-formation",
+   "presence_agreement": "NEITHER",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.8450704225352149,
+   "rejection_reasons_of_top_ranked": [
+    "BODY_INTEGRITY_FAILED"
+   ],
+   "selected_pair_identity": null,
+   "selection_status": "NO_ADMISSIBLE_PAIR",
+   "symbol": "1000XECUSDT",
+   "terminal_compression_ratio": 0.8627608990885229,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 9,
+   "candidate_count": 819,
+   "case_id": "AEVO-formation-fit-negative",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.958333333333349,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      89,
+      156
+     ]
+    ],
+    [
+     "lower",
+     [
+      65,
+      140
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "AEVO",
+   "terminal_compression_ratio": 0.961158219310079,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 22,
+   "candidate_count": 4004,
+   "case_id": "CASHCATUSDT-1m-src1789850340000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 1.2926829268292772,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      47,
+      103
+     ]
+    ],
+    [
+     "lower",
+     [
+      17,
+      54,
+      115
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 1.079554124654433,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 72,
+   "candidate_count": 11232,
+   "case_id": "CASHCATUSDT-1m-src1790590380000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": true,
+   "production_geometry_present": true,
+   "production_identity": [
+    141,
+    183,
+    136,
+    182,
+    136,
+    183
+   ],
+   "production_pattern": "Falling Wedge",
+   "realized_contraction_ratio": 0.8814814814814764,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      115,
+      190
+     ]
+    ],
+    [
+     "lower",
+     [
+      75,
+      172,
+      195
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 0.2839889045179843,
+   "terminal_width_trend": "PERSISTENT_COMPRESSION",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 37,
+   "candidate_count": 7020,
+   "case_id": "CASHCATUSDT-5m-src1790002800000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": false,
+   "production_geometry_present": true,
+   "production_identity": [
+    61,
+    94,
+    42,
+    99,
+    42,
+    99
+   ],
+   "production_pattern": "No wedge",
+   "realized_contraction_ratio": 2.422429906542059,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      29,
+      172
+     ]
+    ],
+    [
+     "lower",
+     [
+      111,
+      183
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 0.6554574232285639,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 44,
+   "candidate_count": 2769,
+   "case_id": "CASHCATUSDT-5m-src1790272200000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": false,
+   "production_geometry_present": true,
+   "production_identity": [
+    17,
+    47,
+    5,
+    37,
+    5,
+    47
+   ],
+   "production_pattern": "No wedge",
+   "realized_contraction_ratio": 1.7179487179487127,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      24,
+      77,
+      161
+     ]
+    ],
+    [
+     "lower",
+     [
+      19,
+      28,
+      111
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 1.1652761022723783,
+   "terminal_width_trend": "EXPANSION",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 126,
+   "candidate_count": 10395,
+   "case_id": "CASHCATUSDT-5m-src1790665800000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": true,
+   "production_geometry_present": true,
+   "production_identity": [
+    134,
+    166,
+    142,
+    188,
+    134,
+    194
+   ],
+   "production_pattern": "Rising Wedge",
+   "realized_contraction_ratio": 0.9335443037974721,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      54,
+      101,
+      106
+     ]
+    ],
+    [
+     "lower",
+     [
+      45,
+      95,
+      131
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 1.0723488729012411,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 0,
+   "candidate_count": 585,
+   "case_id": "ENAUSDT-1m-src1789759320000",
+   "presence_agreement": "NEITHER",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.5863636363636404,
+   "rejection_reasons_of_top_ranked": [
+    "INSUFFICIENT_SHARED_SUPPORT",
+    "STALE_SHARED_SUPPORT"
+   ],
+   "selected_pair_identity": null,
+   "selection_status": "NO_ADMISSIBLE_PAIR",
+   "symbol": "ENAUSDT",
+   "terminal_compression_ratio": 0.4670393864457514,
+   "terminal_width_trend": "PERSISTENT_COMPRESSION",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 20,
+   "candidate_count": 5478,
+   "case_id": "ENAUSDT-1m-src1789850520000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": true,
+   "production_geometry_present": true,
+   "production_identity": [
+    146,
+    183,
+    137,
+    184,
+    137,
+    190
+   ],
+   "production_pattern": "Rising Wedge",
+   "realized_contraction_ratio": 1.4237288135593211,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      48,
+      160,
+      183
+     ]
+    ],
+    [
+     "lower",
+     [
+      126,
+      177
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "ENAUSDT",
+   "terminal_compression_ratio": 0.6406225979221503,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 160,
+   "candidate_count": 6230,
+   "case_id": "ENAUSDT-5m-src1790098200000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.5541871921182298,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      87,
+      157,
+      170
+     ]
+    ],
+    [
+     "lower",
+     [
+      66,
+      122,
+      165
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "ENAUSDT",
+   "terminal_compression_ratio": 0.9675876611461705,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  }
+ ],
+ "observed_expanded_aggregate": {
+  "presence_agreement": {
+   "BOTH_PRESENT": 8,
+   "NEITHER": 2,
+   "SHADOW_ONLY": 3
+  },
+  "production_detected_count": 4,
+  "production_pattern_counts": {
+   "Falling Wedge": 2,
+   "No wedge": 4,
+   "Rising Wedge": 2
+  },
+  "selection_status_counts": {
+   "NO_ADMISSIBLE_PAIR": 2,
+   "SELECTED": 11
+  },
+  "terminal_trend_counts_all_top_ranked": {
+   "EXPANSION": 1,
+   "NO_PERSISTENT_WIDTH_TREND": 10,
+   "PERSISTENT_COMPRESSION": 2
+  },
+  "terminal_trend_counts_selected": {
+   "EXPANSION": 1,
+   "NO_PERSISTENT_WIDTH_TREND": 9,
+   "PERSISTENT_COMPRESSION": 1
+  },
+  "total_cases": 13
+ },
+ "observed_readiness": {
+  "calibration_blockers": [
+   "PERSISTENT_COMPRESSION: have 1, need >= 3",
+   "EXPANSION: have 1, need >= 2"
+  ],
+  "calibration_ready": false,
+  "diversity_gaps": [
+   "PERSISTENT_COMPRESSION: have 1, need >= 3",
+   "EXPANSION: have 1, need >= 2"
+  ],
+  "exact_case_count": 13,
+  "expansion_count": 1,
+  "insufficient_window_count": 0,
+  "newly_recovered_case_count": 8,
+  "no_persistent_trend_count": 9,
+  "non_positive_width_count": 0,
+  "persistent_compression_count": 1,
+  "production_detected_count": 4,
+  "production_positive_family_counts": [
+   [
+    "Falling Wedge",
+    2
+   ],
+   [
+    "Rising Wedge",
+    2
+   ]
+  ],
+  "readiness_rule": "exact_cases>=12; provenance complete for all; selected PERSISTENT_COMPRESSION>=3; selected EXPANSION>=2; selected NO_PERSISTENT_WIDTH_TREND>=3; no-admissible-pair cases>=2; production detected cases>=3",
+  "rejected_selection_count": 2,
+  "source_provenance_complete_count": 13,
+  "unrecoverable_targets": [
+   "CASHCATUSDT-1m-owner-comparison-2026-09-30",
+   "ENAUSDT-1m-owner-comparison-2026-09-30",
+   "robot_candidates without scanner_source_candle_time_ms (CASHCATUSDT 1m x3, ENAUSDT 1m x1, 2026-09-12..14)"
+  ]
+ }
+}

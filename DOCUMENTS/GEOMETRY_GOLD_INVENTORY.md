@@ -175,6 +175,53 @@ Required evidence before any case is declared positive:
 
 Do not weaken detector gates merely to force the screenshots to pass.
 
+## EXACT_SOURCE_TIME — GEO-U1 Slice E recovery (2026-10-01)
+
+Manifest: `tests/fixtures/geometry_gold/source_time_manifest_v1.json`
+(separate from the pinned five-case `manifest_v1.json`). Fixtures:
+`tests/fixtures/geometry_gold/source_time/`.
+
+Method (same as the BONK READY precedent): each case starts from a durable
+Scanner candidate in `runtime/terminal/robot_candidates/` that recorded
+`scanner_source_candle_time_ms`. `analyzer.core` takes that time from the
+newest `get_kline` row, i.e. the still-forming candle, whose decision-time OHLC
+is not historically reproducible. The fixture is therefore the Scanner's exact
+closed rows 0..198 (same indices as the recorded geometry), fetched from the
+Bybit v5 public kline endpoint with an anchored start/end request. Every
+fixture was validated for exact spacing, uniqueness, finite positive OHLC,
+body-inside-range and the pinned cutoff, and all four recorded anchor prices
+of each record equal the fetched high/low at the same index.
+
+Recovered cases (cutoff = last closed candle open, UTC):
+
+| case | cutoff UTC | production on fixture | SHADOW | terminal trend |
+| --- | --- | --- | --- | --- |
+| CASHCATUSDT 1m src1789850340000 | 2026-09-19T20:38Z | no geometry | SELECTED | NO_PERSISTENT_WIDTH_TREND |
+| CASHCATUSDT 1m src1790590380000 | 2026-09-28T10:12Z | Falling Wedge (detected) | SELECTED | PERSISTENT_COMPRESSION |
+| CASHCATUSDT 5m src1790002800000 | 2026-09-21T14:55Z | No wedge | SELECTED | NO_PERSISTENT_WIDTH_TREND |
+| CASHCATUSDT 5m src1790272200000 | 2026-09-24T17:45Z | No wedge | SELECTED | EXPANSION |
+| CASHCATUSDT 5m src1790665800000 | 2026-09-29T07:05Z | Rising Wedge (detected) | SELECTED | NO_PERSISTENT_WIDTH_TREND |
+| ENAUSDT 1m src1789759320000 | 2026-09-18T19:21Z | no geometry | NO_ADMISSIBLE_PAIR | PERSISTENT_COMPRESSION (top-ranked, rejected) |
+| ENAUSDT 1m src1789850520000 | 2026-09-19T20:41Z | Rising Wedge (detected) | SELECTED | NO_PERSISTENT_WIDTH_TREND |
+| ENAUSDT 5m src1790098200000 | 2026-09-22T17:25Z | no geometry | SELECTED | NO_PERSISTENT_WIDTH_TREND |
+
+Production values are observed from each fixture on current main; the recorded
+runtime geometry (which included the forming candle and older code) is kept as
+a separate fact and is not asserted equal. None of these cases is proven to be
+the owner's 2026-09-30 screenshot.
+
+UNRECOVERABLE_EXACT_CUTOFF (no fixture created):
+- CASHCATUSDT 1m owner Scanner-vs-TradingView comparison (2026-09-30);
+- ENAUSDT 1m owner broadening re-markup (2026-09-30);
+- four earlier CASHCAT/ENA 1m candidate records (2026-09-12..14) without
+  `scanner_source_candle_time_ms`.
+Laptop Scanner artifacts end 2026-09-29 and contain no source-time record for
+either owner screenshot; visual candle timing was not used.
+
+Calibration readiness (`geometry/consensus_evidence_readiness.py`, fixed rule):
+13 exact cases, provenance complete for all, NOT READY — selected
+PERSISTENT_COMPRESSION 1 (need 3) and EXPANSION 1 (need 2).
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations
