@@ -1,3 +1,31 @@
+## 🎯 ACTIVE QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
+
+Historical recovery branch is exhausted without speculation.
+
+Verified owner-machine evidence:
+- APRUSDT 5m SHORT Box history preserves only `ikigai_box:APRUSDT:5:SHORT`
+  plus anchor timestamps `1790760600000:1790761500000`;
+- no APRUSDT Box durable candidate exists; the only APRUSDT candidate files are
+  older Falling Wedges;
+- authoritative PAPER DB has no APRUSDT row and the old runtime left no Robot
+  incident directory;
+- therefore frozen planner inputs, planner gate and exact historical exception
+  are not recoverable from surviving artifacts.
+
+Runtime prerequisite is now satisfied:
+- owner synced `C:\BybitScanner` from detached `adfb50b` to authoritative
+  `5260cd2e6d8ee8480500e5b68c61c426d54a6d39`;
+- tracked tree was clean, no local-only commits existed, and owner untracked
+  files were preserved;
+- this runtime includes durable Ikigai Box planner-failure diagnostics.
+
+Next OFR-3 gate:
+- do not continue historical file archaeology and do not launch Scanner/Robot
+  merely to manufacture a failure;
+- the next naturally occurring post-#352 Box planner failure is authoritative;
+- harvest its durable `BOX_PLAN_PREPARATION_EXCEPTION` incident and classify
+  the exact planner/persistence gate before changing planner behavior.
+
 ## ✅ RVL-G3 COMPLETE — 2026-09-30
 
 PR #339 merged to `main` as
