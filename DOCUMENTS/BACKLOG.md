@@ -448,6 +448,7 @@ explicitly reprioritizes.
 | 10 | RVL-G4 | P1 | Fix geometry defect classes one bounded slice at a time | targeted gold failures turn GREEN without regressing accepted cases |
 | 11 | RVL-G5 | P1 | Add high-value geometry/state invariants | invariants complement gold cases without broad test inflation |
 | 12 | RVL-G6 | P1 | One complete owner Scanner/Telegram acceptance | full eligible universe, normal Telegram, all integrated patterns |
+| 12a | GEO-U1 | P1 queued | Universal Pivot-Consensus Envelope Geometry for Wedge/Triangle/Compression | source recovery + shadow consensus/oscillation metrics, then evidence-gated selector change; does not interrupt active G6 |
 | 13 | RVL-V1 | P2 | Compact validation report command | one report shows FAST/REPLAY/Geometry/PAPER/owner gate states |
 | 14 | RVL-V2 | P2 conditional | Bounded normalized incident capture | only if production-shape replay fidelity proves insufficient |
 | 15 | RVL-V3 | P2 | Tier-aware CI routing | focused FAST/REPLAY automatic; broader PAPER CI remains bounded |
