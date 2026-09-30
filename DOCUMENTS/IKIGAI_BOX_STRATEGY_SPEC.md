@@ -102,6 +102,55 @@ This is a strategy-spec correction. It does not authorize LIVE trading and does
 not by itself change current PAPER runtime behavior.
 
 
+## Future design — parent 5m Box with confirmed 1m child re-entry (2026-09-30)
+
+Status: **DESIGN ONLY / NOT IMPLEMENTED / PAPER FUTURE WORK**.
+
+Owner visual reference: `STORJUSDT` on 2026-09-30.
+
+The owner identified a separate execution layer that must not be conflated with
+the passive 1.618/2.618 dual-grid design:
+
+- the **parent setup** is the already-confirmed 5m Ikigai Box and its frozen
+  structure/levels;
+- one or more normal parent-grid attempts may stop out while the higher-timeframe
+  Box thesis is still structurally valid;
+- after those failed attempts, Robot may later admit a **new 1m child execution**
+  only when a separately defined lower-timeframe confirmation appears in the
+  direction required by the parent setup;
+- the first concrete visual trigger proposed by the owner is a confirmed
+  1m bearish engulfing for a SHORT re-entry (LONG mirror to be specified by the
+  same rule family);
+- this is an **active confirmation-based re-entry**, not a third passive grid and
+  not ordinary Scanner multi-signal delivery.
+
+Required parent/child ownership model:
+1. persist an immutable relation from child execution to the parent 5m Box
+   identity and source-time formation;
+2. the child must have its own candidate/trade/execution identity while retaining
+   the parent reference;
+3. parent invalidation must block future child admissions;
+4. child execution must reuse the shared Robot order/protection/recovery engine;
+   do not create a second execution engine;
+5. retry count, per-child risk, aggregate parent+children risk budget, exact 1m
+   confirmation definition, child STOP/TAKE semantics and terminal invalidation
+   conditions remain unresolved and must be frozen before implementation;
+6. no unlimited stop/re-entry loop is permitted.
+
+Owner-facing position-card requirement:
+- if an open position was entered from a lower-timeframe child execution of a
+  higher-timeframe setup, the position card must visibly identify that relation;
+- conceptually the card should show something equivalent to
+  **"Дочернее исполнение: 1m ← родитель 5m"** (exact UX wording may be refined);
+- the card must still show the actual execution timeframe/pattern and must not
+  make the child position look like an independent unrelated 1m setup;
+- parent/child identity must remain visible after restart and in closed-position
+  history, not only in transient Telegram text.
+
+This design is intentionally deferred. It does not change current PAPER behavior
+and does not authorize LIVE trading.
+
+
 ## Completed implementation and no-repeat checkpoint (2026-09-24)
 
 - PR #215: pure PAPER first-grid planner; merged into main.
