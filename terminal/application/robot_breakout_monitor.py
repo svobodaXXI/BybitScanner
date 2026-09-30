@@ -48,6 +48,8 @@ from terminal.application.ikigai_box_catchup import (
     build_box_emergency_close_market_plan,
     build_box_exit_specs,
     build_box_market_ownership_specs,
+    box_fully_worked_terminal,
+    box_take_completed,
     build_box_market_plans,
     classify_box_catchup_slots,
     durable_box_market_intent,
@@ -1050,6 +1052,15 @@ class RobotBreakoutMonitor:
     ) -> bool:
         if proof.exit_quantity <= 0:
             return False
+        if not box_take_completed(proof):
+            # A slot-0 exit (STOP obligation, emergency or manual close) is not
+            # a TAKE completion; its own finalizer or restart reconciliation
+            # closes the lifecycle with the correct reason.
+            return False
+        # OFR-5: P1..P3 historically filled + common TAKE => the same setup is
+        # fully worked. Every other TAKE-flat outcome keeps the existing
+        # first-attempt closure; both cancel all remaining owned orders below.
+        terminal = box_fully_worked_terminal(source, proof)
 
         now_ms = self._now_ms()
         for owner in self._store().load_box_order_ownership(source.candidate_id):
@@ -1078,6 +1089,8 @@ class RobotBreakoutMonitor:
             execution["box_take_realized_at_ms"] = (
                 proof.last_execution_at_ms if proof.last_execution_at_ms is not None else now_ms
             )
+            if terminal is not None:
+                execution["box_setup_terminal"] = terminal
             state = dict(record.robot_state)
             state["execution"] = execution
             try:
@@ -1110,6 +1123,21 @@ class RobotBreakoutMonitor:
             or proof.entry_notional <= 0
         ):
             raise RobotBreakoutMonitorError("Box TAKE proof lacks exit economics")
+        execution = dict(record.robot_state.get("execution") or {})
+        if terminal is not None and execution.get("box_setup_terminal") != terminal:
+            execution["box_setup_terminal"] = terminal
+            state = dict(record.robot_state)
+            state["execution"] = execution
+            try:
+                self._store().save_robot_candidate_state(
+                    record.candidate_id,
+                    status="OPEN",
+                    robot_state=state,
+                    expected_revision=record.state_revision,
+                    updated_at_ms=now_ms,
+                )
+            except ConcurrentUpdate:
+                return False
         realized_pct = (
             (proof.realized_pnl - proof.accumulated_fee)
             / proof.entry_notional

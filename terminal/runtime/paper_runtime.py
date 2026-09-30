@@ -56,6 +56,7 @@ from terminal.application.live_account_reconciliation import (
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.ikigai_box_plan_persistence import persist_ikigai_box_plan
 from terminal.application.ikigai_box_catchup import (
+    box_fully_worked_terminal,
     build_box_manual_close_market_plan,
     durable_box_market_intent,
     restore_box_market_plan,
@@ -2536,6 +2537,45 @@ class PaperRuntime:
             request.client_action_id.value, tuple(results), refreshed.positions,
         )
 
+    def _terminalize_box_take(self, candidate, source_id: str, proof, *, now_ms: int) -> None:
+        """Restart twin of the monitor's Box TAKE finalization.
+
+        Cancel every still-active owned order of this setup (e.g. an unfilled
+        P4) with the same idempotent action identity the monitor uses, then
+        persist OFR-5 fully-worked evidence when P1..P3 historically filled.
+        """
+        for owner in self.store.load_box_order_ownership(source_id):
+            limit = self.store.get_paper_limit(owner.order_id.value, self._paper_account_id)
+            if limit is None or limit.status in INACTIVE_LIMIT_STATUSES:
+                continue
+            digest = hashlib.sha256(
+                f"{source_id}\0take-finalize\0{owner.order_id.value}".encode("utf-8")
+            ).hexdigest()[:32]
+            self.store.cancel_paper_limit(
+                client_action_id=f"box-take-cancel-{digest}",
+                request_fingerprint=hashlib.sha256(
+                    f"{candidate.symbol.value}\0{owner.order_id.value}".encode("utf-8")
+                ).hexdigest(),
+                order_id=owner.order_id,
+                trading_account_id=self._paper_account_id,
+                updated_at_ms=now_ms,
+            )
+        source = self.store.get_robot_candidate(source_id)
+        terminal = box_fully_worked_terminal(source, proof) if source is not None else None
+        execution = dict((candidate.robot_state or {}).get("execution") or {})
+        if terminal is None or execution.get("box_setup_terminal") == terminal:
+            return
+        execution["box_setup_terminal"] = terminal
+        state = dict(candidate.robot_state or {})
+        state["execution"] = execution
+        self.store.save_robot_candidate_state(
+            candidate.candidate_id,
+            status="OPEN",
+            robot_state=state,
+            expected_revision=candidate.state_revision,
+            updated_at_ms=max(now_ms, candidate.updated_at_ms),
+        )
+
     def _robot_close_box_candidate(self, candidate) -> CommandResult:
         """Close one OPEN Box through durable EXIT-slot-0 ownership."""
         trade = self.store.get_open_robot_trade_for_symbol(
@@ -3147,6 +3187,9 @@ class PaperRuntime:
                                 exit_reason = "EMERGENCY_PROTECTION_FAILURE"
                             elif sum(box_proof.exit_by_slot, Decimal("0")) == box_proof.entry_quantity:
                                 exit_reason = "TAKE"
+                                self._terminalize_box_take(
+                                    candidate, source_id.strip(), box_proof, now_ms=now_ms,
+                                )
                             else:
                                 unresolved_trade_ids.add(trade.trade_id)
                                 continue
