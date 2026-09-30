@@ -1,16 +1,19 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE A — 2026-09-30
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE B — 2026-09-30
 
-Owner command: deterministic pivot-consensus boundary SHADOW metrics, based on
-main `ef2189d467f2e0ca89170654c4b00b07783b6a3d`.
+Owner command: deterministic SHADOW upper/lower envelope pairing plus
+oscillation/traversal diagnostics, based on main
+`c3c80ac3e0cbf8b02e4ee59b4082856a29584ded`.
 
-Scope: `geometry/consensus_boundary.py` and focused boundary regressions; reuse
-confirmed pivots, historical cutoff, ATR and formation body-breach diagnostics.
-Production geometry selection/classification and Telegram stay unchanged.
+Scope: pair merged Slice A `BoundaryConsensus` candidates, consume their
+distinct touch clusters, and report signed width, validity, balance,
+alternation, meaningful swings and cross-boundary traversal evidence.
+Production geometry selection/classification, Telegram and LIVE stay unchanged.
 Delivery gate: focused evidence + protected task finish -> commit/push/open PR;
 review/merge remain pending. No Scanner/Robot launch or owner visual acceptance.
 
-Next logical slice (separate owner authorization): shadow upper/lower pairing
-and alternating-touch/traversal evidence, preserving production selection.
+Next logical slice (separate owner authorization): evidence-calibrated SHADOW
+pair selection/terminal compression evaluation before any production selector
+or geometry-family classification change.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
