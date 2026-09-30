@@ -448,6 +448,7 @@ baseline behavior is recorded without tuning.
 - no production detector thresholds or Scanner/Robot/runtime behavior changed.
 
 #### RVL-G3 — Geometry baseline report
+**Status:** COMPLETE — PR #339 merged as `a7bd7c3d9a16a07952709343d7678e354b857146`
 **Priority:** P1
 
 Produce one concise machine-readable/text report:
@@ -460,6 +461,15 @@ No aggregate vanity score is allowed to hide a structurally wrong case.
 
 **Done when:** a geometry code change can immediately show which real cases
 improved and which regressed.
+
+**Completion evidence (2026-09-30):**
+- focused report unit tests: 3/3 PASS;
+- real Geometry Gold baseline: 5/5 PASS;
+- changed-vs-baseline: none;
+- false positives: none;
+- false negatives: none;
+- PONS anchor delta: all six tracked indices +0;
+- no production geometry or detector behavior changed.
 
 #### RVL-G4 — Fix geometry defect classes one at a time
 **Priority:** P1

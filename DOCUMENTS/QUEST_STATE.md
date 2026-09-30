@@ -1,3 +1,21 @@
+## ✅ RVL-G3 COMPLETE — 2026-09-30
+
+PR #339 merged to `main` as
+`a7bd7c3d9a16a07952709343d7678e354b857146`.
+
+Validation:
+- report unit tests: 3/3 PASS;
+- Geometry Gold baseline: 5/5 PASS;
+- changed vs baseline: none;
+- false positives: none;
+- false negatives: none;
+- PONS anchor delta: upper/lower anchors, seconds, START and END all +0.
+
+The report layer is test-only and does not change detector thresholds or
+production Scanner/Robot behavior.
+
+Next Geometry task: RVL-G4 — fix defect classes one at a time.
+
 ## ✅ RVL-G2 COMPLETE — 2026-09-29
 
 PR #338 merged to `main` as
