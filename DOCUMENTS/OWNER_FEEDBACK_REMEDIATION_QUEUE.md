@@ -324,10 +324,15 @@ Owner-frozen STOP rule — 2026-09-30:
   later fill; this is an explicit strategy exception to generic never-widen
   behavior because the frozen distance from actual VWAP is preserved;
 - keep the frozen common TAKE unchanged;
+- full-grid planning retains fee-aware net RR >= 2;
+- partial filled exposure uses the plan's frozen `minimum_partial_fill_rr` as
+  its RR floor; do not require RR >= 2 on each P1/P2/P3 partial VWAP and do not
+  remove RR validation entirely;
 - pre-entry catch-up must fail closed if executable market state cannot support a
-  valid translated STOP/RR;
-- if an already-executed fill cannot be protected under the contract, use the
-  existing fail-closed protection/reconciliation path immediately;
+  translated STOP at or above that frozen partial-fill RR floor;
+- if an already-executed fill falls below the same floor or otherwise cannot be
+  protected under the contract, use the existing fail-closed
+  protection/reconciliation path immediately;
 - never silently invent a different risk model.
 
 Acceptance:
