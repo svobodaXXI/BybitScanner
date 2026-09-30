@@ -86,17 +86,39 @@ Important distinction:
 - already submitted/filling Robot-owned grid orders continue through the normal
   existing Box fill/top-up lifecycle.
 
-### Still unresolved before implementation
+### Owner-frozen catch-up exit mapping and terminal lifecycle — 2026-09-30
 
-The owner has **not yet frozen the exact price mapping for each corresponding
-closing LIMIT**. For example, do not assume without a separate decision that a
-caught P2 slot exits at P1, or that all caught slots exit at the shared TAKE.
-That mapping must be specified explicitly before code is written.
+The owner selected the shared-TAKE mapping for late catch-up execution:
 
-Likewise, preserve the existing Box STOP semantics as the intended protection
-model; if market catch-up fill prices create an arithmetic conflict with the
-currently frozen planned-average/RR calculation, resolve that contract
-explicitly before implementation rather than silently repricing protection.
+- every market-caught slot keeps its original slot identity and quantity;
+- its closing target is the **same frozen common Box TAKE** used by the original
+  Box plan;
+- do not invent per-slot mini-TP levels, previous-slot exits, or a shifted
+  catch-up target;
+- not-yet-crossed entry slots remain at their original frozen LIMIT prices while
+  the setup is still active.
+
+Additional terminal rule:
+
+- if the three nearest original entry slots `P1..P3` have been filled and the
+  resulting position is then closed at the frozen common TAKE, the Box setup is
+  considered **fully worked / terminal**;
+- any still-resting entry LIMITs for that same setup, including an unfilled
+  farther `P4`, must be cancelled;
+- Robot must not enter that same Box setup again after this terminal TAKE;
+- this is setup-identity-specific and does not suppress a later independent Box
+  with different anchors/timeframe/identity.
+
+The paired closing behavior therefore does not create a new target ladder:
+caught slots participate in the same frozen TAKE objective as the rest of the
+Box exposure. Preserve durable per-slot ownership/recovery evidence even though
+the target price is shared.
+
+The remaining pre-implementation strategy question is STOP arithmetic only:
+preserve the existing Box STOP semantics as the intended protection model; if
+real market catch-up fill prices conflict with the currently frozen
+planned-average/RR calculation, resolve that contract explicitly rather than
+silently repricing protection.
 
 This is a strategy-spec correction. It does not authorize LIVE trading and does
 not by itself change current PAPER runtime behavior.
