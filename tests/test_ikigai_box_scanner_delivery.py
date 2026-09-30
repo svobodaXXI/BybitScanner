@@ -418,7 +418,9 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
             unittest.mock.Mock(return_value=None),
             unittest.mock.Mock(return_value="box-robot-" + "ab12" * 16),
         ):
-            with self.subTest(preparer=preparer):
+            with self.subTest(preparer=preparer), patch.object(
+                box, "record_robot_incident",
+            ) as incident:
                 result, photo, warn = self._deliver(preparer=preparer)
                 self.assertTrue(result)
                 self.assertEqual(photo.call_count, 2)
@@ -427,6 +429,15 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
                         (data or "").startswith("robot:") for _t, data in _markup_callbacks(call)
                     ))
                 warn.assert_called_once_with("owner", "TESTUSDT", "5")
+                incident.assert_called_once()
+                kwargs = incident.call_args.kwargs
+                self.assertEqual(kwargs["incident_type"], "ROBOT_CANDIDATE_FAILURE")
+                self.assertEqual(kwargs["stage"], "box_plan_preparation")
+                self.assertEqual(kwargs["reason_code"], "BOX_PLAN_PREPARATION_EXCEPTION")
+                self.assertEqual(kwargs["symbol"], "TESTUSDT")
+                self.assertEqual(kwargs["timeframe"], "5")
+                self.assertEqual(kwargs["pattern"], "IKIGAI_BOX")
+                self.assertIsInstance(kwargs["error"], Exception)
 
     def test_scanner_pass_prepares_only_through_the_owner_card_and_never_admits(self):
         source = _candles()

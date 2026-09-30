@@ -20,6 +20,7 @@ from notification import (
     send_photo,
     warn_owner_robot_candidate_failed,
 )
+from robot_failure_diagnostics import record_robot_incident
 from signal_memory import load_memory, save_memory
 
 import config
@@ -51,7 +52,20 @@ def _prepare_owner_robot_handle(robot_plan_preparer, symbol, timeframe, closed, 
         source_id = robot_plan_preparer(symbol, timeframe, box_robot_formation(closed, formation))
         return box_plan_admission_handle(str(source_id)), False
     except Exception as exc:
-        print(f"[ROBOT CANDIDATE ERROR] symbol={symbol} pattern=IKIGAI_BOX error={exc}")
+        record_robot_incident(
+            incident_type="ROBOT_CANDIDATE_FAILURE",
+            stage="box_plan_preparation",
+            reason_code="BOX_PLAN_PREPARATION_EXCEPTION",
+            symbol=symbol,
+            timeframe=str(timeframe).strip() or None,
+            pattern="IKIGAI_BOX",
+            error=exc,
+        )
+        print(
+            "[ROBOT CANDIDATE ERROR] "
+            f"symbol={symbol} pattern=IKIGAI_BOX "
+            f"error_class={type(exc).__name__}"
+        )
         return None, True
 
 

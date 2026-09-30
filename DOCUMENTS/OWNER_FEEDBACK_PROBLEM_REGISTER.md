@@ -237,8 +237,14 @@ Required work:
 
 Do not guess that these four symbols share one planner/math defect until exact error evidence proves it.
 
+APRUSDT post-G6 investigation (2026-09-30) resolved why no incident file
+existed: the Box-specific `_prepare_owner_robot_handle(...)` exception handler
+did not call `record_robot_incident`; it only printed the raw exception and
+returned `failed=True`. The common `pattern_robot_integration.py` diagnostics
+therefore never saw CONFIRMED Box planner failures. This is an OFR-1 coverage
+gap, not a path-discovery problem.
 ### RH-DIAG-1 — durable candidate/protection incident diagnostics
-**Status: IMPLEMENTED / REAL-INCIDENT READBACK PENDING**
+**Status: BOX-SPECIFIC GAP FOUND / FIX IN PROGRESS**
 
 The original console-only observability gap is implemented on current main:
 - bounded sanitized incident files are written by `robot_failure_diagnostics.py`;
