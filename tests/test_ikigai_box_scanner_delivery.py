@@ -3,6 +3,7 @@
 import os
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -265,6 +266,106 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
         ) as sending:
             main.run_scan_pass()
         sending.assert_not_called()
+
+    def test_completed_gate_requires_p1_then_later_take_for_both_directions(self):
+        for direction in (1, -1):
+            with self.subTest(direction=direction):
+                frame, _, _ = _two_impulses(direction, second_steps=7)
+                formation = detect_ikigai_box(frame)
+                self.assertIsNotNone(formation)
+                tick = Decimal("0.01")
+                prices, take = box.approved_first_grid(
+                    direction=formation.direction,
+                    frozen_f1=Decimal(str(formation.fibonacci_1_0)),
+                    frozen_f1618=Decimal(str(formation.fibonacci_1_618)),
+                    tick_size=tick,
+                )
+                p1 = prices[0]
+                controlled = frame.copy(deep=True)
+                start, end = formation.second_start_index, formation.as_of_index
+                self.assertGreater(end, start)
+
+                if formation.direction == "SHORT":
+                    for index in range(start, end + 1):
+                        controlled.loc[index, "high"] = float(p1 - tick / 2)
+                        controlled.loc[index, "low"] = float(take + tick / 2)
+                    controlled.loc[start, "high"] = float(p1)
+                    controlled.loc[start + 1, "low"] = float(take)
+                else:
+                    for index in range(start, end + 1):
+                        controlled.loc[index, "low"] = float(p1 + tick / 2)
+                        controlled.loc[index, "high"] = float(take - tick / 2)
+                    controlled.loc[start, "low"] = float(p1)
+                    controlled.loc[start + 1, "high"] = float(take)
+
+                self.assertTrue(box._completed_before_delivery(
+                    controlled, formation, tick,
+                ))
+
+                ambiguous = controlled.copy(deep=True)
+                if formation.direction == "SHORT":
+                    ambiguous.loc[start, "low"] = float(take)
+                    ambiguous.loc[start + 1:, "low"] = float(take + tick / 2)
+                else:
+                    ambiguous.loc[start, "high"] = float(take)
+                    ambiguous.loc[start + 1:, "high"] = float(take - tick / 2)
+                self.assertFalse(box._completed_before_delivery(
+                    ambiguous, formation, tick,
+                ))
+
+    def test_completed_box_is_suppressed_before_render_delivery_and_robot_plan(self):
+        frame, _, _ = _two_impulses(second_steps=7)
+        formation = detect_ikigai_box(frame)
+        tick = Decimal("0.01")
+        prices, take = box.approved_first_grid(
+            direction=formation.direction,
+            frozen_f1=Decimal(str(formation.fibonacci_1_0)),
+            frozen_f1618=Decimal(str(formation.fibonacci_1_618)),
+            tick_size=tick,
+        )
+        controlled = frame.copy(deep=True)
+        start = formation.second_start_index
+        for index in range(start, formation.as_of_index + 1):
+            controlled.loc[index, "high"] = float(prices[0] - tick / 2)
+            controlled.loc[index, "low"] = float(take + tick / 2)
+        controlled.loc[start, "high"] = float(prices[0])
+        controlled.loc[start + 1, "low"] = float(take)
+        controlled["time"] = [
+            1_790_000_000_000 + i * 300_000 for i in range(len(controlled))
+        ]
+        live = pd.concat([controlled, pd.DataFrame([{
+            "time": int(controlled.iloc[-1]["time"]) + 300_000,
+            "open": 100, "high": 101, "low": 99, "close": 100,
+        }])], ignore_index=True)
+        history = {}
+        preparer = unittest.mock.Mock(return_value=SOURCE_ID)
+        with patch.object(
+            box, "detect_ikigai_box", return_value=formation,
+        ), patch.object(
+            box, "load_memory", return_value={},
+        ), patch.object(
+            box, "save_memory", side_effect=lambda value: history.update(value),
+        ) as save, patch.object(
+            box, "render_ikigai_box_chart",
+        ) as render, patch.object(
+            box, "send_message",
+        ) as text, patch.object(
+            box, "send_photo",
+        ) as photo, patch.object(
+            box, "get_telegram_chat_ids", return_value=("owner",),
+        ):
+            self.assertFalse(box.send_ikigai_box_observation(
+                "TESTUSDT", live, timeframe="5",
+                robot_plan_preparer=preparer, tick_size=tick,
+            ))
+
+        render.assert_not_called()
+        text.assert_not_called()
+        photo.assert_not_called()
+        preparer.assert_not_called()
+        save.assert_called_once()
+        record = history["ikigai_box:TESTUSDT:5:SHORT"]
+        self.assertEqual(record["status"], "COMPLETED_BEFORE_DELIVERY")
 
     def test_render_failure_never_sends_stale_file(self):
         source = _candles()

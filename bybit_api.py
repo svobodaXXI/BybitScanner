@@ -42,6 +42,15 @@ session.client.proxies.update({
 # Symbols
 # ==================================================
 
+_instrument_tick_sizes = {}
+
+
+def get_instrument_tick_size(symbol):
+    """Return the tick size cached by the latest successful instrument scan."""
+
+    return _instrument_tick_sizes.get(str(symbol).strip().upper())
+
+
 def get_symbols():
     """
     Возвращает актуальный список активных
@@ -54,7 +63,10 @@ def get_symbols():
     инструменты при количестве больше лимита API.
     """
 
+    global _instrument_tick_sizes
+
     symbols = []
+    instrument_tick_sizes = {}
     cursor = None
 
     while True:
@@ -113,6 +125,13 @@ def get_symbols():
                     symbol
                 )
 
+                tick_size = (
+                    item.get("priceFilter", {})
+                    .get("tickSize")
+                )
+                if tick_size:
+                    instrument_tick_sizes[str(symbol).strip().upper()] = str(tick_size)
+
         cursor = result.get(
             "nextPageCursor"
         )
@@ -123,6 +142,8 @@ def get_symbols():
     symbols = sorted(
         set(symbols)
     )
+
+    _instrument_tick_sizes = instrument_tick_sizes
 
     return symbols
 

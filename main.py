@@ -19,7 +19,7 @@ import os
 import time
 
 from analyzer import analyze_symbol
-from bybit_api import get_symbols
+from bybit_api import get_instrument_tick_size, get_symbols
 from config import MODE, MIN_SCORE, MAX_SYMBOLS
 
 from signal_adapter import prepare_signal
@@ -171,6 +171,7 @@ def run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
                             timeframe=timeframe,
                             test_mode=config.TELEGRAM_TEST_MODE,
                             robot_plan_preparer=box_plan_preparer,
+                            tick_size=get_instrument_tick_size(symbol),
                         )
                         if box_sent:
                             box_observation_count += 1
