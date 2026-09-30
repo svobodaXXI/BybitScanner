@@ -497,6 +497,26 @@ Add only high-value invariants:
 Property tests complement, never replace, the real golden fixtures.
 
 #### RVL-G6 — One full owner Scanner acceptance
+
+**2026-09-30 owner run completed (full traversal evidence):**
+- Scanner reported `Сканирование завершено`;
+- full eligible universe: **782/782 tickers**;
+- **112** signals found;
+- **128** Telegram deliveries;
+- **28** Ikigai Box observations;
+- elapsed **73:39**;
+- normal Telegram delivery continued through the pass despite one previously
+  observed transient HTTP `WinError 10053`.
+
+This satisfies the **full-run/traversal and normal Telegram-delivery portion**
+of G6. It does **not** close the Geometry Quality boss: during the same owner
+review, systematic anchor/geometry shortcomings were observed and frozen as
+GEO-U1 (universal pivot-consensus envelope geometry) and GEO-U2
+(Broadening/«Рупор» classification, ENAUSDT reference). Therefore the G6 exit
+condition "no owner-observed systematic geometry defect" is **NOT MET**.
+Do not repeat this 782-symbol pass merely to prove traversal; reopen owner
+geometry acceptance only after the relevant geometry changes are implemented.
+
 **Priority:** P1 final gate / owner-manual
 
 Exactly the existing permanent rule:

@@ -433,6 +433,22 @@ Replay — developer regression, а не замена полного owner Scann
 
 Следующий технический slice для текущего P0: создать первый continuous multi-symbol `ENTRY_PENDING` runtime replay без искусственных drain barriers и доказать текущий overflow как RED до следующего production fix.
 
+## 2026-09-30 G6 full traversal result
+
+✅ Full owner Scanner pass completed naturally:
+- 782/782 tickers;
+- 112 signals;
+- 128 Telegram deliveries;
+- 28 Box observations;
+- 73:39 elapsed.
+
+📐 Geometry Quality boss remains open: owner-observed anchor/shape-selection
+defects during this same pass require GEO-U1/GEO-U2 before a new geometry
+acceptance pass. The completed traversal itself is not to be repeated now.
+
+🎯 Immediate gate after G6: read the durable APRUSDT candidate-failure incident
+created during this pass and use it for OFR-3 root-cause classification.
+
 # BybitScanner — состояние кампании
 
 Статус: ACTIVE  

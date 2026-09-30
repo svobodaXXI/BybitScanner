@@ -1,3 +1,20 @@
+## NOW — 2026-09-30 — G6 FULL PASS COMPLETED / GEOMETRY GATE REOPENED
+
+Owner screenshot at 14:48 confirms natural Scanner completion:
+- scanned tickers: **782**;
+- signals found: **112**;
+- sent to Telegram: **128**;
+- Ikigai Box observations: **28**;
+- elapsed: **73:39**.
+
+The complete traversal and normal Telegram-delivery requirement is satisfied.
+However G6 is **not a Geometry Quality PASS**, because the same run produced
+owner-confirmed systematic geometry issues (anchor consensus/selection and
+Broadening/«Рупор» misclassification). Those are preserved under GEO-U1/GEO-U2.
+The next operational dependency is no longer "wait for G6": harvest durable
+APRUSDT Robot-candidate incident evidence for OFR-3, then continue the
+owner-prioritized remediation queue.
+
 ## OWNER PROPOSALS CHECKPOINT — 2026-09-30
 
 All owner proposals raised during the current Scanner/Geometry/Box review are
@@ -533,14 +550,19 @@ explicitly reprioritizes.
 | 9 | RVL-G3 | P1 | Geometry baseline report | per-case PASS/FAIL and anchor deltas visible in one run |
 | 10 | RVL-G4 | P1 | Fix geometry defect classes one bounded slice at a time | targeted gold failures turn GREEN without regressing accepted cases |
 | 11 | RVL-G5 | P1 | Add high-value geometry/state invariants | invariants complement gold cases without broad test inflation |
-| 12 | RVL-G6 | P1 | One complete owner Scanner/Telegram acceptance | full eligible universe, normal Telegram, all integrated patterns |
+| 12 | RVL-G6 | P1 | **FULL PASS COMPLETE / GEOMETRY GATE NOT PASSED** | 782/782, 112 signals, 128 Telegram deliveries, 28 Box observations, 73:39; owner found systematic geometry defects -> GEO-U1/U2 |
 | 12a | GEO-U1 | P1 queued | Universal Pivot-Consensus Envelope Geometry for Wedge/Triangle/Compression | source recovery + shadow consensus/oscillation metrics, then evidence-gated selector change; does not interrupt active G6 |
 | 12b | GEO-U2 | P1 queued after GEO-U1 | Broadening Formation / «Рупор» Scanner family | recover ENAUSDT 1m source-time case, classify widening consensus pairs separately from wedge/triangle, Telegram-first Scanner integration; Robot strategy deferred |
 | 13 | RVL-V1 | P2 | Compact validation report command | one report shows FAST/REPLAY/Geometry/PAPER/owner gate states |
 | 14 | RVL-V2 | P2 conditional | Bounded normalized incident capture | only if production-shape replay fidelity proves insufficient |
 | 15 | RVL-V3 | P2 | Tier-aware CI routing | focused FAST/REPLAY automatic; broader PAPER CI remains bounded |
 
-**Active task:** RVL-R6 — one canonical owner PAPER acceptance on current merged main. Shutdown itself is already owner-verified on `d3504c695c5793dde6c41cf952276535d56a324a`; the remaining R6 evidence is sustained real-traffic stability plus reconcile/restart non-recurrence.
+**2026-09-30 G6 checkpoint:** full owner Scanner traversal completed: 782/782 tickers,
+112 signals, 128 Telegram deliveries, 28 Box observations, 73:39 elapsed.
+Traversal/Telegram evidence is complete. Geometry Quality is not accepted because
+the same review exposed systematic anchor/shape-selection defects now owned by
+GEO-U1/GEO-U2. Do not repeat the full pass until geometry changes justify a new
+owner acceptance.
 
 Hard sequencing:
 - no new production ingress fix before RVL-R2 RED and RVL-R3 boundary proof;
