@@ -1,19 +1,19 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE B — 2026-09-30
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE C — 2026-09-30
 
-Owner command: deterministic SHADOW upper/lower envelope pairing plus
-oscillation/traversal diagnostics, based on main
-`c3c80ac3e0cbf8b02e4ee59b4082856a29584ded`.
+Owner command: SHADOW pair selection + terminal-compression evidence, based on
+main `99586336cc023555043e17ba53e03734c8b28410` (Slices A #366 and B #367 merged).
 
-Scope: pair merged Slice A `BoundaryConsensus` candidates, consume their
-distinct touch clusters, and report signed width, validity, balance,
-alternation, meaningful swings and cross-boundary traversal evidence.
-Production geometry selection/classification, Telegram and LIVE stay unchanged.
-Delivery gate: focused evidence + protected task finish -> commit/push/open PR;
-review/merge remain pending. No Scanner/Robot launch or owner visual acceptance.
+Scope: `geometry/consensus_selection.py` ranks Slice B `EnvelopePairConsensus`
+candidates with explicit admissibility gates and a lexicographic quality tuple
+(no aggregate score), plus terminal-window width evidence that rejects one-bar
+fake compression. No Wedge/Triangle/Compression/Broadening classification.
+Production geometry selection/classification, Telegram, Robot and LIVE stay
+unchanged. Delivery gate: focused evidence -> commit/push/open PR; review/merge
+remain pending. No Scanner/Robot launch or owner visual acceptance.
 
-Next logical slice (separate owner authorization): evidence-calibrated SHADOW
-pair selection/terminal compression evaluation before any production selector
-or geometry-family classification change.
+Next logical slice (separate owner authorization): SHADOW report beside the
+production winner on exact Geometry Gold cases (deltas only), then thresholds
+calibrated on that evidence, before any selector cutover or family classifier.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
