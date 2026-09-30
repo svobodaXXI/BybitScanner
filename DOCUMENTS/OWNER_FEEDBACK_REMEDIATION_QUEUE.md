@@ -285,7 +285,7 @@ Acceptance:
 
 ### OFR-5 — Box crossed-grid late admission / catch-up execution
 **Priority:** P1  
-**Status:** OPEN / shared TAKE frozen; STOP arithmetic remains unresolved
+**Status:** STRATEGY FROZEN / implementation pending
 
 Frozen owner intent:
 - original P1..P4 grid remains fixed;
@@ -309,18 +309,30 @@ Owner-frozen 2026-09-30:
 - after that terminal TAKE, do not re-enter the same Box setup; a later distinct
   setup/timeframe remains independently eligible.
 
-Remaining blocking decision before code:
-- if real market catch-up fills conflict with existing frozen planned-average/RR
-  STOP arithmetic, freeze the precise STOP rule rather than silently moving it.
+Owner-frozen STOP rule — 2026-09-30:
+- derive the original stop distance from the frozen planned average and planned
+  STOP;
+- after actual MARKET/LIMIT fills establish the real aggregate average entry,
+  translate that same stop distance to the real average:
+  LONG moves STOP below actual average by the original offset; SHORT moves STOP
+  above actual average by the original offset;
+- tick-normalize outward;
+- keep the frozen common TAKE unchanged;
+- if the translated STOP cannot satisfy structural placement and the existing
+  minimum RR/protection contract, fail closed rather than silently inventing a
+  different risk model.
 
 Acceptance:
 - deterministic scenarios for 0/1/2/3/4 crossed slots;
 - exact slot ownership after mixed MARKET + LIMIT entry;
 - all caught slots target the shared frozen TAKE;
+- STOP translation uses actual aggregate average plus the original frozen
+  grid-derived stop offset;
 - `P1..P3 filled -> common TAKE hit` terminalizes the setup, cancels remaining
   entry LIMITs and forbids same-setup re-entry;
 - familiar STOP protection active immediately for real exposure;
-- restart/reconcile preserves the same slot identities and terminal state.
+- restart/reconcile preserves the same slot identities, translated STOP facts
+  and terminal state.
 
 ### OFR-6 — Telegram position-card presentation cleanup
 **Priority:** P1  
