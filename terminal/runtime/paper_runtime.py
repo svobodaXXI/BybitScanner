@@ -1744,6 +1744,7 @@ class PaperRuntime:
                 "age_ms": None,
                 "source_received_at_ms": received_at_ms,
                 "source_event_at_ms": book.source_event_at_ms,
+                "continuity_reason": reason,
             },
             selected_recovery_action="EMERGENCY_CLOSE",
             incident_dir=self._robot_incident_dir,
