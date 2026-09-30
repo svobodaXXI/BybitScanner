@@ -9,6 +9,7 @@ because it can still be open. See DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md.
 
 import os
 import re
+from decimal import Decimal, InvalidOperation
 
 from geometry.ikigai_box import IkigaiBoxWatch, detect_ikigai_box
 from geometry.ikigai_box_chart import ikigai_box_signal_text, render_ikigai_box_chart
@@ -22,11 +23,63 @@ from notification import (
 )
 from robot_failure_diagnostics import record_robot_incident
 from signal_memory import load_memory, save_memory
+from terminal.paper.ikigai_box_plan import approved_first_grid
 
 import config
 
 
 _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]+$")
+
+
+def _completed_before_delivery(closed, formation, tick_size):
+    """True only when an exact first-grid P1 touch precedes a later TAKE touch.
+
+    Same-candle P1+TAKE is intentionally ambiguous because OHLC has no intrabar
+    ordering, so it is not enough to mark a setup completed.
+    """
+
+    if tick_size in (None, ""):
+        return False
+    try:
+        tick = Decimal(str(tick_size))
+        if not tick.is_finite() or tick <= 0:
+            return False
+        prices, take = approved_first_grid(
+            direction=formation.direction,
+            frozen_f1=Decimal(str(formation.fibonacci_1_0)),
+            frozen_f1618=Decimal(str(formation.fibonacci_1_618)),
+            tick_size=tick,
+        )
+    except (ArithmeticError, InvalidOperation, TypeError, ValueError):
+        return False
+
+    p1 = prices[0]
+    start = formation.second_start_index
+    end = formation.as_of_index
+    if type(start) is not int or type(end) is not int or not (0 <= start <= end < len(closed)):
+        return False
+
+    entry_index = None
+    for index in range(start, end + 1):
+        row = closed.iloc[index]
+        high = Decimal(str(row["high"]))
+        low = Decimal(str(row["low"]))
+        touched = high >= p1 if formation.direction == "SHORT" else low <= p1
+        if touched:
+            entry_index = index
+            break
+
+    if entry_index is None:
+        return False
+
+    for index in range(entry_index + 1, end + 1):
+        row = closed.iloc[index]
+        high = Decimal(str(row["high"]))
+        low = Decimal(str(row["low"]))
+        completed = low <= take if formation.direction == "SHORT" else high >= take
+        if completed:
+            return True
+    return False
 
 
 def box_robot_formation(closed, formation):
@@ -71,7 +124,7 @@ def _prepare_owner_robot_handle(robot_plan_preparer, symbol, timeframe, closed, 
 
 def send_ikigai_box_observation(
     symbol, candles, *, timeframe, test_mode=False, chart_dir="charts",
-    robot_plan_preparer=None,
+    robot_plan_preparer=None, tick_size=None,
 ):
     """Deliver text then photo per frozen first-impulse pair.
 
@@ -103,6 +156,16 @@ def send_ikigai_box_observation(
     memory_key = f"ikigai_box:{symbol}:{timeframe}:{formation.direction}"
     memory = load_memory()
     if not test_mode and memory.get(memory_key, {}).get("anchors") == identity:
+        return False
+
+    if _completed_before_delivery(closed, formation, tick_size):
+        if not test_mode:
+            memory[memory_key] = {
+                "anchors": identity,
+                "pattern": "Ikigai Box",
+                "status": "COMPLETED_BEFORE_DELIVERY",
+            }
+            save_memory(memory)
         return False
 
     # Separate first-impulse-specific path: never reuse <symbol>_analysis.png
