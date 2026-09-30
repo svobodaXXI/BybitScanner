@@ -292,7 +292,7 @@ CASHCATUSDT root-cause investigation, and OFR-3 still owns the Box handoff root
 cause after the next real diagnostic record is harvested.
 
 ### RCV-SELF-1 — Robot remains in "Нужна сверка" after emergency close
-**Status: OPEN runtime recovery blocker**
+**Status: IMPLEMENTED / OWNER REAL-RUNTIME REACCEPTANCE PENDING**
 
 Owner evidence:
 - CASHCATUSDT SHORT was emergency-closed;
@@ -312,6 +312,15 @@ Owning queue: `OFR-3A` in
 `DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
 
 ## Geometry / pattern quality
+
+Repository reconciliation 2026-09-30:
+- commit `8a66daaf` already fixed the transient continuity-close liveness path;
+- only a continuity fence raised from prior `READY`/`PAUSED` is eligible for
+  automatic clearing after successful canonical reconciliation;
+- prior `READY` returns to `READY`; deliberate `PAUSED` remains paused;
+- unrelated/pre-existing `RECONCILIATION_REQUIRED` remains fail-closed;
+- focused deterministic PAPER coverage now explicitly pins the recovered
+  `ROBOT_RUNNING/READY` state and renewed admission readiness.
 
 ### G-BOX-1 — malformed Ikigai Box first impulse
 **Status: RECOVERABLE EVIDENCE**
