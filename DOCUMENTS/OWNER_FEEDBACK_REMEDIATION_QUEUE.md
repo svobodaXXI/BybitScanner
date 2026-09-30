@@ -11,7 +11,7 @@ not repeated.
 
 ### OFR-1 — Durable Robot failure diagnostics
 **Priority:** P0  
-**Status:** IMPLEMENTED / LIVE INCIDENT HARVEST PENDING
+**Status:** BOX PATH GAP FOUND / FIX IN PROGRESS
 
 Two real classes now lose their exact cause after the console scrolls:
 
@@ -31,6 +31,18 @@ Two real classes now lose their exact cause after the console scrolls:
    - the only EMERGENCY_CLOSE string found in SQLite by line search was schema
      text; binary line search is not authoritative.
 
+Discovery after completed G6 (2026-09-30):
+- APRUSDT produced the owner warning, but no durable incident directory/file;
+- code inspection found the exact observability gap: the dedicated Ikigai Box
+  `_prepare_owner_robot_handle(...)` path catches planner/handle exceptions
+  locally and only prints `[ROBOT CANDIDATE ERROR]`; it bypassed
+  `record_robot_incident(...)`, unlike the common Wedge/L-shape handoff path;
+- therefore APRUSDT could never produce the expected durable OFR-1 candidate
+  incident on runtime commit `adfb50b`; the missing file is explained by code,
+  not by an unknown filesystem location.
+- bounded fix: persist the Box planner failure through the existing sanitized
+  incident sink with stage `box_plan_preparation` and reason
+  `BOX_PLAN_PREPARATION_EXCEPTION`, without changing delivery/admission logic.
 Required implementation:
 - bounded durable sanitized incident record;
 - timestamp, symbol, timeframe/pattern when applicable, lifecycle stage,
