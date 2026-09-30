@@ -135,6 +135,28 @@ planned average, and do not recalculate a completely new Box geometry.
 This preserves the original grid-derived risk distance while allowing the STOP
 to move proportionally with the real average price actually obtained.
 
+Actual-average and re-translation semantics — owner-frozen 2026-09-30:
+
+- `actual_average` means the authoritative VWAP of **only already-filled,
+  Robot-owned Box entry exposure**. Do not include still-resting P-slots at their
+  planned LIMIT prices in that average.
+- After every additional proven-owned Box entry fill/top-up, recompute that
+  authoritative VWAP and translate STOP again using the same frozen
+  `stop_offset`.
+- In this specific Box catch-up lifecycle, this re-translation may move STOP
+  farther from market than its prior absolute price ("widen" it). That is an
+  explicit strategy exception to generic never-widen behavior because the risk
+  distance from the actual entry VWAP remains the same frozen grid-derived
+  offset.
+- TAKE remains frozen and never follows the average.
+- Before creating initial catch-up exposure, use authoritative executable market
+  state to prove that the resulting translated STOP/RR can be valid. If it
+  cannot, do not enter.
+- If an already-executed fill produces an unexpected state where valid
+  protection cannot be established, use the existing fail-closed protection /
+  reconciliation path; never leave exposure unprotected while waiting for a
+  nicer average.
+
 Safety invariants remain:
 - the translated STOP must remain structurally beyond the relevant far entry
   side and satisfy the existing minimum RR/protection contract after tick

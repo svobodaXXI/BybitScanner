@@ -312,15 +312,23 @@ Owner-frozen 2026-09-30:
 Owner-frozen STOP rule — 2026-09-30:
 - derive the original stop distance from the frozen planned average and planned
   STOP;
-- after actual MARKET/LIMIT fills establish the real aggregate average entry,
-  translate that same stop distance to the real average:
+- `actual average` is the authoritative VWAP of only actually filled,
+  Robot-owned Box entry exposure; never mix unfilled resting LIMIT slots into
+  that average;
+- after each additional owned MARKET/LIMIT fill, recompute actual VWAP and
+  translate the same frozen stop distance again:
   LONG moves STOP below actual average by the original offset; SHORT moves STOP
   above actual average by the original offset;
 - tick-normalize outward;
+- in this Box catch-up lifecycle, STOP may widen in absolute-price terms after a
+  later fill; this is an explicit strategy exception to generic never-widen
+  behavior because the frozen distance from actual VWAP is preserved;
 - keep the frozen common TAKE unchanged;
-- if the translated STOP cannot satisfy structural placement and the existing
-  minimum RR/protection contract, fail closed rather than silently inventing a
-  different risk model.
+- pre-entry catch-up must fail closed if executable market state cannot support a
+  valid translated STOP/RR;
+- if an already-executed fill cannot be protected under the contract, use the
+  existing fail-closed protection/reconciliation path immediately;
+- never silently invent a different risk model.
 
 Acceptance:
 - deterministic scenarios for 0/1/2/3/4 crossed slots;
