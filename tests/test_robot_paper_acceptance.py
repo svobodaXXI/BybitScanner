@@ -895,6 +895,10 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                 self.assertTrue(incident["facts"]["intended_stop_crossed"])
                 self.assertIsNone(incident["facts"]["deadline_at_ms"])
                 self.assertIsNone(incident["facts"]["age_ms"])
+                self.assertEqual(
+                    incident["facts"]["continuity_reason"],
+                    "acceptance_gap",
+                )
             finally:
                 runtime.close()
 
