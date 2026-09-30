@@ -229,12 +229,14 @@ def translate_box_catchup_stop(
     the frozen offset.
 
     LONG: actual_average - offset; SHORT: actual_average + offset, where the
-    offset comes from the frozen planned average and planned STOP. The result
-    is tick-normalized outward. TAKE never moves. The fee-aware net RR floor is
-    2 for the full four-slot quantity and the plan's frozen
-    minimum_partial_fill_rr for partial exposure. If the STOP is not strictly
-    beyond P4 or fails that floor, fail closed; the STOP is never tightened to
-    recover RR and no alternative STOP rule is applied.
+    offset comes from the frozen planned average and planned STOP. The
+    fee-aware net RR floor is validated against that raw translated STOP: 2
+    for the full four-slot quantity and the plan's frozen
+    minimum_partial_fill_rr for partial exposure. Only then is the executable
+    STOP tick-normalized outward, which may degrade RR by less than one tick.
+    TAKE never moves. If the executable STOP is not strictly beyond P4 or the
+    raw STOP fails the applicable floor, fail closed; the STOP is never
+    tightened to recover RR and no alternative STOP rule is applied.
     """
 
     (
@@ -253,16 +255,32 @@ def translate_box_catchup_stop(
     raw_stop = entry - sign * offset
     if raw_stop <= 0:
         raise BoxCatchupStopRejected("translated Box STOP is not positive")
-    outward = OrderSide.BUY if direction == "LONG" else OrderSide.SELL
-    stop = normalize_limit_price(raw_stop, tick, outward)
-    if sign * (prices[3] - stop) <= 0:
-        raise BoxCatchupStopRejected("translated Box STOP is not strictly beyond P4")
 
     reward = sign * (take - entry) - entry * entry_fee - take * target_fee
-    risk = sign * (entry - stop) + entry * entry_fee + stop * stop_fee
+    risk = sign * (entry - raw_stop) + entry * entry_fee + raw_stop * stop_fee
     if reward <= 0 or risk <= 0 or rr_floor * risk > reward:
         raise BoxCatchupStopRejected(
             f"translated Box STOP fails net RR >= {rr_floor} at the actual average"
+        )
+
+    outward = OrderSide.BUY if direction == "LONG" else OrderSide.SELL
+    stop = normalize_limit_price(raw_stop, tick, outward)
+    displacement = sign * (raw_stop - stop)
+    if stop <= 0:
+        raise BoxCatchupStopRejected(
+            "translated Box STOP is not positive after tick normalization"
+        )
+    if sign * (entry - stop) <= 0 or sign * (take - stop) <= 0:
+        raise BoxCatchupStopRejected(
+            "translated Box STOP is not on the loss side of actual entry and frozen TAKE"
+        )
+    if sign * (prices[3] - stop) <= 0:
+        raise BoxCatchupStopRejected("translated Box STOP is not strictly beyond P4")
+    if stop % tick != 0:
+        raise BoxCatchupStopRejected("translated Box STOP is not tick-aligned")
+    if displacement < 0 or displacement >= tick:
+        raise BoxCatchupStopRejected(
+            "translated Box STOP outward tick displacement is outside one tick"
         )
     return BoxTranslatedStop(
         actual_average_entry=entry,

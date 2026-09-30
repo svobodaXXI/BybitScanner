@@ -262,6 +262,42 @@ class BoxCatchupPlanAndStopTranslationTests(unittest.TestCase):
                 self.assertEqual(result.stop_price % Decimal("0.01"), 0)
                 self.assertEqual(result.take_price, Decimal(self.CASES[direction][1]))
                 self.assertEqual(result.minimum_rr, Decimal("2"))
+                sign = Decimal(1 if direction == "LONG" else -1)
+                displacement = sign * (result.raw_stop_price - result.stop_price)
+                self.assertGreaterEqual(displacement, Decimal(0))
+                self.assertLess(displacement, Decimal("0.01"))
+
+    def test_full_fill_accepts_raw_rr_before_sub_tick_outward_rounding(self):
+        cases = {
+            "LONG": (("93.99", "93.2", "92.4", "91.6"), "89.5975", "89.59"),
+            "SHORT": (("106.01", "106.8", "107.6", "108.4"), "110.4025", "110.41"),
+        }
+        for direction, (fills, raw_stop, normalized_stop) in cases.items():
+            with self.subTest(direction=direction):
+                vwap = sum(map(Decimal, fills), Decimal(0)) / Decimal(len(fills))
+                result = translate_box_catchup_stop(
+                    self.sources[direction],
+                    actual_average_entry=vwap,
+                    filled_quantity=Decimal("8"),
+                )
+                expected_vwap = "92.7975" if direction == "LONG" else "107.2025"
+                self.assertEqual(vwap, Decimal(expected_vwap))
+                self.assertEqual(result.raw_stop_price, Decimal(raw_stop))
+                self.assertEqual(result.stop_price, Decimal(normalized_stop))
+                self.assertEqual(result.minimum_rr, Decimal("2"))
+
+                sign = Decimal(1 if direction == "LONG" else -1)
+                executable_rr = (
+                    sign * (result.take_price - result.actual_average_entry)
+                    / (sign * (result.actual_average_entry - result.stop_price))
+                )
+                self.assertLess(executable_rr, Decimal("2"))
+                self.assertEqual(
+                    executable_rr.quantize(Decimal("0.0001")), Decimal("1.9961")
+                )
+                displacement = sign * (result.raw_stop_price - result.stop_price)
+                self.assertGreaterEqual(displacement, Decimal(0))
+                self.assertLess(displacement, Decimal("0.01"))
 
     def test_partial_fill_uses_frozen_partial_rr_floor_without_tightening(self):
         # P1 alone has net RR 5.2/3.2 = 1.625: below 2 but above the frozen
@@ -338,6 +374,12 @@ class BoxCatchupPlanAndStopTranslationTests(unittest.TestCase):
                 self.sources["LONG"],
                 actual_average_entry=Decimal("92.8"),
                 filled_quantity=Decimal("10"),
+            )
+        with self.assertRaisesRegex(BoxCatchupStopRejected, "not positive"):
+            translate_box_catchup_stop(
+                self.sources["LONG"],
+                actual_average_entry=Decimal("3.2"),
+                filled_quantity=Decimal("2"),
             )
 
 
