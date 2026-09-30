@@ -1,19 +1,21 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE C — 2026-09-30
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE D — 2026-10-01
 
-Owner command: SHADOW pair selection + terminal-compression evidence, based on
-main `99586336cc023555043e17ba53e03734c8b28410` (Slices A #366 and B #367 merged).
+Owner command: SHADOW delta-report beside the production Geometry winner on
+exact reusable Geometry Gold cases, based on main
+`3d21c83be3af7598f65d2b9bd06e42566cfade4e` (Slices A #366, B #367, C #368 merged).
 
-Scope: `geometry/consensus_selection.py` ranks Slice B `EnvelopePairConsensus`
-candidates with explicit admissibility gates and a lexicographic quality tuple
-(no aggregate score), plus terminal-window width evidence that rejects one-bar
-fake compression. No Wedge/Triangle/Compression/Broadening classification.
-Production geometry selection/classification, Telegram, Robot and LIVE stay
-unchanged. Delivery gate: focused evidence -> commit/push/open PR; review/merge
-remain pending. No Scanner/Robot launch or owner visual acceptance.
+Scope: `geometry/consensus_gold_report.py` reports production identity/
+classification next to the Slice C SHADOW selection and lists structural
+differences as facts only (NOT_COMPARABLE / UNAVAILABLE where no exact
+counterpart exists), plus count-only aggregates. No verdict, no threshold
+calibration, no family classification. Production geometry selection/
+classification, Telegram, Robot and LIVE stay unchanged. Delivery gate:
+focused evidence -> commit/push/PR; review/merge remain pending. No
+Scanner/Robot launch or owner visual acceptance.
 
-Next logical slice (separate owner authorization): SHADOW report beside the
-production winner on exact Geometry Gold cases (deltas only), then thresholds
-calibrated on that evidence, before any selector cutover or family classifier.
+Next logical slice (separate owner authorization): decide from this evidence
+whether the exact Gold set suffices for threshold calibration or needs more
+recovered source-time cases (e.g. CASHCAT/ENA) first.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
