@@ -53,6 +53,7 @@ from terminal.application.ikigai_box_catchup import (
     durable_box_market_intent,
     ready_box_exit_slots,
     restore_box_market_plan,
+    translate_box_catchup_stop,
 )
 from terminal.application.robot_admission import active_robot_owner_candidate_ids
 from terminal.application.robot_admission_catchup import (
@@ -571,25 +572,10 @@ class RobotBreakoutMonitor:
                 or getattr(preflight, "normalized_quantity", None) != plan.quantity
             ):
                 return False
-        if market_plans:
-            projected_quantity = sum(
-                (plan.quantity for plan in market_plans), Decimal("0")
-            )
-            projected_notional = sum(
-                (plan.quantity * plan.best_price for plan in market_plans),
-                Decimal("0"),
-            )
-            if projected_quantity <= 0:
-                return False
-            try:
-                robot_protection.box_stop_for_actual_entry(
-                    source.signal_snapshot,
-                    average_entry=projected_notional / projected_quantity,
-                )
-            except Exception:
-                # Do not create any ownership when the immediately caught
-                # MARKET exposure cannot own a valid Box STOP under RR/P4.
-                return False
+        if not self._box_catchup_market_viable(source, market_plans):
+            # Do not create any ownership when the immediately caught MARKET
+            # exposure cannot own a valid translated Box STOP.
+            return False
 
         all_limits = build_box_first_grid_specs(source, created_at_ms=self._now_ms())
         limit_slots = tuple(item.slot for item in slots if item.entry_mode == "LIMIT")
@@ -611,6 +597,35 @@ class RobotBreakoutMonitor:
             "book_received_at_ms": int(book.received_at_ms),
         }
         self._persist_execution(record, execution)
+        return True
+
+    @staticmethod
+    def _box_catchup_market_viable(
+        source: RobotCandidateRecord,
+        market_plans,
+    ) -> bool:
+        """Pre-entry OFR-5 viability of the caught MARKET slots.
+
+        The executable-book projected average is only an admission estimate;
+        it is never persisted or attested as actual fill VWAP. It must support
+        the translated STOP at the frozen RR floor before any order exists.
+        """
+        if not market_plans:
+            return True
+        quantity = sum((plan.quantity for plan in market_plans), Decimal("0"))
+        if quantity <= 0:
+            return False
+        notional = sum(
+            (plan.quantity * plan.best_price for plan in market_plans), Decimal("0"),
+        )
+        try:
+            translate_box_catchup_stop(
+                source,
+                actual_average_entry=notional / quantity,
+                filled_quantity=quantity,
+            )
+        except Exception:
+            return False
         return True
 
     def _advance_box_entry_ready(
@@ -758,6 +773,13 @@ class RobotBreakoutMonitor:
                 # No order exists yet, so re-freeze from the newer authoritative
                 # book rather than turning a newly-crossed slot into a stale LIMIT.
                 return self._write_box_catchup_plan(record, source, execution)
+            if not self._box_catchup_market_viable(
+                source,
+                build_box_market_plans(source, current_book, slots=market_slots),
+            ):
+                # Re-check against the book immediately before any Box order
+                # ownership exists; fail closed without entering.
+                return False
 
             self._store().begin_box_attempt_ownership(source.candidate_id)
             all_limits = build_box_first_grid_specs(source, created_at_ms=self._now_ms())
@@ -877,14 +899,33 @@ class RobotBreakoutMonitor:
         )
         if proof.average_entry is None:
             raise RobotBreakoutMonitorError("Box open exposure lacks average entry")
+        # OFR-5: the BOX_CATCHUP lifecycle re-translates the frozen stop offset
+        # to the authoritative owned VWAP after every owned fill; the absolute
+        # STOP may widen. Other Box records keep keep/tighten/never-widen.
+        translated_catchup_stop = execution.get("entry_mode") == "BOX_CATCHUP"
         try:
-            plan = robot_protection.build_box_stop_only_plan(
-                self._candidate_payload(record),
-                record.robot_state,
-                average_entry=proof.average_entry,
-                confirmed_position_quantity=proof.remaining_quantity,
-                existing_stop=existing_stop,
-            )
+            if translated_catchup_stop:
+                translated = translate_box_catchup_stop(
+                    source,
+                    actual_average_entry=proof.average_entry,
+                    filled_quantity=proof.remaining_quantity,
+                )
+                plan = robot_protection.build_box_translated_stop_plan(
+                    self._candidate_payload(record),
+                    record.robot_state,
+                    translated_stop=translated.stop_price,
+                    translated_take=translated.take_price,
+                    average_entry=proof.average_entry,
+                    confirmed_position_quantity=proof.remaining_quantity,
+                )
+            else:
+                plan = robot_protection.build_box_stop_only_plan(
+                    self._candidate_payload(record),
+                    record.robot_state,
+                    average_entry=proof.average_entry,
+                    confirmed_position_quantity=proof.remaining_quantity,
+                    existing_stop=existing_stop,
+                )
             current_stop = projection.stop_loss if projection is not None else None
             if current_stop is None:
                 stop_result = robot_protection.submit_box_stop_only(
@@ -979,6 +1020,7 @@ class RobotBreakoutMonitor:
                 entry_position_version=proof.position_version,
                 stop_price=plan.stop_price,
                 updated_at_ms=now_ms,
+                translated_catchup_stop=translated_catchup_stop,
             )
 
         for spec in build_box_exit_specs(

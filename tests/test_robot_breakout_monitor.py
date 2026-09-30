@@ -18,6 +18,7 @@ from terminal.api.models import (
     ClientActionId, CommandResult, CommandResultStatus, PaperLimitCancelRequest,
     PaperLimitMutationResult, PaperStopMutationResult,
 )
+from terminal.application.ikigai_box_catchup import translate_box_catchup_stop
 from terminal.application.robot_breakout_monitor import RobotBreakoutMonitor
 from terminal.domain.models import (
     Category,
@@ -35,8 +36,11 @@ from terminal.domain.models import (
     TradingAccountId,
 )
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
-from terminal.persistence.sqlite_store import PositionProjectionUpdate, SQLiteStore
+from terminal.persistence.sqlite_store import (
+    ImmutableExecutionConflict, PositionProjectionUpdate, SQLiteStore,
+)
 from tests.test_box_plan_persistence import snapshot as box_snapshot
+from tests.test_ikigai_box_catchup import _short_snapshot as box_short_snapshot
 
 
 ACCOUNT_ID = TradingAccountId("paper")
@@ -446,13 +450,15 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(opened.entry_path, "MIXED")
         self.assertEqual(opened.entry_quantity, Decimal("2"))
         self.assertEqual(opened.average_entry, Decimal("93.5"))
-        self.assertEqual(opened.stop_price, Decimal("90.65"))
+        # OFR-5: frozen offset 3.2 translated to owned VWAP 93.5 (net RR 1.78
+        # is above the frozen minimum_partial_fill_rr); never tightened to RR 2.
+        self.assertEqual(opened.stop_price, Decimal("90.3"))
         self.assertEqual(opened.take_price, Decimal("99.2"))
 
         protection = self.store.get_protection_projection(
             PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
         )
-        self.assertEqual(protection.stop_loss, Decimal("90.65"))
+        self.assertEqual(protection.stop_loss, Decimal("90.3"))
         self.assertIsNone(protection.take_profit)
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
@@ -623,7 +629,9 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertIsNotNone(opened)
         self.assertEqual(opened.entry_quantity, Decimal("2"))
         self.assertEqual(opened.average_entry, Decimal("94"))
-        self.assertEqual(opened.stop_price, Decimal("91.4"))
+        # Partial P1 exposure keeps the frozen offset (94 - 3.2); unfilled
+        # P2..P4 LIMIT prices never enter the owned VWAP.
+        self.assertEqual(opened.stop_price, Decimal("90.8"))
         self.assertEqual(opened.take_price, Decimal("99.2"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
@@ -641,12 +649,189 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(topped_up.trade_id, opened.trade_id)
         self.assertEqual(topped_up.entry_quantity, Decimal("4"))
         self.assertEqual(topped_up.average_entry, Decimal("93.6"))
-        self.assertEqual(topped_up.stop_price, Decimal("91.4"))
+        # Re-translated from the new owned VWAP: the absolute STOP widens.
+        self.assertEqual(topped_up.stop_price, Decimal("90.4"))
         self.assertEqual(topped_up.take_price, Decimal("99.2"))
         self.assertEqual(
             [name for name, _ in self.executor.protection_calls],
-            ["create_stop"],
+            ["create_stop", "amend_stop"],
         )
+        self.assertEqual(
+            self.store.get_protection_projection(
+                PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+            ).stop_loss,
+            Decimal("90.4"),
+        )
+
+    def _open_box_candidate(self, data, *, book_price):
+        data["identity"]["symbol"] = SYMBOL
+        self.store._connection.execute(
+            """INSERT INTO position_projections (
+                   trading_account_id, category, symbol, position_idx, side, quantity,
+                   average_entry, realized_pnl, accumulated_fee, engaged_notional,
+                   sync_state, version, updated_at_ms
+               ) VALUES (?, ?, ?, 0, ?, '0', NULL, '0', '0', '0', 'synced', 1, ?)""",
+            (ACCOUNT_ID.value, Category.LINEAR.value, SYMBOL, PositionSide.FLAT.value, 500),
+        )
+        source, _ = self.store.save_box_plan_only(snapshot=data, created_at_ms=3001)
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id,
+            symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            approved_at_ms=3002,
+        )
+        self.clock.value = 4000
+        self.monitor._get_market_book = lambda symbol: _ready_book(book_price)
+        return source, candidate
+
+    def _box_stop(self):
+        return self.store.get_protection_projection(
+            PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        ).stop_loss
+
+    def test_box_short_partial_fill_translates_widens_on_top_up_and_survives_restart(self):
+        source, candidate = self._open_box_candidate(box_short_snapshot(), book_price="105")
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))  # 0 MARKET
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))  # own 4 LIMIT
+        order_ids = self.store.get_robot_candidate(
+            candidate.candidate_id
+        ).robot_state["execution"]["limit_order_ids"]
+
+        # P1 SELL fills; unfilled P2..P4 never enter VWAP. 106 + 3.2 = 109.2,
+        # net RR 1.625 >= frozen minimum_partial_fill_rr.
+        self.executor.fill_resting_limit(
+            order_ids[0], SYMBOL, OrderSide.SELL, Decimal("2"), Decimal("106"),
+        )
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), (candidate.candidate_id,))
+        trade_id = f"robot-trade-{candidate.candidate_id}"
+        opened = self.store.get_robot_trade(trade_id)
+        self.assertEqual(opened.average_entry, Decimal("106"))
+        self.assertEqual(opened.stop_price, Decimal("109.2"))
+        self.assertEqual(opened.take_price, Decimal("100.8"))
+        self.assertEqual(self._box_stop(), Decimal("109.2"))
+
+        # P2 top-up: owned VWAP 106.4 -> STOP 109.6, farther from market.
+        self.executor.fill_resting_limit(
+            order_ids[1], SYMBOL, OrderSide.SELL, Decimal("2"), Decimal("106.8"),
+        )
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), (candidate.candidate_id,))
+        topped_up = self.store.get_robot_trade(trade_id)
+        self.assertEqual(topped_up.average_entry, Decimal("106.4"))
+        self.assertEqual(topped_up.stop_price, Decimal("109.6"))
+        self.assertEqual(topped_up.take_price, Decimal("100.8"))
+        self.assertEqual(self._box_stop(), Decimal("109.6"))
+        self.assertEqual(
+            [name for name, _ in self.executor.protection_calls],
+            ["create_stop", "amend_stop"],
+        )
+        # Generic Box persistence still refuses widening without the flag.
+        with self.assertRaisesRegex(ImmutableExecutionConflict, "cannot widen"):
+            self.store.refresh_open_box_trade_terms(
+                trade_id, trading_account_id=ACCOUNT_ID,
+                candidate_id=candidate.candidate_id, symbol=Symbol(SYMBOL),
+                average_entry=topped_up.average_entry,
+                entry_quantity=topped_up.entry_quantity,
+                entry_position_version=topped_up.entry_position_version,
+                stop_price=Decimal("109.7"), updated_at_ms=self.clock(),
+            )
+
+        # Restart: a new monitor re-derives the same STOP from durable owned
+        # fills and submits nothing new.
+        self.monitor.close()
+        self.monitor = RobotBreakoutMonitor(
+            lambda: SQLiteStore.open(self.db_path),
+            ACCOUNT_ID,
+            get_closed_candle=self.feed,
+            action_executor=self.executor,
+            tick_size_provider=lambda symbol: Decimal("0.1"),
+            clock_ms=self.clock,
+            arm_entry_coverage=self._arm_entry_coverage,
+            release_entry_coverage=self.released_entry_coverage.append,
+            incident_dir=self.incident_dir,
+        )
+        self.monitor._get_market_book = lambda symbol: _ready_book("105")
+        self.monitor.tick()
+        self.assertEqual(len(self.executor.protection_calls), 2)
+        self.assertEqual(self._box_stop(), Decimal("109.6"))
+        proof = self.store.prove_box_owned_position(source.candidate_id)
+        rebuilt = translate_box_catchup_stop(
+            self.store.get_robot_candidate(source.candidate_id),
+            actual_average_entry=proof.average_entry,
+            filled_quantity=proof.remaining_quantity,
+        )
+        self.assertEqual(rebuilt.stop_price, Decimal("109.6"))
+        self.assertEqual(rebuilt.take_price, Decimal("100.8"))
+
+    def test_box_catchup_market_rejected_pre_entry_below_frozen_partial_floor(self):
+        data = box_snapshot()
+        data["plan"]["minimum_partial_fill_rr"] = "1.7"
+        source, candidate = self._open_box_candidate(data, book_price="93.9")
+        submitted = []
+        self.monitor._market_preflight = lambda request, identity: SimpleNamespace(
+            admitted=True,
+            normalized_quantity=request.volume.amount / request.sizing_reference_price,
+        )
+        self.monitor._submit_market = lambda request, identity: submitted.append(request)
+
+        # One slot crossed at 93.9: projected translated net RR 5.3/3.2 < 1.7.
+        self.assertEqual(self.monitor.tick(), ())
+        execution = self.store.get_robot_candidate(candidate.candidate_id).robot_state.get("execution") or {}
+        self.assertNotIn("box_catchup", execution)
+        self.assertEqual(self.store.load_box_order_ownership(source.candidate_id), ())
+        self.assertEqual(submitted, [])
+
+        # Control: at 93.5 the same slot projects net RR 5.7/3.2 >= 1.7.
+        self.monitor._get_market_book = lambda symbol: _ready_book("93.5")
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        planned = self.store.get_robot_candidate(candidate.candidate_id)
+        self.assertEqual(planned.robot_state["execution"]["box_catchup"]["market_slots"], [1])
+        self.assertEqual(submitted, [])
+
+    def test_box_partial_fill_below_frozen_floor_fails_closed_through_emergency_path(self):
+        data = box_short_snapshot()
+        data["plan"]["minimum_partial_fill_rr"] = "1.7"
+        source, candidate = self._open_box_candidate(data, book_price="105")
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        order_ids = self.store.get_robot_candidate(
+            candidate.candidate_id
+        ).robot_state["execution"]["limit_order_ids"]
+        submitted = []
+        self.monitor._market_preflight = lambda request, identity: SimpleNamespace(
+            admitted=True,
+            normalized_quantity=request.volume.amount / request.sizing_reference_price,
+        )
+
+        def submit_market(request, identity):
+            submitted.append(request)
+            return CommandResult(
+                request.client_action_id.value,
+                CommandResultStatus.ACCEPTED_PENDING,
+                "pending",
+                "emergency close pending",
+            )
+
+        self.monitor._submit_market = submit_market
+
+        # Executed P1 at 106: translated net RR 1.625 < frozen floor 1.7.
+        self.executor.fill_resting_limit(
+            order_ids[0], SYMBOL, OrderSide.SELL, Decimal("2"), Decimal("106"),
+        )
+        self.assertEqual(self.monitor.process_authoritative_fill(SYMBOL), ())
+
+        self.assertNotIn("create_stop", [name for name, _ in self.executor.protection_calls])
+        self.assertIsNone(self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}"))
+        execution = self.store.get_robot_candidate(candidate.candidate_id).robot_state["execution"]
+        intent = execution["box_emergency_close_intent"]
+        self.assertEqual((intent["slot"], intent["quantity"], intent["side"]), (0, "2", "Buy"))
+        self.assertEqual([request.side for request in submitted], [OrderSide.BUY])
+        self.assertEqual(
+            [self.store.get_paper_limit(order_id, ACCOUNT_ID).status for order_id in order_ids[1:]],
+            ["cancelled", "cancelled", "cancelled"],
+        )
+        runtime = self.store.get_robot_runtime_state(ACCOUNT_ID)
+        self.assertEqual(runtime.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertTrue(runtime.reason.startswith("ROBOT_BOX_EMERGENCY_CLOSE_PENDING"))
 
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()

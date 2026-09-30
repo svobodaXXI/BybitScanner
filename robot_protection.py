@@ -458,6 +458,49 @@ def build_box_stop_only_plan(
     existing_stop: Decimal | None = None,
 ) -> ProtectionPlan:
     """Build Box aggregate STOP while TAKE is owned by per-slot EXIT LIMITs."""
+    terms = _box_stop_only_terms(
+        candidate, state, average_entry=average_entry,
+        confirmed_position_quantity=confirmed_position_quantity,
+    )
+    stop = box_stop_for_actual_entry(
+        terms[0], average_entry=terms[5], existing_stop=existing_stop,
+    )
+    return _box_stop_only_plan(terms, stop)
+
+
+def build_box_translated_stop_plan(
+    candidate: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    translated_stop: Decimal,
+    translated_take: Decimal,
+    average_entry: Decimal,
+    confirmed_position_quantity: Decimal,
+) -> ProtectionPlan:
+    """Build the OFR-5 Box catch-up STOP from an already-translated price.
+
+    The STOP comes from ikigai_box_catchup.translate_box_catchup_stop at the
+    current owned filled VWAP. It deliberately bypasses keep/tighten/never-widen
+    (box_stop_for_actual_entry): in this Box catch-up lifecycle the absolute
+    STOP may widen after a later fill. TAKE must equal the frozen common TAKE.
+    """
+    terms = _box_stop_only_terms(
+        candidate, state, average_entry=average_entry,
+        confirmed_position_quantity=confirmed_position_quantity,
+    )
+    frozen_take = _decimal(terms[0]["plan"].get("take_price"), "frozen Box TAKE")
+    if _decimal(translated_take, "translated Box TAKE") != frozen_take:
+        raise RobotProtectionError("translated Box TAKE differs from frozen common TAKE")
+    return _box_stop_only_plan(terms, _decimal(translated_stop, "translated Box STOP"))
+
+
+def _box_stop_only_terms(
+    candidate: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    average_entry: Decimal,
+    confirmed_position_quantity: Decimal,
+):
     if candidate.get("status") not in {"APPROVED", "OPEN"}:
         raise RobotProtectionError("Box candidate must be APPROVED or OPEN")
     snapshot = candidate.get("signal_snapshot")
@@ -472,9 +515,11 @@ def build_box_stop_only_plan(
         raise RobotProtectionError("Box direction conflicts with frozen plan")
     quantity = _decimal(confirmed_position_quantity, "confirmed position quantity")
     entry = _decimal(average_entry, "average_entry")
-    stop = box_stop_for_actual_entry(
-        snapshot, average_entry=entry, existing_stop=existing_stop,
-    )
+    return snapshot, candidate_id, symbol, direction, quantity, entry
+
+
+def _box_stop_only_plan(terms, stop: Decimal) -> ProtectionPlan:
+    snapshot, candidate_id, symbol, direction, quantity, entry = terms
     take = _decimal(snapshot["plan"].get("take_price"), "frozen Box TAKE")
     if direction == DIRECTION_LONG and not (stop < entry < take):
         raise RobotProtectionError("LONG Box protection geometry is invalid")
