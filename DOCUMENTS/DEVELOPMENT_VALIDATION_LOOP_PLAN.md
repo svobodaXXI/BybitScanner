@@ -506,6 +506,18 @@ all integrated patterns. The golden set is implementation evidence only.
 **Exit condition for Geometry Quality boss:** G6 PASS with no owner-observed
 systematic geometry defect requiring reopening the gold set.
 
+#### GEO-U1 — Universal Pivot-Consensus Envelope Geometry (future follow-up)
+**Priority:** P1 queued; does not interrupt the active 2026-09-30 G6 run
+
+Design authority: `DOCUMENTS/UNIVERSAL_PIVOT_CONSENSUS_GEOMETRY_DESIGN.md`.
+
+Future shared geometry for Wedge, Triangle, Triangle Compression / squeeze and
+related two-boundary patterns. Boundaries are to be selected by deterministic
+multi-pivot consensus, distinct touch clusters, two-sided oscillation and
+compression evidence, while preserving locality/historical/body-integrity
+gates. Start with source recovery and shadow metrics; no threshold tuning from
+one screenshot and no production selector mutation before real-case evidence.
+
 ### Phase V — Lightweight validation tooling (after both labs exist)
 
 #### RVL-V1 — Single validation report command
