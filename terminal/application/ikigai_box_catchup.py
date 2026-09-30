@@ -2,7 +2,8 @@
 
 No persistence or order submission. Classifies the frozen P1..P4 slots against
 one authoritative READY book and builds deterministic per-slot EXIT LIMIT specs
-at the existing frozen common TAKE.
+at the existing frozen common TAKE. The frozen STOP offset is translated to the
+actual aggregate average entry (IKIGAI_BOX_STRATEGY_SPEC.md, OFR-5 2026-09-30).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import Iterable, Mapping
 
 from terminal.api.models import ClientActionId, MarketCommandRequest, VolumeRequest, VolumeUnit
 from terminal.application.command_identity import CommandIdentityCandidate, CommandIdentityFactory
+from terminal.application.normalization import normalize_limit_price
 from terminal.domain.models import CommandId, OrderId, OrderSide
 from terminal.market_data.models import BookHealth, NormalizedOrderBook
 from terminal.persistence.sqlite_store import (
@@ -110,6 +112,152 @@ def classify_box_catchup_slots(
         ))
     return tuple(result)
 
+
+class BoxCatchupStopRejected(ValueError):
+    """No translated Box STOP satisfies the frozen protection contract."""
+
+
+@dataclass(frozen=True, slots=True)
+class BoxCatchupPlan:
+    """Immutable pre-submission catch-up plan; not an order or approval."""
+
+    candidate_id: str
+    direction: str
+    slots: tuple[BoxCatchupSlot, ...]
+    take_price: Decimal
+    planned_average: Decimal
+    planned_stop: Decimal
+    stop_offset: Decimal
+    tick_size: Decimal
+    book_received_at_ms: int
+
+    @property
+    def market_slots(self) -> tuple[int, ...]:
+        return tuple(item.slot for item in self.slots if item.entry_mode == "MARKET")
+
+    @property
+    def limit_slots(self) -> tuple[int, ...]:
+        return tuple(item.slot for item in self.slots if item.entry_mode == "LIMIT")
+
+
+@dataclass(frozen=True, slots=True)
+class BoxTranslatedStop:
+    actual_average_entry: Decimal
+    stop_offset: Decimal
+    raw_stop_price: Decimal
+    stop_price: Decimal
+    take_price: Decimal
+
+
+def _fee_rate(value: object, name: str) -> Decimal:
+    try:
+        rate = value if isinstance(value, Decimal) else Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise ValueError(f"{name} is invalid") from exc
+    if not rate.is_finite() or not Decimal(0) <= rate < Decimal(1):
+        raise ValueError(f"{name} must be finite in [0, 1)")
+    return rate
+
+
+def _frozen_stop_terms(candidate: RobotCandidateRecord):
+    direction, prices, _quantities, take = _frozen_terms(candidate)
+    snapshot = candidate.signal_snapshot
+    plan = snapshot["plan"]
+    inputs = snapshot.get("inputs")
+    full_position = plan.get("full_position")
+    if not isinstance(inputs, dict) or not isinstance(full_position, dict):
+        raise ValueError("Box inputs and planned full position are required")
+    planned_average = _decimal(full_position.get("average_entry"), "planned Box average")
+    planned_stop = _decimal(plan.get("stop_price"), "frozen Box STOP")
+    tick = _decimal(inputs.get("tick_size"), "Box tick size")
+    sign = Decimal(1 if direction == "LONG" else -1)
+    stop_offset = sign * (planned_average - planned_stop)
+    if stop_offset <= 0 or sign * (prices[3] - planned_stop) <= 0:
+        raise ValueError("frozen Box STOP is not beyond P4 and the planned average")
+    fees = tuple(
+        _fee_rate(inputs.get(key), key)
+        for key in ("entry_fee_rate", "target_fee_rate", "stop_fee_rate")
+    )
+    return direction, prices, take, planned_average, planned_stop, stop_offset, tick, fees
+
+
+def plan_box_catchup(
+    candidate: RobotCandidateRecord,
+    book: NormalizedOrderBook,
+) -> BoxCatchupPlan:
+    """Freeze the per-slot MARKET/LIMIT split and the original STOP offset.
+
+    Crossed slots keep their own identity and quantity for per-slot MARKET
+    catch-up; uncrossed slots stay resting LIMITs at their frozen prices. Every
+    slot shares the frozen common TAKE. The STOP itself is translated only
+    from the VWAP of actually filled, Robot-owned entry exposure.
+    """
+
+    direction, _prices, take, average, stop, offset, tick, _fees = _frozen_stop_terms(candidate)
+    return BoxCatchupPlan(
+        candidate_id=candidate.candidate_id,
+        direction=direction,
+        slots=classify_box_catchup_slots(candidate, book),
+        take_price=take,
+        planned_average=average,
+        planned_stop=stop,
+        stop_offset=offset,
+        tick_size=tick,
+        book_received_at_ms=int(book.received_at_ms),
+    )
+
+
+def translate_box_catchup_stop(
+    candidate: RobotCandidateRecord,
+    *,
+    actual_average_entry: Decimal,
+) -> BoxTranslatedStop:
+    """Move the frozen stop offset to the actual filled-exposure VWAP.
+
+    actual_average_entry is the authoritative VWAP of ONLY already-filled,
+    Robot-owned Box entry exposure; resting/unfilled slots never contribute
+    their planned LIMIT prices. Callers re-invoke this after every additional
+    owned fill. It is stateless on purpose: the absolute STOP may widen after a
+    later fill (owner-frozen exception to never-widen), while the distance from
+    VWAP stays the frozen offset.
+
+    LONG: actual_average - offset; SHORT: actual_average + offset, where the
+    offset comes from the frozen planned average and planned STOP. The result
+    is tick-normalized outward. TAKE never moves. If the STOP is not strictly
+    beyond P4 or fails the existing fee-aware net RR >= 2 contract at the
+    actual average, fail closed; no alternative STOP rule is applied.
+    """
+
+    (
+        direction, prices, take, _average, _stop, offset, tick,
+        (entry_fee, target_fee, stop_fee),
+    ) = _frozen_stop_terms(candidate)
+    entry = _decimal(actual_average_entry, "actual Box average entry")
+    sign = Decimal(1 if direction == "LONG" else -1)
+
+    if sign * (take - entry) <= 0:
+        raise BoxCatchupStopRejected("actual Box average is not on the loss side of frozen TAKE")
+    raw_stop = entry - sign * offset
+    if raw_stop <= 0:
+        raise BoxCatchupStopRejected("translated Box STOP is not positive")
+    outward = OrderSide.BUY if direction == "LONG" else OrderSide.SELL
+    stop = normalize_limit_price(raw_stop, tick, outward)
+    if sign * (prices[3] - stop) <= 0:
+        raise BoxCatchupStopRejected("translated Box STOP is not strictly beyond P4")
+
+    reward = sign * (take - entry) - entry * entry_fee - take * target_fee
+    risk = sign * (entry - stop) + entry * entry_fee + stop * stop_fee
+    if reward <= 0 or risk <= 0 or Decimal(2) * risk > reward:
+        raise BoxCatchupStopRejected(
+            "translated Box STOP fails net RR >= 2 at the actual average"
+        )
+    return BoxTranslatedStop(
+        actual_average_entry=entry,
+        stop_offset=offset,
+        raw_stop_price=raw_stop,
+        stop_price=stop,
+        take_price=take,
+    )
 
 
 @dataclass(frozen=True, slots=True)
