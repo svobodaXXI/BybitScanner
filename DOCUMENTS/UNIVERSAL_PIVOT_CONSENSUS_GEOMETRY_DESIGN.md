@@ -16,6 +16,8 @@ Current BybitScanner geometry already has pivot-based candidate generation, ATR-
 
 CASHCATUSDT 1m owner comparison (Scanner chart vs TradingView drawing, 2026-09-30) is the current visual target. It is VISUAL_ONLY until exact source-time OHLC/cutoff is frozen.
 
+ENAUSDT 1m owner comparison (Scanner false compression vs TradingView broadening re-markup, 2026-09-30) is the first visual reference showing why converging-vs-diverging classification must happen only after correct local anchors and consensus boundaries are established. Exact source-time OHLC/cutoff must be recovered before it becomes numeric Gold evidence.
+
 ## 2. External implementations surveyed
 
 Research concepts only; no external code is copied.
@@ -207,6 +209,7 @@ The geometry engine returns one shared EnvelopePairConsensus. Pattern modules cl
 - Falling/Rising Wedge: slope orientation + convergence + owner anchor chronology;
 - Triangle variants: slope relation / horizontal-or-sloped side semantics;
 - Triangle Compression / squeeze: compression plus valid two-sided envelope use;
+- Broadening Formation / Megaphone («Рупор»): valid two-sided consensus with increasing pair width, after excluding widening caused only by isolated outliers;
 - future two-boundary patterns: pattern-specific classifier on top of the same geometry.
 
 Pattern-specific rules must not fork the underlying pivot-consensus line search.
