@@ -449,6 +449,7 @@ explicitly reprioritizes.
 | 11 | RVL-G5 | P1 | Add high-value geometry/state invariants | invariants complement gold cases without broad test inflation |
 | 12 | RVL-G6 | P1 | One complete owner Scanner/Telegram acceptance | full eligible universe, normal Telegram, all integrated patterns |
 | 12a | GEO-U1 | P1 queued | Universal Pivot-Consensus Envelope Geometry for Wedge/Triangle/Compression | source recovery + shadow consensus/oscillation metrics, then evidence-gated selector change; does not interrupt active G6 |
+| 12b | GEO-U2 | P1 queued after GEO-U1 | Broadening Formation / «Рупор» Scanner family | recover ENAUSDT 1m source-time case, classify widening consensus pairs separately from wedge/triangle, Telegram-first Scanner integration; Robot strategy deferred |
 | 13 | RVL-V1 | P2 | Compact validation report command | one report shows FAST/REPLAY/Geometry/PAPER/owner gate states |
 | 14 | RVL-V2 | P2 conditional | Bounded normalized incident capture | only if production-shape replay fidelity proves insufficient |
 | 15 | RVL-V3 | P2 | Tier-aware CI routing | focused FAST/REPLAY automatic; broader PAPER CI remains bounded |
