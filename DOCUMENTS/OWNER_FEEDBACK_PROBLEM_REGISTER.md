@@ -156,6 +156,37 @@ Required lifecycle invariant:
 Owning queue: `OFR-4` in
 `DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
 
+### BOX-MTF-REENTRY-1 — 5m parent Box with confirmed 1m child execution
+**Status: DESIGN DEBT / OWNER-FROZEN CONCEPT**
+
+Owner evidence 2026-09-30:
+- `STORJUSDT 5m` was used as the parent Box context;
+- after the initial higher-timeframe execution attempts, the owner identified a
+  later 1m bearish engulfing area as a potential SHORT re-entry;
+- the intended behavior is not another blind/passive grid: it is a new
+  lower-timeframe execution admitted only after explicit confirmation while the
+  original 5m thesis remains valid.
+
+Required future contract:
+- durable parent-child relation: child 1m execution -> parent 5m Box;
+- child has independent execution ownership but inherits/validates parent thesis;
+- bounded retry/risk rules must be frozen before code; no unlimited re-entry loop;
+- exact 1m confirmation trigger, invalidation, STOP/TAKE and combined exposure
+  remain unresolved;
+- shared Robot execution/protection/recovery machinery must be reused.
+
+Position-card UX requirement:
+- an open/closed position created through this path must visibly show that it is
+  a child execution of the parent setup;
+- owner-facing wording may be refined, but it must communicate approximately
+  `Дочернее исполнение: 1m ← 5m`;
+- this relationship must survive restart/history and not exist only in the
+  Telegram message.
+
+Owning strategy authority:
+`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`, section
+"Future design — parent 5m Box with confirmed 1m child re-entry (2026-09-30)".
+
 ## Scanner -> Robot candidate handoff
 
 ### RH-FAIL-1 — valid Box signal delivered, Robot candidate not created
