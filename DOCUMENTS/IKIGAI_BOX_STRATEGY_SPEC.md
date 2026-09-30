@@ -418,6 +418,41 @@ known at signal time; label entry/STOP/TP as planned rather than filled or
 guaranteed. This is a *different* Fibonacci convention and trading lifecycle from
 the separate L-shape impulse-retracement preview.
 
+## Owner correction — simultaneous 1.618 + 2.618 advance grids (2026-09-30; DESIGN ONLY)
+
+Owner evidence from the 2026-09-30 APRUSDT 5m Box example changes the prior
+sequential-attempt rule. A fast continuation can run through the first 1.618
+entry area and reach the 2.618 area before a post-STOP second grid could be
+created safely or in time. Therefore the intended strategy is now:
+
+1. When an executable Box plan is admitted, prepare/place **both** advance entry
+   grids from the same frozen A/B Fibonacci geometry: one around F(1.618) and
+   one around F(2.618). The 2.618 grid is no longer gated on waiting for a
+   confirmed STOP of the 1.618 attempt before its orders may exist.
+2. The 1.618 grid keeps its own frozen STOP/protection. A strong continuation
+   may stop that first position normally while price continues toward the
+   already-resting 2.618 grid.
+3. The 2.618 grid may therefore begin filling immediately during that same fast
+   continuation; do not require a later operator/admission round merely to arm
+   it after the first STOP.
+4. **Both grids use the exact same frozen TAKE price for the formation.** The
+   common TAKE remains the already-approved first-grid TAKE derived from the
+   frozen F(1.618)→F(1.0) return rule; do not invent a second TP from F(2.618).
+5. The grids remain distinct owned entry/protection attempts. A STOP on the
+   1.618 position must not cancel or reprice the still-valid 2.618 grid solely
+   because attempt 1 stopped.
+6. This correction supersedes older wording that required "without
+   simultaneously active attempt grids", "Attempt 2 only after stopped attempt
+   1", or verified FLAT before the 2.618 grid could be placed.
+
+Safety/implementation boundary: this is a strategy/design correction, not
+runtime authorization. Simultaneous resting grids introduce an overlap/race
+case in which attempt-1 STOP execution and attempt-2 fills can occur close
+ together. Implementation must preserve per-grid ownership, independent frozen
+STOP/protection, the shared TAKE identity/price, deterministic event ordering,
+and a fail-closed combined exposure/risk cap. Do not infer or increase a total
+account risk limit merely from the fact that two grids are resting at once.
+
 ## Owner strategy amendment — advance 75% entry, slice TP and re-arm (2026-09-23; PAPER DESIGN ONLY)
 
 **Reference:** HAEDALUSDT 5m owner-supplied Telegram Box chart. The screenshot
@@ -460,8 +495,7 @@ For a STOP-terminated second attempt, use the same four-order, equal-interval
 layout around F(2.618), with its final order strictly beyond F(2.618) in
 the first impulse's direction. The first-attempt P4 is fixed by the formula above. The second attempt's
 P4 overshoot and first-order anchor remain **unresolved owner price/risk
-decisions**; do not invent them. Each grid totals at most 1 РО, without
-simultaneously active attempt grids.
+decisions**; do not invent them. Each grid retains its existing per-grid sizing contract. The 2026-09-30 owner correction above supersedes the former prohibition on simultaneously active attempt grids; combined exposure/risk handling must be frozen separately before executable implementation.
 
 **Owner-confirmed fixed-price grid STOP (2026-09-23; PAPER DESIGN ONLY):**
 Before placing any of the four entry LIMITs, calculate the hypothetical
@@ -577,18 +611,11 @@ existing later Robot stage in `DOCUMENTS/BACKLOG.md`.
   the same attempt. Explicitly track partial-fill risk, which may have RR
   below 2:1 despite the planned full-grid calculation. Apply the same
   precomputed-price rule separately to any authorized second-attempt grid.
-- **Attempt 2 (only after stopped attempt 1):** after a **confirmed STOP close**
-  of the first trade, **verified FLAT position**, no unresolved exit/protection
-  obligation, and cancellation/terminal state of *all* unfilled limits from
-  the first grid, wait for the second impulse's continuation toward `F(2.618)`.
-  Only then allow a **new** four-limit grid, each **1/4 РО**, around 2.618,
+- **2.618 grid (owner correction 2026-09-30):** prepare/place this four-limit grid concurrently with the 1.618 grid from the same frozen formation. It is not gated on confirmed STOP/FLAT of attempt 1. Each order remains **1/4 РО** under the existing per-grid sizing contract, around 2.618,
   with the furthest limit beyond 2.618 in impulse direction. Distribute all
   four orders at equal price intervals; the exact first-order anchor and
   last-order overshoot for this second attempt are still unspecified. Use the same STOP,
-  early partial exit and 1.0-target policy. An ambiguous STOP reason, unresolved
-  partial position, uncertain ownership or still-active earlier LIMIT blocks
-  attempt 2. **At most two sequential attempts per frozen formation**, no
-  overlapping grids, doubling, martingale, or averaging the stopped trade.
+  early partial exit and 1.0-target policy. An ambiguous ownership/protection state still fails closed, but the valid 2.618 resting grid is not cancelled merely because the 1.618 attempt remains active or stops. There are still at most two grids for one frozen formation; this is not martingale sizing or averaging the stopped trade. Combined exposure/risk arbitration for near-simultaneous STOP/fill events must be explicit before execution.
 - **TP:** the common principal target is **F(1.0)**. Start partial profit taking
   *before* that level, then move the remaining position's STOP to fee-aware
   breakeven. Exact partial-exit fraction, trigger price/offset and breakeven

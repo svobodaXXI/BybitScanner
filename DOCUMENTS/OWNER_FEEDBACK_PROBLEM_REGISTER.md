@@ -109,6 +109,26 @@ Owner acceptance 2026-09-29:
 
 Do not reopen unless the symptom reproduces on #325 or later.
 
+## BOX-DUAL-GRID-1 — simultaneous 1.618 and 2.618 advance grids
+**Status: OWNER STRATEGY CORRECTION / IMPLEMENTATION PENDING**
+
+Owner feedback from APRUSDT 5m during the 2026-09-30 G6 run: a sharp second
+impulse can traverse the 1.618 area and continue toward 2.618 too quickly for a
+strictly sequential "STOP first grid, then create second grid" workflow.
+
+Required strategy outcome:
+- place/arm both frozen Box grids up front, at F(1.618) and F(2.618);
+- allow the first grid to stop normally while the already-resting second grid
+  can begin filling on the continuation;
+- both grids use the same frozen TAKE price;
+- first-grid STOP must not by itself cancel/reprice the valid second grid;
+- preserve distinct durable ownership and protection for the two grids;
+- freeze combined exposure/risk/event-order semantics before executable PAPER
+  implementation. This correction does not authorize LIVE trading.
+
+Canonical strategy wording is in `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md` under
+"Owner correction — simultaneous 1.618 + 2.618 advance grids (2026-09-30)".
+
 ## Scanner -> Robot candidate handoff
 
 ### RH-FAIL-1 — valid Box signal delivered, Robot candidate not created
