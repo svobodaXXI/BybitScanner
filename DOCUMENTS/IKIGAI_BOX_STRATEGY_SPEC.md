@@ -157,9 +157,23 @@ Actual-average and re-translation semantics — owner-frozen 2026-09-30:
   reconciliation path; never leave exposure unprotected while waiting for a
   nicer average.
 
+Partial-fill RR rule — owner-frozen 2026-09-30:
+
+- the full four-slot frozen plan continues to require fee-aware net RR >= 2;
+- during partial owned exposure, translated STOP validation uses the plan's
+  already-frozen `minimum_partial_fill_rr` as the minimum acceptable net RR;
+- do not require RR >= 2 from every partial-fill VWAP, because the approved Box
+  plan explicitly reserves and models lower-RR partial exposure before the full
+  grid is filled;
+- do not remove RR validation entirely: if current filled-only VWAP plus the
+  translated frozen offset falls below `minimum_partial_fill_rr`, reject
+  pre-entry catch-up or fail closed through existing protection/reconciliation
+  after an executed fill;
+- TAKE remains frozen and the STOP offset remains unchanged.
+
 Safety invariants remain:
 - the translated STOP must remain structurally beyond the relevant far entry
-  side and satisfy the existing minimum RR/protection contract after tick
+  side and satisfy the applicable RR floor/protection contract after tick
   normalization;
 - if no valid translated STOP exists, fail closed rather than silently moving
   TAKE, shrinking/expanding risk by another rule, or inventing a second STOP
