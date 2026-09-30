@@ -1551,16 +1551,27 @@ class PaperRuntime:
             if source_runtime is not None and source_runtime.mode == ROBOT_RUNNING
             else None
         )
+        normalized_reason = reason.strip() or "unknown"
+        owned_fence_reason = (
+            "ROBOT_PROTECTION_COVERAGE_LOST "
+            f"symbol={normalized.value} reason={normalized_reason}"
+        )
+        same_continuity_fence = bool(
+            source_runtime is not None
+            and source_runtime.mode == ROBOT_RUNNING
+            and source_runtime.recovery_status == RECONCILIATION_REQUIRED
+            and source_runtime.reason == owned_fence_reason
+        )
         self.fence_robot_protection_continuity_loss(normalized.value, reason)
 
         def finish(recovered: bool) -> bool:
             if not recovered:
                 return False
-            # Only a continuity fence raised by this pass from a normal
-            # RUNNING state may be cleared automatically. A pre-existing
-            # RECONCILIATION_REQUIRED fence belongs to some other unresolved
-            # ambiguity and must remain operator-controlled.
-            if prior_recovery_status not in {READY, PAUSED}:
+            # A fence previously written for this exact symbol/reason is still
+            # owned by this continuity-recovery attempt and may be cleared after
+            # canonical reconciliation. Any unrelated pre-existing
+            # RECONCILIATION_REQUIRED state remains fail-closed.
+            if prior_recovery_status not in {READY, PAUSED} and not same_continuity_fence:
                 return True
 
             reconciled = self.robot_reconcile()
