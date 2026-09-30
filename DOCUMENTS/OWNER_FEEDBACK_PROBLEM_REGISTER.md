@@ -258,6 +258,22 @@ The remaining practical gate is to read the next real owner incident after the
 active G6 run (APRUSDT is the expected candidate-handoff recurrence) and use it
 to drive OFR-3. Do not ask the owner to reconstruct transient console text.
 
+### CASH-EC-1 — CASHCATUSDT emergency close classified to continuity-loss recovery
+**Status: ROOT CLASS PROVEN / PRIMARY REASON HISTORICALLY UNRECOVERABLE**
+
+Authoritative PAPER SQLite evidence from 2026-09-29 proves the Rising Wedge SHORT
+was closed by `EMERGENCY_CLOSE` through a `rest-recovery` market event, not by
+its STOP or TAKE. In the runtime code, `rest-recovery` is created only while
+actively recovering a Robot protection symbol already marked unhealthy for
+market-data continuity. The historical local logs no longer contain the exact
+primary reason (`ingress_overflow`, `websocket_disconnect:*`,
+`event_identity_mismatch`, `admission_failed`, or `subscribe_failed`).
+
+Current diagnostics already persist `MARKET_DATA_CONTINUITY_LOST`, source timing,
+STOP/TAKE proof and selected emergency-close action, but before this follow-up
+they did not persist the specific continuity `reason` argument. Preserve that
+reason as a sanitized bounded incident fact so the next recurrence is fully
+classifiable without stdout.
 ### PROT-DIAG-1 — protection/emergency-close durable reason evidence
 **Status: IMPLEMENTED / NEXT REAL READBACK PENDING**
 
