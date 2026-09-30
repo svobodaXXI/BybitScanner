@@ -138,17 +138,40 @@ Acceptance:
 
 ### OFR-3 — Robot candidate handoff failures on valid Box cards
 **Priority:** P0  
-**Status:** OPEN
+**Status:** WAITING FOR NEXT POST-#352 DURABLE INCIDENT
 
 Cases:
-`B2USDT`, `BANKUSDT`, `BNBUSDT`, `BNCUSDT` 5m.
+`B2USDT`, `BANKUSDT`, `BNBUSDT`, `BNCUSDT` 5m, with `APRUSDT 5m SHORT`
+as the 2026-09-30 recurrence on old runtime `adfb50b`.
 
-Required work after OFR-1:
-- recover/classify the exact planner/persistence/admission failure from durable
-  diagnostics or deterministic reproduction;
+Historical recovery result — 2026-09-30:
+- bounded recovery across local `C:\BybitScanner*` artifacts found the APRUSDT
+  Box history key and anchor pair only;
+- no APRUSDT Box candidate JSON survived; the two APRUSDT candidate files are
+  older Falling Wedges;
+- no APRUSDT PAPER DB row or historical durable Robot incident exists;
+- exact frozen planner inputs and exact historical exception are therefore
+  unrecoverable from surviving evidence;
+- further PNG/Telegram/history archaeology may recover presentation, but cannot
+  prove which planner gate raised the historical exception, so it is not the
+  next dependency.
+
+Runtime prerequisite completed:
+- owner moved `C:\BybitScanner` from detached `adfb50b` to authoritative
+  `5260cd2e6d8ee8480500e5b68c61c426d54a6d39` with no tracked dirty files,
+  no local-only commits and all untracked owner files preserved;
+- the synced runtime includes the durable Box planner-failure persistence added
+  after the APRUSDT occurrence.
+
+Required next work:
+- do not launch Scanner/Robot solely to force a recurrence;
+- on the next natural Box planner failure from the synced runtime, harvest the
+  durable `BOX_PLAN_PREPARATION_EXCEPTION` incident;
+- classify the exact planner/persistence gate from that record before changing
+  planner behavior;
 - keep ordinary Scanner signal delivery independent;
 - never show Robot button unless durable candidate creation succeeded;
-- fix the common root cause if one exists; no per-symbol exceptions.
+- fix only the proven common root cause, with no per-symbol exceptions.
 
 Acceptance:
 - representative failing class creates a valid durable Robot candidate or is
