@@ -120,6 +120,13 @@ Owner-observed 5m examples from the 2026-09-29 real Scanner run:
 - `BNBUSDT`;
 - `BNCUSDT`.
 
+Recurrence during the 2026-09-30 RVL-G6 owner Scanner acceptance on runtime commit `adfb50b758181c3ed9bc3670b00fe842ffa8d08a`:
+- `APRUSDT 5m` Ikigai Box was delivered normally;
+- owner warning again stated that the Robot candidate was not created and the signal was delivered without the Robot button;
+- this proves RH-FAIL-1 is still reproducible on the post-G5 main/runtime and is not limited to the original B2/BANK/BNB/BNC examples.
+
+Do not interrupt the active G6 Scanner run solely for this recurrence. Preserve the next available durable/sanitized candidate-preparation evidence and classify the failure after the run; ordinary Scanner delivery continuing is not a fix for the missing Robot candidate.
+
 Observed owner UI:
 - ordinary Ikigai Box chart/card was delivered;
 - `🤖 Робот` button was absent;
