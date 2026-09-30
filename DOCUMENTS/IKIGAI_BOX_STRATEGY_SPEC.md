@@ -418,6 +418,24 @@ known at signal time; label entry/STOP/TP as planned rather than filled or
 guaranteed. This is a *different* Fibonacci convention and trading lifecycle from
 the separate L-shape impulse-retracement preview.
 
+## APPSTOCKUSDT 5m — dual-grid reference example (owner evidence, 2026-09-30)
+
+The owner-supplied APPSTOCKUSDT 5m Telegram Box chart is the visual reference
+for the simultaneous-grid correction below. The observed move shows a sharp
+continuation through the first-entry region with little time for a strictly
+sequential "wait for attempt-1 STOP, then create attempt-2" workflow. The
+reference is used to justify arming the F(2.618) grid in advance together with
+the F(1.618) grid.
+
+Reference interpretation:
+- first grid: advance entries around F(1.618);
+- second grid: advance entries already resting around F(2.618);
+- a fast continuation may STOP the first position and continue directly into
+  the second grid;
+- both grids share the same frozen TAKE price for the formation;
+- the screenshot is strategy/reference evidence only, not proof of actual fills,
+  STOP execution, profitability, or source-time exact prices by itself.
+
 ## Owner correction — simultaneous 1.618 + 2.618 advance grids (2026-09-30; DESIGN ONLY)
 
 Owner evidence from the 2026-09-30 APRUSDT 5m Box example changes the prior
