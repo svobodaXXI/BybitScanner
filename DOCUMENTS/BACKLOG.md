@@ -1,3 +1,71 @@
+## OWNER PROPOSALS CHECKPOINT — 2026-09-30
+
+All owner proposals raised during the current Scanner/Geometry/Box review are
+preserved below. This is a routing checkpoint, not a parallel source of strategy
+truth: the owning specs/register entries remain authoritative.
+
+1. **GEO-U1 — universal pivot-consensus geometry**
+   - build geometry from structural pivots first, not from a preselected pattern label;
+   - choose structurally correct opposite anchors, then fit each boundary to the
+     largest coherent set/consensus of same-side pivots;
+   - allow isolated wick/pivot pierces when the surrounding pivot cluster still
+     confirms the same boundary, but reject systematic boundary violations;
+   - require meaningful oscillation/touches between both boundaries rather than
+     accepting shapes where price only rides one side;
+   - only after the envelope is built classify it as Wedge, Triangle,
+     Compression/Поджатие, or another family;
+   - one universal geometry engine should serve these converging families.
+
+2. **GEO-U2 — Broadening Formation / «Рупор»**
+   - widening boundaries are the geometric opposite of a converging wedge;
+   - detect/classify them explicitly so they cannot be mislabelled as Wedges;
+   - include them in Scanner/Telegram discovery;
+   - Robot execution strategy is deferred until separately specified.
+
+3. **SCAN-MULTI-TF — real multi-signal traversal**
+   - for each ticker, process 5m and then 1m before moving to the next ticker;
+   - all enabled pattern families are evaluated independently on each timeframe;
+   - signal/dedup identity is at least
+     `symbol × timeframe × pattern × formation/source identity`;
+   - one valid 5m signal must not suppress another valid 1m signal or a different
+     pattern on the same symbol;
+   - Scanner multi-signal delivery is distinct from Robot's current one-owner
+     execution constraints and from BOX-MTF-REENTRY-1.
+
+4. **G-COEXIST — independent pattern coexistence**
+   - an earlier Triangle/Wedge/Box/L-shape must not automatically suppress a
+     later structurally independent pattern on the same symbol;
+   - STORJ/CARV-style sequences are evidence that discovery must keep looking
+     after the first detected formation.
+
+5. **BOX-DUAL-GRID-1 — simultaneous 1.618 + 2.618 grids**
+   - arm both Box grids in advance from the same frozen parent geometry;
+   - the first grid may STOP while the already-resting second grid begins filling;
+   - both grids use the same frozen parent TAKE;
+   - combined risk/ownership/event ordering must be frozen before implementation.
+
+6. **BOX-STALE-2 / OFR-4 — completed Box lifecycle**
+   - once frozen TAKE was already achievable, the old Box is completed/stale for
+     new actionable delivery/admission;
+   - a later independent setup, including another timeframe on the same symbol,
+     remains eligible;
+   - SOMIUSDT 5m -> later 1m structure is retained as regression evidence.
+
+7. **BOX-MTF-REENTRY-1 — parent 5m Box -> confirmed 1m child execution**
+   - after bounded stopped attempts, a still-valid 5m parent thesis may admit a
+     new 1m confirmation-based tactical execution;
+   - STORJUSDT is the owner visual reference; first proposed SHORT trigger is a
+     confirmed bearish engulfing/absorption-style reversal, with LONG mirrored;
+   - this is neither a blind third grid nor ordinary Scanner multi-signality;
+   - persist durable parent/child ownership and reuse the shared Robot engine;
+   - position cards/history must visibly identify the relation, approximately
+     `Дочернее исполнение: 1m ← родитель 5m`;
+   - retry count, risk budget, exact trigger, STOP/TAKE and parent invalidation
+     remain specification gates before PAPER implementation.
+
+Current work priority is unchanged: active OFR/G6 work is not interrupted by
+these future-design records. LIVE execution remains prohibited.
+
 ## FUTURE — BOX-MTF-REENTRY-1 — parent 5m setup -> confirmed 1m child execution
 
 Owner-frozen design concept from STORJUSDT, 2026-09-30:
@@ -2331,11 +2399,21 @@ the exact next step are recorded in
 L-shaped formation, not wedge S1"); not duplicated here. Entry rule and
 Robot wiring are still open design items, unchanged from before.
 
-### G7 — Dual-timeframe scanner (5m + 1m per ticker) — REQUIRED (user 2026-09-19)
-Constraints found in code: (1) `TIMEFRAME` is a global constant read by `analyzer/core.py`, `analyzer.py`, `main.py`,
-`notification.py`; (2) `signal_memory.py` keys state by `symbol` only (needs symbol + timeframe); (3) the robot allows one active
-candidate owner per symbol (a second one escalates DUPLICATE_ROBOT_OWNER to RECONCILIATION_REQUIRED), so a rule is needed for
-5m and 1m signals on one ticker; (4) scan time roughly doubles (about 20 to 40 minutes). Needs a spec and a decision on priority.
+### G7 — Dual-timeframe scanner (5m + 1m per ticker) — REQUIRED (owner-updated 2026-09-30)
+Authoritative Scanner contract:
+- process each symbol as `5m -> 1m` before advancing to the next symbol;
+- evaluate all enabled pattern families independently on both timeframes;
+- preserve independent `symbol × timeframe × pattern × formation/source`
+  state, evidence and dedup;
+- a delivered/detected 5m signal must not terminate discovery for that symbol or
+  suppress a valid 1m signal/different pattern.
+
+Known implementation constraints remain relevant: `TIMEFRAME` has historically
+been a global constant and older signal memory was symbol-only. Robot currently
+has stricter one-owner-per-symbol execution constraints; that is a separate
+admission/execution problem and must not be solved by hiding valid Scanner
+signals. BOX-MTF-REENTRY-1 is also separate: it is a parent/child execution
+strategy, not ordinary multi-signal Scanner traversal.
 
 Latest user priority (2026-09-20): finish L-shaped (G6) visualization and its signal path first; then Ikigai Box (G5)
 with the correct two-impulse Fibonacci design, ahead of triangle and additional wedge taxonomy. Earlier ordering
