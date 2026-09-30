@@ -1,3 +1,21 @@
+## FUTURE — BOX-MTF-REENTRY-1 — parent 5m setup -> confirmed 1m child execution
+
+Owner-frozen design concept from STORJUSDT, 2026-09-30:
+- keep the confirmed 5m Ikigai Box as the parent thesis;
+- after bounded failed parent attempts, allow a later 1m confirmation-based
+  re-entry (first concrete example: bearish engulfing for SHORT);
+- this is separate from the passive 1.618/2.618 dual-grid mechanism and separate
+  from ordinary multi-signal Scanner traversal;
+- persist explicit parent/child ownership;
+- reuse shared Robot execution/protection/recovery;
+- freeze retry count, confirmation rule, risk budget, STOP/TAKE and invalidation
+  before implementation;
+- open/closed position cards must visibly mark the relationship, e.g.
+  `Дочернее исполнение: 1m ← 5m`, with final wording to be refined.
+
+Canonical specification:
+`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`.
+
 ## NOW — 2026-09-29 — FINAL OWNER FEEDBACK CHECKPOINT / HANDOFF
 
 All remaining findings from today's owner run are documented and queued before

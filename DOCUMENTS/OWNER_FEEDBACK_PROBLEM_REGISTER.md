@@ -131,6 +131,62 @@ Required strategy outcome:
 Canonical strategy wording is in `DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md` under
 "Owner correction — simultaneous 1.618 + 2.618 advance grids (2026-09-30)".
 
+### BOX-STALE-2 — completed 5m Box followed by a new 1m Box on the same symbol
+**Status: OPEN / REGRESSION EVIDENCE FOR OFR-4**
+
+Owner evidence 2026-09-30:
+- `SOMIUSDT 5m` LONG Ikigai Box was shown in Telegram with approximately
+  `+1.18%` potential;
+- on the owner screenshot, the old 5m formation had already travelled through
+  its actionable return path, beyond the common frozen TAKE area, and price
+  continued higher into the upper extension;
+- after that completed 5m setup, the owner observed a **different Ikigai Box on
+  1m**.
+
+Required lifecycle invariant:
+- a Box whose frozen common TAKE has already been achievable is completed/stale
+  for **new** actionable delivery and Robot admission;
+- completion of the 5m Box must not suppress a later structurally independent
+  1m Box merely because symbol and pattern family are the same;
+- dedup/lifecycle identity must therefore include the formation/timeframe and
+  frozen source-time structure, not just symbol + pattern;
+- historical/review visibility of the old 5m Box may remain, but it must not be
+  presented as a fresh executable setup.
+
+Owning queue: `OFR-4` in
+`DOCUMENTS/OWNER_FEEDBACK_REMEDIATION_QUEUE.md`.
+
+### BOX-MTF-REENTRY-1 — 5m parent Box with confirmed 1m child execution
+**Status: DESIGN DEBT / OWNER-FROZEN CONCEPT**
+
+Owner evidence 2026-09-30:
+- `STORJUSDT 5m` was used as the parent Box context;
+- after the initial higher-timeframe execution attempts, the owner identified a
+  later 1m bearish engulfing area as a potential SHORT re-entry;
+- the intended behavior is not another blind/passive grid: it is a new
+  lower-timeframe execution admitted only after explicit confirmation while the
+  original 5m thesis remains valid.
+
+Required future contract:
+- durable parent-child relation: child 1m execution -> parent 5m Box;
+- child has independent execution ownership but inherits/validates parent thesis;
+- bounded retry/risk rules must be frozen before code; no unlimited re-entry loop;
+- exact 1m confirmation trigger, invalidation, STOP/TAKE and combined exposure
+  remain unresolved;
+- shared Robot execution/protection/recovery machinery must be reused.
+
+Position-card UX requirement:
+- an open/closed position created through this path must visibly show that it is
+  a child execution of the parent setup;
+- owner-facing wording may be refined, but it must communicate approximately
+  `Дочернее исполнение: 1m ← 5m`;
+- this relationship must survive restart/history and not exist only in the
+  Telegram message.
+
+Owning strategy authority:
+`DOCUMENTS/IKIGAI_BOX_STRATEGY_SPEC.md`, section
+"Future design — parent 5m Box with confirmed 1m child re-entry (2026-09-30)".
+
 ## Scanner -> Robot candidate handoff
 
 ### RH-FAIL-1 — valid Box signal delivered, Robot candidate not created
