@@ -843,6 +843,16 @@ class RobotPaperDeterministicAcceptanceTests(unittest.TestCase):
                     )
                 )
                 self.assertTrue(recovered)
+                recovered_state = runtime.call(
+                    lambda owner: owner.store.get_robot_runtime_state(ACCOUNT_ID)
+                )
+                self.assertEqual(
+                    (recovered_state.mode, recovered_state.recovery_status),
+                    ("ROBOT_RUNNING", "READY"),
+                )
+                self.assertTrue(
+                    runtime.call(lambda owner: owner.robot_admission_ready())
+                )
 
                 closed = runtime.call(
                     lambda owner: owner.store.get_robot_trade(trade.trade_id)
