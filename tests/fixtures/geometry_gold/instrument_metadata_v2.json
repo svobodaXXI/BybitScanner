@@ -1,0 +1,39 @@
+{
+ "schema_version": 1,
+ "continues": "tests/fixtures/geometry_gold/instrument_metadata_v1.json",
+ "source": "Bybit v5 public market instruments-info, GET /v5/market/instruments-info?category=linear&symbol=ENSUSDT (no authentication)",
+ "retrieved_at_utc": "2026-10-01T08:00:18+00:00",
+ "instruments": {
+  "ENSUSDT": {
+   "symbol": "ENSUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "ENS",
+   "symbolType": "",
+   "fullName": "Ethereum Name Service",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  }
+ },
+ "case_instruments": [
+  {
+   "case_id": "ENSUSDT-1m-src1789759320000",
+   "fixture_symbol": "ENSUSDT",
+   "instrument_symbol": "ENSUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  }
+ ],
+ "observed_case_classification": [
+  {
+   "case_id": "ENSUSDT-1m-src1789759320000",
+   "instrument_symbol": "ENSUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  }
+ ]
+}

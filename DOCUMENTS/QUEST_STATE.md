@@ -1,20 +1,18 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE G0 — 2026-10-01
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE G1 — 2026-10-01
 
-Owner command: define the Geometry calibration population before any
-threshold calibration, based on main `6fceb035987e54347bfd3edbce6bfca41af1dea6`
-(Slices A-F #366-#371 merged). Population definition / audit only.
+Owner command: recover one exact crypto EXPANSION case to close
+TARGET_POPULATION readiness, based on main
+`141c071bfa72e7fe7f6d6c2294c445f00e653a21` (A-F + G0 #366-#372 merged).
+Evidence recovery only.
 
-Result: policy GEO-U1-POP-1 - eligible = crypto USDT linear perpetuals by
-Bybit symbolType; equity/ETF and commodity/forex kept as separate
-populations; UNKNOWN fails closed. MCDUSDT is symbolType "stock" ->
-excluded from the crypto target. ALL_LINEAR readiness stays READY (historical);
-TARGET_POPULATION readiness is NOT READY: expansion 1 of 2. Calibration must
-not start. Production, thresholds, fixtures, Telegram, Robot, LIVE unchanged.
+Result: ENSUSDT 1m (CRYPTO_LINEAR_PERPETUAL) exact SELECTED/EXPANSION case,
+three-run reproducible, in `source_time_manifest_v3.json`. TARGET_POPULATION
+readiness READY (16 crypto cases: compression 3, expansion 2). Calibration NOT
+started; thresholds, policy, production, Telegram, Robot, LIVE unchanged.
 Delivery gate: focused evidence -> commit/push/PR; review/merge pending.
 
-Next logical slice (separate owner authorization): recover exact source-time
-EXPANSION evidence only from CRYPTO_LINEAR_PERPETUAL instruments (Slice F
-method), with the reproducibility condition.
+Next logical slice (separate owner authorization): threshold calibration on
+the exact crypto Gold population (16 cases), still SHADOW-only.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
