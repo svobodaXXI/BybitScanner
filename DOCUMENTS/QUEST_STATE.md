@@ -1,22 +1,24 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H1 — 2026-10-01
+## 🎯 ACTIVE QUEST — GEO-U1-PERF — 2026-10-01
 
-Owner command: recover one exact 5m PERSISTENT_COMPRESSION crypto Gold case
-to clear the H0 DATA_CONCENTRATION_BLOCKER, based on main
-`625fc8c22a260df1ea6588dee993b0fa2dde894c` (A-H0 merged). Evidence only.
+Owner command: exact SHADOW Geometry performance optimization with zero
+semantic drift, based on main `3b9ea49eea88e8a39538dfddfbabfc3d7331caeb`
+(A-H1 merged). Performance only.
 
-Result: NXPCUSDT 5m src1789996800000 (CRYPTO_LINEAR_PERPETUAL) exact
-SELECTED/PERSISTENT_COMPRESSION, three-run reproducible incl. future rows,
-in `source_time_manifest_v4.json` (+ `instrument_metadata_v3.json`).
-TARGET_POPULATION 17 crypto cases READY: compression 4 (1m 3, 5m 1),
-expansion 2, no-trend 9, no-admissible 2, production detected 4;
-DATA_CONCENTRATION_BLOCKER cleared. H0 sweep not rerun; thresholds, H0
-result, policy, production, Telegram, Robot, LIVE unchanged.
-Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (Slice H1).
+Result: per-bar pandas `.iloc` access and repeated `slope*i+intercept` in the
+SHADOW pair/terminal path replaced by plain-float lists of the same values
+(`consensus_pair.py`, `consensus_selection.py`). Parity: 17/17 default
+canonical reports identical to base, 7/7 pinned reproducibility hashes incl.
+future rows, representative H0 matrix 25 sets x 16 cases = 400 runs identical
+to the pinned H0 outcomes. Bounded benchmark (4 cases, sequential fresh
+processes): 261.8 s -> 41.7 s (6.28x); heavy SHADOW pair+terminal phases
+~109 s -> ~3.4 s. Full before-matrix benchmark aborted by owner-authorized
+bounded perf plan. Thresholds, Gold, H0 result, policy, production
+(envelope_metrics/engine), Telegram, Robot, LIVE unchanged.
+Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (GEO-U1-PERF).
 Delivery gate: focused evidence -> commit/push/PR; review/merge pending.
 
-Next logical slice (separate owner authorization): GEO-U1-PERF (exact
-pair-ranking acceleration), then rerun H0 calibration on the 17-case
-population.
+Next logical slice (separate owner authorization): rerun H0 calibration on
+the 17-case target population using the optimized exact path.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30

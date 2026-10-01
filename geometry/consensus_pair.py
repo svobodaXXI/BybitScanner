@@ -126,24 +126,52 @@ def _line_value(boundary, index):
     return boundary.slope * index + boundary.intercept
 
 
+class _PriceColumns(NamedTuple):
+    """Plain-float copies of the validated historical columns (GEO-U1-PERF).
+
+    ``Series.tolist()`` yields exactly ``float(Series.iloc[i])`` for the float64
+    columns produced by ``_historical_frame``, so list indexing is bit-identical
+    to the per-bar pandas access it replaces, without its per-call overhead.
+    """
+
+    high: list
+    low: list
+    close: list
+
+
+def _price_columns(frame):
+    return _PriceColumns(frame["high"].tolist(), frame["low"].tolist(),
+                         frame["close"].tolist())
+
+
+def _line_values(boundary, length):
+    """``_line_value`` at every index, computed once per boundary (GEO-U1-PERF).
+
+    Same float expression per index, so every value - and every width as the
+    difference of two of them - is bit-identical to the per-call original.
+    """
+    return [_line_value(boundary, index) for index in range(length)]
+
+
 def _segment_evidence(
-    frame, atr, upper, lower, source, destination, *,
+    prices, atr, upper_values, lower_values, source, destination, *,
     touch_band_atr, minimum_swing_width_fraction, minimum_swing_atr,
 ):
     source_side, source_index, source_cluster = source
     destination_side, destination_index, _ = destination
     if destination_index <= source_index:
         return False, False
+    high, low, closes = prices
 
     def in_zone(side, index):
-        width = _signed_width(upper, lower, index)
+        width = upper_values[index] - lower_values[index]
         atr_value = atr[index]
         if width <= 0 or atr_value is None:
             return False
-        value = _line_value(upper if side == "upper" else lower, index)
+        value = upper_values[index] if side == "upper" else lower_values[index]
         if side == "upper":
-            return float(frame.high.iloc[index]) >= value - touch_band_atr * atr_value
-        return float(frame.low.iloc[index]) <= value + touch_band_atr * atr_value
+            return high[index] >= value - touch_band_atr * atr_value
+        return low[index] <= value + touch_band_atr * atr_value
 
     # A traversal needs a real start zone too: the source cluster must touch
     # its own boundary band before the destination, not merely be labelled so.
@@ -151,15 +179,14 @@ def _segment_evidence(
                          if index < destination_index)
     departed = False
     reached_opposite = False
+    source_values = upper_values if source_side == "upper" else lower_values
     for index in range(source_index, destination_index + 1):
-        width = _signed_width(upper, lower, index)
+        width = upper_values[index] - lower_values[index]
         atr_value = atr[index]
         if width <= 0 or atr_value is None:
             continue
-        close = float(frame.close.iloc[index])
-        source_value = _line_value(
-            upper if source_side == "upper" else lower, index
-        )
+        close = closes[index]
+        source_value = source_values[index]
         inward_distance = ((source_value - close) if source_side == "upper"
                            else (close - source_value))
         required_departure = max(
@@ -175,7 +202,8 @@ def _segment_evidence(
 
 
 def _build_pair(
-    frame, atr, upper, lower, *, episode_start_index, episode_end_index,
+    prices, atr, upper, lower, upper_values, lower_values, *,
+    episode_start_index, episode_end_index,
     touch_band_atr, minimum_swing_width_fraction, minimum_swing_atr,
     minimum_side_touch_clusters,
 ):
@@ -223,7 +251,7 @@ def _build_pair(
     interaction_indices = []
     for source, destination in zip(events, events[1:]):
         departed, reached = _segment_evidence(
-            frame, atr, upper, lower, source, destination,
+            prices, atr, upper_values, lower_values, source, destination,
             touch_band_atr=touch_band_atr,
             minimum_swing_width_fraction=minimum_swing_width_fraction,
             minimum_swing_atr=minimum_swing_atr,
@@ -341,12 +369,15 @@ def build_envelope_pair_consensus(
         if (not evidence_indices or min(evidence_indices) < 0
                 or max(evidence_indices) > as_of_index):
             raise ValueError("boundary evidence must stay inside historical cutoff")
+    prices = _price_columns(frame)
+    lower_lines = [_line_values(lower, len(frame)) for lower in lowers]
     pairs = {}
     for upper in uppers:
-        for lower in lowers:
+        upper_values = _line_values(upper, len(frame))
+        for lower, lower_values in zip(lowers, lower_lines):
             identity = (_identity(upper), _identity(lower))
             pairs[identity] = _build_pair(
-                frame, atr, upper, lower,
+                prices, atr, upper, lower, upper_values, lower_values,
                 episode_start_index=episode_start_index,
                 episode_end_index=episode_end_index,
                 touch_band_atr=touch_band_atr,

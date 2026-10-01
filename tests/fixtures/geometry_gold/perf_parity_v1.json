@@ -1,0 +1,160 @@
+{
+ "schema_version": 1,
+ "description": "GEO-U1-PERF exact parity references. defaults: canonical report sha256 of the 17 target crypto cases on untouched base 3b9ea49 (fresh process per case). Representative H0 labels are checked against the pinned H0 outcome matrix (calibration_result_v1.json), not recomputed on the base code.",
+ "base_sha": "3b9ea49eea88e8a39538dfddfbabfc3d7331caeb",
+ "defaults": {
+  "1000BONKUSDT-wrong-anchor-negative": {
+   "sha256": "85196b6752093d55c71baa33a37fbf0657ef8f21c562564916f28f1238c872dd",
+   "candidate_count": 6916,
+   "admissible_count": 46,
+   "deciding_component": "shared_support_coverage"
+  },
+  "1000TOSHIUSDT-locality-invariant": {
+   "sha256": "6b5226bcbf2e428abb0602912a70e69ee9d2da2e6f623c6a14105bab2fa14a0c",
+   "candidate_count": 624,
+   "admissible_count": 22,
+   "deciding_component": "negative_mean_residual_sum"
+  },
+  "1000XECUSDT-no-local-formation": {
+   "sha256": "d663c912795de9aaa7c50d852d0f16adb613ab442110b3ad5045039710f4fe6e",
+   "candidate_count": 245,
+   "admissible_count": 0,
+   "deciding_component": "IDENTITY_TIE_BREAK"
+  },
+  "AEVO-formation-fit-negative": {
+   "sha256": "b9f50f34e5fce36dc846a8b278e9e794076a6b847ee79952ebf2764485662f17",
+   "candidate_count": 819,
+   "admissible_count": 9,
+   "deciding_component": "negative_excursion_count"
+  },
+  "BILLUSDT-1m-src1789759080000": {
+   "sha256": "8abf72c52916a2cb432f2d30cda40fb566e9ea89dabe9d8b3c2ba7ace150fdcc",
+   "candidate_count": 90,
+   "admissible_count": 9,
+   "deciding_component": "negative_mean_residual_sum"
+  },
+  "CASHCATUSDT-1m-src1789850340000": {
+   "sha256": "07bef38532db88cbddf774185d14f5594e5674937f7e8d5fcbc2664b025aca47",
+   "candidate_count": 4004,
+   "admissible_count": 22,
+   "deciding_component": "cross_boundary_traversals"
+  },
+  "CASHCATUSDT-1m-src1790590380000": {
+   "sha256": "cb4105a3e8593f7cbc6c8a5cfc97beda4d80887f578d229a0ed04f1acac455a7",
+   "candidate_count": 11232,
+   "admissible_count": 72,
+   "deciding_component": "negative_mean_residual_sum"
+  },
+  "CASHCATUSDT-5m-src1790002800000": {
+   "sha256": "5a94297a3d34a361decc93afcfb448b1f4eb542c5d716439ab9b3e9fcd2eda7d",
+   "candidate_count": 7020,
+   "admissible_count": 37,
+   "deciding_component": "IDENTITY_TIE_BREAK"
+  },
+  "CASHCATUSDT-5m-src1790272200000": {
+   "sha256": "000c3a2b1b76644eb2e2d204c9c214ce56f8fe21fcdcf96d7fbb5ec05e0f3a67",
+   "candidate_count": 2769,
+   "admissible_count": 44,
+   "deciding_component": "touch_balance"
+  },
+  "CASHCATUSDT-5m-src1790665800000": {
+   "sha256": "f4807d712cb56be773ce45679417b92bc980f6b0be7c6d892022764652346d79",
+   "candidate_count": 10395,
+   "admissible_count": 126,
+   "deciding_component": "opposite_boundary_reach_fraction"
+  },
+  "ENAUSDT-1m-src1789759320000": {
+   "sha256": "99a8829ec27a1b85c36ad857459a83d534c5a86060042fc8b0d3e67a04db3276",
+   "candidate_count": 585,
+   "admissible_count": 0,
+   "deciding_component": "shared_support_coverage"
+  },
+  "ENAUSDT-1m-src1789850520000": {
+   "sha256": "751561bc448bb3f312d7b7f3a41bc444d1c229504784c1a3f822a42943cc3242",
+   "candidate_count": 5478,
+   "admissible_count": 20,
+   "deciding_component": "cross_boundary_traversals"
+  },
+  "ENAUSDT-5m-src1790098200000": {
+   "sha256": "5dcfbb3b8c6b13e4984978528d14c927a8495520fe502d5d0a346451000e2f63",
+   "candidate_count": 6230,
+   "admissible_count": 160,
+   "deciding_component": "negative_support_gap_bars"
+  },
+  "ENSUSDT-1m-src1789759320000": {
+   "sha256": "c26fc68acb127f7fd243ef807ab065ffd700e591a781ba154b973acb13b23c0c",
+   "candidate_count": 120,
+   "admissible_count": 3,
+   "deciding_component": "cross_boundary_traversals"
+  },
+  "GOATUSDT-1m-src1789850640000": {
+   "sha256": "0671a923fd14ece4d83b1a4fa818b33bbbcf53376eb3373632e60a2954ac65be",
+   "candidate_count": 30,
+   "admissible_count": 4,
+   "deciding_component": "shared_support_coverage"
+  },
+  "NXPCUSDT-5m-src1789996800000": {
+   "sha256": "5475ad7d134259ba1e684dababb33cacb4b33bc08ed0444160da2f2d03f7609e",
+   "candidate_count": 90,
+   "admissible_count": 2,
+   "deciding_component": "IDENTITY_TIE_BREAK"
+  },
+  "PONS-formation-fit-positive-anchor": {
+   "sha256": "343e56dcd12ae51ef4d557ddac5612523a040511072ff6cd24cf5e45616f7dba",
+   "candidate_count": 3510,
+   "admissible_count": 25,
+   "deciding_component": "negative_mean_residual_sum"
+  }
+ },
+ "representative_h0_labels": [
+  "BASELINE",
+  "minimum_side_touch_clusters=LOW",
+  "minimum_side_touch_clusters=HIGH",
+  "min_shared_support_coverage=LOW",
+  "min_shared_support_coverage=HIGH",
+  "terminal_window_bars=LOW",
+  "terminal_window_bars=HIGH",
+  "terminal_segments=LOW",
+  "terminal_segments=HIGH",
+  "compression_max_ratio=LOW",
+  "compression_max_ratio=HIGH",
+  "expansion_min_ratio=LOW",
+  "expansion_min_ratio=HIGH",
+  "inlier_band_atr=LOW",
+  "inlier_band_atr=HIGH",
+  "separation_atr=LOW",
+  "touch_band_atr=HIGH",
+  "minimum_swing_width_fraction=LOW",
+  "GRID:minimum_side_touch_clusters=1,min_shared_support_coverage=0.25,terminal_window_bars=24,terminal_segments=2,compression_max_ratio=0.875,expansion_min_ratio=1.075",
+  "GRID:minimum_side_touch_clusters=2,min_shared_support_coverage=0.25,terminal_window_bars=24,terminal_segments=2,compression_max_ratio=0.875,expansion_min_ratio=1.075",
+  "GRID:minimum_side_touch_clusters=2,min_shared_support_coverage=0.25,terminal_window_bars=36,terminal_segments=2,compression_max_ratio=0.925,expansion_min_ratio=1.125",
+  "GRID:minimum_side_touch_clusters=1,min_shared_support_coverage=0.1875,terminal_window_bars=24,terminal_segments=2,compression_max_ratio=0.875,expansion_min_ratio=1.075",
+  "GRID:minimum_side_touch_clusters=1,min_shared_support_coverage=0.1875,terminal_window_bars=24,terminal_segments=2,compression_max_ratio=0.875,expansion_min_ratio=1.1",
+  "GRID:minimum_side_touch_clusters=1,min_shared_support_coverage=0.1875,terminal_window_bars=30,terminal_segments=5,compression_max_ratio=0.875,expansion_min_ratio=1.075",
+  "GRID:minimum_side_touch_clusters=2,min_shared_support_coverage=0.3125,terminal_window_bars=24,terminal_segments=3,compression_max_ratio=0.925,expansion_min_ratio=1.125"
+ ],
+ "matrix_test_cases": [
+  "1000TOSHIUSDT-locality-invariant",
+  "1000XECUSDT-no-local-formation",
+  "AEVO-formation-fit-negative",
+  "BILLUSDT-1m-src1789759080000",
+  "ENAUSDT-1m-src1789759320000",
+  "ENSUSDT-1m-src1789759320000",
+  "GOATUSDT-1m-src1789850640000"
+ ],
+ "future_row_cases": [
+  "BILLUSDT-1m-src1789759080000",
+  "CASHCATUSDT-1m-src1790590380000",
+  "CASHCATUSDT-5m-src1790272200000",
+  "ENSUSDT-1m-src1789759320000",
+  "GOATUSDT-1m-src1789850640000",
+  "MCDUSDT-5m-src1790004300000",
+  "NXPCUSDT-5m-src1789996800000"
+ ],
+ "offline_full_matrix_check": {
+  "cases": 16,
+  "labels": 25,
+  "case_set_runs": 400,
+  "mismatches": 0
+ }
+}
