@@ -1,0 +1,820 @@
+{
+ "schema_version": 1,
+ "description": "GEO-U1 Slice G1 continuation (v1/v2 kept immutable): one exact crypto EXPANSION case.",
+ "continues": [
+  "tests/fixtures/geometry_gold/source_time_manifest_v1.json",
+  "tests/fixtures/geometry_gold/source_time_manifest_v2.json"
+ ],
+ "cases": [
+  {
+   "case_id": "ENSUSDT-1m-src1789759320000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "ENSUSDT",
+   "timeframe": "1",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/ENSUSDT_1m_src1789759320000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1789759260000,
+   "cutoff_candle_open_utc": "2026-09-18T19:21:00Z",
+   "provenance": "Scanner candidate a878f8412eddbb1a57931724.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": null,
+    "production_pattern": null,
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     88,
+     185,
+     60,
+     125,
+     60,
+     186
+    ],
+    "recorded_runtime_pattern": "Rising Wedge",
+    "note": "production_* observed from this fixture on current main; recorded_runtime_* is historical (forming candle, older code), never asserted equal"
+   }
+  }
+ ],
+ "search": {
+  "queue_rule": "class == CRYPTO_LINEAR_PERPETUAL (G0 policy) and Slice F EXPAND proxy and not yet evaluated; ordered by exact pair count then name",
+  "eligible_queue_size": 149,
+  "evaluated": [
+   {
+    "position": 1,
+    "case_id": "TRUTHUSDT-5m-src1789850700000",
+    "pairs": 76,
+    "elapsed_s": 6.2,
+    "selection_status": "NO_ADMISSIBLE_PAIR",
+    "terminal_width_trend": "EXPANSION",
+    "rejection_reasons_of_top_ranked": [
+     "BODY_INTEGRITY_FAILED"
+    ]
+   },
+   {
+    "position": 2,
+    "case_id": "METISUSDT-5m-src1789849500000",
+    "pairs": 80,
+    "elapsed_s": 5.1,
+    "selection_status": "NO_ADMISSIBLE_PAIR",
+    "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+    "rejection_reasons_of_top_ranked": [
+     "INSUFFICIENT_SHARED_SUPPORT",
+     "STALE_SHARED_SUPPORT",
+     "BODY_INTEGRITY_FAILED"
+    ]
+   },
+   {
+    "position": 3,
+    "case_id": "MAGICUSDT-5m-src1789849500000",
+    "pairs": 90,
+    "elapsed_s": 4.7,
+    "selection_status": "NO_ADMISSIBLE_PAIR",
+    "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+    "rejection_reasons_of_top_ranked": [
+     "INSUFFICIENT_SHARED_SUPPORT",
+     "STALE_SHARED_SUPPORT",
+     "BODY_INTEGRITY_FAILED"
+    ]
+   },
+   {
+    "position": 4,
+    "case_id": "SKYAI1USDT-1m-src1789760640000",
+    "pairs": 90,
+    "elapsed_s": 4.4,
+    "selection_status": "SELECTED",
+    "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+    "rejection_reasons_of_top_ranked": []
+   },
+   {
+    "position": 5,
+    "case_id": "ENSUSDT-1m-src1789759320000",
+    "pairs": 120,
+    "elapsed_s": 7.0,
+    "selection_status": "SELECTED",
+    "terminal_width_trend": "EXPANSION",
+    "rejection_reasons_of_top_ranked": []
+   }
+  ],
+  "accepted_position": 5
+ },
+ "reproducibility": {
+  "ENSUSDT-1m-src1789759320000": {
+   "runs": [
+    {
+     "tag": "g1A",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "c26fc68acb127f7fd243ef807ab065ffd700e591a781ba154b973acb13b23c0c"
+    },
+    {
+     "tag": "g1B",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "c26fc68acb127f7fd243ef807ab065ffd700e591a781ba154b973acb13b23c0c"
+    },
+    {
+     "tag": "g1C",
+     "separate_process": true,
+     "future_rows_appended": true,
+     "canonical_report_sha256": "c26fc68acb127f7fd243ef807ab065ffd700e591a781ba154b973acb13b23c0c"
+    }
+   ],
+   "identical": true
+  }
+ },
+ "observed_slice_d_case_facts": [
+  {
+   "admissible_count": 25,
+   "candidate_count": 3510,
+   "case_id": "PONS-formation-fit-positive-anchor",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": true,
+   "production_geometry_present": true,
+   "production_identity": [
+    143,
+    178,
+    145,
+    186,
+    143,
+    186
+   ],
+   "production_pattern": "Falling Wedge",
+   "realized_contraction_ratio": 0.8951048951048918,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      126,
+      178
+     ]
+    ],
+    [
+     "lower",
+     [
+      107,
+      145,
+      186
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "PONS",
+   "terminal_compression_ratio": 0.40493349530501155,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 46,
+   "candidate_count": 6916,
+   "case_id": "1000BONKUSDT-wrong-anchor-negative",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": false,
+   "production_geometry_present": true,
+   "production_identity": [
+    64,
+    150,
+    95,
+    139,
+    64,
+    175
+   ],
+   "production_pattern": "No wedge",
+   "realized_contraction_ratio": 0.6030534351145043,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      64,
+      164
+     ]
+    ],
+    [
+     "lower",
+     [
+      54,
+      139
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "1000BONKUSDT",
+   "terminal_compression_ratio": 0.9865385653370758,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 22,
+   "candidate_count": 624,
+   "case_id": "1000TOSHIUSDT-locality-invariant",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": false,
+   "production_geometry_present": true,
+   "production_identity": [
+    128,
+    173,
+    108,
+    165,
+    108,
+    173
+   ],
+   "production_pattern": "No wedge",
+   "realized_contraction_ratio": 2.374999999999972,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      14,
+      78,
+      137
+     ]
+    ],
+    [
+     "lower",
+     [
+      45,
+      108
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "1000TOSHIUSDT",
+   "terminal_compression_ratio": 1.0975024148503576,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 0,
+   "candidate_count": 245,
+   "case_id": "1000XECUSDT-no-local-formation",
+   "presence_agreement": "NEITHER",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.8450704225352149,
+   "rejection_reasons_of_top_ranked": [
+    "BODY_INTEGRITY_FAILED"
+   ],
+   "selected_pair_identity": null,
+   "selection_status": "NO_ADMISSIBLE_PAIR",
+   "symbol": "1000XECUSDT",
+   "terminal_compression_ratio": 0.8627608990885229,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 9,
+   "candidate_count": 819,
+   "case_id": "AEVO-formation-fit-negative",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.958333333333349,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      89,
+      156
+     ]
+    ],
+    [
+     "lower",
+     [
+      65,
+      140
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "AEVO",
+   "terminal_compression_ratio": 0.961158219310079,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 22,
+   "candidate_count": 4004,
+   "case_id": "CASHCATUSDT-1m-src1789850340000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 1.2926829268292772,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      47,
+      103
+     ]
+    ],
+    [
+     "lower",
+     [
+      17,
+      54,
+      115
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 1.079554124654433,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 72,
+   "candidate_count": 11232,
+   "case_id": "CASHCATUSDT-1m-src1790590380000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": true,
+   "production_geometry_present": true,
+   "production_identity": [
+    141,
+    183,
+    136,
+    182,
+    136,
+    183
+   ],
+   "production_pattern": "Falling Wedge",
+   "realized_contraction_ratio": 0.8814814814814764,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      115,
+      190
+     ]
+    ],
+    [
+     "lower",
+     [
+      75,
+      172,
+      195
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 0.2839889045179843,
+   "terminal_width_trend": "PERSISTENT_COMPRESSION",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 37,
+   "candidate_count": 7020,
+   "case_id": "CASHCATUSDT-5m-src1790002800000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": false,
+   "production_geometry_present": true,
+   "production_identity": [
+    61,
+    94,
+    42,
+    99,
+    42,
+    99
+   ],
+   "production_pattern": "No wedge",
+   "realized_contraction_ratio": 2.422429906542059,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      29,
+      172
+     ]
+    ],
+    [
+     "lower",
+     [
+      111,
+      183
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 0.6554574232285639,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 44,
+   "candidate_count": 2769,
+   "case_id": "CASHCATUSDT-5m-src1790272200000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": false,
+   "production_geometry_present": true,
+   "production_identity": [
+    17,
+    47,
+    5,
+    37,
+    5,
+    47
+   ],
+   "production_pattern": "No wedge",
+   "realized_contraction_ratio": 1.7179487179487127,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      24,
+      77,
+      161
+     ]
+    ],
+    [
+     "lower",
+     [
+      19,
+      28,
+      111
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 1.1652761022723783,
+   "terminal_width_trend": "EXPANSION",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 126,
+   "candidate_count": 10395,
+   "case_id": "CASHCATUSDT-5m-src1790665800000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": true,
+   "production_geometry_present": true,
+   "production_identity": [
+    134,
+    166,
+    142,
+    188,
+    134,
+    194
+   ],
+   "production_pattern": "Rising Wedge",
+   "realized_contraction_ratio": 0.9335443037974721,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      54,
+      101,
+      106
+     ]
+    ],
+    [
+     "lower",
+     [
+      45,
+      95,
+      131
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "CASHCATUSDT",
+   "terminal_compression_ratio": 1.0723488729012411,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 0,
+   "candidate_count": 585,
+   "case_id": "ENAUSDT-1m-src1789759320000",
+   "presence_agreement": "NEITHER",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.5863636363636404,
+   "rejection_reasons_of_top_ranked": [
+    "INSUFFICIENT_SHARED_SUPPORT",
+    "STALE_SHARED_SUPPORT"
+   ],
+   "selected_pair_identity": null,
+   "selection_status": "NO_ADMISSIBLE_PAIR",
+   "symbol": "ENAUSDT",
+   "terminal_compression_ratio": 0.4670393864457514,
+   "terminal_width_trend": "PERSISTENT_COMPRESSION",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 20,
+   "candidate_count": 5478,
+   "case_id": "ENAUSDT-1m-src1789850520000",
+   "presence_agreement": "BOTH_PRESENT",
+   "production_detected": true,
+   "production_geometry_present": true,
+   "production_identity": [
+    146,
+    183,
+    137,
+    184,
+    137,
+    190
+   ],
+   "production_pattern": "Rising Wedge",
+   "realized_contraction_ratio": 1.4237288135593211,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      48,
+      160,
+      183
+     ]
+    ],
+    [
+     "lower",
+     [
+      126,
+      177
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "ENAUSDT",
+   "terminal_compression_ratio": 0.6406225979221503,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 160,
+   "candidate_count": 6230,
+   "case_id": "ENAUSDT-5m-src1790098200000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.5541871921182298,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      87,
+      157,
+      170
+     ]
+    ],
+    [
+     "lower",
+     [
+      66,
+      122,
+      165
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "ENAUSDT",
+   "terminal_compression_ratio": 0.9675876611461705,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 9,
+   "candidate_count": 90,
+   "case_id": "BILLUSDT-1m-src1789759080000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.4166666666666775,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      40,
+      150
+     ]
+    ],
+    [
+     "lower",
+     [
+      84,
+      167
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "BILLUSDT",
+   "terminal_compression_ratio": 0.3088844485598862,
+   "terminal_width_trend": "PERSISTENT_COMPRESSION",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 4,
+   "candidate_count": 30,
+   "case_id": "GOATUSDT-1m-src1789850640000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.11764705882352461,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      74,
+      178
+     ]
+    ],
+    [
+     "lower",
+     [
+      59,
+      157
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "GOATUSDT",
+   "terminal_compression_ratio": 0.7771724909008817,
+   "terminal_width_trend": "PERSISTENT_COMPRESSION",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 8,
+   "candidate_count": 54,
+   "case_id": "MCDUSDT-5m-src1790004300000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 2.6842105263157916,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      20,
+      176
+     ]
+    ],
+    [
+     "lower",
+     [
+      15,
+      134
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "MCDUSDT",
+   "terminal_compression_ratio": 1.1429741749239415,
+   "terminal_width_trend": "EXPANSION",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 3,
+   "candidate_count": 120,
+   "case_id": "ENSUSDT-1m-src1789759320000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 1.2592592592592788,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      116,
+      185
+     ]
+    ],
+    [
+     "lower",
+     [
+      109,
+      166
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "ENSUSDT",
+   "terminal_compression_ratio": 1.1245236876528517,
+   "terminal_width_trend": "EXPANSION",
+   "timeframe": "1"
+  }
+ ],
+ "observed_expanded_aggregate": {
+  "presence_agreement": {
+   "BOTH_PRESENT": 8,
+   "NEITHER": 2,
+   "SHADOW_ONLY": 7
+  },
+  "production_detected_count": 4,
+  "production_pattern_counts": {
+   "Falling Wedge": 2,
+   "No wedge": 4,
+   "Rising Wedge": 2
+  },
+  "selection_status_counts": {
+   "NO_ADMISSIBLE_PAIR": 2,
+   "SELECTED": 15
+  },
+  "terminal_trend_counts_all_top_ranked": {
+   "EXPANSION": 3,
+   "NO_PERSISTENT_WIDTH_TREND": 10,
+   "PERSISTENT_COMPRESSION": 4
+  },
+  "terminal_trend_counts_selected": {
+   "EXPANSION": 3,
+   "NO_PERSISTENT_WIDTH_TREND": 9,
+   "PERSISTENT_COMPRESSION": 3
+  },
+  "total_cases": 17
+ },
+ "observed_readiness_all_linear": {
+  "calibration_blockers": [],
+  "calibration_ready": true,
+  "diversity_gaps": [],
+  "exact_case_count": 17,
+  "expansion_count": 3,
+  "insufficient_window_count": 0,
+  "newly_recovered_case_count": 1,
+  "no_persistent_trend_count": 9,
+  "non_positive_width_count": 0,
+  "persistent_compression_count": 3,
+  "production_detected_count": 4,
+  "production_positive_family_counts": [
+   [
+    "Falling Wedge",
+    2
+   ],
+   [
+    "Rising Wedge",
+    2
+   ]
+  ],
+  "readiness_rule": "exact_cases>=12; provenance complete for all; selected PERSISTENT_COMPRESSION>=3; selected EXPANSION>=2; selected NO_PERSISTENT_WIDTH_TREND>=3; no-admissible-pair cases>=2; production detected cases>=3; selected PERSISTENT_COMPRESSION/EXPANSION count only when independently reproduced (two separate runs, one with future rows, identical report)",
+  "rejected_selection_count": 2,
+  "source_provenance_complete_count": 17,
+  "unrecoverable_targets": [
+   "CASHCATUSDT-1m-owner-comparison-2026-09-30",
+   "ENAUSDT-1m-owner-comparison-2026-09-30",
+   "robot_candidates without scanner_source_candle_time_ms (CASHCATUSDT 1m x3, ENAUSDT 1m x1, 2026-09-12..14)"
+  ]
+ },
+ "observed_readiness_target_population": {
+  "calibration_blockers": [],
+  "calibration_ready": true,
+  "diversity_gaps": [],
+  "exact_case_count": 16,
+  "expansion_count": 2,
+  "insufficient_window_count": 0,
+  "newly_recovered_case_count": 1,
+  "no_persistent_trend_count": 9,
+  "non_positive_width_count": 0,
+  "persistent_compression_count": 3,
+  "production_detected_count": 4,
+  "production_positive_family_counts": [
+   [
+    "Falling Wedge",
+    2
+   ],
+   [
+    "Rising Wedge",
+    2
+   ]
+  ],
+  "readiness_rule": "exact_cases>=12; provenance complete for all; selected PERSISTENT_COMPRESSION>=3; selected EXPANSION>=2; selected NO_PERSISTENT_WIDTH_TREND>=3; no-admissible-pair cases>=2; production detected cases>=3; selected PERSISTENT_COMPRESSION/EXPANSION count only when independently reproduced (two separate runs, one with future rows, identical report)",
+  "rejected_selection_count": 2,
+  "source_provenance_complete_count": 16,
+  "unrecoverable_targets": [
+   "CASHCATUSDT-1m-owner-comparison-2026-09-30",
+   "ENAUSDT-1m-owner-comparison-2026-09-30",
+   "robot_candidates without scanner_source_candle_time_ms (CASHCATUSDT 1m x3, ENAUSDT 1m x1, 2026-09-12..14)"
+  ]
+ }
+}

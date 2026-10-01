@@ -283,6 +283,28 @@ from 2 to 1). Note: the Scanner universe filter has no symbolType rule; the
 2026-10-01 snapshot is 782 symbols = 394 "" + 128 innovation + 199 stock +
 54 ETF + 4 commodity + 3 forex.
 
+## Crypto EXPANSION closure — GEO-U1 Slice G1 (2026-10-01)
+
+Manifest `tests/fixtures/geometry_gold/source_time_manifest_v3.json`
+(continues v1/v2, both unchanged) and additive metadata
+`instrument_metadata_v2.json` (v1 unchanged). Search queue: Slice F
+EXPAND-proxy windows not yet evaluated whose pinned Bybit class is
+CRYPTO_LINEAR_PERPETUAL (149), cheapest exact pair count first. Positions
+1-4 were rejected (TRUTH/METIS/MAGIC no admissible pair; SKYAI1 selected
+without trend); position 5 was accepted:
+
+ENSUSDT 1m src1789759320000 (symbolType "" - Ethereum Name Service),
+closed cutoff 2026-09-18T19:21Z, 199 bars 16:03..19:21Z, 120 SHADOW pairs,
+SELECTED / EXPANSION (terminal ratio 1.125), production finds no geometry on
+the closed prefix (recorded runtime: Rising Wedge). Three separate runs (one
+with appended future rows) gave canonical report sha256
+c26fc68acb127f7fd243ef807ab065ffd700e591a781ba154b973acb13b23c0c.
+
+Readiness: TARGET_POPULATION (crypto, policy GEO-U1-POP-1) 16 cases READY -
+compression 3, expansion 2, no-trend 9, no-admissible 2, production detected
+4; without ENSUSDT it is NOT READY (expansion 1 of 2). ALL_LINEAR 17 cases
+READY. Calibration not started.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations
