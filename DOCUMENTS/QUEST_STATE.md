@@ -1,25 +1,27 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H2 — 2026-10-01
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H3 — 2026-10-02
 
-Owner command: rerun the unchanged H0 calibration methodology on the 17-case
-GEO-U1-POP-1 crypto population (H1 + PERF merged), based on main
-`c59840d126bf8ab50392bd1d2f9610b3b3119bf5`. SHADOW research only.
+Owner command: targeted exact evidence recovery for min_alternating_touches
+(the 7th MATERIAL parameter found by H2), based on main
+`cce347d84cd040e16e622a7cc0f7db4894b9cbdf`. Evidence only; no sweep.
 
-Result (`calibration_result_v2.json`, additive; v1 kept as the historical
-16-case H0 record): baseline 17/17 exact incl. future rows; compression 4
-(1m 3, 5m 1), expansion 2, no-trend 9, no-admissible 2, production detected
-4; DATA_CONCENTRATION_BLOCKER NO. Sensitivity: 7 MATERIAL parameters (H0's 6
-+ min_alternating_touches, which at HIGH=4 turns NXPCUSDT 5m alternation 3
-into NO_ADMISSIBLE) -> CALIBRATION_UNDERDETERMINED under the unchanged H0
-rule (> 6): no sweep, recommended_action MORE_EVIDENCE_REQUIRED. Defaults,
-methodology code, Gold, v1, policy, production, Telegram, Robot, LIVE
-unchanged; production_cutover_authorized = false.
-Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (Slice H2).
+Result: bounded universe of 1209 exact crypto 1m/5m Scanner records fully
+screened under the defaults; 6 new exact cases (distinct symbols, no
+CASHCAT/ENA) admitted by a fixed stratified rule: alternation 3 (LDO 1m, BNT
+5m), 4 (PUFFER 1m, GMX 5m), >=5 (FLOCK 1m, GAS 5m), all SELECTED
+PERSISTENT_COMPRESSION, 3-run + future-row reproducible
+(`source_time_manifest_v5.json`, `instrument_metadata_v4.json`). Diagnostic
+only: at HIGH=4 every alternation-3 case (NXPC, BNT, LDO) becomes
+NO_ADMISSIBLE while all >=4 cases stay selected; LOW=2 changes nothing.
+Label EVIDENCE_SUPPORTS_MATERIALITY. Cap 6, defaults, methodology, v1/v2,
+Gold, policy, production, Telegram, Robot, LIVE unchanged; no calibration
+rerun; production_cutover_authorized = false.
+Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (Slice H3).
 Delivery gate: focused evidence -> commit/push/PR; review/merge pending.
 
-Next logical slice (separate owner decision): either more exact evidence that
-constrains min_alternating_touches (structural alternation-3 vs 4 cases), or an
-owner-authorized change to the frozen H0 active-parameter cap; the rule is not
-changed here.
+Next logical slice (separate owner decision): the 7-parameter underdetermination
+now stands on 4 alternation-3 cases, not one; either owner-authorize a change to
+the frozen H0 active-parameter cap / freeze min_alternating_touches by a
+semantic argument, or add evidence of other classes before any calibration v3.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
