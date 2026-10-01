@@ -1,19 +1,22 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H0 — 2026-10-01
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H1 — 2026-10-01
 
-Owner command: SHADOW-only Geometry threshold calibration methodology and
-bounded sweep on the 16 exact crypto cases, based on main
-`3e7b4534f530fd5a7e116ffe78fa9f51a0f7117c` (A-G1 merged). Research only.
+Owner command: recover one exact 5m PERSISTENT_COMPRESSION crypto Gold case
+to clear the H0 DATA_CONCENTRATION_BLOCKER, based on main
+`625fc8c22a260df1ea6588dee993b0fa2dde894c` (A-H0 merged). Evidence only.
 
-Result: baseline exact (16/16); 6 material parameters; 567-set grid ->
-50 gate-passing, all LOO-robust, none preferred over baseline;
-DATA_CONCENTRATION_BLOCKER (all compression cases 1m). Recommended action
-KEEP_BASELINE; no candidate preset; defaults, policy, fixtures, production,
-Telegram, Robot, LIVE unchanged; production_cutover_authorized = false.
-Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (Slice H0).
+Result: NXPCUSDT 5m src1789996800000 (CRYPTO_LINEAR_PERPETUAL) exact
+SELECTED/PERSISTENT_COMPRESSION, three-run reproducible incl. future rows,
+in `source_time_manifest_v4.json` (+ `instrument_metadata_v3.json`).
+TARGET_POPULATION 17 crypto cases READY: compression 4 (1m 3, 5m 1),
+expansion 2, no-trend 9, no-admissible 2, production detected 4;
+DATA_CONCENTRATION_BLOCKER cleared. H0 sweep not rerun; thresholds, H0
+result, policy, production, Telegram, Robot, LIVE unchanged.
+Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (Slice H1).
 Delivery gate: focused evidence -> commit/push/PR; review/merge pending.
 
-Next logical slice (separate owner authorization): evidence recovery of an
-exact 5m PERSISTENT_COMPRESSION crypto case (and GEO-U1-PERF), then rerun H0.
+Next logical slice (separate owner authorization): GEO-U1-PERF (exact
+pair-ranking acceleration), then rerun H0 calibration on the 17-case
+population.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
