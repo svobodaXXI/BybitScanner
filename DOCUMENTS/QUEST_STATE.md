@@ -1,18 +1,19 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE G1 — 2026-10-01
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H0 — 2026-10-01
 
-Owner command: recover one exact crypto EXPANSION case to close
-TARGET_POPULATION readiness, based on main
-`141c071bfa72e7fe7f6d6c2294c445f00e653a21` (A-F + G0 #366-#372 merged).
-Evidence recovery only.
+Owner command: SHADOW-only Geometry threshold calibration methodology and
+bounded sweep on the 16 exact crypto cases, based on main
+`3e7b4534f530fd5a7e116ffe78fa9f51a0f7117c` (A-G1 merged). Research only.
 
-Result: ENSUSDT 1m (CRYPTO_LINEAR_PERPETUAL) exact SELECTED/EXPANSION case,
-three-run reproducible, in `source_time_manifest_v3.json`. TARGET_POPULATION
-readiness READY (16 crypto cases: compression 3, expansion 2). Calibration NOT
-started; thresholds, policy, production, Telegram, Robot, LIVE unchanged.
+Result: baseline exact (16/16); 6 material parameters; 567-set grid ->
+50 gate-passing, all LOO-robust, none preferred over baseline;
+DATA_CONCENTRATION_BLOCKER (all compression cases 1m). Recommended action
+KEEP_BASELINE; no candidate preset; defaults, policy, fixtures, production,
+Telegram, Robot, LIVE unchanged; production_cutover_authorized = false.
+Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (Slice H0).
 Delivery gate: focused evidence -> commit/push/PR; review/merge pending.
 
-Next logical slice (separate owner authorization): threshold calibration on
-the exact crypto Gold population (16 cases), still SHADOW-only.
+Next logical slice (separate owner authorization): evidence recovery of an
+exact 5m PERSISTENT_COMPRESSION crypto case (and GEO-U1-PERF), then rerun H0.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
