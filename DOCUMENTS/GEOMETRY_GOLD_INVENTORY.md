@@ -348,6 +348,34 @@ boundaries/pairs/terminal evidence; unchanged selection code), cold run 3763 s
 wall on 16 processes, 21502 s summed case time; slowest case
 CASHCATUSDT 1m src1790590380000 (3753 s over all sets). GEO-U1-PERF remains warranted.
 
+## 5m crypto compression recovery — GEO-U1 Slice H1 (2026-10-01)
+
+Manifest `tests/fixtures/geometry_gold/source_time_manifest_v4.json` (continues
+v1-v3, all unchanged) and additive metadata `instrument_metadata_v3.json`
+(v1/v2 unchanged). Purpose: clear the H0 DATA_CONCENTRATION_BLOCKER (all
+compression cases were 1m). Thresholds, H0 result, production and policy
+unchanged; Scanner/Robot not launched.
+
+Search: 1420 distinct Scanner records with `scanner_source_candle_time_ms`;
+957 are 5m CRYPTO_LINEAR_PERPETUAL (pinned Bybit class) not yet in Gold or
+previously evaluated; all 957 closed 199-bar prefixes fetched exact. A
+necessary-condition filter (the realized-range half of the unchanged
+PERSISTENT_COMPRESSION rule) leaves 149; ordered by exact pair count, the
+first exact evaluation qualified, so the search stopped at position 1.
+
+NXPCUSDT 5m src1789996800000 (symbolType "" - NEXPACE), closed cutoff
+2026-09-21T13:15Z, 199 bars 2026-09-20T20:45Z..2026-09-21T13:15Z, 90 SHADOW
+pairs / 2 admissible, SELECTED / PERSISTENT_COMPRESSION (terminal ratio 0.657,
+realized 0.760; deciding component IDENTITY_TIE_BREAK between the two
+admissible pairs). Production finds no geometry on the closed prefix
+(recorded runtime: Rising Wedge). Three separate runs (one with future rows):
+sha256 5475ad7d134259ba1e684dababb33cacb4b33bc08ed0444160da2f2d03f7609e.
+
+After add (TARGET_POPULATION, 17 crypto cases): compression 4 (1m 3, 5m 1),
+expansion 2, no-trend 9, no-admissible 2, production detected 4 -> READY.
+H0 concentration rule: no trigger -> DATA_CONCENTRATION_BLOCKER cleared.
+The H0 sweep was not rerun.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations

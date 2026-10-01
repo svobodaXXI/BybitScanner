@@ -1,0 +1,42 @@
+{
+ "schema_version": 1,
+ "continues": [
+  "tests/fixtures/geometry_gold/instrument_metadata_v1.json",
+  "tests/fixtures/geometry_gold/instrument_metadata_v2.json"
+ ],
+ "source": "Bybit v5 public market instruments-info, GET /v5/market/instruments-info?category=linear&symbol=NXPCUSDT (no authentication)",
+ "retrieved_at_utc": "2026-10-01T18:21:29+00:00",
+ "instruments": {
+  "NXPCUSDT": {
+   "symbol": "NXPCUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "NXPC",
+   "symbolType": "",
+   "fullName": "NEXPACE",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  }
+ },
+ "case_instruments": [
+  {
+   "case_id": "NXPCUSDT-5m-src1789996800000",
+   "fixture_symbol": "NXPCUSDT",
+   "instrument_symbol": "NXPCUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  }
+ ],
+ "observed_case_classification": [
+  {
+   "case_id": "NXPCUSDT-5m-src1789996800000",
+   "instrument_symbol": "NXPCUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  }
+ ]
+}
