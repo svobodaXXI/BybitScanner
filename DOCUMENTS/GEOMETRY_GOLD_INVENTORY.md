@@ -261,6 +261,28 @@ the slowest evaluated case is CASHCATUSDT 1m 2026-09-28 (11232 pairs, ~6 min
 per run); a full expanded recompute is ~1 h. Follow-up GEO-U1-PERF: exact
 pair-ranking acceleration preserving canonical results (not in this slice).
 
+## Calibration population — GEO-U1 Slice G0 (2026-10-01)
+
+Policy `GEO-U1-POP-1` (`geometry/consensus_calibration_population.py`):
+target = Bybit USDT linear perpetuals on crypto underlyings. Instrument class
+comes only from pinned public Bybit `instruments-info` metadata
+(`tests/fixtures/geometry_gold/instrument_metadata_v1.json`):
+symbolType "" / "innovation" -> CRYPTO_LINEAR_PERPETUAL (eligible);
+"stock" / "ETF" -> EQUITY_LINKED_LINEAR and "commodity" / "forex" ->
+OTHER_LINEAR (separate populations, kept but not eligible); anything
+unproven -> UNKNOWN (fails closed). Never decided from ticker appearance or
+trend.
+
+Of the 16 exact cases only MCDUSDT 5m is not crypto (symbolType "stock",
+McDonalds Corp, underlying MCD). PONS/AEVO fixture names were resolved to
+PONSUSDT/AEVOUSDT by exact OHLC match (199/200 bars; last bar was forming).
+
+Readiness: ALL_LINEAR (historical Slice F) 16 cases READY; TARGET_POPULATION
+15 cases NOT READY - expansion 1 of 2 (removing MCD drops the expansion count
+from 2 to 1). Note: the Scanner universe filter has no symbolType rule; the
+2026-10-01 snapshot is 782 symbols = 394 "" + 128 innovation + 199 stock +
+54 ETF + 4 commodity + 3 forex.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations
