@@ -1,27 +1,30 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H3 — 2026-10-02
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H4-A — 2026-10-02
 
-Owner command: targeted exact evidence recovery for min_alternating_touches
-(the 7th MATERIAL parameter found by H2), based on main
-`cce347d84cd040e16e622a7cc0f7db4894b9cbdf`. Evidence only; no sweep.
+Owner command: non-compression alternation-3 exact evidence for
+min_alternating_touches, based on main
+`e417912ee8da4eb733de69415318e2c76442b7b3` (A-H3 merged). Evidence only; no
+sweep, no calibration rerun.
 
-Result: bounded universe of 1209 exact crypto 1m/5m Scanner records fully
-screened under the defaults; 6 new exact cases (distinct symbols, no
-CASHCAT/ENA) admitted by a fixed stratified rule: alternation 3 (LDO 1m, BNT
-5m), 4 (PUFFER 1m, GMX 5m), >=5 (FLOCK 1m, GAS 5m), all SELECTED
-PERSISTENT_COMPRESSION, 3-run + future-row reproducible
-(`source_time_manifest_v5.json`, `instrument_metadata_v4.json`). Diagnostic
-only: at HIGH=4 every alternation-3 case (NXPC, BNT, LDO) becomes
-NO_ADMISSIBLE while all >=4 cases stay selected; LOW=2 changes nothing.
-Label EVIDENCE_SUPPORTS_MATERIALITY. Cap 6, defaults, methodology, v1/v2,
-Gold, policy, production, Telegram, Robot, LIVE unchanged; no calibration
-rerun; production_cutover_authorized = false.
-Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (Slice H3).
+Result: the pinned H3 screen of the 1209-record universe holds 50 SELECTED
+alternation-3 cases (no-trend 25, expansion 18, compression 7); no
+class exhaustion. Four new exact cases admitted by a fixed per-class x
+timeframe rule: GRT 1m and DEXE 5m (EXPANSION), 1000TAG 1m and OGN 5m
+(NO_PERSISTENT_WIDTH_TREND), all SELECTED, alternation 3, 3-run + future-row
+reproducible (`source_time_manifest_v6.json`, `instrument_metadata_v5.json`).
+Diagnostic only: at HIGH=4 all four become NO_ADMISSIBLE (same as NXPC/BNT/LDO
+compression); LOW=2 changes nothing; no pair-only changes. Combined 27
+cases: all 7 alternation-3 cases (3 compression, 2 expansion, 2 no-trend) fail
+at HIGH. Label CROSS_CLASS_MATERIALITY_SUPPORTED. Cap 6, defaults, methodology,
+v1/v2, Gold, policy, production, Telegram, Robot, LIVE unchanged;
+production_cutover_authorized = false.
+Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (Slice H4-A).
 Delivery gate: focused evidence -> commit/push/PR; review/merge pending.
 
-Next logical slice (separate owner decision): the 7-parameter underdetermination
-now stands on 4 alternation-3 cases, not one; either owner-authorize a change to
-the frozen H0 active-parameter cap / freeze min_alternating_touches by a
-semantic argument, or add evidence of other classes before any calibration v3.
+Next logical slice (separate owner decision, no calibration action inferred
+here): min_alternating_touches is a class-independent structural boundary at
+alternation 3; the 7-vs-6 underdetermination stands on 7 cases across all
+three classes. Owner choices: freeze the parameter by a semantic argument,
+authorize a change to the frozen H0 active-parameter cap, or add more evidence.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30

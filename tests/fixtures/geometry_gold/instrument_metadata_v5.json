@@ -1,0 +1,125 @@
+{
+ "schema_version": 1,
+ "continues": [
+  "tests/fixtures/geometry_gold/instrument_metadata_v1.json",
+  "tests/fixtures/geometry_gold/instrument_metadata_v2.json",
+  "tests/fixtures/geometry_gold/instrument_metadata_v3.json",
+  "tests/fixtures/geometry_gold/instrument_metadata_v4.json"
+ ],
+ "source": "Bybit v5 public market instruments-info, GET /v5/market/instruments-info?category=linear&symbol=<SYMBOL> (no authentication)",
+ "retrieved_at_utc": "2026-10-01T21:37:20+00:00",
+ "instruments": {
+  "GRTUSDT": {
+   "symbol": "GRTUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "GRT",
+   "symbolType": "",
+   "fullName": "The Graph",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "DEXEUSDT": {
+   "symbol": "DEXEUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "DEXE",
+   "symbolType": "",
+   "fullName": "dexe",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "1000TAGUSDT": {
+   "symbol": "1000TAGUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "1000TAG",
+   "symbolType": "innovation",
+   "fullName": "",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "OGNUSDT": {
+   "symbol": "OGNUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "OGN",
+   "symbolType": "",
+   "fullName": "Origin Protocol",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  }
+ },
+ "case_instruments": [
+  {
+   "case_id": "GRTUSDT-1m-src1789759440000",
+   "fixture_symbol": "GRTUSDT",
+   "instrument_symbol": "GRTUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "DEXEUSDT-5m-src1789848300000",
+   "fixture_symbol": "DEXEUSDT",
+   "instrument_symbol": "DEXEUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "1000TAGUSDT-1m-src1789850040000",
+   "fixture_symbol": "1000TAGUSDT",
+   "instrument_symbol": "1000TAGUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "OGNUSDT-5m-src1789996800000",
+   "fixture_symbol": "OGNUSDT",
+   "instrument_symbol": "OGNUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  }
+ ],
+ "observed_case_classification": [
+  {
+   "case_id": "GRTUSDT-1m-src1789759440000",
+   "instrument_symbol": "GRTUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "DEXEUSDT-5m-src1789848300000",
+   "instrument_symbol": "DEXEUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "1000TAGUSDT-1m-src1789850040000",
+   "instrument_symbol": "1000TAGUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "innovation",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "OGNUSDT-5m-src1789996800000",
+   "instrument_symbol": "OGNUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  }
+ ]
+}
