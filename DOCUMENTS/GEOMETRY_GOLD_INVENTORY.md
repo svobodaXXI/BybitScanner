@@ -305,6 +305,49 @@ compression 3, expansion 2, no-trend 9, no-admissible 2, production detected
 4; without ENSUSDT it is NOT READY (expansion 1 of 2). ALL_LINEAR 17 cases
 READY. Calibration not started.
 
+## SHADOW calibration — GEO-U1 Slice H0 (2026-10-01)
+
+Diagnostic only: `geometry/consensus_calibration.py`, pinned record
+`tests/fixtures/geometry_gold/calibration_result_v1.json`. Defaults, policy,
+readiness constants, fixtures and production are unchanged;
+`production_cutover_authorized = false`.
+
+Method (fixed in the module before any run): gate-first, lexicographic, no
+scalar score. Hard gates: the 3 compression and 2 expansion cases keep their
+class, the 2 NO_ADMISSIBLE negative controls are never SELECTED, exact
+future-row determinism for any proposable set, population = GEO-U1-POP-1,
+one flat parameter mapping, no trend-class collapse. Preference: fewer lost
+selections, fewer IDENTITY_TIE_BREAK selections, fewer changed cases, fewer
+changed parameters. LOW/HIGH = -/+ 25% of each parameter's semantic magnitude
+(ratio thresholds: of the distance from 1.0; integers -/+ 1).
+
+Results (16 crypto cases):
+- Baseline (`DEFAULT_SHADOW_REPORT_PARAMETERS`) matches the pinned v3 facts
+  exactly for all 16 cases.
+- One-at-a-time: MATERIAL (evidence class changes) = minimum_side_touch_clusters,
+  min_shared_support_coverage, terminal_window_bars, terminal_segments,
+  compression_max_ratio, expansion_min_ratio (6 = maximum allowed);
+  IDENTITY_ONLY = inlier_band_atr, max_support_gap_fraction; the other 9 are
+  insensitive within their LOW/HIGH.
+- Grid 3^6 = 729, 162 invalid window/segment combinations, 567 tested:
+  50 pass every gate, 517 rejected (compression lost 399, expansion lost
+  399, trend-class collapse 144; a negative control was never admitted).
+  Every gate-passing set keeps 1 identity-tie-break selection (baseline: 1,
+  CASHCATUSDT 5m src1790002800000); their only class changes are NO_TREND ->
+  EXPANSION on 1000TOSHIUSDT / CASHCATUSDT 1m src1789850340000 /
+  CASHCATUSDT 5m src1790665800000.
+- Leave-one-out: 50/50 ROBUST, none preferred over baseline in any fold.
+- Concentration: 1m 7 / 5m 9; CASHCAT 5/16, ENA 3/16; innovation 6 /
+  ordinary 10; DATA_CONCENTRATION_BLOCKER — all 3 compression cases are 1m.
+
+Conclusion: KEEP_BASELINE (no candidate preset). Any later threshold change
+needs more evidence, first a 5m PERSISTENT_COMPRESSION case.
+
+Performance: 602 parameter sets, 9632 exact case-runs (exact per-case memo of
+boundaries/pairs/terminal evidence; unchanged selection code), cold run 3763 s
+wall on 16 processes, 21502 s summed case time; slowest case
+CASHCATUSDT 1m src1790590380000 (3753 s over all sets). GEO-U1-PERF remains warranted.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations
