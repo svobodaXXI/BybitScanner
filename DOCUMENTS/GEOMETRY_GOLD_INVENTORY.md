@@ -376,6 +376,40 @@ expansion 2, no-trend 9, no-admissible 2, production detected 4 -> READY.
 H0 concentration rule: no trigger -> DATA_CONCENTRATION_BLOCKER cleared.
 The H0 sweep was not rerun.
 
+## Exact SHADOW performance — GEO-U1-PERF (2026-10-01)
+
+Measured hotspot (base 3b9ea49, defaults, fresh process per case): pair
+construction 60-76 s and terminal evidence 28-33 s of ~105-128 s on the
+heavy cases (10-11k pairs); boundaries < 1 s; production engine ~13-17 s.
+Root cause: per-bar pandas `Series.iloc` scalar/slice access inside
+`_segment_evidence` and `terminal_compression_evidence` (millions of calls)
+plus ~6M recomputations of the same `slope*index+intercept`.
+
+Change (SHADOW only; production `engine.py`/`envelope_metrics.py` untouched):
+the validated float64 high/low/close columns are read once as plain-float lists
+(`Series.tolist()` equals `float(Series.iloc[i])` bit for bit) and each
+boundary's line values are computed once per pair-build call with the same
+expression. Ordering, tie-breaks, gates and every output are unchanged; no
+cache outlives a call and no module-level state was added.
+
+Parity (`tests/test_geometry_perf_parity.py`, `perf_parity_v1.json`): 17/17
+default canonical report sha256 identical to base; the 7 pinned
+reproducibility hashes identical plain and with future rows; representative
+H0 matrix (25 sets: BASELINE, LOW/HIGH of the 6 material parameters,
+boundary/pair-path parameters, 3 gate-passing, 3 rejected, most tie-breaks)
+x 16 cases = 400 runs identical to the pinned H0 outcomes (the pinned H0
+matrix is the BEFORE reference; it was not recomputed on the slow base).
+The full before-matrix benchmark was aborted by the owner-authorized bounded
+perf plan.
+
+Bounded benchmark (same machine, Python 3.12.10, sequential fresh processes,
+base then optimized, no caches): CASHCATUSDT 1m src1790590380000 127.7 ->
+17.8 s; CASHCATUSDT 5m src1790665800000 104.1 -> 18.2 s; CASHCATUSDT 5m
+src1790272200000 28.0 -> 4.8 s; NXPCUSDT 5m 2.0 -> 0.9 s; total 261.8 ->
+41.7 s = 6.28x. Peak working set unchanged (123/118/79/67 MB). The remaining
+time is mostly the unchanged production engine (~13-14 s on heavy cases),
+which the calibration path does not run.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations

@@ -108,7 +108,7 @@ def _identity(pair):
     return pair.upper_boundary_identity, pair.lower_boundary_identity
 
 
-def _window_measures(frame, pair, first, last, segments):
+def _window_measures(high, low, pair, first, last, segments):
     size = (last - first + 1) // segments
     line, realized = [], []
     for k in range(segments):
@@ -117,8 +117,9 @@ def _window_measures(frame, pair, first, last, segments):
         widths = [_signed_width(pair.upper_boundary, pair.lower_boundary, i)
                   for i in range(lo, hi)]
         line.append(fsum(widths) / len(widths))
-        realized.append(float(frame.high.iloc[lo:hi].max()
-                              - frame.low.iloc[lo:hi].min()))
+        # Plain-float lists of the validated float64 columns: max/min and the
+        # difference are the same IEEE operations as the former pandas slices.
+        realized.append(float(max(high[lo:hi]) - min(low[lo:hi])))
     return tuple(line), tuple(realized)
 
 
@@ -187,9 +188,10 @@ def terminal_compression_evidence(
             window_start=first, terminal_width_trend="NON_POSITIVE_WIDTH",
             **base, **empty)
 
-    line, realized = _window_measures(frame, pair, first, end, terminal_segments)
+    high, low = frame["high"].tolist(), frame["low"].tolist()
+    line, realized = _window_measures(high, low, pair, first, end, terminal_segments)
     s_line, s_realized = _window_measures(
-        frame, pair, first - 1, end - 1, terminal_segments)
+        high, low, pair, first - 1, end - 1, terminal_segments)
     per_bar = widths[1:]
     ratio = per_bar[-1] / per_bar[0]
     shifted_ratio = widths[-2] / widths[0]
@@ -208,8 +210,7 @@ def terminal_compression_evidence(
     slope = fsum((x - mean_x) * (w - mean_w) for x, w in zip(xs, per_bar)) / fsum(
         (x - mean_x) ** 2 for x in xs)
 
-    ranges = [float(frame.high.iloc[i] - frame.low.iloc[i])
-              for i in range(first, end + 1)]
+    ranges = [float(high[i] - low[i]) for i in range(first, end + 1)]
     typical = median(ranges[:-1])
     last_ratio = ranges[-1] / typical if typical > 0 else None
     trend = ("PERSISTENT_COMPRESSION" if persistent else
