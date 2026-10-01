@@ -485,6 +485,42 @@ EVIDENCE_SUPPORTS_MATERIALITY (a structural boundary at alternation 3, not a
 one-case artifact; the 6 new cases are all compression by the fixed preference
 rule, so expansion / no-trend behaviour of alternation-3 pairs is not tested).
 
+## Non-compression alternation-3 evidence — GEO-U1 Slice H4-A (2026-10-02)
+
+Manifest `tests/fixtures/geometry_gold/source_time_manifest_v6.json` (continues
+v1-v5, all unchanged) and additive metadata `instrument_metadata_v5.json`.
+Evidence only: no sweep, no calibration rerun, cap and defaults unchanged.
+
+Subset (reconstructed from the pinned H3 screen `source_time_manifest_v5.json`
+`search.screened_all_rows`; nothing recomputed): 50 SELECTED alternation-3
+cases in the 1209-record universe = NO_PERSISTENT_WIDTH_TREND 25 (1m 9, 5m 16),
+EXPANSION 18 (1m 6, 5m 12), PERSISTENT_COMPRESSION 7 (1m 3, 5m 4; BNT and LDO
+already accepted in H3); 47 distinct symbols. No class exhaustion.
+
+Fixed rule: per class x timeframe, symbol not in Gold and not CASHCAT/ENA,
+lowest exact pair count then case_id, distinct symbols. Accepted (all SELECTED,
+alternation 3, 2 traversals, 2/2 clusters, production detects none):
+
+| case | class | shared cov | pairs/adm | ratio / realized | tie |
+| --- | --- | --- | --- | --- | --- |
+| GRTUSDT 1m src1789759440000 | EXPANSION | 0.273 | 36/1 | 1.162 / 0.500 | admissible (only one) |
+| DEXEUSDT 5m src1789848300000 | EXPANSION | 0.268 | 114/5 | 1.104 / 0.944 | terminal_width_trend_persistent |
+| 1000TAGUSDT 1m src1789850040000 (innovation) | NO_PERSISTENT_WIDTH_TREND | 0.263 | 9/1 | 1.014 / 0.990 | admissible (only one) |
+| OGNUSDT 5m src1789996800000 | NO_PERSISTENT_WIDTH_TREND | 0.288 | 90/3 | 1.007 / 0.597 | IDENTITY_TIE_BREAK |
+
+Each: three separate runs (one with future rows) identical; hashes in
+`observed_h4a_pair_facts`.
+
+Diagnostic (min_alternating_touches LOW 2 / CURRENT 3 / HIGH 4 only): all four
+become NO_ADMISSIBLE at HIGH (admissible_count 0); LOW changes nothing; no
+pair-only changes. A: HIGH removes the alternation-3 expansion cases (GRT,
+DEXE). B: HIGH removes the alternation-3 no-trend cases (1000TAG, OGN). C: LOW
+changes nothing. D: no pair-only changes. Combined 27 (old 17 + H3 six + these
+four): the 7 alternation-3 cases (compression NXPC/BNT/LDO, expansion GRT/DEXE,
+no-trend 1000TAG/OGN) all fail at HIGH; every case with alternation >= 4
+stays selected with the same pair. Label CROSS_CLASS_MATERIALITY_SUPPORTED; no
+calibration action is inferred here.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations

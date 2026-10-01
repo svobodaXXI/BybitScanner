@@ -1,0 +1,1039 @@
+{
+ "schema_version": 1,
+ "description": "GEO-U1 Slice H4-A continuation (v1-v5 kept immutable): four exact crypto cases with selected-pair alternating_touches == 3 outside PERSISTENT_COMPRESSION (EXPANSION and NO_PERSISTENT_WIDTH_TREND, 1m and 5m).",
+ "continues": [
+  "tests/fixtures/geometry_gold/source_time_manifest_v1.json",
+  "tests/fixtures/geometry_gold/source_time_manifest_v2.json",
+  "tests/fixtures/geometry_gold/source_time_manifest_v3.json",
+  "tests/fixtures/geometry_gold/source_time_manifest_v4.json",
+  "tests/fixtures/geometry_gold/source_time_manifest_v5.json"
+ ],
+ "cases": [
+  {
+   "case_id": "GRTUSDT-1m-src1789759440000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "GRTUSDT",
+   "timeframe": "1",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/GRTUSDT_1m_src1789759440000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1789759380000,
+   "cutoff_candle_open_utc": "2026-09-18T19:23:00Z",
+   "provenance": "Scanner candidate 09d7472275770538a0e1da4c.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": null,
+    "production_pattern": null,
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     5,
+     191,
+     20,
+     101,
+     5,
+     191
+    ],
+    "recorded_runtime_pattern": "Rising Wedge",
+    "note": "production_* observed from this fixture on current main; recorded_runtime_* is historical (forming candle, older code), never asserted equal"
+   }
+  },
+  {
+   "case_id": "DEXEUSDT-5m-src1789848300000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "DEXEUSDT",
+   "timeframe": "5",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/DEXEUSDT_5m_src1789848300000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1789848000000,
+   "cutoff_candle_open_utc": "2026-09-19T20:00:00Z",
+   "provenance": "Scanner candidate 6774c059d50c5f147508f477.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": null,
+    "production_pattern": null,
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     37,
+     196,
+     54,
+     107,
+     37,
+     196
+    ],
+    "recorded_runtime_pattern": "Rising Wedge",
+    "note": "production_* observed from this fixture on current main; recorded_runtime_* is historical (forming candle, older code), never asserted equal"
+   }
+  },
+  {
+   "case_id": "1000TAGUSDT-1m-src1789850040000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "1000TAGUSDT",
+   "timeframe": "1",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/1000TAGUSDT_1m_src1789850040000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1789849980000,
+   "cutoff_candle_open_utc": "2026-09-19T20:33:00Z",
+   "provenance": "Scanner candidate dda0f33fc5cadc5aee0498b8.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": null,
+    "production_pattern": null,
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     4,
+     119,
+     4,
+     130,
+     4,
+     193
+    ],
+    "recorded_runtime_pattern": "Falling Wedge",
+    "note": "production_* observed from this fixture on current main; recorded_runtime_* is historical (forming candle, older code), never asserted equal"
+   }
+  },
+  {
+   "case_id": "OGNUSDT-5m-src1789996800000",
+   "pattern_family": "WEDGE_TRIANGLE",
+   "symbol": "OGNUSDT",
+   "timeframe": "5",
+   "evidence_class": "EXACT_SOURCE_TIME",
+   "fixture_ref": "tests/fixtures/geometry_gold/source_time/OGNUSDT_5m_src1789996800000.json",
+   "as_of_index": 198,
+   "cutoff_candle_open_ms": 1789996500000,
+   "cutoff_candle_open_utc": "2026-09-21T13:15:00Z",
+   "provenance": "Scanner candidate 677465186edfe4cffe12c4d7.json + Bybit v5 public kline closed prefix; recorded anchor prices cross-checked.",
+   "expectation": {
+    "kind": "SOURCE_TIME_OBSERVED",
+    "production_geometry_identity": null,
+    "production_pattern": null,
+    "production_detected": false,
+    "recorded_runtime_geometry_identity": [
+     48,
+     154,
+     63,
+     159,
+     48,
+     181
+    ],
+    "recorded_runtime_pattern": "Rising Wedge",
+    "note": "production_* observed from this fixture on current main; recorded_runtime_* is historical (forming candle, older code), never asserted equal"
+   }
+  }
+ ],
+ "search": {
+  "candidate_subset_before_admission": {
+   "source": "source_time_manifest_v5.json search.screened_all_rows (H3 exact default screen of the 1209-record universe; not recomputed)",
+   "alternation_3_selected_total": 50,
+   "by_trend": {
+    "EXPANSION": 18,
+    "NO_PERSISTENT_WIDTH_TREND": 25,
+    "PERSISTENT_COMPRESSION": 7
+   },
+   "by_trend_and_timeframe": {
+    "EXPANSION/1m": 6,
+    "EXPANSION/5m": 12,
+    "NO_PERSISTENT_WIDTH_TREND/1m": 9,
+    "NO_PERSISTENT_WIDTH_TREND/5m": 16,
+    "PERSISTENT_COMPRESSION/1m": 3,
+    "PERSISTENT_COMPRESSION/5m": 4
+   },
+   "distinct_symbols": 47,
+   "already_accepted_in_h3": [
+    "BNTUSDT-5m-src1789994700000",
+    "LDOUSDT-1m-src1789759560000"
+   ],
+   "non_compression_candidates": [
+    [
+     "GRTUSDT-1m-src1789759440000",
+     36,
+     "EXPANSION"
+    ],
+    [
+     "LINKUSDT-1m-src1789760340000",
+     60,
+     "EXPANSION"
+    ],
+    [
+     "MOODENGUSDT-1m-src1789759680000",
+     180,
+     "EXPANSION"
+    ],
+    [
+     "MAGMAUSDT-1m-src1789840020000",
+     430,
+     "EXPANSION"
+    ],
+    [
+     "4STOCKUSDT-1m-src1789839360000",
+     595,
+     "EXPANSION"
+    ],
+    [
+     "MITOUSDT-1m-src1789850880000",
+     1056,
+     "EXPANSION"
+    ],
+    [
+     "DEXEUSDT-5m-src1789848300000",
+     114,
+     "EXPANSION"
+    ],
+    [
+     "LUNA2USDT-5m-src1790668500000",
+     420,
+     "EXPANSION"
+    ],
+    [
+     "MTLUSDT-5m-src1790099700000",
+     660,
+     "EXPANSION"
+    ],
+    [
+     "CRVUSDT-5m-src1789995000000",
+     686,
+     "EXPANSION"
+    ],
+    [
+     "PIPPINUSDT-5m-src1789849800000",
+     760,
+     "EXPANSION"
+    ],
+    [
+     "JELLYJELLYUSDT-5m-src1790273100000",
+     780,
+     "EXPANSION"
+    ],
+    [
+     "ACEUSDT-5m-src1790001900000",
+     987,
+     "EXPANSION"
+    ],
+    [
+     "KASUSDT-5m-src1789849200000",
+     1416,
+     "EXPANSION"
+    ],
+    [
+     "MANAUSDT-5m-src1789849500000",
+     1740,
+     "EXPANSION"
+    ],
+    [
+     "AAVEUSDT-5m-src1790001900000",
+     2223,
+     "EXPANSION"
+    ],
+    [
+     "IMXUSDT-5m-src1790004000000",
+     2300,
+     "EXPANSION"
+    ],
+    [
+     "FLOCKUSDT-5m-src1790003400000",
+     2940,
+     "EXPANSION"
+    ],
+    [
+     "1000TAGUSDT-1m-src1789850040000",
+     9,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "SONICUSDT-1m-src1789760700000",
+     18,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "CHILLGUYUSDT-1m-src1789759980000",
+     60,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "AAVEUSDT-1m-src1789759740000",
+     80,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "PENDLEUSDT-1m-src1789851000000",
+     84,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "1000FLOKIUSDT-1m-src1789758900000",
+     90,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "1000FLOKIUSDT-1m-src1789759740000",
+     210,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "CATIUSDT-1m-src1789839600000",
+     918,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "METUSDT-1m-src1789759620000",
+     1029,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "OGNUSDT-5m-src1789996800000",
+     90,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "YGGUSDT-5m-src1789851000000",
+     270,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "MAGICUSDT-5m-src1789996200000",
+     350,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "1000000MOGUSDT-5m-src1789974300000",
+     390,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "AIXBTUSDT-5m-src1789975500000",
+     480,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "ARKMUSDT-5m-src1789847700000",
+     480,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "HEIUSDT-5m-src1790273100000",
+     588,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "THETAUSDT-5m-src1789997700000",
+     868,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "XRPUSDT-5m-src1789998000000",
+     868,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "COOKIEUSDT-5m-src1789995000000",
+     1102,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "BABYUSDT-5m-src1790665500000",
+     1156,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "BSBUSDT-5m-src1789994700000",
+     1170,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "TNSRUSDT-5m-src1789997700000",
+     1530,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "CROUSDT-5m-src1790003100000",
+     1598,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "SANDUSDT-5m-src1789997400000",
+     2091,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ],
+    [
+     "SSVUSDT-5m-src1789997400000",
+     2640,
+     "NO_PERSISTENT_WIDTH_TREND"
+    ]
+   ]
+  },
+  "acceptance_rule": "per stratum (EXPANSION / NO_PERSISTENT_WIDTH_TREND x 1m / 5m): selected alternation-3 cases whose symbol is not in Gold and not CASHCAT/ENA; lowest exact pair count, then case_id; distinct symbols; fixed before fixtures were built",
+  "targets": {
+   "EXPANSION_min": 1,
+   "NO_PERSISTENT_WIDTH_TREND_min": 2
+  },
+  "target_met": true,
+  "bounded_class_exhaustion": false,
+  "accepted": [
+   [
+    "GRTUSDT-1m-src1789759440000",
+    "EXPANSION"
+   ],
+   [
+    "DEXEUSDT-5m-src1789848300000",
+    "EXPANSION"
+   ],
+   [
+    "1000TAGUSDT-1m-src1789850040000",
+    "NO_PERSISTENT_WIDTH_TREND"
+   ],
+   [
+    "OGNUSDT-5m-src1789996800000",
+    "NO_PERSISTENT_WIDTH_TREND"
+   ]
+  ],
+  "prefix_source": "H3 exact closed 199-bar prefixes (Bybit v5 kline, retrieved_at in each fixture provenance); anchors re-verified"
+ },
+ "reproducibility": {
+  "GRTUSDT-1m-src1789759440000": {
+   "runs": [
+    {
+     "tag": "h4aA",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "217a04056d8a3ce21faf875b5a5560af05f42ba3abcc5c823ce10f10b2a76850"
+    },
+    {
+     "tag": "h4aB",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "217a04056d8a3ce21faf875b5a5560af05f42ba3abcc5c823ce10f10b2a76850"
+    },
+    {
+     "tag": "h4aC",
+     "separate_process": true,
+     "future_rows_appended": true,
+     "canonical_report_sha256": "217a04056d8a3ce21faf875b5a5560af05f42ba3abcc5c823ce10f10b2a76850"
+    }
+   ],
+   "identical": true
+  },
+  "DEXEUSDT-5m-src1789848300000": {
+   "runs": [
+    {
+     "tag": "h4aA",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "5090927967f4042495706f89cf6aa922b9299aac3d6c03332d8b47d4cd250ceb"
+    },
+    {
+     "tag": "h4aB",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "5090927967f4042495706f89cf6aa922b9299aac3d6c03332d8b47d4cd250ceb"
+    },
+    {
+     "tag": "h4aC",
+     "separate_process": true,
+     "future_rows_appended": true,
+     "canonical_report_sha256": "5090927967f4042495706f89cf6aa922b9299aac3d6c03332d8b47d4cd250ceb"
+    }
+   ],
+   "identical": true
+  },
+  "1000TAGUSDT-1m-src1789850040000": {
+   "runs": [
+    {
+     "tag": "h4aA",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "e077bff08bfc16d95641a8de2175d23866c63f13e66f61e88fc476d68b6c7127"
+    },
+    {
+     "tag": "h4aB",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "e077bff08bfc16d95641a8de2175d23866c63f13e66f61e88fc476d68b6c7127"
+    },
+    {
+     "tag": "h4aC",
+     "separate_process": true,
+     "future_rows_appended": true,
+     "canonical_report_sha256": "e077bff08bfc16d95641a8de2175d23866c63f13e66f61e88fc476d68b6c7127"
+    }
+   ],
+   "identical": true
+  },
+  "OGNUSDT-5m-src1789996800000": {
+   "runs": [
+    {
+     "tag": "h4aA",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "ed556b4fdded0ddb355a4d4ff33a8e758cc524e455aaf76d0ffa6167e5689826"
+    },
+    {
+     "tag": "h4aB",
+     "separate_process": true,
+     "future_rows_appended": false,
+     "canonical_report_sha256": "ed556b4fdded0ddb355a4d4ff33a8e758cc524e455aaf76d0ffa6167e5689826"
+    },
+    {
+     "tag": "h4aC",
+     "separate_process": true,
+     "future_rows_appended": true,
+     "canonical_report_sha256": "ed556b4fdded0ddb355a4d4ff33a8e758cc524e455aaf76d0ffa6167e5689826"
+    }
+   ],
+   "identical": true
+  }
+ },
+ "observed_slice_d_case_facts": [
+  {
+   "admissible_count": 1,
+   "candidate_count": 36,
+   "case_id": "GRTUSDT-1m-src1789759440000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.5000000000000216,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      29,
+      191
+     ]
+    ],
+    [
+     "lower",
+     [
+      101,
+      155
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "GRTUSDT",
+   "terminal_compression_ratio": 1.1624000000000094,
+   "terminal_width_trend": "EXPANSION",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 5,
+   "candidate_count": 114,
+   "case_id": "DEXEUSDT-5m-src1789848300000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.9444444444444383,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      37,
+      167
+     ]
+    ],
+    [
+     "lower",
+     [
+      54,
+      107
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "DEXEUSDT",
+   "terminal_compression_ratio": 1.1042278894667845,
+   "terminal_width_trend": "EXPANSION",
+   "timeframe": "5"
+  },
+  {
+   "admissible_count": 1,
+   "candidate_count": 9,
+   "case_id": "1000TAGUSDT-1m-src1789850040000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.9902912621359233,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      67,
+      119
+     ]
+    ],
+    [
+     "lower",
+     [
+      18,
+      130
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "1000TAGUSDT",
+   "terminal_compression_ratio": 1.0135769508167844,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "1"
+  },
+  {
+   "admissible_count": 3,
+   "candidate_count": 90,
+   "case_id": "OGNUSDT-5m-src1789996800000",
+   "presence_agreement": "SHADOW_ONLY",
+   "production_detected": false,
+   "production_geometry_present": false,
+   "production_identity": null,
+   "production_pattern": null,
+   "realized_contraction_ratio": 0.5971428571428602,
+   "rejection_reasons_of_top_ranked": [],
+   "selected_pair_identity": [
+    [
+     "upper",
+     [
+      48,
+      154
+     ]
+    ],
+    [
+     "lower",
+     [
+      63,
+      120
+     ]
+    ]
+   ],
+   "selection_status": "SELECTED",
+   "symbol": "OGNUSDT",
+   "terminal_compression_ratio": 1.0069197055695929,
+   "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND",
+   "timeframe": "5"
+  }
+ ],
+ "observed_h4a_pair_facts": {
+  "GRTUSDT-1m-src1789759440000": {
+   "alternating_touches": 3,
+   "cross_boundary_traversals": 2,
+   "upper_touch_clusters": 2,
+   "lower_touch_clusters": 2,
+   "touch_balance": 1.0,
+   "shared_support_coverage": 0.2727272727272727,
+   "deciding_component": "admissible",
+   "terminal_relative_width_slope": 0.005599999999999711,
+   "symbol_type": "",
+   "canonical_report_sha256": "217a04056d8a3ce21faf875b5a5560af05f42ba3abcc5c823ce10f10b2a76850"
+  },
+  "DEXEUSDT-5m-src1789848300000": {
+   "alternating_touches": 3,
+   "cross_boundary_traversals": 2,
+   "upper_touch_clusters": 2,
+   "lower_touch_clusters": 2,
+   "touch_balance": 1.0,
+   "shared_support_coverage": 0.2676767676767677,
+   "deciding_component": "terminal_width_trend_persistent",
+   "terminal_relative_width_slope": 0.0035940651540270767,
+   "symbol_type": "",
+   "canonical_report_sha256": "5090927967f4042495706f89cf6aa922b9299aac3d6c03332d8b47d4cd250ceb"
+  },
+  "1000TAGUSDT-1m-src1789850040000": {
+   "alternating_touches": 3,
+   "cross_boundary_traversals": 2,
+   "upper_touch_clusters": 2,
+   "lower_touch_clusters": 2,
+   "touch_balance": 1.0,
+   "shared_support_coverage": 0.26262626262626265,
+   "deciding_component": "admissible",
+   "terminal_relative_width_slope": 0.00046817071781973715,
+   "symbol_type": "innovation",
+   "canonical_report_sha256": "e077bff08bfc16d95641a8de2175d23866c63f13e66f61e88fc476d68b6c7127"
+  },
+  "OGNUSDT-5m-src1789996800000": {
+   "alternating_touches": 3,
+   "cross_boundary_traversals": 2,
+   "upper_touch_clusters": 2,
+   "lower_touch_clusters": 2,
+   "touch_balance": 1.0,
+   "shared_support_coverage": 0.2878787878787879,
+   "deciding_component": "IDENTITY_TIE_BREAK",
+   "terminal_relative_width_slope": 0.00023861053688241563,
+   "symbol_type": "",
+   "canonical_report_sha256": "ed556b4fdded0ddb355a4d4ff33a8e758cc524e455aaf76d0ffa6167e5689826"
+  }
+ },
+ "observed_min_alternating_touches_diagnostic": {
+  "alternation_3_cases_by_current_class": {
+   "EXPANSION": [
+    {
+     "case_id": "DEXEUSDT-5m-src1789848300000",
+     "fails_at_high": true,
+     "high_class": "NO_ADMISSIBLE_PAIR"
+    },
+    {
+     "case_id": "GRTUSDT-1m-src1789759440000",
+     "fails_at_high": true,
+     "high_class": "NO_ADMISSIBLE_PAIR"
+    }
+   ],
+   "NO_PERSISTENT_WIDTH_TREND": [
+    {
+     "case_id": "1000TAGUSDT-1m-src1789850040000",
+     "fails_at_high": true,
+     "high_class": "NO_ADMISSIBLE_PAIR"
+    },
+    {
+     "case_id": "OGNUSDT-5m-src1789996800000",
+     "fails_at_high": true,
+     "high_class": "NO_ADMISSIBLE_PAIR"
+    }
+   ],
+   "PERSISTENT_COMPRESSION": [
+    {
+     "case_id": "BNTUSDT-5m-src1789994700000",
+     "fails_at_high": true,
+     "high_class": "NO_ADMISSIBLE_PAIR"
+    },
+    {
+     "case_id": "LDOUSDT-1m-src1789759560000",
+     "fails_at_high": true,
+     "high_class": "NO_ADMISSIBLE_PAIR"
+    },
+    {
+     "case_id": "NXPCUSDT-5m-src1789996800000",
+     "fails_at_high": true,
+     "high_class": "NO_ADMISSIBLE_PAIR"
+    }
+   ]
+  },
+  "classes_where_every_alt3_case_fails_at_high": [
+   "EXPANSION",
+   "NO_PERSISTENT_WIDTH_TREND",
+   "PERSISTENT_COMPRESSION"
+  ],
+  "classes_where_no_alt3_case_fails_at_high": [],
+  "combined_27": {
+   "class_changes": [
+    [
+     "NXPCUSDT-5m-src1789996800000",
+     "HIGH",
+     "PERSISTENT_COMPRESSION",
+     "NO_ADMISSIBLE_PAIR"
+    ],
+    [
+     "BNTUSDT-5m-src1789994700000",
+     "HIGH",
+     "PERSISTENT_COMPRESSION",
+     "NO_ADMISSIBLE_PAIR"
+    ],
+    [
+     "LDOUSDT-1m-src1789759560000",
+     "HIGH",
+     "PERSISTENT_COMPRESSION",
+     "NO_ADMISSIBLE_PAIR"
+    ],
+    [
+     "GRTUSDT-1m-src1789759440000",
+     "HIGH",
+     "EXPANSION",
+     "NO_ADMISSIBLE_PAIR"
+    ],
+    [
+     "DEXEUSDT-5m-src1789848300000",
+     "HIGH",
+     "EXPANSION",
+     "NO_ADMISSIBLE_PAIR"
+    ],
+    [
+     "1000TAGUSDT-1m-src1789850040000",
+     "HIGH",
+     "NO_PERSISTENT_WIDTH_TREND",
+     "NO_ADMISSIBLE_PAIR"
+    ],
+    [
+     "OGNUSDT-5m-src1789996800000",
+     "HIGH",
+     "NO_PERSISTENT_WIDTH_TREND",
+     "NO_ADMISSIBLE_PAIR"
+    ]
+   ],
+   "pair_only_changes": [],
+   "populations": "old 17 (calibration_result_v2) + H3 six (manifest v5) + H4-A four"
+  },
+  "label": "CROSS_CLASS_MATERIALITY_SUPPORTED",
+  "label_rule": "CROSS_CLASS_MATERIALITY_SUPPORTED if every alternation-3 selected class (compression, expansion, no-trend) fails consistently at HIGH=4; EVIDENCE_STILL_INSUFFICIENT if a class has no alternation-3 case; otherwise CLASS_DEPENDENT_EFFECT",
+  "new_h4a": {
+   "class_changes": [
+    [
+     "GRTUSDT-1m-src1789759440000",
+     "HIGH",
+     "EXPANSION",
+     "NO_ADMISSIBLE_PAIR"
+    ],
+    [
+     "DEXEUSDT-5m-src1789848300000",
+     "HIGH",
+     "EXPANSION",
+     "NO_ADMISSIBLE_PAIR"
+    ],
+    [
+     "1000TAGUSDT-1m-src1789850040000",
+     "HIGH",
+     "NO_PERSISTENT_WIDTH_TREND",
+     "NO_ADMISSIBLE_PAIR"
+    ],
+    [
+     "OGNUSDT-5m-src1789996800000",
+     "HIGH",
+     "NO_PERSISTENT_WIDTH_TREND",
+     "NO_ADMISSIBLE_PAIR"
+    ]
+   ],
+   "pair_only_changes": [],
+   "per_case": {
+    "1000TAGUSDT-1m-src1789850040000": {
+     "current": {
+      "admissible_count": 1,
+      "alternating_touches": 3,
+      "candidate_count": 9,
+      "deciding_component": "admissible",
+      "selected_pair_identity": [
+       [
+        "upper",
+        [
+         67,
+         119
+        ]
+       ],
+       [
+        "lower",
+        [
+         18,
+         130
+        ]
+       ]
+      ],
+      "selection_status": "SELECTED",
+      "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND"
+     },
+     "high": {
+      "admissible_count": 0,
+      "alternating_touches": null,
+      "candidate_count": 9,
+      "deciding_component": "shared_support_coverage",
+      "selected_pair_identity": null,
+      "selection_status": "NO_ADMISSIBLE_PAIR",
+      "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND"
+     },
+     "low": {
+      "admissible_count": 1,
+      "alternating_touches": 3,
+      "candidate_count": 9,
+      "deciding_component": "admissible",
+      "selected_pair_identity": [
+       [
+        "upper",
+        [
+         67,
+         119
+        ]
+       ],
+       [
+        "lower",
+        [
+         18,
+         130
+        ]
+       ]
+      ],
+      "selection_status": "SELECTED",
+      "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND"
+     }
+    },
+    "DEXEUSDT-5m-src1789848300000": {
+     "current": {
+      "admissible_count": 5,
+      "alternating_touches": 3,
+      "candidate_count": 114,
+      "deciding_component": "terminal_width_trend_persistent",
+      "selected_pair_identity": [
+       [
+        "upper",
+        [
+         37,
+         167
+        ]
+       ],
+       [
+        "lower",
+        [
+         54,
+         107
+        ]
+       ]
+      ],
+      "selection_status": "SELECTED",
+      "terminal_width_trend": "EXPANSION"
+     },
+     "high": {
+      "admissible_count": 0,
+      "alternating_touches": null,
+      "candidate_count": 114,
+      "deciding_component": "negative_excursion_count",
+      "selected_pair_identity": null,
+      "selection_status": "NO_ADMISSIBLE_PAIR",
+      "terminal_width_trend": "EXPANSION"
+     },
+     "low": {
+      "admissible_count": 5,
+      "alternating_touches": 3,
+      "candidate_count": 114,
+      "deciding_component": "terminal_width_trend_persistent",
+      "selected_pair_identity": [
+       [
+        "upper",
+        [
+         37,
+         167
+        ]
+       ],
+       [
+        "lower",
+        [
+         54,
+         107
+        ]
+       ]
+      ],
+      "selection_status": "SELECTED",
+      "terminal_width_trend": "EXPANSION"
+     }
+    },
+    "GRTUSDT-1m-src1789759440000": {
+     "current": {
+      "admissible_count": 1,
+      "alternating_touches": 3,
+      "candidate_count": 36,
+      "deciding_component": "admissible",
+      "selected_pair_identity": [
+       [
+        "upper",
+        [
+         29,
+         191
+        ]
+       ],
+       [
+        "lower",
+        [
+         101,
+         155
+        ]
+       ]
+      ],
+      "selection_status": "SELECTED",
+      "terminal_width_trend": "EXPANSION"
+     },
+     "high": {
+      "admissible_count": 0,
+      "alternating_touches": null,
+      "candidate_count": 36,
+      "deciding_component": "shared_support_coverage",
+      "selected_pair_identity": null,
+      "selection_status": "NO_ADMISSIBLE_PAIR",
+      "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND"
+     },
+     "low": {
+      "admissible_count": 1,
+      "alternating_touches": 3,
+      "candidate_count": 36,
+      "deciding_component": "admissible",
+      "selected_pair_identity": [
+       [
+        "upper",
+        [
+         29,
+         191
+        ]
+       ],
+       [
+        "lower",
+        [
+         101,
+         155
+        ]
+       ]
+      ],
+      "selection_status": "SELECTED",
+      "terminal_width_trend": "EXPANSION"
+     }
+    },
+    "OGNUSDT-5m-src1789996800000": {
+     "current": {
+      "admissible_count": 3,
+      "alternating_touches": 3,
+      "candidate_count": 90,
+      "deciding_component": "IDENTITY_TIE_BREAK",
+      "selected_pair_identity": [
+       [
+        "upper",
+        [
+         48,
+         154
+        ]
+       ],
+       [
+        "lower",
+        [
+         63,
+         120
+        ]
+       ]
+      ],
+      "selection_status": "SELECTED",
+      "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND"
+     },
+     "high": {
+      "admissible_count": 0,
+      "alternating_touches": null,
+      "candidate_count": 90,
+      "deciding_component": "shared_support_coverage",
+      "selected_pair_identity": null,
+      "selection_status": "NO_ADMISSIBLE_PAIR",
+      "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND"
+     },
+     "low": {
+      "admissible_count": 3,
+      "alternating_touches": 3,
+      "candidate_count": 90,
+      "deciding_component": "IDENTITY_TIE_BREAK",
+      "selected_pair_identity": [
+       [
+        "upper",
+        [
+         48,
+         154
+        ]
+       ],
+       [
+        "lower",
+        [
+         63,
+         120
+        ]
+       ]
+      ],
+      "selection_status": "SELECTED",
+      "terminal_width_trend": "NO_PERSISTENT_WIDTH_TREND"
+     }
+    }
+   }
+  },
+  "scope": "diagnostic only: min_alternating_touches LOW=2 / CURRENT=3 / HIGH=4; no sweep, no preset, cap unchanged"
+ }
+}
