@@ -1,0 +1,417 @@
+{
+ "schema_version": 1,
+ "source": "Bybit v5 public market instruments-info, GET /v5/market/instruments-info?category=linear (paginated, no authentication)",
+ "retrieved_at_utc": "2026-10-01T07:35:05+00:00",
+ "note": "Instrument metadata as of retrieval; the classification uses only symbolType/contractType/quoteCoin, never ticker appearance, terminal trend or SHADOW results.",
+ "instruments": {
+  "1000BONKUSDT": {
+   "symbol": "1000BONKUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "1000BONK",
+   "symbolType": "",
+   "fullName": "",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "1000TOSHIUSDT": {
+   "symbol": "1000TOSHIUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "1000TOSHI",
+   "symbolType": "",
+   "fullName": "",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "1000XECUSDT": {
+   "symbol": "1000XECUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "1000XEC",
+   "symbolType": "",
+   "fullName": "",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "AEVOUSDT": {
+   "symbol": "AEVOUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "AEVO",
+   "symbolType": "",
+   "fullName": "AEVO",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "BILLUSDT": {
+   "symbol": "BILLUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "BILL",
+   "symbolType": "innovation",
+   "fullName": "Billions Network",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "CASHCATUSDT": {
+   "symbol": "CASHCATUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "CASHCAT",
+   "symbolType": "innovation",
+   "fullName": "Cash Cat",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "ENAUSDT": {
+   "symbol": "ENAUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "ENA",
+   "symbolType": "",
+   "fullName": "Ethena",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "GOATUSDT": {
+   "symbol": "GOATUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "GOAT",
+   "symbolType": "",
+   "fullName": "Goatseus Maximus",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "MCDUSDT": {
+   "symbol": "MCDUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "MCD",
+   "symbolType": "stock",
+   "fullName": "McDonalds Corp",
+   "marketRegion": "US",
+   "underlyingTicker": "MCD"
+  },
+  "PONSUSDT": {
+   "symbol": "PONSUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "PONS",
+   "symbolType": "",
+   "fullName": "Pons",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  }
+ },
+ "case_instruments": [
+  {
+   "case_id": "PONS-formation-fit-positive-anchor",
+   "fixture_symbol": "PONS",
+   "instrument_symbol": "PONSUSDT",
+   "method": "OHLC_EXACT_MATCH",
+   "evidence": "199/200 fixture bars equal Bybit v5 public linear PONSUSDT 5m kline OHLC (start=1789912200000, end=1789971900000); the unmatched row is the last, then-forming candle"
+  },
+  {
+   "case_id": "1000BONKUSDT-wrong-anchor-negative",
+   "fixture_symbol": "1000BONKUSDT",
+   "instrument_symbol": "1000BONKUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "1000TOSHIUSDT-locality-invariant",
+   "fixture_symbol": "1000TOSHIUSDT",
+   "instrument_symbol": "1000TOSHIUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "1000XECUSDT-no-local-formation",
+   "fixture_symbol": "1000XECUSDT",
+   "instrument_symbol": "1000XECUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "AEVO-formation-fit-negative",
+   "fixture_symbol": "AEVO",
+   "instrument_symbol": "AEVOUSDT",
+   "method": "OHLC_EXACT_MATCH",
+   "evidence": "199/200 fixture bars equal Bybit v5 public linear AEVOUSDT 5m kline OHLC (start=1789936500000, end=1789996200000); the unmatched row is the last, then-forming candle"
+  },
+  {
+   "case_id": "CASHCATUSDT-1m-src1789850340000",
+   "fixture_symbol": "CASHCATUSDT",
+   "instrument_symbol": "CASHCATUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "CASHCATUSDT-1m-src1790590380000",
+   "fixture_symbol": "CASHCATUSDT",
+   "instrument_symbol": "CASHCATUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "CASHCATUSDT-5m-src1790002800000",
+   "fixture_symbol": "CASHCATUSDT",
+   "instrument_symbol": "CASHCATUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "CASHCATUSDT-5m-src1790272200000",
+   "fixture_symbol": "CASHCATUSDT",
+   "instrument_symbol": "CASHCATUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "CASHCATUSDT-5m-src1790665800000",
+   "fixture_symbol": "CASHCATUSDT",
+   "instrument_symbol": "CASHCATUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "ENAUSDT-1m-src1789759320000",
+   "fixture_symbol": "ENAUSDT",
+   "instrument_symbol": "ENAUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "ENAUSDT-1m-src1789850520000",
+   "fixture_symbol": "ENAUSDT",
+   "instrument_symbol": "ENAUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "ENAUSDT-5m-src1790098200000",
+   "fixture_symbol": "ENAUSDT",
+   "instrument_symbol": "ENAUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "BILLUSDT-1m-src1789759080000",
+   "fixture_symbol": "BILLUSDT",
+   "instrument_symbol": "BILLUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "GOATUSDT-1m-src1789850640000",
+   "fixture_symbol": "GOATUSDT",
+   "instrument_symbol": "GOATUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "MCDUSDT-5m-src1790004300000",
+   "fixture_symbol": "MCDUSDT",
+   "instrument_symbol": "MCDUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  }
+ ],
+ "scanner_universe_symbol_type_counts": {
+  "": 394,
+  "ETF": 54,
+  "commodity": 4,
+  "forex": 3,
+  "innovation": 128,
+  "stock": 199
+ },
+ "scanner_universe_rule": "analyzer universe = quoteCoin USDT, contractType LinearPerpetual, status Trading (bybit_api.get_symbols); no symbolType filter",
+ "scanner_universe_size": 782,
+ "observed_case_classification": [
+  {
+   "case_id": "1000BONKUSDT-wrong-anchor-negative",
+   "instrument_symbol": "1000BONKUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "1000TOSHIUSDT-locality-invariant",
+   "instrument_symbol": "1000TOSHIUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "1000XECUSDT-no-local-formation",
+   "instrument_symbol": "1000XECUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "AEVO-formation-fit-negative",
+   "instrument_symbol": "AEVOUSDT",
+   "symbol_resolution": "OHLC_EXACT_MATCH",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "BILLUSDT-1m-src1789759080000",
+   "instrument_symbol": "BILLUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "innovation",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "CASHCATUSDT-1m-src1789850340000",
+   "instrument_symbol": "CASHCATUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "innovation",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "CASHCATUSDT-1m-src1790590380000",
+   "instrument_symbol": "CASHCATUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "innovation",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "CASHCATUSDT-5m-src1790002800000",
+   "instrument_symbol": "CASHCATUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "innovation",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "CASHCATUSDT-5m-src1790272200000",
+   "instrument_symbol": "CASHCATUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "innovation",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "CASHCATUSDT-5m-src1790665800000",
+   "instrument_symbol": "CASHCATUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "innovation",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "ENAUSDT-1m-src1789759320000",
+   "instrument_symbol": "ENAUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "ENAUSDT-1m-src1789850520000",
+   "instrument_symbol": "ENAUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "ENAUSDT-5m-src1790098200000",
+   "instrument_symbol": "ENAUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "GOATUSDT-1m-src1789850640000",
+   "instrument_symbol": "GOATUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "MCDUSDT-5m-src1790004300000",
+   "instrument_symbol": "MCDUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "stock",
+   "instrument_class": "EQUITY_LINKED_LINEAR",
+   "calibration_eligible": false
+  },
+  {
+   "case_id": "PONS-formation-fit-positive-anchor",
+   "instrument_symbol": "PONSUSDT",
+   "symbol_resolution": "OHLC_EXACT_MATCH",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  }
+ ],
+ "observed_target_population_readiness": {
+  "calibration_blockers": [
+   "EXPANSION: have 1, need >= 2"
+  ],
+  "calibration_ready": false,
+  "diversity_gaps": [
+   "EXPANSION: have 1, need >= 2"
+  ],
+  "exact_case_count": 15,
+  "expansion_count": 1,
+  "insufficient_window_count": 0,
+  "newly_recovered_case_count": 2,
+  "no_persistent_trend_count": 9,
+  "non_positive_width_count": 0,
+  "persistent_compression_count": 3,
+  "production_detected_count": 4,
+  "production_positive_family_counts": [
+   [
+    "Falling Wedge",
+    2
+   ],
+   [
+    "Rising Wedge",
+    2
+   ]
+  ],
+  "readiness_rule": "exact_cases>=12; provenance complete for all; selected PERSISTENT_COMPRESSION>=3; selected EXPANSION>=2; selected NO_PERSISTENT_WIDTH_TREND>=3; no-admissible-pair cases>=2; production detected cases>=3; selected PERSISTENT_COMPRESSION/EXPANSION count only when independently reproduced (two separate runs, one with future rows, identical report)",
+  "rejected_selection_count": 2,
+  "source_provenance_complete_count": 15,
+  "unrecoverable_targets": [
+   "CASHCATUSDT-1m-owner-comparison-2026-09-30",
+   "ENAUSDT-1m-owner-comparison-2026-09-30",
+   "robot_candidates without scanner_source_candle_time_ms (CASHCATUSDT 1m x3, ENAUSDT 1m x1, 2026-09-12..14)"
+  ]
+ }
+}

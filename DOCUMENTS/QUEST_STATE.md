@@ -1,20 +1,20 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE F — 2026-10-01
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE G0 — 2026-10-01
 
-Owner command: continue exact source-time Geometry evidence recovery until the
-fixed readiness gaps close or the bounded inventory is exhausted, based on main
-`6e7ce6cbf795e9bc08f170e982b4f91c7e8a9646` (Slices A-E #366-#370 merged).
-Evidence recovery only: no calibration, no algorithm/constant change.
+Owner command: define the Geometry calibration population before any
+threshold calibration, based on main `6fceb035987e54347bfd3edbce6bfca41af1dea6`
+(Slices A-F #366-#371 merged). Population definition / audit only.
 
-Result: 3 new exact cases (BILLUSDT 1m and GOATUSDT 1m persistent compression,
-MCDUSDT 5m expansion) in `source_time_manifest_v2.json`; all five qualifying
-cases independently reproduced. Readiness: 16 exact cases, READY under the
-unchanged rule plus the reproducibility condition. Calibration NOT started.
-Production selection/classification, Telegram, Robot and LIVE unchanged.
+Result: policy GEO-U1-POP-1 - eligible = crypto USDT linear perpetuals by
+Bybit symbolType; equity/ETF and commodity/forex kept as separate
+populations; UNKNOWN fails closed. MCDUSDT is symbolType "stock" ->
+excluded from the crypto target. ALL_LINEAR readiness stays READY (historical);
+TARGET_POPULATION readiness is NOT READY: expansion 1 of 2. Calibration must
+not start. Production, thresholds, fixtures, Telegram, Robot, LIVE unchanged.
 Delivery gate: focused evidence -> commit/push/PR; review/merge pending.
 
-Next logical slices (separate owner authorization each): threshold
-calibration on the exact Gold set; GEO-U1-PERF exact pair-ranking
-acceleration preserving canonical results (full expanded recompute ~1 h).
+Next logical slice (separate owner authorization): recover exact source-time
+EXPANSION evidence only from CRYPTO_LINEAR_PERPETUAL instruments (Slice F
+method), with the reproducibility condition.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
