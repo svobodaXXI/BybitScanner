@@ -410,6 +410,38 @@ src1790272200000 28.0 -> 4.8 s; NXPCUSDT 5m 2.0 -> 0.9 s; total 261.8 ->
 time is mostly the unchanged production engine (~13-14 s on heavy cases),
 which the calibration path does not run.
 
+## SHADOW calibration rerun — GEO-U1 Slice H2 (2026-10-01)
+
+Additive record `tests/fixtures/geometry_gold/calibration_result_v2.json`
+(supersedes v1 for the current calibration state; v1 stays the historical
+16-case H0 record). Population GEO-U1-POP-1 over manifests v1-v4 + metadata
+v1-v3 = 17 crypto cases. Methodology unchanged: the H0 functions in
+`geometry/consensus_calibration.py` are called unmodified (its 16-case
+`load_target_population` is left as is; the 17-case loader/generator lives in
+`tests/test_geometry_calibration_v2.py`). Exact path: merged GEO-U1-PERF.
+
+- Baseline: 17/17 exact vs pinned v4 facts; unmemoized future-row check
+  identical for all 17. Compression 4 (1m 3: BILL/CASHCAT/GOAT, 5m 1: NXPC),
+  expansion 2, no-trend 9, no-admissible 2, production detected 4;
+  identity-tie-break selections: CASHCAT 5m src1790002800000 and NXPC.
+- Concentration (H0 rule): 1m 7 / 5m 10, CASHCAT 5/17, ENA 3/17,
+  innovation 6 / ordinary 11; no trigger -> blocker NO.
+- Sensitivity vs H0 v1: the 6 H0 MATERIAL parameters stay MATERIAL;
+  `min_alternating_touches` INSENSITIVE -> MATERIAL (HIGH = 4 turns NXPC,
+  alternation 3, into NO_ADMISSIBLE). NXPC is also hit by
+  minimum_side_touch_clusters HIGH, terminal_window_bars LOW and
+  terminal_segments HIGH (class lost), and by min_shared_support_coverage LOW
+  (pair identity only). No LOW/HIGH admits a negative control.
+- 7 MATERIAL > 6 -> CALIBRATION_UNDERDETERMINED (H0 active rule, unchanged):
+  no grid sweep, no leave-one-out / NXPC-removal fold to evaluate;
+  recommended_action MORE_EVIDENCE_REQUIRED, no candidate preset.
+
+Runtime (16 processes, cold exact cache, PERF path): baseline 7.0 s +
+future-row check 39.5 s, sensitivity 76.5 s, total 123 s; 595 exact
+case-runs (35 sets x 17); slowest single run 6.2 s (CASHCAT 1m
+src1790590380000). H0 v1 logged 1391 s for baseline + 35-set sensitivity on
+16 cases (pre-PERF, 16 processes) - indicative only, not a controlled benchmark.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations
