@@ -1,24 +1,25 @@
-## 🎯 ACTIVE QUEST — GEO-U1-PERF — 2026-10-01
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H2 — 2026-10-01
 
-Owner command: exact SHADOW Geometry performance optimization with zero
-semantic drift, based on main `3b9ea49eea88e8a39538dfddfbabfc3d7331caeb`
-(A-H1 merged). Performance only.
+Owner command: rerun the unchanged H0 calibration methodology on the 17-case
+GEO-U1-POP-1 crypto population (H1 + PERF merged), based on main
+`c59840d126bf8ab50392bd1d2f9610b3b3119bf5`. SHADOW research only.
 
-Result: per-bar pandas `.iloc` access and repeated `slope*i+intercept` in the
-SHADOW pair/terminal path replaced by plain-float lists of the same values
-(`consensus_pair.py`, `consensus_selection.py`). Parity: 17/17 default
-canonical reports identical to base, 7/7 pinned reproducibility hashes incl.
-future rows, representative H0 matrix 25 sets x 16 cases = 400 runs identical
-to the pinned H0 outcomes. Bounded benchmark (4 cases, sequential fresh
-processes): 261.8 s -> 41.7 s (6.28x); heavy SHADOW pair+terminal phases
-~109 s -> ~3.4 s. Full before-matrix benchmark aborted by owner-authorized
-bounded perf plan. Thresholds, Gold, H0 result, policy, production
-(envelope_metrics/engine), Telegram, Robot, LIVE unchanged.
-Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (GEO-U1-PERF).
+Result (`calibration_result_v2.json`, additive; v1 kept as the historical
+16-case H0 record): baseline 17/17 exact incl. future rows; compression 4
+(1m 3, 5m 1), expansion 2, no-trend 9, no-admissible 2, production detected
+4; DATA_CONCENTRATION_BLOCKER NO. Sensitivity: 7 MATERIAL parameters (H0's 6
++ min_alternating_touches, which at HIGH=4 turns NXPCUSDT 5m alternation 3
+into NO_ADMISSIBLE) -> CALIBRATION_UNDERDETERMINED under the unchanged H0
+rule (> 6): no sweep, recommended_action MORE_EVIDENCE_REQUIRED. Defaults,
+methodology code, Gold, v1, policy, production, Telegram, Robot, LIVE
+unchanged; production_cutover_authorized = false.
+Details: `DOCUMENTS/GEOMETRY_GOLD_INVENTORY.md` (Slice H2).
 Delivery gate: focused evidence -> commit/push/PR; review/merge pending.
 
-Next logical slice (separate owner authorization): rerun H0 calibration on
-the 17-case target population using the optimized exact path.
+Next logical slice (separate owner decision): either more exact evidence that
+constrains min_alternating_touches (structural alternation-3 vs 4 cases), or an
+owner-authorized change to the frozen H0 active-parameter cap; the rule is not
+changed here.
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30
