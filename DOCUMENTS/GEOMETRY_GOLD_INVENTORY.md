@@ -442,6 +442,49 @@ case-runs (35 sets x 17); slowest single run 6.2 s (CASHCAT 1m
 src1790590380000). H0 v1 logged 1391 s for baseline + 35-set sensitivity on
 16 cases (pre-PERF, 16 processes) - indicative only, not a controlled benchmark.
 
+## min_alternating_touches evidence — GEO-U1 Slice H3 (2026-10-02)
+
+Manifest `tests/fixtures/geometry_gold/source_time_manifest_v5.json` (continues
+v1-v4, all unchanged) and additive metadata `instrument_metadata_v4.json`.
+Evidence recovery only: no calibration rerun, no preset, cap and defaults
+unchanged.
+
+Universe (fixed before the screen): Scanner `robot_candidates` records with a
+source candle time, pinned Bybit class CRYPTO_LINEAR_PERPETUAL, 1m or 5m, not
+already in Gold or previously exact-evaluated = 1209 records / 467 symbols
+(1m 253, 5m 956). All 1209 closed 199-bar prefixes fetched exact (0 failures;
+recorded anchor prices match); all 1209 run under the unchanged defaults on
+the PERF path in 121 s - the universe is exhausted. 1061 SELECTED (selected
+pair alternation: 3 = 50, 4 = 425, >=5 = 586), 148 NO_ADMISSIBLE (none rejected
+for alternation: body integrity / shared support only).
+
+Acceptance rule (fixed): per stratum (alternation 3 / 4 / 5+ x 1m / 5m),
+symbol not in Gold and not CASHCAT/ENA, ordered by trend class (compression,
+expansion, no-trend), exact pair count, case_id; distinct symbols. Accepted
+(all SELECTED / PERSISTENT_COMPRESSION, production detects none):
+
+| case | alt | traversals | up/low clusters | shared cov | pairs/adm | ratio / realized | tie |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| LDOUSDT 1m src1789759560000 | 3 | 2 | 2/2 | 0.343 | 90/1 | 0.812 / 0.593 | admissible (only one) |
+| BNTUSDT 5m src1789994700000 | 3 | 2 | 2/2 | 0.288 | 375/2 | 0.709 / 0.362 | IDENTITY_TIE_BREAK |
+| PUFFERUSDT 1m src1789760580000 | 4 | 3 | 2/2 | 0.444 | 150/4 | 0.621 / 0.733 | shared_support_coverage |
+| GMXUSDT 5m src1789848900000 | 4 | 3 | 2/2 | 0.293 | 204/9 | 0.855 / 0.581 | negative_mean_residual_sum |
+| FLOCKUSDT 1m src1789759380000 (innovation) | 5 | 4 | 3/2 | 0.389 | 207/3 | 0.761 / 0.680 | cross_boundary_traversals |
+| GASUSDT 5m src1790098500000 | 5 | 4 | 3/3 | 0.253 | 216/9 | 0.752 / 0.789 | cross_boundary_traversals |
+
+Each: three separate runs (one with future rows) identical; canonical hashes in
+the manifest (`observed_h3_pair_facts`).
+
+Diagnostic (min_alternating_touches LOW 2 / CURRENT 3 / HIGH 4 only): old 17 -
+only NXPC changes (compression -> NO_ADMISSIBLE at HIGH). New 6 - the two
+alternation-3 cases (BNT, LDO) change identically at HIGH; the four >= 4 cases
+stay SELECTED/compression with the same pair. LOW changes nothing in either
+population; no pair-only changes. Combined 23: exactly the 3 alternation-3
+cases (NXPC, BNT, LDO) lose their class at HIGH. Label:
+EVIDENCE_SUPPORTS_MATERIALITY (a structural boundary at alternation 3, not a
+one-case artifact; the 6 new cases are all compression by the fixed preference
+rule, so expansion / no-trend behaviour of alternation-3 pairs is not tested).
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations

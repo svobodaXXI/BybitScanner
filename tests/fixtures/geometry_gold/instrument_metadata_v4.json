@@ -1,0 +1,178 @@
+{
+ "schema_version": 1,
+ "continues": [
+  "tests/fixtures/geometry_gold/instrument_metadata_v1.json",
+  "tests/fixtures/geometry_gold/instrument_metadata_v2.json",
+  "tests/fixtures/geometry_gold/instrument_metadata_v3.json"
+ ],
+ "source": "Bybit v5 public market instruments-info, GET /v5/market/instruments-info?category=linear&symbol=<SYMBOL> (no authentication)",
+ "retrieved_at_utc": "2026-10-01T21:18:28+00:00",
+ "instruments": {
+  "LDOUSDT": {
+   "symbol": "LDOUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "LDO",
+   "symbolType": "",
+   "fullName": "Lido DAO Token",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "BNTUSDT": {
+   "symbol": "BNTUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "BNT",
+   "symbolType": "",
+   "fullName": "Bancor",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "PUFFERUSDT": {
+   "symbol": "PUFFERUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "PUFFER",
+   "symbolType": "",
+   "fullName": "PUFFER",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "GMXUSDT": {
+   "symbol": "GMXUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "GMX",
+   "symbolType": "",
+   "fullName": "GMX",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "FLOCKUSDT": {
+   "symbol": "FLOCKUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "FLOCK",
+   "symbolType": "innovation",
+   "fullName": "FLOCK",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  },
+  "GASUSDT": {
+   "symbol": "GASUSDT",
+   "contractType": "LinearPerpetual",
+   "status": "Trading",
+   "quoteCoin": "USDT",
+   "settleCoin": "USDT",
+   "baseCoin": "GAS",
+   "symbolType": "",
+   "fullName": "Neo Gas",
+   "marketRegion": "",
+   "underlyingTicker": ""
+  }
+ },
+ "case_instruments": [
+  {
+   "case_id": "LDOUSDT-1m-src1789759560000",
+   "fixture_symbol": "LDOUSDT",
+   "instrument_symbol": "LDOUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "BNTUSDT-5m-src1789994700000",
+   "fixture_symbol": "BNTUSDT",
+   "instrument_symbol": "BNTUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "PUFFERUSDT-1m-src1789760580000",
+   "fixture_symbol": "PUFFERUSDT",
+   "instrument_symbol": "PUFFERUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "GMXUSDT-5m-src1789848900000",
+   "fixture_symbol": "GMXUSDT",
+   "instrument_symbol": "GMXUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "FLOCKUSDT-1m-src1789759380000",
+   "fixture_symbol": "FLOCKUSDT",
+   "instrument_symbol": "FLOCKUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  },
+  {
+   "case_id": "GASUSDT-5m-src1790098500000",
+   "fixture_symbol": "GASUSDT",
+   "instrument_symbol": "GASUSDT",
+   "method": "RECORDED_SYMBOL",
+   "evidence": "fixture/manifest symbol is the full Bybit linear symbol"
+  }
+ ],
+ "observed_case_classification": [
+  {
+   "case_id": "LDOUSDT-1m-src1789759560000",
+   "instrument_symbol": "LDOUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "BNTUSDT-5m-src1789994700000",
+   "instrument_symbol": "BNTUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "PUFFERUSDT-1m-src1789760580000",
+   "instrument_symbol": "PUFFERUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "GMXUSDT-5m-src1789848900000",
+   "instrument_symbol": "GMXUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "FLOCKUSDT-1m-src1789759380000",
+   "instrument_symbol": "FLOCKUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "innovation",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  },
+  {
+   "case_id": "GASUSDT-5m-src1790098500000",
+   "instrument_symbol": "GASUSDT",
+   "symbol_resolution": "RECORDED_SYMBOL",
+   "symbol_type": "",
+   "instrument_class": "CRYPTO_LINEAR_PERPETUAL",
+   "calibration_eligible": true
+  }
+ ]
+}
