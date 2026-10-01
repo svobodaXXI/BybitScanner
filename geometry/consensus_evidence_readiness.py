@@ -37,6 +37,11 @@ READINESS_RULE = (
     f"production detected cases>={MIN_PRODUCTION_DETECTED}"
 )
 
+REPRODUCIBILITY_RULE = (
+    "selected PERSISTENT_COMPRESSION/EXPANSION count only when independently "
+    "reproduced (two separate runs, one with future rows, identical report)"
+)
+
 
 @dataclass(frozen=True)
 class GeometryEvidenceReadiness:
@@ -155,9 +160,13 @@ def aggregate_case_facts(facts):
 
 def assess_geometry_evidence_readiness(
     facts, *, newly_recovered_case_ids, provenance_complete_case_ids,
-    unrecoverable_targets,
+    unrecoverable_targets, reproduced_case_ids=None,
 ):
-    """Apply the fixed readiness rule to compact case facts (see case_facts)."""
+    """Apply the fixed readiness rule to compact case facts (see case_facts).
+
+    ``reproduced_case_ids`` (optional) adds REPRODUCIBILITY_RULE; when omitted
+    the result is exactly the Slice E behaviour.
+    """
     ids = [f["case_id"] for f in facts]
     if len(set(ids)) != len(ids):
         raise ValueError("duplicate case_id in readiness input")
@@ -185,6 +194,21 @@ def assess_geometry_evidence_readiness(
     if provenance != len(facts):
         blockers.append(
             f"PROVENANCE_INCOMPLETE: {len(facts) - provenance} case(s)")
+    rule = READINESS_RULE
+    if reproduced_case_ids is not None:
+        # Opt-in (Slice F): a selected compression/expansion case counts toward
+        # its minimum only with independent-rerun evidence. Thresholds unchanged.
+        rule = f"{READINESS_RULE}; {REPRODUCIBILITY_RULE}"
+        for trend, minimum in (("PERSISTENT_COMPRESSION", MIN_PERSISTENT_COMPRESSION),
+                               ("EXPANSION", MIN_EXPANSION)):
+            cases = [f["case_id"] for f in selected
+                     if f["terminal_width_trend"] == trend]
+            missing = sorted(c for c in cases if c not in reproduced_case_ids)
+            reproduced = len(cases) - len(missing)
+            if missing and reproduced < minimum:
+                blockers.append(
+                    f"UNREPRODUCED_{trend}: reproduced {reproduced}, need >= "
+                    f"{minimum}; missing {', '.join(missing)}")
     return GeometryEvidenceReadiness(
         exact_case_count=len(facts),
         newly_recovered_case_count=sum(i in newly_recovered_case_ids for i in ids),
@@ -201,5 +225,5 @@ def assess_geometry_evidence_readiness(
         diversity_gaps=tuple(gaps),
         calibration_ready=not blockers,
         calibration_blockers=tuple(blockers),
-        readiness_rule=READINESS_RULE,
+        readiness_rule=rule,
     )

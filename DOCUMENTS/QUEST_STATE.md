@@ -1,21 +1,20 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE E — 2026-10-01
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE F — 2026-10-01
 
-Owner command: recover exact source-time Geometry evidence and expand Geometry
-Gold, based on main `cc0970e2fb82edbb78b3f03944d4d0fd12e9fc14` (Slices A-D
-#366-#369 merged). Evidence recovery only: no threshold calibration, no
-production cutover.
+Owner command: continue exact source-time Geometry evidence recovery until the
+fixed readiness gaps close or the bounded inventory is exhausted, based on main
+`6e7ce6cbf795e9bc08f170e982b4f91c7e8a9646` (Slices A-E #366-#370 merged).
+Evidence recovery only: no calibration, no algorithm/constant change.
 
-Result: 8 exact CASHCAT/ENA closed-prefix fixtures recovered from recorded
-Scanner candidates + Bybit public klines (separate source-time manifest).
-The owner's 2026-09-30 CASHCAT/ENA screenshots stay
-UNRECOVERABLE_EXACT_CUTOFF. Readiness gate: 13 exact cases, NOT READY
-(persistent compression 1/3, expansion 1/2). Production selection/
-classification, Telegram, Robot and LIVE unchanged. Delivery gate: focused
-evidence -> commit/push/PR; review/merge pending. No Scanner/Robot launch.
+Result: 3 new exact cases (BILLUSDT 1m and GOATUSDT 1m persistent compression,
+MCDUSDT 5m expansion) in `source_time_manifest_v2.json`; all five qualifying
+cases independently reproduced. Readiness: 16 exact cases, READY under the
+unchanged rule plus the reproducibility condition. Calibration NOT started.
+Production selection/classification, Telegram, Robot and LIVE unchanged.
+Delivery gate: focused evidence -> commit/push/PR; review/merge pending.
 
-Next logical slice (separate owner authorization): recover more exact
-source-time cases the same way (other symbols' durable candidates with
-`scanner_source_candle_time_ms`) until the fixed readiness rule is met.
+Next logical slices (separate owner authorization each): threshold
+calibration on the exact Gold set; GEO-U1-PERF exact pair-ranking
+acceleration preserving canonical results (full expanded recompute ~1 h).
 No XP, level, achievement or reward-ledger change is claimed by this checkpoint.
 
 ## ⏳ WAITING QUEST — OFR-3 BOX ROBOT HANDOFF — 2026-09-30

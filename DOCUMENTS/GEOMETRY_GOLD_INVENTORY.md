@@ -222,6 +222,45 @@ Calibration readiness (`geometry/consensus_evidence_readiness.py`, fixed rule):
 13 exact cases, provenance complete for all, NOT READY — selected
 PERSISTENT_COMPRESSION 1 (need 3) and EXPANSION 1 (need 2).
 
+## EXACT_SOURCE_TIME continuation — GEO-U1 Slice F (2026-10-01)
+
+Manifest: `tests/fixtures/geometry_gold/source_time_manifest_v2.json`
+(continues v1; v1 and its eight fixtures stay byte-identical). Same Slice E
+method: Scanner closed rows 0..198, forming source candle excluded, Bybit v5
+public kline, all four recorded anchor prices cross-checked.
+
+Bounded inventory of `runtime/terminal/robot_candidates/`: 1889 records,
+1378 with `scanner_source_candle_time_ms` (8 already in Gold), 1370 closed
+prefixes fetched and validated with 0 provenance failures. An OHLC-only
+realized-range proxy (prioritization only, never a fact) ordered 399 windows;
+the cheapest exact pair counts were evaluated with the unchanged Slice D
+report until the readiness gaps closed (27 evaluations, all logged in the
+manifest `screening_log`).
+
+Admitted (all three: production finds no geometry on the closed prefix;
+recorded runtime pattern kept as a separate fact):
+
+| case | cutoff UTC | pairs | SHADOW | terminal trend |
+| --- | --- | --- | --- | --- |
+| BILLUSDT 1m src1789759080000 | 2026-09-18T19:17Z | 90 | SELECTED | PERSISTENT_COMPRESSION |
+| GOATUSDT 1m src1789850640000 | 2026-09-19T20:43Z | 30 | SELECTED | PERSISTENT_COMPRESSION |
+| MCDUSDT 5m src1790004300000 | 2026-09-21T15:20Z | 54 | SELECTED | EXPANSION |
+
+Reproducibility: these three and the two Slice E qualifying cases
+(CASHCATUSDT 1m 2026-09-28 compression, CASHCATUSDT 5m 2026-09-24 expansion)
+produced identical canonical report JSON in separate processes, one with
+appended future rows; hashes are recorded in the manifest.
+
+Readiness (fixed rule + opt-in reproducibility condition): 16 exact cases,
+provenance 16/16, selected compression 3, expansion 2, no-trend 9,
+no-admissible 2, production detected 4 -> READY. Calibration is NOT started
+by this slice.
+
+Performance observation: exact pair counts reach 11438 (fetched windows);
+the slowest evaluated case is CASHCATUSDT 1m 2026-09-28 (11232 pairs, ~6 min
+per run); a full expanded recompute is ~1 h. Follow-up GEO-U1-PERF: exact
+pair-ranking acceleration preserving canonical results (not in this slice).
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations
