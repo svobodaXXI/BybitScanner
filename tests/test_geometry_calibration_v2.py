@@ -140,7 +140,9 @@ def h2_extras(cases, classification, outcomes, rows, active, sets, sweep_labels,
 
 
 def generate(processes=16, cache_dir=None, log=print):
-    """Full exact H2 rerun with the unchanged H0 functions (expensive)."""
+    """Historical H2 runner; unavailable once H4-B policy is active."""
+    if "min_alternating_touches" in calibration.FROZEN_STRUCTURAL_PARAMETERS:
+        raise RuntimeError("H2 calibration_result_v2.json is historical and immutable after H4-B")
     started = time.perf_counter()
     cases, pinned, classification = load_population_v2()
     ids = [c["case_id"] for c in cases]
@@ -261,8 +263,8 @@ class CalibrationV2Tests(unittest.TestCase):
         cls.cases, cls.pinned, cls.classification = load_population_v2()
         cls.ids = sorted(c["case_id"] for c in cls.cases)
         cls.outcomes = expand_outcome_matrix(RESULT["outcome_matrix"])
-        cls.sets, cls.sweep_labels, cls.invalid = derived_parameter_sets(
-            RESULT["active_parameters"])
+        cls.sets = dict(sensitivity_parameter_sets())
+        cls.sweep_labels, cls.invalid = [], []
         cls.base = {c: cls.outcomes[c]["BASELINE"] for c in cls.ids}
 
     def _rebuild(self, cases, outcomes):
@@ -328,8 +330,14 @@ class CalibrationV2Tests(unittest.TestCase):
 
     def test_sensitivity_and_active_parameters_deterministic(self):        # G, H
         rows, active = summarize_sensitivity(self.outcomes, self.ids)
-        self.assertEqual(json.loads(_dumps(rows)), RESULT["sensitivity_summary"])
-        self.assertEqual(active, RESULT["active_parameters"])
+        historical = [r for r in RESULT["sensitivity_summary"]
+                      if r["parameter"] != "min_alternating_touches"]
+        self.assertEqual(json.loads(_dumps(rows)), historical)
+        self.assertEqual([p for p in RESULT["active_parameters"]
+                          if p != "min_alternating_touches"], active)
+        self.assertIn("min_alternating_touches", RESULT["active_parameters"])
+        self.assertEqual(len(active), 6)
+        self.assertNotIn("min_alternating_touches", active)
         self.assertEqual(summarize_sensitivity(self.outcomes, list(reversed(self.ids)))[1], active)
         by_id = {c["case_id"]: c for c in self.cases}
         computed, _ = compute_outcomes([by_id[CHEAP[0]], by_id[NXPC]],
@@ -339,15 +347,21 @@ class CalibrationV2Tests(unittest.TestCase):
                 self.assertEqual(outcome, self.outcomes[case_id][label], (case_id, label))
 
     def test_sweep_and_result_deterministic(self):                          # I
+        historical_labels = ["BASELINE"] + [f"{name}={tag}"
+                             for name, _, _, _ in calibration.PARAMETER_DOMAIN
+                             for tag in ("LOW", "HIGH")]
         self.assertEqual(RESULT["outcome_matrix"]["labels"],
-                         [l for l, _ in sensitivity_parameter_sets()] + self.sweep_labels)
-        self.assertEqual(self._strip(self._rebuild(self.cases, self.outcomes)),
-                         self._strip(RESULT))
+                         historical_labels)
+        self.assertEqual(RESULT["tested_parameter_set_count"], 0)
+        self.assertEqual(RESULT["candidate_presets"], [])
+        self.assertEqual(RESULT["recommended_action"], "MORE_EVIDENCE_REQUIRED")
+        self.assertTrue(any("CALIBRATION_UNDERDETERMINED" in reason
+                            for reason in RESULT["reasons"]))
 
     def test_case_order_does_not_change_result(self):                      # J
         reordered = {k: self.outcomes[k] for k in reversed(self.ids)}
         self.assertEqual(self._strip(self._rebuild(list(reversed(self.cases)), reordered)),
-                         self._strip(RESULT))
+                         self._strip(self._rebuild(self.cases, self.outcomes)))
 
     def test_surviving_sets_keep_every_hard_gate_case(self):               # K, L, M
         roles = {c: evidence_class(self.base[c]) for c in self.ids}

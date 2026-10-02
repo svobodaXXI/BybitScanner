@@ -1,4 +1,24 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H4-A — 2026-10-02
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H4-B — 2026-10-02
+
+Owner command: semantically freeze `min_alternating_touches = 3` as the
+minimum repeated two-boundary oscillation in SHADOW calibration policy. Two
+touches prove one transition; four require extra recurrence and change
+recall. The H2/H3/H4-A pinned evidence across seven alternation-3 cases in
+compression, expansion and no-trend supports this class-independent decision.
+
+H4-B work is scoped to the calibration policy, focused regression and owning
+documentation. The default remains 3 and `MAX_ACTIVE_PARAMETERS` remains 6.
+SHADOW geometry keeps explicit 2/4 diagnostic calls. Historical v1/v2
+calibration records, GEO-U1-POP-1, Gold, manifests and production Geometry
+remain unchanged; `production_cutover_authorized = false`.
+
+Current delivery gate: focused/adjacent tests -> protected task PASS ->
+commit/push/PR review; do not merge in this slice. No calibration v3, grid
+sweep, leave-one-out or preset nomination. Next separate quest after H4-B
+integration: GEO-U1 H5 calibration v3 on the expanded evidence population
+under the frozen policy. No XP, level or achievement change is claimed.
+
+## ✅ PREVIOUS QUEST — GEO-U1 SLICE H4-A — 2026-10-02
 
 Owner command: non-compression alternation-3 exact evidence for
 min_alternating_touches, based on main

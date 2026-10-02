@@ -521,6 +521,29 @@ no-trend 1000TAG/OGN) all fail at HIGH; every case with alternation >= 4
 stays selected with the same pair. Label CROSS_CLASS_MATERIALITY_SUPPORTED; no
 calibration action is inferred here.
 
+## Structural calibration policy — GEO-U1 Slice H4-B (2026-10-02)
+
+Owner semantic decision: freeze `min_alternating_touches` at its existing
+default **3** as a structural invariant. Three alternating contacts form the
+minimum repeated two-boundary sequence (`U-L-U` or `L-U-L`); two show only one
+transition, while four require additional recurrence and reduce recall.
+
+`geometry/consensus_calibration.py` records this in
+`FROZEN_STRUCTURAL_PARAMETERS` and excludes the parameter from future
+LOW/CURRENT/HIGH sensitivity, MATERIAL/INSENSITIVE classification, active
+dimensions, grids and candidate preset optimization. Generated calibration
+sets keep its value at 3; the SHADOW geometry function still accepts explicit
+2/4 overrides for diagnostics. The active cap stays 6. Result metadata
+exposes the frozen value/category/reason, rather than silently omitting it.
+
+The H0 `calibration_result_v1.json` and H2 `calibration_result_v2.json` remain
+historical, byte-unchanged records. Their earlier H2 MATERIAL finding is not
+retroactively rewritten. The H3/H4-A evidence, GEO-U1-POP-1, manifests,
+metadata, Gold fixtures, defaults and production Geometry are unchanged.
+H4-B does not run calibration v3, sweep or leave-one-out and nominates no
+preset; production cutover remains unauthorized. H5 is the next separately
+authorized calibration run on the expanded evidence population.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations

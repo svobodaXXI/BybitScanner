@@ -79,8 +79,9 @@ ACTIVE_RULE = (
     "a parameter is MATERIAL if LOW or HIGH changes the evidence class "
     "(selection status or terminal trend) of >= 1 case; IDENTITY_ONLY "
     "(selected pair changes, class unchanged) and INSENSITIVE parameters are "
-    "frozen at CURRENT. > 6 MATERIAL parameters -> CALIBRATION_UNDERDETERMINED "
-    "(no sweep)."
+    "frozen at CURRENT. Structural invariants are excluded before sensitivity "
+    "and cannot become active. > 6 MATERIAL parameters -> "
+    "CALIBRATION_UNDERDETERMINED (no sweep)."
 )
 MAX_ACTIVE_PARAMETERS = 6
 CONCENTRATION_RULE = (
@@ -120,6 +121,29 @@ PARAMETER_DOMAIN = (
     ("single_bar_narrow_ratio", 0.375, 0.625,
      "last-bar range / median range flag (diagnostic only)"),
 )
+
+# H4-B policy: U-L-U or L-U-L is the first repeated two-boundary oscillation.
+# Two touches establish only one transition; four demand extra recurrence and
+# change recall. Historical H0/H2 LOW/HIGH results remain in their pinned files.
+FROZEN_STRUCTURAL_PARAMETERS = {
+    "min_alternating_touches": {
+        "value": 3,
+        "category": "STRUCTURAL_INVARIANT",
+        "reason": "Three alternating touches prove repeated two-boundary oscillation; "
+                  "two prove one transition, while four impose extra recurrence.",
+    },
+}
+CALIBRATABLE_PARAMETER_DOMAIN = tuple(
+    row for row in PARAMETER_DOMAIN if row[0] not in FROZEN_STRUCTURAL_PARAMETERS)
+
+
+def _check_calibration_policy(active=()):
+    for name, policy in FROZEN_STRUCTURAL_PARAMETERS.items():
+        if DEFAULT_SHADOW_REPORT_PARAMETERS[name] != policy["value"]:
+            raise ValueError(f"FROZEN_STRUCTURAL_DEFAULT_MISMATCH: {name}")
+    invalid = set(active) - {row[0] for row in CALIBRATABLE_PARAMETER_DOMAIN}
+    if invalid:
+        raise ValueError(f"NON_CALIBRATABLE_ACTIVE_PARAMETERS: {sorted(invalid)}")
 
 _BOUNDARY_KEYS = ("inlier_band_atr", "separation_atr")
 _PAIR_KEYS = ("touch_band_atr", "minimum_swing_width_fraction",
@@ -161,6 +185,9 @@ def validate_parameter_set(parameters):
     if set(parameters) != set(DEFAULT_SHADOW_REPORT_PARAMETERS):
         problems.append("PARAMETER_KEYS_DIFFER_FROM_DEFAULTS")
         return problems
+    for name, policy in FROZEN_STRUCTURAL_PARAMETERS.items():
+        if parameters[name] != policy["value"]:
+            problems.append(f"FROZEN_STRUCTURAL_PARAMETER_VARIED: {name}")
     if any(isinstance(v, (dict, list, tuple)) or isinstance(v, bool)
            for v in parameters.values()):
         problems.append("NON_SCALAR_PARAMETER")
@@ -507,9 +534,10 @@ def leave_one_out(baseline, candidate, case_ids, parameters):
 
 
 def sensitivity_parameter_sets():
-    """[(label, parameters)]: BASELINE plus LOW/HIGH of every parameter."""
+    """[(label, parameters)]: BASELINE plus calibratable LOW/HIGH only."""
+    _check_calibration_policy()
     sets = [("BASELINE", dict(DEFAULT_SHADOW_REPORT_PARAMETERS))]
-    for name, low, high, _ in PARAMETER_DOMAIN:
+    for name, low, high, _ in CALIBRATABLE_PARAMETER_DOMAIN:
         for tag, value in (("LOW", low), ("HIGH", high)):
             sets.append((f"{name}={tag}", {**DEFAULT_SHADOW_REPORT_PARAMETERS, name: value}))
     return sets
@@ -517,10 +545,11 @@ def sensitivity_parameter_sets():
 
 def summarize_sensitivity(outcomes, case_ids):
     """Descriptive one-at-a-time table and the MATERIAL/IDENTITY_ONLY split."""
+    _check_calibration_policy()
     base = {c: outcomes[c]["BASELINE"] for c in case_ids}
     rows = []
     status = {}
-    for name, low, high, rationale in PARAMETER_DOMAIN:
+    for name, low, high, rationale in CALIBRATABLE_PARAMETER_DOMAIN:
         row = {"parameter": name, "low": low,
                "current": DEFAULT_SHADOW_REPORT_PARAMETERS[name], "high": high,
                "rationale": rationale}
@@ -546,14 +575,16 @@ def summarize_sensitivity(outcomes, case_ids):
                               "IDENTITY_ONLY" if identity else "INSENSITIVE")
         status[name] = row["sensitivity"]
         rows.append(row)
-    active = [n for n, _, _, _ in PARAMETER_DOMAIN if status[n] == "MATERIAL"]
+    active = [n for n, _, _, _ in CALIBRATABLE_PARAMETER_DOMAIN
+              if status[n] == "MATERIAL"]
     return rows, active
 
 
 def sweep_parameter_sets(active):
     """Full finite grid over active parameters' LOW/CURRENT/HIGH; frozen rest."""
+    _check_calibration_policy(active)
     domain = {name: (low, DEFAULT_SHADOW_REPORT_PARAMETERS[name], high)
-              for name, low, high, _ in PARAMETER_DOMAIN}
+              for name, low, high, _ in CALIBRATABLE_PARAMETER_DOMAIN}
     sets, invalid = [], []
     for values in product(*(domain[name] for name in active)):
         params = {**DEFAULT_SHADOW_REPORT_PARAMETERS, **dict(zip(active, values))}
@@ -565,6 +596,7 @@ def sweep_parameter_sets(active):
 def derived_parameter_sets(active):
     """(label -> parameters, sweep labels, invalid labels) from the locked
     domain alone; the pinned record therefore stores labels, not values."""
+    _check_calibration_policy(active)
     sets = dict(sensitivity_parameter_sets())
     if len(active) > MAX_ACTIVE_PARAMETERS:
         return sets, [], []
@@ -620,6 +652,11 @@ def build_calibration_result(cases, classification, outcomes, *, sensitivity_row
                              active, sweep_labels, invalid_labels, parameter_sets,
                              determinism, performance):
     """Assemble the facts-only GeometryCalibrationResult record (pure)."""
+    _check_calibration_policy(active)
+    for label, params in parameter_sets.items():
+        if any(params[name] != policy["value"]
+               for name, policy in FROZEN_STRUCTURAL_PARAMETERS.items()):
+            raise ValueError(f"FROZEN_STRUCTURAL_PARAMETER_VARIED: {label}")
     ids = sorted(c["case_id"] for c in cases)
     base = {c: outcomes[c]["BASELINE"] for c in ids}
     base_eval = evaluate_parameter_set(base, base, ids, DEFAULT_SHADOW_REPORT_PARAMETERS)
@@ -699,7 +736,9 @@ def build_calibration_result(cases, classification, outcomes, *, sensitivity_row
         "active_rule": ACTIVE_RULE,
         "sensitivity_summary": sensitivity_rows,
         "active_parameters": active,
-        "frozen_parameters": [n for n, _, _, _ in PARAMETER_DOMAIN if n not in active],
+        "frozen_parameters": [n for n in DEFAULT_SHADOW_REPORT_PARAMETERS if n not in active],
+        "frozen_structural_parameters": {
+            name: dict(policy) for name, policy in FROZEN_STRUCTURAL_PARAMETERS.items()},
         "tested_parameter_set_count": len(sweep_labels),
         "invalid_grid_combinations": {
             "count": len(invalid_labels),
