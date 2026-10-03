@@ -544,6 +544,43 @@ H4-B does not run calibration v3, sweep or leave-one-out and nominates no
 preset; production cutover remains unauthorized. H5 is the next separately
 authorized calibration run on the expanded evidence population.
 
+## SHADOW calibration v3 — GEO-U1 Slice H5 (2026-10-03)
+
+`tests/fixtures/geometry_gold/calibration_result_v3.json` is the exact H5
+result over GEO-U1-POP-1: historical 17 eligible cases plus H3 six and H4-A
+four, for **27 distinct cases**. All saved decision-time fixtures pass their
+integrity checks; 22 have an exact 199-closed-bar source-time prefix, and five
+are historical READY Gold cases. The excluded forming candle is not included.
+Baseline matches all 27 pinned facts and remains invariant to future rows.
+
+Baseline classes: 10 SELECTED PERSISTENT_COMPRESSION, four SELECTED EXPANSION,
+11 SELECTED NO_PERSISTENT_WIDTH_TREND, two NO_ADMISSIBLE_PAIR; four
+production-detected cases. Timeframes: 12 at 1m, 15 at 5m. Symbol types:
+eight innovation, 19 ordinary. The existing concentration rule has no trigger
+(CASHCATUSDT 5/27).
+
+H4-B freezes `min_alternating_touches=3` as STRUCTURAL_INVARIANT. Its value is
+3 in every tested set and it is absent from the 16-dimension calibratable
+sensitivity domain. Eight dimensions are MATERIAL:
+`minimum_swing_width_fraction`, `minimum_side_touch_clusters`,
+`min_shared_support_coverage`, `max_support_gap_fraction`,
+`terminal_window_bars`, `terminal_segments`, `compression_max_ratio`, and
+`expansion_min_ratio`. `inlier_band_atr` is IDENTITY_ONLY; the other seven
+calibratable dimensions are INSENSITIVE. Relative to the historical H2 result,
+`minimum_swing_width_fraction` changed INSENSITIVE→MATERIAL and
+`max_support_gap_fraction` changed IDENTITY_ONLY→MATERIAL. Thus freezing the structural
+dimension did **not** reduce active dimensions from seven to six.
+
+The unchanged active cap is six. With eight active dimensions, the H0 hard
+gate is `CALIBRATION_UNDERDETERMINED`: no grid was generated (0 valid/0 invalid
+evaluated; 3^8 = 6561 theoretical uncapped combinations), no grid set passed
+hard gates, no preset comparison or leave-one-out was performed. The 33
+baseline/one-at-a-time sets produced 891 exact case-runs. Recommendation:
+`MORE_EVIDENCE_REQUIRED`; `proposed_shadow_preset=null`; baseline retained;
+`production_cutover_authorized=false`. This is a SHADOW evidence result, not
+permission to change Geometry, Robot, Scanner, risk, or LIVE behavior. Historical
+v1/v2 calibration records and Gold manifests/metadata are unchanged.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations
