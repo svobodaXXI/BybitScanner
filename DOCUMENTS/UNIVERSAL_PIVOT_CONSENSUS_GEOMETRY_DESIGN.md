@@ -285,3 +285,28 @@ Only after real references show a robust separation:
 Task ID: **GEO-U1 — Universal Pivot-Consensus Envelope Geometry**
 
 This is a future Geometry follow-up. It does not interrupt the currently running RVL-G6 acceptance. Implementation must begin with source recovery + shadow metrics, not with detector threshold tuning.
+
+## 11. H4-B semantic freeze of two-boundary recurrence (2026-10-02)
+
+For the universal two-boundary SHADOW model, `min_alternating_touches = 3` is
+a structural invariant of calibration policy. `U -> L -> U` or `L -> U -> L`
+is the first repeated use of both boundaries. Two touches establish only one
+cross-boundary transition; requiring four adds another oscillation and changes
+recall rather than defining the minimum structure.
+
+H2 found this parameter MATERIAL on NXPC. H3 reproduced the HIGH=4 loss on
+BNT and LDO; H4-A extended it to expansion (GRT, DEXE) and no-trend
+(1000TAG, OGN). Across the pinned 27-case diagnostic, all seven
+alternation-3 cases become NO_ADMISSIBLE at HIGH=4, LOW=2 changes nothing,
+and cases with alternation >=4 remain selected. These are diagnostic results,
+not a new calibration sweep.
+
+Going forward, calibration records the frozen structural parameter, value
+and reason explicitly. It excludes this parameter from sensitivity, active
+dimension derivation, grid generation and preset optimization. The default
+remains 3, the active-parameter cap remains 6, and direct SHADOW geometry
+diagnostics may still pass 2 or 4. Historical calibration results v1/v2 retain
+their original methodology and findings. No calibration v3, preset or
+production cutover is authorized by H4-B; `production_cutover_authorized`
+remains false. The next separate slice is H5 calibration v3 on the expanded
+evidence population under this policy.
