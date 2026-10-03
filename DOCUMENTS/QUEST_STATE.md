@@ -1,4 +1,18 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H4-B — 2026-10-02
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H5 — 2026-10-03
+
+Owner-authorized exact SHADOW calibration v3 uses 27 eligible saved cases
+(historical 17 + H3 six + H4-A four) under the H4-B structural freeze
+`min_alternating_touches=3`. Baseline matches pinned facts 27/27 and is
+future-row invariant. Eight of 16 calibratable dimensions are MATERIAL, above
+the unchanged active cap six; therefore no grid, leave-one-out, or preset
+nomination is authorized. The v3 recommendation is
+`MORE_EVIDENCE_REQUIRED`, baseline retained, and
+`production_cutover_authorized=false`. Inventory and result record hold the
+exact case/class/timing facts. Current delivery gate: adjacent regression,
+protected task PASS, commit/push/PR review; do not merge in this slice.
+No Scanner/Robot/LIVE action, XP, level, achievement, or ledger change claimed.
+
+## ✅ PREVIOUS QUEST — GEO-U1 SLICE H4-B — 2026-10-02
 
 Owner command: semantically freeze `min_alternating_touches = 3` as the
 minimum repeated two-boundary oscillation in SHADOW calibration policy. Two
