@@ -267,7 +267,7 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             main.run_scan_pass()
         sending.assert_not_called()
 
-    def test_completed_gate_requires_p1_then_later_take_for_both_directions(self):
+    def test_completed_gate_uses_frozen_take_without_p1_for_both_directions(self):
         for direction in (1, -1):
             with self.subTest(direction=direction):
                 frame, _, _ = _two_impulses(direction, second_steps=7)
@@ -280,37 +280,30 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
                     frozen_f1618=Decimal(str(formation.fibonacci_1_618)),
                     tick_size=tick,
                 )
-                p1 = prices[0]
-                controlled = frame.copy(deep=True)
+                still_valid = frame.copy(deep=True)
                 start, end = formation.second_start_index, formation.as_of_index
                 self.assertGreater(end, start)
 
                 if formation.direction == "SHORT":
                     for index in range(start, end + 1):
-                        controlled.loc[index, "high"] = float(p1 - tick / 2)
-                        controlled.loc[index, "low"] = float(take + tick / 2)
-                    controlled.loc[start, "high"] = float(p1)
-                    controlled.loc[start + 1, "low"] = float(take)
+                        still_valid.loc[index, "high"] = float(prices[0] - tick / 2)
+                        still_valid.loc[index, "low"] = float(take + tick / 2)
                 else:
                     for index in range(start, end + 1):
-                        controlled.loc[index, "low"] = float(p1 + tick / 2)
-                        controlled.loc[index, "high"] = float(take - tick / 2)
-                    controlled.loc[start, "low"] = float(p1)
-                    controlled.loc[start + 1, "high"] = float(take)
+                        still_valid.loc[index, "low"] = float(prices[0] + tick / 2)
+                        still_valid.loc[index, "high"] = float(take - tick / 2)
 
-                self.assertTrue(box._completed_before_delivery(
-                    controlled, formation, tick,
+                self.assertFalse(box._completed_before_delivery(
+                    still_valid, formation, tick,
                 ))
 
-                ambiguous = controlled.copy(deep=True)
+                completed = still_valid.copy(deep=True)
                 if formation.direction == "SHORT":
-                    ambiguous.loc[start, "low"] = float(take)
-                    ambiguous.loc[start + 1:, "low"] = float(take + tick / 2)
+                    completed.loc[start, "low"] = float(take)
                 else:
-                    ambiguous.loc[start, "high"] = float(take)
-                    ambiguous.loc[start + 1:, "high"] = float(take - tick / 2)
-                self.assertFalse(box._completed_before_delivery(
-                    ambiguous, formation, tick,
+                    completed.loc[start, "high"] = float(take)
+                self.assertTrue(box._completed_before_delivery(
+                    completed, formation, tick,
                 ))
 
     def test_completed_box_is_suppressed_before_render_delivery_and_robot_plan(self):
@@ -323,49 +316,70 @@ class IkigaiBoxTelegramBridgeTests(unittest.TestCase):
             frozen_f1618=Decimal(str(formation.fibonacci_1_618)),
             tick_size=tick,
         )
-        controlled = frame.copy(deep=True)
+        still_valid = frame.copy(deep=True)
         start = formation.second_start_index
         for index in range(start, formation.as_of_index + 1):
-            controlled.loc[index, "high"] = float(prices[0] - tick / 2)
-            controlled.loc[index, "low"] = float(take + tick / 2)
-        controlled.loc[start, "high"] = float(prices[0])
-        controlled.loc[start + 1, "low"] = float(take)
-        controlled["time"] = [
-            1_790_000_000_000 + i * 300_000 for i in range(len(controlled))
+            still_valid.loc[index, "high"] = float(prices[0] - tick / 2)
+            still_valid.loc[index, "low"] = float(take + tick / 2)
+        still_valid["time"] = [
+            1_790_000_000_000 + i * 300_000 for i in range(len(still_valid))
         ]
-        live = pd.concat([controlled, pd.DataFrame([{
-            "time": int(controlled.iloc[-1]["time"]) + 300_000,
-            "open": 100, "high": 101, "low": 99, "close": 100,
-        }])], ignore_index=True)
+        completed = still_valid.copy(deep=True)
+        completed.loc[start + 1, "low"] = float(take)
+        later_valid = still_valid.copy(deep=True)
+        later_valid["time"] += 24 * 60 * 60 * 1000
+
+        def with_open_candle(closed):
+            return pd.concat([closed, pd.DataFrame([{
+                "time": int(closed.iloc[-1]["time"]) + 300_000,
+                "open": 100, "high": 101, "low": 99, "close": 100,
+            }])], ignore_index=True)
+
         history = {}
         preparer = unittest.mock.Mock(return_value=SOURCE_ID)
         with patch.object(
+            box.config, "TELEGRAM_ENABLED", True,
+        ), patch.object(
             box, "detect_ikigai_box", return_value=formation,
         ), patch.object(
-            box, "load_memory", return_value={},
+            box, "load_memory", side_effect=lambda: dict(history),
         ), patch.object(
             box, "save_memory", side_effect=lambda value: history.update(value),
         ) as save, patch.object(
             box, "render_ikigai_box_chart",
         ) as render, patch.object(
-            box, "send_message",
+            box, "send_message", return_value={"ok": True},
         ) as text, patch.object(
-            box, "send_photo",
+            box, "send_photo", return_value={"ok": True},
         ) as photo, patch.object(
             box, "get_telegram_chat_ids", return_value=("owner",),
+        ), patch.object(
+            box, "get_telegram_owner_chat_id", return_value="owner",
         ):
             self.assertFalse(box.send_ikigai_box_observation(
-                "TESTUSDT", live, timeframe="5",
+                "TESTUSDT", with_open_candle(completed), timeframe="5",
+                robot_plan_preparer=preparer, tick_size=tick,
+            ))
+            render.assert_not_called()
+            text.assert_not_called()
+            photo.assert_not_called()
+            preparer.assert_not_called()
+            self.assertEqual(
+                history["ikigai_box:TESTUSDT:5:SHORT"]["status"],
+                "COMPLETED_BEFORE_DELIVERY",
+            )
+
+            self.assertTrue(box.send_ikigai_box_observation(
+                "TESTUSDT", with_open_candle(later_valid), timeframe="1",
                 robot_plan_preparer=preparer, tick_size=tick,
             ))
 
-        render.assert_not_called()
-        text.assert_not_called()
-        photo.assert_not_called()
-        preparer.assert_not_called()
-        save.assert_called_once()
-        record = history["ikigai_box:TESTUSDT:5:SHORT"]
-        self.assertEqual(record["status"], "COMPLETED_BEFORE_DELIVERY")
+        render.assert_called_once()
+        text.assert_called_once()
+        photo.assert_called_once()
+        preparer.assert_called_once()
+        self.assertEqual(save.call_count, 2)
+        self.assertIn("ikigai_box:TESTUSDT:1:SHORT", history)
 
     def test_render_failure_never_sends_stale_file(self):
         source = _candles()

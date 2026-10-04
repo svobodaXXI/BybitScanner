@@ -32,11 +32,7 @@ _SAFE_SYMBOL = re.compile(r"^[A-Z0-9]+$")
 
 
 def _completed_before_delivery(closed, formation, tick_size):
-    """True only when an exact first-grid P1 touch precedes a later TAKE touch.
-
-    Same-candle P1+TAKE is intentionally ambiguous because OHLC has no intrabar
-    ordering, so it is not enough to mark a setup completed.
-    """
+    """True when a closed candle reaches the formation's frozen Box TAKE."""
 
     if tick_size in (None, ""):
         return False
@@ -44,7 +40,7 @@ def _completed_before_delivery(closed, formation, tick_size):
         tick = Decimal(str(tick_size))
         if not tick.is_finite() or tick <= 0:
             return False
-        prices, take = approved_first_grid(
+        _, take = approved_first_grid(
             direction=formation.direction,
             frozen_f1=Decimal(str(formation.fibonacci_1_0)),
             frozen_f1618=Decimal(str(formation.fibonacci_1_618)),
@@ -53,26 +49,12 @@ def _completed_before_delivery(closed, formation, tick_size):
     except (ArithmeticError, InvalidOperation, TypeError, ValueError):
         return False
 
-    p1 = prices[0]
     start = formation.second_start_index
     end = formation.as_of_index
     if type(start) is not int or type(end) is not int or not (0 <= start <= end < len(closed)):
         return False
 
-    entry_index = None
     for index in range(start, end + 1):
-        row = closed.iloc[index]
-        high = Decimal(str(row["high"]))
-        low = Decimal(str(row["low"]))
-        touched = high >= p1 if formation.direction == "SHORT" else low <= p1
-        if touched:
-            entry_index = index
-            break
-
-    if entry_index is None:
-        return False
-
-    for index in range(entry_index + 1, end + 1):
         row = closed.iloc[index]
         high = Decimal(str(row["high"]))
         low = Decimal(str(row["low"]))
