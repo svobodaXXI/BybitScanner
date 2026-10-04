@@ -591,8 +591,10 @@ Docs/policy only. Based on the accepted H15 verdict
 to a *diagnostic-only structural proxy*. Structural liveness/staleness
 semantics are owned by `DerivedEnvelopeLifecycle` (SHADOW, PR #382, open and
 unmerged), not by a tunable gap threshold. The parameter is removed only from
-the forward active calibration set; it is not a calibratable dimension, is not
-swept, and cannot become active.
+the forward active calibration set; it is excluded from the forward
+calibration policy active set and must not be swept or promoted back to active
+by future calibration policy; executable calibration code is unchanged until a
+separate authorized slice.
 
 **Preserved facts.** H5 (`calibration_result_v3.json`) remains historically
 true: under the old proxy regime eight dimensions were MATERIAL, including
