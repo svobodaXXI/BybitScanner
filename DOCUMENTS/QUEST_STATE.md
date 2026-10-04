@@ -1,4 +1,24 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H5 — 2026-10-03
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H14 — 2026-10-04
+
+Owner-authorized SHADOW-only external-transition lifecycle coverage on the
+already-pinned OGNUSDT 5m pair, continuing H13 on PR #382. A confirmed
+opposite-type external pivot on the same outside side completes the external
+swing; an isolated excursion does not. Existing TOSHI chronology and all
+production selection/admission remain unchanged. Delivery gate: focused and
+adjacent regressions, protected task PASS, commit/push to PR #382; no merge.
+No Scanner/Robot/LIVE action or reward change is claimed.
+
+## ✅ PREVIOUS QUEST — GEO-U1 SLICE H13 — 2026-10-04
+
+Owner-authorized SHADOW-only derived envelope lifecycle implementation on the
+already-pinned 1000TOSHIUSDT 5m pair. H9-H12 established the state semantics,
+same-pair transition and ambiguity policy. This slice adds only diagnostic
+derivation and a focused source-time regression; existing selection and
+`max_support_gap_fraction` retain authority. Delivery gate: protected task
+PASS, commit/push and PR review; no merge in this slice. No Scanner/Robot/LIVE
+action or reward change is claimed.
+
+## ✅ PREVIOUS QUEST — GEO-U1 SLICE H5 — 2026-10-03
 
 Owner-authorized exact SHADOW calibration v3 uses 27 eligible saved cases
 (historical 17 + H3 six + H4-A four) under the H4-B structural freeze
