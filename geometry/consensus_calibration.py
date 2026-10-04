@@ -136,6 +136,22 @@ FROZEN_STRUCTURAL_PARAMETERS = {
 CALIBRATABLE_PARAMETER_DOMAIN = tuple(
     row for row in PARAMETER_DOMAIN if row[0] not in FROZEN_STRUCTURAL_PARAMETERS)
 
+# H16/H25 forward policy: sensitivity still reports these (historical H5 truth
+# stays reproducible), but they can never become active or be swept.
+DIAGNOSTIC_ONLY_PARAMETERS = {
+    "max_support_gap_fraction": {
+        "category": "DIAGNOSTIC_STRUCTURAL_PROXY",
+        "reason": "DerivedEnvelopeLifecycle owns structural liveness/staleness; "
+                  "the gap fraction is a coarse proxy (H15/H16).",
+    },
+    "minimum_swing_width_fraction": {
+        "category": "DIAGNOSTIC_RANKING_ONLY",
+        "reason": "No genuine traversal changes across LOW/CURRENT/HIGH in the "
+                  "27 pinned cases; in-band effects are same-side retests that "
+                  "only move the reach ratio (H23/H24/H25).",
+    },
+}
+
 
 def _check_calibration_policy(active=()):
     for name, policy in FROZEN_STRUCTURAL_PARAMETERS.items():
@@ -144,6 +160,12 @@ def _check_calibration_policy(active=()):
     invalid = set(active) - {row[0] for row in CALIBRATABLE_PARAMETER_DOMAIN}
     if invalid:
         raise ValueError(f"NON_CALIBRATABLE_ACTIVE_PARAMETERS: {sorted(invalid)}")
+
+
+def forward_active_parameters(material):
+    """Forward active set: MATERIAL names minus diagnostic-only exclusions."""
+    _check_calibration_policy()
+    return [name for name in material if name not in DIAGNOSTIC_ONLY_PARAMETERS]
 
 _BOUNDARY_KEYS = ("inlier_band_atr", "separation_atr")
 _PAIR_KEYS = ("touch_band_atr", "minimum_swing_width_fraction",
@@ -583,6 +605,9 @@ def summarize_sensitivity(outcomes, case_ids):
 def sweep_parameter_sets(active):
     """Full finite grid over active parameters' LOW/CURRENT/HIGH; frozen rest."""
     _check_calibration_policy(active)
+    diagnostic = set(active) & set(DIAGNOSTIC_ONLY_PARAMETERS)
+    if diagnostic:
+        raise ValueError(f"DIAGNOSTIC_ONLY_ACTIVE_PARAMETERS: {sorted(diagnostic)}")
     domain = {name: (low, DEFAULT_SHADOW_REPORT_PARAMETERS[name], high)
               for name, low, high, _ in CALIBRATABLE_PARAMETER_DOMAIN}
     sets, invalid = [], []
@@ -832,7 +857,8 @@ def run_calibration(processes=None, log=print, cache_dir=None):
     if not all(r["matches_pinned_facts"] for r in table):
         raise RuntimeError("BASELINE_MISMATCH: calibration stopped")
     log(f"baseline exact; sensitivity done in {time.perf_counter() - started:.0f}s")
-    rows, active = summarize_sensitivity(outcomes, ids)
+    rows, material = summarize_sensitivity(outcomes, ids)
+    active = forward_active_parameters(material)
     log(f"active={active}")
 
     parameter_sets = dict(sens_sets)

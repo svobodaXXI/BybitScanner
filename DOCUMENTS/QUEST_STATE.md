@@ -1,4 +1,17 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H25 — 2026-10-04
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H26 — 2026-10-04
+
+Owner-authorized executable encoding of the merged H16/H25 forward policy.
+`DIAGNOSTIC_ONLY_PARAMETERS` (`max_support_gap_fraction`,
+`minimum_swing_width_fraction`) are still measured by sensitivity, so the
+historical H5 MATERIAL set of eight stays reproducible, but
+`forward_active_parameters` removes them and grids reject them. The forward
+active set is exactly six = `MAX_ACTIVE_PARAMETERS`, so active-count overflow no
+longer triggers `CALIBRATION_UNDERDETERMINED`. Defaults, production Geometry,
+selection, lifecycle and v1/v2/v3 records are unchanged; no v4 grid, LOO or
+preset run in this slice. Delivery gate: focused + calibration regressions,
+`git diff --check`, PR review; do not merge.
+
+## ✅ PREVIOUS QUEST — GEO-U1 SLICE H25 — 2026-10-04
 
 Owner-authorized docs/policy-only reclassification, stacked on H16 (PR #383).
 `minimum_swing_width_fraction` is diagnostic/ranking-only in forward
