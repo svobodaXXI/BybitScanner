@@ -1,3 +1,141 @@
+## IMPLEMENTATION PLAN — DELIVERY-FIRST RESET — 2026-10-04
+
+Owner decision: optimize for the shortest verified path to a reliable PAPER Robot,
+not for completing research work before product validation.
+
+### 1. Critical path
+
+The critical path is now product-facing:
+
+`real defect -> smallest fix -> focused regression -> merge -> PAPER acceptance -> next defect`.
+
+A task belongs on the critical path only when it:
+- removes a real Scanner/Robot/PAPER blocker;
+- reduces trading/protection/recovery risk;
+- opens the next acceptance gate;
+- or fixes geometry that has a concrete observed bad signal behind it.
+
+Research that does not meet one of those conditions must not block PAPER progress.
+
+### 2. Geometry / calibration routing
+
+GEO-U1 remains valuable but is no longer allowed to monopolize the critical path.
+
+Current H28 state:
+- v4 runner/gate is merged;
+- no accepted `calibration_result_v4.json` exists;
+- the 16-process run exhausted the laptop;
+- the 1-process exhaustive run is operationally too slow for the normal workflow.
+
+Therefore exhaustive v4 is **PARKED / background research**, not a prerequisite for
+continuing PAPER Robot work. It may resume later on a stronger machine or after a
+runner optimization that preserves exact methodology and supports checkpoint/resume.
+
+Geometry work returns to the main queue only when:
+1. a real signal exposes a concrete geometry defect; or
+2. a bounded Geometry slice directly opens a product acceptance gate.
+
+When that happens: pin the bad case -> add it to Gold -> fix that defect class ->
+focused regression -> merge. Avoid broad semantic expansion unless the evidence
+requires it.
+
+### 3. Product-critical execution order
+
+Resume the owner feedback / Robot reliability queue ahead of more exhaustive Geometry:
+
+1. **Robot readiness and recovery**
+   - eliminate persistent `reconciliation_required` / not-ready states when the
+     authoritative PAPER state is already safe and flat;
+   - keep fail-closed behavior when state is genuinely uncertain;
+   - make the durable blocker explicit when automatic recovery is impossible.
+
+2. **Execution and protection correctness**
+   - close any unresolved emergency-close / protection-path cause that can affect
+     capital safety;
+   - verify partial-fill protection, STOP behavior, restart/recovery and no
+     duplicate obligations.
+
+3. **Box execution correctness**
+   - crossed-grid catch-up, actual-average STOP translation, paired closing
+     orders and completion/stale suppression;
+   - prove behavior with focused PAPER regressions before expanding strategy.
+
+4. **Natural PAPER acceptance and statistics**
+   - prefer real full Scanner passes and naturally occurring Robot candidates over
+     synthetic runtime churn;
+   - accumulate PAPER trades and use them to rank the next defects by real impact.
+
+5. **Feature expansion only after reliability**
+   - dual-grid / re-entry / multi-TF / master-junior Robot features remain queued,
+     but must not outrank unresolved safety/recovery defects.
+
+### 4. Slice size / anti-stall rules
+
+To keep throughput high without sacrificing safety:
+
+- one slice = one defect or one gate;
+- reuse existing evidence before collecting new evidence;
+- one focused regression set, not broad test inflation;
+- merge completed slices quickly instead of stacking long research chains;
+- after at most **2-3 consecutive research slices**, require a product checkpoint:
+  `what became safer or closer to PAPER acceptance?`
+- if the answer is “nothing yet”, park the research line and return to the product queue;
+- no archaeology after evidence is proven unrecoverable;
+- no heavy exhaustive job may block normal development.
+
+### 5. Heavy computation policy
+
+Long-running calibration/optimization jobs are infrastructure work, not owner-interactive
+critical-path work.
+
+Required direction before another expensive exhaustive run:
+- checkpoint/resume;
+- deterministic chunking;
+- reuse/caching where semantics remain identical;
+- optional execution on a stronger PC/server;
+- failure must preserve completed work instead of restarting from zero.
+
+No approximation may silently replace the accepted exhaustive methodology. A faster
+screen may be used only as a prefilter if the final accepted result is still validated
+by the exact method.
+
+### 6. Agent prompt / workflow format
+
+Default delegated prompt should be short:
+- authoritative base;
+- one goal;
+- 3-5 hard boundaries;
+- acceptance result;
+- STOP.
+
+Do not restate the full project history in every prompt. Repository authority and the
+owning spec carry context. Expand a prompt only when a concrete dependency requires it.
+
+### 7. Definition of progress
+
+Progress is measured primarily by:
+- fewer unresolved real PAPER blockers;
+- safer and more self-recovering Robot behavior;
+- more successful natural PAPER candidates/trades;
+- fewer owner interventions;
+- shorter time from observed defect to merged verified fix.
+
+Number of research slices, documents, tests, or calibration stages is not itself a
+progress metric.
+
+### 8. Immediate routing decision
+
+Do **not** make H28/H28C the next critical-path task.
+
+Next planning action:
+- refresh the current owner-feedback / Robot reliability queue from repository truth;
+- choose exactly one highest-risk unresolved product blocker;
+- run the normal vertical slice:
+  `evidence -> fix -> focused regression -> merge -> PAPER acceptance`.
+
+Geometry v4 remains preserved for later continuation; no accepted work is discarded.
+
+
 ## NOW — 2026-09-30 — G6 FULL PASS COMPLETED / GEOMETRY GATE REOPENED
 
 Owner screenshot at 14:48 confirms natural Scanner completion:
