@@ -1,4 +1,18 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H14 — 2026-10-04
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H16 — 2026-10-04
+
+Owner-authorized docs/policy-only reclassification. `max_support_gap_fraction`
+is a diagnostic-only structural proxy in forward-looking calibration policy,
+not an active MATERIAL dimension. Basis: accepted H15 verdict
+`RECLASSIFICATION_EVIDENCE_READY`; `DerivedEnvelopeLifecycle` (PR #382, open,
+unmerged) owns structural liveness/staleness semantics. Historical H5 truth is
+preserved: eight MATERIAL under the old proxy regime; `calibration_result_v1/v2/v3`
+are unchanged. Forward MATERIAL count is 7; `MAX_ACTIVE_PARAMETERS` stays 6;
+blocker `CALIBRATION_UNDERDETERMINED: 7 > 6` remains, no grid/preset
+authorized. Production selection still uses legacy `max_support_gap_fraction`
+until a separate cutover; code, defaults, tests, Scanner/Robot/LIVE untouched.
+Delivery gate: `git diff --check`, PR review; do not merge.
+
+## ✅ PREVIOUS QUEST — GEO-U1 SLICE H14 — 2026-10-04
 
 Owner-authorized SHADOW-only external-transition lifecycle coverage on the
 already-pinned OGNUSDT 5m pair, continuing H13 on PR #382. A confirmed

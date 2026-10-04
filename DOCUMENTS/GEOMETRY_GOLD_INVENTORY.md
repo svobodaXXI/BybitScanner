@@ -581,6 +581,40 @@ baseline/one-at-a-time sets produced 891 exact case-runs. Recommendation:
 permission to change Geometry, Robot, Scanner, risk, or LIVE behavior. Historical
 v1/v2 calibration records and Gold manifests/metadata are unchanged.
 
+## Calibration policy reclassification — GEO-U1 Slice H16 (2026-10-04)
+
+Docs/policy only. Based on the accepted H15 verdict
+`RECLASSIFICATION_EVIDENCE_READY`.
+
+**Reclassification wording (forward-looking calibration policy):**
+`max_support_gap_fraction` is reclassified from an active MATERIAL dimension
+to a *diagnostic-only structural proxy*. Structural liveness/staleness
+semantics are owned by `DerivedEnvelopeLifecycle` (SHADOW, PR #382, open and
+unmerged), not by a tunable gap threshold. The parameter is removed only from
+the forward active calibration set; it is excluded from the forward
+calibration policy active set and must not be swept or promoted back to active
+by future calibration policy; executable calibration code is unchanged until a
+separate authorized slice.
+
+**Preserved facts.** H5 (`calibration_result_v3.json`) remains historically
+true: under the old proxy regime eight dimensions were MATERIAL, including
+`max_support_gap_fraction` (IDENTITY_ONLY in H2 -> MATERIAL in H5).
+`calibration_result_v1/v2/v3` and historical sensitivity artifacts are not
+edited. Production selection (`geometry/consensus_selection.py`) still uses the
+legacy `max_support_gap_fraction` until a separate, explicitly authorized
+cutover; its value and all defaults are unchanged.
+
+**Forward count, 8 -> 7.** H5 MATERIAL set (8): `minimum_swing_width_fraction`,
+`minimum_side_touch_clusters`, `min_shared_support_coverage`,
+`max_support_gap_fraction`, `terminal_window_bars`, `terminal_segments`,
+`compression_max_ratio`, `expansion_min_ratio`. Forward active set (7) = the
+same without `max_support_gap_fraction`.
+
+**Blocker unchanged.** `MAX_ACTIVE_PARAMETERS = 6`; 7 > 6 so the forward
+state remains `CALIBRATION_UNDERDETERMINED: 7 > 6`. No grid, leave-one-out or
+preset nomination is authorized; `production_cutover_authorized=false`.
+No Scanner/Robot/LIVE behavior change.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations
