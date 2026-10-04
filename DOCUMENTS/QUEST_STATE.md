@@ -1,4 +1,17 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H26 — 2026-10-04
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H27 — 2026-10-04
+
+Owner-authorized v4 calibration gate preparation; no calibration run. The v4
+runner (`tests/test_geometry_calibration_v4.py`) reuses the H5 population,
+fixture checks, gates, LOO, determinism and concentration path, and uses
+`forward_active_parameters`: exactly six active dimensions, 3^6 = 729 raw grid
+labels (567 valid, 162 invalid by terminal divisibility), no diagnostic-only
+parameter in any grid label. The v4 record adds a `v4` block (material,
+diagnostic-only and forward sets) and keeps `production_cutover_authorized=false`.
+History v1/v2/v3 is digest-pinned and unchanged; `calibration_result_v4.json`
+is not generated. The actual run needs separate authorization. Delivery gate:
+focused + calibration regressions, `git diff --check`, PR review; do not merge.
+
+## ✅ PREVIOUS QUEST — GEO-U1 SLICE H26 — 2026-10-04
 
 Owner-authorized executable encoding of the merged H16/H25 forward policy.
 `DIAGNOSTIC_ONLY_PARAMETERS` (`max_support_gap_fraction`,
