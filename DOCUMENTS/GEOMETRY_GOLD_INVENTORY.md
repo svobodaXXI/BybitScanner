@@ -615,6 +615,60 @@ state remains `CALIBRATION_UNDERDETERMINED: 7 > 6`. No grid, leave-one-out or
 preset nomination is authorized; `production_cutover_authorized=false`.
 No Scanner/Robot/LIVE behavior change.
 
+## Calibration policy reclassification — GEO-U1 Slice H25 (2026-10-04)
+
+Docs/policy only; follows H16. Based on H23 `RECLASSIFICATION_CANDIDATE` and
+H24 `TRAVERSAL_INVARIANT_CONFIRMED`.
+
+**Reclassification wording (forward-looking calibration policy):**
+`minimum_swing_width_fraction` is reclassified from an active MATERIAL
+dimension to *diagnostic/ranking-only semantics*. It is excluded from the
+forward calibration policy active set and must not be swept or promoted back
+to active by future calibration policy; executable calibration code is
+unchanged until a separate authorized slice.
+
+**Evidence (H24, read-only, pinned population).** All 27 cases of
+`calibration_result_v3.json`, 639 CURRENT-admissible pairs (equal to the v3
+admissible counts), 2,235 touch-to-touch segments. Departure is measured with
+the existing segment semantics: max inward close distance meeting
+`max(fraction * width, minimum_swing_atr * ATR)`, expressed as a width
+fraction.
+- Genuine boundary-to-boundary traversal is invariant across LOW 0.225,
+  CURRENT 0.30 and HIGH 0.375: admissible sets and traversal counts are
+  identical at all three values in every case.
+- Minimum genuine traversal departure is 0.3960 (1000TOSHI locality-invariant,
+  U[78,128]/L[45,191], segment U128->L191); no genuine traversal lies in
+  [0.225, 0.375).
+- All 70 departure values in [0.225, 0.375) are same-side retests.
+- The only H5 effect (DEXE 5m EXPANSION -> NO_PERSISTENT_WIDTH_TREND at HIGH)
+  arises because a same-side retest (L54->L107, 0.3088877 on competitor
+  U[22,167]/L[54,107]) stops counting as a meaningful swing, raising that
+  pair's reach ratio (traversals / meaningful swings) from 0.667 to 1.0. This
+  reach-ratio change is a ranking artifact, not a structural traversal
+  requirement, and is recorded as a ranking defect rather than a tuning target.
+
+**Preserved facts.** H5 remains historically true: eight MATERIAL dimensions
+under the old calibration regime, including `minimum_swing_width_fraction`.
+`calibration_result_v1/v2/v3` and historical sensitivity artifacts are not
+edited. Production Geometry, calibration code, defaults and tests are
+unchanged.
+
+**Forward count, 7 -> 6.** Forward active set after H16 and H25:
+`minimum_side_touch_clusters`, `min_shared_support_coverage`,
+`terminal_window_bars`, `terminal_segments`, `compression_max_ratio`,
+`expansion_min_ratio`. (`min_shared_support_coverage` stays active: H17-H22
+found an independent minimum co-support role with no threshold-free
+replacement.)
+
+**Blocker cleared in forward policy.** Forward active count 6 <=
+`MAX_ACTIVE_PARAMETERS = 6`, so `CALIBRATION_UNDERDETERMINED` no longer applies
+to forward policy. This does not itself authorize a grid, leave-one-out,
+preset nomination or production cutover; `production_cutover_authorized=false`.
+
+**Caveat.** The traversal invariant must be re-checked whenever new pinned
+cases are added: the current minimum genuine traversal margin is 0.3960 vs
+HIGH 0.375.
+
 ## VISUAL_ONLY / training-reference library
 
 `training/reference_patterns/` contains a substantial library of annotations

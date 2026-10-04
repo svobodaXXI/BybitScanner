@@ -1,4 +1,20 @@
-## 🎯 ACTIVE QUEST — GEO-U1 SLICE H16 — 2026-10-04
+## 🎯 ACTIVE QUEST — GEO-U1 SLICE H25 — 2026-10-04
+
+Owner-authorized docs/policy-only reclassification, stacked on H16 (PR #383).
+`minimum_swing_width_fraction` is diagnostic/ranking-only in forward
+calibration policy, not an active MATERIAL dimension. Basis: H23
+`RECLASSIFICATION_CANDIDATE` and H24 `TRAVERSAL_INVARIANT_CONFIRMED` (27 pinned
+cases, 639 CURRENT-admissible pairs, 2,235 segments; minimum genuine traversal
+departure 0.3960 > HIGH 0.375; all 70 in-band values are same-side retests).
+Historical H5 truth is preserved: eight MATERIAL; `calibration_result_v1/v2/v3`
+are unchanged. Forward active set is 6 = `MAX_ACTIVE_PARAMETERS` 6, so
+`CALIBRATION_UNDERDETERMINED` is cleared in forward policy only; executable
+calibration code, defaults, tests, production Geometry and Scanner/Robot/LIVE
+are unchanged and no grid/preset is authorized by this slice. Caveat: re-check
+the traversal invariant whenever pinned cases are added. Delivery gate:
+`git diff --check`, PR review; do not merge.
+
+## ✅ PREVIOUS QUEST — GEO-U1 SLICE H16 — 2026-10-04
 
 Owner-authorized docs/policy-only reclassification. `max_support_gap_fraction`
 is a diagnostic-only structural proxy in forward-looking calibration policy,
