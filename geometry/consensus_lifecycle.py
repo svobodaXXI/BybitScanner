@@ -23,6 +23,7 @@ class LifecyclePivot:
     side: str  # upper | lower
     index: int
     relation: str  # INTERNAL | EXTERNAL | BOUNDARY_RELATIVE
+    external_side: str | None = None  # above_upper | below_lower
 
 
 @dataclass(frozen=True)
@@ -70,9 +71,8 @@ def derive_envelope_lifecycle(
 ) -> DerivedEnvelopeLifecycle:
     """Interpret one fixed pair at a closed-candle cutoff, without admission.
 
-    The only implemented transition is a completed internal swing after the
-    last boundary-relative contact. An external transition has no H13 rule and
-    remains ambiguous. Pivot confirmation uses the existing ``find_pivots``
+    A completed internal or same-side external swing after the last boundary
+    contact is decisive. Pivot confirmation uses the existing ``find_pivots``
     defaults on the historical prefix, including its right-hand candles.
     """
     if (type(evidence_as_of_index) is not int
@@ -115,7 +115,11 @@ def derive_envelope_lifecycle(
                     relation = "INTERNAL"
                 else:
                     relation = "EXTERNAL"
-                after.append(LifecyclePivot(side, index, relation))
+                external_side = None
+                if relation == "EXTERNAL":
+                    external_side = ("above_upper" if price >= upper
+                                     else "below_lower")
+                after.append(LifecyclePivot(side, index, relation, external_side))
     after.sort(key=lambda event: (event.index, event.side))
     chain = tuple(after)
     common = dict(
@@ -135,6 +139,23 @@ def derive_envelope_lifecycle(
             ambiguity_trace=("BILATERAL_RECURRENCE_UNPROVEN",),
             shadow_admission_disposition="DEFER_NEW_ADMISSION", **common)
 
+    first_external_by_side = {}
+    external_swing = None
+    for event in chain:
+        if event.relation != "EXTERNAL":
+            continue
+        opposite = "lower" if event.side == "upper" else "upper"
+        previous = first_external_by_side.get((event.external_side, opposite))
+        if previous is not None:
+            external_swing = (previous, event)
+            break
+        first_external_by_side.setdefault((event.external_side, event.side), event)
+    if external_swing is not None:
+        return DerivedEnvelopeLifecycle(
+            lifecycle_state=COMPLETED, decisive_event=external_swing,
+            transition_reason="EXTERNAL_SWING_CHAIN_CONFIRMED",
+            ambiguity_trace=(),
+            shadow_admission_disposition="REJECT_OLD_PAIR", **common)
     if any(event.relation == "EXTERNAL" for event in chain):
         return DerivedEnvelopeLifecycle(
             lifecycle_state=None, decisive_event=None,
