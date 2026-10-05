@@ -87,12 +87,15 @@ def record_robot_incident(
     normalized reason code and only bounded deciding facts.
     """
 
+    failure_stage = "directory_resolve"
     try:
         directory = (
             Path(incident_dir) if incident_dir is not None else _default_incident_dir()
         )
+        failure_stage = "directory_create"
         directory.mkdir(parents=True, exist_ok=True)
 
+        failure_stage = "record_build"
         now_ms = (
             int(timestamp_ms)
             if timestamp_ms is not None
@@ -123,6 +126,7 @@ def record_robot_incident(
         name = f"{now_ns:020d}-{secrets.token_hex(4)}.json"
         path = directory / name
         temp = directory / f".{name}.tmp"
+        failure_stage = "serialize"
         payload = json.dumps(
             record,
             ensure_ascii=False,
@@ -130,7 +134,9 @@ def record_robot_incident(
             separators=(",", ":"),
         )
         try:
+            failure_stage = "temporary_write"
             temp.write_text(payload + "\n", encoding="utf-8")
+            failure_stage = "atomic_replace"
             temp.replace(path)
         finally:
             try:
@@ -138,13 +144,18 @@ def record_robot_incident(
             except Exception:
                 pass
 
+        failure_stage = "retention"
         _prune(directory, keep=MAX_INCIDENT_RECORDS)
         return True
-    except Exception:
+    except Exception as error:
         # Diagnostics are never allowed to block Scanner delivery or Robot
         # protection/recovery. Do not print the underlying exception because it
         # may contain an absolute path or other sensitive context.
-        print("[ROBOT DIAGNOSTIC ERROR] incident_write_failed")
+        error_class = _safe_text(type(error).__name__, limit=64) or "Unknown"
+        print(
+            "[ROBOT DIAGNOSTIC ERROR] incident_write_failed "
+            f"stage={failure_stage} error_class={error_class}"
+        )
         return False
 
 

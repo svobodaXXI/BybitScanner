@@ -1,6 +1,8 @@
 """End-to-end opt-in Scanner/Telegram observation tests (no network or PAPER DB)."""
 
 import os
+import contextlib
+import io
 import tempfile
 import unittest
 from decimal import Decimal
@@ -13,6 +15,7 @@ import pandas as pd
 import tests.test_telegram_delivery  # noqa: F401
 import main
 import ikigai_box_scanner as box
+import robot_failure_diagnostics as diagnostics
 from tests.test_ikigai_box_detector import _two_impulses, _terminal_wick_two_impulses
 from geometry.ikigai_box import detect_ikigai_box, detect_ikigai_box_watches
 from geometry.ikigai_box_chart import ikigai_box_signal_text
@@ -553,6 +556,52 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
                 self.assertEqual(kwargs["timeframe"], "5")
                 self.assertEqual(kwargs["pattern"], "IKIGAI_BOX")
                 self.assertIsInstance(kwargs["error"], Exception)
+
+    def test_preparation_failure_writes_durable_incident_from_missing_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            incident_dir = Path(temp) / "missing" / "robot_incidents"
+            with patch.object(
+                diagnostics, "_default_incident_dir", return_value=incident_dir,
+            ):
+                delivered, photo, warn = self._deliver(
+                    preparer=unittest.mock.Mock(
+                        side_effect=ValueError("secret at C:/private/box-plan.json"),
+                    ),
+                )
+            self.assertTrue(delivered)
+            self.assertEqual(photo.call_count, 2)
+            warn.assert_called_once_with("owner", "TESTUSDT", "5")
+            record, = diagnostics.load_recent_robot_incidents(incident_dir=incident_dir)
+            self.assertEqual(record["incident_type"], "ROBOT_CANDIDATE_FAILURE")
+            self.assertEqual(record["stage"], "box_plan_preparation")
+            self.assertEqual(record["reason_code"], "BOX_PLAN_PREPARATION_EXCEPTION")
+            self.assertEqual(record["symbol"], "TESTUSDT")
+            self.assertEqual(record["timeframe"], "5")
+            self.assertEqual(record["pattern"], "IKIGAI_BOX")
+            self.assertEqual(record["error_class"], "ValueError")
+            self.assertNotIn("private", next(incident_dir.glob("*.json")).read_text(encoding="utf-8"))
+
+    def test_diagnostic_storage_failure_keeps_box_delivery_and_reports_safe_cause(self):
+        with tempfile.TemporaryDirectory() as temp:
+            occupied = Path(temp) / "occupied"
+            occupied.write_text("x", encoding="utf-8")
+            incident_dir = occupied / "robot_incidents"
+            with patch.object(
+                diagnostics, "_default_incident_dir", return_value=incident_dir,
+            ), contextlib.redirect_stdout(io.StringIO()) as output:
+                delivered, photo, warn = self._deliver(
+                    preparer=unittest.mock.Mock(
+                        side_effect=ValueError("secret at C:/private/box-plan.json"),
+                    ),
+                )
+            self.assertTrue(delivered)
+            self.assertEqual(photo.call_count, 2)
+            warn.assert_called_once_with("owner", "TESTUSDT", "5")
+            self.assertFalse(incident_dir.exists())
+            self.assertIn("stage=directory_create", output.getvalue())
+            self.assertRegex(output.getvalue(), r"error_class=(FileExistsError|NotADirectoryError)")
+            self.assertNotIn("private", output.getvalue())
+            self.assertNotIn(str(incident_dir), output.getvalue())
 
     def test_scanner_pass_prepares_only_through_the_owner_card_and_never_admits(self):
         source = _candles()
