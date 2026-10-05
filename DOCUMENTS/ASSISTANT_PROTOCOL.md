@@ -2,11 +2,11 @@
 
 Version:
 
-4.47
+4.48
 
 Date:
 
-2026-09-30
+2026-10-05
 
 Document Type:
 
@@ -334,6 +334,56 @@ This rule implements the project's primary efficiency objective: owner time is
 the scarcest resource. It overrides exploratory one-command-at-a-time diagnosis
 when a documented known path already exists, while preserving fail-closed
 safety and the user-action preflight.
+
+### 2.2.3B OWNER-ROUND-TRIP BUDGET / ANTI-INVESTIGATION-BLOAT — HARD STOP
+
+Owner time is a bounded project resource. Once a defect is localized enough for an
+agent or repository-side workflow to reproduce, inspect, or patch it, further owner
+diagnostic turns are forbidden unless a **new, named host-local unknown** is the only
+remaining blocker.
+
+Mandatory stop rules:
+
+1. **Two-confirmation stop.** After two independent pieces of evidence support the
+   same local failure class or boundary, stop asking the owner for equivalent or
+   adjacent diagnostic checks. Delegate reproduction/root-cause work to the coding
+   agent or use repository/runtime tools directly.
+2. **No equivalent re-probes.** Do not repeat the same hypothesis through alternate
+   commands, paths, grep variants, ACL checks, environment checks, process listings,
+   or file-location searches unless the previous result created a materially new
+   contradiction. A different command that answers the same question still counts
+   as a repeat.
+3. **One authorization is enough.** Explicit owner authorization for the same task,
+   branch publication, PR creation, merge boundary, runtime action, or other scoped
+   operation is valid for that scope until it is completed, revoked, or materially
+   changed. Never ask the owner to repeat the same authorization merely because an
+   agent/tool guard failed to recognize it. Treat that as a tooling/guard blocker
+   and resolve it through another available execution path or report it once.
+4. **Agent escalation threshold.** If one bounded owner diagnostic round-trip does
+   not produce the decisive fact for a new incident, the next step should normally
+   be delegated automated diagnosis. A second owner diagnostic round-trip is allowed
+   only when it tests a different, explicitly named unknown that cannot be obtained
+   by the assistant/agent. After that, further owner diagnostics for the same blocker
+   require explicit owner opt-in.
+5. **Repair over archaeology.** When the failure boundary and a safe minimal repair
+   are already known, implement the focused regression/fix instead of continuing to
+   reconstruct every historical detail. Unknown historical root cause may remain
+   documented as unknown if the regression proves the contract and the fix closes
+   the demonstrated failure mode.
+6. **No process multiplication.** Do not create extra worktrees, branches, PRs,
+   test campaigns, recovery packages, or documentation tasks merely to investigate
+   a small localized blocker. Use the current scoped task unless isolation is
+   technically required.
+7. **State the exception.** Before requesting any owner action beyond these budgets,
+   name the exact new unknown, why existing evidence is insufficient, why repository/
+   agent tooling cannot obtain it, and what single decision the action will unlock.
+   If those four points cannot be stated, do not request the action.
+
+This HARD STOP supplements `2.2.1`, `2.2.2`, and `2.2.3A`. Where they overlap,
+the stricter owner-effort limit applies. Safety/fail-closed requirements are never
+weakened: if stopping investigation would create trading, credential, data-loss, or
+runtime-safety uncertainty, stop the operation itself rather than spending owner
+turns on speculative diagnostics.
 
 ### 2.2.4 MULTI-COMPONENT READINESS CLAIM GATE — HARD RULE
 
