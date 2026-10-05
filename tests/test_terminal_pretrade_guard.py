@@ -15,6 +15,7 @@ import pytest
 from terminal.application.command_identity import CommandIdentityFactory
 from terminal.application.models import ReconciliationResult, TrustState
 from terminal.application.pretrade_guard import (
+    ExactQuantityIntent,
     IntentClassification,
     MutationGate,
     NotionalIntent,
@@ -425,3 +426,90 @@ def test_stage4_has_no_network_mutation_persistence_or_scanner_coupling() -> Non
         }
         assert imports.isdisjoint(forbidden_import_roots)
         assert calls.isdisjoint(forbidden_methods)
+
+
+DUST_INSTRUMENT = instrument(min_notional_value=Decimal("50"))
+
+
+def dust_long(quantity: str = "0.002", **changes) -> PreTradeContext:
+    changes.setdefault("instrument", DUST_INSTRUMENT)
+    return context(
+        position_side=PositionSide.LONG,
+        confirmed_position_quantity=Decimal(quantity),
+        **changes,
+    )
+
+
+def exact(side: OrderSide, quantity: str) -> PreTradeIntent:
+    return market(side=side, volume=ExactQuantityIntent(Decimal(quantity)))
+
+
+def test_paper_dust_full_close_is_exempt_from_min_notional_only() -> None:
+    # 0.002 BTC at 20000 = 40 USDT, below the 50 USDT minimum notional.
+    request = admitted(exact(OrderSide.SELL, "0.002"), dust_long(paper_dust_close_allowed=True))
+    assert request.classification is IntentClassification.CLOSE
+    assert request.reduce_only is True
+    assert request.final_quantity == Decimal("0.002")
+
+
+def test_dust_full_close_without_paper_opt_in_keeps_min_notional() -> None:
+    # LIVE contexts never set the opt-in: behavior is unchanged.
+    decision = enabled_guard().evaluate(exact(OrderSide.SELL, "0.002"), dust_long())
+    assert not decision.admitted
+    assert decision.reason_code is RejectionCode.INSUFFICIENT_VOLUME
+    assert decision.reason == "notional is below instrument minimum"
+
+
+@pytest.mark.parametrize(
+    "intent,ctx",
+    [
+        # Opening from FLAT.
+        (exact(OrderSide.BUY, "0.002"),
+         context(instrument=DUST_INSTRUMENT, paper_dust_close_allowed=True)),
+        # Increasing an existing Long.
+        (market(side=OrderSide.BUY, volume=NotionalIntent(Decimal("40"))),
+         dust_long(paper_dust_close_allowed=True)),
+        # Partial reduction that does not flatten.
+        (exact(OrderSide.SELL, "0.001"), dust_long(paper_dust_close_allowed=True)),
+        # Opposite LIMIT can reverse; it is never exempt.
+        (limit(OrderSide.SELL, "40", "20000"),
+         dust_long(paper_dust_close_allowed=True)),
+    ],
+)
+def test_paper_dust_exemption_never_opens_increases_reduces_partially_or_reverses(
+    intent, ctx,
+) -> None:
+    decision = enabled_guard().evaluate(intent, ctx)
+    assert not decision.admitted
+    assert decision.reason_code is RejectionCode.INSUFFICIENT_VOLUME
+
+
+def test_paper_dust_full_close_still_rejects_below_min_quantity() -> None:
+    ctx = dust_long(
+        "0.002",
+        instrument=instrument(min_notional_value=Decimal("50"), min_order_quantity=Decimal("0.01")),
+        paper_dust_close_allowed=True,
+    )
+    decision = enabled_guard().evaluate(exact(OrderSide.SELL, "0.002"), ctx)
+    assert not decision.admitted
+    assert decision.reason == "quantity is below instrument minimum"
+
+
+def test_paper_dust_full_close_still_rejects_misaligned_quantity_step() -> None:
+    decision = enabled_guard().evaluate(
+        exact(OrderSide.SELL, "0.0015"),
+        dust_long("0.0015", paper_dust_close_allowed=True),
+    )
+    assert not decision.admitted
+
+
+@pytest.mark.parametrize("opt_in", [False, True])
+def test_normal_full_close_is_unchanged_by_paper_opt_in(opt_in: bool) -> None:
+    ctx = context(
+        position_side=PositionSide.LONG,
+        confirmed_position_quantity=Decimal("0.01"),
+        paper_dust_close_allowed=opt_in,
+    )
+    request = admitted(exact(OrderSide.SELL, "0.01"), ctx)
+    assert request.classification is IntentClassification.CLOSE
+    assert request.final_quantity == Decimal("0.01")
