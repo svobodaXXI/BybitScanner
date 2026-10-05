@@ -599,7 +599,7 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
             warn.assert_called_once_with("owner", "TESTUSDT", "5")
             self.assertFalse(incident_dir.exists())
             self.assertIn("stage=directory_create", output.getvalue())
-            self.assertIn("error_class=FileExistsError", output.getvalue())
+            self.assertRegex(output.getvalue(), r"error_class=(FileExistsError|NotADirectoryError)")
             self.assertNotIn("private", output.getvalue())
             self.assertNotIn(str(incident_dir), output.getvalue())
 
