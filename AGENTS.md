@@ -448,6 +448,15 @@ Use the durable governance path only when its distinct value is needed:
 
 `PASS`/`ADVISORY` may continue; `STALE`/`FAIL`/`BLOCKING` stop. Never add recovery, worktrees, branches, full regression, ContextDump, or Project Sync “just in case”.
 
+## Owner-effort hard stop
+
+For diagnosis and authorization handling, `DOCUMENTS/ASSISTANT_PROTOCOL.md`
+§2.2.3B is mandatory. Do not keep the owner in iterative diagnostic loops once
+a localized defect can be reproduced or investigated by an agent. Do not ask
+for the same authorization twice within unchanged scope. After the owner
+diagnostic budget is exhausted, escalate to automated/delegated diagnosis or
+stop and report the single concrete blocker.
+
 ## Communication bootstrap
 
 Before the first project-specific user action in a session, load the relevant communication/user-action rules from `DOCUMENTS/ASSISTANT_PROTOCOL.md`. Reload only changed/uncertain sections.
