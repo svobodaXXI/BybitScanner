@@ -1,9 +1,12 @@
 import contextlib
 import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import pattern_robot_integration as integration
+import robot_failure_diagnostics as diagnostics
 
 
 class PatternRobotIntegrationTests(unittest.TestCase):
@@ -126,6 +129,33 @@ class PatternRobotIntegrationTests(unittest.TestCase):
         self.assertEqual(diagnostic.call_args.kwargs["error"].args, ("disk full",))
         self.assertIn("[ROBOT CANDIDATE ERROR]", output.getvalue())
         self.assertNotIn("disk full", output.getvalue())
+
+    def test_persistence_failure_creates_durable_sanitized_incident(self):
+        snapshot = {"pattern": "L-shape", "symbol": "TESTUSDT", "robot_handoff_ready": True}
+        with tempfile.TemporaryDirectory() as temp:
+            incident_dir = Path(temp) / "missing" / "robot_incidents"
+            with patch.object(
+                integration, "create_signal_snapshot",
+                side_effect=OSError("secret at C:/private/candidate.json"),
+            ), patch.object(
+                diagnostics, "_default_incident_dir", return_value=incident_dir,
+            ), contextlib.redirect_stdout(io.StringIO()):
+                result = integration.prepare_robot_handoff(
+                    snapshot, timeframe="5", enabled=True,
+                )
+
+            self.assertTrue(result.executable)
+            self.assertTrue(result.persistence_failed)
+            self.assertIsNone(result.candidate_id)
+            record, = diagnostics.load_recent_robot_incidents(incident_dir=incident_dir)
+            self.assertEqual(record["incident_type"], "ROBOT_CANDIDATE_FAILURE")
+            self.assertEqual(record["stage"], "candidate_persistence")
+            self.assertEqual(record["reason_code"], "CANDIDATE_PERSISTENCE_EXCEPTION")
+            self.assertEqual(record["symbol"], "TESTUSDT")
+            self.assertEqual(record["timeframe"], "5")
+            self.assertEqual(record["pattern"], "L-shape")
+            self.assertEqual(record["error_class"], "OSError")
+            self.assertNotIn("private", next(incident_dir.glob("*.json")).read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
