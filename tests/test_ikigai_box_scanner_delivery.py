@@ -1,6 +1,8 @@
 """End-to-end opt-in Scanner/Telegram observation tests (no network or PAPER DB)."""
 
 import os
+import contextlib
+import io
 import tempfile
 import unittest
 from decimal import Decimal
@@ -578,6 +580,28 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
             self.assertEqual(record["pattern"], "IKIGAI_BOX")
             self.assertEqual(record["error_class"], "ValueError")
             self.assertNotIn("private", next(incident_dir.glob("*.json")).read_text(encoding="utf-8"))
+
+    def test_diagnostic_storage_failure_keeps_box_delivery_and_reports_safe_cause(self):
+        with tempfile.TemporaryDirectory() as temp:
+            occupied = Path(temp) / "occupied"
+            occupied.write_text("x", encoding="utf-8")
+            incident_dir = occupied / "robot_incidents"
+            with patch.object(
+                diagnostics, "_default_incident_dir", return_value=incident_dir,
+            ), contextlib.redirect_stdout(io.StringIO()) as output:
+                delivered, photo, warn = self._deliver(
+                    preparer=unittest.mock.Mock(
+                        side_effect=ValueError("secret at C:/private/box-plan.json"),
+                    ),
+                )
+            self.assertTrue(delivered)
+            self.assertEqual(photo.call_count, 2)
+            warn.assert_called_once_with("owner", "TESTUSDT", "5")
+            self.assertFalse(incident_dir.exists())
+            self.assertIn("stage=directory_create", output.getvalue())
+            self.assertIn("error_class=FileExistsError", output.getvalue())
+            self.assertNotIn("private", output.getvalue())
+            self.assertNotIn(str(incident_dir), output.getvalue())
 
     def test_scanner_pass_prepares_only_through_the_owner_card_and_never_admits(self):
         source = _candles()
