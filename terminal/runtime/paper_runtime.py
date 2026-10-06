@@ -978,10 +978,16 @@ class PaperRuntime:
         return self._dispatch_robot_command(lambda runtime: runtime.robot_match_symbol(symbol))
 
     def _dispatch_robot_market_book(self, symbol: str):
+        """Read-only market evidence for the Robot monitor.
+
+        Read on the calling (monitor) thread, never routed through the
+        serialized owner: a provider REST fallback must not hold the owner.
+        On the owner itself only an already-streamed book is used.
+        """
         normalized = Symbol(symbol.strip().upper())
-        return self._dispatch_robot_command(
-            lambda runtime: runtime._book_provider.get_book(normalized)
-        )
+        if self.store.is_owned_by_current_thread():
+            return self._streamed_book(normalized)
+        return self._book_provider.get_book(normalized)
 
     def _dispatch_robot_market_preflight(self, request, identity):
         return self._dispatch_robot_command(
@@ -1385,13 +1391,15 @@ class PaperRuntime:
         for ``symbol``, independent of the Workspace UI's selected account and
         of which symbol the UI currently has live-streamed.
 
-        Uses book_provider.get_book() (REST fallback when the symbol is not
-        the UI's currently live-buffered one) rather than
-        get_current_book_update() (buffer-only, single-symbol), so a Robot
-        candidate never depends on the operator viewing its symbol.
+        Matches against the already-streamed book (Workspace buffer or the
+        Robot entry/protection coverage context armed before the LIMIT was
+        created), so a Robot candidate never depends on the operator viewing
+        its symbol. Runs on the serialized owner, so it never falls back to
+        provider REST: without a streamed book nothing matches now, and the
+        coverage feed's own ordered events match the LIMIT instead.
         """
         normalized = Symbol(symbol.strip().upper())
-        book = self._book_provider.get_book(normalized)
+        book = self._streamed_book(normalized)
         if book is None:
             return 0
         match_event_id = f"robot:{normalized.value}:{int(book.received_at_ms)}"
