@@ -72,7 +72,9 @@ from scanner_geometry_cursor import (
     default_scanner_geometry_cursor_provider, latest_scanner_closed_candle,
     load_scanner_catchup_closed_candles, project_latest_geometry_index,
 )
-from terminal.runtime.closed_candle_cache import CachedClosedCandleProvider
+from terminal.runtime.closed_candle_cache import (
+    CachedClosedCandleProvider, PreparedCatchupEvidence,
+)
 from terminal.domain.models import (
     Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
     PositionSide, Quantity, Symbol, TradingAccountId,
@@ -807,6 +809,14 @@ class PaperRuntime:
             and self.robot_closed_candle_cache.fetch is latest_scanner_closed_candle
             else None
         )
+        # Owner-thread one-shot monitors never call the kline loader above:
+        # they read only evidence prepared off the owner (see
+        # SerializedPaperRuntime.warm_robot_closed_candles).
+        self.robot_catchup_evidence = (
+            PreparedCatchupEvidence(self._robot_admission_catchup_candles)
+            if self._robot_admission_catchup_candles is not None
+            else None
+        )
         self._robot_breakout_monitor = RobotBreakoutMonitor(
             lambda: SQLiteStore.open(database_path),
             self._paper_account_id,
@@ -1522,7 +1532,7 @@ class PaperRuntime:
                 lambda: self.store,
                 self._paper_account_id,
                 get_closed_candle=self._robot_closed_candle_provider,
-                get_admission_catchup_candles=self._robot_admission_catchup_candles,
+                get_admission_catchup_candles=self.robot_catchup_evidence,
                 action_executor=_DirectRobotActionExecutor(self),
                 tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
                 clock_ms=lambda: int(time.time() * 1000),
@@ -1632,7 +1642,7 @@ class PaperRuntime:
             lambda: self.store,
             self._paper_account_id,
             get_closed_candle=self._robot_closed_candle_provider,
-            get_admission_catchup_candles=self._robot_admission_catchup_candles,
+            get_admission_catchup_candles=self.robot_catchup_evidence,
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
@@ -1881,7 +1891,7 @@ class PaperRuntime:
                     lambda: self.store,
                     self._paper_account_id,
                     get_closed_candle=self._robot_closed_candle_provider,
-                    get_admission_catchup_candles=self._robot_admission_catchup_candles,
+                    get_admission_catchup_candles=self.robot_catchup_evidence,
                     action_executor=_DirectRobotActionExecutor(self),
                     tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
                     clock_ms=lambda: int(time.time() * 1000),
@@ -1995,6 +2005,23 @@ class PaperRuntime:
         return project_latest_geometry_index(
             snapshot, latest_closed_candle_time_ms=candle["time_ms"],
         )
+
+    def robot_catchup_targets(self) -> tuple[tuple[str, dict[str, object]], ...]:
+        """(symbol, signal snapshot) of APPROVED candidates still uninitialized.
+
+        Read on the owner so the caller can fetch their admission catch-up
+        candles off the owner before queueing pending-entry synchronization.
+        """
+        if self.robot_catchup_evidence is None:
+            return ()
+        targets = []
+        for item in self.store.load_active_robot_candidate_states(self._paper_account_id):
+            if item.status != "APPROVED" or item.robot_state is not None:
+                continue
+            record = self.store.get_robot_candidate(item.candidate_id)
+            if record is not None and record.robot_state is None:
+                targets.append((record.symbol.value, dict(record.signal_snapshot)))
+        return tuple(targets)
 
     def robot_approved_candidate_symbols(self) -> tuple[str, ...]:
         """Symbols of APPROVED candidates (light read) for the candle cache warm-up."""
@@ -2849,11 +2876,17 @@ class PaperRuntime:
             if item.status == "APPROVED"
         }
 
+        # Owner thread: closed candles come only from the cache warmed off the
+        # owner (a miss means "no candle yet"), catch-up only from prepared
+        # evidence -- never a kline request.
+        cache = self.robot_closed_candle_cache
         monitor = RobotBreakoutMonitor(
             lambda: self.store,
             self._account_id,
-            get_closed_candle=self._robot_closed_candle_provider,
-            get_admission_catchup_candles=self._robot_admission_catchup_candles,
+            get_closed_candle=(
+                cache.peek if cache is not None else self._robot_closed_candle_provider
+            ),
+            get_admission_catchup_candles=self.robot_catchup_evidence,
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),

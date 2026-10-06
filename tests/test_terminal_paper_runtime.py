@@ -2918,7 +2918,7 @@ def test_robot_commands_with_warm_candle_cache_do_no_network_on_owner_thread(com
 
 
 @pytest.mark.parametrize("command", ["pause", "stop", "reconcile"])
-def test_robot_commands_without_warm_cache_still_fetch_on_owner_thread_as_before(command):
+def test_robot_commands_without_warm_cache_never_fetch_on_owner_thread(command):
     import threading
 
     calls = []
@@ -2932,9 +2932,9 @@ def test_robot_commands_without_warm_cache_still_fetch_on_owner_thread_as_before
         try:
             _seed_waiting_candidates(runtime)
             _run_robot_command(runtime, command)
-            # Fallback: the previous in-place fetch, one per candidate.
-            assert sorted(symbol for symbol, _ in calls) == list(_CACHE_SYMBOLS)
-            assert all(ident == threading.get_ident() for _, ident in calls)
+            # P0-B: a cold cache is "no closed candle yet" on the owner -- one
+            # counted miss per candidate, never an in-place kline request.
+            assert calls == []
             assert runtime.robot_closed_candle_cache.metrics() == {
                 "candle_cache_hits": 0, "candle_cache_misses_owner": 5,
             }

@@ -16,6 +16,8 @@ Any other thread always fetches and stores a non-``None`` result.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import threading
 import time
@@ -79,6 +81,16 @@ class CachedClosedCandleProvider:
                 LOGGER.warning("candle cache miss on owner thread symbol=%s", symbol)
         return self._fetch_and_store(symbol)
 
+    def peek(self, symbol: str) -> Candle | None:
+        """Fresh cached candle or None. Never fetches, on any thread."""
+        with self._lock:
+            entry = self._entries.get(symbol)
+            if entry is not None and self._clock() - entry[0] <= self._max_age_s:
+                self._hits += 1
+                return entry[1]
+            self._owner_misses += 1
+        return None
+
     def require_cached(self, symbol: str) -> Candle:
         """Recovery evidence only: never fall back to network on the owner.
 
@@ -127,3 +139,65 @@ class CachedClosedCandleProvider:
             with self._lock:
                 self._entries[symbol] = (fetched_at, candle)
         return candle
+
+
+def _snapshot_key(symbol: str, signal_snapshot: Mapping[str, object]) -> tuple[str, str]:
+    canonical = json.dumps(
+        signal_snapshot, sort_keys=True, separators=(",", ":"), default=str,
+    )
+    return symbol, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+class PreparedCatchupEvidence:
+    """Admission catch-up candles prepared OFF the owner thread.
+
+    ``load_scanner_catchup_closed_candles`` is a blocking Bybit kline request.
+    Owner-thread one-shot monitors (pause/stop/reconcile synchronization) get
+    this object as their ``get_admission_catchup_candles``: it only returns
+    evidence that ``prepare`` already fetched on a non-owner thread for that
+    exact (symbol, signal snapshot), consumes it once, and raises -- never
+    fetches -- when nothing fresh was prepared. The monitor then leaves the
+    candidate uninitialized (no state, no order, no exposure), exactly as a
+    failed fetch always has.
+    """
+
+    def __init__(
+        self,
+        fetch: Callable[[str, Mapping[str, object]], tuple],
+        *,
+        max_age_s: float = DEFAULT_MAX_AGE_S,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._fetch = fetch
+        self._max_age_s = max_age_s
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._entries: dict[tuple[str, str], tuple[float, tuple]] = {}
+
+    @property
+    def fetch(self) -> Callable[[str, Mapping[str, object]], tuple]:
+        return self._fetch
+
+    def prepare(self, targets: Iterable[tuple[str, Mapping[str, object]]]) -> None:
+        """Fetch on the calling (non-owner) thread. Errors leave no evidence."""
+        for symbol, signal_snapshot in targets:
+            try:
+                candles = tuple(self._fetch(symbol, signal_snapshot))
+            except Exception:
+                LOGGER.warning(
+                    "Robot catch-up evidence unavailable symbol=%s", symbol, exc_info=True,
+                )
+                continue
+            fetched_at = self._clock()
+            with self._lock:
+                self._entries[_snapshot_key(symbol, signal_snapshot)] = (fetched_at, candles)
+
+    def __call__(self, symbol: str, signal_snapshot: Mapping[str, object]) -> tuple:
+        key = _snapshot_key(symbol, signal_snapshot)
+        with self._lock:
+            entry = self._entries.pop(key, None)
+        if entry is None or self._clock() - entry[0] > self._max_age_s:
+            raise RuntimeError(
+                f"Robot catch-up evidence was not prepared off the owner thread: {symbol}"
+            )
+        return entry[1]

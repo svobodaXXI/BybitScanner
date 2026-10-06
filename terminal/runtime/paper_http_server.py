@@ -1238,6 +1238,7 @@ class SerializedPaperRuntime:
         self._slowest_owner_task: tuple[float, str | None, object] = (0.0, None, None)
         self._owner_diagnostics_disabled = False
         self._candle_cache = None  # the owned runtime's CachedClosedCandleProvider, if any
+        self._catchup_evidence = None  # the owned runtime's PreparedCatchupEvidence, if any
         self._protection_ingress_last_symbol: str | None = None
         self._protection_ingress_last_role: str | None = None
         self._protection_ingress_last_overflow_symbol: str | None = None
@@ -1352,10 +1353,14 @@ class SerializedPaperRuntime:
         instead of blocking the owner thread on REST.
         """
         cache = self._candle_cache
-        if cache is None:
-            return
-        symbols = self.call(lambda runtime: runtime.robot_approved_candidate_symbols())
-        cache.warm(symbols)
+        if cache is not None:
+            symbols = self.call(lambda runtime: runtime.robot_approved_candidate_symbols())
+            cache.warm(symbols)
+        # Admission catch-up klines for still-uninitialized candidates are
+        # fetched here as well; the owner only consumes prepared evidence.
+        evidence = self._catchup_evidence
+        if evidence is not None:
+            evidence.prepare(self.call(lambda runtime: runtime.robot_catchup_targets()))
 
     def protection_ingress_metrics(self) -> dict[str, object]:
         cache = self._candle_cache
@@ -1463,6 +1468,7 @@ class SerializedPaperRuntime:
             self._ready.set()
             return
         self._candle_cache = getattr(runtime, "robot_closed_candle_cache", None)
+        self._catchup_evidence = getattr(runtime, "robot_catchup_evidence", None)
         self._ready.set()
         try:
             while True:
