@@ -344,17 +344,14 @@ class RobotLateAdmissionSerializedRuntimeAcceptanceTests(unittest.TestCase):
                 self.assertTrue(result["preflight"].admitted)
                 self.assertGreater(result["preflight"].normalized_quantity, Decimal("0"))
                 self.assertEqual(result["submit"].status, CommandResultStatus.COMPLETED)
-                # P0-B: the plan-evidence book read is read-only and runs on the
-                # monitor's own thread (a provider REST fallback must never hold
-                # the owner); the execution-time book read stays on the owner.
+                # P0-B: provider reads that may fall back to REST (plan evidence,
+                # then the submit's execution evidence) run on the monitor's own
+                # thread; the owner only looks up the current streamed book
+                # (this in-memory fake stands in for it) and executes there.
                 self.assertEqual(
-                    book_provider.thread_ids[0], result["worker_ident"],
-                    "late Market evidence read was routed through the owner thread",
-                )
-                self.assertTrue(book_provider.thread_ids[1:])
-                self.assertTrue(
-                    all(ident == owner_ident for ident in book_provider.thread_ids[1:]),
-                    "late Market execution escaped the serialized owner thread",
+                    book_provider.thread_ids,
+                    [result["worker_ident"], result["worker_ident"], owner_ident],
+                    "late Market book reads crossed the owner boundary",
                 )
 
                 command = runtime.call(
