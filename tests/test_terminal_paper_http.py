@@ -2915,7 +2915,7 @@ def load_tests(loader, tests, pattern):
             test_workspace_state_endpoint_is_read_only_and_reports_authoritative_state,
             test_workspace_activation_failure_rolls_back_provider_and_active_generation,
             test_workspace_candidate_wait_does_not_block_current_read_only_consumers,
-            test_health_get_returns_exact_paper_status,
+            test_health_get_proves_owner_and_returns_allow_listed_identity,
             test_threaded_http_serializes_concurrent_paper_mutations,
             test_public_orderbook_applies_snapshot_and_incremental_delta,
             test_public_orderbook_accepts_newer_noncontiguous_and_ignores_stale_delta,
@@ -2925,5 +2925,190 @@ def load_tests(loader, tests, pattern):
             test_public_trades_aggregate_side_window_notional_and_sweep_ticks,
             test_finalized_trade_captures_immutable_latest_book_descriptor,
             test_finalized_trade_allows_unavailable_book_correlation,
+            test_protection_runs_before_queued_ordinary_work_behind_slow_book_update,
+            test_protection_latency_is_bounded_by_one_in_flight_ordinary_task,
+            test_steady_protection_stream_does_not_overflow_behind_slow_ordinary_backlog,
+            test_protection_overflow_still_fails_closed_behind_one_overlong_ordinary_task,
         )
     )
+
+
+def _wait_for_queued_requests(runtime, count: int) -> None:
+    deadline = time.monotonic() + 2
+    while runtime._requests.qsize() < count:
+        assert time.monotonic() < deadline, "ordinary requests were not queued"
+        time.sleep(0.005)
+
+
+def test_protection_runs_before_queued_ordinary_work_behind_slow_book_update():
+    """Root fix for the shared-owner starvation incident: protection events
+    admitted while a slow book update runs must not wait behind call()s that
+    were queued earlier; each runs exactly once, in admission order."""
+    release = threading.Event()
+    started = threading.Event()
+    order: list[str] = []
+
+    class SlowBookRuntime:
+        def process_orderbook_update(self, book_update_id: str) -> None:
+            started.set()
+            assert release.wait(timeout=2)
+            order.append("book")
+
+        def close(self) -> None:
+            return None
+
+    runtime = SerializedPaperRuntime(lambda: SlowBookRuntime())
+    callers: list[threading.Thread] = []
+    try:
+        runtime.enqueue_book_update("JNJUSDT:1:1")
+        assert started.wait(timeout=1)
+        for index in range(3):
+            caller = threading.Thread(
+                target=runtime.call,
+                args=(lambda _owner, captured=index: order.append(f"call-{captured}"),),
+            )
+            caller.start()
+            callers.append(caller)
+        _wait_for_queued_requests(runtime, 3)
+        for index in range(3):
+            runtime.enqueue(
+                lambda _owner, captured=index: order.append(f"protection-{captured}"),
+                symbol="MUBARAKUSDT", coverage_role="EXPOSURE",
+            )
+
+        release.set()
+        for caller in callers:
+            caller.join(timeout=2)
+        runtime.call(lambda _: None)
+
+        assert order[:4] == ["book", "protection-0", "protection-1", "protection-2"]
+        assert sorted(order[4:]) == ["call-0", "call-1", "call-2"]
+        assert runtime.protection_ingress_metrics()["current_pending"] == 0
+    finally:
+        release.set()
+        runtime.close()
+
+
+def test_protection_latency_is_bounded_by_one_in_flight_ordinary_task():
+    """Measured bound: with a 0.25 s book update in flight and four 0.25 s
+    calls queued behind it (1.25 s of ordinary backlog), protection queue
+    latency stays within one ordinary task instead of the whole backlog."""
+    task_s = 0.25
+    started = threading.Event()
+
+    class SlowBookRuntime:
+        def process_orderbook_update(self, book_update_id: str) -> None:
+            started.set()
+            time.sleep(task_s)
+
+        def close(self) -> None:
+            return None
+
+    runtime = SerializedPaperRuntime(lambda: SlowBookRuntime())
+    callers: list[threading.Thread] = []
+    try:
+        runtime.enqueue_book_update("JNJUSDT:1:1")
+        assert started.wait(timeout=1)
+        for _ in range(4):
+            caller = threading.Thread(
+                target=runtime.call, args=(lambda _owner: time.sleep(task_s),),
+            )
+            caller.start()
+            callers.append(caller)
+        _wait_for_queued_requests(runtime, 4)
+        runtime.enqueue(lambda _owner: None, symbol="JNJUSDT", coverage_role="EXPOSURE")
+        for caller in callers:
+            caller.join(timeout=5)
+        runtime.call(lambda _: None)  # the protection task has run by now
+        assert runtime.protection_ingress_metrics()["current_pending"] == 0
+
+        latency_ms = runtime.protection_ingress_metrics()["max_queue_latency_ms"]
+        # One in-flight task plus scheduling slack; FIFO measured ~1240 ms here.
+        assert latency_ms < 2 * task_s * 1000, latency_ms
+    finally:
+        runtime.close()
+
+
+def test_steady_protection_stream_does_not_overflow_behind_slow_ordinary_backlog():
+    """Reproduces the incident shape: a steady protection event stream while
+    the owner works through a slow ordinary backlog. FIFO scheduling let the
+    stream pile up behind the whole backlog until ingress_overflow; strict
+    priority drains it between ordinary tasks, so nothing overflows and every
+    event is processed exactly once, in order."""
+    task_s = 0.15
+    capacity = 8
+    events = 30
+    processed: list[int] = []
+
+    class IdleRuntime:
+        def close(self) -> None:
+            return None
+
+    runtime = SerializedPaperRuntime(
+        lambda: IdleRuntime(), protection_ingress_capacity=capacity,
+    )
+    callers: list[threading.Thread] = []
+    try:
+        for _ in range(10):  # 1.5 s of ordinary backlog
+            caller = threading.Thread(
+                target=runtime.call, args=(lambda _owner: time.sleep(task_s),),
+            )
+            caller.start()
+            callers.append(caller)
+        _wait_for_queued_requests(runtime, 5)
+        for index in range(events):  # one event every 50 ms for 1.5 s
+            runtime.enqueue(
+                lambda _owner, captured=index: processed.append(captured),
+                symbol="MUBARAKUSDT", coverage_role="EXPOSURE",
+            )
+            time.sleep(0.05)
+        for caller in callers:
+            caller.join(timeout=5)
+        runtime.call(lambda _: None)
+
+        assert processed == list(range(events))
+        metrics = runtime.protection_ingress_metrics()
+        assert metrics["last_overflow_symbol"] is None
+        assert metrics["high_watermark"] < capacity
+    finally:
+        runtime.close()
+
+
+def test_protection_overflow_still_fails_closed_behind_one_overlong_ordinary_task():
+    """Priority does not hide overload: if a single in-flight ordinary task
+    outlasts the bound, admission still raises ProtectionIngressOverflow, and
+    every admitted event still runs once, in order, before queued calls."""
+    release = threading.Event()
+    started = threading.Event()
+    order: list[str] = []
+
+    class IdleRuntime:
+        def close(self) -> None:
+            return None
+
+    def blocking_call(_owner: object) -> None:
+        started.set()
+        assert release.wait(timeout=2)
+        order.append("blocking-call")
+
+    runtime = SerializedPaperRuntime(
+        lambda: IdleRuntime(), protection_ingress_capacity=2,
+    )
+    blocker = threading.Thread(target=runtime.call, args=(blocking_call,))
+    try:
+        blocker.start()
+        assert started.wait(timeout=1)
+        runtime.enqueue(lambda _owner: order.append("protection-0"), symbol="JNJUSDT")
+        runtime.enqueue(lambda _owner: order.append("protection-1"), symbol="JNJUSDT")
+        with pytest.raises(ProtectionIngressOverflow):
+            runtime.enqueue(lambda _owner: order.append("dropped"), symbol="JNJUSDT")
+
+        release.set()
+        blocker.join(timeout=2)
+        runtime.call(lambda _owner: order.append("next-call"))
+
+        assert order == ["blocking-call", "protection-0", "protection-1", "next-call"]
+        assert runtime.protection_ingress_metrics()["last_overflow_symbol"] == "JNJUSDT"
+    finally:
+        release.set()
+        runtime.close()
