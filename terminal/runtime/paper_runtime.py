@@ -618,6 +618,14 @@ class PaperRuntime:
         )
         engine = ExecutionEngine(self.store)
         self._book_provider = book_provider
+        # Owner-thread protection closes read only an already-streamed book:
+        # LiveOrderBookProvider.get_book() may fall back to a blocking REST
+        # request, which would stall the single owner (and protection ingress)
+        # for up to its timeout. In-memory providers without a network
+        # fallback expose only get_book().
+        self._streamed_book = getattr(
+            book_provider, "get_streamed_book", book_provider.get_book,
+        )
         self._limit_executor = PaperLimitExecutor(
             engine,
             fee_rate=Decimal("0.0006"),
@@ -1675,7 +1683,7 @@ class PaperRuntime:
         existing = self.store.get_paper_protection_obligation_for_trade(trade.trade_id)
         if existing is not None and existing.status != "RESOLVED":
             resumed = self._dispatch_paper_protection_obligation(
-                existing, now_ms=received_at_ms,
+                existing, now_ms=received_at_ms, recovery_book=book,
             )
             closed = self.store.get_robot_trade(trade.trade_id)
             return finish(
@@ -1781,7 +1789,7 @@ class PaperRuntime:
             latched_at_ms=received_at_ms,
         )
         resolved = self._dispatch_paper_protection_obligation(
-            obligation, now_ms=received_at_ms,
+            obligation, now_ms=received_at_ms, recovery_book=book,
         )
         closed = self.store.get_robot_trade(trade.trade_id)
         return finish(
@@ -1907,6 +1915,9 @@ class PaperRuntime:
             if position.side is PositionSide.LONG
             else OrderSide.BUY
         )
+        execution_book = self._streamed_book(symbol)
+        if execution_book is None:
+            raise RuntimeError("streamed PAPER protection book is unavailable")
         stop_result = self._market_executor.execute(
             trading_account_id=context.pretrade.position_key.trading_account_id,
             symbol=context.pretrade.position_key.symbol,
@@ -1915,6 +1926,7 @@ class PaperRuntime:
             order_link_id=f"paper-{leg}-{digest}",
             order_id=OrderId(f"paper-{leg}-order-{digest}"),
             exec_id=ExecutionId(f"paper-{leg}-exec-{digest}"),
+            book=execution_book,
         )
         if stop_result.apply_result is ExecutionApplyResult.APPLIED:
             applied += 1
@@ -2137,6 +2149,7 @@ class PaperRuntime:
 
     def _dispatch_paper_protection_obligation(
         self, obligation: PaperProtectionObligationRecord, *, now_ms: int,
+        recovery_book: NormalizedOrderBook | None = None,
     ) -> PaperProtectionObligationRecord:
         """Idempotently drive one durable D2.1 obligation from
         TRIGGERED/DISPATCHING to RESOLVED (D2.3).
@@ -2150,6 +2163,12 @@ class PaperRuntime:
         and never advances a step it cannot prove; any ownership/lifecycle
         mismatch (manual close, replacement position) fails closed and
         leaves the obligation for reconciliation rather than guessing.
+
+        Runs on the serialized owner, so it never waits on network I/O: the
+        close executes against the current already-streamed book, or -- only
+        for continuity recovery, whose stream may be down -- the authoritative
+        ``recovery_book`` snapshot fetched off the owner thread. Without
+        either, nothing executes and the obligation resumes on a later quote.
         """
         if obligation.status == "RESOLVED":
             return obligation
@@ -2251,6 +2270,21 @@ class PaperRuntime:
                     updated_at_ms=now_ms,
                 )
             close_side = OrderSide.SELL if expected_side is PositionSide.LONG else OrderSide.BUY
+            execution_book = self._streamed_book(trade.symbol)
+            if (
+                execution_book is None
+                and recovery_book is not None
+                and recovery_book.symbol == trade.symbol
+            ):
+                execution_book = recovery_book
+            if execution_book is None:
+                LOGGER.error(
+                    "Robot protection close has no streamed execution book; "
+                    "not dispatching, will resume on the next quote/restart; "
+                    "obligation=%s symbol=%s",
+                    obligation.obligation_id, trade.symbol.value,
+                )
+                return obligation
             try:
                 self._market_executor.execute(
                     trading_account_id=trade.trading_account_id,
@@ -2260,6 +2294,7 @@ class PaperRuntime:
                     order_link_id=obligation.obligation_id,
                     order_id=obligation.order_id,
                     exec_id=obligation.exec_id,
+                    book=execution_book,
                 )
             except (RuntimeError, ValueError):
                 LOGGER.exception(
