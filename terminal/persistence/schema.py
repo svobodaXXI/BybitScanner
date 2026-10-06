@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -896,6 +896,17 @@ SCHEMA_V24_MIGRATION_STATEMENTS = (
        BEGIN SELECT RAISE(ABORT, 'Robot auto decision audit cannot be deleted'); END""",
 )
 
+# Robot hot-path read access (P0 protection latency). robot_candidates is a
+# WITHOUT ROWID table carrying multi-KB signal snapshots; without these, the
+# per-symbol and active-status reads on every protection event walk the whole
+# candidate history through the (trading_account_id, snapshot_sha256) key.
+SCHEMA_V25_MIGRATION_STATEMENTS = (
+    """CREATE INDEX IF NOT EXISTS robot_candidates_account_symbol
+       ON robot_candidates(trading_account_id, symbol)""",
+    """CREATE INDEX IF NOT EXISTS robot_candidates_account_status
+       ON robot_candidates(trading_account_id, status)""",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -921,4 +932,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V22_MIGRATION_STATEMENTS
     + SCHEMA_V23_MIGRATION_STATEMENTS
     + SCHEMA_V24_MIGRATION_STATEMENTS
+    + SCHEMA_V25_MIGRATION_STATEMENTS
 )
