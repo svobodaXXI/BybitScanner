@@ -135,6 +135,98 @@ Next planning action:
 
 Geometry v4 remains preserved for later continuation; no accepted work is discarded.
 
+## NOW — 2026-10-07 — OWNER FEEDBACK QUEUE
+
+The following owner-observed defects and UX requirements are now in the active
+product queue. They are distinct slices; do not bundle trading-safety changes
+with geometry or presentation changes unless the implementation dependency is
+strictly necessary.
+
+1. **P0 — BOX-PRISTINE-FLAT-1 — pristine FLAT Box admission**
+   - AVNTUSDT 5m LONG was admitted as linked `APPROVED / BOX_ENTRY_READY` but
+     remained unexecuted after repeated attempts with
+     `Box ownership requires reconciled FLAT position and journal`;
+   - read-only evidence: AVNTUSDT has no position projection, no executions, no
+     Box attempt ownership and no Box order ownership;
+   - treat `no position row + no executions + no ownership/exposure evidence`
+     as a provable pristine-FLAT baseline for PAPER Box ownership;
+   - keep fail-closed behavior when any execution/history/ownership/exposure
+     evidence exists without a reconciled projection;
+   - acceptance: pristine symbol reaches catch-up classification and normal
+     MARKET/LIMIT execution path; ambiguous symbol remains blocked.
+
+2. **P0 — MON-CAND-EXEC-1 — candidate execution observability**
+   - candidate monitoring currently hides durable execution state behind the
+     generic text `Сделка: не открыта`;
+   - show phase, attempt count, last execution error/block reason and, for Box,
+     MARKET-vs-LIMIT catch-up slot state / ownership readiness when available;
+   - the owner must be able to distinguish waiting, blocked, planned and actually
+     submitted states without reading SQLite manually.
+
+3. **P1 — MON-CAND-CHART-1 — chart in candidate monitoring**
+   - every monitored durable candidate must have an updated chart on its signal
+     timeframe using current closed candles;
+   - preserve frozen candidate identity, anchors/geometry and trading levels;
+     monitoring must not silently re-detect/re-anchor from later candles;
+   - retain TradingView navigation and degrade to the text card if rendering fails;
+     chart failure must never block Robot execution/protection.
+
+4. **P0 — GEO-ADJ-ANCHOR-1 — anchors only on adjacent opposite extrema**
+   - CAPUSDT 5m is the owner visual reference for a malformed triangle caused by
+     anchor selection across non-adjacent opposite pivots;
+   - an anchor pair is valid only when the opposite extremum is the immediate
+     neighboring opposite pivot in chronological pivot order;
+   - skipping an intermediate opposite extremum is a hard geometry reject, not a
+     score penalty;
+   - acceptance: no Wedge/Triangle candidate may be built from a pair that jumps
+     over another opposite pivot.
+
+5. **P0 — GEO-CORRECTIVE-WEDGE-START-1 — corrective wedge first anchor**
+   - CASHCATUSDT 5m is the owner visual reference: after a strong decline, the
+     rising corrective wedge should begin at the lowest reversal extremum that
+     terminates the impulse, not at a later local point inside the correction;
+   - mirror the rule after a strong rise for falling corrective wedges;
+   - anchor selection must preserve impulse/reversal chronology and must not crop
+     away the true start merely because a later local fit scores well.
+
+6. **P1 — GEO-WEDGE-IMPULSE-CONTEXT-1 — impulse context in wedge selection**
+   - wedge geometry/ranking must distinguish a corrective wedge after a strong
+     impulse from an isolated local shape;
+   - reuse structural pivot evidence; do not add a coin-specific threshold or
+     presentation-only patch;
+   - this slice is subordinate to the hard adjacent-anchor and corrective-start
+     rules above.
+
+7. **P0 — WEDGE-TP-BASE-1 — TP/potential must equal wedge-base measurement**
+   - CTUSDT 1m Falling Wedge is the owner visual reference: displayed TP is much
+     farther than the visible wedge base implies;
+   - trace whether target calculation, frozen geometry or chart rendering is using
+     a different span;
+   - one authoritative wedge-base measurement must drive both displayed potential
+     percentage and TP level;
+   - if the base cannot be established validly, reject/flag the candidate rather
+     than publish an inflated target.
+
+8. **P1 — POSITION-CARD-STATUS-CLEANUP-1 — remove redundant open-status row**
+   - remove the user-visible line `Статус: открыта` from the position card;
+   - do not replace it with equivalent noise; preserve useful PnL/SL/TP/volume and
+     navigation controls.
+
+9. **P0 — PAPER-UNCERTAINTY-1 — unresolved PAPER state / stale reconciliation debt**
+   - `/positions` currently reports `PAPER · Состояние не подтверждено` while no
+     open position projection is shown;
+   - many historical FLAT projections remain `sync_state=reconciliation_required`;
+   - separately identify the unfinished command and/or unfinished reconciliation
+     checkpoint that actually triggers the warning, then repair self-recovery or
+     stale terminalization through canonical persistence APIs only;
+   - no manual SQL cleanup; preserve fail-closed behavior when exposure is genuinely
+     uncertain.
+
+Routing order for these new items: fix PAPER/Robot execution blockers first
+(`BOX-PRISTINE-FLAT-1`, `PAPER-UNCERTAINTY-1`), then candidate observability,
+then geometry hard gates/target correctness, then presentation cleanup. A real
+owner-observed safety blocker may preempt this order.
+
 
 ## NOW — 2026-09-30 — G6 FULL PASS COMPLETED / GEOMETRY GATE REOPENED
 
