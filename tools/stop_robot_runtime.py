@@ -20,6 +20,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
+import json
 import os
 from pathlib import Path
 import sqlite3
@@ -34,6 +35,7 @@ import requests
 from urllib.parse import urlsplit
 
 from terminal.application.robot_control import RobotControlRejected, stop_robot
+from terminal.persistence.schema import SCHEMA_VERSION
 from tools.legacy_runtime_process import (
     BACKEND, TELEGRAM, LegacyOwnerUnproven, probe_listener_pids,
     resolve_legacy_chain, terminate_exact_pids,
@@ -62,6 +64,14 @@ PRESENT = "present"
 
 class SafeStopError(RuntimeError):
     """A shutdown precondition could not be proven; nothing further is changed."""
+
+
+class ReconcileRejected(SafeStopError):
+    """The backend answered a definitive reconcile failure (HTTP 409, success false)."""
+
+    def __init__(self, message: str, body: Mapping[str, object]) -> None:
+        super().__init__(message)
+        self.body = body
 
 
 class Unreachable(Exception):
@@ -272,6 +282,198 @@ def hold_legacy_paper_quiescence(database_path: Path) -> Iterator[None]:
             connection.close()
 
 
+# Legacy pre-v26 upgrade deadlock (P0 BOX-PRISTINE-FLAT-1): an old backend cannot
+# reconcile APPROVED Box candidates on never-traded symbols, so the canonical stop
+# refuses to end it, while the v26 code that can reconcile them cannot load until it
+# exits. These names pin the exact legacy blocker and failure shape.
+LEGACY_BOX_UPGRADE_REASON_PREFIX = "reconcile_robot could not prove pending Robot entry safety: "
+LEGACY_BOX_PRISTINE_ERROR = "Box ownership requires reconciled FLAT position and journal"
+LEGACY_BOX_EXECUTION_KEYS = frozenset({"attempt_count", "last_attempt_at_ms", "last_execution_error"})
+LEGACY_BOX_MIN_SCHEMA = 23  # first schema with Box ownership tables
+
+
+@dataclass(frozen=True)
+class LegacyBoxUpgradeProof:
+    schema_version: int
+    robot_version: int
+    candidate_ids: tuple[str, ...]
+    symbols: tuple[str, ...]
+
+
+def _prove_pristine_box_candidate(connection: sqlite3.Connection, candidate_id: str) -> str:
+    row = connection.execute(
+        """SELECT trading_account_id, symbol, status, robot_state_json
+           FROM robot_candidates WHERE candidate_id=?""",
+        (candidate_id,),
+    ).fetchone()
+    if (
+        row is None or row[0] != "paper" or row[2] != "APPROVED"
+        or not candidate_id.startswith("box-robot-")
+    ):
+        raise SafeStopError(f"{candidate_id} is not an APPROVED Box Robot candidate")
+    symbol = str(row[1])
+    state = json.loads(row[3]) if isinstance(row[3], str) else None
+    if (
+        not isinstance(state, dict) or state.get("phase") != "BOX_ENTRY_READY"
+        or state.get("pattern") != "IKIGAI_BOX"
+    ):
+        raise SafeStopError(f"{symbol}: candidate is not in Box pending-entry state")
+    source_id = state.get("source_box_candidate_id")
+    source = connection.execute(
+        "SELECT trading_account_id, symbol, status FROM robot_candidates WHERE candidate_id=?",
+        (source_id,),
+    ).fetchone() if isinstance(source_id, str) else None
+    if source is None or tuple(source) != ("paper", symbol, "BOX_PLAN_ONLY"):
+        raise SafeStopError(f"{symbol}: frozen Box source plan is not proven")
+    execution = state.get("execution")
+    if not isinstance(execution, dict) or set(execution) - LEGACY_BOX_EXECUTION_KEYS:
+        raise SafeStopError(f"{symbol}: candidate has unexpected execution evidence")
+    if execution.get("last_execution_error") != LEGACY_BOX_PRISTINE_ERROR:
+        raise SafeStopError(
+            f"{symbol}: failure is not the legacy pristine Box ownership rejection"
+        )
+
+    def present(sql: str, *args: object) -> bool:
+        return connection.execute(sql, args).fetchone() is not None
+
+    evidence = (
+        ("a position projection", present(
+            "SELECT 1 FROM position_projections WHERE trading_account_id='paper' AND symbol=?",
+            symbol)),
+        ("executions", present(
+            "SELECT 1 FROM executions WHERE trading_account_id='paper' AND symbol=?", symbol)),
+        ("Box ownership", present(
+            "SELECT 1 FROM box_attempt_ownership WHERE symbol=?", symbol)
+         or present(
+            "SELECT 1 FROM box_order_ownership WHERE candidate_id IN (?, ?)",
+            source_id, candidate_id)),
+        ("a PAPER limit", present(
+            """SELECT 1 FROM paper_limit_orders WHERE trading_account_id='paper' AND symbol=?
+               AND status != 'cancelled'""", symbol)),
+        ("an unresolved trading command", present(
+            """SELECT 1 FROM trading_commands WHERE trading_account_id='paper' AND symbol=?
+               AND current_state NOT IN ('cancelled', 'rejected', 'failed')""", symbol)),
+        ("a protection projection", present(
+            "SELECT 1 FROM protection_projections WHERE trading_account_id='paper' AND symbol=?",
+            symbol)),
+        ("a protection obligation", present(
+            "SELECT 1 FROM paper_protection_obligations WHERE trading_account_id='paper' AND symbol=?",
+            symbol)),
+        ("an open Robot trade", present(
+            """SELECT 1 FROM robot_trades WHERE trading_account_id='paper' AND symbol=?
+               AND exit_time_ms IS NULL""", symbol)),
+    )
+    found = [name for name, exists in evidence if exists]
+    if found:
+        raise SafeStopError(f"{symbol}: pristine Box proof blocked by " + ", ".join(found))
+    return symbol
+
+
+def _prove_legacy_box_upgrade(connection: sqlite3.Connection) -> LegacyBoxUpgradeProof:
+    schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if not LEGACY_BOX_MIN_SCHEMA <= schema_version < SCHEMA_VERSION:
+        raise SafeStopError(
+            f"PAPER DB schema v{schema_version} is not a legacy pre-v{SCHEMA_VERSION} "
+            "Box upgrade state"
+        )
+    robot = connection.execute(
+        """SELECT mode, recovery_status, reason, version FROM robot_runtime_state
+           WHERE trading_account_id='paper'"""
+    ).fetchone()
+    if robot is None or (robot[0], robot[1]) != ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
+        raise SafeStopError("Robot is not ROBOT_RUNNING / RECONCILIATION_REQUIRED")
+    reason = robot[2]
+    if not isinstance(reason, str) or not reason.startswith(LEGACY_BOX_UPGRADE_REASON_PREFIX):
+        raise SafeStopError("Robot reason is not the pending-entry reconciliation blocker")
+    candidate_ids = tuple(reason[len(LEGACY_BOX_UPGRADE_REASON_PREFIX):].split(","))
+    if (
+        any(not item or item != item.strip() for item in candidate_ids)
+        or len(set(candidate_ids)) != len(candidate_ids)
+        or list(candidate_ids) != sorted(candidate_ids)
+    ):
+        raise SafeStopError("pending-entry reconciliation blocker names are malformed")
+    scanner = connection.execute(
+        "SELECT mode FROM scanner_runtime_state WHERE trading_account_id='paper'"
+    ).fetchone()
+    if scanner is None or scanner[0] != "SCANNER_STOPPED":
+        raise SafeStopError("Scanner is not durably STOPPED")
+    # Global Robot-scoped quiescence: no OPEN candidate, open trade, working limit,
+    # ambiguous APPROVED exposure or unresolved protection obligation anywhere.
+    # Other inert APPROVED candidates are not ownership (same contract as the
+    # existing legacy shutdown); the upgraded backend restarts them closed.
+    _assert_legacy_paper_quiescence(connection)
+    symbols = [_prove_pristine_box_candidate(connection, item) for item in candidate_ids]
+    if len(set(symbols)) != len(symbols):
+        raise SafeStopError("several blocked Box candidates share one symbol")
+    for candidate_id, symbol in zip(candidate_ids, symbols):
+        if connection.execute(
+            """SELECT 1 FROM robot_candidates
+               WHERE trading_account_id='paper' AND symbol=? AND candidate_id != ?
+                 AND status IN ('APPROVED', 'OPEN')""",
+            (symbol, candidate_id),
+        ).fetchone() is not None:
+            raise SafeStopError(f"{symbol}: another active Robot candidate owns the symbol")
+    return LegacyBoxUpgradeProof(
+        schema_version, int(robot[3]), candidate_ids, tuple(sorted(symbols)),
+    )
+
+
+def prove_legacy_box_upgrade(database_path: Path) -> LegacyBoxUpgradeProof:
+    """Read-only proof that a pre-v26 backend blocks only on pristine Box candidates."""
+    if not database_path.exists():
+        raise SafeStopError("legacy PAPER database is unavailable")
+    try:
+        connection = sqlite3.connect(database_path.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            connection.execute("BEGIN")
+            return _prove_legacy_box_upgrade(connection)
+        finally:
+            connection.close()
+    except SafeStopError:
+        raise
+    except (sqlite3.Error, InvalidOperation, TypeError, ValueError) as exc:
+        raise SafeStopError("legacy Box upgrade evidence is unreadable") from exc
+
+
+@contextmanager
+def hold_legacy_box_upgrade(
+    database_path: Path, expected: LegacyBoxUpgradeProof,
+) -> Iterator[None]:
+    """Freeze PAPER writers and re-prove the identical pristine Box evidence.
+
+    Same bounded BEGIN IMMEDIATE + query_only barrier as the legacy quiescence
+    guard: no writer can create an order, fill or ownership row between this
+    proof and termination, and this helper never edits a row itself.
+    """
+    if not database_path.exists():
+        raise SafeStopError("legacy PAPER database is unavailable")
+    connection = None
+    try:
+        connection = sqlite3.connect(
+            database_path.resolve().as_uri() + "?mode=rw", uri=True,
+            timeout=LEGACY_WRITER_BARRIER_TIMEOUT_S,
+        )
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute("PRAGMA query_only=ON")
+        if _prove_legacy_box_upgrade(connection) != expected:
+            raise SafeStopError("legacy Box upgrade evidence changed before termination")
+    except SafeStopError:
+        if connection is not None:
+            connection.close()
+        raise
+    except (sqlite3.Error, InvalidOperation, TypeError, ValueError) as exc:
+        if connection is not None:
+            connection.close()
+        raise SafeStopError("legacy Box upgrade barrier is unavailable") from exc
+    try:
+        yield
+    finally:
+        try:
+            connection.rollback()
+        finally:
+            connection.close()
+
+
 @dataclass(frozen=True)
 class LegacyBackendProof:
     process_instance_id: str
@@ -295,6 +497,8 @@ class RuntimeShutdown:
         legacy_terminator: Callable[[tuple[int, ...]], None] = terminate_exact_pids,
         legacy_paper_quiescence: Callable[[], None] | None = None,
         legacy_paper_guard: Callable[[], ContextManager[None]] | None = None,
+        legacy_box_upgrade_proof: Callable[[], LegacyBoxUpgradeProof] | None = None,
+        legacy_box_upgrade_guard: Callable[[LegacyBoxUpgradeProof], ContextManager[None]] | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> None:
         env = dict(os.environ if env is None else env)
@@ -314,6 +518,14 @@ class RuntimeShutdown:
         self._legacy_paper_guard = (
             legacy_paper_guard
             or (lambda: hold_legacy_paper_quiescence(database_path))
+        )
+        self._legacy_box_upgrade_proof = (
+            legacy_box_upgrade_proof
+            or (lambda: prove_legacy_box_upgrade(database_path))
+        )
+        self._legacy_box_upgrade_guard = (
+            legacy_box_upgrade_guard
+            or (lambda proof: hold_legacy_box_upgrade(database_path, proof))
         )
         self._get = get
         self._post = post
@@ -368,7 +580,10 @@ class RuntimeShutdown:
                 state = self._robot_state()
                 if state == ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
                     self._mark("requesting Robot reconciliation")
-                    self._reconcile_robot()
+                    try:
+                        self._reconcile_robot()
+                    except ReconcileRejected as rejected:
+                        return self._shutdown_legacy_box_upgrade(telegram, steps, rejected)
                     self._mark("Robot reconciliation confirmed")
                     steps.append("robot:reconcile")
                     state = self._robot_state()
@@ -543,13 +758,117 @@ class RuntimeShutdown:
             raise SafeStopError(
                 "Robot reconcile outcome is unknown; not retried; runtime kept alive"
             ) from exc
+        message = "Robot reconcile did not confirm success; not retried; runtime kept alive"
+        if (
+            status == 409 and isinstance(body, dict)
+            and body.get("ok") is False and body.get("success") is False
+        ):
+            raise ReconcileRejected(message, body)
         if (
             status != 200 or not isinstance(body, dict)
             or body.get("ok") is not True or body.get("success") is not True
         ):
+            raise SafeStopError(message)
+
+    def _shutdown_legacy_box_upgrade(
+        self, telegram: str, steps: list[str], rejected: ReconcileRejected,
+    ) -> ShutdownResult:
+        # Upgrade-only escape hatch. A pre-v26 backend cannot reconcile APPROVED
+        # Box candidates on never-traded symbols, and the v26 code that can is
+        # unable to load until that process exits. Terminate the exact proven
+        # legacy chain only when the durable DB independently proves every
+        # blocked candidate is pristine with zero exposure. Durable Robot state is
+        # left as RECONCILIATION_REQUIRED for the upgraded backend to reconcile.
+        try:
+            return self._terminate_for_legacy_box_upgrade(telegram, steps, rejected.body)
+        except SafeStopError as exc:
             raise SafeStopError(
-                "Robot reconcile did not confirm success; not retried; runtime kept alive"
+                f"{rejected}; legacy Box upgrade shutdown not proven: {exc}"
+            ) from exc
+
+    def _terminate_for_legacy_box_upgrade(
+        self, telegram: str, steps: list[str], body: Mapping[str, object],
+    ) -> ShutdownResult:
+        self._mark("Robot reconcile rejected; proving legacy pristine Box upgrade state")
+        try:
+            proof = self._legacy_box_upgrade_proof()
+        except SafeStopError:
+            raise
+        except Exception as exc:
+            raise SafeStopError("legacy Box upgrade evidence is unavailable") from exc
+        unresolved = body.get("unresolved_candidate_ids")
+        if (
+            not isinstance(unresolved, list)
+            or any(not isinstance(item, str) for item in unresolved)
+            or len(unresolved) != len(proof.candidate_ids)
+            or tuple(sorted(unresolved)) != proof.candidate_ids
+        ):
+            raise SafeStopError(
+                "reconcile response does not name exactly the proven pristine Box candidates"
             )
+        self._require_scanner_stopped()
+        self._require_box_upgrade_protection(proof)
+        identity = self._legacy_backend_attribution()
+        self._mark("acquiring bounded SQLite writer barrier for legacy Box upgrade")
+        with self._legacy_box_upgrade_guard(proof):
+            chain = self._resolve_box_upgrade_chain(proof, identity)
+            steps.append("runtime:legacy-box-upgrade-proof")
+            if telegram == PRESENT:
+                self._mark("shutting down Telegram monitoring")
+                steps.append(self._shutdown(
+                    self._telegram + "/shutdown", self._telegram + "/health",
+                    "Telegram monitoring", TELEGRAM, "telegram",
+                ))
+            final_chain = self._resolve_box_upgrade_chain(proof, identity)
+            if final_chain != chain:
+                raise SafeStopError("legacy PAPER backend process chain changed; nothing was terminated")
+            self._mark(f"terminating exact legacy backend chain for upgrade: {final_chain}")
+            try:
+                self._legacy_terminator(final_chain)
+            except Exception as exc:
+                raise SafeStopError(
+                    f"PAPER backend legacy termination failed: {type(exc).__name__}"
+                ) from exc
+            steps.append("backend:legacy-box-upgrade-terminate")
+            self._wait_gone(self._backend + "/api/health", "PAPER backend")
+        return ShutdownResult(
+            SCOPE_ALL, True,
+            "Runtime STOPPED for upgrade: legacy backend ended after pristine Box proof; "
+            "Robot stays RECONCILIATION_REQUIRED for the upgraded backend.",
+            tuple(steps), runtime_stopped=True,
+        )
+
+    def _resolve_box_upgrade_chain(
+        self, proof: LegacyBoxUpgradeProof, identity: LegacyBackendProof,
+    ) -> tuple[int, ...]:
+        if self._robot_state() != ("ROBOT_RUNNING", "RECONCILIATION_REQUIRED"):
+            raise SafeStopError("Robot changed during legacy Box upgrade proof")
+        self._require_scanner_stopped()
+        self._require_box_upgrade_protection(proof)
+        if self._legacy_backend_attribution() != identity:
+            raise SafeStopError("legacy PAPER backend identity changed before termination")
+        location = urlsplit(self._backend)
+        try:
+            chain = tuple(self._legacy_resolver(
+                BACKEND, location.hostname or "", location.port or 0, self._root,
+            ))
+        except LegacyOwnerUnproven as exc:
+            raise SafeStopError(
+                f"PAPER backend legacy ownership could not be proven ({exc}); nothing was terminated"
+            ) from exc
+        if self._legacy_backend_attribution() != identity:
+            raise SafeStopError("legacy PAPER backend identity changed during ownership proof")
+        return chain
+
+    def _require_box_upgrade_protection(self, proof: LegacyBoxUpgradeProof) -> None:
+        # Only nothing, or stale temporary ENTRY_PENDING arms on the proven pristine
+        # symbols, may remain: no position/TAKE/STOP coverage the backend still owes.
+        if self._protection_quiescent():
+            return
+        health = self._require_temporary_entry_arm_shape()
+        covered = {str(item).strip().upper() for item in health["covered_symbols"]}
+        if not covered <= set(proof.symbols):
+            raise SafeStopError("legacy protection covers symbols outside the pristine Box proof")
 
     def _retire_entry_coverage(self) -> LegacyBackendProof | None:
         if self._robot_state() != ROBOT_STOPPED_PAIR:
