@@ -77,8 +77,13 @@ class PaperMarketExecutor:
         order_link_id: str,
         order_id: OrderId,
         exec_id: ExecutionId,
+        book: NormalizedOrderBook | None = None,
     ) -> PaperMarketExecutionResult:
-        book = self.book_provider.get_book(symbol)
+        # An explicit book is caller-proven execution evidence (owner-thread
+        # protection closes must never reach the provider's network fallback);
+        # it is held to the same symbol and freshness checks as a provider book.
+        if book is None:
+            book = self.book_provider.get_book(symbol)
         if book is None:
             raise RuntimeError("normalized book is unavailable")
         if book.symbol != symbol:
