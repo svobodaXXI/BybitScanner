@@ -135,6 +135,43 @@ Next planning action:
 
 Geometry v4 remains preserved for later continuation; no accepted work is discarded.
 
+## NOW — 2026-10-07 — OWNER PRIORITY OVERRIDE: ROBOT MUST OPEN REAL PAPER POSITIONS
+
+Owner priority supersedes the routing order below until these two execution tracks are resolved:
+
+1. **P0 FIRST — BOX-PRISTINE-FLAT-1 / Box late-entry execution.**
+   - Fix the proven blocker that prevents a clean symbol with no position row,
+     no executions and no ownership from establishing a pristine-FLAT baseline.
+   - AVNTUSDT 5m and NEARUSDT 5m are two independent real reproductions:
+     both reached `APPROVED / BOX_ENTRY_READY` and then failed before catch-up
+     with `Box ownership requires reconciled FLAT position and journal`.
+   - After the fix, a late-admitted Box whose price has already crossed grid
+     slots must execute the crossed slots by MARKET and leave only untouched
+     slots as LIMIT, through the existing catch-up path.
+   - Acceptance is not only a unit test: obtain one real PAPER owner-run Box
+     candidate that reaches actual entry/fill/protection evidence and produces
+     the normal open-position lifecycle/notification. Do not start Scanner/Robot
+     from an agent; owner controls runtime.
+
+2. **P0 SECOND — LSHAPE-NO-ENTRY-1 / explain and fix why L-shape does not open.**
+   - The owner has not yet observed a real open PAPER position from L-shape.
+   - Diagnose from durable candidates and execution state before changing policy:
+     handoff/admission, `L_SHAPE_WAITING_RETEST`, retest detection,
+     pre-entry block reason, RR gate, entry-coverage arm, LIMIT submission,
+     fill/matching, protection, lifecycle notification.
+   - Distinguish strategy-valid waiting/invalidation from an execution defect.
+   - If a defect is proven, fix the earliest failing stage with a focused
+     regression; do not weaken the frozen 0.8% potential floor or RR >= 2:1 merely
+     to force a trade.
+   - Acceptance: one real PAPER L-shape progresses through its intended lifecycle
+     to an actual protected position, or a durable explicit reason proves why a
+     particular candidate correctly did not enter. Monitoring must expose that
+     reason without SQLite archaeology.
+
+Until these are resolved, Geometry implementation (including the new Wedge
+contract) remains documented and queued but is **not the immediate implementation
+priority**. PAPER/LIVE safety and fail-closed execution invariants remain mandatory.
+
 ## NOW — 2026-10-07 — OWNER FEEDBACK QUEUE
 
 Canonical wedge-geometry authority for the rules below:
