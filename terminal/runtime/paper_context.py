@@ -120,6 +120,7 @@ class PaperCommandContextProvider:
             reconciliation=reconciliation,
             conflicting_unresolved_command=False,
             instrument=instrument,
+            paper_dust_close_allowed=True,
         )
 
         position = PositionEvent(

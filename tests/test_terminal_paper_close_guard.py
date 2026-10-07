@@ -1,4 +1,5 @@
 ﻿import tempfile
+import unittest
 import uuid
 from decimal import Decimal
 from pathlib import Path
@@ -7,6 +8,7 @@ from terminal.application.command_identity import CommandIdentityFactory
 from terminal.application.execution_engine import ExecutionEngine
 from terminal.application.models import ReconciliationResult, TrustState
 from terminal.application.pretrade_guard import (
+    ExactQuantityIntent,
     IntentClassification,
     MutationGate,
     NotionalIntent,
@@ -35,6 +37,7 @@ from terminal.exchange.events import InstrumentSnapshot
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.paper.executor import PaperMarketExecutor
 from terminal.persistence.sqlite_store import SQLiteStore
+from terminal.runtime.paper_context import PaperCommandContextProvider
 
 
 ACCOUNT = TradingAccountId("paper")
@@ -231,3 +234,78 @@ def test_real_guard_caps_paper_market_sell_at_flat_and_never_reverses():
             assert len(store.load_executions()) == 2
         finally:
             store.close()
+
+
+def _paper_full_close_flattens_residual_below_min_notional():
+    with tempfile.TemporaryDirectory() as temp:
+        store = SQLiteStore.open(Path(temp) / "paper.sqlite3")
+        try:
+            store.initialize_paper_account(ACCOUNT, Decimal("5000"), updated_at_ms=1000)
+            engine = ExecutionEngine(store)
+            provider = BookProvider(NormalizedOrderBook(
+                symbol=SYMBOL,
+                bids=(PriceLevel(Price(Decimal("110")), Quantity(Decimal("5"))),),
+                asks=(PriceLevel(Price(Decimal("111")), Quantity(Decimal("5"))),),
+                health=BookHealth.READY,
+                received_at_ms=1000,
+                available_depth=1,
+            ))
+            paper_executor = PaperMarketExecutor(
+                provider, engine, max_book_age_ms=1000,
+                fee_rate=Decimal("0.001"), clock_ms=lambda: 1500,
+            )
+            # Real residual: 0.003 BTC at 111 USDT is below the 5 USDT minimum notional.
+            paper_executor.execute(
+                trading_account_id=ACCOUNT,
+                symbol=SYMBOL,
+                side=OrderSide.BUY,
+                quantity=Quantity(Decimal("0.003")),
+                order_link_id="dust-link",
+                order_id=OrderId("dust-order"),
+                exec_id=ExecutionId("dust-exec"),
+            )
+            context = PaperCommandContextProvider(
+                store=store,
+                account_id=ACCOUNT,
+                instrument=instrument(),
+                active_account_id_provider=lambda: ACCOUNT,
+            ).context_for("BTCUSDT").pretrade
+            assert context.paper_dust_close_allowed is True
+            adapter = AdapterMustNotRun()
+            app = TradingApplication(
+                PreTradeGuard(
+                    gate=MutationGate(mutations_enabled=True),
+                    identity_factory=CommandIdentityFactory(lambda: uuid.UUID(int=3)),
+                ),
+                store, adapter, engine,
+                mutations_enabled=True,
+                clock_ms=lambda: 1500,
+                paper_market_executor=paper_executor,
+            )
+
+            result = app.submit(PreTradeIntent(
+                symbol="BTCUSDT",
+                side=OrderSide.SELL,
+                order_kind=OrderKind.MARKET,
+                volume=ExactQuantityIntent(Decimal("0.003")),
+                sizing_reference_price=Decimal("110"),
+                slippage=SlippageMetadata(SlippageToleranceType.PERCENT, Decimal("0.5")),
+            ), context)
+
+            assert result.decision is not None and result.decision.admitted is True
+            assert result.decision.request.classification is IntentClassification.CLOSE
+            assert result.decision.request.reduce_only is True
+            assert result.command is not None
+            assert result.command.current_state is CommandState.FILLED
+            assert adapter.calls == 0
+            projection = store.get_position_projection(POSITION_KEY)
+            assert projection.side is PositionSide.FLAT
+            assert projection.quantity.value == Decimal("0")
+            assert projection.sync_state == "synced"
+        finally:
+            store.close()
+
+
+class PaperDustFullCloseTests(unittest.TestCase):
+    def test_paper_full_close_flattens_residual_below_min_notional(self):
+        _paper_full_close_flattens_residual_below_min_notional()

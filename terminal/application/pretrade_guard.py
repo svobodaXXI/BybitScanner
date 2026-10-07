@@ -124,6 +124,10 @@ class PreTradeContext:
     reconciliation: ReconciliationResult
     conflicting_unresolved_command: bool
     instrument: InstrumentSnapshot
+    # PAPER-only opt-in: a reduce-only Market CLOSE that flattens exactly the
+    # confirmed position may be below the instrument minimum notional, so a
+    # real residual (dust) can always be closed. LIVE contexts never set it.
+    paper_dust_close_allowed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -242,6 +246,9 @@ class PreTradeGuard:
             reference_price,
             intent.order_kind,
             context.instrument,
+            enforce_min_notional=not _is_paper_dust_close(
+                intent, context, classification, final_quantity, reduce_only,
+            ),
         )
         if limit_error is not None:
             return limit_error
@@ -385,10 +392,21 @@ def _classify_and_cap(intent, context, normalized_quantity):
     return classification, normalized_quantity, False, False
 
 
-def _quantity_limit_error(quantity, price, order_kind, instrument):
+def _is_paper_dust_close(intent, context, classification, final_quantity, reduce_only) -> bool:
+    return (
+        context.paper_dust_close_allowed
+        and intent.order_kind is OrderKind.MARKET
+        and classification is IntentClassification.CLOSE
+        and reduce_only
+        and context.position_side is not PositionSide.FLAT
+        and final_quantity == context.confirmed_position_quantity
+    )
+
+
+def _quantity_limit_error(quantity, price, order_kind, instrument, *, enforce_min_notional=True):
     if quantity <= 0 or quantity < instrument.min_order_quantity:
         return _blocked(RejectionCode.INSUFFICIENT_VOLUME, "quantity is below instrument minimum")
-    if quantity * price < instrument.min_notional_value:
+    if enforce_min_notional and quantity * price < instrument.min_notional_value:
         return _blocked(RejectionCode.INSUFFICIENT_VOLUME, "notional is below instrument minimum")
     maximum = (
         instrument.max_market_order_quantity
