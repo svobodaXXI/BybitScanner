@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -907,6 +907,37 @@ SCHEMA_V25_MIGRATION_STATEMENTS = (
        ON robot_candidates(trading_account_id, status)""",
 )
 
+# journal_hash(()) -- the Box baseline digest of an empty execution journal.
+BOX_EMPTY_JOURNAL_HASH = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+
+# A never-traded PAPER symbol has no position projection row; its first
+# execution creates the row at version 1. Box ownership therefore records such
+# a pristine FLAT base as virtual baseline_position_version 0, legal only with
+# an empty journal at time 0 so that every later fill on the symbol must be
+# owned. Rebuild the referenced parent without rewriting box_order_ownership.
+SCHEMA_V26_MIGRATION_STATEMENTS = (
+    f"""CREATE TABLE box_attempt_ownership_v26 (
+        candidate_id TEXT PRIMARY KEY REFERENCES robot_candidates(candidate_id),
+        trading_account_id TEXT NOT NULL CHECK (trading_account_id = 'paper'),
+        symbol TEXT NOT NULL,
+        attempt INTEGER NOT NULL CHECK (attempt = 1),
+        baseline_position_version INTEGER NOT NULL CHECK (baseline_position_version >= 0),
+        baseline_time_ms INTEGER NOT NULL CHECK (baseline_time_ms >= 0),
+        baseline_execution_count INTEGER NOT NULL CHECK (baseline_execution_count >= 0),
+        baseline_execution_hash TEXT NOT NULL CHECK (length(baseline_execution_hash) = 64),
+        CHECK (baseline_position_version >= 1
+            OR (baseline_time_ms = 0 AND baseline_execution_count = 0
+                AND baseline_execution_hash = '{BOX_EMPTY_JOURNAL_HASH}'))
+    ) WITHOUT ROWID""",
+    "INSERT INTO box_attempt_ownership_v26 SELECT * FROM box_attempt_ownership",
+    "DROP TABLE box_attempt_ownership",
+    "ALTER TABLE box_attempt_ownership_v26 RENAME TO box_attempt_ownership",
+    """CREATE TRIGGER box_attempt_immutable BEFORE UPDATE ON box_attempt_ownership
+        BEGIN SELECT RAISE(ABORT, 'Box ownership is immutable'); END""",
+    """CREATE TRIGGER box_attempt_no_delete BEFORE DELETE ON box_attempt_ownership
+        BEGIN SELECT RAISE(ABORT, 'Box ownership cannot be forgotten'); END""",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -933,4 +964,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V23_MIGRATION_STATEMENTS
     + SCHEMA_V24_MIGRATION_STATEMENTS
     + SCHEMA_V25_MIGRATION_STATEMENTS
+    + SCHEMA_V26_MIGRATION_STATEMENTS
 )
