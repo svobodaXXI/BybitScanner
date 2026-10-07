@@ -135,6 +135,128 @@ Next planning action:
 
 Geometry v4 remains preserved for later continuation; no accepted work is discarded.
 
+## NOW — 2026-10-07 — OWNER FEEDBACK QUEUE
+
+The following owner-observed defects and UX requirements are now in the active
+product queue. They are distinct slices; do not bundle trading-safety changes
+with geometry or presentation changes unless the implementation dependency is
+strictly necessary.
+
+1. **P0 — BOX-PRISTINE-FLAT-1 — pristine FLAT Box admission**
+   - AVNTUSDT 5m LONG was admitted as linked `APPROVED / BOX_ENTRY_READY` but
+     remained unexecuted after repeated attempts with
+     `Box ownership requires reconciled FLAT position and journal`;
+   - NEARUSDT 5m LONG independently reproduced the same defect on 2026-10-07:
+     `APPROVED / BOX_ENTRY_READY`, attempt_count=2, same last_execution_error,
+     with no NEAR position projection, no executions and no Box order ownership;
+   - read-only evidence for both AVNTUSDT and NEARUSDT is consistent with a
+     pristine symbol: no position projection, no executions and no Box ownership;
+   - treat `no position row + no executions + no ownership/exposure evidence`
+     as a provable pristine-FLAT baseline for PAPER Box ownership;
+   - keep fail-closed behavior when any execution/history/ownership/exposure
+     evidence exists without a reconciled projection;
+   - acceptance: pristine symbol reaches catch-up classification and normal
+     MARKET/LIMIT execution path; ambiguous symbol remains blocked.
+
+2. **P0 — MON-CAND-EXEC-1 — candidate execution observability**
+   - candidate monitoring currently hides durable execution state behind the
+     generic text `Сделка: не открыта`;
+   - show phase, attempt count, last execution error/block reason and, for Box,
+     MARKET-vs-LIMIT catch-up slot state / ownership readiness when available;
+   - the owner must be able to distinguish waiting, blocked, planned and actually
+     submitted states without reading SQLite manually.
+
+3. **P1 — MON-CAND-CHART-1 — chart in candidate monitoring**
+   - every monitored durable candidate must have an updated chart on its signal
+     timeframe using current closed candles;
+   - preserve frozen candidate identity, anchors/geometry and trading levels;
+     monitoring must not silently re-detect/re-anchor from later candles;
+   - retain TradingView navigation and degrade to the text card if rendering fails;
+     chart failure must never block Robot execution/protection.
+
+4. **P0 — GEO-ADJ-ANCHOR-1 — anchors only on adjacent opposite extrema**
+   - CAPUSDT 5m is the owner visual reference for a malformed triangle caused by
+     anchor selection across non-adjacent opposite pivots;
+   - an anchor pair is valid only when the opposite extremum is the immediate
+     neighboring opposite pivot in chronological pivot order;
+   - skipping an intermediate opposite extremum is a hard geometry reject, not a
+     score penalty;
+   - acceptance: no Wedge/Triangle candidate may be built from a pair that jumps
+     over another opposite pivot.
+
+5. **P0 — GEO-CORRECTIVE-WEDGE-START-1 — corrective wedge first anchor**
+   - CASHCATUSDT 5m is the owner visual reference: after a strong decline, the
+     rising corrective wedge should begin at the lowest reversal extremum that
+     terminates the impulse, not at a later local point inside the correction;
+   - mirror the rule after a strong rise for falling corrective wedges;
+   - anchor selection must preserve impulse/reversal chronology and must not crop
+     away the true start merely because a later local fit scores well.
+
+6. **P1 — GEO-WEDGE-IMPULSE-CONTEXT-1 — impulse context in wedge selection**
+   - wedge geometry/ranking must distinguish a corrective wedge after a strong
+     impulse from an isolated local shape;
+   - reuse structural pivot evidence; do not add a coin-specific threshold or
+     presentation-only patch;
+   - this slice is subordinate to the hard adjacent-anchor and corrective-start
+     rules above.
+
+7. **P0 — WEDGE-TP-BASE-1 — TP/potential must equal wedge-base measurement**
+   - CTUSDT 1m Falling Wedge is the owner visual reference: displayed TP is much
+     farther than the visible wedge base implies;
+   - trace whether target calculation, frozen geometry or chart rendering is using
+     a different span;
+   - one authoritative wedge-base measurement must drive both displayed potential
+     percentage and TP level;
+   - if the base cannot be established validly, reject/flag the candidate rather
+     than publish an inflated target.
+
+8. **P0 — WEDGE-STOP-1 — structural stop for wedge entries**
+   - LONGXIAUSDT 5m Falling Wedge is the owner visual reference: the current STOP
+     is too close to entry and can be hit by ordinary noise while the wedge thesis
+     remains structurally valid;
+   - trace the current wedge STOP source and replace any over-tight local/minor-low
+     behavior with a structural rule tied to the relevant wedge boundary/extremum,
+     with an appropriate safety buffer;
+   - preserve risk gating and fail closed if a valid structural STOP cannot produce
+     acceptable risk/reward; do not widen STOP merely to force an entry;
+   - acceptance: STOP is structurally defensible on the frozen wedge geometry and
+     is consistent with the scale of the formation.
+
+9. **P0 — WEDGE-REENTRY-2 — bounded re-entry attempts per signal**
+   - owner requirement: after a failed wedge entry, the same still-valid signal may
+     be entered again up to two times;
+   - maximum is three failed entries total for one signal: initial attempt + two
+     re-entry attempts; after the third failed entry, invalidate/cancel the signal
+     and forbid further entry;
+   - re-entry is allowed only while the original frozen signal remains structurally
+     valid and a fresh admissible entry trigger exists; do not blindly re-enter
+     immediately after STOP;
+   - define the failed-attempt accounting durably and expose the current attempt
+     number in monitoring/lifecycle UI;
+   - preserve the original signal identity and avoid creating parallel owners for
+     the same symbol/signal.
+
+10. **P1 — POSITION-CARD-STATUS-CLEANUP-1 — remove redundant open-status row**
+   - remove the user-visible line `Статус: открыта` from the position card;
+   - do not replace it with equivalent noise; preserve useful PnL/SL/TP/volume and
+     navigation controls.
+
+11. **P0 — PAPER-UNCERTAINTY-1 — unresolved PAPER state / stale reconciliation debt**
+   - `/positions` currently reports `PAPER · Состояние не подтверждено` while no
+     open position projection is shown;
+   - many historical FLAT projections remain `sync_state=reconciliation_required`;
+   - separately identify the unfinished command and/or unfinished reconciliation
+     checkpoint that actually triggers the warning, then repair self-recovery or
+     stale terminalization through canonical persistence APIs only;
+   - no manual SQL cleanup; preserve fail-closed behavior when exposure is genuinely
+     uncertain.
+
+Routing order for these new items: fix PAPER/Robot execution blockers first
+(`BOX-PRISTINE-FLAT-1`, `PAPER-UNCERTAINTY-1`), then execution correctness
+(`WEDGE-STOP-1`, `WEDGE-REENTRY-2`), then candidate observability, then geometry
+hard gates/target correctness, then presentation cleanup. A real owner-observed
+safety blocker may preempt this order.
+
 
 ## NOW — 2026-09-30 — G6 FULL PASS COMPLETED / GEOMETRY GATE REOPENED
 
@@ -1381,6 +1503,31 @@ Do not add Box-specific trade states such as GRID_PARTIAL/GRID_FILLED, a Box rec
 Owner requirement: after Full Scanner discovers a structurally interesting
 symbol and moves on, the project must continue following that symbol without
 waiting for the next full-universe pass.
+
+### Candidate monitoring chart — OWNER REQUIREMENT 2026-10-07
+
+When an existing Robot candidate is shown through the monitoring surface, the
+owner must receive a chart together with the candidate state. A text-only
+candidate card is not sufficient.
+
+Presentation/behavior contract:
+- render the candidate on its own signal timeframe using current closed candles;
+- preserve the candidate's frozen source identity, anchors/geometry and trading
+  levels; monitoring must not silently re-detect or re-anchor the setup from
+  later candles;
+- show current price progression relative to the frozen setup and relevant
+  entry/STOP/TAKE/grid levels when that data exists;
+- keep the normal candidate caption/status and the existing
+  «Открыть в Trading View» navigation;
+- each owner monitoring refresh must be able to return an updated chart for the
+  same durable candidate rather than only text;
+- chart-generation failure must degrade to the existing text/status response and
+  must not block Robot state, admission, protection or trading lifecycle.
+
+Implementation should reuse the existing Scanner/Robot chart and candle
+infrastructure rather than creating a parallel renderer. This is a
+presentation/observability requirement only; it does not authorize strategy,
+risk, admission or execution changes.
 
 Architecture is split into three responsibilities:
 
