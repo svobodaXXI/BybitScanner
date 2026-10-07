@@ -821,6 +821,14 @@ Authoritative standard:
   are direct tracked launchers: `Запуск робота -> start_robot_runtime.bat`,
   `Остановить робота -> stop_robot_runtime.bat`, and
   `start_scanner -> start_scanner.bat`. Untracked local wrappers are not authority.
+- **Owner portability decision 2026-10-07:** PC and laptop share the same
+  `C:\\BybitScanner` repository root and the same shortcut semantics. Do not maintain
+  separate PC/laptop launcher variants or require shortcut rewrites when switching
+  machines. Shared launchers must use repo-relative paths; machine-local Desktop,
+  OneDrive, username and hostname differences stay outside tracked runtime semantics.
+  Git synchronization must not silently retarget the existing owner shortcuts or
+  change “Запуск робота” into a different startup composition.
+
 - `tools/sync_owner_shortcuts.ps1` is the canonical one-shot repair/verification
   for those targets; it preserves the existing shortcut names.
 - Owner runtime-check on 2026-09-27 proved the canonical start path.
