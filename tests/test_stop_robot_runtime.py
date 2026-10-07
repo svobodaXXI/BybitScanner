@@ -57,6 +57,11 @@ class FakeRuntime:
         self.shutdown_replies = {}
         self.reconcile_reply = (200, {"ok": True, "success": True})
         self.reconcile_state = PAUSED
+        self.post_scanner_mode = "SCANNER_STOPPED"
+        self.box_upgrade_proof = shutdown.SafeStopError("legacy Box upgrade evidence not configured")
+        self.box_upgrade_guard_error = None
+        self.box_upgrade_checks = 0
+        self.box_upgrade_guards = 0
         self.exit_after_polls = {"telegram": 1, "backend": 1}
         self.calls = []
         self.now = 0.0
@@ -88,7 +93,7 @@ class FakeRuntime:
             return self.reconcile_reply
         if url == BACKEND + "/api/scanner/stop":
             self.calls.append("scanner:stop")
-            self.scanner_mode = "SCANNER_STOPPED"
+            self.scanner_mode = self.post_scanner_mode
             return 200, {"ok": True, "mode": "SCANNER_STOPPED"}
         if url == BACKEND + "/api/runtime/retire-entry-coverage":
             self.calls.append("protection:retire-entry-arms")
@@ -153,15 +158,32 @@ class FakeRuntime:
         if self.legacy_paper_blocker is not None:
             raise shutdown.SafeStopError(self.legacy_paper_blocker)
 
+    def prove_box_upgrade(self):
+        self.box_upgrade_checks += 1
+        if isinstance(self.box_upgrade_proof, Exception):
+            raise self.box_upgrade_proof
+        return self.box_upgrade_proof
+
+    def box_upgrade_guard(self, proof):
+        assert proof == self.box_upgrade_proof
+        self.box_upgrade_guards += 1
+        if self.box_upgrade_guard_error is not None:
+            raise self.box_upgrade_guard_error
+        return nullcontext()
+
     def orchestrator(self):
         return shutdown.RuntimeShutdown(
-            root=ROOT, env={}, get=self.get, post=self.post,
+            root=ROOT, env={}, get=lambda url, timeout: self.get(url, timeout),
+            post=lambda url, payload, timeout: self.post(url, payload, timeout),
             robot_state=lambda: self.robot, stop_robot_fn=self.stop_robot,
             sleep=self.sleep, monotonic=lambda: self.now,
-            legacy_resolver=self.resolve_legacy, listener_probe=self.probe_listener,
+            legacy_resolver=lambda *args: self.resolve_legacy(*args),
+            listener_probe=self.probe_listener,
             legacy_terminator=self.terminate_legacy,
             legacy_paper_quiescence=self.prove_legacy_paper_quiescence,
             legacy_paper_guard=lambda: nullcontext(),
+            legacy_box_upgrade_proof=self.prove_box_upgrade,
+            legacy_box_upgrade_guard=self.box_upgrade_guard,
         )
 
 
@@ -1416,6 +1438,419 @@ class HandoffAndCliTests(unittest.TestCase):
     def test_desktop_wrapper_runs_full_scope_module(self):
         launcher = (ROOT / "stop_robot_runtime.bat").read_text()
         self.assertIn('"%~dp0venv\\Scripts\\python.exe" -m tools.stop_robot_runtime', launcher)
+
+
+# --- Legacy pre-v26 backend: pristine Box upgrade shutdown ------------------------------
+
+PRISTINE_SYMBOLS = ("AVNTUSDT", "NEARUSDT")
+LEGACY_REASON_PREFIX = "reconcile_robot could not prove pending Robot entry safety: "
+
+
+def _box_snapshot(symbol, a_time_ms=1000):
+    from tests.test_box_plan_persistence import snapshot
+
+    data = snapshot()
+    data["identity"]["symbol"] = symbol
+    data["identity"]["a_time_ms"] = a_time_ms
+    return data
+
+
+class LegacyBoxUpgradeDb:
+    """A real SQLiteStore DB in the AVNT/NEAR deadlock shape, rewound to schema v25.
+
+    Pristine APPROVED / BOX_ENTRY_READY Box candidates that failed ownership on the
+    pre-v26 backend, Robot ROBOT_RUNNING / RECONCILIATION_REQUIRED naming them.
+    """
+
+    def __init__(self, path: Path):
+        from terminal.persistence.sqlite_store import SQLiteStore
+
+        self.path = path
+        self.account = TradingAccountId("paper")
+        self.store = SQLiteStore.open(path)
+        self.robot_ids = {}
+        for symbol in PRISTINE_SYMBOLS:
+            source, _ = self.store.save_box_plan_only(
+                snapshot=_box_snapshot(symbol), created_at_ms=3001,
+            )
+            candidate, _ = self.store.handoff_box_plan_to_robot(
+                source.candidate_id, symbol=source.symbol,
+                expected_snapshot_sha256=source.snapshot_sha256, approved_at_ms=3002,
+            )
+            self.robot_ids[symbol] = candidate.candidate_id
+            self.set_execution(symbol, {
+                "last_execution_error": shutdown.LEGACY_BOX_PRISTINE_ERROR,
+                "last_attempt_at_ms": 3500, "attempt_count": 4,
+            })
+        self.store.initialize_scanner_runtime_state(self.account, updated_at_ms=1)
+        self.set_robot("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", self.reason())
+
+    def reason(self, ids=None):
+        return LEGACY_REASON_PREFIX + ",".join(sorted(ids or self.robot_ids.values()))
+
+    def set_execution(self, symbol, execution):
+        candidate = self.store.get_robot_candidate(self.robot_ids[symbol])
+        state = {**candidate.robot_state, "execution": execution}
+        with self.store._transaction():
+            self.store._connection.execute(
+                "UPDATE robot_candidates SET robot_state_json=? WHERE candidate_id=?",
+                (json.dumps(state), candidate.candidate_id),
+            )
+
+    def set_robot(self, mode, recovery_status, reason):
+        state = (self.store.get_robot_runtime_state(self.account)
+                 or self.store.initialize_robot_runtime_state(self.account, updated_at_ms=1))
+        self.store.update_robot_runtime_state(
+            self.account, mode=mode, recovery_status=recovery_status, reason=reason,
+            expected_version=state.version, updated_at_ms=state.updated_at_ms + 1,
+        )
+
+    def finish(self, schema_version=25):
+        self.store.close()
+        connection = sqlite3.connect(self.path)
+        try:
+            connection.execute(f"PRAGMA user_version = {schema_version}")
+        finally:
+            connection.close()
+
+
+class LegacyBoxUpgradeProofTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.directory = Path(tmp.name)
+        self.count = 0
+
+    def db(self):
+        self.count += 1
+        db = LegacyBoxUpgradeDb(self.directory / f"paper-{self.count}.sqlite3")
+        self.addCleanup(lambda: db.store._connection is None or db.store.close())
+        return db
+
+    def assert_blocked(self, db, phrase, **finish):
+        db.finish(**finish)
+        with self.assertRaisesRegex(shutdown.SafeStopError, phrase):
+            shutdown.prove_legacy_box_upgrade(db.path)
+
+    def test_pristine_avnt_near_deadlock_is_proven_upgrade_safe(self):
+        db = self.db()
+        db.finish()
+        proof = shutdown.prove_legacy_box_upgrade(db.path)
+        self.assertEqual(proof.candidate_ids, tuple(sorted(db.robot_ids.values())))
+        self.assertEqual(proof.symbols, PRISTINE_SYMBOLS)
+        self.assertEqual(proof.schema_version, 25)
+        with shutdown.hold_legacy_box_upgrade(db.path, proof):
+            pass
+
+    def test_current_schema_backend_is_not_legacy(self):
+        from terminal.persistence.schema import SCHEMA_VERSION
+
+        self.assert_blocked(self.db(), "not a legacy pre-v26", schema_version=SCHEMA_VERSION)
+
+    def test_any_execution_blocks(self):
+        from terminal.domain.models import (
+            Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, Price,
+            Quantity, Symbol,
+        )
+
+        db = self.db()
+        with db.store._transaction():
+            db.store._insert_execution(Execution(
+                ExecutionDedupKey(db.account, Category.LINEAR, ExecutionId("x1")), OrderId("o1"),
+                Symbol("AVNTUSDT"), OrderSide.BUY, Price(Decimal("1")), Quantity(Decimal("1")),
+                Decimal("0"), 10,
+            ))
+        self.assert_blocked(db, "AVNTUSDT.*executions")
+
+    def test_any_position_projection_blocks_even_flat(self):
+        from terminal.domain.models import (
+            Category, Notional, PositionKey, PositionSide, Price, Quantity, Symbol,
+        )
+        from terminal.persistence.sqlite_store import PositionProjectionUpdate
+
+        for side, quantity, sync in ((PositionSide.FLAT, "0", "synced"),
+                                     (PositionSide.LONG, "1", "reconciliation_required")):
+            with self.subTest(side=side):
+                db = self.db()
+                key = PositionKey(db.account, Category.LINEAR, Symbol("NEARUSDT"), 0)
+                qty = Decimal(quantity)
+                with db.store._transaction():
+                    db.store._write_projection(PositionProjectionUpdate(
+                        key, side, Quantity(qty), Price(Decimal("1")) if qty else None,
+                        Decimal(0), Decimal(0), Notional(qty), sync, None, 10,
+                    ))
+                self.assert_blocked(db, "NEARUSDT.*position projection|pending Robot exposure")
+
+    def test_active_limit_or_box_ownership_blocks(self):
+        from terminal.domain.models import OrderId, OrderSide, Symbol
+
+        db = self.db()
+        db.store.create_paper_limit(
+            client_action_id="m", request_fingerprint="m-fp", order_id=OrderId("m-1"),
+            order_link_id="m-link", trading_account_id=db.account, symbol=Symbol("AVNTUSDT"),
+            side=OrderSide.BUY, price=Decimal("1"), quantity=Decimal("1"), created_at_ms=10,
+        )
+        self.assert_blocked(db, "working PAPER limits|AVNTUSDT.*PAPER limit")
+
+        db = self.db()
+        source = db.store.get_robot_candidate(db.robot_ids["NEARUSDT"]).robot_state["source_box_candidate_id"]
+        # Current code can attest a pristine baseline; that is Box ownership evidence.
+        self.assertTrue(db.store.begin_box_attempt_ownership(source))
+        self.assert_blocked(db, "NEARUSDT.*Box ownership")
+
+    def test_unresolved_command_or_protection_blocks(self):
+        db = self.db()
+        with db.store._transaction():
+            db.store._connection.execute(
+                """INSERT INTO trading_commands (
+                       command_id, order_link_id, trading_account_id, category, symbol,
+                       position_idx, command_kind, side, requested_notional, normalized_price,
+                       normalized_quantity, origin, controller, current_state, version,
+                       exchange_order_id, created_at_ms, updated_at_ms)
+                   VALUES ('c1', 'l1', 'paper', 'linear', 'AVNTUSDT', 0, 'create_market', 'Buy',
+                           '1', NULL, '1', 'terminal_manual', 'manual', 'submitting', 1, NULL, 1, 1)""",
+            )
+        self.assert_blocked(db, "AVNTUSDT.*unresolved trading command")
+
+        db = self.db()
+        with db.store._transaction():
+            db.store._connection.execute(
+                """INSERT INTO protection_projections VALUES
+                   ('paper', 'linear', 'NEARUSDT', 0, 'confirmed_active', NULL, '1', NULL, NULL, 1, 1, 1)""",
+            )
+        self.assert_blocked(db, "NEARUSDT.*protection projection")
+
+    def test_open_robot_trade_blocks(self):
+        from tests.test_box_plan_persistence import trade_args
+
+        db = self.db()
+        db.store.create_robot_candidate(
+            candidate_id="wedge", trading_account_id=db.account,
+            symbol=__import__("terminal.domain.models", fromlist=["Symbol"]).Symbol("BTCUSDT"),
+            status="APPROVED", signal_snapshot={"pattern": "Falling Wedge"},
+            approved_at_ms=1, updated_at_ms=1,
+        )
+        db.store.create_robot_trade(**trade_args("wedge"))
+        self.assert_blocked(db, "OPEN Robot candidates|open Robot trades")
+
+    def test_inert_approved_candidates_elsewhere_match_the_real_pc_shape(self):
+        # Real owner PC: AVNT/NEAR blockers plus several inert APPROVED wedge
+        # candidates on other symbols with no order, fill or exposure.
+        from terminal.domain.models import Symbol
+
+        db = self.db()
+        for index, symbol in enumerate(("CCUSDT", "BEATUSDT", "PONSUSDT")):
+            db.store.create_robot_candidate(
+                candidate_id=f"wedge-{index}", trading_account_id=db.account, symbol=Symbol(symbol),
+                status="APPROVED", signal_snapshot={"pattern": "Falling Wedge", "n": index},
+                approved_at_ms=1, updated_at_ms=1,
+            )
+        db.finish()
+        proof = shutdown.prove_legacy_box_upgrade(db.path)
+        self.assertEqual(proof.symbols, PRISTINE_SYMBOLS)
+
+    def test_extra_or_different_active_candidate_owner_blocks(self):
+        from terminal.domain.models import Symbol
+
+        db = self.db()
+        db.store.create_robot_candidate(
+            candidate_id="same-symbol-owner", trading_account_id=db.account, symbol=Symbol("AVNTUSDT"),
+            status="APPROVED", signal_snapshot={"pattern": "Falling Wedge"},
+            approved_at_ms=1, updated_at_ms=1,
+        )
+        self.assert_blocked(db, "AVNTUSDT: another active Robot candidate owns the symbol")
+
+        db = self.db()
+        db.set_robot("ROBOT_RUNNING", "RECONCILIATION_REQUIRED",
+                     LEGACY_REASON_PREFIX + "box-robot-unknown")
+        self.assert_blocked(db, "box-robot-unknown is not an APPROVED Box Robot candidate")
+
+        db = self.db()
+        unsorted_ids = sorted(db.robot_ids.values(), reverse=True)
+        db.set_robot("ROBOT_RUNNING", "RECONCILIATION_REQUIRED",
+                     LEGACY_REASON_PREFIX + ",".join(unsorted_ids))
+        self.assert_blocked(db, "blocker names are malformed")
+
+    def test_non_pristine_failure_shape_blocks(self):
+        for execution, phrase in (
+            ({"last_execution_error": "some other failure", "attempt_count": 1}, "not the legacy pristine"),
+            ({"last_execution_error": shutdown.LEGACY_BOX_PRISTINE_ERROR, "limit_order_ids": ["x"]},
+             "unexpected execution evidence"),
+            ({"last_execution_error": shutdown.LEGACY_BOX_PRISTINE_ERROR, "box_ownership_ready": True},
+             "unexpected execution evidence"),
+        ):
+            with self.subTest(execution=execution):
+                db = self.db()
+                db.set_execution("AVNTUSDT", execution)
+                self.assert_blocked(db, phrase)
+
+    def test_robot_or_scanner_state_mismatch_blocks(self):
+        db = self.db()
+        db.set_robot("ROBOT_RUNNING", "RECONCILIATION_REQUIRED", "some other reconcile failure")
+        self.assert_blocked(db, "pending-entry reconciliation blocker")
+
+        db = self.db()
+        db.set_robot("ROBOT_RUNNING", "READY", None)
+        self.assert_blocked(db, "RECONCILIATION_REQUIRED")
+
+        db = self.db()
+        state = db.store.get_scanner_runtime_state(db.account)
+        db.store.update_scanner_runtime_state(
+            db.account, mode="SCANNER_RUNNING", expected_version=state.version, updated_at_ms=5,
+        )
+        self.assert_blocked(db, "Scanner is not durably STOPPED")
+
+    def test_guard_rejects_changed_evidence_and_blocks_writers(self):
+        db = self.db()
+        db.finish()
+        proof = shutdown.prove_legacy_box_upgrade(db.path)
+        changed = shutdown.LegacyBoxUpgradeProof(
+            proof.schema_version, proof.robot_version + 1, proof.candidate_ids, proof.symbols,
+        )
+        with self.assertRaisesRegex(shutdown.SafeStopError, "changed"):
+            with shutdown.hold_legacy_box_upgrade(db.path, changed):
+                pass
+        with shutdown.hold_legacy_box_upgrade(db.path, proof):
+            competitor = sqlite3.connect(db.path, timeout=0.0)
+            try:
+                with self.assertRaises(sqlite3.OperationalError):
+                    competitor.execute("UPDATE scanner_runtime_state SET reason='race'")
+            finally:
+                competitor.close()
+
+
+class LegacyBoxUpgradeShutdownTests(unittest.TestCase):
+    IDS = ("box-robot-avnt", "box-robot-near")
+
+    def runtime(self):
+        runtime = FakeRuntime(robot=RECON)
+        runtime.reconcile_reply = (409, {
+            "ok": False, "success": False, "mode": "ROBOT_RUNNING",
+            "recovery_status": "RECONCILIATION_REQUIRED",
+            "unresolved_candidate_ids": list(self.IDS),
+        })
+        runtime.reconcile_state = RECON
+        runtime.legacy_chains = {"backend": (130, 120, 110, 105)}
+        runtime.box_upgrade_proof = shutdown.LegacyBoxUpgradeProof(25, 7, self.IDS, PRISTINE_SYMBOLS)
+        return runtime
+
+    def test_red_reproducer_without_proof_still_blocks_after_one_reconcile(self):
+        runtime = self.runtime()
+        runtime.box_upgrade_proof = shutdown.SafeStopError("AVNTUSDT has executions")
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("runtime kept alive", result.message)
+        self.assertIn("legacy Box upgrade shutdown not proven: AVNTUSDT has executions", result.message)
+        self.assertEqual(runtime.calls, ["scanner:stop", "robot:reconcile"])
+        self.assertTrue(runtime.backend_alive and runtime.telegram_alive)
+
+    def test_proven_pristine_deadlock_terminates_exact_legacy_backend_once(self):
+        runtime = self.runtime()
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertTrue(result.runtime_stopped)
+        self.assertEqual(result.steps, (
+            "scanner:stop", "runtime:legacy-box-upgrade-proof",
+            "telegram:shutdown", "backend:legacy-box-upgrade-terminate",
+        ))
+        self.assertEqual(runtime.calls, [
+            "scanner:stop", "robot:reconcile", "resolve:backend:127.0.0.1:8765",
+            "telegram:shutdown", "resolve:backend:127.0.0.1:8765",
+            "terminate:[130, 120, 110, 105]",
+        ])
+        # Durable Robot state is never edited; the upgraded backend reconciles it.
+        self.assertEqual(runtime.robot, RECON)
+        self.assertNotIn("robot:stop", runtime.calls)
+        self.assertNotIn("backend:shutdown", runtime.calls)
+        self.assertEqual(runtime.box_upgrade_guards, 1)
+
+    def test_stale_entry_arms_on_named_symbols_are_allowed_others_block(self):
+        runtime = self.runtime()
+        runtime.protection.update({
+            "covered_symbols": ["AVNTUSDT"], "armed_symbols": ["AVNTUSDT"],
+            "coverage_roles": {"AVNTUSDT": "ENTRY_PENDING"},
+        })
+        self.assertTrue(runtime.orchestrator().run("all").ok)
+
+        for covered, roles in ((["BTCUSDT"], {"BTCUSDT": "ENTRY_PENDING"}),
+                               (["AVNTUSDT"], {"AVNTUSDT": "POSITION"})):
+            with self.subTest(covered=covered, roles=roles):
+                runtime = self.runtime()
+                runtime.protection.update({
+                    "covered_symbols": covered, "armed_symbols": covered, "coverage_roles": roles,
+                })
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertNotIn("terminate:[130, 120, 110, 105]", runtime.calls)
+                self.assertTrue(runtime.backend_alive)
+
+    def test_identity_chain_response_or_scanner_changes_block_without_termination(self):
+        def instance_changes(runtime):
+            original = runtime.get
+            seen = {"n": 0}
+
+            def get(url, timeout):
+                status, body = original(url, timeout)
+                if url == BACKEND + "/api/health":
+                    seen["n"] += 1
+                    if seen["n"] > 2:
+                        body = {**body, "process_instance_id": "restarted"}
+                return status, body
+            runtime.get = get
+
+        def chain_changes(runtime):
+            original = runtime.resolve_legacy
+            seen = {"n": 0}
+
+            def resolve(kind, host, port, root):
+                seen["n"] += 1
+                chain = original(kind, host, port, root)
+                return chain if seen["n"] == 1 else (999,)
+            runtime.resolve_legacy = resolve
+
+        def response_ids_differ(runtime):
+            runtime.reconcile_reply[1]["unresolved_candidate_ids"] = ["box-robot-avnt"]
+
+        def response_ids_missing(runtime):
+            del runtime.reconcile_reply[1]["unresolved_candidate_ids"]
+
+        def scanner_running(runtime):
+            runtime.post_scanner_mode = "SCANNER_RUNNING"
+
+        def database_identity_changes(runtime):
+            original = runtime.post
+
+            def post(url, payload, timeout):
+                reply = original(url, payload, timeout)
+                if url == BACKEND + "/api/robot/reconcile":
+                    runtime.backend_health["database_identity"] = "other-db"
+                return reply
+            runtime.post = post
+
+        def guard_rejects(runtime):
+            runtime.box_upgrade_guard_error = shutdown.SafeStopError("legacy Box upgrade evidence changed")
+
+        for mutate in (instance_changes, chain_changes, response_ids_differ, response_ids_missing,
+                       scanner_running, database_identity_changes, guard_rejects):
+            with self.subTest(case=mutate.__name__):
+                runtime = self.runtime()
+                mutate(runtime)
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok, result.message)
+                self.assertFalse(any(call.startswith("terminate:") for call in runtime.calls))
+                self.assertTrue(runtime.backend_alive)
+                self.assertEqual(runtime.robot, RECON)
+
+    def test_ambiguous_or_non_definitive_reconcile_never_enters_upgrade_path(self):
+        for reply in ((503, {"ok": False, "error": "robot_reconcile_unavailable"}),
+                      (200, {"ok": True, "success": False}), TimeoutError("lost")):
+            with self.subTest(reply=reply):
+                runtime = self.runtime()
+                runtime.reconcile_reply = reply
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertEqual(runtime.calls, ["scanner:stop", "robot:reconcile"])
+                self.assertEqual(runtime.box_upgrade_checks, 0)
 
 
 if __name__ == "__main__":
