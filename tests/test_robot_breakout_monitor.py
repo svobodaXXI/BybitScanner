@@ -370,6 +370,84 @@ class _Clock:
 
 
 class RobotBreakoutMonitorTests(unittest.TestCase):
+    def test_box_late_catchup_on_pristine_symbol_markets_crossed_slot_and_limits_rest(self):
+        # AVNTUSDT/NEARUSDT shape: never traded on PAPER -- no projection row and
+        # no executions -- is a provable FLAT base for the same catch-up path.
+        data = box_snapshot()
+        data["identity"]["symbol"] = SYMBOL
+        key = PositionKey(ACCOUNT_ID, Category.LINEAR, Symbol(SYMBOL), 0)
+        self.assertIsNone(self.store.get_position_projection(key))
+        source, _ = self.store.save_box_plan_only(snapshot=data, created_at_ms=3001)
+        candidate, _ = self.store.handoff_box_plan_to_robot(
+            source.candidate_id,
+            symbol=source.symbol,
+            expected_snapshot_sha256=source.snapshot_sha256,
+            approved_at_ms=3002,
+        )
+        self.clock.value = 4000
+        book = _ready_book("93.5")
+        self.monitor._get_market_book = lambda symbol: book
+        self.monitor._market_preflight = lambda request, identity: SimpleNamespace(
+            admitted=True,
+            normalized_quantity=request.volume.amount / request.sizing_reference_price,
+        )
+        submitted = set()
+
+        def submit_market(request, identity):
+            if identity.command_id.value not in submitted:
+                submitted.add(identity.command_id.value)
+                self.executor._apply_fill(
+                    request.symbol, request.side,
+                    request.volume.amount / request.sizing_reference_price,
+                    request.sizing_reference_price,
+                    order_id=OrderId(f"paper-order-{identity.order_link_id}"),
+                )
+            return CommandResult(
+                request.client_action_id.value, CommandResultStatus.COMPLETED,
+                "completed", "market filled",
+            )
+
+        self.monitor._submit_market = submit_market
+
+        # Tick 1: pristine baseline marker + frozen classification (P1 crossed).
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        baseline = self.store._connection.execute(
+            "SELECT baseline_position_version, baseline_time_ms, baseline_execution_count "
+            "FROM box_attempt_ownership WHERE candidate_id=?",
+            (source.candidate_id,),
+        ).fetchone()
+        self.assertEqual(tuple(baseline), (1, 0, 0))
+        catchup = self.store.get_robot_candidate(candidate.candidate_id).robot_state["execution"]["box_catchup"]
+        self.assertEqual((catchup["market_slots"], catchup["limit_slots"]), ([1], [2, 3, 4]))
+
+        # Tick 2: atomic ownership of P1 MARKET + P2..P4 resting LIMIT.
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        owned = self.store.load_box_order_ownership(source.candidate_id)
+        self.assertEqual([(item.role, item.slot) for item in owned],
+                         [("ENTRY", 1), ("ENTRY", 2), ("ENTRY", 3), ("ENTRY", 4)])
+        resting = [self.store.get_paper_limit(item.order_id.value, ACCOUNT_ID)
+                   for item in owned if item.slot in {2, 3, 4}]
+        self.assertEqual([(order.price, order.quantity, order.status) for order in resting], [
+            (Decimal("93.2"), Decimal("2"), "open"),
+            (Decimal("92.4"), Decimal("2"), "open"),
+            (Decimal("91.6"), Decimal("2"), "open"),
+        ])
+
+        # Tick 3: crossed P1 fills by MARKET for its frozen quantity; the first fill
+        # creates the projection at version 1 = pristine 0 + 1. Same trade as the
+        # FLAT-projection variant below.
+        self.assertEqual(self.monitor.tick(), (candidate.candidate_id,))
+        opened = self.store.get_robot_trade(f"robot-trade-{candidate.candidate_id}")
+        self.assertIsNotNone(opened)
+        self.assertEqual((opened.entry_path, opened.entry_quantity, opened.average_entry),
+                         ("MIXED", Decimal("2"), Decimal("93.5")))
+        self.assertEqual((opened.stop_price, opened.take_price), (Decimal("90.65"), Decimal("99.2")))
+        position = self.store.get_position_projection(key)
+        self.assertEqual((position.side, position.quantity.value, position.version),
+                         (PositionSide.LONG, Decimal("2"), 1))
+        proof = self.store.prove_box_owned_position(source.candidate_id)
+        self.assertEqual(proof.entry_by_slot, (Decimal("2"), Decimal(0), Decimal(0), Decimal(0)))
+
     def test_box_mixed_catchup_market_then_slot_take_cancels_untouched_entries(self):
         data = box_snapshot()
         data["identity"]["symbol"] = SYMBOL

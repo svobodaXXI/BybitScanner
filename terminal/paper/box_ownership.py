@@ -41,6 +41,24 @@ def journal_hash(fills) -> str:
     return hashlib.sha256(json.dumps(rows, separators=(",", ":")).encode()).hexdigest()
 
 
+# A never-traded symbol has no projection row; its first execution creates the
+# row at version 1, so it is the virtual version-0 FLAT state. Schema 24 keeps
+# baseline_position_version >= 1, so that base is stored as this marker (an
+# empty journal at time 0) and proven as version 0. Real FLAT baselines are
+# never written at time 0, and a misread one can only fail the version fence.
+PRISTINE_BASELINE_VERSION = 1
+PRISTINE_BASELINE_TIME_MS = 0
+
+
+def is_pristine_baseline(baseline) -> bool:
+    return (
+        baseline["baseline_position_version"] == PRISTINE_BASELINE_VERSION
+        and baseline["baseline_time_ms"] == PRISTINE_BASELINE_TIME_MS
+        and baseline["baseline_execution_count"] == 0
+        and baseline["baseline_execution_hash"] == journal_hash(())
+    )
+
+
 def prove_box_exposure(candidate, baseline, ownership, fills, position):
     """Require complete, unambiguous fills from the attested FLAT base.
 
@@ -48,14 +66,25 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
     Projection version fences foreign writes that leave net quantity intact.
     This first-grid slice provides no replenishment or attempt reset.
     """
-    if position is None or position.sync_state != "synced":
-        raise BoxOwnershipError("actual position is missing or not reconciled")
     history = tuple(f for f in fills if f.exchange_timestamp_ms <= baseline["baseline_time_ms"])
     if (len(history) != baseline["baseline_execution_count"]
             or journal_hash(history) != baseline["baseline_execution_hash"]):
         raise BoxOwnershipError("baseline execution evidence changed or is incomplete")
     current = tuple(f for f in fills if f.exchange_timestamp_ms > baseline["baseline_time_ms"])
-    if position.version != baseline["baseline_position_version"] + len(current):
+    pristine = is_pristine_baseline(baseline)
+    if position is None:
+        # Still never traded: any fill would have created the projection row.
+        if not pristine or current:
+            raise BoxOwnershipError("actual position is missing or not reconciled")
+        return BoxExposureProof(
+            candidate.candidate_id, Decimal(0), Decimal(0), Decimal(0), None, None,
+            Decimal(0), Decimal(0), Decimal(0), None, None,
+            (Decimal(0),) * 4, (Decimal(0),) * 4, 0, (),
+        )
+    if position.sync_state != "synced":
+        raise BoxOwnershipError("actual position is missing or not reconciled")
+    base_version = 0 if pristine else baseline["baseline_position_version"]
+    if position.version != base_version + len(current):
         raise BoxOwnershipError("position version has an unexplained mutation or missing execution")
     plan = candidate.signal_snapshot["plan"]
     entry_side = OrderSide.BUY if plan["direction"] == "LONG" else OrderSide.SELL

@@ -4287,8 +4287,12 @@ class SQLiteStore:
 
         The journal is the only fill store. Its baseline digest and the position
         version allow later proof to reject missing/late evidence and mutations.
+        A never-traded symbol (no projection row) is attested with the pristine
+        marker, proven later as virtual version 0 (see box_ownership).
         """
-        from terminal.paper.box_ownership import journal_hash
+        from terminal.paper.box_ownership import (
+            PRISTINE_BASELINE_TIME_MS, PRISTINE_BASELINE_VERSION, journal_hash,
+        )
 
         with self._transaction():
             candidate = self._box_ownership_candidate(candidate_id)
@@ -4299,19 +4303,51 @@ class SQLiteStore:
             key = PositionKey(candidate.trading_account_id, Category.LINEAR, candidate.symbol, 0)
             position = self.get_position_projection(key)
             fills = self.load_executions_for_symbol(candidate.trading_account_id, candidate.symbol)
-            net = sum((f.quantity.value if f.side is OrderSide.BUY else -f.quantity.value
-                       for f in fills), Decimal(0))
-            if (position is None or position.sync_state != "synced"
-                    or position.side is not PositionSide.FLAT or position.quantity.value != 0
-                    or position.average_entry is not None or net != 0
-                    or any(f.exchange_timestamp_ms > position.updated_at_ms for f in fills)):
-                raise PersistenceError("Box ownership requires reconciled FLAT position and journal")
+            if position is None:
+                self._require_pristine_box_symbol(candidate, fills)
+                baseline_version, baseline_time_ms = PRISTINE_BASELINE_VERSION, PRISTINE_BASELINE_TIME_MS
+            else:
+                net = sum((f.quantity.value if f.side is OrderSide.BUY else -f.quantity.value
+                           for f in fills), Decimal(0))
+                # updated_at_ms > 0 keeps a real FLAT baseline distinct from the pristine marker.
+                if (position.sync_state != "synced" or position.updated_at_ms <= 0
+                        or position.side is not PositionSide.FLAT or position.quantity.value != 0
+                        or position.average_entry is not None or net != 0
+                        or any(f.exchange_timestamp_ms > position.updated_at_ms for f in fills)):
+                    raise PersistenceError("Box ownership requires reconciled FLAT position and journal")
+                baseline_version, baseline_time_ms = position.version, position.updated_at_ms
             self._connection.execute(
                 "INSERT INTO box_attempt_ownership VALUES (?, 'paper', ?, 1, ?, ?, ?, ?)",
-                (candidate_id, candidate.symbol.value, position.version, position.updated_at_ms,
+                (candidate_id, candidate.symbol.value, baseline_version, baseline_time_ms,
                  len(fills), journal_hash(fills)),
             )
         return True
+
+    def _require_pristine_box_symbol(self, candidate: RobotCandidateRecord, fills) -> None:
+        """Prove a missing projection means "never traded", not lost state.
+
+        Any execution, other Box baseline, live order/command, protection or open
+        Robot exposure on the symbol makes the missing row ambiguous.
+        """
+        account, symbol = candidate.trading_account_id.value, candidate.symbol.value
+
+        def present(sql: str) -> bool:
+            return self._connection.execute(sql, (account, symbol)).fetchone() is not None
+
+        if (
+            fills
+            or present("SELECT 1 FROM box_attempt_ownership WHERE trading_account_id=? AND symbol=?")
+            or present("SELECT 1 FROM paper_limit_orders WHERE trading_account_id=? AND symbol=? "
+                       "AND status != 'cancelled'")
+            or present("SELECT 1 FROM trading_commands WHERE trading_account_id=? AND symbol=? "
+                       "AND current_state NOT IN ('cancelled', 'rejected', 'failed')")
+            or present("SELECT 1 FROM protection_projections WHERE trading_account_id=? AND symbol=?")
+            or present("SELECT 1 FROM robot_trades WHERE trading_account_id=? AND symbol=? "
+                       "AND exit_time_ms IS NULL")
+            or present("SELECT 1 FROM robot_candidates WHERE trading_account_id=? AND symbol=? "
+                       "AND status='OPEN'")
+        ):
+            raise PersistenceError("Box ownership requires reconciled FLAT position and journal")
 
     def _reserve_box_order_identity(
         self, candidate_id: str, *, order_id: OrderId, role: str, slot: int,
