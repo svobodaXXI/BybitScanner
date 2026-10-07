@@ -1168,6 +1168,10 @@ class _OwnerTask:
     coverage_role: str
 
 
+# Wakes the owner thread when protection work is pending; carries no work itself.
+_PROTECTION_WAKE = object()
+
+
 class ProtectionIngressOverflow(RuntimeError):
     """Raised when bounded Robot protection ingress cannot admit another
     event without coalescing or dropping it.
@@ -1192,8 +1196,15 @@ class SerializedPaperRuntime:
         # processed, a further enqueue() fails closed instead of growing
         # self._requests without bound. call()/enqueue_book_update's
         # Workspace coalescing path are untouched by this limit.
+        #
+        # Admitted protection tasks wait in their own FIFO, not behind
+        # ordinary work: the owner drains every already-admitted protection
+        # task before it starts any call()/book update, so a protection event
+        # waits for at most the one ordinary task already running.
         self._protection_ingress_capacity = protection_ingress_capacity
         self._protection_ingress_lock = threading.Lock()
+        self._protection_tasks: deque[_OwnerTask] = deque()
+        self._protection_wake_pending = False
         self._protection_ingress_pending = 0
         self._protection_ingress_high_watermark = 0
         self._protection_ingress_max_queue_latency_ms = 0.0
@@ -1298,12 +1309,16 @@ class SerializedPaperRuntime:
             )
             self._protection_ingress_last_symbol = normalized_symbol or None
             self._protection_ingress_last_role = normalized_role
-        self._requests.put(_OwnerTask(
-            operation,
-            time.perf_counter(),
-            normalized_symbol,
-            normalized_role,
-        ))
+            self._protection_tasks.append(_OwnerTask(
+                operation,
+                time.perf_counter(),
+                normalized_symbol,
+                normalized_role,
+            ))
+            wake = not self._protection_wake_pending
+            self._protection_wake_pending = True
+        if wake:
+            self._requests.put(_PROTECTION_WAKE)
 
     def warm_robot_closed_candles(self) -> None:
         """Fetch closed candles for APPROVED candidates on the calling thread.
@@ -1376,6 +1391,45 @@ class SerializedPaperRuntime:
             self._owner_diagnostics_disabled = True
             LOGGER.exception("PAPER owner diagnostics failed; disabling")
 
+    def _drain_protection_tasks(self, runtime) -> None:
+        """Owner thread only. Run every protection task admitted so far, in
+        admission order. Tasks admitted during the drain post a fresh wake and
+        run before the next ordinary request, so ordinary work still advances
+        one request per drain round and neither class can starve the other."""
+        with self._protection_ingress_lock:
+            self._protection_wake_pending = False
+            batch = list(self._protection_tasks)
+            self._protection_tasks.clear()
+        for task in batch:
+            self._run_protection_task(runtime, task)
+
+    def _run_protection_task(self, runtime, task: _OwnerTask) -> None:
+        started_at = time.perf_counter()
+        queue_latency_ms = (started_at - task.enqueued_at) * 1000
+        try:
+            task.operation(runtime)
+        except BaseException:
+            LOGGER.exception("PAPER owner task failed")
+        finally:
+            processing_ms = (time.perf_counter() - started_at) * 1000
+            with self._protection_ingress_lock:
+                self._protection_ingress_pending -= 1
+                pending = self._protection_ingress_pending
+                self._protection_ingress_max_queue_latency_ms = max(
+                    self._protection_ingress_max_queue_latency_ms,
+                    queue_latency_ms,
+                )
+                self._protection_ingress_max_processing_ms = max(
+                    self._protection_ingress_max_processing_ms,
+                    processing_ms,
+                )
+            self._observe_owner_task(
+                "protection", task.operation, processing_ms,
+                f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"
+                f" symbol={task.symbol or 'UNKNOWN'} role={task.coverage_role}"
+                if processing_ms > SLOW_OWNER_TASK_WARNING_MS else "",
+            )
+
     def _run(self, factory) -> None:
         runtime = None
         try:
@@ -1389,6 +1443,11 @@ class SerializedPaperRuntime:
         try:
             while True:
                 request = self._requests.get()
+                # Strict priority: protection admitted before this point runs
+                # before the ordinary request just dequeued.
+                self._drain_protection_tasks(runtime)
+                if request is _PROTECTION_WAKE:
+                    continue
                 if isinstance(request, _BookUpdateNotification):
                     with self._book_update_lock:
                         book_update_id = (
@@ -1407,33 +1466,6 @@ class SerializedPaperRuntime:
                         "book_update", BOOK_UPDATE_TASK_LABEL,
                         (time.perf_counter() - started_at) * 1000,
                     )
-                    continue
-                if isinstance(request, _OwnerTask):
-                    started_at = time.perf_counter()
-                    queue_latency_ms = (started_at - request.enqueued_at) * 1000
-                    try:
-                        request.operation(runtime)
-                    except BaseException:
-                        LOGGER.exception("PAPER owner task failed")
-                    finally:
-                        processing_ms = (time.perf_counter() - started_at) * 1000
-                        with self._protection_ingress_lock:
-                            self._protection_ingress_pending -= 1
-                            pending = self._protection_ingress_pending
-                            self._protection_ingress_max_queue_latency_ms = max(
-                                self._protection_ingress_max_queue_latency_ms,
-                                queue_latency_ms,
-                            )
-                            self._protection_ingress_max_processing_ms = max(
-                                self._protection_ingress_max_processing_ms,
-                                processing_ms,
-                            )
-                        self._observe_owner_task(
-                            "protection", request.operation, processing_ms,
-                            f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"
-                            f" symbol={request.symbol or 'UNKNOWN'} role={request.coverage_role}"
-                            if processing_ms > SLOW_OWNER_TASK_WARNING_MS else "",
-                        )
                     continue
                 operation, completed, response = request
                 if operation is None:
