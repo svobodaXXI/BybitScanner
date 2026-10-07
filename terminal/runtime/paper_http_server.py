@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Mapping
 from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
@@ -1239,6 +1240,7 @@ class SerializedPaperRuntime:
         self._owner_diagnostics_disabled = False
         self._candle_cache = None  # the owned runtime's CachedClosedCandleProvider, if any
         self._catchup_evidence = None  # the owned runtime's PreparedCatchupEvidence, if any
+        self._evidence_book_provider = None  # the owned runtime's book provider, if any
         self._protection_ingress_last_symbol: str | None = None
         self._protection_ingress_last_role: str | None = None
         self._protection_ingress_last_overflow_symbol: str | None = None
@@ -1344,6 +1346,34 @@ class SerializedPaperRuntime:
             self._protection_wake_pending = True
         if wake:
             self._requests.put(_PROTECTION_WAKE)
+
+    def fetch_manual_evidence(self, symbols) -> dict[str, object]:
+        """Execution-time books for manual PAPER commands, read OFF the owner.
+
+        Called on the HTTP handler thread before it queues owner work: the
+        streamed book when one exists, otherwise the provider's REST read,
+        symbols in parallel. A failed or missing read simply yields no entry;
+        the owner then fails closed rather than fetching.
+        """
+        provider = self._evidence_book_provider
+        unique = sorted({str(symbol).strip().upper() for symbol in symbols if symbol})
+        if provider is None or not unique:
+            return {}
+
+        streamed = getattr(provider, "get_streamed_book", None)
+
+        def read(symbol: str):
+            try:
+                book = streamed(Symbol(symbol)) if streamed is not None else None
+                return symbol, book if book is not None else provider.get_book(Symbol(symbol))
+            except Exception:
+                LOGGER.warning("manual PAPER evidence read failed symbol=%s", symbol, exc_info=True)
+                return symbol, None
+
+        with ThreadPoolExecutor(
+            max_workers=min(8, len(unique)), thread_name_prefix="manual-evidence",
+        ) as pool:
+            return {symbol: book for symbol, book in pool.map(read, unique) if book is not None}
 
     def warm_robot_closed_candles(self) -> None:
         """Fetch closed candles for APPROVED candidates on the calling thread.
@@ -1469,6 +1499,7 @@ class SerializedPaperRuntime:
             return
         self._candle_cache = getattr(runtime, "robot_closed_candle_cache", None)
         self._catchup_evidence = getattr(runtime, "robot_catchup_evidence", None)
+        self._evidence_book_provider = getattr(runtime, "_book_provider", None)
         self._ready.set()
         try:
             while True:
@@ -2978,6 +3009,22 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _manual_evidence(self, symbol: str) -> dict[str, object]:
+        """Handler-thread read of a manual command's execution book (never the owner)."""
+        fetch = getattr(self.server.runtime, "fetch_manual_evidence", None)
+        if fetch is None:
+            return {}
+        book = fetch([symbol]).get(str(symbol).strip().upper())
+        return {"evidence": book} if book is not None else {}
+
+    def _manual_close_all_evidence(self) -> dict[str, object]:
+        fetch = getattr(self.server.runtime, "fetch_manual_evidence", None)
+        if fetch is None:
+            return {}
+        symbols = self.server.runtime.call(lambda runtime: runtime.manual_open_symbols())
+        books = fetch(symbols)
+        return {"evidence": books} if books else {}
+
     def _warm_robot_closed_candles(self) -> None:
         # pause/stop/reconcile synchronize pending entries on the owner thread;
         # fetch their candles here first. Failures are ignored: an owner-thread
@@ -3257,7 +3304,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             try:
                 payload = self._payload(CLOSE_ALL_FIELDS)
                 request = CloseAllCommandRequest(ClientActionId(payload["client_action_id"]))
-                result = self.server.runtime.call(lambda runtime: runtime.close_all(request))
+                evidence = self._manual_close_all_evidence()
+                result = self.server.runtime.call(
+                    lambda runtime: runtime.close_all(request, **evidence)
+                )
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
@@ -3530,9 +3580,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
+            evidence = self._manual_evidence(request.symbol)
             result, state = self.server.runtime.call(
                 lambda runtime: (
-                    runtime.full_close(request),
+                    runtime.full_close(request, **evidence),
                     runtime.paper_state(request.symbol),
                 )
             )
@@ -3603,9 +3654,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(400, to_primitive(_validation_error()))
             return
 
+        evidence = self._manual_evidence(request.symbol)
         result, state = self.server.runtime.call(
             lambda runtime: (
-                runtime.market(request),
+                runtime.market(request, **evidence),
                 runtime.paper_state(request.symbol),
             )
         )

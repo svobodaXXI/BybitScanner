@@ -1295,9 +1295,14 @@ class PaperRuntime:
         ):
             raise RuntimeError("live_mutations_disabled")
 
-    def market(self, request):
+    def market(self, request, *, evidence: NormalizedOrderBook | None = None):
+        """Manual PAPER Market. ``evidence`` is the book the HTTP boundary read
+        off the owner thread; the owner uses the current streamed book first
+        and never the provider's REST fallback."""
         self.require_paper_mutations()
-        return self.api.market(request)
+        return self.api.market(
+            request, market_book=self._robot_execution_book(request.symbol, evidence),
+        )
 
     def _robot_market(self, request, *, evidence: NormalizedOrderBook | None = None):
         return self._robot_api.market(
@@ -1352,9 +1357,18 @@ class PaperRuntime:
         stored = self._stored_bybit_account(account_id.value)
         return stored.environment == TradingAccountEnvironment.MAINNET.value and not stored.read_only
 
-    def full_close(self, request):
+    def full_close(self, request, *, evidence: NormalizedOrderBook | None = None):
         self.require_paper_mutations()
-        return self.api.full_close(request)
+        return self.api.full_close(
+            request, market_book=self._robot_execution_book(request.symbol, evidence),
+        )
+
+    def manual_open_symbols(self) -> tuple[str, ...]:
+        """Symbols of open PAPER positions, in close_all's order (cheap owner read)."""
+        return tuple(
+            position.position_key.symbol.value
+            for position in self.store.load_open_position_projections(self._account_id)
+        )
 
     def _robot_full_close(self, request, *, evidence: NormalizedOrderBook | None = None):
         return self._robot_api.full_close(
@@ -2633,8 +2647,12 @@ class PaperRuntime:
             ))
         return PaperOpenPositionsResponse(account.trading_account_id.value, tuple(projected))
 
-    def close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
+    def close_all(
+        self, request: CloseAllCommandRequest, *,
+        evidence: Mapping[str, NormalizedOrderBook] | None = None,
+    ) -> CloseAllCommandResponse:
         self.require_paper_mutations()
+        evidence = evidence or {}
         source_positions = self.store.load_open_position_projections(self._account_id)
         results = []
         for position in source_positions:
@@ -2642,9 +2660,10 @@ class PaperRuntime:
             digest = hashlib.sha256(
                 f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
             ).hexdigest()[:32]
-            results.append(self.api.full_close(FullCloseCommandRequest(
-                ClientActionId(f"paper-close-all-{digest}"), symbol,
-            )))
+            results.append(self.api.full_close(
+                FullCloseCommandRequest(ClientActionId(f"paper-close-all-{digest}"), symbol),
+                market_book=self._robot_execution_book(symbol, evidence.get(symbol)),
+            ))
         refreshed = self.open_positions()
         return CloseAllCommandResponse(
             request.client_action_id.value, tuple(results), refreshed.positions,
