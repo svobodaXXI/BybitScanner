@@ -14,8 +14,9 @@ if not exist "%~dp0venv\Scripts\python.exe" (
 )
 
 rem Owner intent only; bootstrap, identity and state routing live in tools.runtime_intent.
+rem No argument means ROBOT only (the Zapusk robota desktop button); SCANNER and ALL must be explicit.
 set "BYBITSCANNER_RUNTIME_INTENT=%~1"
-if "%BYBITSCANNER_RUNTIME_INTENT%"=="" set "BYBITSCANNER_RUNTIME_INTENT=ALL"
+if "%BYBITSCANNER_RUNTIME_INTENT%"=="" set "BYBITSCANNER_RUNTIME_INTENT=ROBOT"
 
 "%~dp0venv\Scripts\python.exe" -m tools.runtime_intent "%BYBITSCANNER_RUNTIME_INTENT%"
 exit /b %errorlevel%

@@ -5,6 +5,9 @@ Scanner routing are owned by tools.runtime_intent and POST /api/runtime/intent
 (covered by test_runtime_intent_bootstrap / test_runtime_intent_backend).
 """
 
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -19,13 +22,14 @@ def _commands(path):
 
 
 class RuntimeLauncherTests(unittest.TestCase):
-    def test_default_robot_launcher_routes_all_intent(self):
+    def test_default_robot_launcher_routes_robot_intent_never_implicit_all(self):
         commands = _commands(LAUNCHER)
         self.assertIn('set "BYBITSCANNER_RUNTIME_INTENT=%~1"', commands)
         self.assertIn(
-            'if "%BYBITSCANNER_RUNTIME_INTENT%"=="" set "BYBITSCANNER_RUNTIME_INTENT=ALL"',
+            'if "%BYBITSCANNER_RUNTIME_INTENT%"=="" set "BYBITSCANNER_RUNTIME_INTENT=ROBOT"',
             commands,
         )
+        self.assertFalse(any("INTENT=ALL" in line for line in commands))
         invoke = '"%~dp0venv\\Scripts\\python.exe" -m tools.runtime_intent "%BYBITSCANNER_RUNTIME_INTENT%"'
         self.assertEqual(commands[-2:], [invoke, "exit /b %errorlevel%"])
 
@@ -66,6 +70,47 @@ class RuntimeLauncherTests(unittest.TestCase):
                 ))
 
 
+@unittest.skipUnless(os.name == "nt", "batch launcher semantics are Windows-only")
+class DesktopLaunchResolutionTests(unittest.TestCase):
+    """Run the real tracked .bat files in cmd with only the bootstrap call replaced.
+
+    The final `-m tools.runtime_intent` line is swapped for an echo of the resolved
+    intent, so nothing is bootstrapped, no backend/Scanner/Robot is started, and no
+    python process runs; every line before it (arguments, defaults, delegation) is real.
+    """
+
+    def _resolve(self, launcher_name, *args):
+        invoke = '"%~dp0venv\\Scripts\\python.exe" -m tools.runtime_intent "%BYBITSCANNER_RUNTIME_INTENT%"'
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "venv" / "Scripts").mkdir(parents=True)
+            (root / "venv" / "Scripts" / "python.exe").write_bytes(b"")
+            for name in ("start_robot_runtime.bat", "start_scanner.bat"):
+                text = (ROOT / name).read_text()
+                if name == "start_robot_runtime.bat":
+                    self.assertIn(invoke, text)
+                    text = text.replace(invoke, "echo RESOLVED_INTENT=%BYBITSCANNER_RUNTIME_INTENT%")
+                (root / name).write_text(text)
+            done = subprocess.run(
+                ["cmd.exe", "/c", str(root / launcher_name), *args],
+                cwd=temp, capture_output=True, text=True, timeout=30, check=False,
+            )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return [line for line in done.stdout.splitlines() if line.startswith("RESOLVED_INTENT=")]
+
+    def test_robot_desktop_launch_without_argument_resolves_robot(self):
+        self.assertEqual(self._resolve("start_robot_runtime.bat"), ["RESOLVED_INTENT=ROBOT"])
+
+    def test_robot_desktop_shortcut_with_explicit_robot_argument_resolves_robot(self):
+        self.assertEqual(self._resolve("start_robot_runtime.bat", "ROBOT"), ["RESOLVED_INTENT=ROBOT"])
+
+    def test_scanner_desktop_launch_resolves_scanner(self):
+        self.assertEqual(self._resolve("start_scanner.bat"), ["RESOLVED_INTENT=SCANNER"])
+
+    def test_explicit_all_remains_all(self):
+        self.assertEqual(self._resolve("start_robot_runtime.bat", "ALL"), ["RESOLVED_INTENT=ALL"])
+
+
 class OwnerShortcutProvisioningTests(unittest.TestCase):
     def test_shortcut_sync_is_ascii_only_for_windows_powershell_51(self):
         raw = (ROOT / "tools" / "sync_owner_shortcuts.ps1").read_bytes()
@@ -90,6 +135,15 @@ class OwnerShortcutProvisioningTests(unittest.TestCase):
         self.assertNotIn("'start_robot.bat'", script)
         self.assertNotIn("'stop_robot.bat'", script)
         self.assertIn("'OWNER SHORTCUTS = CANONICAL'", script)
+
+    def test_shortcut_sync_pins_robot_only_arguments_and_never_all(self):
+        script = (ROOT / "tools" / "sync_owner_shortcuts.ps1").read_text(encoding="ascii")
+
+        self.assertIn("$intentArguments[$robotShortcut] = 'ROBOT'", script)
+        self.assertIn("$shortcut.Arguments = $expectedArguments", script)
+        self.assertIn("$verify.Arguments, $expectedArguments", script)
+        self.assertNotIn("'ALL'", script)
+        self.assertNotIn("'SCANNER'", script)
 
 
 class StopRuntimeLauncherTests(unittest.TestCase):
