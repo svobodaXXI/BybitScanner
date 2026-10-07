@@ -22,14 +22,13 @@ def _commands(path):
 
 
 class RuntimeLauncherTests(unittest.TestCase):
-    def test_default_robot_launcher_routes_robot_intent_never_implicit_all(self):
+    def test_default_robot_launcher_routes_all_one_action_intent(self):
         commands = _commands(LAUNCHER)
         self.assertIn('set "BYBITSCANNER_RUNTIME_INTENT=%~1"', commands)
         self.assertIn(
-            'if "%BYBITSCANNER_RUNTIME_INTENT%"=="" set "BYBITSCANNER_RUNTIME_INTENT=ROBOT"',
+            'if "%BYBITSCANNER_RUNTIME_INTENT%"=="" set "BYBITSCANNER_RUNTIME_INTENT=ALL"',
             commands,
         )
-        self.assertFalse(any("INTENT=ALL" in line for line in commands))
         invoke = '"%~dp0venv\\Scripts\\python.exe" -m tools.runtime_intent "%BYBITSCANNER_RUNTIME_INTENT%"'
         self.assertEqual(commands[-2:], [invoke, "exit /b %errorlevel%"])
 
@@ -98,8 +97,8 @@ class DesktopLaunchResolutionTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         return [line for line in done.stdout.splitlines() if line.startswith("RESOLVED_INTENT=")]
 
-    def test_robot_desktop_launch_without_argument_resolves_robot(self):
-        self.assertEqual(self._resolve("start_robot_runtime.bat"), ["RESOLVED_INTENT=ROBOT"])
+    def test_robot_desktop_launch_without_argument_resolves_all(self):
+        self.assertEqual(self._resolve("start_robot_runtime.bat"), ["RESOLVED_INTENT=ALL"])
 
     def test_robot_desktop_shortcut_with_explicit_robot_argument_resolves_robot(self):
         self.assertEqual(self._resolve("start_robot_runtime.bat", "ROBOT"), ["RESOLVED_INTENT=ROBOT"])
@@ -136,13 +135,13 @@ class OwnerShortcutProvisioningTests(unittest.TestCase):
         self.assertNotIn("'stop_robot.bat'", script)
         self.assertIn("'OWNER SHORTCUTS = CANONICAL'", script)
 
-    def test_shortcut_sync_pins_robot_only_arguments_and_never_all(self):
+    def test_shortcut_sync_pins_owner_all_arguments_explicitly(self):
         script = (ROOT / "tools" / "sync_owner_shortcuts.ps1").read_text(encoding="ascii")
 
-        self.assertIn("$intentArguments[$robotShortcut] = 'ROBOT'", script)
+        self.assertIn("$intentArguments[$robotShortcut] = 'ALL'", script)
         self.assertIn("$shortcut.Arguments = $expectedArguments", script)
         self.assertIn("$verify.Arguments, $expectedArguments", script)
-        self.assertNotIn("'ALL'", script)
+        self.assertNotIn("$intentArguments[$robotShortcut] = 'ROBOT'", script)
         self.assertNotIn("'SCANNER'", script)
 
 
