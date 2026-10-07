@@ -642,6 +642,32 @@ class RuntimeReplayEntryPendingCoverageStartBoundaryTests(unittest.TestCase):
 BOX_ARM_LEAK_SYMBOLS = ("AKEUSDT", "ARKMUSDT", "BATUSDT", "BLASTUSDT", "BOMEUSDT", "BRETTUSDT")
 
 
+def seed_failing_box_candidates(database_path: Path, symbols: tuple[str, ...]) -> None:
+    """Box candidates whose ownership must fail closed: lost projection, not pristine.
+
+    A never-traded symbol (no projection, no executions) is now a valid pristine
+    FLAT base, so each symbol gets one immutable execution and no projection row.
+    An execution creates no protection coverage role, so it cannot mask an arm leak.
+    """
+    from terminal.domain.models import (
+        Category, Execution, ExecutionDedupKey, ExecutionId, Price, Quantity,
+    )
+
+    account = TradingAccountId("paper")
+    store = SQLiteStore.open(database_path)
+    try:
+        for symbol in symbols:
+            with store._transaction():
+                store._insert_execution(Execution(
+                    ExecutionDedupKey(account, Category.LINEAR, ExecutionId(f"orphan-{symbol}")),
+                    OrderId(f"orphan-order-{symbol}"), Symbol(symbol), OrderSide.BUY,
+                    Price(Decimal("94")), Quantity(Decimal("1")), Decimal("0"), 2_000,
+                ))
+    finally:
+        store.close()
+    seed_unowned_box_candidates(database_path, symbols)
+
+
 class RuntimeReplayBoxArmLeakTests(unittest.TestCase):
     """RVL-R6 RED: a failed Box pre-creation attempt must not keep its temporary arm.
 
@@ -669,7 +695,7 @@ class RuntimeReplayBoxArmLeakTests(unittest.TestCase):
                 hub, owner, resync_interval_s=3600.0, recovery_session=_OfflineRecoverySession(),
             )
             try:
-                seed_unowned_box_candidates(path, (symbol,))
+                seed_failing_box_candidates(path, (symbol,))
                 self.assertEqual(manager.health()["armed_symbols"], ())
 
                 advanced = tick_box_monitor(path, manager)
@@ -733,7 +759,7 @@ class RuntimeReplayBoxArmLeakTests(unittest.TestCase):
         self.assertEqual(events[self.CAPACITY].symbol, legit)
 
         def setup(owner, manager, database_path):
-            seed_unowned_box_candidates(database_path, BOX_ARM_LEAK_SYMBOLS)
+            seed_failing_box_candidates(database_path, BOX_ARM_LEAK_SYMBOLS)
             advanced = tick_box_monitor(database_path, manager)
             box = box_candidate_facts(database_path, BOX_ARM_LEAK_SYMBOLS)
             # The one legitimate durable ENTRY_PENDING: a linked, open, unfilled LIMIT;
