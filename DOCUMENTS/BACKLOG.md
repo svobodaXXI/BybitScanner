@@ -210,12 +210,38 @@ strictly necessary.
    - if the base cannot be established validly, reject/flag the candidate rather
      than publish an inflated target.
 
-8. **P1 — POSITION-CARD-STATUS-CLEANUP-1 — remove redundant open-status row**
+8. **P0 — WEDGE-STOP-1 — structural stop for wedge entries**
+   - LONGXIAUSDT 5m Falling Wedge is the owner visual reference: the current STOP
+     is too close to entry and can be hit by ordinary noise while the wedge thesis
+     remains structurally valid;
+   - trace the current wedge STOP source and replace any over-tight local/minor-low
+     behavior with a structural rule tied to the relevant wedge boundary/extremum,
+     with an appropriate safety buffer;
+   - preserve risk gating and fail closed if a valid structural STOP cannot produce
+     acceptable risk/reward; do not widen STOP merely to force an entry;
+   - acceptance: STOP is structurally defensible on the frozen wedge geometry and
+     is consistent with the scale of the formation.
+
+9. **P0 — WEDGE-REENTRY-2 — bounded re-entry attempts per signal**
+   - owner requirement: after a failed wedge entry, the same still-valid signal may
+     be entered again up to two times;
+   - maximum is three failed entries total for one signal: initial attempt + two
+     re-entry attempts; after the third failed entry, invalidate/cancel the signal
+     and forbid further entry;
+   - re-entry is allowed only while the original frozen signal remains structurally
+     valid and a fresh admissible entry trigger exists; do not blindly re-enter
+     immediately after STOP;
+   - define the failed-attempt accounting durably and expose the current attempt
+     number in monitoring/lifecycle UI;
+   - preserve the original signal identity and avoid creating parallel owners for
+     the same symbol/signal.
+
+10. **P1 — POSITION-CARD-STATUS-CLEANUP-1 — remove redundant open-status row**
    - remove the user-visible line `Статус: открыта` from the position card;
    - do not replace it with equivalent noise; preserve useful PnL/SL/TP/volume and
      navigation controls.
 
-9. **P0 — PAPER-UNCERTAINTY-1 — unresolved PAPER state / stale reconciliation debt**
+11. **P0 — PAPER-UNCERTAINTY-1 — unresolved PAPER state / stale reconciliation debt**
    - `/positions` currently reports `PAPER · Состояние не подтверждено` while no
      open position projection is shown;
    - many historical FLAT projections remain `sync_state=reconciliation_required`;
@@ -226,9 +252,10 @@ strictly necessary.
      uncertain.
 
 Routing order for these new items: fix PAPER/Robot execution blockers first
-(`BOX-PRISTINE-FLAT-1`, `PAPER-UNCERTAINTY-1`), then candidate observability,
-then geometry hard gates/target correctness, then presentation cleanup. A real
-owner-observed safety blocker may preempt this order.
+(`BOX-PRISTINE-FLAT-1`, `PAPER-UNCERTAINTY-1`), then execution correctness
+(`WEDGE-STOP-1`, `WEDGE-REENTRY-2`), then candidate observability, then geometry
+hard gates/target correctness, then presentation cleanup. A real owner-observed
+safety blocker may preempt this order.
 
 
 ## NOW — 2026-09-30 — G6 FULL PASS COMPLETED / GEOMETRY GATE REOPENED
