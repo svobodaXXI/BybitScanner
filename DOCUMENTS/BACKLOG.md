@@ -241,7 +241,25 @@ strictly necessary.
    - do not replace it with equivalent noise; preserve useful PnL/SL/TP/volume and
      navigation controls.
 
-11. **P0 — PAPER-UNCERTAINTY-1 — unresolved PAPER state / stale reconciliation debt**
+11. **P0 — WEDGE-STRICT-BOUNDARY-2 — strict boundary must pass through the controlling extremum**
+   - POWERUSDT 5m Falling Wedge is the owner visual reference for a malformed
+     strict upper boundary that approaches the apex without passing through a
+     real controlling upper extremum;
+   - for a Falling Wedge, the strict upper boundary must pass through the
+     relevant upper pivot immediately preceding the final lower extremum before
+     the apex; mirror this rule for the strict lower boundary of a Rising Wedge;
+   - this is a hard structural condition, not a score preference: a strict
+     boundary that effectively hangs in empty space near the apex is invalid;
+   - no relevant wick/high may protrude beyond the strict upper boundary for a
+     Falling Wedge; mirror the rule for lows below the strict lower boundary in
+     a Rising Wedge;
+   - after fitting through the controlling extremum, all earlier relevant same-side
+     extrema must lie on or inside the strict boundary; any prior protrusion
+     invalidates the candidate;
+   - acceptance: the strict boundary is anchored to the controlling extremum and
+     contains all relevant same-side extrema with zero protrusions.
+
+12. **P0 — PAPER-UNCERTAINTY-1 — unresolved PAPER state / stale reconciliation debt**
    - `/positions` currently reports `PAPER · Состояние не подтверждено` while no
      open position projection is shown;
    - many historical FLAT projections remain `sync_state=reconciliation_required`;
@@ -254,8 +272,8 @@ strictly necessary.
 Routing order for these new items: fix PAPER/Robot execution blockers first
 (`BOX-PRISTINE-FLAT-1`, `PAPER-UNCERTAINTY-1`), then execution correctness
 (`WEDGE-STOP-1`, `WEDGE-REENTRY-2`), then candidate observability, then geometry
-hard gates/target correctness, then presentation cleanup. A real owner-observed
-safety blocker may preempt this order.
+hard gates/target correctness (including `WEDGE-STRICT-BOUNDARY-2`), then
+presentation cleanup. A real owner-observed safety blocker may preempt this order.
 
 
 ## NOW — 2026-09-30 — G6 FULL PASS COMPLETED / GEOMETRY GATE REOPENED
