@@ -186,6 +186,32 @@ For all future Scanner/Robot/runtime development:
 If the underlying target path is migrated, maintain compatibility or update the shortcut
 as part of the same implementation slice and record the new target in project docs.
 
+### PC ↔ laptop owner-path portability — OWNER RULE 2026-10-07
+
+The owner's Windows PC and laptop intentionally use the **same repository root**:
+`C:\\BybitScanner`. Switching machines must not require a separate launcher rewrite,
+shortcut migration, or machine-specific Git branch.
+
+Permanent rules:
+- keep the same owner-facing shortcut names and the same `C:\\BybitScanner` target root
+  on both machines;
+- tracked launcher code must resolve repo-internal files relative to its own directory
+  (for batch launchers, `%~dp0`) rather than baking in a user profile, Desktop,
+  OneDrive, hostname, or machine name;
+- machine-local `.lnk` files may remain local, but Git changes must not silently
+  retarget them or change what “Запуск робота”, “Остановить робота”, or
+  `start_scanner` means;
+- do not create separate “PC” and “laptop” launcher variants merely because the
+  owner changed machines; a genuine machine difference must be isolated in local
+  configuration, outside the shared runtime semantics;
+- before changing shortcut targets or launcher composition, compare against the
+  last owner-verified working desktop contract and preserve backward compatibility;
+- repository synchronization between PC and laptop must never require the owner to
+  rebuild the desktop launch surface after each switch.
+
+This portability rule does not authorize an agent to start Scanner/Robot and does
+not weaken PAPER/LIVE safety, runtime ownership, or acceptance gates.
+
 ## Scanner runtime ownership — MANUAL ONLY (OWNER RULE 2026-09-23)
 
 **Only the owner manually starts the real Scanner through the verified existing

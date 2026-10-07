@@ -92,6 +92,19 @@ Current owner-facing surface (canonicalized 2026-09-28; do not rediscover):
 - `Запуск робота.lnk` -> tracked `C:\\BybitScanner\\start_robot_runtime.bat`, Start In `C:\\BybitScanner`;
 - `Остановить робота.lnk` -> tracked `C:\\BybitScanner\\stop_robot_runtime.bat`, Start In `C:\\BybitScanner`.
 
+**Cross-machine invariant (owner decision 2026-10-07):** PC and laptop both use
+`C:\\BybitScanner` as the repository root. Treat the desktop launch surface as one
+shared contract across both machines, not as two configurations. A machine switch
+must not require rewriting tracked launchers or retargeting shortcuts. Keep
+repo-internal launcher references relative to the launcher directory; never encode
+Windows username, Desktop/OneDrive path, hostname, or a PC/laptop-specific root in
+shared runtime semantics. Local `.lnk` files may differ only in their physical
+Desktop location, not in the intended target semantics. Git sync must not silently
+change the meaning of the existing owner shortcuts. Any future target/composition
+migration requires explicit compatibility with the last owner-verified working
+contract and must work unchanged after switching PC ↔ laptop.
+
+
 Current wiring contract:
 - desktop shortcuts must target tracked canonical launchers directly; local/untracked `start_robot.bat` and `stop_robot.bat` are not runtime authority and must not sit in the owner-critical path;
 - tracked `tools/sync_owner_shortcuts.ps1` repairs/verifies these three targets without renaming the owner-facing buttons;
