@@ -164,7 +164,8 @@ not ad-hoc terminal commands and not a newly invented launcher workflow.
 
 Known owner-facing shortcuts:
 - `start_scanner` — manual Scanner launch/control entry;
-- `Запуск робота` — manual Robot/prototype launch entry;
+- `Запуск робота` — manual Robot launch entry, **Robot only** (`ROBOT`; it must never start
+  Scanner — `ALL` is an explicit surface such as Telegram `/all`);
 - the companion desktop stop shortcut remains part of the same owner-facing surface.
 
 For all future Scanner/Robot/runtime development:
