@@ -146,8 +146,11 @@ strictly necessary.
    - AVNTUSDT 5m LONG was admitted as linked `APPROVED / BOX_ENTRY_READY` but
      remained unexecuted after repeated attempts with
      `Box ownership requires reconciled FLAT position and journal`;
-   - read-only evidence: AVNTUSDT has no position projection, no executions, no
-     Box attempt ownership and no Box order ownership;
+   - NEARUSDT 5m LONG independently reproduced the same defect on 2026-10-07:
+     `APPROVED / BOX_ENTRY_READY`, attempt_count=2, same last_execution_error,
+     with no NEAR position projection, no executions and no Box order ownership;
+   - read-only evidence for both AVNTUSDT and NEARUSDT is consistent with a
+     pristine symbol: no position projection, no executions and no Box ownership;
    - treat `no position row + no executions + no ownership/exposure evidence`
      as a provable pristine-FLAT baseline for PAPER Box ownership;
    - keep fail-closed behavior when any execution/history/ownership/exposure
