@@ -1073,15 +1073,42 @@ class RuntimeShutdown:
             self._sleep(POLL_INTERVAL_S)
 
     def _require_scanner_stopped(self) -> None:
-        try:
-            status, body = self._get(self._backend + "/api/scanner/status", PROBE_TIMEOUT_S)
-        except Unreachable as exc:
-            raise SafeStopError("Scanner state is unavailable from legacy PAPER backend") from exc
-        if not (
-            status == 200 and isinstance(body, dict) and body.get("ok") is True
-            and body.get("mode") == "SCANNER_STOPPED"
-        ):
-            raise SafeStopError("Scanner is not proven STOPPED on legacy PAPER backend")
+        # Like the identity re-proof, /api/scanner/status is answered through the
+        # legacy backend's serialized owner queue, so a read-only re-proof can be
+        # briefly unanswered by the same live process. Only that is retried, within
+        # a bounded deadline; any definite answer other than STOPPED blocks at once.
+        deadline = self._monotonic() + LEGACY_HEALTH_REPROOF_WAIT_S
+        attempts = 0
+        while True:
+            attempts += 1
+            remaining = deadline - self._monotonic()
+            timeout = min(PROBE_TIMEOUT_S, max(0.1, remaining))
+            try:
+                status, body = self._get(self._backend + "/api/scanner/status", timeout)
+            except Unreachable:
+                transient = "transport unavailable"
+            else:
+                if (
+                    status == 200 and isinstance(body, dict) and body.get("ok") is True
+                    and body.get("mode") == "SCANNER_STOPPED"
+                ):
+                    return
+                if not (
+                    status == 503 and isinstance(body, dict)
+                    and body.get("error") == "scanner_control_unavailable"
+                ):
+                    raise SafeStopError("Scanner is not proven STOPPED on legacy PAPER backend")
+                transient = "serialized owner unavailable"
+            if self._monotonic() >= deadline:
+                raise SafeStopError(
+                    "Scanner state is unavailable from legacy PAPER backend: "
+                    "Scanner STOPPED re-proof timed out"
+                )
+            self._mark(
+                f"legacy Scanner STOPPED re-proof delayed ({transient}); "
+                f"retrying read-only probe attempt {attempts + 1}"
+            )
+            self._sleep(POLL_INTERVAL_S)
 
     def _require_temporary_entry_arm_shape(self) -> dict[str, object]:
         try:

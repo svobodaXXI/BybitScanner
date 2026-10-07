@@ -2117,6 +2117,120 @@ class LegacyBoxUpgradeShutdownTests(unittest.TestCase):
         self.assertIn("outside the upgrade proof", result.message)
         self.assertFalse(any(call.startswith("terminate:") for call in runtime.calls))
 
+    # --- final Scanner STOPPED re-proof race (owner run after #410) -------------------
+
+    def scanner_race_runtime(self, script, *, telegram=True, from_call=3):
+        """LONGXIA + AVNT/NEAR runtime whose Nth+ /api/scanner/status reads follow
+        ``script`` (exceptions are raised, tuples returned, then normal replies).
+
+        Call 3 is the final re-proof inside the second _resolve_box_upgrade_chain,
+        after Telegram shutdown -- where the owner run failed.
+        """
+        runtime = self.longxia_runtime()
+        runtime.telegram_alive = telegram
+        original = runtime.get
+        state = {"calls": 0, "script": list(script)}
+
+        def get(url, timeout):
+            if url == BACKEND + "/api/scanner/status":
+                state["calls"] += 1
+                if state["calls"] >= from_call and state["script"]:
+                    item = state["script"].pop(0)
+                    if callable(item):
+                        state["script"].insert(0, item)
+                        item = item()
+                    if isinstance(item, Exception):
+                        raise item
+                    return item
+            return original(url, timeout)
+        runtime.get = get
+        runtime.scanner_reads = state
+        return runtime
+
+    def assert_terminated_once(self, runtime, result, *, telegram=True):
+        self.assertTrue(result.ok, result.message)
+        expected = ["scanner:stop", "runtime:legacy-box-upgrade-proof"]
+        if telegram:
+            expected.append("telegram:shutdown")
+        expected.append("backend:legacy-box-upgrade-terminate")
+        self.assertEqual(list(result.steps), expected)
+        self.assertEqual([c for c in runtime.calls if c.startswith("terminate:")],
+                         ["terminate:[130, 120, 110, 105]"])
+        self.assertEqual(runtime.robot, RECON)
+
+    def assert_blocked_alive(self, runtime, result, phrase):
+        self.assertFalse(result.ok)
+        self.assertIn(phrase, result.message)
+        self.assertFalse(any(c.startswith("terminate:") for c in runtime.calls))
+        self.assertTrue(runtime.backend_alive)
+        self.assertEqual(runtime.robot, RECON)
+
+    def test_final_scanner_reproof_survives_one_transient_unreachable(self):
+        # RED on #410 main: the single GET failed -> "Scanner state is unavailable".
+        runtime = self.scanner_race_runtime([shutdown.Unreachable("owner queue busy")])
+        self.assert_terminated_once(runtime, runtime.orchestrator().run("all"))
+        self.assertEqual(runtime.scanner_reads["calls"], 4)
+
+    def test_final_scanner_reproof_survives_serialized_owner_unavailable(self):
+        runtime = self.scanner_race_runtime(
+            [(503, {"ok": False, "error": "scanner_control_unavailable"})] * 2)
+        self.assert_terminated_once(runtime, runtime.orchestrator().run("all"))
+
+    def test_owner_pc_shape_with_telegram_already_absent(self):
+        runtime = self.scanner_race_runtime([shutdown.Unreachable("busy")], telegram=False)
+        self.assert_terminated_once(runtime, runtime.orchestrator().run("all"), telegram=False)
+        self.assertNotIn("telegram:shutdown", runtime.calls)
+
+    def test_retry_ending_in_running_paused_or_malformed_blocks_immediately(self):
+        for final, phrase in (
+            ((200, {"ok": True, "mode": "SCANNER_RUNNING"}), "Scanner is not proven STOPPED"),
+            ((200, {"ok": True, "mode": "SCANNER_PAUSED"}), "Scanner is not proven STOPPED"),
+            ((200, {"ok": True}), "Scanner is not proven STOPPED"),
+            ((200, None), "Scanner is not proven STOPPED"),
+            ((200, {"ok": False, "mode": "SCANNER_STOPPED"}), "Scanner is not proven STOPPED"),
+            ((503, {"ok": False, "error": "other"}), "Scanner is not proven STOPPED"),
+            ((500, {"ok": False}), "Scanner is not proven STOPPED"),
+        ):
+            with self.subTest(final=final):
+                runtime = self.scanner_race_runtime([shutdown.Unreachable("busy"), final])
+                self.assert_blocked_alive(runtime, runtime.orchestrator().run("all"), phrase)
+                self.assertEqual(runtime.scanner_reads["calls"], 4)  # no retry after a definite state
+
+    def test_repeated_unreachable_through_deadline_blocks(self):
+        runtime = self.scanner_race_runtime([lambda: shutdown.Unreachable("down")])
+        result = runtime.orchestrator().run("all")
+        self.assert_blocked_alive(runtime, result, "Scanner STOPPED re-proof timed out")
+        self.assertGreaterEqual(runtime.now, shutdown.LEGACY_HEALTH_REPROOF_WAIT_S)
+
+    def test_identity_or_chain_change_after_scanner_retry_blocks(self):
+        def after_retry(runtime, mutate):
+            original = runtime.get
+
+            def get(url, timeout):
+                if url == BACKEND + "/api/health" and runtime.scanner_reads["calls"] >= 4:
+                    status, body = original(url, timeout)
+                    return status, mutate(dict(body))
+                return original(url, timeout)
+            runtime.get = get
+
+        for label, mutate, phrase in (
+            ("instance", lambda b: {**b, "process_instance_id": "restarted"}, "identity changed"),
+            ("database", lambda b: {**b, "database_identity": "other-db"}, "identity changed"),
+        ):
+            with self.subTest(case=label):
+                runtime = self.scanner_race_runtime([shutdown.Unreachable("busy")])
+                after_retry(runtime, mutate)
+                self.assert_blocked_alive(runtime, runtime.orchestrator().run("all"), phrase)
+
+        runtime = self.scanner_race_runtime([shutdown.Unreachable("busy")])
+        original = runtime.resolve_legacy
+
+        def resolve(kind, host, port, root):
+            chain = original(kind, host, port, root)
+            return (999,) if runtime.scanner_reads["calls"] >= 4 else chain
+        runtime.resolve_legacy = resolve
+        self.assert_blocked_alive(runtime, runtime.orchestrator().run("all"), "process chain changed")
+
     def test_ambiguous_or_non_definitive_reconcile_never_enters_upgrade_path(self):
         for reply in ((503, {"ok": False, "error": "robot_reconcile_unavailable"}),
                       (200, {"ok": True, "success": False}), TimeoutError("lost")):
