@@ -6,6 +6,7 @@ Scanner routing are owned by tools.runtime_intent and POST /api/runtime/intent
 """
 
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -22,14 +23,13 @@ def _commands(path):
 
 
 class RuntimeLauncherTests(unittest.TestCase):
-    def test_default_robot_launcher_routes_robot_intent_never_implicit_all(self):
+    def test_default_robot_launcher_routes_all_intent(self):
         commands = _commands(LAUNCHER)
         self.assertIn('set "BYBITSCANNER_RUNTIME_INTENT=%~1"', commands)
         self.assertIn(
-            'if "%BYBITSCANNER_RUNTIME_INTENT%"=="" set "BYBITSCANNER_RUNTIME_INTENT=ROBOT"',
+            'if "%BYBITSCANNER_RUNTIME_INTENT%"=="" set "BYBITSCANNER_RUNTIME_INTENT=ALL"',
             commands,
         )
-        self.assertFalse(any("INTENT=ALL" in line for line in commands))
         invoke = '"%~dp0venv\\Scripts\\python.exe" -m tools.runtime_intent "%BYBITSCANNER_RUNTIME_INTENT%"'
         self.assertEqual(commands[-2:], [invoke, "exit /b %errorlevel%"])
 
@@ -98,17 +98,32 @@ class DesktopLaunchResolutionTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         return [line for line in done.stdout.splitlines() if line.startswith("RESOLVED_INTENT=")]
 
-    def test_robot_desktop_launch_without_argument_resolves_robot(self):
-        self.assertEqual(self._resolve("start_robot_runtime.bat"), ["RESOLVED_INTENT=ROBOT"])
+    def _shortcut_arguments(self, shortcut_name):
+        script = (ROOT / "tools" / "sync_owner_shortcuts.ps1").read_text(encoding="ascii")
+        if shortcut_name == "robot":
+            match = re.search(r"\$intentArguments\[\$robotShortcut\] = '([A-Z]+)'", script)
+            self.assertIsNotNone(match)
+            return [match.group(1)]
+        return []
 
-    def test_robot_desktop_shortcut_with_explicit_robot_argument_resolves_robot(self):
-        self.assertEqual(self._resolve("start_robot_runtime.bat", "ROBOT"), ["RESOLVED_INTENT=ROBOT"])
+    def test_robot_desktop_shortcut_resolves_all(self):
+        # Shortcut arguments exactly as tools/sync_owner_shortcuts.ps1 pins them.
+        arguments = self._shortcut_arguments("robot")
+        self.assertEqual(arguments, ["ALL"])
+        self.assertEqual(self._resolve("start_robot_runtime.bat", *arguments), ["RESOLVED_INTENT=ALL"])
 
-    def test_scanner_desktop_launch_resolves_scanner(self):
+    def test_robot_launcher_without_argument_still_resolves_all(self):
+        self.assertEqual(self._resolve("start_robot_runtime.bat"), ["RESOLVED_INTENT=ALL"])
+
+    def test_scanner_desktop_shortcut_resolves_scanner(self):
+        self.assertEqual(self._shortcut_arguments("scanner"), [])
         self.assertEqual(self._resolve("start_scanner.bat"), ["RESOLVED_INTENT=SCANNER"])
 
-    def test_explicit_all_remains_all(self):
-        self.assertEqual(self._resolve("start_robot_runtime.bat", "ALL"), ["RESOLVED_INTENT=ALL"])
+    def test_explicit_robot_intent_remains_available(self):
+        from tools import runtime_intent
+
+        self.assertEqual(self._resolve("start_robot_runtime.bat", "ROBOT"), ["RESOLVED_INTENT=ROBOT"])
+        self.assertEqual(set(runtime_intent.INTENTS), {"ALL", "SCANNER", "ROBOT"})
 
 
 class OwnerShortcutProvisioningTests(unittest.TestCase):
@@ -136,13 +151,14 @@ class OwnerShortcutProvisioningTests(unittest.TestCase):
         self.assertNotIn("'stop_robot.bat'", script)
         self.assertIn("'OWNER SHORTCUTS = CANONICAL'", script)
 
-    def test_shortcut_sync_pins_robot_only_arguments_and_never_all(self):
+    def test_shortcut_sync_pins_robot_shortcut_to_explicit_all_only(self):
         script = (ROOT / "tools" / "sync_owner_shortcuts.ps1").read_text(encoding="ascii")
 
-        self.assertIn("$intentArguments[$robotShortcut] = 'ROBOT'", script)
+        self.assertIn("$intentArguments[$robotShortcut] = 'ALL'", script)
+        self.assertEqual(len(re.findall(r"\$intentArguments\[[^\]]+\] = '", script)), 1)
         self.assertIn("$shortcut.Arguments = $expectedArguments", script)
         self.assertIn("$verify.Arguments, $expectedArguments", script)
-        self.assertNotIn("'ALL'", script)
+        self.assertNotIn("'ROBOT'", script)
         self.assertNotIn("'SCANNER'", script)
 
 

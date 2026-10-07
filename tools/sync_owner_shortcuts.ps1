@@ -30,10 +30,11 @@ $targets.Add(
     'stop_robot_runtime.bat'
 )
 
-# "Zapusk robota" is Robot-only: it passes ROBOT explicitly and must never rely on an
-# implicit default. SCANNER is carried by start_scanner.bat; ALL has no desktop shortcut.
+# "Zapusk robota" is the full one-action PAPER runtime (Robot + Scanner): it passes ALL
+# explicitly and must never rely on an implicit default. SCANNER is carried by
+# start_scanner.bat; the stop shortcut takes no intent.
 $intentArguments = @{}
-$intentArguments[$robotShortcut] = 'ROBOT'
+$intentArguments[$robotShortcut] = 'ALL'
 
 $shell = New-Object -ComObject WScript.Shell
 

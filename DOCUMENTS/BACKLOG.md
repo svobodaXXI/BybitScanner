@@ -828,15 +828,20 @@ Authoritative standard:
   OneDrive, username and hostname differences stay outside tracked runtime semantics.
   Git synchronization must not silently retarget the existing owner shortcuts or
   change “Запуск робота” into a different startup composition.
-- **Intent contract (owner decision 2026-10-07):** `Запуск робота` = `ROBOT`
-  only, `start_scanner` = `SCANNER` only, `ALL` only by an explicit request
-  (`/all` or `start_robot_runtime.bat ALL`). No launcher may start Scanner
-  through an implicit default: `start_robot_runtime.bat` with no argument
-  resolves to `ROBOT`.
+- **Intent contract (owner decision 2026-10-07, restored by this correction):**
+  `Запуск робота` = the full one-action PAPER runtime, explicit `ALL`
+  (Robot + Scanner), as designed in PR #285; `start_scanner` = `SCANNER` only;
+  `Остановить робота` = canonical full safe stop. `ROBOT`-only remains an
+  explicit intent on its dedicated control path (Telegram Robot control / the
+  runtime-intent API / `start_robot_runtime.bat ROBOT`), never a desktop
+  shortcut. PR #404 briefly redefined the button as `ROBOT` only; that was an
+  owner-confirmed misreading of the original design and is reverted.
+  `start_robot_runtime.bat` keeps `ALL` as its documented no-argument default,
+  but the desktop shortcut must not depend on it.
 
 - `tools/sync_owner_shortcuts.ps1` is the canonical one-shot repair/verification
   for those targets; it preserves the existing shortcut names and pins the
-  `Запуск робота` shortcut argument to `ROBOT` (verified after save).
+  `Запуск робота` shortcut argument to `ALL` (verified after save).
 - Owner runtime-check on 2026-09-27 proved the canonical start path.
 - Abrupt-power recovery exposed a stale fail-closed
   `ROBOT_ENTRY_OWNERSHIP_MISMATCH` latch for BLENDUSDT after the durable
@@ -870,13 +875,12 @@ Implementation/evidence:
 - PR #285 merged as `543168420afaab3b0dde9be083969ff867b69263`: shared
   `SCANNER / ROBOT / ALL` Runtime Intent Reconciler, PAPER backend boundary,
   desktop bootstrap and Telegram routing;
-- the one-action `ALL` intent (Robot + Scanner) was owner-run from a stopped
-  state to Robot READY/protection healthy + Scanner RUNNING without the former
-  manual Robot-start prerequisite. **Superseded 2026-10-07:** that run went
-  through the desktop `Запуск робота` button only because it then mapped to
-  `ALL`; that mapping was a regression, not a contract. `Запуск робота` is
-  Robot-only (`ROBOT`); `ALL` stays an explicit surface (`/all`,
-  `start_robot_runtime.bat ALL`);
+- canonical desktop `Запуск робота` expresses one `ALL` intent and has
+  been owner-run from a stopped state to Robot READY/protection healthy +
+  Scanner RUNNING without the former manual Robot-start prerequisite. This is
+  the intended permanent contract: the button starts the full PAPER working
+  stack (a brief 2026-10-07 reinterpretation as `ROBOT` only, PR #404, was
+  reverted);
 - canonical safe-stop remains separate and proven;
 - backend/Telegram reuse is guarded by PAPER DB identity and readiness checks;
 - LIVE/operator authority remains forced off for the PAPER bootstrap.
