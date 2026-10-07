@@ -802,6 +802,14 @@ class PaperRuntime:
         if self.robot_closed_candle_cache is not None:
             self.robot_closed_candle_cache.bind_owner_thread(self.store.is_owned_by_current_thread)
         self._robot_closed_candle_provider = provider
+        # Owner-thread one-shot monitors read the warmed cache only: a miss is
+        # "no closed candle yet", never an in-place kline request. Their fill /
+        # protection paths do not read closed candles at all.
+        self._owner_closed_candle = (
+            self.robot_closed_candle_cache.peek
+            if self.robot_closed_candle_cache is not None
+            else provider
+        )
         # RobotBreakoutMonitor enables admission catch-up only for the bare
         # latest_scanner_closed_candle; keep that when the cache wraps it.
         self._robot_admission_catchup_candles = (
@@ -1532,7 +1540,7 @@ class PaperRuntime:
             monitor = RobotBreakoutMonitor(
                 lambda: self.store,
                 self._paper_account_id,
-                get_closed_candle=self._robot_closed_candle_provider,
+                get_closed_candle=self._owner_closed_candle,
                 get_admission_catchup_candles=self.robot_catchup_evidence,
                 action_executor=_DirectRobotActionExecutor(self),
                 tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
@@ -1653,7 +1661,7 @@ class PaperRuntime:
         monitor = RobotBreakoutMonitor(
             lambda: self.store,
             self._paper_account_id,
-            get_closed_candle=self._robot_closed_candle_provider,
+            get_closed_candle=self._owner_closed_candle,
             get_admission_catchup_candles=self.robot_catchup_evidence,
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
@@ -1903,7 +1911,7 @@ class PaperRuntime:
                 monitor = RobotBreakoutMonitor(
                     lambda: self.store,
                     self._paper_account_id,
-                    get_closed_candle=self._robot_closed_candle_provider,
+                    get_closed_candle=self._owner_closed_candle,
                     get_admission_catchup_candles=self.robot_catchup_evidence,
                     action_executor=_DirectRobotActionExecutor(self),
                     tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
@@ -2584,7 +2592,10 @@ class PaperRuntime:
         for item in self.store.load_open_position_projections(self._account_id):
             symbol = item.position_key.symbol
             instrument = self._context._instrument_for(symbol.value)
-            book = self._book_provider.get_book(symbol)
+            # Read-only valuation on the owner: only an already-streamed book,
+            # never the provider's REST fallback. Without a fresh one the
+            # position is returned without a mark (current_price/PnL None).
+            book = self._streamed_book(symbol)
             now_ms = int(time.time() * 1000)
             current_price = None
             unrealized_pnl = None
@@ -2931,13 +2942,10 @@ class PaperRuntime:
         # Owner thread: closed candles come only from the cache warmed off the
         # owner (a miss means "no candle yet"), catch-up only from prepared
         # evidence -- never a kline request.
-        cache = self.robot_closed_candle_cache
         monitor = RobotBreakoutMonitor(
             lambda: self.store,
             self._account_id,
-            get_closed_candle=(
-                cache.peek if cache is not None else self._robot_closed_candle_provider
-            ),
+            get_closed_candle=self._owner_closed_candle,
             get_admission_catchup_candles=self.robot_catchup_evidence,
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
