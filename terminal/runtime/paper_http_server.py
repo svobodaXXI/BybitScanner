@@ -1048,10 +1048,12 @@ class LiveOrderBookProvider:
         buffer: PublicOrderBookBuffer,
         *,
         rest_session: requests.Session | None = None,
+        hub: "MarketDataHub | None" = None,
     ) -> None:
         self._buffer = buffer
         self._lock = threading.RLock()
         self._rest_session = rest_session
+        self._hub = hub
 
     def set_buffer(self, buffer: PublicOrderBookBuffer) -> None:
         with self._lock:
@@ -1064,6 +1066,28 @@ class LiveOrderBookProvider:
         if self._rest_session is None:
             return None
         return self._load_rest_book(symbol)
+
+    def get_streamed_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
+        """Current READY book from an already-streamed buffer, never REST.
+
+        Checks the Workspace buffer, then any MarketDataHub context already
+        subscribed for ``symbol`` (e.g. Robot protection coverage). Never
+        subscribes and never performs network I/O, so the serialized PAPER
+        owner can use it for protection closes without blocking.
+        """
+        current = self.get_current_book_update(symbol)
+        if current is not None:
+            return current[1]
+        if self._hub is None:
+            return None
+        for context in self._hub.list_contexts():
+            if context.symbol == symbol.value:
+                return _normalized_book_from_snapshot(
+                    symbol.value,
+                    context.public_orderbook.snapshot(),
+                    source_generation=context.reconnect_count,
+                )
+        return None
 
     def _load_rest_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
         try:
@@ -3723,6 +3747,7 @@ def main() -> None:
         book_provider = LiveOrderBookProvider(
             initial_market.public_orderbook,
             rest_session=rest_session,
+            hub=hub,
         )
         runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
             database_path,
