@@ -1382,6 +1382,31 @@ Owner requirement: after Full Scanner discovers a structurally interesting
 symbol and moves on, the project must continue following that symbol without
 waiting for the next full-universe pass.
 
+### Candidate monitoring chart — OWNER REQUIREMENT 2026-10-07
+
+When an existing Robot candidate is shown through the monitoring surface, the
+owner must receive a chart together with the candidate state. A text-only
+candidate card is not sufficient.
+
+Presentation/behavior contract:
+- render the candidate on its own signal timeframe using current closed candles;
+- preserve the candidate's frozen source identity, anchors/geometry and trading
+  levels; monitoring must not silently re-detect or re-anchor the setup from
+  later candles;
+- show current price progression relative to the frozen setup and relevant
+  entry/STOP/TAKE/grid levels when that data exists;
+- keep the normal candidate caption/status and the existing
+  «Открыть в Trading View» navigation;
+- each owner monitoring refresh must be able to return an updated chart for the
+  same durable candidate rather than only text;
+- chart-generation failure must degrade to the existing text/status response and
+  must not block Robot state, admission, protection or trading lifecycle.
+
+Implementation should reuse the existing Scanner/Robot chart and candle
+infrastructure rather than creating a parallel renderer. This is a
+presentation/observability requirement only; it does not authorize strategy,
+risk, admission or execution changes.
+
 Architecture is split into three responsibilities:
 
 - Full Scanner: broad universe discovery;
