@@ -158,8 +158,9 @@ class FakeRuntime:
         if self.legacy_paper_blocker is not None:
             raise shutdown.SafeStopError(self.legacy_paper_blocker)
 
-    def prove_box_upgrade(self):
+    def prove_box_upgrade(self, covered=()):
         self.box_upgrade_checks += 1
+        self.box_upgrade_covered = tuple(covered)
         if isinstance(self.box_upgrade_proof, Exception):
             raise self.box_upgrade_proof
         return self.box_upgrade_proof
@@ -1719,6 +1720,221 @@ class LegacyBoxUpgradeProofTests(unittest.TestCase):
                 competitor.close()
 
 
+CLOSED_ARM = "LONGXIAUSDT"
+
+
+def add_closed_flat_trade(db, symbol=CLOSED_ARM, *, exit_fill=True, exit_qty="4251",
+                          obligation_status="RESOLVED", close_candidate=True):
+    """LONGXIA shape: filled entry LIMIT, protection STOP exit, synced FLAT, CLOSED trade."""
+    from tests.test_box_plan_persistence import trade_args
+    from terminal.domain.models import (
+        Category, Execution, ExecutionDedupKey, ExecutionId, Notional, OrderId, OrderSide,
+        PositionKey, PositionSide, Price, Quantity, Symbol,
+    )
+    from terminal.persistence.sqlite_store import PositionProjectionUpdate
+
+    store, account, sym = db.store, db.account, Symbol(symbol)
+    key = PositionKey(account, Category.LINEAR, sym, 0)
+    candidate_id, trade_id = f"wedge-{symbol}", f"robot-trade-wedge-{symbol}"
+    store.create_robot_candidate(
+        candidate_id=candidate_id, trading_account_id=account, symbol=sym, status="APPROVED",
+        signal_snapshot={"pattern": "Falling Wedge", "symbol": symbol},
+        approved_at_ms=1, updated_at_ms=1,
+    )
+    store.create_paper_limit(
+        client_action_id=f"entry-{symbol}", request_fingerprint=f"entry-fp-{symbol}",
+        order_id=OrderId(f"limit-{symbol}"), order_link_id=f"link-{symbol}",
+        trading_account_id=account, symbol=sym, side=OrderSide.BUY,
+        price=Decimal("0.0588"), quantity=Decimal("4251"), created_at_ms=1000,
+    )
+    store.apply_paper_limit_execution_once(
+        OrderId(f"limit-{symbol}"),
+        Execution(ExecutionDedupKey(account, Category.LINEAR, ExecutionId(f"entry-exec-{symbol}")),
+                  OrderId(f"limit-{symbol}"), sym, OrderSide.BUY, Price(Decimal("0.0585")),
+                  Quantity(Decimal("4251")), Decimal("0.1"), 1100),
+        PositionProjectionUpdate(key, PositionSide.LONG, Quantity(Decimal("4251")),
+                                 Price(Decimal("0.0585")), Decimal(0), Decimal("0.1"),
+                                 Notional(Decimal("248.6835")), "synced", None, 1100),
+        updated_at_ms=1100,
+    )
+    args = {**trade_args(candidate_id), "trade_id": trade_id, "symbol": sym,
+            "average_entry": Decimal("0.0585"), "stop_price": Decimal("0.0584"),
+            "take_price": Decimal("0.06"), "entry_quantity": Decimal("4251"),
+            "entry_position_version": 1, "entry_time_ms": 1200, "created_at_ms": 1200}
+    store.create_robot_trade(**args)
+    if exit_fill:
+        store.apply_execution_once(
+            Execution(ExecutionDedupKey(account, Category.LINEAR, ExecutionId(f"exit-exec-{symbol}")),
+                      OrderId(f"exit-order-{symbol}"), sym, OrderSide.SELL, Price(Decimal("0.0584")),
+                      Quantity(Decimal(exit_qty)), Decimal("0.1"), 2000),
+            PositionProjectionUpdate(
+                key, PositionSide.FLAT if Decimal(exit_qty) == 4251 else PositionSide.LONG,
+                Quantity(Decimal("4251") - Decimal(exit_qty)),
+                None if Decimal(exit_qty) == 4251 else Price(Decimal("0.0585")),
+                Decimal("-0.4"), Decimal("0.2"), Notional(Decimal(0)), "synced", 1, 2000),
+        )
+    with store._transaction():
+        store._connection.execute(
+            """INSERT INTO paper_protection_obligations (
+                   obligation_id, trade_id, trading_account_id, symbol, protection_version,
+                   winning_leg, trigger_price, observed_exit_price, observed_quantity,
+                   market_event_id, source_received_at_ms, latched_at_ms, order_id, exec_id,
+                   status, version, updated_at_ms)
+               VALUES (?, ?, 'paper', ?, 1, 'STOP', '0.0584', '0.0584', '4251', 'evt', 1990, 1995,
+                       ?, ?, ?, 2, 2000)""",
+            (f"obligation-{symbol}", trade_id, symbol, f"exit-order-{symbol}",
+             f"exit-exec-{symbol}", obligation_status),
+        )
+        store._connection.execute(
+            """UPDATE robot_trades SET exit_time_ms=2000, exit_price='0.0584', exit_reason='STOP',
+                   realized_pnl_usdt='-0.4', realized_pnl_pct='-0.1', fees_costs_usdt='0.2',
+                   version=version+1, updated_at_ms=2000
+               WHERE trade_id=?""",
+            (trade_id,),
+        )
+        if close_candidate:
+            store._connection.execute(
+                "UPDATE robot_candidates SET status='CLOSED' WHERE candidate_id=?", (candidate_id,),
+            )
+    return candidate_id, trade_id
+
+
+class LegacyClosedTradeEntryArmProofTests(unittest.TestCase):
+    """Class B stale arm: a fully CLOSED + synced FLAT Robot trade (LONGXIA shape)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.directory = Path(tmp.name)
+        self.count = 0
+
+    def db(self, **closed):
+        self.count += 1
+        db = LegacyBoxUpgradeDb(self.directory / f"closed-{self.count}.sqlite3")
+        self.addCleanup(lambda: db.store._connection is None or db.store.close())
+        if closed is not None:
+            add_closed_flat_trade(db, **closed)
+        return db
+
+    def prove(self, db, covered=("AVNTUSDT", CLOSED_ARM)):
+        db.finish()
+        return shutdown.prove_legacy_box_upgrade(db.path, covered)
+
+    def assert_blocked(self, db, phrase, covered=("AVNTUSDT", CLOSED_ARM)):
+        with self.assertRaisesRegex(shutdown.SafeStopError, phrase):
+            self.prove(db, covered)
+
+    def test_longxia_closed_flat_arm_is_accepted_only_as_class_b(self):
+        db = self.db()
+        proof = self.prove(db)
+        self.assertEqual(proof.symbols, PRISTINE_SYMBOLS)
+        self.assertEqual(proof.closed_arm_symbols, (CLOSED_ARM,))
+        with shutdown.hold_legacy_box_upgrade(db.path, proof):
+            pass
+        # A pristine blocker symbol is never re-classified as a closed-trade arm.
+        self.assertEqual(self.prove(self.db(), ("AVNTUSDT", "NEARUSDT")).closed_arm_symbols, ())
+
+    def test_arm_symbol_without_completed_robot_trade_blocks(self):
+        self.assert_blocked(self.db(), "XRPUSDT: stale entry arm has no position projection",
+                            covered=(CLOSED_ARM, "XRPUSDT"))
+
+    def test_non_flat_unsynced_or_missing_position_blocks(self):
+        from terminal.domain.models import Category, Notional, PositionKey, PositionSide, Quantity, Symbol
+        from terminal.persistence.sqlite_store import PositionProjectionUpdate
+
+        self.assert_blocked(self.db(exit_qty="4000"), "pending Robot exposure|not synced FLAT|journal")
+        db = self.db()
+        key = PositionKey(db.account, Category.LINEAR, Symbol(CLOSED_ARM), 0)
+        current = db.store.get_position_projection(key)
+        with db.store._transaction():
+            db.store._write_projection(PositionProjectionUpdate(
+                key, PositionSide.FLAT, Quantity(Decimal(0)), None, Decimal(0), Decimal(0),
+                Notional(Decimal(0)), "reconciliation_required", current.version, 2100,
+            ))
+        self.assert_blocked(db, f"{CLOSED_ARM}: position is not synced FLAT")
+        self.assert_blocked(self.db(exit_fill=False), f"{CLOSED_ARM}:.*(not synced FLAT|journal)")
+
+    def test_open_trade_active_candidate_limit_command_or_obligation_blocks(self):
+        from terminal.domain.models import OrderId, OrderSide, Symbol
+
+        db = self.db()  # missing exit_time: the schema makes that an OPEN trade
+        with db.store._transaction():
+            db.store._connection.execute(
+                """UPDATE robot_trades SET exit_time_ms=NULL, exit_price=NULL, exit_reason=NULL,
+                       realized_pnl_usdt=NULL, realized_pnl_pct=NULL WHERE symbol=?""",
+                (CLOSED_ARM,))
+        self.assert_blocked(db, "open Robot trades|OPEN Robot")
+
+        self.assert_blocked(self.db(close_candidate=False), "OPEN Robot candidates: LONGXIAUSDT")
+        db = self.db(close_candidate=False)  # APPROVED on a flat symbol passes global quiescence
+        with db.store._transaction():
+            db.store._connection.execute(
+                "UPDATE robot_candidates SET status='APPROVED' WHERE symbol=? AND status='OPEN'",
+                (CLOSED_ARM,))
+        self.assert_blocked(db, f"{CLOSED_ARM}: closed-trade entry arm blocked by an active Robot candidate")
+
+        db = self.db()
+        db.store.create_paper_limit(
+            client_action_id="w", request_fingerprint="w-fp", order_id=OrderId("w-1"),
+            order_link_id="w-link", trading_account_id=db.account, symbol=Symbol(CLOSED_ARM),
+            side=OrderSide.BUY, price=Decimal("0.05"), quantity=Decimal("1"), created_at_ms=3000,
+        )
+        self.assert_blocked(db, "working PAPER limits")
+
+        db = self.db()
+        with db.store._transaction():
+            db.store._connection.execute(
+                """INSERT INTO trading_commands (
+                       command_id, order_link_id, trading_account_id, category, symbol,
+                       position_idx, command_kind, side, requested_notional, normalized_price,
+                       normalized_quantity, origin, controller, current_state, version,
+                       exchange_order_id, created_at_ms, updated_at_ms)
+                   VALUES ('c1', 'l1', 'paper', 'linear', ?, 0, 'create_market', 'Buy', '1',
+                           NULL, '1', 'terminal_manual', 'manual', 'unknown', 1, NULL, 1, 1)""",
+                (CLOSED_ARM,),
+            )
+        self.assert_blocked(db, f"{CLOSED_ARM}:.*unresolved trading command")
+
+        for status in ("TRIGGERED", "DISPATCHING"):
+            self.assert_blocked(self.db(obligation_status=status), "unresolved protection obligations")
+
+    def test_missing_or_ambiguous_exit_evidence_blocks(self):
+        for sql, phrase in (
+            ("UPDATE paper_protection_obligations SET exec_id='missing-exec' WHERE symbol=?",
+             "exit execution is not proven"),
+            ("UPDATE robot_trades SET exit_price='0.0599' WHERE symbol=?", "exit execution is not proven"),
+            ("UPDATE robot_candidates SET status='EXPIRED' WHERE symbol=? AND status='CLOSED'",
+             "completed Robot trade"),
+            ("UPDATE robot_trades SET exit_time_ms=1999 WHERE symbol=?", "exit execution is not proven"),
+            ("DELETE FROM paper_protection_obligations WHERE symbol=?", "protection exit history"),
+        ):
+            with self.subTest(sql=sql):
+                db = self.db()
+                with db.store._transaction():
+                    db.store._connection.execute(sql, (CLOSED_ARM,))
+                self.assert_blocked(db, phrase)
+
+    def test_guard_rejects_changed_closed_arm_evidence(self):
+        for sql, phrase in (
+            ("UPDATE position_projections SET sync_state='reconciliation_required' WHERE symbol=?",
+             f"{CLOSED_ARM}: position is not synced FLAT"),
+            ("UPDATE robot_runtime_state SET version=version+1 WHERE ? IS NOT NULL", "changed"),
+        ):
+            with self.subTest(sql=sql):
+                db = self.db()
+                proof = self.prove(db)
+                self.assertEqual(proof.closed_arm_symbols, (CLOSED_ARM,))
+                connection = sqlite3.connect(db.path)
+                try:
+                    connection.execute(sql, (CLOSED_ARM,))
+                    connection.commit()
+                finally:
+                    connection.close()
+                with self.assertRaisesRegex(shutdown.SafeStopError, phrase):
+                    with shutdown.hold_legacy_box_upgrade(db.path, proof):
+                        pass
+
+
 class LegacyBoxUpgradeShutdownTests(unittest.TestCase):
     IDS = ("box-robot-avnt", "box-robot-near")
 
@@ -1840,6 +2056,66 @@ class LegacyBoxUpgradeShutdownTests(unittest.TestCase):
                 self.assertFalse(any(call.startswith("terminate:") for call in runtime.calls))
                 self.assertTrue(runtime.backend_alive)
                 self.assertEqual(runtime.robot, RECON)
+
+    def longxia_runtime(self, role="ENTRY_PENDING"):
+        # Exact owner-PC protection-health snapshot after the LONGXIA STOP close.
+        runtime = self.runtime()
+        runtime.protection.update({
+            "healthy": True, "covered_symbols": [CLOSED_ARM], "armed_symbols": [CLOSED_ARM],
+            "coverage_roles": {CLOSED_ARM: role}, "unhealthy_symbols": {},
+        })
+        runtime.box_upgrade_proof = shutdown.LegacyBoxUpgradeProof(
+            25, 7, self.IDS, PRISTINE_SYMBOLS, (CLOSED_ARM,),
+        )
+        return runtime
+
+    def test_red_longxia_arm_blocked_without_closed_trade_proof(self):
+        runtime = self.longxia_runtime()
+        runtime.box_upgrade_proof = shutdown.LegacyBoxUpgradeProof(25, 7, self.IDS, PRISTINE_SYMBOLS)
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("legacy protection covers symbols outside the upgrade proof", result.message)
+        self.assertFalse(any(call.startswith("terminate:") for call in runtime.calls))
+
+    def test_longxia_closed_flat_arm_terminates_exact_legacy_backend_once(self):
+        runtime = self.longxia_runtime()
+        result = runtime.orchestrator().run("all")
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(runtime.box_upgrade_covered, (CLOSED_ARM,))
+        self.assertEqual(result.steps, (
+            "scanner:stop", "runtime:legacy-box-upgrade-proof",
+            "telegram:shutdown", "backend:legacy-box-upgrade-terminate",
+        ))
+        self.assertEqual([c for c in runtime.calls if c.startswith("terminate:")],
+                         ["terminate:[130, 120, 110, 105]"])
+        self.assertEqual(runtime.robot, RECON)
+
+    def test_stop_take_role_or_new_covered_symbol_blocks(self):
+        for role in ("STOP", "TAKE", "POSITION"):
+            with self.subTest(role=role):
+                runtime = self.longxia_runtime(role)
+                result = runtime.orchestrator().run("all")
+                self.assertFalse(result.ok)
+                self.assertFalse(any(call.startswith("terminate:") for call in runtime.calls))
+
+        runtime = self.longxia_runtime()
+        original = runtime.get
+        reads = {"n": 0}
+
+        def get(url, timeout):
+            status, body = original(url, timeout)
+            if url == BACKEND + "/api/robot/protection-health":
+                reads["n"] += 1
+                if reads["n"] > 1:
+                    body = {**body, "covered_symbols": [CLOSED_ARM, "XRPUSDT"],
+                            "armed_symbols": [CLOSED_ARM, "XRPUSDT"],
+                            "coverage_roles": {CLOSED_ARM: "ENTRY_PENDING", "XRPUSDT": "ENTRY_PENDING"}}
+            return status, body
+        runtime.get = get
+        result = runtime.orchestrator().run("all")
+        self.assertFalse(result.ok)
+        self.assertIn("outside the upgrade proof", result.message)
+        self.assertFalse(any(call.startswith("terminate:") for call in runtime.calls))
 
     def test_ambiguous_or_non_definitive_reconcile_never_enters_upgrade_path(self):
         for reply in ((503, {"ok": False, "error": "robot_reconcile_unavailable"}),

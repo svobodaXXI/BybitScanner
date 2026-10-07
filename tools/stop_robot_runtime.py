@@ -298,6 +298,116 @@ class LegacyBoxUpgradeProof:
     robot_version: int
     candidate_ids: tuple[str, ...]
     symbols: tuple[str, ...]
+    # Class B stale ENTRY_PENDING arms: symbols whose last Robot trade is fully
+    # CLOSED, exited by its resolved protection fill and synced FLAT.
+    closed_arm_symbols: tuple[str, ...] = ()
+
+
+def _prove_closed_flat_arm_symbol(connection: sqlite3.Connection, symbol: str) -> None:
+    """Prove a stale ENTRY_PENDING arm belongs to a completed, flat Robot trade.
+
+    Only the exact LONGXIA class is accepted: the newest closed Robot trade was
+    exited by the execution its RESOLVED protection obligation names, the whole
+    journal nets to zero and the projection is synced FLAT. Anything else blocks.
+    """
+    projection = connection.execute(
+        """SELECT side, quantity, average_entry, sync_state, updated_at_ms
+           FROM position_projections
+           WHERE trading_account_id='paper' AND category='linear' AND symbol=? AND position_idx=0""",
+        (symbol,),
+    ).fetchone()
+    if projection is None:
+        raise SafeStopError(f"{symbol}: stale entry arm has no position projection")
+    if (
+        projection[0] != "Flat" or Decimal(str(projection[1])) != 0
+        or projection[2] is not None or projection[3] != "synced"
+    ):
+        raise SafeStopError(f"{symbol}: position is not synced FLAT")
+
+    def present(sql: str) -> bool:
+        return connection.execute(sql, (symbol,)).fetchone() is not None
+
+    evidence = (
+        ("a working PAPER limit", present(
+            """SELECT 1 FROM paper_limit_orders WHERE trading_account_id='paper' AND symbol=?
+               AND status NOT IN ('filled', 'cancelled')""")),
+        ("an unresolved trading command", present(
+            """SELECT 1 FROM trading_commands WHERE trading_account_id='paper' AND symbol=?
+               AND current_state NOT IN ('filled', 'cancelled', 'rejected', 'failed')""")),
+        ("an unresolved protection obligation", present(
+            """SELECT 1 FROM paper_protection_obligations WHERE trading_account_id='paper'
+               AND symbol=? AND status != 'RESOLVED'""")),
+        ("an open Robot trade", present(
+            """SELECT 1 FROM robot_trades WHERE trading_account_id='paper' AND symbol=?
+               AND exit_time_ms IS NULL""")),
+        ("an active Robot candidate", present(
+            """SELECT 1 FROM robot_candidates WHERE trading_account_id='paper' AND symbol=?
+               AND status IN ('APPROVED', 'OPEN')""")),
+        ("a protection projection", present(
+            "SELECT 1 FROM protection_projections WHERE trading_account_id='paper' AND symbol=?")),
+        ("Box ownership", present("SELECT 1 FROM box_attempt_ownership WHERE symbol=?")),
+    )
+    found = [name for name, exists in evidence if exists]
+    if found:
+        raise SafeStopError(f"{symbol}: closed-trade entry arm blocked by " + ", ".join(found))
+
+    net = Decimal(0)
+    for side, quantity in connection.execute(
+        "SELECT side, quantity FROM executions WHERE trading_account_id='paper' AND symbol=?",
+        (symbol,),
+    ):
+        amount = Decimal(str(quantity))
+        if side == "Buy":
+            net += amount
+        elif side == "Sell":
+            net -= amount
+        else:
+            raise SafeStopError(f"{symbol}: execution side is malformed")
+    if net != 0:
+        raise SafeStopError(f"{symbol}: execution journal does not net to FLAT")
+
+    trades = connection.execute(
+        """SELECT trade_id, candidate_id, direction, entry_quantity, exit_time_ms, exit_reason,
+                  exit_price
+           FROM robot_trades WHERE trading_account_id='paper' AND symbol=?
+             AND exit_time_ms IS NOT NULL
+           ORDER BY exit_time_ms DESC LIMIT 2""",
+        (symbol,),
+    ).fetchall()
+    if not trades or (len(trades) == 2 and trades[0][4] == trades[1][4]):
+        raise SafeStopError(f"{symbol}: no unambiguous completed Robot trade")
+    trade_id, candidate_id, direction, entry_quantity, exit_time_ms, exit_reason, exit_price = trades[0]
+    candidate = connection.execute(
+        "SELECT status FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
+    ).fetchone()
+    if (
+        direction not in ("LONG", "SHORT") or not isinstance(exit_reason, str)
+        or not exit_reason.strip() or exit_price is None or entry_quantity is None
+        or Decimal(str(exit_price)) <= 0 or Decimal(str(entry_quantity)) <= 0
+        or candidate is None or candidate[0] != "CLOSED"
+    ):
+        raise SafeStopError(f"{symbol}: no unambiguous completed Robot trade")
+    obligations = connection.execute(
+        """SELECT exec_id FROM paper_protection_obligations
+           WHERE trading_account_id='paper' AND trade_id=? AND status='RESOLVED'""",
+        (trade_id,),
+    ).fetchall()
+    if len(obligations) != 1:
+        raise SafeStopError(f"{symbol}: protection exit history is not proven")
+    exit_fill = connection.execute(
+        """SELECT side, quantity, price, exchange_timestamp_ms FROM executions
+           WHERE trading_account_id='paper' AND symbol=? AND exec_id=?""",
+        (symbol, obligations[0][0]),
+    ).fetchone()
+    if (
+        exit_fill is None
+        or exit_fill[0] != ("Sell" if direction == "LONG" else "Buy")
+        or Decimal(str(exit_fill[1])) != Decimal(str(entry_quantity))
+        or Decimal(str(exit_fill[2])) != Decimal(str(exit_price))
+        or int(exit_fill[3]) != int(exit_time_ms)
+        or int(projection[4]) < int(exit_time_ms)
+    ):
+        raise SafeStopError(f"{symbol}: protection exit execution is not proven")
 
 
 def _prove_pristine_box_candidate(connection: sqlite3.Connection, candidate_id: str) -> str:
@@ -369,7 +479,9 @@ def _prove_pristine_box_candidate(connection: sqlite3.Connection, candidate_id: 
     return symbol
 
 
-def _prove_legacy_box_upgrade(connection: sqlite3.Connection) -> LegacyBoxUpgradeProof:
+def _prove_legacy_box_upgrade(
+    connection: sqlite3.Connection, covered_symbols: tuple[str, ...] = (),
+) -> LegacyBoxUpgradeProof:
     schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
     if not LEGACY_BOX_MIN_SCHEMA <= schema_version < SCHEMA_VERSION:
         raise SafeStopError(
@@ -413,20 +525,32 @@ def _prove_legacy_box_upgrade(connection: sqlite3.Connection) -> LegacyBoxUpgrad
             (symbol, candidate_id),
         ).fetchone() is not None:
             raise SafeStopError(f"{symbol}: another active Robot candidate owns the symbol")
+    # Covered symbols outside the pristine blocker set are accepted only as class B.
+    closed_arm_symbols = tuple(sorted(
+        {str(item).strip().upper() for item in covered_symbols} - set(symbols)
+    ))
+    for symbol in closed_arm_symbols:
+        _prove_closed_flat_arm_symbol(connection, symbol)
     return LegacyBoxUpgradeProof(
-        schema_version, int(robot[3]), candidate_ids, tuple(sorted(symbols)),
+        schema_version, int(robot[3]), candidate_ids, tuple(sorted(symbols)), closed_arm_symbols,
     )
 
 
-def prove_legacy_box_upgrade(database_path: Path) -> LegacyBoxUpgradeProof:
-    """Read-only proof that a pre-v26 backend blocks only on pristine Box candidates."""
+def prove_legacy_box_upgrade(
+    database_path: Path, covered_symbols: tuple[str, ...] = (),
+) -> LegacyBoxUpgradeProof:
+    """Read-only proof that a pre-v26 backend blocks only on pristine Box candidates.
+
+    ``covered_symbols`` are the backend's stale ENTRY_PENDING arms; each one
+    outside the pristine blocker set must be a proven CLOSED + FLAT Robot trade.
+    """
     if not database_path.exists():
         raise SafeStopError("legacy PAPER database is unavailable")
     try:
         connection = sqlite3.connect(database_path.resolve().as_uri() + "?mode=ro", uri=True)
         try:
             connection.execute("BEGIN")
-            return _prove_legacy_box_upgrade(connection)
+            return _prove_legacy_box_upgrade(connection, covered_symbols)
         finally:
             connection.close()
     except SafeStopError:
@@ -455,7 +579,8 @@ def hold_legacy_box_upgrade(
         )
         connection.execute("BEGIN IMMEDIATE")
         connection.execute("PRAGMA query_only=ON")
-        if _prove_legacy_box_upgrade(connection) != expected:
+        covered = expected.symbols + expected.closed_arm_symbols
+        if _prove_legacy_box_upgrade(connection, covered) != expected:
             raise SafeStopError("legacy Box upgrade evidence changed before termination")
     except SafeStopError:
         if connection is not None:
@@ -497,7 +622,7 @@ class RuntimeShutdown:
         legacy_terminator: Callable[[tuple[int, ...]], None] = terminate_exact_pids,
         legacy_paper_quiescence: Callable[[], None] | None = None,
         legacy_paper_guard: Callable[[], ContextManager[None]] | None = None,
-        legacy_box_upgrade_proof: Callable[[], LegacyBoxUpgradeProof] | None = None,
+        legacy_box_upgrade_proof: Callable[[tuple[str, ...]], LegacyBoxUpgradeProof] | None = None,
         legacy_box_upgrade_guard: Callable[[LegacyBoxUpgradeProof], ContextManager[None]] | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> None:
@@ -521,7 +646,7 @@ class RuntimeShutdown:
         )
         self._legacy_box_upgrade_proof = (
             legacy_box_upgrade_proof
-            or (lambda: prove_legacy_box_upgrade(database_path))
+            or (lambda covered: prove_legacy_box_upgrade(database_path, covered))
         )
         self._legacy_box_upgrade_guard = (
             legacy_box_upgrade_guard
@@ -790,8 +915,9 @@ class RuntimeShutdown:
         self, telegram: str, steps: list[str], body: Mapping[str, object],
     ) -> ShutdownResult:
         self._mark("Robot reconcile rejected; proving legacy pristine Box upgrade state")
+        covered = self._box_upgrade_covered_symbols()
         try:
-            proof = self._legacy_box_upgrade_proof()
+            proof = self._legacy_box_upgrade_proof(covered)
         except SafeStopError:
             raise
         except Exception as exc:
@@ -860,15 +986,19 @@ class RuntimeShutdown:
             raise SafeStopError("legacy PAPER backend identity changed during ownership proof")
         return chain
 
-    def _require_box_upgrade_protection(self, proof: LegacyBoxUpgradeProof) -> None:
-        # Only nothing, or stale temporary ENTRY_PENDING arms on the proven pristine
-        # symbols, may remain: no position/TAKE/STOP coverage the backend still owes.
+    def _box_upgrade_covered_symbols(self) -> tuple[str, ...]:
+        # Remaining protection may only be stale temporary ENTRY_PENDING arms
+        # (never position/STOP/TAKE coverage); each covered symbol must then be
+        # proven durably as a pristine blocker (A) or a CLOSED + FLAT trade (B).
         if self._protection_quiescent():
-            return
+            return ()
         health = self._require_temporary_entry_arm_shape()
-        covered = {str(item).strip().upper() for item in health["covered_symbols"]}
-        if not covered <= set(proof.symbols):
-            raise SafeStopError("legacy protection covers symbols outside the pristine Box proof")
+        return tuple(sorted({str(item).strip().upper() for item in health["covered_symbols"]}))
+
+    def _require_box_upgrade_protection(self, proof: LegacyBoxUpgradeProof) -> None:
+        covered = set(self._box_upgrade_covered_symbols())
+        if not covered <= set(proof.symbols) | set(proof.closed_arm_symbols):
+            raise SafeStopError("legacy protection covers symbols outside the upgrade proof")
 
     def _retire_entry_coverage(self) -> LegacyBackendProof | None:
         if self._robot_state() != ROBOT_STOPPED_PAIR:
