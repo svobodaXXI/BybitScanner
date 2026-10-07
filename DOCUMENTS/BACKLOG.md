@@ -135,7 +135,51 @@ Next planning action:
 
 Geometry v4 remains preserved for later continuation; no accepted work is discarded.
 
+## NOW — 2026-10-07 — OWNER PRIORITY OVERRIDE: ROBOT MUST OPEN REAL PAPER POSITIONS
+
+Owner priority supersedes the routing order below until these two execution tracks are resolved:
+
+1. **P0 FIRST — BOX-PRISTINE-FLAT-1 / Box late-entry execution.**
+   - Fix the proven blocker that prevents a clean symbol with no position row,
+     no executions and no ownership from establishing a pristine-FLAT baseline.
+   - AVNTUSDT 5m and NEARUSDT 5m are two independent real reproductions:
+     both reached `APPROVED / BOX_ENTRY_READY` and then failed before catch-up
+     with `Box ownership requires reconciled FLAT position and journal`.
+   - After the fix, a late-admitted Box whose price has already crossed grid
+     slots must execute the crossed slots by MARKET and leave only untouched
+     slots as LIMIT, through the existing catch-up path.
+   - Acceptance is not only a unit test: obtain one real PAPER owner-run Box
+     candidate that reaches actual entry/fill/protection evidence and produces
+     the normal open-position lifecycle/notification. Do not start Scanner/Robot
+     from an agent; owner controls runtime.
+
+2. **P0 SECOND — LSHAPE-NO-ENTRY-1 / explain and fix why L-shape does not open.**
+   - The owner has not yet observed a real open PAPER position from L-shape.
+   - Diagnose from durable candidates and execution state before changing policy:
+     handoff/admission, `L_SHAPE_WAITING_RETEST`, retest detection,
+     pre-entry block reason, RR gate, entry-coverage arm, LIMIT submission,
+     fill/matching, protection, lifecycle notification.
+   - Distinguish strategy-valid waiting/invalidation from an execution defect.
+   - If a defect is proven, fix the earliest failing stage with a focused
+     regression; do not weaken the frozen 0.8% potential floor or RR >= 2:1 merely
+     to force a trade.
+   - Acceptance: one real PAPER L-shape progresses through its intended lifecycle
+     to an actual protected position, or a durable explicit reason proves why a
+     particular candidate correctly did not enter. Monitoring must expose that
+     reason without SQLite archaeology.
+
+Until these are resolved, Geometry implementation (including the new Wedge
+contract) remains documented and queued but is **not the immediate implementation
+priority**. PAPER/LIVE safety and fail-closed execution invariants remain mandatory.
+
 ## NOW — 2026-10-07 — OWNER FEEDBACK QUEUE
+
+Canonical wedge-geometry authority for the rules below:
+`DOCUMENTS/WEDGE_GEOMETRY_CONTRACT_2026-10-07.md`.
+Use that document instead of reconstructing wedge rules from individual screenshots
+or older containment notes. BACKLOG keeps routing/priorities; the geometry contract
+owns the consolidated structural semantics.
+
 
 The following owner-observed defects and UX requirements are now in the active
 product queue. They are distinct slices; do not bundle trading-safety changes
@@ -241,7 +285,25 @@ strictly necessary.
    - do not replace it with equivalent noise; preserve useful PnL/SL/TP/volume and
      navigation controls.
 
-11. **P0 — PAPER-UNCERTAINTY-1 — unresolved PAPER state / stale reconciliation debt**
+11. **P0 — WEDGE-STRICT-BOUNDARY-2 — strict boundary must pass through the controlling extremum**
+   - POWERUSDT 5m Falling Wedge is the owner visual reference for a malformed
+     strict upper boundary that approaches the apex without passing through a
+     real controlling upper extremum;
+   - for a Falling Wedge, the strict upper boundary must pass through the
+     relevant upper pivot immediately preceding the final lower extremum before
+     the apex; mirror this rule for the strict lower boundary of a Rising Wedge;
+   - this is a hard structural condition, not a score preference: a strict
+     boundary that effectively hangs in empty space near the apex is invalid;
+   - no relevant wick/high may protrude beyond the strict upper boundary for a
+     Falling Wedge; mirror the rule for lows below the strict lower boundary in
+     a Rising Wedge;
+   - after fitting through the controlling extremum, all earlier relevant same-side
+     extrema must lie on or inside the strict boundary; any prior protrusion
+     invalidates the candidate;
+   - acceptance: the strict boundary is anchored to the controlling extremum and
+     contains all relevant same-side extrema with zero protrusions.
+
+12. **P0 — PAPER-UNCERTAINTY-1 — unresolved PAPER state / stale reconciliation debt**
    - `/positions` currently reports `PAPER · Состояние не подтверждено` while no
      open position projection is shown;
    - many historical FLAT projections remain `sync_state=reconciliation_required`;
@@ -254,8 +316,8 @@ strictly necessary.
 Routing order for these new items: fix PAPER/Robot execution blockers first
 (`BOX-PRISTINE-FLAT-1`, `PAPER-UNCERTAINTY-1`), then execution correctness
 (`WEDGE-STOP-1`, `WEDGE-REENTRY-2`), then candidate observability, then geometry
-hard gates/target correctness, then presentation cleanup. A real owner-observed
-safety blocker may preempt this order.
+hard gates/target correctness (including `WEDGE-STRICT-BOUNDARY-2`), then
+presentation cleanup. A real owner-observed safety blocker may preempt this order.
 
 
 ## NOW — 2026-09-30 — G6 FULL PASS COMPLETED / GEOMETRY GATE REOPENED
