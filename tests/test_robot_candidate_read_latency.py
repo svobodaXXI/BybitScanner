@@ -171,7 +171,7 @@ class RobotCandidateIndexMigrationTests(unittest.TestCase):
         return version, names
 
     def test_v24_database_migrates_to_v25_indexes_preserving_candidates(self):
-        self.assertEqual(schema.SCHEMA_VERSION, 25)
+        self.assertGreaterEqual(schema.SCHEMA_VERSION, 25)
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "paper.sqlite3"
             before = self._v24_database(path)
@@ -182,7 +182,7 @@ class RobotCandidateIndexMigrationTests(unittest.TestCase):
             finally:
                 migrated.close()
             version, names = self._state(path)
-            self.assertEqual(version, 25)
+            self.assertEqual(version, schema.SCHEMA_VERSION)
             self.assertTrue(set(HOT_INDEXES).issubset(names))
 
     def test_failed_v25_migration_rolls_back_and_retries_cleanly(self):
@@ -203,7 +203,7 @@ class RobotCandidateIndexMigrationTests(unittest.TestCase):
                 self.assertEqual(migrated.load_robot_candidates(ACCOUNT), before)
             finally:
                 migrated.close()
-            self.assertEqual(self._state(path)[0], 25)
+            self.assertEqual(self._state(path)[0], schema.SCHEMA_VERSION)
 
 
 class RobotProtectionOutcomeEquivalenceTests(unittest.TestCase):

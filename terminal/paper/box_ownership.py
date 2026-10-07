@@ -48,13 +48,23 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
     Projection version fences foreign writes that leave net quantity intact.
     This first-grid slice provides no replenishment or attempt reset.
     """
-    if position is None or position.sync_state != "synced":
-        raise BoxOwnershipError("actual position is missing or not reconciled")
     history = tuple(f for f in fills if f.exchange_timestamp_ms <= baseline["baseline_time_ms"])
     if (len(history) != baseline["baseline_execution_count"]
             or journal_hash(history) != baseline["baseline_execution_hash"]):
         raise BoxOwnershipError("baseline execution evidence changed or is incomplete")
     current = tuple(f for f in fills if f.exchange_timestamp_ms > baseline["baseline_time_ms"])
+    if position is None:
+        # Pristine baseline (virtual version 0) with no fill yet: the symbol is
+        # still never-traded. Any fill would have created the projection row.
+        if baseline["baseline_position_version"] != 0 or current:
+            raise BoxOwnershipError("actual position is missing or not reconciled")
+        return BoxExposureProof(
+            candidate.candidate_id, Decimal(0), Decimal(0), Decimal(0), None, None,
+            Decimal(0), Decimal(0), Decimal(0), None, None,
+            (Decimal(0),) * 4, (Decimal(0),) * 4, 0, (),
+        )
+    if position.sync_state != "synced":
+        raise BoxOwnershipError("actual position is missing or not reconciled")
     if position.version != baseline["baseline_position_version"] + len(current):
         raise BoxOwnershipError("position version has an unexplained mutation or missing execution")
     plan = candidate.signal_snapshot["plan"]

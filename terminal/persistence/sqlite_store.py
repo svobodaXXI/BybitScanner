@@ -59,6 +59,7 @@ from .schema import (
     SCHEMA_V23_MIGRATION_STATEMENTS,
     SCHEMA_V24_MIGRATION_STATEMENTS,
     SCHEMA_V25_MIGRATION_STATEMENTS,
+    SCHEMA_V26_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -1065,6 +1066,11 @@ class SQLiteStore:
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
             return
+        if version == 25:
+            SQLiteStore._validate_required_tables(connection, version=25)
+            SQLiteStore._migrate_v25_to_v26(connection)
+            SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
         if version == 24:
             SQLiteStore._validate_required_tables(connection, version=24)
             SQLiteStore._migrate_v24_to_v25(connection)
@@ -1534,6 +1540,26 @@ class SQLiteStore:
         except Exception:
             connection.execute("ROLLBACK")
             raise
+        SQLiteStore._migrate_v25_to_v26(connection)
+
+    @staticmethod
+    def _migrate_v25_to_v26(connection: sqlite3.Connection) -> None:
+        # Rebuild the referenced parent without rewriting box_order_ownership's FK.
+        connection.execute("PRAGMA foreign_keys = OFF")
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in SCHEMA_V26_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise SchemaError("Box pristine baseline migration found a foreign key violation")
+            connection.execute("PRAGMA user_version = 26")
+            connection.execute("COMMIT")
+        except Exception:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+        finally:
+            connection.execute("PRAGMA foreign_keys = ON")
 
     @staticmethod
     def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
@@ -4306,6 +4332,8 @@ class SQLiteStore:
 
         The journal is the only fill store. Its baseline digest and the position
         version allow later proof to reject missing/late evidence and mutations.
+        A never-traded symbol has no projection row (the first fill creates it at
+        version 1); it is attested as virtual version 0 with an empty journal.
         """
         from terminal.paper.box_ownership import journal_hash
 
@@ -4318,19 +4346,69 @@ class SQLiteStore:
             key = PositionKey(candidate.trading_account_id, Category.LINEAR, candidate.symbol, 0)
             position = self.get_position_projection(key)
             fills = self.load_executions_for_symbol(candidate.trading_account_id, candidate.symbol)
-            net = sum((f.quantity.value if f.side is OrderSide.BUY else -f.quantity.value
-                       for f in fills), Decimal(0))
-            if (position is None or position.sync_state != "synced"
-                    or position.side is not PositionSide.FLAT or position.quantity.value != 0
-                    or position.average_entry is not None or net != 0
-                    or any(f.exchange_timestamp_ms > position.updated_at_ms for f in fills)):
-                raise PersistenceError("Box ownership requires reconciled FLAT position and journal")
+            if position is None:
+                self._require_pristine_box_symbol(candidate, fills)
+                baseline_version, baseline_time_ms = 0, 0
+            else:
+                net = sum((f.quantity.value if f.side is OrderSide.BUY else -f.quantity.value
+                           for f in fills), Decimal(0))
+                if (position.sync_state != "synced"
+                        or position.side is not PositionSide.FLAT or position.quantity.value != 0
+                        or position.average_entry is not None or net != 0
+                        or any(f.exchange_timestamp_ms > position.updated_at_ms for f in fills)):
+                    raise PersistenceError("Box ownership requires reconciled FLAT position and journal")
+                baseline_version, baseline_time_ms = position.version, position.updated_at_ms
             self._connection.execute(
                 "INSERT INTO box_attempt_ownership VALUES (?, 'paper', ?, 1, ?, ?, ?, ?)",
-                (candidate_id, candidate.symbol.value, position.version, position.updated_at_ms,
+                (candidate_id, candidate.symbol.value, baseline_version, baseline_time_ms,
                  len(fills), journal_hash(fills)),
             )
         return True
+
+    def _require_pristine_box_symbol(self, candidate: RobotCandidateRecord, fills) -> None:
+        """Prove a missing projection means "never traded", not lost state.
+
+        Any execution, competing Box baseline, live order/command, protection or
+        open Robot exposure on the symbol makes the missing row ambiguous.
+        """
+        account, symbol = candidate.trading_account_id.value, candidate.symbol.value
+        evidence = (
+            ("executions", bool(fills)),
+            ("another Box ownership baseline", self._connection.execute(
+                "SELECT 1 FROM box_attempt_ownership WHERE trading_account_id=? AND symbol=?",
+                (account, symbol),
+            ).fetchone()),
+            ("an active PAPER limit order", self._connection.execute(
+                "SELECT 1 FROM paper_limit_orders WHERE trading_account_id=? AND symbol=? "
+                "AND status != 'cancelled'",
+                (account, symbol),
+            ).fetchone()),
+            ("an unresolved trading command", self._connection.execute(
+                "SELECT 1 FROM trading_commands WHERE trading_account_id=? AND symbol=? "
+                "AND current_state NOT IN ('cancelled', 'rejected', 'failed')",
+                (account, symbol),
+            ).fetchone()),
+            ("a protection projection", self._connection.execute(
+                "SELECT 1 FROM protection_projections WHERE trading_account_id=? AND symbol=?",
+                (account, symbol),
+            ).fetchone()),
+            ("an open Robot trade", self._connection.execute(
+                "SELECT 1 FROM robot_trades WHERE trading_account_id=? AND symbol=? "
+                "AND exit_time_ms IS NULL",
+                (account, symbol),
+            ).fetchone()),
+            ("an OPEN Robot candidate", self._connection.execute(
+                "SELECT 1 FROM robot_candidates WHERE trading_account_id=? AND symbol=? "
+                "AND status='OPEN'",
+                (account, symbol),
+            ).fetchone()),
+        )
+        found = [name for name, present in evidence if present]
+        if found:
+            raise PersistenceError(
+                "Box ownership requires reconciled FLAT position and journal: "
+                "missing projection is ambiguous with " + ", ".join(found)
+            )
 
     def _reserve_box_order_identity(
         self, candidate_id: str, *, order_id: OrderId, role: str, slot: int,
