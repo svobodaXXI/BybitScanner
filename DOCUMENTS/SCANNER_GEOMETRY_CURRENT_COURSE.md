@@ -1,6 +1,6 @@
 # Scanner geometry — active rule and short work index
 
-Status: ACTIVE; owner-defined wedge START is normative. Updated: 2026-09-23.
+Status: ACTIVE; 2026-10-07 canonical wedge geometry contract is normative. Updated: 2026-10-07.
 Entry: [AGENTS.md](../AGENTS.md#active-scanner-geometry-course).
 Scope: 5m Scanner wedge geometry and development of the separate L-shaped pattern.
 This is a navigation/working index, not approval to change strategy, risk,
@@ -58,38 +58,60 @@ rules belong to the owning specification; do not extrapolate one pattern's
 constraints to another. A Robot trade's actual exit requires execution
 evidence, not only an observed price touch.
 
-## Universal wedge anchor rule — OWNER AUTHORITY
+## Universal wedge geometry rule — OWNER AUTHORITY
 
-**For EVERY wedge:** preceding directional impulse → **first anchor is the
-extreme ending that impulse** → **second anchor is the next meaningful,
-confirmed pivot on the opposite side**.
+Canonical authority:
+`DOCUMENTS/WEDGE_GEOMETRY_CONTRACT_2026-10-07.md`.
 
-After UP: terminal HIGH → next LOW. After DOWN: terminal LOW → next HIGH.
-Both anchors belong to the same local formation episode and must have been
-knowable at the historical decision time. First identify this chronological
-start; then fit/validate the two boundaries using subsequent pivots. Rising vs
-falling and corrective vs decelerating subtype are determined *separately* and
-NEVER change first/second-anchor selection. Do not assign START retrospectively
-from whichever two fitted lines have the highest score. If the required local
-formation is absent or not confirmed, do not emit a wedge.
+For EVERY wedge, construction is chronological and structural:
 
-**Owner clarification — mandatory first-anchor criterion (2026-09-22).** With
-A = first anchor, B = second anchor (the next confirmed opposite-side pivot)
-and C = the next confirmed pivot on A's side after B:
+1. establish the preceding directional impulse;
+2. the **first anchor** is the reversal extremum that terminates that impulse;
+3. the **second anchor** is the **immediate next confirmed opposite pivot** in
+   chronological pivot order — not a farther "meaningful" pivot;
+4. continue through the local alternating pivot sequence without skipping an
+   intermediate opposite extremum;
+5. fit/validate boundaries only from structurally admissible pivots;
+6. validate the strict boundary against its mandatory controlling extremum and
+   zero-protrusion rule;
+7. only then classify/rank the candidate and derive geometry-based potential/TP.
+
+After UP: terminal HIGH → immediate next LOW. After DOWN: terminal LOW →
+immediate next HIGH. Both anchors must belong to the same local formation
+episode and be knowable at the historical decision time.
+
+For a corrective Rising Wedge after a strong decline, the first anchor is the
+lowest reversal extremum ending that decline. For a corrective Falling Wedge
+after a strong rise, mirror the rule. Do not crop the structure to a later
+local pivot merely because the later subset fits or scores better.
+
+The earlier A/B/C contraction check remains subordinate confirmation among
+already structurally admissible adjacent pivots:
 
     abs(P[C] - P[B]) < abs(P[B] - P[A])
 
-If it fails, A was selected incorrectly: take the next admissible formation
-start among the existing confirmed pivots/candidate pool and apply the same
-full rule to it. Rejecting the pair A/B does not end the search, and A must
-not be swapped for an arbitrary later pivot merely to pass the check. No
-admissible start, or C not yet confirmed, means the wedge is not confirmed.
+It may reject a candidate, but it may not justify skipping the immediate
+opposite pivot or replacing the impulse-ending first anchor with a later pivot.
 
-This section is the **only active wording** of the owner rule. The research
-document in draft [PR #156](https://github.com/svobodaXXI/BybitScanner/pull/156)
-links back here; any earlier subtype-specific START statements there describe
-historical examples, not an alternative selection contract. Do not ask the
-owner to restate this rule.
+Strict-boundary hard gate:
+- Falling Wedge: the strict upper boundary must pass through the relevant upper
+  pivot immediately preceding the final lower extremum before the apex, and no
+  relevant high/wick/upper extremum may protrude above it;
+- Rising Wedge: mirror this on the strict lower boundary, with no relevant
+  low/wick/lower extremum protruding below it.
+
+A strict boundary that floats through empty space near the apex, misses the
+controlling extremum, or permits a same-side protrusion is invalid regardless
+of score. No ATR/body-tolerance soft penalty may rescue such a wedge.
+
+Potential and TP must use one authoritative wedge-base measurement from the
+accepted geometry. If that base cannot be established consistently, do not
+publish an inflated or guessed target.
+
+This section and `WEDGE_GEOMETRY_CONTRACT_2026-10-07.md` supersede older
+wedge START/anchor/strict-containment wording wherever it conflicts. Historical
+documents remain evidence of past implementation behavior, not alternate owner
+authority. Do not ask the owner to restate these rules.
 
 ## Current state and next one bounded slice
 
@@ -128,14 +150,13 @@ new full-pass run is authorized merely by reading this index.
 
 ## Active development priority — L-shaped formation, not wedge S1
 
-**Owner direction (2026-09-23):** develop the preceding directional impulse
-criterion **only within the new, independent L-shaped pattern detector**.
-The wedge implementation route below is **DEFERRED**, including its S1
-impulse/episode gate, candidate-generation expansion and Scanner integration.
-Do not apply the L-shaped detector's impulse criterion as a new wedge
-requirement or alter #191's universal wedge A/B/C rule during this work.
-Sharing a proven future primitive with wedges would require a separate
-scoped decision and validation.
+**Historical owner direction (2026-09-23):** at that time the preceding
+directional-impulse criterion was deferred for Wedge work while L-shape was
+developed. **Superseded 2026-10-07 for Wedge geometry semantics:** the canonical
+Wedge contract now explicitly requires impulse-ending first-anchor ownership,
+adjacent opposite pivots and strict-boundary structural gates. Implementation
+still proceeds in bounded defect-class slices; do not import L-shape-specific
+thresholds or mechanics into Wedge logic.
 
 **L-shaped geometry (pattern-specific, not an A/B/C wedge):** strong UP/DOWN
 directional impulse from its source extremum to a new extreme, followed by a
@@ -263,7 +284,8 @@ to this index; no chat handoff or repeated research is needed.
 | Need | Existing owner/evidence | Read policy |
 | --- | --- | --- |
 | Current code behavior | `geometry/engine.py`, `geometry/evaluation.py`, `geometry/pair_metrics.py`, `geometry/candidate.py`, `geometry/filter.py`, `geometry/pre_pattern.py`, `pivots.py` | Read affected functions, not all files by default. |
-| Boundary/body tolerance decision and earlier failures | [SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md](SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md) — latest effective decision is “Approved bounded revision — 2026-09-22: sustained formation body mismatch”; older sections are historical and may be superseded. | Only for body/ATR scope. |
+| Wedge structural geometry authority | [WEDGE_GEOMETRY_CONTRACT_2026-10-07.md](WEDGE_GEOMETRY_CONTRACT_2026-10-07.md) | Canonical for Wedge anchors, adjacency, corrective start, strict boundary, zero protrusions and wedge-base target measurement. |
+| Historical body/ATR containment implementation | [SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md](SCANNER_GEOMETRY_ATR_CONTAINMENT_DECISION.md) | Historical implementation evidence only where it conflicts with the 2026-10-07 strict-boundary hard gate. |
 | Earlier boundary proposals | [SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md](SCANNER_GEOMETRY_BOUNDARY_VIOLATION_DECISION.md) | Historical proposal, **not** a second active gate. |
 | Previous implementation/verification record | [CR-SCANNER-GEOMETRY-FORMATION-FIT-001.md](CHANGE_REQUESTS/CR-SCANNER-GEOMETRY-FORMATION-FIT-001.md), existing `tests/test_geometry_formation_fit.py` and scoped fixtures | Reuse passing evidence; retest only changed behavior. |
 | Episode/pivot research and CRCL/0G/CRV saved controls | [draft PR #156](https://github.com/svobodaXXI/BybitScanner/pull/156), `DOCUMENTS/WEDGE_LOCAL_EPISODE_REFERENCE_AND_IMPLEMENTATION_PLAN_2026-09-20.md` **on that PR branch only** | Research-only; no automatic episode selector or production gate. Open only the applicable section, not its entire 697-line file or 24-file PR. |
