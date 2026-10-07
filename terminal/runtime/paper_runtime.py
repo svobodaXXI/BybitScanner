@@ -2678,9 +2678,11 @@ class PaperRuntime:
         before this method is ever reached; this method only reuses the
         existing Robot-scoped execution path, never a second one.
         """
-        candidates = self.store.load_active_robot_candidate_states(self._account_id)
+        # Full, hash-validated OPEN records: Box routing needs the immutable
+        # signal snapshot and the Box close needs robot_state/state_revision,
+        # none of which the lightweight active-state projection carries.
         open_candidates = sorted(
-            (item for item in candidates if item.status == "OPEN"),
+            self.store.load_robot_candidates_by_status(self._account_id, ("OPEN",)),
             key=lambda item: item.symbol.value,
         )
         results = []
@@ -2690,8 +2692,9 @@ class PaperRuntime:
             digest = hashlib.sha256(
                 f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
             ).hexdigest()[:32]
+            is_box = candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
             try:
-                if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                if is_box:
                     result = self._robot_close_box_candidate(candidate)
                 else:
                     result = self._robot_api.full_close(FullCloseCommandRequest(
@@ -2701,7 +2704,7 @@ class PaperRuntime:
                 result = CommandResult(
                     f"robot-close-all-{digest}",
                     CommandResultStatus.UNAVAILABLE,
-                    "box_close_failed" if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX" else "close_failed",
+                    "box_close_failed" if is_box else "close_failed",
                     type(error).__name__,
                     None,
                     True,
