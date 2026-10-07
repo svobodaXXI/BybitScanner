@@ -86,10 +86,10 @@ search, filtering and parsing itself and returns only the decisive result.
 The owner's canonical manual runtime UX is the existing desktop shortcut surface.
 Do not make the owner re-discover or re-explain this path in future sessions.
 
-Current owner-facing surface (canonicalized 2026-09-28; do not rediscover):
+Current owner-facing surface (canonicalized 2026-09-28; owner composition reconfirmed 2026-10-07; do not rediscover):
 - shortcut directory: `C:\\Users\\svobo\\OneDrive\\Рабочий стол`;
 - `start_scanner.lnk` -> tracked `C:\\BybitScanner\\start_scanner.bat`, Start In `C:\\BybitScanner`;
-- `Запуск робота.lnk` -> tracked `C:\\BybitScanner\\start_robot_runtime.bat` with argument `ROBOT` (Robot only; never Scanner, never implicit `ALL`), Start In `C:\\BybitScanner`;
+- `Запуск робота.lnk` -> tracked `C:\\BybitScanner\\start_robot_runtime.bat` with argument `ALL` (the normal one-action Robot + Scanner start), Start In `C:\\BybitScanner`;
 - `Остановить робота.lnk` -> tracked `C:\\BybitScanner\\stop_robot_runtime.bat`, Start In `C:\\BybitScanner`.
 
 **Cross-machine invariant (owner decision 2026-10-07):** PC and laptop both use
@@ -109,8 +109,8 @@ Current wiring contract:
 - desktop shortcuts must target tracked canonical launchers directly; local/untracked `start_robot.bat` and `stop_robot.bat` are not runtime authority and must not sit in the owner-critical path;
 - tracked `tools/sync_owner_shortcuts.ps1` repairs/verifies these three targets without renaming the owner-facing buttons;
 - tracked `start_scanner.bat` delegates to tracked `start_robot_runtime.bat` and therefore reaches the canonical readiness/identity/protection/ScannerControlRuntime path;
-- tracked `start_robot_runtime.bat` owns the one-action runtime-intent start path; with no argument it resolves to `ROBOT`, and `SCANNER`/`ALL` are only ever passed explicitly (`start_scanner.bat` passes `SCANNER`; `ALL` comes from Telegram `/all` or an explicit `start_robot_runtime.bat ALL`);
-- the `ROBOT`-only semantics of `Запуск робота` live in tracked files (`start_robot_runtime.bat` default plus `tools/sync_owner_shortcuts.ps1` argument pin), so a Git sync on either machine cannot restore an implicit `ALL`;
+- tracked `start_robot_runtime.bat` owns the one-action runtime-intent start path; with no argument it resolves to `ALL` for backward compatibility, while `start_scanner.bat` passes `SCANNER` explicitly and dedicated Robot-only control paths may pass `ROBOT`;
+- the `ALL` semantics of `Запуск робота` live in tracked files and are explicit in `tools/sync_owner_shortcuts.ps1`, which pins shortcut Arguments to `ALL`; Git sync on either machine must preserve this composition;
 - tracked `stop_robot_runtime.bat` owns the canonical full safe-stop path through `python -m tools.stop_robot_runtime`;
 - the previous local wrapper and `C:\\BybitScanner-box-robot-run\\start_robot_all.cmd` wiring are historical/legacy and are not owner desktop runtime authority.
 
