@@ -828,15 +828,16 @@ Authoritative standard:
   OneDrive, username and hostname differences stay outside tracked runtime semantics.
   Git synchronization must not silently retarget the existing owner shortcuts or
   change “Запуск робота” into a different startup composition.
-- **Intent contract (owner decision 2026-10-07):** `Запуск робота` = `ROBOT`
-  only, `start_scanner` = `SCANNER` only, `ALL` only by an explicit request
-  (`/all` or `start_robot_runtime.bat ALL`). No launcher may start Scanner
-  through an implicit default: `start_robot_runtime.bat` with no argument
-  resolves to `ROBOT`.
+- **Intent contract (owner decision reconfirmed 2026-10-07):** `Запуск робота` is
+  the normal one-action `ALL` start: Robot + Scanner through the shared Runtime
+  Intent Reconciler. `start_scanner` remains `SCANNER` only. Dedicated Robot-only
+  control paths may use `ROBOT`, but the desktop “Запуск робота” surface must not
+  be narrowed to Robot-only. `start_robot_runtime.bat` with no argument remains
+  `ALL` for backward compatibility.
 
 - `tools/sync_owner_shortcuts.ps1` is the canonical one-shot repair/verification
   for those targets; it preserves the existing shortcut names and pins the
-  `Запуск робота` shortcut argument to `ROBOT` (verified after save).
+  `Запуск робота` shortcut argument to explicit `ALL` (verified after save).
 - Owner runtime-check on 2026-09-27 proved the canonical start path.
 - Abrupt-power recovery exposed a stale fail-closed
   `ROBOT_ENTRY_OWNERSHIP_MISMATCH` latch for BLENDUSDT after the durable
@@ -872,11 +873,10 @@ Implementation/evidence:
   desktop bootstrap and Telegram routing;
 - the one-action `ALL` intent (Robot + Scanner) was owner-run from a stopped
   state to Robot READY/protection healthy + Scanner RUNNING without the former
-  manual Robot-start prerequisite. **Superseded 2026-10-07:** that run went
-  through the desktop `Запуск робота` button only because it then mapped to
-  `ALL`; that mapping was a regression, not a contract. `Запуск робота` is
-  Robot-only (`ROBOT`); `ALL` stays an explicit surface (`/all`,
-  `start_robot_runtime.bat ALL`);
+  manual Robot-start prerequisite. **Owner reconfirmation 2026-10-07:** this is
+  the intended permanent desktop behavior of `Запуск робота`; the temporary
+  Robot-only reinterpretation in PR #404 was incorrect and must not be treated
+  as product authority;
 - canonical safe-stop remains separate and proven;
 - backend/Telegram reuse is guarded by PAPER DB identity and readiness checks;
 - LIVE/operator authority remains forced off for the PAPER bootstrap.
