@@ -2,10 +2,27 @@
 
 Version: 1.0
 Date: 2026-09-10
-Status: ACCEPTED DESIGN
-Implementation authorization: APPROVED (2026-09-11) — see IMPLEMENTATION_RECORD below
+Status: HISTORICAL IMPLEMENTATION RECORD; PARTIALLY SUPERSEDED FOR WEDGE GEOMETRY (2026-10-07)
+Implementation authorization: historical APPROVED (2026-09-11) — see IMPLEMENTATION_RECORD below
 
 ## Supersession
+
+**Current Wedge authority (2026-10-07):**
+`DOCUMENTS/WEDGE_GEOMETRY_CONTRACT_2026-10-07.md`.
+
+For Wedge geometry, that contract supersedes this document wherever the two
+conflict. In particular:
+- the strict Wedge boundary is a **hard structural gate**, not a quality penalty;
+- the strict boundary has zero tolerance for relevant wick/extremum protrusions;
+- it must pass through the mandatory controlling extremum near the apex;
+- Falling and Rising Wedge use mirrored strict-side rules;
+- anchors are impulse-ending first anchor + immediate adjacent opposite pivot;
+- wedge potential and plotted TP share one accepted wedge-base measurement.
+
+The ATR/body-zone logic below is retained as historical implementation evidence
+and may still inform non-conflicting flexible-side diagnostics. It is not
+authority for accepting a Wedge whose strict boundary violates the canonical
+2026-10-07 geometry contract.
 
 This document **replaces**:
 
@@ -48,9 +65,14 @@ The structure between `start_index` and `end_index` splits into:
 
 The 50/50 midpoint implicit in the current containment evaluation becomes a configurable split, set to 60/40 by this decision.
 
-### 3. Upper trendline (Falling Wedge upper boundary)
+### 3. Upper trendline (Falling Wedge upper boundary) — HISTORICAL IMPLEMENTATION
 
-Strict across the **entire** structure, both zones, no exception. Any candle whose **body** (not wick) breaches the line by more than the ATR-derived tolerance is a violation.
+The 2026-09-11 implementation treated body breaches beyond an ATR-derived
+tolerance as soft violations. **That acceptance rule is superseded.** Under the
+2026-10-07 canonical Wedge contract, the Falling Wedge upper boundary is the
+strict boundary: it must pass through the mandatory controlling upper extremum
+and no relevant high/wick/upper extremum may protrude above it. Any such
+protrusion is a hard geometry reject.
 
 ### 4. Lower trendline, early zone (first 60%)
 
@@ -67,9 +89,14 @@ Same strict regime as the upper trendline: any candle whose body breaches the li
 
   A body breach accompanied by a recognized pattern is excused and not counted. An unaccompanied body breach counts as one violation.
 
-### 6. Violation handling — soft penalty, not hard reject
+### 6. Violation handling — HISTORICAL SOFT-PENALTY POLICY
 
-This is the central change from the current production behavior: `features["containment"]` in `wedge/detector.py:detect_structure()` is currently a hard boolean that, when `False`, forces `detected = False` regardless of the five Validation Gate checks. This decision removes that hard-reject role for containment. Violations instead produce counts:
+This section records the 2026-09-11 behavior. It is **not current authority for
+the strict Wedge boundary**. Strict-side structural violations defined by
+`WEDGE_GEOMETRY_CONTRACT_2026-10-07.md` are hard rejects and cannot be
+rescued by score/tier downgrade.
+
+Historically, this was the central change from the then-current production behavior: `features["containment"]` in `wedge/detector.py:detect_structure()` is currently a hard boolean that, when `False`, forces `detected = False` regardless of the five Validation Gate checks. This decision removes that hard-reject role for containment. Violations instead produce counts:
 
 ```text
 containment_violations = {
@@ -112,7 +139,9 @@ freshness_window = max(15, round(structure_length * 0.20))
 
 ## Explicit non-goals
 
-- **Rising Wedge**: the mirrored rule (strict lower trendline, flexible upper trendline with bearish reversal patterns) is a separate, unresolved future task, as it was in the superseded document.
+- **Rising Wedge (historical scope):** this 2026-09-10 decision did not cover it.
+  **Superseded for current Wedge semantics:** the 2026-10-07 canonical contract
+  now defines the mirrored strict lower-boundary hard gate for Rising Wedge.
 - **Implementation**: no change to `geometry/envelope_metrics.py:evaluate_candle_containment()`, `outside_percent()`, `wedge/detector.py:detect_structure()`, or `signal/quality.py` is authorized by this decision.
 - **Final numeric values**: the `0.15 * ATR(14)` tolerance multiplier, the 60/40 zone split, and the `freshness_window` `0.20` factor are proposals for review, not finalized, implementation-authorized numbers.
 - **Reversal-pattern recognizer implementation**: exact rolling-window size, "large/small body" thresholds, and the Arc run-length/shape criteria remain to be specified at implementation time, as in the superseded document.
@@ -149,7 +178,7 @@ Files changed:
 - `signal/quality.py` — `evaluate_quality()` gained an optional `containment_violations` parameter; base tier is now computed without early return, then downgraded per the approved severity/tier table (constants `CONTAINMENT_SEVERITY_WEIGHT_UPPER=2`, `CONTAINMENT_SEVERITY_WEIGHT_LOWER_STRICT=2`, `CONTAINMENT_SEVERITY_WEIGHT_LOWER_FLEXIBLE=1`, `CONTAINMENT_SEVERITY_TIER_1_MAX=2`, `CONTAINMENT_SEVERITY_TIER_2_MAX=4`). The `Invalid` tier is unaffected.
 - `analyzer/core.py` — passes `containment_violations` from `result["detection"]["features"]` into `evaluate_quality()`.
 
-### KNOWN_GAP — Rising Wedge / Triangle Compression have no containment gate at all
+### HISTORICAL KNOWN_GAP — Rising Wedge / Triangle Compression containment
 
 Detected: 2026-09-11 (during this implementation).
 Status: OPEN (re-opened 2026-09-12 — see below; briefly MITIGATED 2026-09-11 through 2026-09-12 via a `main.py` exclusion filter that was itself explicitly reverted).
