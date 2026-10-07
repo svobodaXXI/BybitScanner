@@ -194,6 +194,21 @@ The owner's Windows PC and laptop intentionally use the **same repository root**
 shortcut migration, or machine-specific Git branch.
 
 Permanent rules:
+- the **owner-verified PC desktop surface is the template for laptop provisioning**; do not
+  redesign it on the laptop. Reproduce the same shortcut names, launch semantics and visual
+  identity, including the same shortcut icons;
+- canonical shortcut wiring to reproduce on the laptop:
+  - `start_scanner.lnk` -> `C:\\BybitScanner\\start_scanner.bat`, Start In
+    `C:\\BybitScanner`;
+  - `Запуск робота.lnk` -> `C:\\BybitScanner\\start_robot_runtime.bat` with explicit
+    argument `ALL`, Start In `C:\\BybitScanner`;
+  - `Остановить робота.lnk` -> `C:\\BybitScanner\\stop_robot_runtime.bat`, Start In
+    `C:\\BybitScanner`;
+- laptop setup must copy/reproduce the **same user-visible icons as the verified PC shortcuts**.
+  Icon replication is machine-local shortcut provisioning and must not alter tracked runtime
+  semantics merely to make the icons work. If the PC icon resource is machine-specific, capture
+  its current `IconLocation` first and reproduce the same appearance on the laptop through a
+  portable/local resource; never guess or replace the icon silently;
 - keep the same owner-facing shortcut names and the same `C:\\BybitScanner` target root
   on both machines;
 - tracked launcher code must resolve repo-internal files relative to its own directory
