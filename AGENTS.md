@@ -117,6 +117,33 @@ and its narrow changed-behavior checks during implementation; complete the
 mandatory full-universe Scanner acceptance pass below for every new pattern
 or Scanner correction, without redundant repeated passes.
 
+## Reference-first parity and migration — OWNER RULE 2026-10-08
+
+When moving an already-working BybitScanner runtime to another machine or recovering
+the same behavior on an existing machine, **do not rebuild the workflow from scratch**:
+
+1. Establish the latest *verified* working source machine/runtime configuration
+   as the reference. Separate tracked code/commit, machine-local launchers,
+   shortcut arguments, environment, dependencies, DB state, and process composition.
+2. Compare the target machine against that reference using existing project evidence
+   and direct, narrow checks. Reuse proven migration and parity results; investigate
+   only actual differences or gaps.
+3. Correct only a demonstrated mismatch with the smallest reversible change.
+   Do not introduce new architecture, repeated preflight campaigns, or change a
+   working launcher intent merely because the target host is new.
+4. Validate the changed boundary and the owner-visible outcome against the
+   reference; do not declare functional parity based only on Git HEAD, CI,
+   static checks or a READY flag.
+5. Preserve safety gates: a verified risky behavior in the reference is not
+   permission to reproduce it blindly. Document the blocking deviation, keep
+   Scanner/Robot under owner-only runtime control, and request a decision only
+   when a genuine safety trade-off remains.
+
+**Operator burden:** the assistant leads reference discovery, comparison, scoped
+patch and checks. Do not make the owner discover obvious mismatches or repeat
+already-proven work. If reference host is unavailable, state the evidence boundary
+and defer host-specific changes rather than guessing.
+
 ## GitHub ↔ Codex/local handoff sync guard — OWNER RULE 2026-09-26
 
 When work is about to move from ChatGPT-led GitHub-first edits/review to
