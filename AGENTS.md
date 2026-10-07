@@ -164,8 +164,8 @@ not ad-hoc terminal commands and not a newly invented launcher workflow.
 
 Known owner-facing shortcuts:
 - `start_scanner` — manual Scanner launch/control entry;
-- `Запуск робота` — manual Robot launch entry, **Robot only** (`ROBOT`; it must never start
-  Scanner — `ALL` is an explicit surface such as Telegram `/all`);
+- `Запуск робота` — the owner's normal **one-action full PAPER runtime launch**: explicit
+  `ALL`, which prepares/starts Robot + Scanner through the shared Runtime Intent Reconciler;
 - the companion desktop stop shortcut remains part of the same owner-facing surface.
 
 For all future Scanner/Robot/runtime development:
@@ -201,7 +201,8 @@ Permanent rules:
   OneDrive, hostname, or machine name;
 - machine-local `.lnk` files may remain local, but Git changes must not silently
   retarget them or change what “Запуск робота”, “Остановить робота”, or
-  `start_scanner` means;
+  `start_scanner` means. In particular, “Запуск робота” means `ALL`
+  (Robot + Scanner) on both PC and laptop;
 - do not create separate “PC” and “laptop” launcher variants merely because the
   owner changed machines; a genuine machine difference must be isolated in local
   configuration, outside the shared runtime semantics;
