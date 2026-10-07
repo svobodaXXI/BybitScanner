@@ -73,7 +73,9 @@ from scanner_geometry_cursor import (
     default_scanner_geometry_cursor_provider, latest_scanner_closed_candle,
     load_scanner_catchup_closed_candles, project_latest_geometry_index,
 )
-from terminal.runtime.closed_candle_cache import CachedClosedCandleProvider
+from terminal.runtime.closed_candle_cache import (
+    CachedClosedCandleProvider, PreparedCatchupEvidence,
+)
 from terminal.domain.models import (
     Category, Execution, ExecutionDedupKey, ExecutionId, OrderId, OrderSide, PositionKey,
     PositionSide, Quantity, Symbol, TradingAccountId,
@@ -215,7 +217,12 @@ class RobotPaperActionExecutor:
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_cancel_limit(request))
 
     def market(self, request):
-        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_market(request))
+        # Execution evidence is read here, on the monitor thread, and handed
+        # to the owner as an immutable book.
+        evidence = self._runtime._dispatch_robot_market_book(request.symbol)
+        return self._runtime._dispatch_robot_command(
+            lambda runtime: runtime._robot_market(request, evidence=evidence)
+        )
 
     def create_stop(self, request):
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_create_stop(request))
@@ -230,7 +237,10 @@ class RobotPaperActionExecutor:
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_take(request))
 
     def full_close(self, request):
-        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_full_close(request))
+        evidence = self._runtime._dispatch_robot_market_book(request.symbol)
+        return self._runtime._dispatch_robot_command(
+            lambda runtime: runtime._robot_full_close(request, evidence=evidence)
+        )
 
 
 class _DirectRobotActionExecutor:
@@ -618,6 +628,14 @@ class PaperRuntime:
         )
         engine = ExecutionEngine(self.store)
         self._book_provider = book_provider
+        # Owner-thread protection closes read only an already-streamed book:
+        # LiveOrderBookProvider.get_book() may fall back to a blocking REST
+        # request, which would stall the single owner (and protection ingress)
+        # for up to its timeout. In-memory providers without a network
+        # fallback expose only get_book().
+        self._streamed_book = getattr(
+            book_provider, "get_streamed_book", book_provider.get_book,
+        )
         self._limit_executor = PaperLimitExecutor(
             engine,
             fee_rate=Decimal("0.0006"),
@@ -784,12 +802,28 @@ class PaperRuntime:
         if self.robot_closed_candle_cache is not None:
             self.robot_closed_candle_cache.bind_owner_thread(self.store.is_owned_by_current_thread)
         self._robot_closed_candle_provider = provider
+        # Owner-thread one-shot monitors read the warmed cache only: a miss is
+        # "no closed candle yet", never an in-place kline request. Their fill /
+        # protection paths do not read closed candles at all.
+        self._owner_closed_candle = (
+            self.robot_closed_candle_cache.peek
+            if self.robot_closed_candle_cache is not None
+            else provider
+        )
         # RobotBreakoutMonitor enables admission catch-up only for the bare
         # latest_scanner_closed_candle; keep that when the cache wraps it.
         self._robot_admission_catchup_candles = (
             load_scanner_catchup_closed_candles
             if self.robot_closed_candle_cache is not None
             and self.robot_closed_candle_cache.fetch is latest_scanner_closed_candle
+            else None
+        )
+        # Owner-thread one-shot monitors never call the kline loader above:
+        # they read only evidence prepared off the owner (see
+        # SerializedPaperRuntime.warm_robot_closed_candles).
+        self.robot_catchup_evidence = (
+            PreparedCatchupEvidence(self._robot_admission_catchup_candles)
+            if self._robot_admission_catchup_candles is not None
             else None
         )
         self._robot_breakout_monitor = RobotBreakoutMonitor(
@@ -970,10 +1004,17 @@ class PaperRuntime:
         return self._dispatch_robot_command(lambda runtime: runtime.robot_match_symbol(symbol))
 
     def _dispatch_robot_market_book(self, symbol: str):
+        """Read-only market evidence for the Robot monitor.
+
+        Read on the calling (monitor) thread, never routed through the
+        serialized owner: a provider REST fallback must not hold the owner.
+        On the owner itself only an already-streamed book is used.
+        """
         normalized = Symbol(symbol.strip().upper())
-        return self._dispatch_robot_command(
-            lambda runtime: runtime._book_provider.get_book(normalized)
-        )
+        streamed = self._streamed_book(normalized)
+        if streamed is not None or self.store.is_owned_by_current_thread():
+            return streamed
+        return self._book_provider.get_book(normalized)
 
     def _dispatch_robot_market_preflight(self, request, identity):
         return self._dispatch_robot_command(
@@ -981,9 +1022,28 @@ class PaperRuntime:
         )
 
     def _dispatch_robot_market_submit(self, request, identity):
+        evidence = self._dispatch_robot_market_book(request.symbol)
         return self._dispatch_robot_command(
-            lambda runtime: runtime._robot_api.market(request, identity=identity)
+            lambda runtime: runtime._robot_api.market(
+                request, identity=identity,
+                market_book=runtime._robot_execution_book(request.symbol, evidence),
+            )
         )
+
+    def _robot_execution_book(
+        self, symbol: str, evidence: NormalizedOrderBook | None = None,
+    ) -> NormalizedOrderBook | None:
+        """Owner-thread execution evidence for a Robot PAPER Market command.
+
+        The current already-streamed book, else the immutable ``evidence`` the
+        caller read off the owner thread. Never the provider's REST fallback;
+        None makes TradingApplication fail before any command is persisted.
+        """
+        normalized = Symbol(symbol.strip().upper())
+        book = self._streamed_book(normalized)
+        if book is None and evidence is not None and evidence.symbol == normalized:
+            book = evidence
+        return book
 
     @property
     def _account_id(self) -> TradingAccountId:
@@ -1235,12 +1295,19 @@ class PaperRuntime:
         ):
             raise RuntimeError("live_mutations_disabled")
 
-    def market(self, request):
+    def market(self, request, *, evidence: NormalizedOrderBook | None = None):
+        """Manual PAPER Market. ``evidence`` is the book the HTTP boundary read
+        off the owner thread; the owner uses the current streamed book first
+        and never the provider's REST fallback."""
         self.require_paper_mutations()
-        return self.api.market(request)
+        return self.api.market(
+            request, market_book=self._robot_execution_book(request.symbol, evidence),
+        )
 
-    def _robot_market(self, request):
-        return self._robot_api.market(request)
+    def _robot_market(self, request, *, evidence: NormalizedOrderBook | None = None):
+        return self._robot_api.market(
+            request, market_book=self._robot_execution_book(request.symbol, evidence),
+        )
 
     def live_market(self, request: LiveMarketCommandRequest):
         return self._live_market.submit(request)
@@ -1290,12 +1357,23 @@ class PaperRuntime:
         stored = self._stored_bybit_account(account_id.value)
         return stored.environment == TradingAccountEnvironment.MAINNET.value and not stored.read_only
 
-    def full_close(self, request):
+    def full_close(self, request, *, evidence: NormalizedOrderBook | None = None):
         self.require_paper_mutations()
-        return self.api.full_close(request)
+        return self.api.full_close(
+            request, market_book=self._robot_execution_book(request.symbol, evidence),
+        )
 
-    def _robot_full_close(self, request):
-        return self._robot_api.full_close(request)
+    def manual_open_symbols(self) -> tuple[str, ...]:
+        """Symbols of open PAPER positions, in close_all's order (cheap owner read)."""
+        return tuple(
+            position.position_key.symbol.value
+            for position in self.store.load_open_position_projections(self._account_id)
+        )
+
+    def _robot_full_close(self, request, *, evidence: NormalizedOrderBook | None = None):
+        return self._robot_api.full_close(
+            request, market_book=self._robot_execution_book(request.symbol, evidence),
+        )
 
     def add_bybit_account(self, display_name: str, api_key: str, api_secret: str) -> dict[str, object]:
         if not self._credential_store or not self._account_validator:
@@ -1377,13 +1455,15 @@ class PaperRuntime:
         for ``symbol``, independent of the Workspace UI's selected account and
         of which symbol the UI currently has live-streamed.
 
-        Uses book_provider.get_book() (REST fallback when the symbol is not
-        the UI's currently live-buffered one) rather than
-        get_current_book_update() (buffer-only, single-symbol), so a Robot
-        candidate never depends on the operator viewing its symbol.
+        Matches against the already-streamed book (Workspace buffer or the
+        Robot entry/protection coverage context armed before the LIMIT was
+        created), so a Robot candidate never depends on the operator viewing
+        its symbol. Runs on the serialized owner, so it never falls back to
+        provider REST: without a streamed book nothing matches now, and the
+        coverage feed's own ordered events match the LIMIT instead.
         """
         normalized = Symbol(symbol.strip().upper())
-        book = self._book_provider.get_book(normalized)
+        book = self._streamed_book(normalized)
         if book is None:
             return 0
         match_event_id = f"robot:{normalized.value}:{int(book.received_at_ms)}"
@@ -1474,8 +1554,8 @@ class PaperRuntime:
             monitor = RobotBreakoutMonitor(
                 lambda: self.store,
                 self._paper_account_id,
-                get_closed_candle=self._robot_closed_candle_provider,
-                get_admission_catchup_candles=self._robot_admission_catchup_candles,
+                get_closed_candle=self._owner_closed_candle,
+                get_admission_catchup_candles=self.robot_catchup_evidence,
                 action_executor=_DirectRobotActionExecutor(self),
                 tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
                 clock_ms=lambda: int(time.time() * 1000),
@@ -1595,8 +1675,8 @@ class PaperRuntime:
         monitor = RobotBreakoutMonitor(
             lambda: self.store,
             self._paper_account_id,
-            get_closed_candle=self._robot_closed_candle_provider,
-            get_admission_catchup_candles=self._robot_admission_catchup_candles,
+            get_closed_candle=self._owner_closed_candle,
+            get_admission_catchup_candles=self.robot_catchup_evidence,
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
@@ -1675,7 +1755,7 @@ class PaperRuntime:
         existing = self.store.get_paper_protection_obligation_for_trade(trade.trade_id)
         if existing is not None and existing.status != "RESOLVED":
             resumed = self._dispatch_paper_protection_obligation(
-                existing, now_ms=received_at_ms,
+                existing, now_ms=received_at_ms, recovery_book=book,
             )
             closed = self.store.get_robot_trade(trade.trade_id)
             return finish(
@@ -1781,7 +1861,7 @@ class PaperRuntime:
             latched_at_ms=received_at_ms,
         )
         resolved = self._dispatch_paper_protection_obligation(
-            obligation, now_ms=received_at_ms,
+            obligation, now_ms=received_at_ms, recovery_book=book,
         )
         closed = self.store.get_robot_trade(trade.trade_id)
         return finish(
@@ -1845,8 +1925,8 @@ class PaperRuntime:
                 monitor = RobotBreakoutMonitor(
                     lambda: self.store,
                     self._paper_account_id,
-                    get_closed_candle=self._robot_closed_candle_provider,
-                    get_admission_catchup_candles=self._robot_admission_catchup_candles,
+                    get_closed_candle=self._owner_closed_candle,
+                    get_admission_catchup_candles=self.robot_catchup_evidence,
                     action_executor=_DirectRobotActionExecutor(self),
                     tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
                     clock_ms=lambda: int(time.time() * 1000),
@@ -1907,6 +1987,9 @@ class PaperRuntime:
             if position.side is PositionSide.LONG
             else OrderSide.BUY
         )
+        execution_book = self._streamed_book(symbol)
+        if execution_book is None:
+            raise RuntimeError("streamed PAPER protection book is unavailable")
         stop_result = self._market_executor.execute(
             trading_account_id=context.pretrade.position_key.trading_account_id,
             symbol=context.pretrade.position_key.symbol,
@@ -1915,6 +1998,7 @@ class PaperRuntime:
             order_link_id=f"paper-{leg}-{digest}",
             order_id=OrderId(f"paper-{leg}-order-{digest}"),
             exec_id=ExecutionId(f"paper-{leg}-exec-{digest}"),
+            book=execution_book,
         )
         if stop_result.apply_result is ExecutionApplyResult.APPLIED:
             applied += 1
@@ -1956,6 +2040,23 @@ class PaperRuntime:
         return project_latest_geometry_index(
             snapshot, latest_closed_candle_time_ms=candle["time_ms"],
         )
+
+    def robot_catchup_targets(self) -> tuple[tuple[str, dict[str, object]], ...]:
+        """(symbol, signal snapshot) of APPROVED candidates still uninitialized.
+
+        Read on the owner so the caller can fetch their admission catch-up
+        candles off the owner before queueing pending-entry synchronization.
+        """
+        if self.robot_catchup_evidence is None:
+            return ()
+        targets = []
+        for item in self.store.load_active_robot_candidate_states(self._paper_account_id):
+            if item.status != "APPROVED" or item.robot_state is not None:
+                continue
+            record = self.store.get_robot_candidate(item.candidate_id)
+            if record is not None and record.robot_state is None:
+                targets.append((record.symbol.value, dict(record.signal_snapshot)))
+        return tuple(targets)
 
     def robot_approved_candidate_symbols(self) -> tuple[str, ...]:
         """Symbols of APPROVED candidates (light read) for the candle cache warm-up."""
@@ -2137,6 +2238,7 @@ class PaperRuntime:
 
     def _dispatch_paper_protection_obligation(
         self, obligation: PaperProtectionObligationRecord, *, now_ms: int,
+        recovery_book: NormalizedOrderBook | None = None,
     ) -> PaperProtectionObligationRecord:
         """Idempotently drive one durable D2.1 obligation from
         TRIGGERED/DISPATCHING to RESOLVED (D2.3).
@@ -2150,6 +2252,12 @@ class PaperRuntime:
         and never advances a step it cannot prove; any ownership/lifecycle
         mismatch (manual close, replacement position) fails closed and
         leaves the obligation for reconciliation rather than guessing.
+
+        Runs on the serialized owner, so it never waits on network I/O: the
+        close executes against the current already-streamed book, or -- only
+        for continuity recovery, whose stream may be down -- the authoritative
+        ``recovery_book`` snapshot fetched off the owner thread. Without
+        either, nothing executes and the obligation resumes on a later quote.
         """
         if obligation.status == "RESOLVED":
             return obligation
@@ -2251,6 +2359,21 @@ class PaperRuntime:
                     updated_at_ms=now_ms,
                 )
             close_side = OrderSide.SELL if expected_side is PositionSide.LONG else OrderSide.BUY
+            execution_book = self._streamed_book(trade.symbol)
+            if (
+                execution_book is None
+                and recovery_book is not None
+                and recovery_book.symbol == trade.symbol
+            ):
+                execution_book = recovery_book
+            if execution_book is None:
+                LOGGER.error(
+                    "Robot protection close has no streamed execution book; "
+                    "not dispatching, will resume on the next quote/restart; "
+                    "obligation=%s symbol=%s",
+                    obligation.obligation_id, trade.symbol.value,
+                )
+                return obligation
             try:
                 self._market_executor.execute(
                     trading_account_id=trade.trading_account_id,
@@ -2260,6 +2383,7 @@ class PaperRuntime:
                     order_link_id=obligation.obligation_id,
                     order_id=obligation.order_id,
                     exec_id=obligation.exec_id,
+                    book=execution_book,
                 )
             except (RuntimeError, ValueError):
                 LOGGER.exception(
@@ -2482,7 +2606,10 @@ class PaperRuntime:
         for item in self.store.load_open_position_projections(self._account_id):
             symbol = item.position_key.symbol
             instrument = self._context._instrument_for(symbol.value)
-            book = self._book_provider.get_book(symbol)
+            # Read-only valuation on the owner: only an already-streamed book,
+            # never the provider's REST fallback. Without a fresh one the
+            # position is returned without a mark (current_price/PnL None).
+            book = self._streamed_book(symbol)
             now_ms = int(time.time() * 1000)
             current_price = None
             unrealized_pnl = None
@@ -2520,8 +2647,12 @@ class PaperRuntime:
             ))
         return PaperOpenPositionsResponse(account.trading_account_id.value, tuple(projected))
 
-    def close_all(self, request: CloseAllCommandRequest) -> CloseAllCommandResponse:
+    def close_all(
+        self, request: CloseAllCommandRequest, *,
+        evidence: Mapping[str, NormalizedOrderBook] | None = None,
+    ) -> CloseAllCommandResponse:
         self.require_paper_mutations()
+        evidence = evidence or {}
         source_positions = self.store.load_open_position_projections(self._account_id)
         results = []
         for position in source_positions:
@@ -2529,9 +2660,10 @@ class PaperRuntime:
             digest = hashlib.sha256(
                 f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
             ).hexdigest()[:32]
-            results.append(self.api.full_close(FullCloseCommandRequest(
-                ClientActionId(f"paper-close-all-{digest}"), symbol,
-            )))
+            results.append(self.api.full_close(
+                FullCloseCommandRequest(ClientActionId(f"paper-close-all-{digest}"), symbol),
+                market_book=self._robot_execution_book(symbol, evidence.get(symbol)),
+            ))
         refreshed = self.open_positions()
         return CloseAllCommandResponse(
             request.client_action_id.value, tuple(results), refreshed.positions,
@@ -2598,7 +2730,7 @@ class PaperRuntime:
         if isinstance(raw_intent, Mapping):
             plan = restore_box_market_plan(raw_intent)
         else:
-            book = self._book_provider.get_book(candidate.symbol)
+            book = self._robot_execution_book(candidate.symbol.value)
             if book is None:
                 raise RuntimeError("authoritative Box book is unavailable")
             plan = build_box_manual_close_market_plan(
@@ -2664,7 +2796,10 @@ class PaperRuntime:
                 updated_at_ms=now_ms,
             )
 
-        result = self._robot_api.market(plan.request, identity=plan.identity)
+        result = self._robot_api.market(
+            plan.request, identity=plan.identity,
+            market_book=self._robot_execution_book(candidate.symbol.value),
+        )
         if result.status is not CommandResultStatus.COMPLETED:
             return result
 
@@ -2730,9 +2865,11 @@ class PaperRuntime:
         before this method is ever reached; this method only reuses the
         existing Robot-scoped execution path, never a second one.
         """
-        candidates = self.store.load_active_robot_candidate_states(self._account_id)
+        # Full, hash-validated OPEN records: Box routing needs the immutable
+        # signal snapshot and the Box close needs robot_state/state_revision,
+        # none of which the lightweight active-state projection carries.
         open_candidates = sorted(
-            (item for item in candidates if item.status == "OPEN"),
+            self.store.load_robot_candidates_by_status(self._account_id, ("OPEN",)),
             key=lambda item: item.symbol.value,
         )
         results = []
@@ -2742,18 +2879,19 @@ class PaperRuntime:
             digest = hashlib.sha256(
                 f"{request.client_action_id.value}\0{symbol}".encode("utf-8")
             ).hexdigest()[:32]
+            is_box = candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX"
             try:
-                if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+                if is_box:
                     result = self._robot_close_box_candidate(candidate)
                 else:
-                    result = self._robot_api.full_close(FullCloseCommandRequest(
+                    result = self._robot_full_close(FullCloseCommandRequest(
                         ClientActionId(f"robot-close-all-{digest}"), symbol,
                     ))
             except Exception as error:
                 result = CommandResult(
                     f"robot-close-all-{digest}",
                     CommandResultStatus.UNAVAILABLE,
-                    "box_close_failed" if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX" else "close_failed",
+                    "box_close_failed" if is_box else "close_failed",
                     type(error).__name__,
                     None,
                     True,
@@ -2820,11 +2958,14 @@ class PaperRuntime:
             if item.status == "APPROVED"
         }
 
+        # Owner thread: closed candles come only from the cache warmed off the
+        # owner (a miss means "no candle yet"), catch-up only from prepared
+        # evidence -- never a kline request.
         monitor = RobotBreakoutMonitor(
             lambda: self.store,
             self._account_id,
-            get_closed_candle=self._robot_closed_candle_provider,
-            get_admission_catchup_candles=self._robot_admission_catchup_candles,
+            get_closed_candle=self._owner_closed_candle,
+            get_admission_catchup_candles=self.robot_catchup_evidence,
             action_executor=_DirectRobotActionExecutor(self),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),

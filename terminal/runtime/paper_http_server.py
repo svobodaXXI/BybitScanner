@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation, ROUND_CEILING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Mapping
 from urllib.parse import parse_qs, unquote, urlparse
 from uuid import uuid4
@@ -1048,10 +1049,12 @@ class LiveOrderBookProvider:
         buffer: PublicOrderBookBuffer,
         *,
         rest_session: requests.Session | None = None,
+        hub: "MarketDataHub | None" = None,
     ) -> None:
         self._buffer = buffer
         self._lock = threading.RLock()
         self._rest_session = rest_session
+        self._hub = hub
 
     def set_buffer(self, buffer: PublicOrderBookBuffer) -> None:
         with self._lock:
@@ -1064,6 +1067,28 @@ class LiveOrderBookProvider:
         if self._rest_session is None:
             return None
         return self._load_rest_book(symbol)
+
+    def get_streamed_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
+        """Current READY book from an already-streamed buffer, never REST.
+
+        Checks the Workspace buffer, then any MarketDataHub context already
+        subscribed for ``symbol`` (e.g. Robot protection coverage). Never
+        subscribes and never performs network I/O, so the serialized PAPER
+        owner can use it for protection closes without blocking.
+        """
+        current = self.get_current_book_update(symbol)
+        if current is not None:
+            return current[1]
+        if self._hub is None:
+            return None
+        for context in self._hub.list_contexts():
+            if context.symbol == symbol.value:
+                return _normalized_book_from_snapshot(
+                    symbol.value,
+                    context.public_orderbook.snapshot(),
+                    source_generation=context.reconnect_count,
+                )
+        return None
 
     def _load_rest_book(self, symbol: Symbol) -> NormalizedOrderBook | None:
         try:
@@ -1168,6 +1193,10 @@ class _OwnerTask:
     coverage_role: str
 
 
+# Wakes the owner thread when protection work is pending; carries no work itself.
+_PROTECTION_WAKE = object()
+
+
 class ProtectionIngressOverflow(RuntimeError):
     """Raised when bounded Robot protection ingress cannot admit another
     event without coalescing or dropping it.
@@ -1192,8 +1221,15 @@ class SerializedPaperRuntime:
         # processed, a further enqueue() fails closed instead of growing
         # self._requests without bound. call()/enqueue_book_update's
         # Workspace coalescing path are untouched by this limit.
+        #
+        # Admitted protection tasks wait in their own FIFO, not behind
+        # ordinary work: the owner drains every already-admitted protection
+        # task before it starts any call()/book update, so a protection event
+        # waits for at most the one ordinary task already running.
         self._protection_ingress_capacity = protection_ingress_capacity
         self._protection_ingress_lock = threading.Lock()
+        self._protection_tasks: deque[_OwnerTask] = deque()
+        self._protection_wake_pending = False
         self._protection_ingress_pending = 0
         self._protection_ingress_high_watermark = 0
         self._protection_ingress_max_queue_latency_ms = 0.0
@@ -1203,6 +1239,8 @@ class SerializedPaperRuntime:
         self._slowest_owner_task: tuple[float, str | None, object] = (0.0, None, None)
         self._owner_diagnostics_disabled = False
         self._candle_cache = None  # the owned runtime's CachedClosedCandleProvider, if any
+        self._catchup_evidence = None  # the owned runtime's PreparedCatchupEvidence, if any
+        self._evidence_book_provider = None  # the owned runtime's book provider, if any
         self._protection_ingress_last_symbol: str | None = None
         self._protection_ingress_last_role: str | None = None
         self._protection_ingress_last_overflow_symbol: str | None = None
@@ -1298,12 +1336,44 @@ class SerializedPaperRuntime:
             )
             self._protection_ingress_last_symbol = normalized_symbol or None
             self._protection_ingress_last_role = normalized_role
-        self._requests.put(_OwnerTask(
-            operation,
-            time.perf_counter(),
-            normalized_symbol,
-            normalized_role,
-        ))
+            self._protection_tasks.append(_OwnerTask(
+                operation,
+                time.perf_counter(),
+                normalized_symbol,
+                normalized_role,
+            ))
+            wake = not self._protection_wake_pending
+            self._protection_wake_pending = True
+        if wake:
+            self._requests.put(_PROTECTION_WAKE)
+
+    def fetch_manual_evidence(self, symbols) -> dict[str, object]:
+        """Execution-time books for manual PAPER commands, read OFF the owner.
+
+        Called on the HTTP handler thread before it queues owner work: the
+        streamed book when one exists, otherwise the provider's REST read,
+        symbols in parallel. A failed or missing read simply yields no entry;
+        the owner then fails closed rather than fetching.
+        """
+        provider = self._evidence_book_provider
+        unique = sorted({str(symbol).strip().upper() for symbol in symbols if symbol})
+        if provider is None or not unique:
+            return {}
+
+        streamed = getattr(provider, "get_streamed_book", None)
+
+        def read(symbol: str):
+            try:
+                book = streamed(Symbol(symbol)) if streamed is not None else None
+                return symbol, book if book is not None else provider.get_book(Symbol(symbol))
+            except Exception:
+                LOGGER.warning("manual PAPER evidence read failed symbol=%s", symbol, exc_info=True)
+                return symbol, None
+
+        with ThreadPoolExecutor(
+            max_workers=min(8, len(unique)), thread_name_prefix="manual-evidence",
+        ) as pool:
+            return {symbol: book for symbol, book in pool.map(read, unique) if book is not None}
 
     def warm_robot_closed_candles(self) -> None:
         """Fetch closed candles for APPROVED candidates on the calling thread.
@@ -1313,10 +1383,14 @@ class SerializedPaperRuntime:
         instead of blocking the owner thread on REST.
         """
         cache = self._candle_cache
-        if cache is None:
-            return
-        symbols = self.call(lambda runtime: runtime.robot_approved_candidate_symbols())
-        cache.warm(symbols)
+        if cache is not None:
+            symbols = self.call(lambda runtime: runtime.robot_approved_candidate_symbols())
+            cache.warm(symbols)
+        # Admission catch-up klines for still-uninitialized candidates are
+        # fetched here as well; the owner only consumes prepared evidence.
+        evidence = self._catchup_evidence
+        if evidence is not None:
+            evidence.prepare(self.call(lambda runtime: runtime.robot_catchup_targets()))
 
     def protection_ingress_metrics(self) -> dict[str, object]:
         cache = self._candle_cache
@@ -1376,6 +1450,45 @@ class SerializedPaperRuntime:
             self._owner_diagnostics_disabled = True
             LOGGER.exception("PAPER owner diagnostics failed; disabling")
 
+    def _drain_protection_tasks(self, runtime) -> None:
+        """Owner thread only. Run every protection task admitted so far, in
+        admission order. Tasks admitted during the drain post a fresh wake and
+        run before the next ordinary request, so ordinary work still advances
+        one request per drain round and neither class can starve the other."""
+        with self._protection_ingress_lock:
+            self._protection_wake_pending = False
+            batch = list(self._protection_tasks)
+            self._protection_tasks.clear()
+        for task in batch:
+            self._run_protection_task(runtime, task)
+
+    def _run_protection_task(self, runtime, task: _OwnerTask) -> None:
+        started_at = time.perf_counter()
+        queue_latency_ms = (started_at - task.enqueued_at) * 1000
+        try:
+            task.operation(runtime)
+        except BaseException:
+            LOGGER.exception("PAPER owner task failed")
+        finally:
+            processing_ms = (time.perf_counter() - started_at) * 1000
+            with self._protection_ingress_lock:
+                self._protection_ingress_pending -= 1
+                pending = self._protection_ingress_pending
+                self._protection_ingress_max_queue_latency_ms = max(
+                    self._protection_ingress_max_queue_latency_ms,
+                    queue_latency_ms,
+                )
+                self._protection_ingress_max_processing_ms = max(
+                    self._protection_ingress_max_processing_ms,
+                    processing_ms,
+                )
+            self._observe_owner_task(
+                "protection", task.operation, processing_ms,
+                f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"
+                f" symbol={task.symbol or 'UNKNOWN'} role={task.coverage_role}"
+                if processing_ms > SLOW_OWNER_TASK_WARNING_MS else "",
+            )
+
     def _run(self, factory) -> None:
         runtime = None
         try:
@@ -1385,10 +1498,17 @@ class SerializedPaperRuntime:
             self._ready.set()
             return
         self._candle_cache = getattr(runtime, "robot_closed_candle_cache", None)
+        self._catchup_evidence = getattr(runtime, "robot_catchup_evidence", None)
+        self._evidence_book_provider = getattr(runtime, "_book_provider", None)
         self._ready.set()
         try:
             while True:
                 request = self._requests.get()
+                # Strict priority: protection admitted before this point runs
+                # before the ordinary request just dequeued.
+                self._drain_protection_tasks(runtime)
+                if request is _PROTECTION_WAKE:
+                    continue
                 if isinstance(request, _BookUpdateNotification):
                     with self._book_update_lock:
                         book_update_id = (
@@ -1407,33 +1527,6 @@ class SerializedPaperRuntime:
                         "book_update", BOOK_UPDATE_TASK_LABEL,
                         (time.perf_counter() - started_at) * 1000,
                     )
-                    continue
-                if isinstance(request, _OwnerTask):
-                    started_at = time.perf_counter()
-                    queue_latency_ms = (started_at - request.enqueued_at) * 1000
-                    try:
-                        request.operation(runtime)
-                    except BaseException:
-                        LOGGER.exception("PAPER owner task failed")
-                    finally:
-                        processing_ms = (time.perf_counter() - started_at) * 1000
-                        with self._protection_ingress_lock:
-                            self._protection_ingress_pending -= 1
-                            pending = self._protection_ingress_pending
-                            self._protection_ingress_max_queue_latency_ms = max(
-                                self._protection_ingress_max_queue_latency_ms,
-                                queue_latency_ms,
-                            )
-                            self._protection_ingress_max_processing_ms = max(
-                                self._protection_ingress_max_processing_ms,
-                                processing_ms,
-                            )
-                        self._observe_owner_task(
-                            "protection", request.operation, processing_ms,
-                            f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"
-                            f" symbol={request.symbol or 'UNKNOWN'} role={request.coverage_role}"
-                            if processing_ms > SLOW_OWNER_TASK_WARNING_MS else "",
-                        )
                     continue
                 operation, completed, response = request
                 if operation is None:
@@ -2916,6 +3009,22 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _manual_evidence(self, symbol: str) -> dict[str, object]:
+        """Handler-thread read of a manual command's execution book (never the owner)."""
+        fetch = getattr(self.server.runtime, "fetch_manual_evidence", None)
+        if fetch is None:
+            return {}
+        book = fetch([symbol]).get(str(symbol).strip().upper())
+        return {"evidence": book} if book is not None else {}
+
+    def _manual_close_all_evidence(self) -> dict[str, object]:
+        fetch = getattr(self.server.runtime, "fetch_manual_evidence", None)
+        if fetch is None:
+            return {}
+        symbols = self.server.runtime.call(lambda runtime: runtime.manual_open_symbols())
+        books = fetch(symbols)
+        return {"evidence": books} if books else {}
+
     def _warm_robot_closed_candles(self) -> None:
         # pause/stop/reconcile synchronize pending entries on the owner thread;
         # fetch their candles here first. Failures are ignored: an owner-thread
@@ -3195,7 +3304,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             try:
                 payload = self._payload(CLOSE_ALL_FIELDS)
                 request = CloseAllCommandRequest(ClientActionId(payload["client_action_id"]))
-                result = self.server.runtime.call(lambda runtime: runtime.close_all(request))
+                evidence = self._manual_close_all_evidence()
+                result = self.server.runtime.call(
+                    lambda runtime: runtime.close_all(request, **evidence)
+                )
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
@@ -3468,9 +3580,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             except Exception:
                 self._json_response(400, to_primitive(_validation_error()))
                 return
+            evidence = self._manual_evidence(request.symbol)
             result, state = self.server.runtime.call(
                 lambda runtime: (
-                    runtime.full_close(request),
+                    runtime.full_close(request, **evidence),
                     runtime.paper_state(request.symbol),
                 )
             )
@@ -3541,9 +3654,10 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self._json_response(400, to_primitive(_validation_error()))
             return
 
+        evidence = self._manual_evidence(request.symbol)
         result, state = self.server.runtime.call(
             lambda runtime: (
-                runtime.market(request),
+                runtime.market(request, **evidence),
                 runtime.paper_state(request.symbol),
             )
         )
@@ -3691,6 +3805,7 @@ def main() -> None:
         book_provider = LiveOrderBookProvider(
             initial_market.public_orderbook,
             rest_session=rest_session,
+            hub=hub,
         )
         runtime = SerializedPaperRuntime(lambda: create_configured_paper_runtime(
             database_path,
