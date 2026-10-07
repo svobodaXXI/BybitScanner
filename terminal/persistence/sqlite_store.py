@@ -1048,6 +1048,7 @@ class SQLiteStore:
             if str(journal_mode).lower() != "wal":
                 raise SchemaError("database did not enter WAL mode")
             cls._initialize_or_validate_schema(connection)
+            cls._ensure_robot_candidate_read_indexes(connection)
             return cls(connection, database_path, busy_timeout_ms)
         except (sqlite3.DatabaseError, OSError) as exc:
             if connection is not None:
@@ -1056,6 +1057,42 @@ class SQLiteStore:
         except Exception:
             if connection is not None:
                 connection.close()
+            raise
+
+    # Robot hot-path read access (P0 protection latency; same names and
+    # definitions as main's schema v25 / PR #393). robot_candidates is a WITHOUT
+    # ROWID table with multi-KB signal snapshots and no symbol/status index, so
+    # per-symbol and active-status reads walk the whole candidate history.
+    # Stable stays on schema 24: the indexes are created idempotently on open,
+    # with no version bump (older builds ignore them), and a main that later
+    # migrates to v25 finds them already present.
+    _ROBOT_CANDIDATE_READ_INDEXES = (
+        ("robot_candidates_account_symbol", "robot_candidates(trading_account_id, symbol)"),
+        ("robot_candidates_account_status", "robot_candidates(trading_account_id, status)"),
+    )
+
+    @staticmethod
+    def _ensure_robot_candidate_read_indexes(connection: sqlite3.Connection) -> None:
+        present = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='robot_candidates'"
+            )
+        }
+        missing = [
+            (name, target)
+            for name, target in SQLiteStore._ROBOT_CANDIDATE_READ_INDEXES
+            if name not in present
+        ]
+        if not missing:
+            return  # steady state: no write transaction on open
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for name, target in missing:
+                connection.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
             raise
 
     @staticmethod
