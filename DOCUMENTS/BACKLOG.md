@@ -137,6 +137,13 @@ Geometry v4 remains preserved for later continuation; no accepted work is discar
 
 ## NOW — 2026-10-07 — OWNER FEEDBACK QUEUE
 
+Canonical wedge-geometry authority for the rules below:
+`DOCUMENTS/WEDGE_GEOMETRY_CONTRACT_2026-10-07.md`.
+Use that document instead of reconstructing wedge rules from individual screenshots
+or older containment notes. BACKLOG keeps routing/priorities; the geometry contract
+owns the consolidated structural semantics.
+
+
 The following owner-observed defects and UX requirements are now in the active
 product queue. They are distinct slices; do not bundle trading-safety changes
 with geometry or presentation changes unless the implementation dependency is
