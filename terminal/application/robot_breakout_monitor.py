@@ -980,6 +980,7 @@ class RobotBreakoutMonitor:
                 stop_price=plan.stop_price,
                 updated_at_ms=now_ms,
             )
+        self._record_box_first_fill_protection(record, plan, proof, now_ms)
 
         for spec in build_box_exit_specs(
             source,
@@ -1002,6 +1003,45 @@ class RobotBreakoutMonitor:
                 created_at_ms=spec.created_at_ms,
             )
         return True
+
+    def _record_box_first_fill_protection(
+        self, record: RobotCandidateRecord, plan, proof, now_ms: int,
+    ) -> None:
+        """Keep the first armed Box STOP and its actual-fill net RR, once.
+
+        Top-ups rewrite the trade's average entry, so the partial-fill RR is
+        stored on the candidate state; a later pass never overwrites it.
+        """
+        fresh = self._store().get_robot_candidate(record.candidate_id)
+        if fresh is None or fresh.status not in {"APPROVED", "OPEN"}:
+            return
+        state = dict(fresh.robot_state or {})
+        execution = dict(state.get("execution") or {})
+        if "box_first_fill_protection" in execution:
+            return
+        execution["box_first_fill_protection"] = {
+            "stop_basis": plan.stop_basis,
+            "stop_price": str(plan.stop_price),
+            "take_price": str(plan.take_price),
+            "average_entry": str(proof.average_entry),
+            "entry_quantity": str(proof.entry_quantity),
+            "actual_fill_net_rr": (
+                str(plan.actual_fill_net_rr) if plan.actual_fill_net_rr is not None else None
+            ),
+            "recorded_at_ms": now_ms,
+        }
+        state["execution"] = execution
+        try:
+            self._store().save_robot_candidate_state(
+                fresh.candidate_id,
+                status=fresh.status,
+                robot_state=state,
+                expected_revision=fresh.state_revision,
+                updated_at_ms=now_ms,
+            )
+        except ConcurrentUpdate:
+            # The STOP is already armed; a concurrent writer only delays the record.
+            return
 
     def _finalize_box_take_if_flat(
         self, record: RobotCandidateRecord, source: RobotCandidateRecord, proof,

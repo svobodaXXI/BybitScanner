@@ -537,6 +537,20 @@ be satisfied, keep Robot execution blocked pending an explicit risk decision.
 The earlier proposal to wait for three filled LIMITs before any STOP is
 superseded; no filled exposure may remain intentionally unprotected.
 
+**Owner risk decision — first-fill STOP, PAPER option B (2026-10-08).** Example:
+`HIMSUSDT` P1 filled 1.17 @ 28.25 of a 4 x 2.21 grid; no STOP beyond P4 reached net
+2:1 for that entry, so protection failed and the Robot emergency-closed. Now:
+- the STOP is still tightened toward entry when a tick-aligned STOP strictly beyond
+  P4 reaches actual-fill net RR >= 2 (unchanged);
+- when no such STOP exists, the frozen STOP (or an already active STOP, never wider)
+  is armed from the first confirmed fill, provided it is tick-aligned strictly
+  beyond P4 and the **full planned grid** still satisfies net RR >= 2; otherwise
+  protection fails closed as before;
+- the first armed STOP, its basis (`ACTUAL_FILL_RR` / `FROZEN_FIRST_FILL`) and the
+  actual-fill net RR are kept once in the candidate's
+  `execution.box_first_fill_protection`; the plan-level worst case stays in
+  `plan.minimum_partial_fill_rr`. Frozen TAKE, planner gates and LIVE are unchanged.
+
 **Per-slice exit:** upon any confirmed slice fill (including partial quantity),
 protect the actually filled exposure without delay and place a reduce-only
 opposite-side TAKE LIMIT at the **same frozen common TAKE price** defined
