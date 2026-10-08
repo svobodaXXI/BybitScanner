@@ -109,6 +109,20 @@ class RobotBreakoutMonitorError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class EmergencyClosePath:
+    """Owner-thread close callbacks, used ONLY when a Box fill cannot be protected.
+
+    The regular book/preflight/submit callbacks hop through the serialized owner
+    queue, which would deadlock when the monitor itself runs on the owner thread.
+    These run in place, never fetch from the network, and must not raise.
+    """
+
+    get_market_book: Callable[[str], NormalizedOrderBook | None]
+    market_preflight: Callable[[MarketCommandRequest, CommandIdentityCandidate], object]
+    submit_market: Callable[[MarketCommandRequest, CommandIdentityCandidate], object]
+
+
+@dataclass(frozen=True, slots=True)
 class _EntryEvidence:
     order_ids: tuple[OrderId, ...]
     quantity: Decimal
@@ -183,7 +197,9 @@ class RobotBreakoutMonitor:
         arm_entry_coverage: Callable[[str], bool] | None = None,
         release_entry_coverage: Callable[[str], None] | None = None,
         incident_dir=None,
+        emergency_close_path: EmergencyClosePath | None = None,
     ) -> None:
+        self._emergency_close_path = emergency_close_path
         # Resting entry LIMITs become fill-capable the moment they are durable, so
         # protection coverage for the symbol must already be listening. Without a
         # bound arm this monitor never creates a resting entry LIMIT (fail closed).
@@ -2261,11 +2277,12 @@ class RobotBreakoutMonitor:
             return
         if proof.remaining_quantity <= 0:
             return
-        if (
-            self._get_market_book is None
-            or self._market_preflight is None
-            or self._submit_market is None
-        ):
+        close = self._emergency_close_path
+        owner_path = self._get_market_book is None and close is not None
+        get_book = close.get_market_book if owner_path else self._get_market_book
+        preflight_close = close.market_preflight if owner_path else self._market_preflight
+        submit_close = close.submit_market if owner_path else self._submit_market
+        if get_book is None or preflight_close is None or submit_close is None:
             self._escalate_reconciliation(
                 "ROBOT_BOX_PROTECTION_FAILURE_NO_CLOSE_PATH "
                 f"symbol={record.symbol.value} candidate_id={record.candidate_id}"
@@ -2307,13 +2324,20 @@ class RobotBreakoutMonitor:
                 )
                 return
         else:
-            book = self._get_market_book(record.symbol.value)
+            book = get_book(record.symbol.value)
             if book is None:
+                if owner_path:
+                    # In-place close has no evidence; keep the durable fence.
+                    self._escalate_reconciliation(
+                        "ROBOT_BOX_PROTECTION_FAILURE_NO_CLOSE_PATH "
+                        f"symbol={record.symbol.value} candidate_id={record.candidate_id} "
+                        "reason=no_fresh_book"
+                    )
                 return
             plan = build_box_emergency_close_market_plan(
                 source, book, quantity=proof.remaining_quantity,
             )
-            preflight = self._market_preflight(plan.request, plan.identity)
+            preflight = preflight_close(plan.request, plan.identity)
             if (
                 not getattr(preflight, "admitted", False)
                 or getattr(preflight, "normalized_quantity", None) != plan.quantity
@@ -2374,7 +2398,7 @@ class RobotBreakoutMonitor:
                 updated_at_ms=now_ms,
             )
 
-        result = self._submit_market(plan.request, plan.identity)
+        result = submit_close(plan.request, plan.identity)
         if getattr(result, "status", None) != CommandResultStatus.COMPLETED:
             self._escalate_reconciliation(
                 "ROBOT_BOX_EMERGENCY_CLOSE_PENDING "
