@@ -12,6 +12,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 import robot_protection as rp
 from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
@@ -232,6 +233,112 @@ class HimsOwnerThreadFillTests(unittest.TestCase):
         self.assertEqual(record.robot_state["execution"]["box_first_fill_protection"], before)
         trade = store.get_open_robot_trade_for_symbol(ACCOUNT, Symbol("HIMSUSDT"))
         self.assertEqual((trade.entry_quantity, trade.stop_price), (D("1.67"), D("27.98")))
+
+
+def _refuse_stop(*_args, **_kwargs):
+    raise rp.RobotProtectionError("simulated initial STOP refusal")
+
+
+class HimsStopRefusalOwnerThreadCloseTests(HimsOwnerThreadFillTests):
+    """STOP refusal on the owner thread: close in the same event, not NO_CLOSE_PATH.
+
+    Inherits only the fixture; the two inherited tests are skipped here.
+    """
+
+    test_partial_p1_fill_is_protected_with_the_frozen_stop_and_recorded = None
+    test_the_first_fill_record_is_not_overwritten_by_a_later_pass = None
+
+    def setUp(self):
+        super().setUp()
+        # No streamed book: the owner may only use the event's own immutable book.
+        self.runtime._streamed_book = lambda symbol: None
+
+    def _sells(self):
+        return [fill for fill in self.runtime.store.load_executions_for_symbol(
+            ACCOUNT, Symbol("HIMSUSDT")) if fill.side.value == "Sell"]
+
+    def _commands(self):
+        return self.runtime.store._connection.execute(
+            "SELECT COUNT(*) FROM trading_commands WHERE symbol='HIMSUSDT'").fetchone()[0]
+
+    def _background_pass(self, fresh_book):
+        # What the 60 s background monitor does: dispatcher hop, REST-free book source.
+        self.runtime._robot_command_dispatcher = lambda operation: operation(self.runtime)
+        self.runtime._streamed_book = lambda symbol: fresh_book
+        monitor = self.runtime._robot_breakout_monitor
+        monitor.process_authoritative_fill("HIMSUSDT")
+        monitor.tick()
+
+    def test_refused_initial_stop_is_closed_in_the_same_owner_event(self):
+        store = self.runtime.store
+        book = _p1_book()
+        with patch.object(rp, "build_box_stop_only_plan", _refuse_stop):
+            self.runtime.process_robot_market_event(
+                "HIMSUSDT", book, event_id="HIMSUSDT:1", received_at_ms=book.received_at_ms,
+            )
+
+        sells = self._sells()
+        self.assertEqual([(fill.quantity.value, fill.price.value) for fill in sells],
+                         [(D("1.17"), D("28.24"))])
+        key = PositionKey(ACCOUNT, Category.LINEAR, Symbol("HIMSUSDT"), 0)
+        self.assertEqual(store.get_position_projection(key).side, PositionSide.FLAT)
+        record = store.get_robot_candidate(self.candidate.candidate_id)
+        self.assertEqual(record.status, "INVALIDATED")
+        execution = record.robot_state["execution"]
+        self.assertEqual(execution["protection_failure"], "RobotProtectionError")
+        self.assertEqual(execution["box_emergency_close_intent"]["slot"], 0)
+        self.assertEqual(D(execution["box_emergency_close_intent"]["quantity"]), D("1.17"))
+        self.assertEqual(
+            sorted(order.status for order in (
+                store.get_paper_limit(item.order_id.value, ACCOUNT)
+                for item in store.load_box_order_ownership(self.source.candidate_id)
+                if item.role == "ENTRY")),
+            ["cancelled"] * 4,
+        )
+        state = store.get_robot_runtime_state(ACCOUNT)
+        self.assertEqual((state.mode, state.recovery_status), ("ROBOT_RUNNING", "READY"))
+        self.assertNotIn("NO_CLOSE_PATH", state.reason or "")
+        self.assertIsNone(store.get_open_robot_trade_for_symbol(ACCOUNT, Symbol("HIMSUSDT")))
+
+    def test_background_monitor_never_sends_a_second_close(self):
+        book = _p1_book()
+        with patch.object(rp, "build_box_stop_only_plan", _refuse_stop):
+            self.runtime.process_robot_market_event(
+                "HIMSUSDT", book, event_id="HIMSUSDT:1", received_at_ms=book.received_at_ms,
+            )
+        before = (len(self._sells()), self._commands())
+        self.assertEqual(before[0], 1)
+
+        with patch.object(rp, "build_box_stop_only_plan", _refuse_stop):
+            self._background_pass(_p1_book())
+
+        self.assertEqual((len(self._sells()), self._commands()), before)
+
+    def test_owner_close_without_valid_evidence_keeps_the_fence_and_closes_exactly_once_later(self):
+        store = self.runtime.store
+        stale = replace(_p1_book(), received_at_ms=int(time.time() * 1000) - 10_000)
+        with patch.object(rp, "build_box_stop_only_plan", _refuse_stop):
+            self.runtime.process_robot_market_event(
+                "HIMSUSDT", stale, event_id="HIMSUSDT:1", received_at_ms=stale.received_at_ms,
+            )
+
+        key = PositionKey(ACCOUNT, Category.LINEAR, Symbol("HIMSUSDT"), 0)
+        self.assertEqual(self._sells(), [])
+        self.assertEqual(store.get_position_projection(key).side, PositionSide.LONG)
+        state = store.get_robot_runtime_state(ACCOUNT)
+        self.assertEqual(state.recovery_status, "RECONCILIATION_REQUIRED")
+        self.assertIn("ROBOT_BOX_EMERGENCY_CLOSE_PENDING", state.reason)
+        intent = store.get_robot_candidate(self.candidate.candidate_id).robot_state[
+            "execution"]["box_emergency_close_intent"]
+
+        with patch.object(rp, "build_box_stop_only_plan", _refuse_stop):
+            self._background_pass(_p1_book())
+            self._background_pass(_p1_book())
+
+        sells = self._sells()
+        self.assertEqual(len(sells), 1)
+        self.assertEqual(store.get_position_projection(key).side, PositionSide.FLAT)
+        self.assertEqual(sells[0].order_id.value, intent["order_id"])
 
 
 if __name__ == "__main__":

@@ -324,8 +324,8 @@ class OwnerNetworkInventoryGuardTests(unittest.TestCase):
                 index += 1
             sites.append(source[match.start():index])
         # market, full_close, close_all, _robot_market, _robot_full_close,
-        # late-admission submit, Box manual close.
-        self.assertEqual(len(sites), 7, sites)
+        # late-admission submit, Box manual close, owner-thread Box emergency close.
+        self.assertEqual(len(sites), 8, sites)
         for site in sites:
             self.assertIn("market_book=", site, site)
 

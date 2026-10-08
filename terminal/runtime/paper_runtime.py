@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import time
+from types import SimpleNamespace
 
 import hashlib
 import hmac
@@ -25,7 +26,7 @@ from terminal.api.models import (
     LiveMarketCommandRequest,
 )
 from terminal.application.robot_breakout_monitor import (
-    DEFAULT_TICK_INTERVAL_S, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
+    DEFAULT_TICK_INTERVAL_S, EmergencyClosePath, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
 )
 from terminal.application.live_market_execution import LiveMarketMutationCoordinator, LiveMarketMutationGates
 from terminal.application.live_execution import LiveExecutionCoordinator, LiveParityMutationGates
@@ -1035,6 +1036,40 @@ class PaperRuntime:
             )
         )
 
+    def _owner_emergency_close_path(
+        self, event_book: NormalizedOrderBook | None = None,
+    ) -> EmergencyClosePath:
+        """In-place close callbacks for owner-thread Box monitors (initial STOP refused).
+
+        Never routed through the owner queue (that would deadlock) and never the
+        provider's REST fallback: the current streamed book, else the immutable
+        event book the caller already holds. Failures become a non-COMPLETED
+        result so the monitor keeps its durable RECONCILIATION_REQUIRED fence.
+        """
+        def market_book(symbol: str) -> NormalizedOrderBook | None:
+            return self._robot_execution_book(symbol, event_book)
+
+        def preflight(request, identity):
+            try:
+                return self._robot_api.market_preflight(request, identity=identity)
+            except Exception as error:
+                print(f"[ROBOT OWNER EMERGENCY CLOSE] preflight unavailable symbol={request.symbol}: {error}")
+                return SimpleNamespace(admitted=False, normalized_quantity=None)
+
+        def submit(request, identity):
+            try:
+                return self._robot_api.market(
+                    request, identity=identity, market_book=market_book(request.symbol),
+                )
+            except Exception as error:
+                print(f"[ROBOT OWNER EMERGENCY CLOSE] submit unavailable symbol={request.symbol}: {error}")
+                return CommandResult(
+                    request.client_action_id.value, CommandResultStatus.UNAVAILABLE,
+                    "owner_emergency_close_unavailable", str(error),
+                )
+
+        return EmergencyClosePath(market_book, preflight, submit)
+
     def _robot_execution_book(
         self, symbol: str, evidence: NormalizedOrderBook | None = None,
     ) -> NormalizedOrderBook | None:
@@ -1562,6 +1597,7 @@ class PaperRuntime:
                 get_closed_candle=self._owner_closed_candle,
                 get_admission_catchup_candles=self.robot_catchup_evidence,
                 action_executor=_DirectRobotActionExecutor(self),
+                emergency_close_path=self._owner_emergency_close_path(book),
                 tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
                 clock_ms=lambda: int(time.time() * 1000),
                 incident_dir=self._robot_incident_dir,
@@ -1672,6 +1708,7 @@ class PaperRuntime:
             get_closed_candle=self._owner_closed_candle,
             get_admission_catchup_candles=self.robot_catchup_evidence,
             action_executor=_DirectRobotActionExecutor(self),
+            emergency_close_path=self._owner_emergency_close_path(),
             tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
             incident_dir=self._robot_incident_dir,
@@ -1925,6 +1962,7 @@ class PaperRuntime:
                     get_closed_candle=self._owner_closed_candle,
                     get_admission_catchup_candles=self.robot_catchup_evidence,
                     action_executor=_DirectRobotActionExecutor(self),
+                    emergency_close_path=self._owner_emergency_close_path(),
                     tick_size_provider=lambda item: self._instrument_provider(item).tick_size,
                     clock_ms=lambda: int(time.time() * 1000),
                     incident_dir=self._robot_incident_dir,
@@ -2925,6 +2963,7 @@ class PaperRuntime:
             get_closed_candle=self._owner_closed_candle,
             get_admission_catchup_candles=self.robot_catchup_evidence,
             action_executor=_DirectRobotActionExecutor(self),
+            emergency_close_path=self._owner_emergency_close_path(),
             tick_size_provider=lambda symbol: self._instrument_provider(symbol).tick_size,
             clock_ms=lambda: int(time.time() * 1000),
             incident_dir=self._robot_incident_dir,
