@@ -82,17 +82,17 @@ class FormatPositionCardTests(unittest.TestCase):
         card = format_position_card(with_last_price(_view(), "0.0260"))
         self.assertTrue(card.startswith("SAGAUSDT · LONG"))
         self.assertIn("Статус: открыта", card)
-        self.assertIn("Объем: 100 (2.54 USDT)", card)
+        self.assertIn("Объём: 100 (2.54 USDT)", card)
         self.assertIn("Средний вход: 0.0254", card)
         self.assertIn("PnL: ≈ +0.06 USDT (+2.36%)", card)
-        self.assertIn("STOP: 0.0249", card)
-        self.assertIn("TAKE: 0.0284", card)
+        self.assertIn("SL: 0.0249", card)
+        self.assertIn("TP: 0.0284", card)
         self.assertIn("Паттерн: Falling Wedge", card)
         self.assertNotIn(NOT_ROBOT_LINE, card)
 
     def test_closed_card_uses_same_volume_formatter(self):
         card = format_position_card(_view(is_open=False))
-        self.assertIn("Объем: 100 (2.54 USDT)", card)
+        self.assertIn("Объём: 100 (2.54 USDT)", card)
 
     def test_short_pnl_sign_and_missing_price(self):
         short = _view(direction="SHORT")
@@ -116,7 +116,7 @@ class FormatPositionCardTests(unittest.TestCase):
             symbol="CELOUSDT", trade=None, signal_snapshot=None, pattern=None,
             stop_price=None, take_price=None,
         ))
-        self.assertIn("STOP: —", card)
+        self.assertIn("SL: —", card)
         self.assertIn("Паттерн: —", card)
         self.assertTrue(card.endswith(NOT_ROBOT_LINE))
 
