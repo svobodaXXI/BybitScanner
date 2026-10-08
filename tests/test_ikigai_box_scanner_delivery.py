@@ -414,7 +414,7 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
 
     def test_preparation_failure_still_delivers_without_false_button_and_warns_owner(self):
         for preparer in (
-            unittest.mock.Mock(side_effect=ValueError("1 WV is below the instrument minimum")),
+            unittest.mock.Mock(side_effect=ValueError("paper account is not initialized")),
             unittest.mock.Mock(return_value=None),
             unittest.mock.Mock(return_value="box-robot-" + "ab12" * 16),
         ):
@@ -427,6 +427,115 @@ class IkigaiBoxOwnerRobotAdmissionTests(unittest.TestCase):
                         (data or "").startswith("robot:") for _t, data in _markup_callbacks(call)
                     ))
                 warn.assert_called_once_with("owner", "TESTUSDT", "5")
+
+    def _stack(self, stack, *, history, recipients=("owner", "guest")):
+        stack.enter_context(patch.object(box, "get_telegram_chat_ids", return_value=recipients))
+        stack.enter_context(patch.object(box, "get_telegram_owner_chat_id", return_value="owner"))
+        stack.enter_context(patch.object(box, "load_memory", side_effect=lambda: dict(history)))
+        save = stack.enter_context(patch.object(
+            box, "save_memory", side_effect=lambda record: history.update(record),
+        ))
+        render = stack.enter_context(patch.object(box, "render_ikigai_box_chart"))
+        text = stack.enter_context(patch.object(box, "send_message", return_value={"ok": True}))
+        photo = stack.enter_context(patch.object(box, "send_photo", return_value={"ok": True}))
+        warn = stack.enter_context(patch.object(box, "warn_owner_robot_candidate_failed"))
+        handoff = stack.enter_context(patch(
+            "terminal.persistence.sqlite_store.SQLiteStore.handoff_box_plan_to_robot",
+            side_effect=AssertionError("a rejected or prepared Box must never be admitted"),
+        ))
+        return save, render, text, photo, warn, handoff
+
+    def test_planner_rejection_sends_no_card_records_reason_and_is_not_repeated(self):
+        import contextlib
+        import io
+        from contextlib import ExitStack
+        from terminal.paper.ikigai_box_plan import IkigaiBoxPlanRejected
+
+        reason = "no tick-aligned STOP beyond P4 satisfies net RR >= 2"
+        preparer = unittest.mock.Mock(side_effect=IkigaiBoxPlanRejected(reason))
+        history = {}
+        output = io.StringIO()
+        with ExitStack() as stack, tempfile.TemporaryDirectory() as folder:
+            save, render, text, photo, warn, handoff = self._stack(stack, history=history)
+            with contextlib.redirect_stdout(output):
+                results = [
+                    box.send_ikigai_box_observation(
+                        "TESTUSDT", _candles(), timeframe="5",
+                        chart_dir=folder, robot_plan_preparer=preparer,
+                    )
+                    for _ in range(2)
+                ]
+        self.assertEqual(results, [False, False])
+        text.assert_not_called()
+        photo.assert_not_called()
+        render.assert_not_called()
+        warn.assert_not_called()
+        handoff.assert_not_called()
+        preparer.assert_called_once()
+        save.assert_called_once()
+        record = history["ikigai_box:TESTUSDT:5:" + detect_ikigai_box(_candles().iloc[:-1]).direction]
+        self.assertEqual(record["robot_plan"], "REJECTED")
+        self.assertEqual(record["reason"], reason)
+        self.assertEqual(record["pattern"], "Ikigai Box")
+        diagnostic = output.getvalue()
+        self.assertEqual(diagnostic.count("[IKIGAI BOX PLAN REJECTED]"), 1)
+        for fragment in ("symbol=TESTUSDT", "timeframe=5", f"reason={reason}"):
+            self.assertIn(fragment, diagnostic)
+
+    def test_valid_box_still_gets_card_and_owner_robot_button_exactly_once(self):
+        from contextlib import ExitStack
+
+        preparer = unittest.mock.Mock(return_value=SOURCE_ID)
+        history = {}
+        with ExitStack() as stack, tempfile.TemporaryDirectory() as folder:
+            save, render, text, photo, warn, handoff = self._stack(stack, history=history)
+            results = [
+                box.send_ikigai_box_observation(
+                    "TESTUSDT", _candles(), timeframe="5",
+                    chart_dir=folder, robot_plan_preparer=preparer,
+                )
+                for _ in range(2)
+            ]
+        self.assertEqual(results, [True, False])
+        preparer.assert_called_once()
+        self.assertEqual(photo.call_count, 2)
+        owner = photo.call_args_list[0]
+        handle = "bp-" + SOURCE_ID.removeprefix("box-plan-")[:40]
+        self.assertIn(("🤖 Робот", f"robot:approve:{handle}"), _markup_callbacks(owner))
+        record, = history.values()
+        self.assertNotIn("robot_plan", record)
+        warn.assert_not_called()
+        handoff.assert_not_called()
+
+    def test_persistence_failure_is_diagnosed_and_never_silently_suppressed(self):
+        import contextlib
+        import io
+        import sqlite3
+        from contextlib import ExitStack
+
+        preparer = unittest.mock.Mock(side_effect=sqlite3.OperationalError("disk I/O error"))
+        history = {}
+        output = io.StringIO()
+        with ExitStack() as stack, tempfile.TemporaryDirectory() as folder:
+            save, render, text, photo, warn, handoff = self._stack(stack, history=history)
+            with contextlib.redirect_stdout(output):
+                result = box.send_ikigai_box_observation(
+                    "TESTUSDT", _candles(), timeframe="5",
+                    chart_dir=folder, robot_plan_preparer=preparer,
+                )
+        self.assertTrue(result)
+        self.assertEqual(photo.call_count, 2)
+        for call in photo.call_args_list:
+            self.assertFalse(any(
+                (data or "").startswith("robot:") for _t, data in _markup_callbacks(call)
+            ))
+        warn.assert_called_once_with("owner", "TESTUSDT", "5")
+        self.assertIn("[ROBOT CANDIDATE ERROR]", output.getvalue())
+        self.assertIn("disk I/O error", output.getvalue())
+        self.assertNotIn("[IKIGAI BOX PLAN REJECTED]", output.getvalue())
+        record, = history.values()
+        self.assertNotIn("robot_plan", record)
+        handoff.assert_not_called()
 
     def test_scanner_pass_prepares_only_through_the_owner_card_and_never_admits(self):
         source = _candles()

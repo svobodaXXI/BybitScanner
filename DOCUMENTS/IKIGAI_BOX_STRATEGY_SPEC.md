@@ -45,6 +45,22 @@ Required actionable gate before new Telegram delivery and before Robot admission
 The exact source-time 1INCHUSDT case should be frozen when recoverable and used
 as the first regression for this completion gate.
 
+## Owner correction — Robot-rejected Box is not delivered (2026-10-08)
+
+Owner example: `ACTUSDT 5m`, 2026-10-08 — valid CONFIRMED Box, but no STOP beyond
+P4 reaches net RR >= 2.0 (best RR 1.77), so the Robot had no plan and no button.
+
+Rule: a CONFIRMED Box that the Robot planner rejects (`IkigaiBoxPlanRejected`: grid,
+instrument limits, RR/STOP) is **not shown in Telegram to any recipient**.
+- The planner runs before chart rendering and delivery; the risk gates are unchanged.
+- The rejection is printed as `[IKIGAI BOX PLAN REJECTED] symbol=... reason=...` and stored in
+  `signals_history.json` under the Box key (`robot_plan: REJECTED`, `reason`); the same
+  A/B identity is not re-evaluated or re-sent.
+- Only planner rejections are suppressed. Technical failures (persistence, missing
+  account, dispatcher, unexpected errors) keep the previous behavior: the card is
+  delivered without a Robot button, the error is printed and the owner is warned.
+- Valid Boxes keep the `BOX_PLAN_ONLY` source and the owner-tap-only admission.
+
 
 ## Owner correction — late admission / crossed Box grid catch-up (2026-09-29)
 

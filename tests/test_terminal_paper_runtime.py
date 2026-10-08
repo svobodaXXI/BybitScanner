@@ -1,4 +1,5 @@
 ﻿import itertools
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -40,6 +41,7 @@ from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLe
 from terminal.runtime.paper_runtime import (
     PaperRuntime, RobotPaperActionExecutor, _robot_protection_crossing_leg,
 )
+from terminal.paper.ikigai_box_plan import IkigaiBoxPlanRejected
 from terminal.persistence.sqlite_store import DuplicateIdentity
 
 
@@ -186,6 +188,57 @@ class IkigaiBoxPlanPreparationTests(unittest.TestCase):
         again = runtime._prepare_ikigai_box_robot_plan("BTCUSDT", "5", _CONFIRMED_BOX_FORMATION)
         self.assertEqual(again, source_id)
         self.assertEqual(len(runtime.store.load_robot_candidates(TradingAccountId("paper"))), 1)
+
+    def _new_runtime(self, provider=None):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        runtime = PaperRuntime(
+            Path(temp.name) / "paper.sqlite3",
+            book_provider=StaticBookProvider(),
+            instrument_snapshot=_instrument(),
+            instrument_provider=provider or self._box_instrument,
+        )
+        self.addCleanup(runtime.close)
+        return runtime
+
+    def _assert_nothing_persisted_or_admitted(self, runtime):
+        account = TradingAccountId("paper")
+        self.assertEqual(runtime.store.load_robot_candidates(account), ())
+        self.assertFalse(runtime.store.load_active_paper_limits(account, Symbol("BTCUSDT")))
+
+    def test_rr_below_two_is_a_planner_rejection_that_persists_and_admits_nothing(self):
+        runtime = self._new_runtime()
+        # Same shape as the ACTUSDT 5m case: valid grid, but no STOP beyond P4 reaches RR 2.
+        formation = {**_CONFIRMED_BOX_FORMATION, "f1618": "64571", "f2618": "63860"}
+        with self.assertRaisesRegex(IkigaiBoxPlanRejected, r"net RR >= 2"):
+            runtime._prepare_ikigai_box_robot_plan("BTCUSDT", "5", formation)
+        self._assert_nothing_persisted_or_admitted(runtime)
+
+    def test_instrument_limit_failure_is_a_planner_rejection(self):
+        runtime = self._new_runtime(
+            lambda symbol: replace(self._box_instrument(symbol), min_notional_value=Decimal("1000000"))
+        )
+        with self.assertRaisesRegex(IkigaiBoxPlanRejected, "minimum notional"):
+            runtime._prepare_ikigai_box_robot_plan("BTCUSDT", "5", _CONFIRMED_BOX_FORMATION)
+        self._assert_nothing_persisted_or_admitted(runtime)
+
+    def test_persistence_failure_is_technical_not_a_rejection(self):
+        runtime = self._new_runtime()
+        with patch(
+            "terminal.runtime.paper_runtime.persist_ikigai_box_plan",
+            side_effect=sqlite3.OperationalError("disk I/O error"),
+        ):
+            with self.assertRaises(sqlite3.OperationalError) as caught:
+                runtime._prepare_ikigai_box_robot_plan("BTCUSDT", "5", _CONFIRMED_BOX_FORMATION)
+        self.assertNotIsInstance(caught.exception, IkigaiBoxPlanRejected)
+        self._assert_nothing_persisted_or_admitted(runtime)
+
+    def test_missing_paper_account_is_technical_not_a_rejection(self):
+        runtime = self._new_runtime()
+        with patch.object(runtime.store, "get_paper_account", return_value=None):
+            with self.assertRaises(ValueError) as caught:
+                runtime._prepare_ikigai_box_robot_plan("BTCUSDT", "5", _CONFIRMED_BOX_FORMATION)
+        self.assertNotIsInstance(caught.exception, IkigaiBoxPlanRejected)
 
     def test_production_scanner_path_has_no_automatic_box_admission(self):
         import inspect

@@ -44,15 +44,26 @@ def box_robot_formation(closed, formation):
 
 
 def _prepare_owner_robot_handle(robot_plan_preparer, symbol, timeframe, closed, formation):
-    """(callback handle, failed). Failure never blocks ordinary Box delivery."""
+    """(callback handle, failed, rejection reason).
+
+    A planner rejection (``IkigaiBoxPlanRejected``) is an expected non-actionable
+    Box and is reported separately. Any other failure is technical: it never
+    blocks ordinary Box delivery and is always diagnosed.
+    """
     try:
         from terminal.application.robot_admission import box_plan_admission_handle
+        from terminal.paper.ikigai_box_plan import IkigaiBoxPlanRejected
 
-        source_id = robot_plan_preparer(symbol, timeframe, box_robot_formation(closed, formation))
-        return box_plan_admission_handle(str(source_id)), False
+        try:
+            source_id = robot_plan_preparer(
+                symbol, timeframe, box_robot_formation(closed, formation),
+            )
+        except IkigaiBoxPlanRejected as rejection:
+            return None, False, str(rejection) or "rejected"
+        return box_plan_admission_handle(str(source_id)), False, None
     except Exception as exc:
         print(f"[ROBOT CANDIDATE ERROR] symbol={symbol} pattern=IKIGAI_BOX error={exc}")
-        return None, True
+        return None, True, None
 
 
 def send_ikigai_box_observation(
@@ -63,8 +74,9 @@ def send_ikigai_box_observation(
 
     With ``robot_plan_preparer`` (production owner delivery only) the exact
     CONFIRMED formation is frozen as BOX_PLAN_ONLY first and the owner photo gets
-    ``🤖 Робот`` -> ``robot:approve:<bp-handle>``. Returns True only if every
-    configured recipient received both parts. Never posts a stale wedge image.
+    ``🤖 Робот`` -> ``robot:approve:<bp-handle>``. A Box the planner rejects is
+    not delivered at all. Returns True only if every configured recipient received
+    both parts. Never posts a stale wedge image.
     """
     if not getattr(config, "TELEGRAM_ENABLED", False) or candles is None:
         return False
@@ -91,6 +103,31 @@ def send_ikigai_box_observation(
     if not test_mode and memory.get(memory_key, {}).get("anchors") == identity:
         return False
 
+    # The planner decides admissibility before anything is rendered or sent: a
+    # Box the Robot would refuse (RR, STOP, grid, instrument limits) is not shown.
+    owner_chat_id = get_telegram_owner_chat_id()
+    robot_handle, robot_failed = None, False
+    if (robot_plan_preparer is not None and not test_mode
+            and owner_chat_id and owner_chat_id in recipients):
+        robot_handle, robot_failed, rejection = _prepare_owner_robot_handle(
+            robot_plan_preparer, symbol, timeframe, closed, formation,
+        )
+        if rejection is not None:
+            print(
+                f"[IKIGAI BOX PLAN REJECTED] symbol={symbol} timeframe={timeframe} "
+                f"direction={formation.direction} a_time_ms={anchor_a_time} "
+                f"b_time_ms={anchor_b_time} reason={rejection}"
+            )
+            # Same identity is never re-evaluated or re-sent; the reason stays durable.
+            memory[memory_key] = {
+                "anchors": identity,
+                "pattern": "Ikigai Box",
+                "robot_plan": "REJECTED",
+                "reason": rejection,
+            }
+            save_memory(memory)
+            return False
+
     # Separate first-impulse-specific path: never reuse <symbol>_analysis.png
     # produced by chart_clean.py for a wedge on the same symbol.
     chart_path = os.path.join(
@@ -102,13 +139,6 @@ def send_ikigai_box_observation(
         closed, formation, chart_path, symbol=symbol, timeframe=timeframe
     )
     message = ikigai_box_signal_text(symbol, timeframe, formation)
-    owner_chat_id = get_telegram_owner_chat_id()
-    robot_handle, robot_failed = None, False
-    if (robot_plan_preparer is not None and not test_mode
-            and owner_chat_id and owner_chat_id in recipients):
-        robot_handle, robot_failed = _prepare_owner_robot_handle(
-            robot_plan_preparer, symbol, timeframe, closed, formation,
-        )
     delivered = True
     for chat_id in recipients:
         is_owner = chat_id == owner_chat_id and bool(owner_chat_id)
