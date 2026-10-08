@@ -214,7 +214,12 @@ class RobotPaperActionExecutor:
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_cancel_limit(request))
 
     def market(self, request):
-        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_market(request))
+        # Execution evidence is read here, on the monitor thread, and handed
+        # to the owner as an immutable book.
+        evidence = self._runtime._dispatch_robot_market_book(request.symbol)
+        return self._runtime._dispatch_robot_command(
+            lambda runtime: runtime._robot_market(request, evidence=evidence)
+        )
 
     def create_stop(self, request):
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_create_stop(request))
@@ -229,7 +234,10 @@ class RobotPaperActionExecutor:
         return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_amend_take(request))
 
     def full_close(self, request):
-        return self._runtime._dispatch_robot_command(lambda runtime: runtime._robot_full_close(request))
+        evidence = self._runtime._dispatch_robot_market_book(request.symbol)
+        return self._runtime._dispatch_robot_command(
+            lambda runtime: runtime._robot_full_close(request, evidence=evidence)
+        )
 
 
 class _DirectRobotActionExecutor:
@@ -984,8 +992,9 @@ class PaperRuntime:
         On the owner itself only an already-streamed book is used.
         """
         normalized = Symbol(symbol.strip().upper())
-        if self.store.is_owned_by_current_thread():
-            return self._streamed_book(normalized)
+        streamed = self._streamed_book(normalized)
+        if streamed is not None or self.store.is_owned_by_current_thread():
+            return streamed
         return self._book_provider.get_book(normalized)
 
     def _dispatch_robot_market_preflight(self, request, identity):
@@ -994,9 +1003,28 @@ class PaperRuntime:
         )
 
     def _dispatch_robot_market_submit(self, request, identity):
+        evidence = self._dispatch_robot_market_book(request.symbol)
         return self._dispatch_robot_command(
-            lambda runtime: runtime._robot_api.market(request, identity=identity)
+            lambda runtime: runtime._robot_api.market(
+                request, identity=identity,
+                market_book=runtime._robot_execution_book(request.symbol, evidence),
+            )
         )
+
+    def _robot_execution_book(
+        self, symbol: str, evidence: NormalizedOrderBook | None = None,
+    ) -> NormalizedOrderBook | None:
+        """Owner-thread execution evidence for a Robot PAPER Market command.
+
+        The current already-streamed book, else the immutable ``evidence`` the
+        caller read off the owner thread. Never the provider's REST fallback;
+        None makes TradingApplication fail before any command is persisted.
+        """
+        normalized = Symbol(symbol.strip().upper())
+        book = self._streamed_book(normalized)
+        if book is None and evidence is not None and evidence.symbol == normalized:
+            book = evidence
+        return book
 
     @property
     def _account_id(self) -> TradingAccountId:
@@ -1252,8 +1280,10 @@ class PaperRuntime:
         self.require_paper_mutations()
         return self.api.market(request)
 
-    def _robot_market(self, request):
-        return self._robot_api.market(request)
+    def _robot_market(self, request, *, evidence: NormalizedOrderBook | None = None):
+        return self._robot_api.market(
+            request, market_book=self._robot_execution_book(request.symbol, evidence),
+        )
 
     def live_market(self, request: LiveMarketCommandRequest):
         return self._live_market.submit(request)
@@ -1307,8 +1337,10 @@ class PaperRuntime:
         self.require_paper_mutations()
         return self.api.full_close(request)
 
-    def _robot_full_close(self, request):
-        return self._robot_api.full_close(request)
+    def _robot_full_close(self, request, *, evidence: NormalizedOrderBook | None = None):
+        return self._robot_api.full_close(
+            request, market_book=self._robot_execution_book(request.symbol, evidence),
+        )
 
     def add_bybit_account(self, display_name: str, api_key: str, api_secret: str) -> dict[str, object]:
         if not self._credential_store or not self._account_validator:
@@ -2589,7 +2621,7 @@ class PaperRuntime:
         if isinstance(raw_intent, Mapping):
             plan = restore_box_market_plan(raw_intent)
         else:
-            book = self._book_provider.get_book(candidate.symbol)
+            book = self._robot_execution_book(candidate.symbol.value)
             if book is None:
                 raise RuntimeError("authoritative Box book is unavailable")
             plan = build_box_manual_close_market_plan(
@@ -2655,7 +2687,10 @@ class PaperRuntime:
                 updated_at_ms=now_ms,
             )
 
-        result = self._robot_api.market(plan.request, identity=plan.identity)
+        result = self._robot_api.market(
+            plan.request, identity=plan.identity,
+            market_book=self._robot_execution_book(candidate.symbol.value),
+        )
         if result.status is not CommandResultStatus.COMPLETED:
             return result
 
@@ -2740,7 +2775,7 @@ class PaperRuntime:
                 if is_box:
                     result = self._robot_close_box_candidate(candidate)
                 else:
-                    result = self._robot_api.full_close(FullCloseCommandRequest(
+                    result = self._robot_full_close(FullCloseCommandRequest(
                         ClientActionId(f"robot-close-all-{digest}"), symbol,
                     ))
             except Exception as error:
