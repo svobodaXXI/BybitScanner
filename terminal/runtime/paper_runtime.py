@@ -60,7 +60,9 @@ from terminal.application.ikigai_box_catchup import (
     durable_box_market_intent,
     restore_box_market_plan,
 )
-from terminal.paper.ikigai_box_plan import approved_first_grid, plan_ikigai_box
+from terminal.paper.ikigai_box_plan import (
+    IkigaiBoxPlanRejected, approved_first_grid, plan_ikigai_box,
+)
 from terminal.application.robot_control import resume_robot_in_store, start_robot_in_store
 from terminal.application.robot_recovery import (
     PAUSED, READY, RECONCILING, RECONCILIATION_REQUIRED, ROBOT_RUNNING,
@@ -915,49 +917,53 @@ class PaperRuntime:
         f1 = Decimal(str(formation["f1"]))
         f1618 = Decimal(str(formation["f1618"]))
         f2618 = Decimal(str(formation["f2618"]))
-        limit_prices, take_price = approved_first_grid(
-            direction=direction,
-            frozen_f1=f1,
-            frozen_f1618=f1618,
-            tick_size=instrument.tick_size,
-        )
-        average_grid_price = sum(limit_prices, Decimal("0")) / Decimal("4")
-        raw_slice_quantity = one_wv_usdt / average_grid_price / Decimal("4")
-        slice_quantity = floor_to_step(raw_slice_quantity, instrument.quantity_step)
-        if slice_quantity <= 0:
-            raise ValueError("1 WV is below the instrument minimum Box slice")
-        working_quantity = slice_quantity * Decimal("4")
-        if (
-            slice_quantity < instrument.min_order_quantity
-            or slice_quantity > instrument.max_order_quantity
-        ):
-            raise ValueError("Box slice quantity is outside instrument limits")
-        if any(
-            price < instrument.min_price or price > instrument.max_price
-            for price in limit_prices
-        ):
-            raise ValueError("Box LIMIT price is outside instrument limits")
-        if any(
-            slice_quantity * price < instrument.min_notional_value
-            for price in limit_prices
-        ):
-            raise ValueError("Box slice is below instrument minimum notional")
-
         fee_rate = Decimal("0.0006")
-        plan = plan_ikigai_box(
-            direction=direction,
-            limit_prices=limit_prices,
-            limit_quantities=(slice_quantity,) * 4,
-            working_quantity=working_quantity,
-            frozen_f1=f1,
-            frozen_f1618=f1618,
-            tick_size=instrument.tick_size,
-            entry_fee_rate=fee_rate,
-            target_fee_rate=fee_rate,
-            stop_fee_rate=fee_rate,
-            structural_stop=None,
-            take_price=take_price,
-        )
+        # Every gate here is a Robot-admissibility rule; a failure is a planner
+        # rejection, not a technical error. Persistence below stays outside.
+        try:
+            limit_prices, take_price = approved_first_grid(
+                direction=direction,
+                frozen_f1=f1,
+                frozen_f1618=f1618,
+                tick_size=instrument.tick_size,
+            )
+            average_grid_price = sum(limit_prices, Decimal("0")) / Decimal("4")
+            raw_slice_quantity = one_wv_usdt / average_grid_price / Decimal("4")
+            slice_quantity = floor_to_step(raw_slice_quantity, instrument.quantity_step)
+            if slice_quantity <= 0:
+                raise ValueError("1 WV is below the instrument minimum Box slice")
+            working_quantity = slice_quantity * Decimal("4")
+            if (
+                slice_quantity < instrument.min_order_quantity
+                or slice_quantity > instrument.max_order_quantity
+            ):
+                raise ValueError("Box slice quantity is outside instrument limits")
+            if any(
+                price < instrument.min_price or price > instrument.max_price
+                for price in limit_prices
+            ):
+                raise ValueError("Box LIMIT price is outside instrument limits")
+            if any(
+                slice_quantity * price < instrument.min_notional_value
+                for price in limit_prices
+            ):
+                raise ValueError("Box slice is below instrument minimum notional")
+            plan = plan_ikigai_box(
+                direction=direction,
+                limit_prices=limit_prices,
+                limit_quantities=(slice_quantity,) * 4,
+                working_quantity=working_quantity,
+                frozen_f1=f1,
+                frozen_f1618=f1618,
+                tick_size=instrument.tick_size,
+                entry_fee_rate=fee_rate,
+                target_fee_rate=fee_rate,
+                stop_fee_rate=fee_rate,
+                structural_stop=None,
+                take_price=take_price,
+            )
+        except ValueError as exc:
+            raise IkigaiBoxPlanRejected(str(exc)) from exc
         now_ms = int(time.time() * 1000)
         source, _created = persist_ikigai_box_plan(
             self.store,

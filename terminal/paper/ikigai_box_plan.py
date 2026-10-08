@@ -17,6 +17,10 @@ from terminal.application.normalization import (
 from terminal.domain.models import OrderSide
 
 
+class IkigaiBoxPlanRejected(ValueError):
+    """The frozen Box fails a mandatory admissibility gate (grid, limits, RR/STOP)."""
+
+
 @dataclass(frozen=True, slots=True)
 class PlannedExposure:
     """Hypothetical fills at proposed prices; fees on both entry and exit."""
