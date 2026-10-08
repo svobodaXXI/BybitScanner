@@ -4328,7 +4328,8 @@ class SQLiteStore:
         marker, proven later as virtual version 0 (see box_ownership).
         """
         from terminal.paper.box_ownership import (
-            PRISTINE_BASELINE_TIME_MS, PRISTINE_BASELINE_VERSION, journal_hash,
+            LEGACY_UNSYNCED_STATE, PRISTINE_BASELINE_TIME_MS, PRISTINE_BASELINE_VERSION,
+            journal_hash, legacy_flat_row_is_provably_clean,
         )
 
         with self._transaction():
@@ -4346,8 +4347,16 @@ class SQLiteStore:
             else:
                 net = sum((f.quantity.value if f.side is OrderSide.BUY else -f.quantity.value
                            for f in fills), Decimal(0))
+                # A pre-9f64db3 FLAT row still labelled unsynced is accepted only when its
+                # own journal proves it clean and the symbol is quiet; it is never rewritten.
+                legacy_clean = (
+                    position.sync_state == LEGACY_UNSYNCED_STATE
+                    and legacy_flat_row_is_provably_clean(position, fills)
+                    and self._symbol_is_quiet_for_legacy_flat_box(candidate)
+                )
                 # updated_at_ms > 0 keeps a real FLAT baseline distinct from the pristine marker.
-                if (position.sync_state != "synced" or position.updated_at_ms <= 0
+                if ((position.sync_state != "synced" and not legacy_clean)
+                        or position.updated_at_ms <= 0
                         or position.side is not PositionSide.FLAT or position.quantity.value != 0
                         or position.average_entry is not None or net != 0
                         or any(f.exchange_timestamp_ms > position.updated_at_ms for f in fills)):
@@ -4359,6 +4368,31 @@ class SQLiteStore:
                  len(fills), journal_hash(fills)),
             )
         return True
+
+    def _symbol_is_quiet_for_legacy_flat_box(self, candidate: RobotCandidateRecord) -> bool:
+        """No command, order, protection or Robot state is still live on the symbol.
+
+        Command states outside the terminal list count as in flight, so an unknown
+        or new state fails closed.
+        """
+        account, symbol = candidate.trading_account_id.value, candidate.symbol.value
+
+        def present(sql: str) -> bool:
+            return self._connection.execute(sql, (account, symbol)).fetchone() is not None
+
+        return not (
+            present("SELECT 1 FROM trading_commands WHERE trading_account_id=? AND symbol=? "
+                    "AND current_state NOT IN ('filled', 'cancelled', 'rejected', 'failed')")
+            or present("SELECT 1 FROM paper_limit_orders WHERE trading_account_id=? AND symbol=? "
+                       "AND status NOT IN ('filled', 'cancelled')")
+            or present("SELECT 1 FROM protection_projections WHERE trading_account_id=? AND symbol=?")
+            or present("SELECT 1 FROM paper_protection_obligations WHERE trading_account_id=? "
+                       "AND symbol=? AND status != 'RESOLVED'")
+            or present("SELECT 1 FROM robot_trades WHERE trading_account_id=? AND symbol=? "
+                       "AND exit_time_ms IS NULL")
+            or present("SELECT 1 FROM robot_candidates WHERE trading_account_id=? AND symbol=? "
+                       "AND status='OPEN'")
+        )
 
     def _require_pristine_box_symbol(self, candidate: RobotCandidateRecord, fills) -> None:
         """Prove a missing projection means "never traded", not lost state.

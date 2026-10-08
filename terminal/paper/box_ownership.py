@@ -49,6 +49,36 @@ def journal_hash(fills) -> str:
 PRISTINE_BASELINE_VERSION = 1
 PRISTINE_BASELINE_TIME_MS = 0
 
+# Before 9f64db3 (2026-09-18) every simulator-owned PAPER fill stored its
+# projection as "reconciliation_required", so a symbol that returned to a clean
+# FLAT kept that label. The label is accepted only for a row that proves itself
+# clean from the immutable journal; the row is never rewritten.
+LEGACY_UNSYNCED_STATE = "reconciliation_required"
+
+
+def _is_clean_flat_row(position) -> bool:
+    return (
+        position.side is PositionSide.FLAT
+        and position.quantity.value == 0
+        and position.average_entry is None
+        and position.updated_at_ms > 0
+    )
+
+
+def legacy_flat_row_is_provably_clean(position, fills) -> bool:
+    """FLAT row whose version, net and timing are fully explained by its journal."""
+    net = sum(
+        (f.quantity.value if f.side is OrderSide.BUY else -f.quantity.value for f in fills),
+        Decimal(0),
+    )
+    return (
+        position.sync_state == LEGACY_UNSYNCED_STATE
+        and _is_clean_flat_row(position)
+        and net == 0
+        and position.version == len(fills)
+        and all(f.exchange_timestamp_ms <= position.updated_at_ms for f in fills)
+    )
+
 
 def is_pristine_baseline(baseline) -> bool:
     return (
@@ -81,7 +111,18 @@ def prove_box_exposure(candidate, baseline, ownership, fills, position):
             Decimal(0), Decimal(0), Decimal(0), None, None,
             (Decimal(0),) * 4, (Decimal(0),) * 4, 0, (),
         )
-    if position.sync_state != "synced":
+    # A legacy unsynced label is tolerated only while the attested clean FLAT row
+    # is untouched: same version and time, no later fill. The first owned fill
+    # rewrites the row as synced.
+    legacy_untouched = (
+        position.sync_state == LEGACY_UNSYNCED_STATE
+        and not pristine
+        and not current
+        and _is_clean_flat_row(position)
+        and position.version == baseline["baseline_position_version"]
+        and position.updated_at_ms == baseline["baseline_time_ms"]
+    )
+    if position.sync_state != "synced" and not legacy_untouched:
         raise BoxOwnershipError("actual position is missing or not reconciled")
     base_version = 0 if pristine else baseline["baseline_position_version"]
     if position.version != base_version + len(current):
