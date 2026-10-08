@@ -71,6 +71,16 @@ Architecture → Contracts → Documentation → Implementation → Validation �
 
 # 2. COMMUNICATION AND USER ACTIONS
 
+### OUTCOME-FIRST EXECUTION — OWNER RULE 2026-10-08
+
+The assistant owns progress toward the current owner-approved, observable outcome, not an expanding sequence of preparatory tasks. Before interrupting acceptance or adding a task for a newly discovered risk, classify it against current evidence and mandatory safety/acceptance contracts:
+
+- A demonstrated violation of a mandatory safety gate or a concrete critical blocker: stop the unsafe action, perform the smallest authorized repair and targeted verification, then return to the interrupted acceptance path.
+- A known, bounded, non-blocking risk: record it in the existing owning backlog/incident record and continue the current task; do not automatically turn it into a new PR, audit, or prerequisite.
+- Uncertain severity: establish only the narrowest decisive evidence before making a GO/NO-GO decision; neither assume safety nor invent a blocker.
+
+Once required checks pass, return directly to the owner-approved acceptance milestone. Do not introduce unrelated improvements, duplicate checks, new worktrees, or infrastructure campaigns along the way. Codex GO does not override mandatory safety gates, owner-only Scanner/Robot start authority, PAPER/LIVE boundaries, or full-pass acceptance requirements. The assistant applies this principle proactively without needing repeated owner intervention.
+
 Responses should be concise, current-stage-oriented, technically precise, and free of repeated artifacts or
 unnecessary process narration. A natural, lightly humorous tone is allowed only when it does not reduce clarity,
 discipline, or productivity.
