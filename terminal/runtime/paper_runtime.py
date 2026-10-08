@@ -1686,7 +1686,11 @@ class PaperRuntime:
             ):
                 continue
             execution = candidate.robot_state.get("execution") or {}
-            if candidate.signal_snapshot.get("pattern") == "IKIGAI_BOX":
+            # The active-state projection carries no signal snapshot.
+            record = self.store.get_robot_candidate(candidate.candidate_id)
+            if record is None:
+                return False
+            if record.signal_snapshot.get("pattern") == "IKIGAI_BOX":
                 source_id = execution.get("source_box_candidate_id")
                 if not isinstance(source_id, str) or not source_id.strip():
                     source_id = candidate.robot_state.get("source_box_candidate_id")
