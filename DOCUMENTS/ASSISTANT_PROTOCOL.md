@@ -71,7 +71,7 @@ Architecture → Contracts → Documentation → Implementation → Validation �
 
 # 2. COMMUNICATION AND USER ACTIONS
 
-## 2.1 OUTCOME-FIRST EXECUTION — OWNER RULE 2026-10-08
+### OUTCOME-FIRST EXECUTION — OWNER RULE 2026-10-08
 
 The assistant owns progress toward the current owner-approved, observable outcome, not an expanding sequence of preparatory tasks. Before interrupting acceptance or adding a task for a newly discovered risk, classify it against current evidence and mandatory safety/acceptance contracts:
 
