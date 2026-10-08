@@ -42,6 +42,10 @@ class RobotProtectionError(RuntimeError):
     pass
 
 
+class BoxActualFillRRUnsatisfied(RobotProtectionError):
+    """No tick-aligned STOP beyond P4 reaches net RR >= 2 for the actual entry."""
+
+
 def min_entry_rr() -> Decimal:
     """Retest-LIMIT entry threshold: ``ROBOT_MIN_ENTRY_RR`` when a valid Decimal in 0..10, else the default."""
 
@@ -73,6 +77,9 @@ class ProtectionPlan:
     take_price: Decimal
     stop_request: PaperStopMutationRequest
     take_request: PaperStopMutationRequest
+    # Box only: how the STOP was chosen and the actual-fill net RR it yields.
+    stop_basis: str | None = None
+    actual_fill_net_rr: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,7 +387,7 @@ def box_stop_for_actual_entry(
         raise RobotProtectionError("Box STOP RR bound is undefined")
     bound = (reward / Decimal(2) - entry * (sign + entry_fee)) / denominator
     if bound <= 0:
-        raise RobotProtectionError("no positive Box STOP satisfies actual-fill RR")
+        raise BoxActualFillRRUnsatisfied("no positive Box STOP satisfies actual-fill RR")
 
     from decimal import ROUND_CEILING, ROUND_FLOOR
     rounding = ROUND_CEILING if direction == DIRECTION_LONG else ROUND_FLOOR
@@ -393,10 +400,52 @@ def box_stop_for_actual_entry(
         tightened = min(tightened, current)
 
     if not acceptable(tightened):
-        raise RobotProtectionError(
+        raise BoxActualFillRRUnsatisfied(
             "no tick-aligned Box STOP beyond P4 satisfies actual-fill net RR >= 2"
         )
     return tightened
+
+
+def box_actual_fill_net_rr(
+    snapshot: Mapping[str, Any], *, average_entry: Decimal, stop: Decimal,
+) -> Decimal:
+    """Fee-aware net RR of the actual entry against ``stop`` and the frozen TAKE."""
+    plan = snapshot.get("plan")
+    inputs = snapshot.get("inputs")
+    if not isinstance(plan, Mapping) or not isinstance(inputs, Mapping):
+        raise RobotProtectionError("Box plan/inputs are missing")
+    sign = Decimal(1 if str(plan.get("direction", "")).strip().upper() == DIRECTION_LONG else -1)
+    take = _decimal(plan.get("take_price"), "frozen Box TAKE")
+    entry = _decimal(average_entry, "actual Box average entry")
+    stop = _decimal(stop, "Box STOP")
+
+    def fee(value: object, name: str) -> Decimal:
+        # Same contract as box_stop_for_actual_entry: a finite rate in [0, 1).
+        try:
+            rate = value if isinstance(value, Decimal) else Decimal(str(value))
+        except Exception as exc:
+            raise RobotProtectionError(f"{name} must be decimal-compatible") from exc
+        if not rate.is_finite() or not Decimal(0) <= rate < Decimal(1):
+            raise RobotProtectionError(f"{name} must be finite in [0, 1)")
+        return rate
+
+    entry_fee = fee(inputs.get("entry_fee_rate"), "Box entry fee")
+    target_fee = fee(inputs.get("target_fee_rate"), "Box target fee")
+    stop_fee = fee(inputs.get("stop_fee_rate"), "Box STOP fee")
+    reward = sign * (take - entry) - entry * entry_fee - take * target_fee
+    risk = sign * (entry - stop) + entry * entry_fee + stop * stop_fee
+    if risk <= 0:
+        raise RobotProtectionError("Box STOP carries no positive risk")
+    return reward / risk
+
+
+def _box_full_grid_average(snapshot: Mapping[str, Any]) -> Decimal:
+    plan = snapshot.get("plan") or {}
+    prices = tuple(_decimal(item, "Box LIMIT price") for item in plan.get("limit_prices") or ())
+    sizes = tuple(_decimal(item, "Box LIMIT quantity") for item in plan.get("limit_quantities") or ())
+    if len(prices) != 4 or len(sizes) != 4 or sum(sizes) <= 0:
+        raise RobotProtectionError("Box grid must contain four entries")
+    return sum((p * q for p, q in zip(prices, sizes)), Decimal(0)) / sum(sizes)
 
 
 def build_box_protection_plan(
@@ -472,9 +521,34 @@ def build_box_stop_only_plan(
         raise RobotProtectionError("Box direction conflicts with frozen plan")
     quantity = _decimal(confirmed_position_quantity, "confirmed position quantity")
     entry = _decimal(average_entry, "average_entry")
-    stop = box_stop_for_actual_entry(
-        snapshot, average_entry=entry, existing_stop=existing_stop,
-    )
+    try:
+        stop = box_stop_for_actual_entry(
+            snapshot, average_entry=entry, existing_stop=existing_stop,
+        )
+        basis = "ACTUAL_FILL_RR"
+    except BoxActualFillRRUnsatisfied as shortfall:
+        # PAPER option B (owner, 2026-10-08): a partial first fill may sit below
+        # net 2:1. Keep the frozen (or already active, never wider) STOP, but only
+        # while the full planned grid itself still proves net RR >= 2.
+        try:
+            box_stop_for_actual_entry(snapshot, average_entry=_box_full_grid_average(snapshot))
+        except RobotProtectionError as error:
+            raise RobotProtectionError(
+                f"Box full grid does not satisfy net RR >= 2: {error}"
+            ) from shortfall
+        frozen = snapshot["plan"]
+        stop = _decimal(
+            existing_stop if existing_stop is not None else frozen.get("stop_price"),
+            "Box STOP",
+        )
+        tick = _decimal((snapshot.get("inputs") or {}).get("tick_size"), "Box tick size")
+        p4 = _decimal(frozen["limit_prices"][3], "Box P4")
+        beyond_p4 = stop < p4 if direction == DIRECTION_LONG else stop > p4
+        if stop <= 0 or stop % tick != 0 or not beyond_p4:
+            raise RobotProtectionError(
+                "frozen Box STOP is not tick-aligned strictly beyond P4"
+            ) from shortfall
+        basis = "FROZEN_FIRST_FILL"
     take = _decimal(snapshot["plan"].get("take_price"), "frozen Box TAKE")
     if direction == DIRECTION_LONG and not (stop < entry < take):
         raise RobotProtectionError("LONG Box protection geometry is invalid")
@@ -498,6 +572,8 @@ def build_box_stop_only_plan(
         take_request=PaperStopMutationRequest(
             _action_id(candidate_id, "take", take), symbol, take,
         ),
+        stop_basis=basis,
+        actual_fill_net_rr=box_actual_fill_net_rr(snapshot, average_entry=entry, stop=stop),
     )
 
 
