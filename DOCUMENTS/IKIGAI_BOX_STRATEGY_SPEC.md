@@ -61,6 +61,26 @@ instrument limits, RR/STOP) is **not shown in Telegram to any recipient**.
   delivered without a Robot button, the error is printed and the owner is warned.
 - Valid Boxes keep the `BOX_PLAN_ONLY` source and the owner-tap-only admission.
 
+## Legacy FLAT baseline — provably clean `reconciliation_required` rows (2026-10-08)
+
+Before `9f64db3` (2026-09-18) every simulator-owned PAPER fill stored its position
+projection as `sync_state=reconciliation_required`; a symbol that later returned to a
+clean FLAT kept that label, and `begin_box_attempt_ownership` rejected it forever
+(25 PC symbols, e.g. `0GUSDT`, `BLESSUSDT`).
+
+`begin_box_attempt_ownership` and `prove_box_exposure` accept such a row only when it
+proves itself clean; nothing is rewritten or migrated:
+- FLAT, quantity 0, no average entry, `updated_at_ms > 0`;
+- net executions 0, no execution after the row's last write, `version == number of executions`;
+- no command outside `filled/cancelled/rejected/failed`, no working limit, no protection
+  projection, no unresolved protection obligation, no open Robot trade or `OPEN` candidate
+  on the symbol.
+
+The proof tolerates the legacy label only while the row is untouched (same version and
+time, no later fill); the first owned fill rewrites it as `synced`. Non-flat legacy
+positions (`CELOUSDT`) and any other inconsistency still fail closed, and
+`FOREIGN_POSITION_PRESENT_BEFORE_ROBOT_ENTRY` is unchanged.
+
 
 ## Owner correction — late admission / crossed Box grid catch-up (2026-09-29)
 
