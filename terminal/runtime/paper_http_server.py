@@ -2273,18 +2273,20 @@ class RobotProtectionCoverageManager:
                 )
                 return False
             event_id, book = snapshot
-            recovered = bool(self._runtime.call(
-                lambda runtime: runtime.recover_robot_protection_continuity_loss(
+            def _recover_on_owner(runtime):
+                recovered = bool(runtime.recover_robot_protection_continuity_loss(
                     symbol,
                     book,
                     event_id=event_id,
                     received_at_ms=book.received_at_ms,
                     reason=reason,
-                )
-            ))
-            if recovered:
-                self._mark_healthy(symbol)
-            return recovered
+                ))
+                if recovered:
+                    self._mark_healthy(symbol)
+                    self._release_continuity_fence(runtime, symbol)
+                return recovered
+
+            return bool(self._runtime.call(_recover_on_owner))
         except Exception:
             LOGGER.exception(
                 "Robot protection continuity recovery failed; symbol=%s reason=%s",
@@ -2381,6 +2383,7 @@ class RobotProtectionCoverageManager:
                 )
                 if recovered:
                     self._mark_healthy(symbol)
+                    self._release_continuity_fence(runtime, symbol)
                 return recovered
             return runtime.process_robot_market_event(
                 symbol, book, event_id=book_update_id, received_at_ms=received_at_ms,
@@ -2434,6 +2437,19 @@ class RobotProtectionCoverageManager:
     def _mark_healthy(self, symbol: str) -> None:
         with self._lock:
             self._unhealthy.pop(symbol, None)
+
+    def _release_continuity_fence(self, runtime, symbol: str) -> None:
+        """Owner thread only, after a proven recovery. The runtime releases only
+        the barrier this coverage-loss event created, and only while every
+        covered symbol's ingress is healthy."""
+        try:
+            runtime.release_robot_protection_continuity_fence(
+                symbol, ingress_healthy=self.is_healthy,
+            )
+        except Exception:
+            LOGGER.exception(
+                "Robot protection continuity fence release failed; symbol=%s", symbol,
+            )
 
     def _run(self) -> None:
         while not self._stop.wait(self._resync_interval_s):

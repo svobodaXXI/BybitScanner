@@ -67,6 +67,7 @@ class _Owner:
         self.fences = []
         self.recoveries = []
         self.processed = []
+        self.releases = []
         self.durable_loss = durable_loss
 
     def robot_protection_coverage_symbols(self):
@@ -85,6 +86,10 @@ class _Owner:
         self.recoveries.append(
             (symbol, book, event_id, received_at_ms, reason)
         )
+        return True
+
+    def release_robot_protection_continuity_fence(self, symbol, *, ingress_healthy):
+        self.releases.append((symbol, ingress_healthy()))
         return True
 
     def process_robot_market_event(
@@ -226,6 +231,36 @@ class RobotProtectionOverflowRecoveryTests(unittest.TestCase):
             {"category": "linear", "symbol": SYMBOL, "limit": 50},
         )
         self.assertEqual(timeout, 10)
+
+    def test_proven_recovery_asks_the_runtime_to_release_its_own_fence(self):
+        owner = _Owner()
+        manager = RobotProtectionCoverageManager(
+            object(), _Runtime(owner), recovery_session=_Session(),
+        )
+        manager._covered[SYMBOL] = _Context()
+        manager._unhealthy[SYMBOL] = "websocket_disconnect:SSLError"
+
+        manager.resync()
+
+        # The symbol is already marked healthy when the runtime evaluates ingress.
+        self.assertEqual(owner.releases, [(SYMBOL, True)])
+
+    def test_release_sees_other_unhealthy_symbols_and_unproven_recovery_is_not_released(self):
+        owner = _Owner()
+        manager = RobotProtectionCoverageManager(
+            object(), _Runtime(owner), recovery_session=_Session(),
+        )
+        manager._covered[SYMBOL] = _Context()
+        manager._unhealthy[SYMBOL] = "ingress_overflow"
+        manager._unhealthy["OTHERUSDT"] = "websocket_disconnect:OSError"
+        manager.resync()
+        self.assertEqual(owner.releases, [(SYMBOL, False)])
+
+        owner.releases.clear()
+        owner.recover_robot_protection_continuity_loss = lambda *a, **k: False
+        manager._unhealthy[SYMBOL] = "ingress_overflow"
+        manager.resync()
+        self.assertEqual(owner.releases, [])
 
 
 if __name__ == "__main__":
