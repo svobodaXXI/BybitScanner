@@ -193,10 +193,10 @@ def _frozen_box_levels(view: PositionView) -> tuple[tuple[Decimal, str], ...]:
             raise ValueError("Box Fibonacci and frozen executable plan disagree")
         direction = snapshot.get("identity", {}).get("direction")
         if direction == "LONG":
-            if not (levels[2] < levels[1] < entries[3] < entries[2] < entries[1] < entries[0] < take < levels[0]):
+            if not (levels[2] < entries[3] < levels[1] < entries[2] < entries[1] < entries[0] < take < levels[0]):
                 raise ValueError("Box LONG levels out of order")
         elif direction == "SHORT":
-            if not (levels[2] > levels[1] > entries[3] > entries[2] > entries[1] > entries[0] > take > levels[0]):
+            if not (levels[2] > entries[3] > levels[1] > entries[2] > entries[1] > entries[0] > take > levels[0]):
                 raise ValueError("Box SHORT levels out of order")
         else:
             raise ValueError("Box direction missing")
