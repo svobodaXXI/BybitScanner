@@ -591,6 +591,10 @@ class PaperRuntime:
             raise RuntimeError("PAPER runtime requires the authoritative paper account")
         account_id = self._paper_account_id
         self._robot_incident_dir = Path(database_path).parent / "robot_incidents"
+        # Coverage-loss fences this process created (symbol -> (prior status,
+        # version, reason)) and the symbols whose recovery has been proven since.
+        self._continuity_fence_origin: dict[str, tuple[str, int, str]] = {}
+        self._continuity_recovered: set[str] = set()
 
         self.store = SQLiteStore.open(database_path)
         runtime_process_identity = RuntimeProcessIdentity.capture(
@@ -1626,7 +1630,7 @@ class PaperRuntime:
             return False
         if state.recovery_status == RECONCILIATION_REQUIRED:
             return True
-        self.store.update_robot_runtime_state(
+        fenced = self.store.update_robot_runtime_state(
             self._paper_account_id,
             mode=ROBOT_RUNNING,
             recovery_status=RECONCILIATION_REQUIRED,
@@ -1637,7 +1641,65 @@ class PaperRuntime:
             expected_version=state.version,
             updated_at_ms=int(time.time() * 1000),
         )
+        # Only a fence created here, from a normal READY/PAUSED state, may later
+        # be released by release_robot_protection_continuity_fence. In-memory on
+        # purpose: after a restart the durable fence stays operator-controlled.
+        if state.recovery_status in {READY, PAUSED}:
+            self._continuity_fence_origin[normalized] = (
+                state.recovery_status, fenced.version, fenced.reason,
+            )
+            self._continuity_recovered.discard(normalized)
         return True
+
+    def release_robot_protection_continuity_fence(
+        self, symbol: str, *, ingress_healthy,
+    ) -> bool:
+        """Release the barrier raised by one coverage-loss event after proven recovery.
+
+        Call only after recover_robot_protection_continuity_loss(symbol) returned
+        True (this symbol has no unprotected or unknown Robot exposure). Releases
+        only a fence this process created from READY/PAUSED for that same event
+        and left untouched (same durable version and reason); any other
+        RECONCILIATION_REQUIRED cause, including one that pre-dates the loss, or
+        one from before a restart, is left to the operator. The fence is held
+        while any protection ingress is unhealthy, then goes through the same
+        evidence-based robot_reconcile and resumes to READY only if it was READY
+        before; an owner PAUSE is preserved. Idempotent: no fence, no action.
+        """
+        normalized = symbol.strip().upper()
+        self._continuity_recovered.add(normalized)
+        if not ingress_healthy():
+            return False
+        state = self.store.get_robot_runtime_state(self._paper_account_id)
+        if (
+            state is None
+            or state.mode != ROBOT_RUNNING
+            or state.recovery_status != RECONCILIATION_REQUIRED
+        ):
+            return False
+        loss = self.robot_protection_continuity_loss()
+        if loss is None:
+            return False
+        fence_symbol = loss[0]
+        origin = self._continuity_fence_origin.get(fence_symbol)
+        if (
+            origin is None
+            or fence_symbol not in self._continuity_recovered
+            or (origin[1], origin[2]) != (state.version, state.reason)
+        ):
+            return False
+        prior_status = origin[0]
+        reconciled = self.robot_reconcile()
+        if not reconciled.success or reconciled.recovery_status != PAUSED:
+            return False
+        self._continuity_fence_origin.pop(fence_symbol, None)
+        self._continuity_recovered.discard(fence_symbol)
+        if prior_status == PAUSED:
+            return True
+        resumed = resume_robot_in_store(
+            self.store, clock_ms=lambda: int(time.time() * 1000),
+        )
+        return resumed.mode == ROBOT_RUNNING and resumed.recovery_status == READY
 
     def recover_robot_protection_continuity_loss(
         self, symbol: str, book: NormalizedOrderBook, *, event_id: str,
