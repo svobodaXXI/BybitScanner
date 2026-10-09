@@ -3478,9 +3478,23 @@ owning_change_request:
 
 `DOCUMENTS/CHANGE_REQUESTS/CR-PAPER-PROTECTION-LIFECYCLE-001.md`
 
-current_runtime_checkpoint:
+historical_runtime_checkpoint:
 
-`d4d550ecf4899bee59a01dff21a11b58ee6c701d`
+`d4d550ecf4899bee59a01dff21a11b58ee6c701d` (original design checkpoint; **not** current deployed state).
+
+## Runtime architecture evidence checkpoint — 2026-10-09
+
+The owner-reported laptop runtime baseline before the first post-transfer PAPER launch was `stable/adfb50b-forward` at `5435f29681052cc1f7a0e0b2d750d4dee08e100b`. This is **not** proof that runtime has started or passed acceptance. Subsequent documentation PR #438 does not modify trading code or constitute deployment.
+
+The following corrections were **merged into the stable source line**, not necessarily verified by the owner in a new runtime:
+- PR #421: Robot candidate read indexes, schema v24 preserved (hot-path reduction).
+- PR #422: separate protection FIFO and protection-before-ordinary owner work (priority ingress, preserving one mutation owner and fail-closed boundaries).
+- PR #424 and #426–#431: selective backports removing owner-thread REST/network paths.
+- PR #434: first confirmed partial fill retains frozen STOP under the specified PAPER rule.
+- PR #435: owner-thread emergency close path for unprotected first Box fill.
+
+The staged A–D section below describes **historical remediation design and decision boundaries**, not an assertion that every stage remains unimplemented or that all runtime outcomes are accepted. Consult current `DOCUMENTS/BACKLOG.md` for priority, merged PR evidence for source changes, and owner PAPER evidence for live runtime outcome. Do not automatically start a new architecture campaign, repeat merged fixes, or weaken safety gates.
+
 
 ## Runtime ownership model
 
