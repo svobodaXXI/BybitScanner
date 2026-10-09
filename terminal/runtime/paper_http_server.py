@@ -1136,18 +1136,10 @@ class LiveOrderBookProvider:
             return None
         try:
             bids = tuple(
-                PriceLevel(
-                    Price(Decimal(level["price"])),
-                    Quantity(Decimal(level["size"])),
-                )
-                for level in payload["bids"]
+                _book_level(level["price"], level["size"]) for level in payload["bids"]
             )
             asks = tuple(
-                PriceLevel(
-                    Price(Decimal(level["price"])),
-                    Quantity(Decimal(level["size"])),
-                )
-                for level in payload["asks"]
+                _book_level(level["price"], level["size"]) for level in payload["asks"]
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -1917,6 +1909,31 @@ def create_symbol_context(symbol: str, tick_size: Decimal) -> SymbolContext:
     return SymbolContext(symbol, public_orderbook, public_trades, public_klines)
 
 
+# Immutable PriceLevel per exact (price, size) wire strings. A 1000-level book
+# changes only a few levels per push, so rebuilding and re-validating every
+# Decimal/Price/Quantity/PriceLevel per event dominated owner and ingress CPU.
+# The values are frozen and compared by value, so a reused instance is identical
+# to a fresh one. Only exact strings are cached (Decimal("1.0") and
+# Decimal("1.00") stay distinct); anything else, and every invalid level, takes
+# the original construction path and raises exactly as before. Bounded: cleared
+# when full. Plain dict operations are atomic under the GIL.
+_BOOK_LEVEL_CACHE: dict[tuple[str, str], PriceLevel] = {}
+_BOOK_LEVEL_CACHE_LIMIT = 50_000
+
+
+def _book_level(price, size) -> PriceLevel:
+    if type(price) is not str or type(size) is not str:
+        return PriceLevel(Price(Decimal(price)), Quantity(Decimal(size)))
+    key = (price, size)
+    level = _BOOK_LEVEL_CACHE.get(key)
+    if level is None:
+        level = PriceLevel(Price(Decimal(price)), Quantity(Decimal(size)))
+        if len(_BOOK_LEVEL_CACHE) >= _BOOK_LEVEL_CACHE_LIMIT:
+            _BOOK_LEVEL_CACHE.clear()
+        _BOOK_LEVEL_CACHE[key] = level
+    return level
+
+
 def _normalized_book_from_snapshot(
     symbol: str, payload: dict, *, source_generation: int | None = None,
 ) -> NormalizedOrderBook | None:
@@ -1930,12 +1947,10 @@ def _normalized_book_from_snapshot(
         return None
     try:
         bids = tuple(
-            PriceLevel(Price(Decimal(level["price"])), Quantity(Decimal(level["size"])))
-            for level in payload["bids"]
+            _book_level(level["price"], level["size"]) for level in payload["bids"]
         )
         asks = tuple(
-            PriceLevel(Price(Decimal(level["price"])), Quantity(Decimal(level["size"])))
-            for level in payload["asks"]
+            _book_level(level["price"], level["size"]) for level in payload["asks"]
         )
     except (KeyError, TypeError, ValueError, InvalidOperation):
         return None
