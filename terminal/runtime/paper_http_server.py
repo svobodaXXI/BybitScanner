@@ -292,6 +292,7 @@ def _execute_robot_route(runtime: PaperRuntime, command: str, operation):
 
 
 RUNTIME_INTENT_FIELDS = {"intent"}
+AUTOPILOT_MODE_FIELDS = {"mode"}
 RUNTIME_SHUTDOWN_FIELDS = {"database_identity"}
 
 
@@ -2545,6 +2546,15 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if parsed.path == "/api/robot/autopilot":
+            try:
+                state = self.server.runtime.call(lambda runtime: runtime.autopilot_state())
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "autopilot_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **to_primitive(state)})
+            return
+
         if parsed.path == "/api/scanner/status":
             try:
                 result = self.server.runtime.call(lambda runtime: runtime.scanner_status())
@@ -3475,6 +3485,26 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             ).start()
             return
 
+        if self.path == "/api/robot/autopilot":
+            # Slice A1 (issue #446): OFF and SHADOW only. PAPER_AUTO is rejected.
+            try:
+                mode = self._payload(AUTOPILOT_MODE_FIELDS)["mode"]
+                if not isinstance(mode, str):
+                    raise ValueError("mode must be a string")
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self._json_response(400, {"ok": False, "error": "invalid_autopilot_mode"})
+                return
+            try:
+                state = self.server.runtime.call(lambda runtime: runtime.set_autopilot_mode(mode))
+            except ValueError as exc:
+                self._json_response(409, {"ok": False, "error": str(exc)})
+                return
+            except Exception:
+                self._json_response(503, {"ok": False, "error": "autopilot_unavailable"})
+                return
+            self._json_response(200, {"ok": True, **to_primitive(state)})
+            return
+
         if self.path == "/api/runtime/intent":
             try:
                 raw_intent = self._payload(RUNTIME_INTENT_FIELDS)["intent"]
@@ -3874,6 +3904,9 @@ def main() -> None:
         runtime.call(lambda owned: owned.bind_robot_entry_coverage(
             robot_protection_coverage.arm_entry_coverage,
             robot_protection_coverage.release_entry_coverage,
+        ))
+        runtime.call(lambda owned: owned.bind_autopilot_protection_health(
+            robot_protection_coverage.is_healthy,
         ))
         runtime.start_robot_monitor()
 

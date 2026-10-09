@@ -25,6 +25,9 @@ from terminal.api.models import (
     TimeInForce, to_primitive,
     LiveMarketCommandRequest,
 )
+from terminal.application.robot_autopilot_shadow import (
+    SOURCE_BOX_PLAN, SOURCE_SCANNER, observe_shadow_candidate, shadow_mode_or_off,
+)
 from terminal.application.robot_breakout_monitor import (
     DEFAULT_TICK_INTERVAL_S, EmergencyClosePath, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
 )
@@ -300,13 +303,16 @@ SCANNER_PAUSED = "SCANNER_PAUSED"
 DEFAULT_SCANNER_SCAN_INTERVAL_S = 5.0
 
 
-def _run_scanner_scan_pass(*, box_plan_preparer=None, control_checkpoint=None) -> None:
+def _run_scanner_scan_pass(
+    *, box_plan_preparer=None, control_checkpoint=None, robot_candidate_observer=None,
+) -> None:
     """Load Scanner/config only when an actual scan pass is due."""
     from main import run_scan_pass
 
     run_scan_pass(
         box_plan_preparer=box_plan_preparer,
         control_checkpoint=control_checkpoint,
+        robot_candidate_observer=robot_candidate_observer,
     )
 
 _SCANNER_VALID_TRANSITIONS = {
@@ -666,10 +672,20 @@ class PaperRuntime:
         # Autopilot is independently durable and always defaults OFF. Stage A
         # creates no autonomous admission/execution path; this row only makes
         # restart semantics explicit for later SHADOW/PAPER_AUTO control.
-        self.store.initialize_robot_autopilot_state(
+        autopilot = self.store.initialize_robot_autopilot_state(
             account_id,
             updated_at_ms=int(time.time() * 1000),
         )
+        # Restart is fail-closed: a persisted PAPER_AUTO never resumes by itself.
+        if autopilot.mode == "PAPER_AUTO":
+            self.store.update_robot_autopilot_state(
+                account_id, mode="OFF", reason="restart_recovery",
+                expected_version=autopilot.version,
+                updated_at_ms=max(int(time.time() * 1000), autopilot.updated_at_ms),
+            )
+        # Autopilot SHADOW reads protection health from the coverage manager when
+        # the HTTP runtime binds it; otherwise that fact is unknown (WAIT).
+        self._autopilot_protection_health: Callable[[], bool] | None = None
 
         context_provider = PaperCommandContextProvider(
             store=self.store,
@@ -860,6 +876,7 @@ class PaperRuntime:
             scan_pass=lambda checkpoint: _run_scanner_scan_pass(
                 box_plan_preparer=self._dispatch_ikigai_box_plan_preparation,
                 control_checkpoint=checkpoint,
+                robot_candidate_observer=self._dispatch_autopilot_shadow_scanner_candidate,
             ),
             clock_ms=lambda: int(time.time() * 1000),
         )
@@ -904,10 +921,55 @@ class PaperRuntime:
     def _dispatch_ikigai_box_plan_preparation(
         self, symbol: str, timeframe: str, formation: Mapping[str, object],
     ) -> object:
-        return self._dispatch_robot_command(
-            lambda runtime: runtime._prepare_ikigai_box_robot_plan(
-                symbol, timeframe, formation,
+        def prepare(runtime: "PaperRuntime") -> object:
+            source_id = runtime._prepare_ikigai_box_robot_plan(symbol, timeframe, formation)
+            runtime.observe_autopilot_shadow_candidate(SOURCE_BOX_PLAN, source_id)
+            return source_id
+
+        return self._dispatch_robot_command(prepare)
+
+    def _dispatch_autopilot_shadow_scanner_candidate(self, candidate_id: str) -> None:
+        self._dispatch_robot_command(
+            lambda runtime: runtime.observe_autopilot_shadow_candidate(SOURCE_SCANNER, candidate_id)
+        )
+
+    def bind_autopilot_protection_health(self, provider: Callable[[], bool] | None) -> None:
+        self._autopilot_protection_health = provider
+
+    def observe_autopilot_shadow_candidate(self, source: str, candidate_ref: str):
+        """Owner thread. Autopilot SHADOW evaluation of one arrived candidate.
+
+        Never admits, plans or trades. A failure is logged and never reaches the
+        Scanner pass or the Box plan freeze.
+        """
+        try:
+            return observe_shadow_candidate(
+                self.store, self._paper_account_id,
+                source=source, candidate_ref=str(candidate_ref),
+                protection_healthy=self._autopilot_protection_health,
             )
+        except Exception as error:
+            print(
+                "[AUTOPILOT SHADOW ERROR] "
+                f"source={source} candidate_ref={candidate_ref} error_class={type(error).__name__}"
+            )
+            return None
+
+    def autopilot_state(self):
+        return self.store.get_robot_autopilot_state(self._paper_account_id)
+
+    def set_autopilot_mode(self, mode: str):
+        """Owner switch for this slice: OFF or SHADOW only; PAPER_AUTO is rejected."""
+        target = shadow_mode_or_off(mode)
+        current = self.store.get_robot_autopilot_state(self._paper_account_id)
+        if current is None:
+            raise RuntimeError("Robot Autopilot state is unavailable")
+        if current.mode == target:
+            return current
+        return self.store.update_robot_autopilot_state(
+            self._paper_account_id, mode=target, reason="owner",
+            expected_version=current.version,
+            updated_at_ms=max(int(time.time() * 1000), current.updated_at_ms),
         )
 
     def _prepare_ikigai_box_robot_plan(

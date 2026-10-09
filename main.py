@@ -70,7 +70,17 @@ def build_scan_finished_message(
     )
 
 
-def run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
+def run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None, robot_candidate_observer=None):
+    """Run one Scanner pass; ``robot_candidate_observer`` sees persisted Robot candidates."""
+    from pattern_robot_integration import robot_candidate_observer as observe
+
+    with observe(robot_candidate_observer):
+        return _run_scan_pass(
+            box_plan_preparer=box_plan_preparer, control_checkpoint=control_checkpoint,
+        )
+
+
+def _run_scan_pass(*, box_plan_preparer=None, control_checkpoint=None):
     """Run exactly one Scanner scan pass over all discovered symbols.
 
     Extracted from main() as a reusable, throttled-repeatable unit (mirroring
