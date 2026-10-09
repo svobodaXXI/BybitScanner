@@ -959,30 +959,43 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
             (Decimal("1010"), Decimal("986"), Decimal("1.4")),
         )
 
-    def test_entry_rr_at_or_above_threshold_is_not_skipped(self):
-        for direction, extreme, references in (
-            ("LONG", 990.1, (1006.0, 1011.0)),   # take 1015 -> rr 1.5, take 1020 -> rr 2.0
-            ("SHORT", 1009.9, (994.0, 989.0)),   # take 985 -> rr 1.5, take 980 -> rr 2.0
+    def test_wedge_entry_rr_below_two_rejects_both_directions(self):
+        # BBUSDT-like RR 1.5/1.54 must never pass, even if env lowers the gate.
+        for direction, extreme, reference in (
+            ("LONG", 990.1, 1006.0),
+            ("SHORT", 1009.9, 994.0),
         ):
-            for reference in references:
-                with self.subTest(direction=direction, reference=reference):
-                    self.assertIsNone(
-                        self._rr_check(direction, reference=reference, extreme=extreme)
+            for env in (None, "1.0", "1.5"):
+                with self.subTest(direction=direction, env=env):
+                    skipped = self._rr_check(
+                        direction, reference=reference, extreme=extreme, env=env,
                     )
+                    self.assertEqual(skipped[0], "SKIPPED_POOR_RR")
+                    self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("2"))
+                    self.assertEqual(Decimal(skipped[1]["rr"]), Decimal("1.5"))
 
-    def test_entry_rr_threshold_follows_environment_variable(self):
-        # rr is 1.5 here: passes by default, skipped when the threshold is raised.
-        self.assertIsNone(self._rr_check("LONG", reference=1006.0, extreme=990.1))
-        raised = self._rr_check("LONG", reference=1006.0, extreme=990.1, env="1.6")
+    def test_entry_rr_at_or_above_two_is_not_skipped(self):
+        for direction, extreme, reference in (
+            ("LONG", 990.1, 1011.0),  # take 1020 -> RR 2
+            ("SHORT", 1009.9, 989.0),  # take 980 -> RR 2
+        ):
+            with self.subTest(direction=direction):
+                self.assertIsNone(
+                    self._rr_check(direction, reference=reference, extreme=extreme)
+                )
+
+    def test_wedge_entry_rr_environment_can_only_tighten(self):
+        self.assertIsNone(self._rr_check("LONG", reference=1011.0, extreme=990.1))
+        raised = self._rr_check("LONG", reference=1011.0, extreme=990.1, env="2.1")
         self.assertEqual(raised[0], "SKIPPED_POOR_RR")
-        self.assertEqual((Decimal(raised[1]["min_rr"]), Decimal(raised[1]["rr"])), (Decimal("1.6"), Decimal("1.5")))
-        # rr 1.4 passes when the threshold is lowered.
-        self.assertIsNone(self._rr_check("LONG", reference=1005.0, extreme=990.1, env="1.4"))
-        # Invalid values fall back to the default 1.5.
+        self.assertEqual(
+            (Decimal(raised[1]["min_rr"]), Decimal(raised[1]["rr"])),
+            (Decimal("2.1"), Decimal("2")),
+        )
         for bad in ("abc", "-1", "11", "NaN", ""):
             with self.subTest(env=bad):
-                skipped = self._rr_check("LONG", reference=1005.0, extreme=990.1, env=bad)
-                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("1.5"))
+                skipped = self._rr_check("LONG", reference=1006.0, extreme=990.1, env=bad)
+                self.assertEqual(Decimal(skipped[1]["min_rr"]), Decimal("2"))
 
     def test_entry_rr_unavailable_blocks_initial_entry(self):
         # A zero-width frozen target cannot yield a valid TAKE.
