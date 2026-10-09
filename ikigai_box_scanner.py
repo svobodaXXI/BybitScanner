@@ -11,6 +11,7 @@ import os
 import re
 
 from geometry.ikigai_box import IkigaiBoxWatch, detect_ikigai_box
+from geometry.ikigai_box_completion import box_first_grid_already_completed
 from geometry.ikigai_box_chart import ikigai_box_signal_text, render_ikigai_box_chart
 from notification import (
     build_tradingview_keyboard,
@@ -90,6 +91,11 @@ def send_ikigai_box_observation(
     closed = candles.iloc[:-1]
     formation = detect_ikigai_box(closed)
     if formation is None:
+        return False
+    # Only actionable first-grid Box opportunities reach Telegram/Robot planning.
+    # Chronological P1 -> TAKE completion is a spent setup, even when its
+    # detector still reports the same frozen A/B geometry (issue #416).
+    if box_first_grid_already_completed(closed, formation):
         return False
 
     recipients = get_telegram_chat_ids()
