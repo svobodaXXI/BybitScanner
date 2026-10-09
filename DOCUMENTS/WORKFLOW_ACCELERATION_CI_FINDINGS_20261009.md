@@ -31,3 +31,19 @@ GitHub connector `fetch_commit_workflow_runs` для **head SHA** провере
 **Не выполнено:** runtime профилирование, оценка end-to-end latency, измерение CI job duration, новая PAPER-приёмка. Это не основание тормозить штатный owner launch.
 
 Источники: https://github.com/svobodaXXI/BybitScanner/pull/405 ; https://github.com/svobodaXXI/BybitScanner/pull/427 ; https://github.com/svobodaXXI/BybitScanner/pull/435 ; https://github.com/svobodaXXI/BybitScanner/actions/runs/37598235731 ; https://github.com/svobodaXXI/BybitScanner/actions/runs/37755287072 ; https://github.com/svobodaXXI/BybitScanner/actions/runs/37813511593 .
+
+
+## 09.10 — ограниченная оценка стоимости backport
+
+Проверены семь пар исходный PR `main` → backport PR `stable` по метаданным GitHub. Интервал **только от открытия backport PR до merge**, в минутах:
+- #392 → #422: 12,9;
+- #394 → #424: 1,6;
+- #396 → #426: 8,5;
+- #397 → #427: 52,1;
+- #398 → #428: 3,9;
+- #401 → #430: 6,1;
+- #402 → #431: 1,9.
+
+Сумма наблюдаемых PR-open→merge интервалов: **около 87 минут**, медиана **6,1 минуты**. Суммирование не учитывает параллельную работу, подготовку до открытия PR, ожидание владельца, CI и окончательную PAPER-приёмку; это **не** измеренные трудозатраты и **не** полная стоимость backport. Само расхождение коммитов не доказывает задержку.
+
+**Решение:** отдельная переделка Git-ветвления не оправдана текущими доказательствами. Существующий селективный backport оставить без новых gates, синхронизации или PR. Вернуться к PAPER-запуску ноутбука и следить только за фактическими повторными переносами/конфликтами, если они появятся в новых задачах.
