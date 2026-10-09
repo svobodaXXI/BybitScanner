@@ -43,9 +43,72 @@ def collect_portfolio_facts(store: SQLiteStore, account: TradingAccountId) -> di
         trades = store.load_open_robot_trades(account)
         orders = {o["order_id"]: o for o in rows["paper_limit_orders"]}
         commands = {c["command_id"]: c for c in rows["trading_commands"]}
-        if any(c["current_state"] not in {"filled", "cancelled", "amended", "rejected", "failed"}
-               for c in commands.values()):
-            raise Unavailable("unfinished command may carry unproven obligations")
+        projections = {p["symbol"]: p for p in rows["position_projections"]}
+        working_limits = [
+            order for order in orders.values()
+            if order["status"] in {"open", "partially_filled"}
+        ]
+        working_limit_symbols = {order["symbol"] for order in working_limits}
+        terminal_command_states = {"filled", "cancelled", "amended", "rejected", "failed"}
+        superseded_commands = []
+        unresolved_commands = []
+        for command in commands.values():
+            if command["current_state"] in terminal_command_states:
+                continue
+            projection = projections.get(command["symbol"])
+            superseded_by_flat = (
+                command["command_kind"] == "create_market"
+                and command["current_state"] == "submitting"
+                and command["exchange_order_id"] is None
+                and projection is not None
+                and projection["side"] == "Flat"
+                and _number(projection["quantity"]) == 0
+                and _number(projection["engaged_notional"]) == 0
+                and projection["sync_state"] == "synced"
+                and int(projection["updated_at_ms"]) > int(command["updated_at_ms"])
+                and command["symbol"] not in working_limit_symbols
+            )
+            summary = {
+                "command_id": command["command_id"],
+                "symbol": command["symbol"],
+                "kind": command["command_kind"],
+                "state": command["current_state"],
+                "updated_at_ms": command["updated_at_ms"],
+            }
+            if superseded_by_flat:
+                summary["proof"] = "later_synced_flat_zero_exposure"
+                summary["proof_updated_at_ms"] = projection["updated_at_ms"]
+                superseded_commands.append(summary)
+            else:
+                unresolved_commands.append(summary)
+        facts["superseded_commands"] = sorted(
+            superseded_commands,
+            key=lambda item: (item["symbol"], item["updated_at_ms"], item["command_id"]),
+        )
+        unresolved_symbols = {command["symbol"] for command in unresolved_commands}
+        facts["historical_flat_records"] = [
+            {"symbol": position["symbol"], "sync_state": position["sync_state"],
+             "version": position["version"], "updated_at_ms": position["updated_at_ms"],
+             "proof": "flat_zero_quantity_zero_engaged_notional"}
+            for position in projections.values()
+            if (position["side"] == "Flat" and _number(position["quantity"]) == 0
+                and _number(position["engaged_notional"]) == 0
+                and position["sync_state"] != "synced"
+                and position["symbol"] not in working_limit_symbols
+                and position["symbol"] not in unresolved_symbols)
+        ]
+        if unresolved_commands:
+            facts["unresolved_commands"] = sorted(
+                unresolved_commands,
+                key=lambda item: (item["symbol"], item["updated_at_ms"], item["command_id"]),
+            )
+            counts = {}
+            for command in unresolved_commands:
+                counts[command["symbol"]] = counts.get(command["symbol"], 0) + 1
+            detail = ", ".join(f"{symbol} ({counts[symbol]})" for symbol in sorted(counts))
+            raise Unavailable(
+                "unfinished command lacks a later authoritative flat snapshot: " + detail
+            )
         owners = {}
         reservations = {}
         symbols = set()
@@ -96,7 +159,6 @@ def collect_portfolio_facts(store: SQLiteStore, account: TradingAccountId) -> di
         executions = {}
         for fill in rows["executions"]:
             executions.setdefault(fill["symbol"], []).append(fill)
-        projections = {p["symbol"]: p for p in rows["position_projections"]}
         pending_symbols = set()
         for order in orders.values():
             qty, filled = _number(order["quantity"]), _number(order["filled_quantity"])
@@ -115,7 +177,10 @@ def collect_portfolio_facts(store: SQLiteStore, account: TradingAccountId) -> di
         for symbol in set(executions) | set(projections):
             projection = projections.get(symbol)
             projected = _number(projection["quantity"]) if projection else Decimal(0)
-            if projection and projection["sync_state"] != "synced":
+            if projection and projected == 0:
+                if projection["side"] != "Flat" or _number(projection["engaged_notional"]) != 0:
+                    raise Unavailable("zero position projection is internally inconsistent")
+            elif projection and projection["sync_state"] != "synced":
                 raise Unavailable("position is not reconciled")
             if projected and projection["side"] not in {"Long", "Short"}:
                 raise Unavailable("position side is invalid")
@@ -171,7 +236,7 @@ def collect_portfolio_facts(store: SQLiteStore, account: TradingAccountId) -> di
         facts["working_limits"] = [
             {name: order[name] for name in ("order_id", "symbol", "side", "price", "quantity",
                                            "filled_quantity", "status", "updated_at_ms")}
-            for order in orders.values() if order["status"] in {"open", "partially_filled"}
+            for order in working_limits
         ]
         facts["positions"] = [
             {name: position[name] for name in ("symbol", "side", "quantity", "engaged_notional",
