@@ -947,7 +947,7 @@ class RobotBreakoutMonitorTests(unittest.TestCase):
         self.assertEqual(
             {key: Decimal(value) for key, value in long_skip[1].items()},
             {
-                "entry_price": Decimal("1000"), "min_rr": Decimal("1.5"),
+                "entry_price": Decimal("1000"), "min_rr": Decimal("2"),
                 "stop_price": Decimal("990"), "take_price": Decimal("1014"), "rr": Decimal("1.4"),
             },
         )
