@@ -159,6 +159,12 @@ class PreTradeDecision:
 class PreTradeGuard:
     gate: MutationGate = field(default_factory=MutationGate)
     identity_factory: CommandIdentityFactory = field(default_factory=CommandIdentityFactory)
+    # PAPER-only (issue #450): a MARKET order that only reduces or closes the
+    # confirmed position may be below the exchange minimum notional, so legacy
+    # PAPER dust can be closed through the normal ledger. Minimum quantity,
+    # quantity step, maximum quantity and every trust gate still apply. Never
+    # set for LIVE: the LIVE guard keeps the default (False).
+    paper_reduce_only_below_min_notional: bool = False
 
     def evaluate(self, intent: PreTradeIntent, context: PreTradeContext) -> PreTradeDecision:
         if not self.gate.mutations_enabled:
@@ -242,6 +248,12 @@ class PreTradeGuard:
             reference_price,
             intent.order_kind,
             context.instrument,
+            exempt_min_notional=(
+                self.paper_reduce_only_below_min_notional
+                and reduce_only
+                and intent.order_kind is OrderKind.MARKET
+                and classification in {IntentClassification.REDUCE, IntentClassification.CLOSE}
+            ),
         )
         if limit_error is not None:
             return limit_error
@@ -385,10 +397,10 @@ def _classify_and_cap(intent, context, normalized_quantity):
     return classification, normalized_quantity, False, False
 
 
-def _quantity_limit_error(quantity, price, order_kind, instrument):
+def _quantity_limit_error(quantity, price, order_kind, instrument, *, exempt_min_notional=False):
     if quantity <= 0 or quantity < instrument.min_order_quantity:
         return _blocked(RejectionCode.INSUFFICIENT_VOLUME, "quantity is below instrument minimum")
-    if quantity * price < instrument.min_notional_value:
+    if not exempt_min_notional and quantity * price < instrument.min_notional_value:
         return _blocked(RejectionCode.INSUFFICIENT_VOLUME, "notional is below instrument minimum")
     maximum = (
         instrument.max_market_order_quantity

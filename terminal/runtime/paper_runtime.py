@@ -693,7 +693,10 @@ class PaperRuntime:
         )
 
         application = TradingApplication(
-            PreTradeGuard(gate=MutationGate(mutations_enabled=True)),
+            PreTradeGuard(
+                gate=MutationGate(mutations_enabled=True),
+                paper_reduce_only_below_min_notional=True,
+            ),
             self.store,
             PaperOnlyAdapter(),
             engine,
