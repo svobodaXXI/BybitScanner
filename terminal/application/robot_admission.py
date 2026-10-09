@@ -81,11 +81,9 @@ def _admit_box_plan_candidate(
         if len(sources) != 1:
             raise RobotAdmissionRejected("Scanner candidate is not admissible")
         source = sources[0]
-        if (source.status != "BOX_PLAN_ONLY"
-                or source.trading_account_id != PAPER_ACCOUNT_ID
-                or source.signal_snapshot.get("pattern") != "IKIGAI_BOX"
-                or source.signal_snapshot.get("identity", {}).get("symbol") != source.symbol.value):
-            raise RobotAdmissionRejected("Scanner candidate is not admissible")
+        error = box_plan_source_admission_error(source)
+        if error is not None:
+            raise RobotAdmissionRejected(error)
 
         linked = [
             item for item in candidates
@@ -156,6 +154,66 @@ def active_robot_owner_candidate_ids(
     return tuple(sorted(set(owners)))
 
 
+def scanner_candidate_admission_error(candidate: Mapping[str, Any]) -> str | None:
+    """Pure Scanner-candidate admissibility checks of ``admit_robot_candidate``.
+
+    Returns the rejection message, or None when the immutable candidate may enter
+    admission. Shared with the Autopilot SHADOW fact collector so both use exactly
+    the same per-pattern rules (Wedge 1m/handoff geometry, L-shape frozen terms).
+    An invalid symbol still raises ValueError, in the original order.
+    """
+    if candidate["status"] not in {"AVAILABLE", "APPROVED"}:
+        return "Scanner candidate is not admissible"
+
+    Symbol(str(candidate["symbol"]).strip())
+    snapshot = candidate.get("signal_snapshot")
+    if not isinstance(snapshot, dict):
+        return "Scanner candidate snapshot is invalid"
+    if (snapshot.get("pattern") == "IKIGAI_BOX"
+            or candidate.get("status") == "BOX_PLAN_ONLY"):
+        return "BOX_PLAN_ONLY cannot enter execution admission"
+    is_l_shape = robot_l_shape.is_l_shape_snapshot(snapshot)
+    if not is_l_shape and not is_supported_pattern(snapshot.get("pattern")):
+        return "Scanner candidate pattern is not supported by Robot"
+
+    source_timeframe = str(candidate.get("timeframe", "")).strip()
+    if is_l_shape:
+        if source_timeframe not in {"1", "5"}:
+            return "L-shape Robot supports only 1m or 5m source timeframe"
+        if snapshot.get("robot_handoff_ready") is not True:
+            return "L-shape candidate has no Robot handoff"
+        try:
+            terms = robot_l_shape.frozen_terms(snapshot)
+        except robot_l_shape.RobotLShapeError:
+            return "Scanner candidate snapshot is invalid"
+        if source_timeframe != terms.source_timeframe:
+            return "L-shape source timeframe conflicts with frozen terms"
+    elif source_timeframe != "1":
+        if snapshot.get("robot_handoff_ready") is not True:
+            return "Scanner candidate has no proven Robot 1m handoff"
+        if not isinstance(snapshot.get("robot_geometry"), dict):
+            return "Scanner candidate has no projected Robot geometry"
+        cursor = snapshot.get("scanner_geometry_cursor")
+        if (
+            not isinstance(cursor, dict)
+            or str(cursor.get("timeframe", "")).strip() != "1"
+        ):
+            return "Scanner candidate has no Robot 1m geometry cursor"
+    return None
+
+
+def box_plan_source_admission_error(
+    source: RobotCandidateRecord, trading_account_id: TradingAccountId = PAPER_ACCOUNT_ID,
+) -> str | None:
+    """Pure source checks of the owner Box admission (shared with Autopilot SHADOW)."""
+    if (source.status != "BOX_PLAN_ONLY"
+            or source.trading_account_id != trading_account_id
+            or source.signal_snapshot.get("pattern") != "IKIGAI_BOX"
+            or source.signal_snapshot.get("identity", {}).get("symbol") != source.symbol.value):
+        return "Scanner candidate is not admissible"
+    return None
+
+
 def admit_robot_candidate(
     candidate_id: str,
     *,
@@ -177,51 +235,12 @@ def admit_robot_candidate(
         )
 
     candidate = load_candidate(candidate_id, store_dir=store_dir)
-    if candidate["status"] not in {"AVAILABLE", "APPROVED"}:
-        raise RobotAdmissionRejected("Scanner candidate is not admissible")
-
+    error = scanner_candidate_admission_error(candidate)
+    if error is not None:
+        raise RobotAdmissionRejected(error)
     symbol = Symbol(str(candidate["symbol"]).strip())
-    snapshot = candidate.get("signal_snapshot")
-    if not isinstance(snapshot, dict):
-        raise RobotAdmissionRejected("Scanner candidate snapshot is invalid")
-    if (snapshot.get("pattern") == "IKIGAI_BOX"
-            or candidate.get("status") == "BOX_PLAN_ONLY"):
-        raise RobotAdmissionRejected("BOX_PLAN_ONLY cannot enter execution admission")
+    snapshot = candidate["signal_snapshot"]
     is_l_shape = robot_l_shape.is_l_shape_snapshot(snapshot)
-    if not is_l_shape and not is_supported_pattern(snapshot.get("pattern")):
-        raise RobotAdmissionRejected("Scanner candidate pattern is not supported by Robot")
-
-    source_timeframe = str(candidate.get("timeframe", "")).strip()
-    if is_l_shape:
-        if source_timeframe not in {"1", "5"}:
-            raise RobotAdmissionRejected(
-                "L-shape Robot supports only 1m or 5m source timeframe"
-            )
-        if snapshot.get("robot_handoff_ready") is not True:
-            raise RobotAdmissionRejected("L-shape candidate has no Robot handoff")
-        try:
-            terms = robot_l_shape.frozen_terms(snapshot)
-        except robot_l_shape.RobotLShapeError as exc:
-            raise RobotAdmissionRejected("Scanner candidate snapshot is invalid") from exc
-        if source_timeframe != terms.source_timeframe:
-            raise RobotAdmissionRejected("L-shape source timeframe conflicts with frozen terms")
-    elif source_timeframe != "1":
-        if snapshot.get("robot_handoff_ready") is not True:
-            raise RobotAdmissionRejected(
-                "Scanner candidate has no proven Robot 1m handoff"
-            )
-        if not isinstance(snapshot.get("robot_geometry"), dict):
-            raise RobotAdmissionRejected(
-                "Scanner candidate has no projected Robot geometry"
-            )
-        cursor = snapshot.get("scanner_geometry_cursor")
-        if (
-            not isinstance(cursor, dict)
-            or str(cursor.get("timeframe", "")).strip() != "1"
-        ):
-            raise RobotAdmissionRejected(
-                "Scanner candidate has no Robot 1m geometry cursor"
-            )
 
     resolved_database_path = (
         Path(database_path) if database_path is not None else DEFAULT_DATABASE_PATH

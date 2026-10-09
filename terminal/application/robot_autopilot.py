@@ -16,7 +16,7 @@ from terminal.persistence.sqlite_store import (
 )
 
 
-POLICY_VERSION = "robot-autopilot-shadow-v0.1"
+POLICY_VERSION = "robot-autopilot-shadow-v0.2"
 
 OUTCOME_ALLOW = "ALLOW"
 OUTCOME_WAIT = "WAIT"
@@ -35,6 +35,7 @@ REASON_ROBOT_NOT_READY = "ROBOT_NOT_READY"
 REASON_RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
 REASON_SYMBOL_OWNED = "SYMBOL_OWNED"
 REASON_PROTECTION_UNHEALTHY = "PROTECTION_UNHEALTHY"
+REASON_PROTECTION_HEALTH_UNKNOWN = "PROTECTION_HEALTH_UNKNOWN"
 REASON_PORTFOLIO_POLICY_UNSET = "PORTFOLIO_POLICY_UNSET"
 
 
@@ -51,7 +52,8 @@ class RobotAutoAdmissionFacts:
     already_admitted: bool
     reconciliation_clear: bool
     symbol_owned: bool
-    protection_healthy: bool
+    # None: no authoritative protection-health source -> WAIT, never assumed healthy.
+    protection_healthy: bool | None
     portfolio_policy_ready: bool
 
 
@@ -89,6 +91,8 @@ def evaluate_auto_admission(
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_RECONCILIATION_REQUIRED)
     if facts.symbol_owned:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_SYMBOL_OWNED)
+    if facts.protection_healthy is None:
+        return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PROTECTION_HEALTH_UNKNOWN)
     if not facts.protection_healthy:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PROTECTION_UNHEALTHY)
     if not facts.portfolio_policy_ready:

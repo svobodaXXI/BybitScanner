@@ -8,12 +8,46 @@ action. It does not approve candidates, execute orders, or alter protection.
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 from robot_candidate_store import create_signal_snapshot
 from robot_failure_diagnostics import record_robot_incident
 from robot_state_machine import is_supported_pattern
+
+
+# Optional observer of persisted Robot candidates (Autopilot SHADOW, issue #446).
+# Bound only for the duration of one in-process Scanner pass, on that pass's own
+# thread: a ContextVar keeps concurrent passes on other threads isolated and
+# restores the outer observer for a nested pass. It can never affect delivery
+# or the handoff result.
+_candidate_observer: ContextVar[Callable[[str], None] | None] = ContextVar(
+    "robot_candidate_observer", default=None,
+)
+
+
+@contextmanager
+def robot_candidate_observer(observer: Callable[[str], None] | None) -> Iterator[None]:
+    token = _candidate_observer.set(observer)
+    try:
+        yield
+    finally:
+        _candidate_observer.reset(token)
+
+
+def _notify_candidate_observer(candidate_id: str) -> None:
+    observer = _candidate_observer.get()
+    if observer is None:
+        return
+    try:
+        observer(candidate_id)
+    except Exception as error:
+        print(
+            "[AUTOPILOT SHADOW OBSERVER ERROR] "
+            f"candidate_id={candidate_id} error_class={type(error).__name__}"
+        )
 
 
 L_SHAPE_PATTERN = "L-shape"
@@ -148,6 +182,7 @@ def prepare_robot_handoff(
             persistence_failed=True,
         )
 
+    _notify_candidate_observer(candidate_id)
     return RobotHandoffResult(
         executable=True,
         candidate_id=candidate_id,
