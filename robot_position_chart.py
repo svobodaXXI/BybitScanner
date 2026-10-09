@@ -191,15 +191,17 @@ def _frozen_box_levels(view: PositionView) -> tuple[tuple[Decimal, str], ...]:
             raise ValueError("Box grid contains non-positive or nonfinite price")
         if (frozen_f1, frozen_f1618) != levels[:2]:
             raise ValueError("Box Fibonacci and frozen executable plan disagree")
-        direction = snapshot.get("identity", {}).get("direction")
-        if direction == "LONG":
-            if not (levels[2] < entries[3] < levels[1] < entries[2] < entries[1] < entries[0] < take < levels[0]):
-                raise ValueError("Box LONG levels out of order")
-        elif direction == "SHORT":
-            if not (levels[2] > entries[3] > levels[1] > entries[2] > entries[1] > entries[0] > take > levels[0]):
-                raise ValueError("Box SHORT levels out of order")
-        else:
-            raise ValueError("Box direction missing")
+        identity = snapshot.get("identity")
+        direction = identity.get("direction") if isinstance(identity, Mapping) else None
+        if direction not in ("LONG", "SHORT") or direction != view.direction:
+            raise ValueError("Box direction missing or contradicts the position")
+        # Order is the planner contract: only P4 must lie beyond F1.618. Tick
+        # rounding can legitimately put P3 beyond it, so P3 is not constrained.
+        sign = 1 if direction == "LONG" else -1
+        chain = (levels[2], entries[3], entries[2], entries[1], entries[0], take, levels[0])
+        if not (sign * (levels[1] - entries[3]) > 0
+                and all(sign * (b - a) > 0 for a, b in zip(chain, chain[1:]))):
+            raise ValueError(f"Box {direction} levels out of order")
     except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
         raise PositionChartError("IKIGAI_BOX frozen grid cannot be proven") from exc
     return (

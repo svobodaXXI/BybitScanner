@@ -49,6 +49,42 @@ class FrozenBoxChartTests(unittest.TestCase):
                 )
                 self.assertEqual(chart._frozen_box_levels(view), actual)
 
+    def _levels(self, snapshot, direction):
+        view = _view(pattern="IKIGAI_BOX", direction=direction, signal_snapshot=snapshot,
+                     trade=_trade(pattern="IKIGAI_BOX"))
+        return chart._frozen_box_levels(view)
+
+    def test_real_tick_rounded_plans_with_p3_beyond_f1618_are_drawn(self):
+        # Stored PAPER plans (APEXUSDT LONG, IMXUSDT SHORT): P3 sits beyond F1.618, P4 further.
+        cases = {
+            "LONG": ("0.2212", "0.2170594", "0.2103594", ["0.218", "0.2175", "0.217", "0.2165"], "0.2207"),
+            "SHORT": ("0.1709", "0.1729394", "0.1762394", ["0.1725", "0.1728", "0.1731", "0.1734"], "0.1712"),
+        }
+        for direction, (f1, f1618, f2618, entries, take) in cases.items():
+            with self.subTest(direction=direction):
+                snapshot = {
+                    "pattern": "IKIGAI_BOX", "identity": {"direction": direction},
+                    "fibonacci": {"f1": f1, "f1618": f1618, "f2618": f2618},
+                    "plan": {"frozen_f1": f1, "frozen_f1618": f1618,
+                             "limit_prices": entries, "take_price": take},
+                }
+                self.assertEqual([label for _, label in self._levels(snapshot, direction)],
+                                 ["F1.0", "F1.618", "F2.618", "P1", "P2", "P3", "P4"])
+
+    def test_p4_not_beyond_f1618_or_wrong_direction_fails_closed(self):
+        for direction in ("LONG", "SHORT"):
+            with self.subTest(direction=direction):
+                snapshot = box_snapshot(direction)
+                snapshot["plan"]["limit_prices"][3] = snapshot["fibonacci"]["f1618"]
+                with self.assertRaises(PositionChartError):
+                    self._levels(snapshot, direction)
+        with self.assertRaises(PositionChartError):
+            self._levels(box_snapshot("LONG"), "SHORT")
+        broken = box_snapshot("LONG")
+        broken["identity"] = "LONG"
+        with self.assertRaises(PositionChartError):
+            self._levels(broken, "LONG")
+
     def test_open_box_draws_frozen_grid_and_entry_stop_take(self):
         view = _view(pattern="IKIGAI_BOX", signal_snapshot=box_snapshot(),
                      trade=_trade(pattern="IKIGAI_BOX"))
