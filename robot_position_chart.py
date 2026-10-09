@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import math
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -162,6 +163,53 @@ def _draw_level(ax, price: float, label: str, color: str, style: str) -> None:
     )
 
 
+def _frozen_box_levels(view: PositionView) -> tuple[tuple[Decimal, str], ...]:
+    """Read the immutable originating Box plan, never infer from market price.
+
+    A missing or contradictory frozen plan is a rendering error for an open
+    Box, rather than silently drawing invented Fibonacci geometry.
+    """
+    snapshot = view.signal_snapshot
+    if not isinstance(snapshot, Mapping) or snapshot.get("pattern") != "IKIGAI_BOX":
+        raise PositionChartError("IKIGAI_BOX position has no proven frozen snapshot")
+    fib = snapshot.get("fibonacci")
+    plan = snapshot.get("plan")
+    if not isinstance(fib, Mapping) or not isinstance(plan, Mapping):
+        raise PositionChartError("IKIGAI_BOX frozen Fibonacci/grid unavailable")
+    try:
+        levels = tuple(
+            Decimal(str(fib[key])) for key in ("f1", "f1618", "f2618")
+        )
+        prices = plan["limit_prices"]
+        if not isinstance(prices, (list, tuple)) or len(prices) != 4:
+            raise ValueError("Box entry grid must contain four frozen levels")
+        entries = tuple(Decimal(str(value)) for value in prices)
+        take = Decimal(str(plan["take_price"]))
+        frozen_f1 = Decimal(str(plan["frozen_f1"]))
+        frozen_f1618 = Decimal(str(plan["frozen_f1618"]))
+        if not all(x.is_finite() and x > 0 for x in (*levels, *entries, take)):
+            raise ValueError("Box grid contains non-positive or nonfinite price")
+        if (frozen_f1, frozen_f1618) != levels[:2]:
+            raise ValueError("Box Fibonacci and frozen executable plan disagree")
+        identity = snapshot.get("identity")
+        direction = identity.get("direction") if isinstance(identity, Mapping) else None
+        if direction not in ("LONG", "SHORT") or direction != view.direction:
+            raise ValueError("Box direction missing or contradicts the position")
+        # Order is the planner contract: only P4 must lie beyond F1.618. Tick
+        # rounding can legitimately put P3 beyond it, so P3 is not constrained.
+        sign = 1 if direction == "LONG" else -1
+        chain = (levels[2], entries[3], entries[2], entries[1], entries[0], take, levels[0])
+        if not (sign * (levels[1] - entries[3]) > 0
+                and all(sign * (b - a) > 0 for a, b in zip(chain, chain[1:]))):
+            raise ValueError(f"Box {direction} levels out of order")
+    except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+        raise PositionChartError("IKIGAI_BOX frozen grid cannot be proven") from exc
+    return (
+        (levels[0], "F1.0"), (levels[1], "F1.618"), (levels[2], "F2.618"),
+        *((price, f"P{i}") for i, price in enumerate(entries, start=1)),
+    )
+
+
 def render_position_chart(
     view: PositionView,
     candles_df,
@@ -201,6 +249,10 @@ def render_position_chart(
             (view.take_price, "TP", TAKE_COLOR, "-"),
         ]
         prices = [float(df["low"].min()), float(df["high"].max())]
+        if view.pattern == "IKIGAI_BOX" and view.trade is not None and view.exit_time_ms is None:
+            for level, label in _frozen_box_levels(view):
+                _draw_level(ax, float(level), label, LINE_COLOR, ":")
+                prices.append(float(level))
         for price, label, color, style in levels:
             if price is not None:
                 _draw_level(ax, float(price), label, color, style)
