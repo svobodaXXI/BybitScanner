@@ -1,3 +1,5 @@
+> **Current owner Wedge RR decision (2026-10-09):** minimum executable RR for Falling/Rising Wedge is **1.5:1**, not 2:1. See `DOCUMENTS/WEDGE_ROBOT_RR_OWNER_DECISION_20261009.md`. PR #440 was closed unmerged; Box and L-shape remain governed by their own thresholds.
+
 # BybitScanner — Unified Signal / Robot Integration Standard
 
 Status: ACTIVE  

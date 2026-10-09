@@ -1,3 +1,5 @@
+> **Current owner Wedge RR decision (2026-10-09):** minimum executable RR for Falling/Rising Wedge is **1.5:1**, not 2:1. See `DOCUMENTS/WEDGE_ROBOT_RR_OWNER_DECISION_20261009.md`. PR #440 was closed unmerged; Box and L-shape remain governed by their own thresholds.
+
 # BybitScanner — доказательный разбор веток и PR (этап 1)
 Дата: 2026-10-09. Статус: read-only findings, **без runtime/code-изменений**.
 Связан с `DOCUMENTS/WORKFLOW_ACCELERATION_AUDIT_PLAN_20261009.md`.
