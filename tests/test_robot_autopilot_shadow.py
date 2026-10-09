@@ -229,6 +229,35 @@ class ShadowRuntimeHookTests(unittest.TestCase):
             finally:
                 runtime.close()
 
+    def test_shadow_failure_never_blocks_box_freeze_or_scanner_handoff(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as temp:
+            runtime = self._runtime(temp, "SHADOW")
+            try:
+                with patch("terminal.runtime.paper_runtime.observe_shadow_candidate",
+                           side_effect=RuntimeError("shadow failure")):
+                    source_id = runtime._dispatch_ikigai_box_plan_preparation(
+                        "BTCUSDT", "5", _CONFIRMED_BOX_FORMATION)
+                self.assertEqual(runtime.store.get_robot_candidate(source_id).status, "BOX_PLAN_ONLY")
+                self.assertEqual(runtime.store.load_robot_auto_decisions(ACCOUNT), ())
+
+                # An unbound or failing owner dispatch must not break the Scanner handoff.
+                runtime._robot_command_dispatcher = None
+                original = integration.create_signal_snapshot
+                integration.create_signal_snapshot = lambda snapshot, *, timeframe: create_signal_snapshot(
+                    snapshot, timeframe=timeframe, store_dir=Path(temp) / "candidates")
+                try:
+                    with integration.robot_candidate_observer(
+                            runtime._dispatch_autopilot_shadow_scanner_candidate):
+                        handoff = integration.prepare_robot_handoff(
+                            {"symbol": "ONGUSDT", "pattern": "Falling Wedge"}, timeframe="1", enabled=True)
+                finally:
+                    integration.create_signal_snapshot = original
+                self.assertTrue(handoff.executable and handoff.candidate_id)
+            finally:
+                runtime.close()
+
     def test_box_plan_freeze_with_autopilot_off_records_nothing(self):
         with tempfile.TemporaryDirectory() as temp:
             runtime = self._runtime(temp, "OFF")
@@ -285,11 +314,11 @@ class CandidateObserverScopeTests(unittest.TestCase):
                 snapshot, timeframe=timeframe, store_dir=Path(temp))
             try:
                 snapshot = {"symbol": "ONGUSDT", "pattern": "Falling Wedge"}
-                self.assertIsNone(integration._candidate_observer)
+                self.assertIsNone(integration._candidate_observer.get())
                 with integration.robot_candidate_observer(seen.append):
                     result = integration.prepare_robot_handoff(snapshot, timeframe="1", enabled=True)
                 self.assertEqual(seen, [result.candidate_id])
-                self.assertIsNone(integration._candidate_observer)
+                self.assertIsNone(integration._candidate_observer.get())
 
                 def broken(_candidate_id):
                     raise RuntimeError("observer failure")
