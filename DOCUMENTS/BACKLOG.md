@@ -2,9 +2,9 @@
 
 Owner explicitly reprioritized: **repository consistency and workflow audit first**; the first laptop PAPER launch is **deferred**, not cancelled, until the owner resumes it. This overrides the historical September `NOW` sections below for task selection only.
 
-Execution boundary: document and repair only evidence-backed repository/process inconsistencies using a separate review branch. Do not auto-merge `main` into `stable/adfb50b-forward`, change runtime, alter safety gates, launch Scanner/Robot, or overwrite dirty worktrees. The running laptop remains the owner-controlled PAPER target. The latest owner-reported migration checkpoint is restored STOPPED; a new live start has not been verified.
+Execution boundary: document and repair only evidence-backed repository/process inconsistencies using a separate review branch. Do not auto-merge `main` into `stable/adfb50b-forward`, change runtime, alter safety gates, launch Scanner/Robot, or overwrite dirty worktrees. The laptop remains the designated owner-controlled PAPER host; no successful post-transfer runtime start has been confirmed. The latest owner-reported migration checkpoint is restored STOPPED; a new live start has not been verified.
 
-Audit evidence/plan: `DOCUMENTS/WORKFLOW_ACCELERATION_AUDIT_PLAN_20261009.md`, `DOCUMENTS/WORKFLOW_ACCELERATION_FINDINGS_20261009.md`, `DOCUMENTS/WORKFLOW_ACCELERATION_CI_FINDINGS_20261009.md` on `docs/workflow-acceleration-audit-20261009`. The current documentation branch is a review candidate; this index does not imply those files have been merged into stable.
+Audit evidence/plan: `DOCUMENTS/WORKFLOW_ACCELERATION_AUDIT_PLAN_20261009.md`, `DOCUMENTS/WORKFLOW_ACCELERATION_FINDINGS_20261009.md`, `DOCUMENTS/WORKFLOW_ACCELERATION_CI_FINDINGS_20261009.md`. These references become authoritative in stable only if this documentation PR is merged.
 
 Next: resolve only confirmed authority/navigation inconsistencies; keep existing selective backport unless proven costly. After the owner resumes operational work: first laptop PAPER launch → Robot Stability → Geometry Quality. No XP for planning/documentation alone.
 
