@@ -365,7 +365,7 @@ def format_position_card(view: PositionView) -> str:
         f"{view.symbol} · {view.direction}",
         "",
         f"Статус: {'открыта' if view.is_open else 'закрыта'}",
-        f"Объем: {volume_text}",
+        f"Объём: {volume_text}",
         f"Средний вход: {format_price(view.average_entry)}",
     ]
     if view.is_open:
@@ -381,8 +381,8 @@ def format_position_card(view: PositionView) -> str:
         if trade.realized_pnl_usdt is not None:
             lines.append(format_trade_result(view))
     lines += [
-        f"STOP: {format_price(view.stop_price)}",
-        f"TAKE: {format_price(view.take_price)}",
+        f"SL: {format_price(view.stop_price)}",
+        f"TP: {format_price(view.take_price)}",
         f"Паттерн: {view.pattern or '—'}",
     ]
     if view.entry_before_chart:
