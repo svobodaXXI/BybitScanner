@@ -2145,7 +2145,9 @@ class RobotBreakoutMonitor:
         meets the threshold. Existing filled positions continue through their
         independent post-fill protection and emergency-close lifecycle.
         """
-        threshold = robot_protection.min_entry_rr()
+        # Wedge executable entries require RR >= 2; configuration may tighten,
+        # but never relax, the owner-approved admission floor (issue #419).
+        threshold = max(robot_protection.min_entry_rr(), Decimal("2"))
         details: dict[str, object] = {
             "entry_price": str(plan.request.limit_price), "min_rr": str(threshold),
         }
