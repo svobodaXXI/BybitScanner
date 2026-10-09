@@ -7,7 +7,8 @@ active-status reads made on every protection event, book update and coverage
 resync walked the whole candidate history (~200 ms per read on a copy of the
 laptop DB, growing with history). Main adds the indexes as schema v25; stable
 is pinned to schema 24 ("no migration"), so SQLiteStore.open() creates the same
-two indexes idempotently and leaves user_version at 24.
+two indexes idempotently. A3 later adds facts_json in schema v25; the index
+contract remains independent of that additive audit migration.
 
 Cost is measured in SQLite VM steps (deterministic), not wall time.
 """
@@ -121,36 +122,34 @@ def _open_recording(path: Path) -> tuple[SQLiteStore, list[str]]:
     return store, holder[0].statements
 
 
-def _make_v24_without_indexes(path: Path) -> None:
+def _make_current_without_indexes(path: Path) -> None:
     store = SQLiteStore.open(path)
     try:
         _seed_history(store, 0, 3)
         _drop_hot_indexes(store)
     finally:
         store.close()
-    assert _raw_state(path) == (24, set())
+    assert _raw_state(path) == (schema.SCHEMA_VERSION, set())
 
 
-class SchemaStaysAt24Tests(unittest.TestCase):
-    def test_schema_module_is_unchanged_at_24(self):
-        self.assertEqual(schema.SCHEMA_VERSION, 24)
-        self.assertFalse(hasattr(schema, "SCHEMA_V25_MIGRATION_STATEMENTS"))
+class IndexMigrationIndependenceTests(unittest.TestCase):
+    def test_indexes_remain_outside_versioned_schema(self):
         self.assertFalse(any("robot_candidates_account" in sql for sql in schema.SCHEMA_STATEMENTS))
 
 
 class IndexLifecycleTests(unittest.TestCase):
-    def test_fresh_database_gets_both_indexes_at_user_version_24(self):
+    def test_fresh_database_gets_both_indexes_at_current_version(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "paper.sqlite3"
             SQLiteStore.open(path).close()
             version, names = _raw_state(path)
-            self.assertEqual(version, 24)
+            self.assertEqual(version, schema.SCHEMA_VERSION)
             self.assertTrue(set(HOT_INDEXES).issubset(names))
 
-    def test_existing_v24_database_without_indexes_is_upgraded_in_place(self):
+    def test_existing_database_without_indexes_is_upgraded_in_place(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "paper.sqlite3"
-            _make_v24_without_indexes(path)
+            _make_current_without_indexes(path)
             store = SQLiteStore.open(path)
             try:
                 before = store.load_robot_candidates(ACCOUNT)
@@ -158,13 +157,13 @@ class IndexLifecycleTests(unittest.TestCase):
             finally:
                 store.close()
             version, names = _raw_state(path)
-            self.assertEqual(version, 24)  # no migration, no version bump
+            self.assertEqual(version, schema.SCHEMA_VERSION)  # indexes do not change the current schema version
             self.assertTrue(set(HOT_INDEXES).issubset(names))
 
     def test_second_open_issues_no_write_transaction(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "paper.sqlite3"
-            _make_v24_without_indexes(path)
+            _make_current_without_indexes(path)
 
             first, first_statements = _open_recording(path)
             first.close()
@@ -178,12 +177,12 @@ class IndexLifecycleTests(unittest.TestCase):
             joined = " ".join(second_statements).upper()
             self.assertNotIn("BEGIN", joined)
             self.assertNotIn("CREATE INDEX", joined)
-            self.assertEqual(_raw_state(path)[0], 24)
+            self.assertEqual(_raw_state(path)[0], schema.SCHEMA_VERSION)
 
     def test_partially_indexed_database_only_creates_the_missing_index(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "paper.sqlite3"
-            _make_v24_without_indexes(path)
+            _make_current_without_indexes(path)
             connection = sqlite3.connect(path)
             connection.execute(
                 "CREATE INDEX robot_candidates_account_symbol "
@@ -198,7 +197,7 @@ class IndexLifecycleTests(unittest.TestCase):
             self.assertEqual(len(created), 1)
             self.assertIn("robot_candidates_account_status", created[0])
             version, names = _raw_state(path)
-            self.assertEqual(version, 24)
+            self.assertEqual(version, schema.SCHEMA_VERSION)
             self.assertTrue(set(HOT_INDEXES).issubset(names))
 
 

@@ -51,6 +51,7 @@ def eligible_facts(**changes):
         symbol_owned=False,
         protection_healthy=True,
         portfolio_policy_ready=True,
+        portfolio_facts={"available": True, "occupied_ro": 0},
     )
     values.update(changes)
     return RobotAutoAdmissionFacts(**values)

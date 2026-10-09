@@ -6,8 +6,9 @@ caller-supplied authoritative facts, then may append an immutable audit record.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 import hashlib
+import json
 
 from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import (
@@ -16,7 +17,7 @@ from terminal.persistence.sqlite_store import (
 )
 
 
-POLICY_VERSION = "robot-autopilot-shadow-v0.2"
+POLICY_VERSION = "robot-autopilot-shadow-v0.3"
 
 OUTCOME_ALLOW = "ALLOW"
 OUTCOME_WAIT = "WAIT"
@@ -37,6 +38,8 @@ REASON_SYMBOL_OWNED = "SYMBOL_OWNED"
 REASON_PROTECTION_UNHEALTHY = "PROTECTION_UNHEALTHY"
 REASON_PROTECTION_HEALTH_UNKNOWN = "PROTECTION_HEALTH_UNKNOWN"
 REASON_PORTFOLIO_POLICY_UNSET = "PORTFOLIO_POLICY_UNSET"
+REASON_PORTFOLIO_DATA_UNAVAILABLE = "PORTFOLIO_DATA_UNAVAILABLE"
+REASON_PORTFOLIO_AGGREGATE_CAP = "PORTFOLIO_AGGREGATE_CAP"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +58,7 @@ class RobotAutoAdmissionFacts:
     # None: no authoritative protection-health source -> WAIT, never assumed healthy.
     protection_healthy: bool | None
     portfolio_policy_ready: bool
+    portfolio_facts: dict | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +101,14 @@ def evaluate_auto_admission(
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PROTECTION_UNHEALTHY)
     if not facts.portfolio_policy_ready:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_POLICY_UNSET)
+    portfolio = facts.portfolio_facts
+    if not portfolio or portfolio.get("available") is not True:
+        return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_DATA_UNAVAILABLE)
+    occupied = portfolio.get("occupied_ro")
+    if type(occupied) is not int or occupied < 0:
+        return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_DATA_UNAVAILABLE)
+    if occupied + 1 > 19:
+        return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_PORTFOLIO_AGGREGATE_CAP)
     return RobotAutoAdmissionResult(OUTCOME_ALLOW, REASON_ELIGIBLE)
 
 
@@ -149,5 +161,6 @@ def record_auto_decision(
         reason_code=result.reason_code,
         evaluated_at_ms=evaluated_at_ms,
         resulting_candidate_id=None,
+        facts_json=json.dumps(asdict(facts), sort_keys=True, separators=(",", ":")),
     )
     return store.append_robot_auto_decision(record)

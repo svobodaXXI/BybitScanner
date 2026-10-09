@@ -1,6 +1,6 @@
 """Versioned SQLite schema for Terminal execution recovery state."""
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 SCHEMA_V1_STATEMENTS = (
     """
@@ -896,6 +896,10 @@ SCHEMA_V24_MIGRATION_STATEMENTS = (
        BEGIN SELECT RAISE(ABORT, 'Robot auto decision audit cannot be deleted'); END""",
 )
 
+SCHEMA_V25_MIGRATION_STATEMENTS = (
+    "ALTER TABLE robot_auto_decisions ADD COLUMN facts_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(facts_json) AND json_type(facts_json) = 'object')",
+)
+
 SCHEMA_STATEMENTS = (
     SCHEMA_V1_STATEMENTS
     + SCHEMA_V2_MIGRATION_STATEMENTS
@@ -921,4 +925,5 @@ SCHEMA_STATEMENTS = (
     + SCHEMA_V22_MIGRATION_STATEMENTS
     + SCHEMA_V23_MIGRATION_STATEMENTS
     + SCHEMA_V24_MIGRATION_STATEMENTS
+    + SCHEMA_V25_MIGRATION_STATEMENTS
 )

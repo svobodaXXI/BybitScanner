@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -58,6 +58,7 @@ from .schema import (
     SCHEMA_V22_MIGRATION_STATEMENTS,
     SCHEMA_V23_MIGRATION_STATEMENTS,
     SCHEMA_V24_MIGRATION_STATEMENTS,
+    SCHEMA_V25_MIGRATION_STATEMENTS,
     SCHEMA_VERSION,
 )
 
@@ -545,6 +546,7 @@ class RobotAutoDecisionRecord:
     reason_code: str
     evaluated_at_ms: int
     resulting_candidate_id: str | None
+    facts_json: str = "{}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -674,6 +676,7 @@ def _robot_auto_decision_from_row(row: sqlite3.Row) -> RobotAutoDecisionRecord:
         reason_code=row["reason_code"],
         evaluated_at_ms=int(row["evaluated_at_ms"]),
         resulting_candidate_id=row["resulting_candidate_id"],
+        facts_json=row["facts_json"],
     )
 
 
@@ -1100,6 +1103,10 @@ class SQLiteStore:
         version = int(connection.execute("PRAGMA user_version").fetchone()[0])
         if version == SCHEMA_VERSION:
             SQLiteStore._validate_required_tables(connection, version=SCHEMA_VERSION)
+            return
+        if version == 24:
+            SQLiteStore._validate_required_tables(connection, version=24)
+            SQLiteStore._migrate_v24_to_v25(connection)
             return
         if version == 23:
             SQLiteStore._validate_required_tables(connection, version=23)
@@ -1548,6 +1555,20 @@ class SQLiteStore:
             for statement in SCHEMA_V24_MIGRATION_STATEMENTS:
                 connection.execute(statement)
             connection.execute("PRAGMA user_version = 24")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+        SQLiteStore._migrate_v24_to_v25(connection)
+
+    @staticmethod
+    def _migrate_v24_to_v25(connection: sqlite3.Connection) -> None:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in SCHEMA_V25_MIGRATION_STATEMENTS:
+                connection.execute(statement)
+            connection.execute("PRAGMA user_version = 25")
             connection.execute("COMMIT")
         except Exception:
             connection.execute("ROLLBACK")
@@ -4183,6 +4204,31 @@ class SQLiteStore:
                 raise ConcurrentUpdate("Robot Autopilot state changed or timestamp regressed")
         return self.get_robot_autopilot_state(trading_account_id)  # type: ignore[return-value]
 
+    @contextmanager
+    def autopilot_decision_transaction(self) -> Iterator[None]:
+        """Serialize SHADOW snapshot + virtual reservation; only audit may be written.
+
+        BEGIN IMMEDIATE also excludes other SQLite connections, not only this
+        store's owner thread. No change to the general trading transaction API.
+        """
+        with self._transaction():
+            self._autopilot_transaction = True
+            try:
+                yield
+            finally:
+                self._autopilot_transaction = False
+
+    def load_paper_portfolio_rows(self, account: TradingAccountId) -> dict[str, tuple[dict, ...]]:
+        """Read account-scoped facts; caller holds the decision snapshot transaction."""
+        self._assert_owner()
+        if account.value != "paper":
+            raise ValueError("portfolio collector is PAPER-only")
+        tables = ("paper_limit_orders", "box_order_ownership", "executions",
+                  "position_projections", "trading_commands")
+        return {table: tuple(dict(row) for row in self._connection.execute(
+            f"SELECT * FROM {table} WHERE trading_account_id=?", (account.value,),
+        )) for table in tables}
+
     def append_robot_auto_decision(
         self, record: RobotAutoDecisionRecord,
     ) -> tuple[RobotAutoDecisionRecord, bool]:
@@ -4216,21 +4262,22 @@ class SQLiteStore:
             if existing != record:
                 raise DuplicateIdentity("Robot auto decision identity conflicts with durable audit")
             return existing, False
-        with self._transaction():
+        context = nullcontext() if getattr(self, "_autopilot_transaction", False) else self._transaction()
+        with context:
             try:
                 self._connection.execute(
                     """INSERT INTO robot_auto_decisions (
                         decision_id, trading_account_id, candidate_ref, pattern, symbol,
                         timeframe, source_identity, snapshot_sha256, mode, policy_version,
-                        outcome, reason_code, evaluated_at_ms, resulting_candidate_id
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        outcome, reason_code, evaluated_at_ms, resulting_candidate_id, facts_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         record.decision_id, record.trading_account_id.value,
                         record.candidate_ref, record.pattern, record.symbol.value,
                         record.timeframe, record.source_identity, record.snapshot_sha256,
                         record.mode, record.policy_version, record.outcome,
                         record.reason_code, record.evaluated_at_ms,
-                        record.resulting_candidate_id,
+                        record.resulting_candidate_id, record.facts_json,
                     ),
                 )
             except sqlite3.IntegrityError as exc:

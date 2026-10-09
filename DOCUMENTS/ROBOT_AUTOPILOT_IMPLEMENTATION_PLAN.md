@@ -480,3 +480,29 @@ The first useful product result is a SHADOW report answering:
 
 Only after that evidence exists do we connect the same ALLOW result to
 canonical PAPER admission.
+
+
+## A3 owner override — 2026-10-10 / #446
+
+SHADOW uses First Eligible with fixed reference capital 5000 USDT, 1 RO =
+250 USDT, aggregate cap 19 RO (4750 USDT). An eligible next selection at
+18 RO reaches 19; at 19 or more it waits PORTFOLIO_AGGREGATE_CAP.
+Each identified Robot idea reserves one full RO across fills and resting orders.
+Each manual working LIMIT without proven shared identity reserves one RO.
+Fills of that same order share its reservation. Manual net positions without
+fill history and without overlapping obligations reserve at least one RO,
+rounded up by 250 USDT notional; mixed/ambiguous positions or partial reductions
+across multiple ideas fail closed with PORTFOLIO_DATA_UNAVAILABLE.
+The collector does not create manual idea identity or mutate trading objects.
+
+The existing append-only audit gains facts_json through additive schema v25;
+legacy rows retain {}. Deferred per-asset 2 RO, correlation, cluster, direction
+and daily-loss controls are NOT_EVALUATED. They are never reported as passed.
+Snapshot, replay lookup and ALLOW append share BEGIN IMMEDIATE, serializing
+parallel callers across SQLite connections. Repeats return the original facts.
+ALLOW rows are virtual SHADOW reservations, independent of real PAPER capital.
+They survive OFF/restart and do not expire speculatively. A linked physical
+Robot idea replaces the virtual reservation; a terminal linked idea releases
+it only when no physical obligation remains. Pure SHADOW does not simulate
+closure; unresolved virtual selections keep capacity reserved conservatively.
+No new executor, admission/RR change, LIVE, #447/#448 work or PAPER_AUTO enablement.

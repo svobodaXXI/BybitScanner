@@ -12,7 +12,7 @@ evaluated in arrival order, one by one; the audit order is that order.
 Facts come only from authoritative state. A fact without an authoritative
 source is reported as such (WAIT with an exact reason), never assumed:
 - protection health: the in-process coverage manager when bound, else unknown;
-- portfolio policy: no owner-approved source exists yet, so never ready.
+- portfolio policy: owner-approved fixed RO policy and account-scoped PAPER facts.
 """
 
 from __future__ import annotations
@@ -32,11 +32,13 @@ from terminal.application.robot_admission import (
     scanner_candidate_admission_error,
 )
 from terminal.application.robot_autopilot import (
+    POLICY_VERSION,
     RobotAutoAdmissionFacts,
     RobotAutoAdmissionResult,
     evaluate_auto_admission,
     record_auto_decision,
 )
+from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.domain.models import Category, PositionKey, PositionSide, Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import RobotAutoDecisionRecord, SQLiteStore
 
@@ -143,7 +145,7 @@ def _symbol_owned(store: SQLiteStore, account: TradingAccountId, candidate: _Can
     return position is not None and position.side is not PositionSide.FLAT and position.quantity.value > 0
 
 
-def observe_shadow_candidate(
+def _observe_shadow_candidate_locked(
     store: SQLiteStore,
     account: TradingAccountId,
     *,
@@ -169,6 +171,19 @@ def observe_shadow_candidate(
     else:
         raise ValueError(f"unknown Autopilot SHADOW source: {source!r}")
 
+    decisions = store.load_robot_auto_decisions(account)
+    for existing in decisions:
+        if (existing.candidate_ref == candidate.ref
+                and existing.source_identity == candidate.source_identity
+                and existing.mode == state.mode
+                and existing.policy_version == POLICY_VERSION):
+            frozen_facts = RobotAutoAdmissionFacts(**json.loads(existing.facts_json))
+            frozen_result = RobotAutoAdmissionResult(existing.outcome, existing.reason_code,
+                                                     existing.policy_version)
+            return ShadowObservation(frozen_facts, frozen_result, existing, False)
+
+    portfolio = collect_portfolio_facts(store, account)
+    portfolio["audit_sequence"] = len(decisions) + 1
     runtime = store.get_robot_runtime_state(account)
     try:
         healthy = None if protection_healthy is None else bool(protection_healthy())
@@ -188,19 +203,13 @@ def observe_shadow_candidate(
         reconciliation_clear=(
             runtime is not None and runtime.recovery_status != "RECONCILIATION_REQUIRED"
         ),
-        symbol_owned=_symbol_owned(store, account, candidate),
+        symbol_owned=(_symbol_owned(store, account, candidate)
+                      or candidate.symbol.value in portfolio.get("owned_symbols", [])),
         protection_healthy=healthy,
-        # No owner-approved portfolio/capital policy source exists yet (issue #446).
-        portfolio_policy_ready=False,
+        portfolio_policy_ready=True,
+        portfolio_facts=portfolio,
     )
     result = evaluate_auto_admission(facts)
-
-    for existing in store.load_robot_auto_decisions(account):
-        if (existing.candidate_ref == candidate.ref
-                and existing.source_identity == candidate.source_identity
-                and existing.mode == facts.autopilot_mode
-                and existing.policy_version == result.policy_version):
-            return ShadowObservation(facts, result, existing, False)
 
     now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
     decision, created = record_auto_decision(
@@ -217,6 +226,24 @@ def observe_shadow_candidate(
         evaluated_at_ms=now,
     )
     return ShadowObservation(facts, result, decision, created)
+
+
+def observe_shadow_candidate(
+    store: SQLiteStore, account: TradingAccountId, *, source: str,
+    candidate_ref: str, protection_healthy: Callable[[], bool] | None = None,
+    candidate_store_dir: Path | str | None = None,
+    clock_ms: Callable[[], int] | None = None,
+) -> ShadowObservation | None:
+    # OFF/PAPER_AUTO: one mode read, no callback, collector or write transaction.
+    state = store.get_robot_autopilot_state(account)
+    if state is None or state.mode != SHADOW_MODE:
+        return None
+    with store.autopilot_decision_transaction():
+        return _observe_shadow_candidate_locked(
+            store, account, source=source, candidate_ref=candidate_ref,
+            protection_healthy=protection_healthy, candidate_store_dir=candidate_store_dir,
+            clock_ms=clock_ms,
+        )
 
 
 def shadow_mode_or_off(mode: str) -> str:
