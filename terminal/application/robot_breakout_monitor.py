@@ -826,6 +826,13 @@ class RobotBreakoutMonitor:
         if current_proof.entry_quantity > 0 and current_proof.remaining_quantity == 0:
             return self._sync_box_trade(record, execution, create_trade=False)
 
+        if current_proof.remaining_quantity > 0:
+            # Proven exposure is protected before any pending MARKET slot is sent.
+            # If the STOP cannot be confirmed (fail-closed close/reconciliation
+            # already raised inside), no new entry exposure may be added.
+            if not self._sync_box_trade(record, execution, create_trade=False):
+                return False
+
         for plan in market_plans:
             command = self._store().get_command(plan.identity.command_id)
             if command is None:

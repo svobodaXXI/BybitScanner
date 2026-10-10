@@ -18,7 +18,9 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest.mock import MagicMock, patch
 
+import robot_protection as rp
 from terminal.application.ikigai_box_catchup import (
     build_box_market_ownership_specs,
     build_box_market_plans,
@@ -26,7 +28,7 @@ from terminal.application.ikigai_box_catchup import (
     durable_box_market_intent,
 )
 from terminal.application.ikigai_box_first_grid import build_box_first_grid_specs
-from terminal.domain.models import Category, PositionKey, PositionSide, Price, Quantity, Symbol
+from terminal.domain.models import CommandId, Category, PositionKey, PositionSide, Price, Quantity, Symbol
 from terminal.market_data.models import BookHealth, NormalizedOrderBook, PriceLevel
 from terminal.runtime.paper_runtime import PaperRuntime
 from tests.test_box_first_fill_frozen_stop import ACCOUNT, HIMS_PRICES, _hims_instrument
@@ -123,6 +125,33 @@ class MixedCatchupFirstLimitFillTests(unittest.TestCase):
             protection.stop_loss if protection is not None else None,
             "filled Box exposure has no STOP after its fill event (#447)",
         )
+
+    def test_unconfirmed_stop_never_sends_the_pending_market_slot(self):
+        store = self.runtime.store
+        monitor = self.runtime._robot_breakout_monitor
+        sent = MagicMock(name="submit_market")
+        monitor._submit_market = sent
+        monitor._market_preflight = MagicMock(
+            return_value=MagicMock(admitted=True, normalized_quantity=D("2.21")))
+
+        def refuse(*_a, **_k):
+            raise rp.RobotProtectionError("simulated initial STOP refusal")
+
+        fill_book = _book("28.19", "1.17", sequence=2)
+        with patch.object(rp, "build_box_stop_only_plan", refuse):
+            self.runtime.process_robot_market_event(
+                "HIMSUSDT", fill_book, event_id="HIMSUSDT:2", received_at_ms=fill_book.received_at_ms,
+            )
+            monitor.tick()
+
+        pending = self.candidate.robot_state["execution"]["box_catchup"]["market_intents"][0]
+        entry_sends = [
+            call for call in sent.call_args_list
+            if call.args and call.args[1].command_id.value == pending["command_id"]
+        ]
+        self.assertEqual(entry_sends, [], "pending MARKET entry was sent without a confirmed STOP")
+        self.assertIsNone(store.get_command(
+            CommandId(pending["command_id"])))
 
 
 if __name__ == "__main__":
