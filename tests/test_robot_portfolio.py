@@ -120,6 +120,42 @@ class PortfolioTests(unittest.TestCase):
         self.store._connection.execute("UPDATE paper_limit_orders SET filled_quantity='20',status='partially_filled' WHERE order_id IN ('slot-0','slot-1')")
         self.assertEqual(self.facts()["occupied_ro"], 1)
 
+    def test_box_handoff_order_owner_requires_verified_lineage(self):
+        source, robot = "box-plan-source", "box-robot-source"
+        self.candidate(source, "BOXUSDT")
+        self.candidate(robot, "BOXUSDT", {"limit_order_id": "slot"})
+        original = {"id": "frozen-source"}
+        snapshot = {**original, "source_box_candidate_id": source}
+        self.store._connection.execute(
+            "UPDATE robot_candidates SET status='BOX_PLAN_ONLY', signal_snapshot_json=? "
+            "WHERE candidate_id=?", (json.dumps(original), source))
+        self.store._connection.execute(
+            "UPDATE robot_candidates SET signal_snapshot_json=?, robot_state_json=? "
+            "WHERE candidate_id=?",
+            (json.dumps(snapshot), json.dumps({
+                "execution": {"limit_order_id": "slot"},
+                "source_box_candidate_id": source,
+            }), robot))
+        self.store._connection.execute(
+            "INSERT INTO box_attempt_ownership VALUES (?,?,?,?,?,?,?,?)",
+            (source, "paper", "BOXUSDT", 1, 1, 0, 0, "0" * 64))
+        self.limit("slot", "BOXUSDT")
+        self.store._connection.execute(
+            "INSERT INTO box_order_ownership VALUES ('paper','slot',?,'ENTRY',1)",
+            (source,))
+        facts = self.facts()
+        self.assertTrue(facts["available"], facts.get("data_error"))
+        self.assertEqual(facts["occupied_ro"], 1)
+        self.assertEqual(facts["reservations"][0]["identity"], "robot:" + robot)
+
+        # A snapshot link alone is insufficient; Robot state must also agree.
+        self.store._connection.execute(
+            "UPDATE robot_candidates SET robot_state_json=? WHERE candidate_id=?",
+            (json.dumps({"execution": {"limit_order_id": "slot"}}), robot))
+        facts = self.facts()
+        self.assertFalse(facts["available"])
+        self.assertEqual(facts["data_error"], "order ownership is ambiguous")
+
     def test_robot_limit_filled_and_pending_share_candidate(self):
         self.candidate("w", "MANUSDT", {"limit_order_id": "a"})
         self.limit("a"); self.fill("a", 50); self.position(50)
