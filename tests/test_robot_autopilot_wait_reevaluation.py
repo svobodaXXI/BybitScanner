@@ -2,8 +2,8 @@
 
 A recorded WAIT may be evaluated again only by the existing observer/admission
 calls, on a newly closed source candle or a durable Robot/Autopilot state
-transition, while the idea is still fresh. Stale or invalidated ideas are never
-resumed, repeats are idempotent and an ALLOW still has to pass the S3 boundary.
+transition. There is no age-based expiry; invalidated ideas are never resumed,
+repeats are idempotent and an ALLOW still has to pass the S3 boundary.
 """
 
 import tempfile
@@ -13,11 +13,11 @@ from pathlib import Path
 from robot_candidate_store import load_candidate
 from terminal.application.robot_autopilot import (
     OUTCOME_ALLOW, OUTCOME_REJECT, OUTCOME_WAIT, REASON_CANDIDATE_INVALIDATED,
-    REASON_CANDIDATE_STALE, REASON_ELIGIBLE, REASON_PROTECTION_HEALTH_UNKNOWN,
+    REASON_ELIGIBLE, REASON_PROTECTION_HEALTH_UNKNOWN,
     REASON_ROBOT_NOT_READY,
 )
 from terminal.application.robot_autopilot_shadow import (
-    SOURCE_SCANNER, WAIT_REEVALUATION_CANDLES, admit_paper_auto_candidate,
+    SOURCE_SCANNER, admit_paper_auto_candidate,
 )
 from terminal.domain.models import Symbol
 from tests.test_robot_autopilot_shadow import ACCOUNT, TRADING_TABLES, _Db, _wedge
@@ -122,34 +122,32 @@ class WaitReevaluationTests(unittest.TestCase):
         db.observe("c", health=_healthy, now=T0 + 3_000)
         self.assertEqual(len(by_ref("a")), 2)
 
-    def test_stale_wait_or_allow_is_never_resumed(self):
+    def test_wait_and_shadow_allow_do_not_expire_by_age(self):
         db = self.db
         _wedge(db.candidates, "old-wait")
         _wedge(db.candidates, "old-allow", symbol="AAAUSDT")
         db.observe("old-wait", now=T0)
         allowed = db.observe("old-allow", health=_healthy, now=T0)
-        self.assertEqual(WAIT_REEVALUATION_CANDLES, 5)  # owner-approved A6 limit
-        expired = T0 + (WAIT_REEVALUATION_CANDLES + 1) * MINUTE
+        much_later = T0 + 100 * MINUTE
 
-        # Another arrival does not revive the expired WAIT ...
+        # A later arrival rechecks older WAITs without an arbitrary expiry.
         _wedge(db.candidates, "new", symbol="BBBUSDT")
-        self.assertEqual(db.observe("new", health=_healthy, now=expired).result.outcome,
+        self.assertEqual(db.observe("new", health=_healthy, now=much_later).result.outcome,
                          OUTCOME_ALLOW)
-        self.assertEqual(len(self.outcomes("old-wait")), 1)
-        # ... and seeing it again records one terminal fail-closed decision.
-        stale = db.observe("old-wait", health=_healthy, now=expired)
-        self.assertEqual((stale.result.outcome, stale.result.reason_code),
-                         (OUTCOME_REJECT, REASON_CANDIDATE_STALE))
-        self.assertFalse(db.observe("old-wait", health=_healthy, now=expired + MINUTE).created)
-        self.assertEqual(len(self.outcomes("old-wait")), 2)
+        self.assertEqual(self.outcomes("old-wait"),
+                         [(OUTCOME_WAIT, REASON_PROTECTION_HEALTH_UNKNOWN),
+                          (OUTCOME_ALLOW, REASON_ELIGIBLE)])
+        self.assertFalse(db.observe("old-wait", health=_healthy,
+                                    now=much_later + MINUTE).created)
 
-        # S3 applies the same freshness to an aged SHADOW ALLOW.
-        self.enable_paper_auto(expired)
-        rejected = self.auto(allowed.decision, expired + 1_000, _healthy)
-        self.assertEqual((rejected.result.outcome, rejected.result.reason_code),
-                         (OUTCOME_REJECT, REASON_CANDIDATE_STALE))
-        self.assertIsNone(rejected.candidate)
-        self.assertIsNone(db.store.get_robot_candidate("old-allow"))
+        # S3 still runs full admission for an old SHADOW ALLOW, not age rejection.
+        self.enable_paper_auto(much_later)
+        admitted = self.auto(allowed.decision, much_later + 1_000, _healthy)
+        self.assertEqual(admitted.result.outcome, OUTCOME_ALLOW)
+        self.assertTrue(admitted.candidate_created)
+        self.assertFalse(admitted.facts.candidate_stale)
+        self.assertFalse(self.auto(allowed.decision, much_later + 2_000,
+                                   _healthy).candidate_created)
 
     def test_invalidated_wait_is_rejected_instead_of_resumed(self):
         db = self.db
