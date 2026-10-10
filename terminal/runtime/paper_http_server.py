@@ -1300,8 +1300,8 @@ class SerializedPaperRuntime:
         self._protection_ingress_high_watermark = 0
         self._protection_ingress_max_queue_latency_ms = 0.0
         self._protection_ingress_max_processing_ms = 0.0
-        # (monotonic end, queue latency ms, processing ms) of recent protection tasks.
-        self._protection_ingress_recent: deque[tuple[float, float, float]] = deque(maxlen=512)
+        # Time-bounded ingress samples; count caps must not shorten the safety window.
+        self._protection_ingress_recent: deque[tuple[float, float, float]] = deque()
         # Slowest owner request of any kind since start: (ms, kind, label source).
         # Written only by the owner thread as one tuple; the label is resolved lazily.
         self._slowest_owner_task: tuple[float, str | None, object] = (0.0, None, None)
@@ -1498,6 +1498,12 @@ class SerializedPaperRuntime:
         now = time.monotonic()
         now_perf = time.perf_counter()
         with self._protection_ingress_lock:
+            retention_cutoff = now - AUTOPILOT_INGRESS_WINDOW_S
+            while (
+                self._protection_ingress_recent
+                and self._protection_ingress_recent[0][0] < retention_cutoff
+            ):
+                self._protection_ingress_recent.popleft()
             samples = [item for item in self._protection_ingress_recent if now - item[0] <= window_s]
             queued_wait_ms = (
                 (now_perf - self._protection_tasks[0].enqueued_at) * 1000
@@ -1575,8 +1581,15 @@ class SerializedPaperRuntime:
                     self._protection_ingress_max_processing_ms,
                     processing_ms,
                 )
+                completed_at = time.monotonic()
+                retention_cutoff = completed_at - AUTOPILOT_INGRESS_WINDOW_S
+                while (
+                    self._protection_ingress_recent
+                    and self._protection_ingress_recent[0][0] < retention_cutoff
+                ):
+                    self._protection_ingress_recent.popleft()
                 self._protection_ingress_recent.append(
-                    (time.monotonic(), queue_latency_ms, processing_ms))
+                    (completed_at, queue_latency_ms, processing_ms))
             self._observe_owner_task(
                 "protection", task.operation, processing_ms,
                 f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"

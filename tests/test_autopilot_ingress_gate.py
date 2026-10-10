@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from terminal.application.robot_admission import admit_robot_candidate
 from terminal.application.robot_autopilot import (
@@ -112,6 +113,29 @@ class IngressGateProviderTests(unittest.TestCase):
 
 
 class RecentWindowOnRealIngressTests(unittest.TestCase):
+    def test_early_slow_sample_survives_more_than_512_events_until_window_expires(self):
+        runtime = SerializedPaperRuntime(_Owned)
+        self.addCleanup(runtime.close)
+        now = time.monotonic()
+        with runtime._protection_ingress_lock:
+            runtime._protection_ingress_recent.append((now - 0.5, 250.0, 5.0))
+            for index in range(513):
+                runtime._protection_ingress_recent.append(
+                    (now - 0.4 + index * 0.0001, 10.0, 5.0))
+
+        gate = make_autopilot_protection_health(
+            _Coverage(), runtime, window_s=1.0, max_queue_latency_ms=200.0,
+        )
+        self.assertEqual(runtime.protection_ingress_metrics()["current_pending"], 0)
+        with mock.patch(
+            "terminal.runtime.paper_http_server.time.monotonic", return_value=now,
+        ):
+            self.assertIs(gate(), False)
+        with mock.patch(
+            "terminal.runtime.paper_http_server.time.monotonic", return_value=now + 1.1,
+        ):
+            self.assertIs(gate(), True)
+
     def test_recent_latency_gates_then_window_expires_and_protection_still_runs(self):
         runtime = SerializedPaperRuntime(_Owned)
         self.addCleanup(runtime.close)
