@@ -66,10 +66,10 @@ SHADOW_MODE = "SHADOW"
 PAPER_AUTO_MODE = "PAPER_AUTO"
 _TERMINAL_STATUSES = {"EXPIRED", "INVALIDATED"}
 _ACTIVE_STATUSES = ("APPROVED", "OPEN")
-# A6, PROVISIONAL (no owner-approved value yet): an idea stays fresh for this many
-# closed source candles after its first audited evaluation. 2 candles outlast one
-# 60 s S2 ingress-health window on a 1m source; +1 margin. Not a trading parameter.
-WAIT_REEVALUATION_CANDLES = 3
+# A6 owner-approved bounded freshness for short-lived scanner candidates.
+# Box lifecycle validity needs independent proof before exempting it from this
+# fail-closed cap; never admit an old Box on frozen geometry alone.
+WAIT_REEVALUATION_CANDLES = 5
 
 
 @dataclass(frozen=True, slots=True)
