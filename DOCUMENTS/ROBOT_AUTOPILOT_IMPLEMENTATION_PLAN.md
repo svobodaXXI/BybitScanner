@@ -526,3 +526,17 @@ is not release evidence. Until that source terminal event exists, a pure SHADOW
 ALLOW survives restart/OFF and continues to reserve one RO. A3 implements the
 linked Robot-candidate release route only; consuming a source-only terminal
 observation requires its own future append-and-release integration.
+
+## S2 ingress admission gate — 2026-10-10 / #448
+
+The Autopilot protection-health source is `make_autopilot_protection_health()`:
+coverage health AND a 60 s recent ingress window (queue latency and processing
+<= 2000 ms each, backlog < 50% of capacity, oldest queued wait included).
+Overload gives WAIT `PROTECTION_UNHEALTHY`; a missing or invalid metric gives
+WAIT `PROTECTION_HEALTH_UNKNOWN`, as does a window with no ingress sample
+while any symbol is covered or armed (zero samples is calm only when nothing
+is covered). Lifetime maxima and the instantaneous backlog
+are not used (the owner has drained its backlog whenever an admission runs).
+Thresholds are owner-tunable constants in `paper_http_server.py`. Read-only:
+manual admission and protection of open positions are untouched. Not covered:
+per-candidate book freshness and PAPER_AUTO (still unavailable).
