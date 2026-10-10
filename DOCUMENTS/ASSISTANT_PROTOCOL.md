@@ -71,27 +71,68 @@ Architecture → Contracts → Documentation → Implementation → Validation �
 
 # 2. COMMUNICATION AND USER ACTIONS
 
+### No harness recovery spiral — OWNER RULE 2026-10-10
+
+A tool/harness error is NOT authorization to launch a new infrastructure task.
+For `PREEXISTING_DIRTY`, `not a managed worktree`, reparse-point/`apply_patch`
+failure, or a nested task-transaction rejection:
+
+1. Preserve the current task diff, user changes and exact failure evidence; identify
+   whether the failure is workspace/tooling rather than product code.
+2. Reuse the original task/worktree and its already-passing checks. Attempt at most
+   ONE narrowly supported, authorized recovery with the existing harness.
+3. Never silently stash/pop, reset, clean, move worktrees, recreate tasks, or modify
+   audit contracts, task metadata or harness guards merely to manufacture PASS.
+   A workaround requires a proven supported procedure and explicit permission;
+   no permission bypasses a mandatory gate.
+4. If recovery fails, STOP with exact blocker, location of preserved diff and
+   smallest supported next action. Do not chain fallbacks or reopen transactions.
+5. Once unblocked, finish the original product delta and mandatory targeted proof,
+   then STOP. Do not create another preparatory quest.
+
+This rule does not weaken repository integrity, fail-closed protection, PAPER/LIVE
+boundaries, mandatory gates or owner runtime authority.
+
+### GitHub PR merge via assistant — OWNER RULE 2026-10-10
+
+The owner should not be sent to GitHub to click **Squash and merge** when the
+connected GitHub integration can perform it. For a concrete PR, the owner may
+authorize merge in chat (e.g. «Мержи #459»); that authorizes **that PR only**,
+not blanket auto-merge. Before mutating, verify current PR target branch, HEAD,
+mergeability, required CI/review checks and known safety blockers. Perform
+`squash` merge via the existing GitHub connector with the exact expected HEAD
+SHA; report GitHub's merge result/commit and continue the authorized task.
+A changed HEAD, failing/unknown mandatory gate, conflicts or material safety
+blocker means STOP without merge. If the connector lacks merge access, report
+the precise limitation rather than asking the owner to navigate GitHub by
+default. No new bot, merge pipeline or CI infrastructure is needed.
+
+Critical runtime/PAPER/LIVE/security PRs still require explicit owner approval
+and their normal mandatory gates. Routine PRs also require specific owner
+approval unless an independently documented, explicit, scoped standing
+authorization is granted later; this rule does NOT grant one. Never infer
+merge approval from «э», CI success, a Codex report or generic continuation.
+Do not implicitly merge other PRs or change branch policy.
+
 ### Owner-authorized GitHub squash merge via ChatGPT — OWNER RULE 2026-10-10
 
 For BybitScanner PRs, do not send the owner to the GitHub website to click
 "Squash and merge" when the connected GitHub tool can perform the operation.
-A clear owner instruction to merge a specified PR is sufficient authorization
-for **that PR only**; it does not grant blanket autonomous merging.
+A clear owner instruction to merge a specified PR, or a standalone "э" replying
+to the immediately preceding explicit proposal to merge identified PR(s), is
+authorization for **those PRs only**. It does not grant blanket autonomous merging.
 
 On authorization, the assistant:
-1. Reads the current PR state, target base, head SHA, mergeability and required
-   CI/review/safety gates. Reuse valid existing evidence; do not rerun tests
-   without changed inputs or new blockers.
-2. If gates pass, invokes GitHub's squash merge with the exact expected head
-   SHA. Confirm the returned merged status and commit SHA before claiming success.
-3. If the head moved, checks are pending/failed, or a blocker exists, do NOT
-   merge. Report the single decisive obstacle or next action.
-4. Continue the approved project task after a verified merge; leave local
-   runtime, PAPER DB, LIVE and worktrees untouched unless separately authorized.
+1. Reads current PR state, target base, head SHA, mergeability and required
+   CI/review/safety gates; reuses valid evidence instead of rerunning tests.
+2. If gates pass, invokes squash merge with the expected head SHA; verifies
+   GitHub's merged status and resulting commit SHA.
+3. If head changed, gates are pending/failed or conflicts exist, does not merge.
+   Reports the smallest decisive blocker; never bypasses mandatory checks.
+4. Resumes the authorized project task once the merge is confirmed.
 
-For now, **no auto-merge on CI success and no automatic blanket consent**.
-Even a docs-only or low-risk PR requires the owner's explicit merge instruction.
-This removes manual website clicks, not owner authority or fail-closed checks.
+"э" authorizes no unspecified future PR, LIVE trading, runtime start, DB
+mutation or unrelated operation. No auto-merge solely on CI success.
 
 ### OUTCOME-FIRST EXECUTION — OWNER RULE 2026-10-08
 
