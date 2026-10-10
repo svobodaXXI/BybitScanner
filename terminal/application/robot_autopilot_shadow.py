@@ -85,6 +85,9 @@ class PaperAutoAdmission:
     candidate_created: bool
 
 
+FreshnessProver = Callable[[str, dict], bool | None]
+
+
 @dataclass(frozen=True, slots=True)
 class _Candidate:
     ref: str
@@ -98,6 +101,7 @@ class _Candidate:
     invalidated: bool
     already_admitted: bool
     own_ids: frozenset[str]
+    snapshot: dict
 
 
 def _candle_ms(timeframe: str) -> int | None:
@@ -156,6 +160,7 @@ def _scanner_candidate(store: SQLiteStore, ref: str, store_dir) -> _Candidate:
         invalidated=durable is not None and durable.status in _TERMINAL_STATUSES,
         already_admitted=durable is not None,
         own_ids=frozenset({ref}),
+        snapshot=dict(snapshot or {}),
     )
 
 
@@ -185,6 +190,7 @@ def _box_plan_candidate(
         invalidated=any(item.status in _TERMINAL_STATUSES for item in linked),
         already_admitted=bool(linked),
         own_ids=frozenset({ref, *(item.candidate_id for item in linked)}),
+        snapshot=dict(source.signal_snapshot),
     )
 
 
@@ -243,6 +249,7 @@ def _fresh_facts(
     store: SQLiteStore, account: TradingAccountId, *, mode: str, candidate: _Candidate,
     decisions: tuple[RobotAutoDecisionRecord, ...],
     protection_healthy: Callable[[], bool] | None,
+    candidate_fresh: FreshnessProver | None = None,
     prior_shadow_allow: RobotAutoDecisionRecord | None = None,
 ) -> RobotAutoAdmissionFacts:
     portfolio = collect_portfolio_facts(store, account)
@@ -254,6 +261,13 @@ def _fresh_facts(
         healthy = None if healthy is None else bool(healthy)
     except Exception:
         healthy = None
+    fresh: bool | None = None
+    if mode == PAPER_AUTO_MODE and candidate_fresh is not None:
+        try:
+            proven = candidate_fresh(candidate.symbol.value, candidate.snapshot)
+        except Exception:
+            proven = None  # unprovable freshness is never an implicit ALLOW
+        fresh = None if proven is None else bool(proven)
     return RobotAutoAdmissionFacts(
         autopilot_mode=mode,
         environment="PAPER",
@@ -272,6 +286,7 @@ def _fresh_facts(
         protection_healthy=healthy,
         portfolio_policy_ready=True,
         portfolio_facts=portfolio,
+        candidate_fresh=fresh,
     )
 
 
@@ -335,6 +350,7 @@ def _observe_shadow_candidate_locked(
 def admit_paper_auto_candidate(
     store: SQLiteStore, account: TradingAccountId, *, allow_decision_id: str,
     source: str, protection_healthy: Callable[[], bool] | None = None,
+    candidate_fresh: FreshnessProver | None = None,
     candidate_store_dir: Path | str | None = None,
     clock_ms: Callable[[], int] | None = None,
 ) -> PaperAutoAdmission | None:
@@ -398,7 +414,7 @@ def admit_paper_auto_candidate(
             facts = _fresh_facts(
                 store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
                 decisions=decisions, protection_healthy=protection_healthy,
-                prior_shadow_allow=prior,
+                candidate_fresh=candidate_fresh, prior_shadow_allow=prior,
             )
             result = evaluate_auto_admission(facts)
             robot_candidate = None
@@ -437,6 +453,104 @@ def admit_paper_auto_candidate(
                 robot_candidate, candidate_created,
             )
         if source == SOURCE_SCANNER and admission.candidate is not None:
+            scanner_legacy_ref = candidate.ref
+
+    if scanner_legacy_ref is not None:
+        approve_candidate(
+            scanner_legacy_ref,
+            approval={"source": PAPER_AUTO_MODE, "decision_id": admission.decision.decision_id},
+            store_dir=candidate_store_dir,
+        )
+    return admission
+
+
+def admit_arrived_auto_candidate(
+    store: SQLiteStore, account: TradingAccountId, *, source: str, candidate_ref: str,
+    protection_healthy: Callable[[], bool] | None = None,
+    candidate_fresh: FreshnessProver | None = None,
+    candidate_store_dir: Path | str | None = None,
+    clock_ms: Callable[[], int] | None = None,
+) -> PaperAutoAdmission | None:
+    """A7: evaluate one arrived candidate in PAPER_AUTO and admit it canonically.
+
+    Same policy, same audit and the same ``admit_robot_candidate`` boundary as the
+    owner's manual tap; no second execution engine, scheduler or order path. A
+    recorded WAIT is re-evaluated under the A6 rule; ALLOW/REJECT stay terminal.
+    Returns None unless durable Autopilot state is PAPER_AUTO.
+    """
+    state = store.get_robot_autopilot_state(account)
+    if state is None or state.mode != PAPER_AUTO_MODE:
+        return None
+
+    scanner_legacy_ref: str | None = None
+    with store.autopilot_decision_transaction():
+        state = store.get_robot_autopilot_state(account)
+        if state is None or state.mode != PAPER_AUTO_MODE:
+            return None
+        candidate = _resolve_candidate(
+            store, account, source=source, candidate_ref=candidate_ref,
+            candidate_store_dir=candidate_store_dir,
+        )
+        now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
+        decisions = store.load_robot_auto_decisions(account)
+        existing = _latest_decision(
+            decisions, candidate.ref, candidate.source_identity, PAPER_AUTO_MODE,
+        )
+        if existing is not None and not _wait_reevaluation_due(
+                existing, now, state, store.get_robot_runtime_state(account)):
+            facts = RobotAutoAdmissionFacts(**json.loads(existing.facts_json))
+            result = RobotAutoAdmissionResult(
+                existing.outcome, existing.reason_code, existing.policy_version,
+            )
+            robot_candidate = (
+                store.get_robot_candidate(existing.resulting_candidate_id)
+                if existing.resulting_candidate_id is not None else None
+            )
+            if result.outcome == OUTCOME_ALLOW and robot_candidate is None:
+                raise PersistenceError("PAPER_AUTO audit lost its canonical candidate")
+            return PaperAutoAdmission(facts, result, existing, False, robot_candidate, False)
+
+        facts = _fresh_facts(
+            store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
+            decisions=decisions, protection_healthy=protection_healthy,
+            candidate_fresh=candidate_fresh,
+        )
+        result = evaluate_auto_admission(facts)
+        robot_candidate = None
+        candidate_created = False
+        if result.outcome == OUTCOME_ALLOW:
+            admission_ref = (
+                candidate.ref if source == SOURCE_SCANNER
+                else box_plan_admission_handle(candidate.ref)
+            )
+            robot_candidate, candidate_created = admit_robot_candidate(
+                admission_ref,
+                store_dir=candidate_store_dir,
+                clock_ms=lambda: now,
+                transaction_store=store,
+                expected_snapshot_sha256=candidate.snapshot_sha256,
+                mark_legacy_approved=False,
+            )
+        decision, decision_created = record_auto_decision(
+            store,
+            trading_account_id=account,
+            candidate_ref=candidate.ref,
+            pattern=candidate.pattern,
+            symbol=candidate.symbol,
+            timeframe=candidate.timeframe,
+            source_identity=candidate.source_identity,
+            snapshot_sha256=candidate.snapshot_sha256,
+            facts=facts,
+            result=result,
+            evaluated_at_ms=now,
+            resulting_candidate_id=(
+                robot_candidate.candidate_id if robot_candidate is not None else None
+            ),
+        )
+        admission = PaperAutoAdmission(
+            facts, result, decision, decision_created, robot_candidate, candidate_created,
+        )
+        if source == SOURCE_SCANNER and robot_candidate is not None:
             scanner_legacy_ref = candidate.ref
 
     if scanner_legacy_ref is not None:
@@ -505,8 +619,26 @@ def _due_wait_refs(
 
 
 def shadow_mode_or_off(mode: str) -> str:
-    """Owner control for this slice: only OFF and SHADOW may be set."""
+    """Owner control for OFF/SHADOW only; kept for callers that never automate."""
     normalized = str(mode).strip().upper()
     if normalized not in {"OFF", SHADOW_MODE}:
         raise ValueError("only OFF and SHADOW are supported; PAPER_AUTO is not available")
     return normalized
+
+
+def owner_autopilot_mode(mode: str, *, environment: str, confirm_paper_auto: bool) -> str:
+    """A7 owner control. PAPER_AUTO needs an explicit confirmation and a PAPER account.
+
+    Enabling automation is an owner decision, never a side effect of a task, a
+    restart or a passing gate; OFF and SHADOW stay available unconditionally.
+    """
+    normalized = str(mode).strip().upper()
+    if normalized in {"OFF", SHADOW_MODE}:
+        return normalized
+    if normalized != PAPER_AUTO_MODE:
+        raise ValueError("unsupported Robot Autopilot mode")
+    if str(environment).strip().upper() != "PAPER":
+        raise ValueError("PAPER_AUTO is available only for the PAPER account")
+    if confirm_paper_auto is not True:
+        raise ValueError("PAPER_AUTO requires an explicit owner confirmation")
+    return PAPER_AUTO_MODE

@@ -17,7 +17,7 @@ from terminal.persistence.sqlite_store import (
 )
 
 
-POLICY_VERSION = "robot-autopilot-shadow-v0.3"
+POLICY_VERSION = "robot-autopilot-shadow-v0.4"
 
 OUTCOME_ALLOW = "ALLOW"
 OUTCOME_WAIT = "WAIT"
@@ -30,6 +30,7 @@ REASON_LIVE_NOT_ALLOWED = "LIVE_NOT_ALLOWED"
 REASON_CANDIDATE_INVALID = "CANDIDATE_INVALID"
 REASON_CANDIDATE_NOT_EXECUTABLE = "CANDIDATE_NOT_EXECUTABLE"
 REASON_CANDIDATE_STALE = "CANDIDATE_STALE"
+REASON_CANDIDATE_FRESHNESS_UNKNOWN = "CANDIDATE_FRESHNESS_UNKNOWN"
 REASON_CANDIDATE_INVALIDATED = "CANDIDATE_INVALIDATED"
 REASON_ALREADY_ADMITTED = "ALREADY_ADMITTED"
 REASON_ROBOT_NOT_READY = "ROBOT_NOT_READY"
@@ -59,6 +60,9 @@ class RobotAutoAdmissionFacts:
     protection_healthy: bool | None
     portfolio_policy_ready: bool
     portfolio_facts: dict | None = None
+    # A7, PAPER_AUTO only. True/False only from authoritative evidence that the
+    # idea is still live; None means it could not be proven -> WAIT, never ALLOW.
+    candidate_fresh: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +91,14 @@ def evaluate_auto_admission(
         return RobotAutoAdmissionResult(OUTCOME_REJECT, REASON_CANDIDATE_STALE)
     if facts.candidate_invalidated:
         return RobotAutoAdmissionResult(OUTCOME_REJECT, REASON_CANDIDATE_INVALIDATED)
+    if facts.autopilot_mode == "PAPER_AUTO":
+        # Read-only SHADOW stays observational; only a real automatic admission
+        # has to prove, from authoritative evidence, that the idea is still live.
+        if facts.candidate_fresh is None:
+            return RobotAutoAdmissionResult(
+                OUTCOME_WAIT, REASON_CANDIDATE_FRESHNESS_UNKNOWN)
+        if not facts.candidate_fresh:
+            return RobotAutoAdmissionResult(OUTCOME_REJECT, REASON_CANDIDATE_STALE)
     if facts.already_admitted:
         return RobotAutoAdmissionResult(OUTCOME_WAIT, REASON_ALREADY_ADMITTED)
     if facts.robot_mode != "ROBOT_RUNNING" or facts.robot_recovery_status != "READY":
