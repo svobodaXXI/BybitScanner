@@ -93,6 +93,27 @@ failure, or a nested task-transaction rejection:
 This rule does not weaken repository integrity, fail-closed protection, PAPER/LIVE
 boundaries, mandatory gates or owner runtime authority.
 
+### GitHub PR merge via assistant — OWNER RULE 2026-10-10
+
+The owner should not be sent to GitHub to click **Squash and merge** when the
+connected GitHub integration can perform it. For a concrete PR, the owner may
+authorize merge in chat (e.g. «Мержи #459»); that authorizes **that PR only**,
+not blanket auto-merge. Before mutating, verify current PR target branch, HEAD,
+mergeability, required CI/review checks and known safety blockers. Perform
+`squash` merge via the existing GitHub connector with the exact expected HEAD
+SHA; report GitHub's merge result/commit and continue the authorized task.
+A changed HEAD, failing/unknown mandatory gate, conflicts or material safety
+blocker means STOP without merge. If the connector lacks merge access, report
+the precise limitation rather than asking the owner to navigate GitHub by
+default. No new bot, merge pipeline or CI infrastructure is needed.
+
+Critical runtime/PAPER/LIVE/security PRs still require explicit owner approval
+and their normal mandatory gates. Routine PRs also require specific owner
+approval unless an independently documented, explicit, scoped standing
+authorization is granted later; this rule does NOT grant one. Never infer
+merge approval from «э», CI success, a Codex report or generic continuation.
+Do not implicitly merge other PRs or change branch policy.
+
 ### OUTCOME-FIRST EXECUTION — OWNER RULE 2026-10-08
 
 The assistant owns progress toward the current owner-approved, observable outcome, not an expanding sequence of preparatory tasks. Before interrupting acceptance or adding a task for a newly discovered risk, classify it against current evidence and mandatory safety/acceptance contracts:
