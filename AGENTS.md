@@ -82,6 +82,40 @@ admission для другого. Pattern-specific остаются только 
 торговые правила adapter'а.
 
 
+## Mandatory task execution gate — OWNER RULE 2026-10-10
+
+This is an **enforcement entry point**, not a new planning process. Apply the
+existing `DOCUMENTS/ASSISTANT_PROTOCOL.md` §§3.2, 3.2.1a and the
+Reuse-First principle to **every** delegated Codex/Claude task, including
+backups, synchronization and handoffs.
+
+Before issuing or executing a task, the assistant/agent must establish:
+1. **Owner-visible outcome:** one deliverable and a concrete stop condition.
+2. **Reuse first:** locate the already-working command, backup, artifact or
+   successful evidence; do not create a script/subsystem if it suffices.
+3. **Minimum delta:** one bounded action, only required checks, run once
+   after a meaningful change; reuse prior PASS evidence.
+4. **Risk triage:** proven mandatory safety blocker -> stop unsafe work and
+   request the smallest remedy; bounded nonblocking risk -> record and
+   continue the owner's milestone, not an automatic side quest.
+5. **Failure boundary:** after one failed method and one narrowly justified
+   retry, STOP and report the blocker. No autonomous fallback chains,
+   scaffolding, test loops or escalating backup frameworks.
+6. **Owner resource budget:** avoid unnecessary agent calls, waiting, repeated
+   discovery, full-repository audits and new worktrees. Deliver PASS/BLOCKED,
+   concrete evidence and the smallest next action, then exit.
+
+**Migration/backup application:** keep established runtime/database stop and
+consistent-snapshot safety gates; use existing verified backup/PowerShell/Git
+facilities. Do not generate new transfer tooling as a prerequisite. A missing
+nonessential artifact is reported rather than triggering reconstruction of
+the whole package. Never sacrifice data integrity to meet a time budget.
+
+**ChatGPT delegation gate:** if a proposed prompt is an extended checklist
+or multi-phase quest, narrow it *before sending*, except where a specific
+mandatory safety procedure requires those steps. The assistant is
+accountable for prompt scope, not the owner.
+
 ## Outcome-first Scanner / PAPER Robot priorities — owner direction
 
 **Business goal:** a Scanner that shows faithful, independently checkable
