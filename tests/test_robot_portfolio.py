@@ -127,7 +127,8 @@ class PortfolioTests(unittest.TestCase):
         original = {"id": "frozen-source"}
         snapshot = {**original, "source_box_candidate_id": source}
         self.store._connection.execute(
-            "UPDATE robot_candidates SET status='BOX_PLAN_ONLY', signal_snapshot_json=? "
+            "UPDATE robot_candidates SET status='BOX_PLAN_ONLY', approved_at_ms=NULL, "
+            "robot_state_json=NULL, state_revision=0, signal_snapshot_json=? "
             "WHERE candidate_id=?", (json.dumps(original), source))
         self.store._connection.execute(
             "UPDATE robot_candidates SET signal_snapshot_json=?, robot_state_json=? "
