@@ -26,11 +26,17 @@ from tests.test_robot_autopilot_shadow import ACCOUNT, _Db, _wedge
 
 
 class _Coverage:
-    def __init__(self, healthy=True):
+    def __init__(self, healthy=True, covered=(), armed=()):
         self.healthy = healthy
+        self.covered = tuple(covered)
+        self.armed = tuple(armed)
 
     def is_healthy(self):
         return self.healthy
+
+    def health(self):
+        return {"healthy": self.healthy, "covered_symbols": self.covered,
+                "armed_symbols": self.armed, "unhealthy_symbols": {}}
 
 
 class _Owned:
@@ -68,6 +74,21 @@ class IngressGateProviderTests(unittest.TestCase):
     def test_backlog_at_half_capacity_is_unhealthy(self):
         self.assertIs(self.provider(_Metrics(current_pending=32))(), False)
         self.assertIs(self.provider(_Metrics(current_pending=31))(), True)
+
+    def test_zero_samples_is_healthy_only_when_nothing_is_covered(self):
+        silent = dict(recent_samples=0, recent_max_queue_latency_ms=0.0,
+                      recent_max_processing_ms=0.0)
+        # Idle: no covered/armed symbol, so no protection traffic is expected.
+        self.assertIs(self.provider(_Metrics(**silent))(), True)
+        # A covered or armed symbol streams ordered events through ingress; a
+        # silent window is unproven freshness, never healthy.
+        self.assertIsNone(self.provider(_Metrics(**silent), _Coverage(covered=("AAAUSDT",)))())
+        self.assertIsNone(self.provider(_Metrics(**silent), _Coverage(armed=("AAAUSDT",)))())
+
+        class NoHealth(_Coverage):
+            health = None
+
+        self.assertIsNone(self.provider(_Metrics(**silent), NoHealth())())
 
     def test_coverage_already_unhealthy_stays_unhealthy(self):
         self.assertIs(self.provider(_Metrics(), _Coverage(False))(), False)
