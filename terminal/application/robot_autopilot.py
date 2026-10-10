@@ -125,10 +125,12 @@ def record_auto_decision(
     facts: RobotAutoAdmissionFacts,
     result: RobotAutoAdmissionResult,
     evaluated_at_ms: int,
+    resulting_candidate_id: str | None = None,
 ) -> tuple[RobotAutoDecisionRecord, bool]:
     """Append one immutable SHADOW/PAPER_AUTO policy decision.
 
     This helper deliberately has no import of Robot admission/execution modules.
+    A resulting candidate id is accepted only from the caller's canonical transaction.
     """
 
     if facts.autopilot_mode not in {"SHADOW", "PAPER_AUTO"}:
@@ -160,7 +162,7 @@ def record_auto_decision(
         outcome=result.outcome,
         reason_code=result.reason_code,
         evaluated_at_ms=evaluated_at_ms,
-        resulting_candidate_id=None,
+        resulting_candidate_id=resulting_candidate_id,
         facts_json=json.dumps(asdict(facts), sort_keys=True, separators=(",", ":")),
     )
     return store.append_robot_auto_decision(record)

@@ -4205,18 +4205,34 @@ class SQLiteStore:
         return self.get_robot_autopilot_state(trading_account_id)  # type: ignore[return-value]
 
     @contextmanager
+    def robot_admission_transaction(self) -> Iterator[None]:
+        """Serialize canonical Robot admission checks and durable creation."""
+        with self._transaction():
+            self._robot_admission_transaction = True
+            try:
+                yield
+            finally:
+                self._robot_admission_transaction = False
+
+    def in_robot_admission_transaction(self) -> bool:
+        self._assert_owner()
+        return bool(getattr(self, "_robot_admission_transaction", False))
+
+    @contextmanager
     def autopilot_decision_transaction(self) -> Iterator[None]:
-        """Serialize SHADOW snapshot + virtual reservation; only audit may be written.
+        """Serialize Autopilot snapshot, audit and optional canonical admission.
 
         BEGIN IMMEDIATE also excludes other SQLite connections, not only this
         store's owner thread. No change to the general trading transaction API.
         """
         with self._transaction():
             self._autopilot_transaction = True
+            self._robot_admission_transaction = True
             try:
                 yield
             finally:
                 self._autopilot_transaction = False
+                self._robot_admission_transaction = False
 
     def load_paper_portfolio_rows(self, account: TradingAccountId) -> dict[str, tuple[dict, ...]]:
         """Read account-scoped facts; caller holds the decision snapshot transaction."""
@@ -4606,7 +4622,9 @@ class SQLiteStore:
         self._assert_owner()
         if type(approved_at_ms) is not int or approved_at_ms < 0:
             raise ValueError("invalid Box handoff timestamp")
-        with self._transaction():
+        context = (nullcontext() if getattr(self, "_robot_admission_transaction", False)
+                   else self._transaction())
+        with context:
             source = self.get_robot_candidate(source_candidate_id)
             if source is None or source.status != "BOX_PLAN_ONLY":
                 raise PersistenceError("immutable Box source plan is required")
@@ -4653,7 +4671,9 @@ class SQLiteStore:
             raise ValueError("invalid Robot candidate timestamps")
         snapshot_json = _canonical_json(signal_snapshot)
         snapshot_sha256 = hashlib.sha256(snapshot_json.encode("utf-8")).hexdigest()
-        with self._transaction():
+        context = (nullcontext() if getattr(self, "_robot_admission_transaction", False)
+                   else self._transaction())
+        with context:
             existing = self._connection.execute(
                 "SELECT * FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
             ).fetchone()
@@ -4751,7 +4771,9 @@ class SQLiteStore:
         if status not in ROBOT_CANDIDATE_STATUSES or expected_revision < 0 or updated_at_ms < 0:
             raise ValueError("invalid Robot candidate state update")
         state_json = _canonical_json(robot_state)
-        with self._transaction():
+        context = (nullcontext() if getattr(self, "_robot_admission_transaction", False)
+                   else self._transaction())
+        with context:
             current = self._connection.execute(
                 "SELECT status FROM robot_candidates WHERE candidate_id=?", (candidate_id,),
             ).fetchone()
