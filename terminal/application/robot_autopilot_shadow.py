@@ -10,6 +10,12 @@ to runtime and the owner mode control still cannot enable PAPER_AUTO.
 First Eligible: there is no ranking and no batch window. Candidates are
 evaluated in arrival order, one by one; the audit order is that order.
 
+A6 bounded WAIT reevaluation: there is no scheduler or polling. Only the existing
+observer / S3 calls may evaluate a recorded WAIT again, and only on a newly closed
+source candle or a durable Robot/Autopilot state transition while the idea is
+still fresh. A stale or invalidated idea gets one terminal REJECT and is never
+resumed; ALLOW and REJECT stay frozen.
+
 Facts come only from authoritative state. A fact without an authoritative
 source is reported as such (WAIT with an exact reason), never assumed:
 - protection health: the in-process coverage manager when bound, else unknown;
@@ -36,7 +42,9 @@ from terminal.application.robot_admission import (
 )
 from terminal.application.robot_autopilot import (
     OUTCOME_ALLOW,
+    OUTCOME_WAIT,
     POLICY_VERSION,
+    REASON_ALREADY_ADMITTED,
     RobotAutoAdmissionFacts,
     RobotAutoAdmissionResult,
     evaluate_auto_admission,
@@ -58,6 +66,10 @@ SHADOW_MODE = "SHADOW"
 PAPER_AUTO_MODE = "PAPER_AUTO"
 _TERMINAL_STATUSES = {"EXPIRED", "INVALIDATED"}
 _ACTIVE_STATUSES = ("APPROVED", "OPEN")
+# A6, PROVISIONAL (no owner-approved value yet): an idea stays fresh for this many
+# closed source candles after its first audited evaluation. 2 candles outlast one
+# 60 s S2 ingress-health window on a 1m source; +1 margin. Not a trading parameter.
+WAIT_REEVALUATION_CANDLES = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +103,55 @@ class _Candidate:
     invalidated: bool
     already_admitted: bool
     own_ids: frozenset[str]
+
+
+def _candle_ms(timeframe: str) -> int | None:
+    text = str(timeframe).strip()
+    return int(text) * 60_000 if text.isdecimal() and int(text) > 0 else None
+
+
+def _candidate_stale(
+    decisions: tuple[RobotAutoDecisionRecord, ...], candidate_ref: str,
+    source_identity: str, timeframe: str, now_ms: int,
+) -> bool:
+    """Age of one immutable idea since its first audited evaluation, in any mode."""
+    first = min((item.evaluated_at_ms for item in decisions
+                 if item.candidate_ref == candidate_ref
+                 and item.source_identity == source_identity), default=None)
+    if first is None:
+        return False  # first evaluation happens at arrival, the decision time
+    candle = _candle_ms(timeframe)
+    if candle is None:
+        return True  # freshness cannot be proven without a source candle
+    return now_ms // candle - first // candle > WAIT_REEVALUATION_CANDLES
+
+
+def _latest_decision(
+    decisions: tuple[RobotAutoDecisionRecord, ...], candidate_ref: str,
+    source_identity: str, mode: str,
+) -> RobotAutoDecisionRecord | None:
+    matching = [item for item in decisions
+                if item.candidate_ref == candidate_ref
+                and item.source_identity == source_identity
+                and item.mode == mode and item.policy_version == POLICY_VERSION]
+    return matching[-1] if matching else None  # ordered by evaluation time
+
+
+def _wait_reevaluation_due(
+    last: RobotAutoDecisionRecord, now_ms: int, *state_records: Any,
+) -> bool:
+    """True only for a WAIT with a new closed source candle or a state transition."""
+    if last.outcome != OUTCOME_WAIT or last.reason_code == REASON_ALREADY_ADMITTED:
+        return False
+    if now_ms <= last.evaluated_at_ms:
+        return False
+    candle = _candle_ms(last.timeframe)
+    if candle is not None and now_ms // candle > last.evaluated_at_ms // candle:
+        return True
+    # Durable Robot runtime / Autopilot rows change only on real transitions.
+    return any(record is not None
+               and last.evaluated_at_ms < record.updated_at_ms <= now_ms
+               for record in state_records)
 
 
 def _scanner_candidate(store: SQLiteStore, ref: str, store_dir) -> _Candidate:
@@ -202,7 +263,7 @@ def _without_own_shadow_reservation(
 def _fresh_facts(
     store: SQLiteStore, account: TradingAccountId, *, mode: str, candidate: _Candidate,
     decisions: tuple[RobotAutoDecisionRecord, ...],
-    protection_healthy: Callable[[], bool] | None,
+    protection_healthy: Callable[[], bool] | None, now_ms: int,
     prior_shadow_allow: RobotAutoDecisionRecord | None = None,
 ) -> RobotAutoAdmissionFacts:
     portfolio = collect_portfolio_facts(store, account)
@@ -221,7 +282,9 @@ def _fresh_facts(
         robot_recovery_status=runtime.recovery_status if runtime is not None else None,
         candidate_valid=candidate.valid,
         candidate_executable=candidate.executable,
-        candidate_stale=False,
+        candidate_stale=_candidate_stale(
+            decisions, candidate.ref, candidate.source_identity, candidate.timeframe, now_ms,
+        ),
         candidate_invalidated=candidate.invalidated,
         already_admitted=candidate.already_admitted,
         reconciliation_clear=(
@@ -249,7 +312,8 @@ def _observe_shadow_candidate_locked(
 
     OFF (the default) reads only the mode row and writes nothing. PAPER_AUTO is
     not part of this slice and is treated like OFF: no evaluation, no admission.
-    A candidate already decided for the same immutable snapshot is not written again.
+    A candidate already decided for the same immutable snapshot is not written again,
+    except a WAIT that is due for its bounded A6 reevaluation.
     """
     state = store.get_robot_autopilot_state(account)
     if state is None or state.mode != SHADOW_MODE:
@@ -259,24 +323,22 @@ def _observe_shadow_candidate_locked(
         candidate_store_dir=candidate_store_dir,
     )
 
+    now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
     decisions = store.load_robot_auto_decisions(account)
-    for existing in decisions:
-        if (existing.candidate_ref == candidate.ref
-                and existing.source_identity == candidate.source_identity
-                and existing.mode == state.mode
-                and existing.policy_version == POLICY_VERSION):
-            frozen_facts = RobotAutoAdmissionFacts(**json.loads(existing.facts_json))
-            frozen_result = RobotAutoAdmissionResult(existing.outcome, existing.reason_code,
-                                                     existing.policy_version)
-            return ShadowObservation(frozen_facts, frozen_result, existing, False)
+    existing = _latest_decision(decisions, candidate.ref, candidate.source_identity, state.mode)
+    if existing is not None and not _wait_reevaluation_due(
+            existing, now, state, store.get_robot_runtime_state(account)):
+        frozen_facts = RobotAutoAdmissionFacts(**json.loads(existing.facts_json))
+        frozen_result = RobotAutoAdmissionResult(existing.outcome, existing.reason_code,
+                                                 existing.policy_version)
+        return ShadowObservation(frozen_facts, frozen_result, existing, False)
 
     facts = _fresh_facts(
         store, account, mode=state.mode, candidate=candidate, decisions=decisions,
-        protection_healthy=protection_healthy,
+        protection_healthy=protection_healthy, now_ms=now,
     )
     result = evaluate_auto_admission(facts)
 
-    now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
     decision, created = record_auto_decision(
         store,
         trading_account_id=account,
@@ -335,15 +397,13 @@ def admit_paper_auto_candidate(
         ):
             raise PersistenceError("SHADOW ALLOW immutable candidate identity changed")
 
+        now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
         decisions = store.load_robot_auto_decisions(account)
-        existing = next((
-            item for item in decisions
-            if item.candidate_ref == candidate.ref
-            and item.source_identity == candidate.source_identity
-            and item.mode == PAPER_AUTO_MODE
-            and item.policy_version == POLICY_VERSION
-        ), None)
-        if existing is not None:
+        existing = _latest_decision(
+            decisions, candidate.ref, candidate.source_identity, PAPER_AUTO_MODE,
+        )
+        if existing is not None and not _wait_reevaluation_due(
+                existing, now, state, store.get_robot_runtime_state(account)):
             facts = RobotAutoAdmissionFacts(**json.loads(existing.facts_json))
             result = RobotAutoAdmissionResult(
                 existing.outcome, existing.reason_code, existing.policy_version,
@@ -361,10 +421,9 @@ def admit_paper_auto_candidate(
             facts = _fresh_facts(
                 store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
                 decisions=decisions, protection_healthy=protection_healthy,
-                prior_shadow_allow=prior,
+                now_ms=now, prior_shadow_allow=prior,
             )
             result = evaluate_auto_admission(facts)
-            now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
             robot_candidate = None
             candidate_created = False
             if result.outcome == OUTCOME_ALLOW:
@@ -422,12 +481,52 @@ def observe_shadow_candidate(
     state = store.get_robot_autopilot_state(account)
     if state is None or state.mode != SHADOW_MODE:
         return None
-    with store.autopilot_decision_transaction():
-        return _observe_shadow_candidate_locked(
-            store, account, source=source, candidate_ref=candidate_ref,
-            protection_healthy=protection_healthy, candidate_store_dir=candidate_store_dir,
-            clock_ms=clock_ms,
-        )
+    now = clock_ms() if clock_ms is not None else int(time.time() * 1000)
+
+    def observe(ref: str, ref_source: str) -> ShadowObservation | None:
+        with store.autopilot_decision_transaction():
+            return _observe_shadow_candidate_locked(
+                store, account, source=ref_source, candidate_ref=ref,
+                protection_healthy=protection_healthy,
+                candidate_store_dir=candidate_store_dir, clock_ms=lambda: now,
+            )
+
+    # A6: this arrival is the only trigger. Earlier still-fresh WAITs that are due
+    # go first, in arrival order (First Eligible); each in its own short transaction.
+    arrival = (str(candidate_ref), source)
+    observation, observed = None, False
+    for due in _due_wait_refs(store, account, state, now):
+        if due == arrival:
+            observation, observed = observe(*due), True
+            continue
+        try:
+            observe(*due)
+        except Exception as error:  # an old WAIT must never block the arrival
+            print(
+                "[AUTOPILOT SHADOW WAIT REEVALUATION ERROR] "
+                f"candidate_ref={due[0]} error_class={type(error).__name__}"
+            )
+    return observation if observed else observe(*arrival)
+
+
+def _due_wait_refs(
+    store: SQLiteStore, account: TradingAccountId, state: Any, now_ms: int,
+) -> list[tuple[str, str]]:
+    """Fresh WAIT ideas due for reevaluation, oldest arrival first; read-only."""
+    decisions = store.load_robot_auto_decisions(account)
+    runtime = store.get_robot_runtime_state(account)
+    latest: dict[tuple[str, str], RobotAutoDecisionRecord] = {}
+    for item in decisions:
+        if item.mode == state.mode and item.policy_version == POLICY_VERSION:
+            latest[(item.candidate_ref, item.source_identity)] = item
+    return [
+        (last.candidate_ref,
+         SOURCE_BOX_PLAN if last.pattern == "IKIGAI_BOX" else SOURCE_SCANNER)
+        for last in latest.values()
+        if _wait_reevaluation_due(last, now_ms, state, runtime)
+        and not _candidate_stale(
+            decisions, last.candidate_ref, last.source_identity, last.timeframe, now_ms)
+    ]
 
 
 def shadow_mode_or_off(mode: str) -> str:
