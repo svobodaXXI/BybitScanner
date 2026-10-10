@@ -8,6 +8,9 @@ cancels, or closes an order.
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+import hashlib
+import json
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -36,6 +39,14 @@ _BOX_PLAN_SOURCE_PREFIX = "box-plan-"
 _BOX_PLAN_HANDLE_HEX = 40
 
 
+def candidate_snapshot_sha256(snapshot: Mapping[str, Any]) -> str:
+    """Hash the immutable Scanner snapshot exactly as Autopilot identifies it."""
+    text = json.dumps(
+        snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str,
+    )
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 class RobotAdmissionRejected(PersistenceError):
     """Raised when a candidate cannot cross the durable Robot admission gate."""
 
@@ -59,6 +70,8 @@ def _box_plan_source_prefix(handle: str) -> str | None:
 
 def _admit_box_plan_candidate(
     handle: str, *, database_path: Path | str | None, clock_ms,
+    transaction_store: SQLiteStore | None = None,
+    expected_snapshot_sha256: str | None = None,
 ) -> tuple[RobotCandidateRecord, bool]:
     """Owner admission of one frozen Box plan through the existing atomic handoff.
 
@@ -72,50 +85,61 @@ def _admit_box_plan_candidate(
     if not isinstance(now, int) or isinstance(now, bool) or now < 0:
         raise RobotAdmissionRejected("Robot admission clock returned invalid timestamp")
 
-    store = SQLiteStore.open(
+    owns_store = transaction_store is None
+    store = transaction_store or SQLiteStore.open(
         Path(database_path) if database_path is not None else DEFAULT_DATABASE_PATH
     )
+    if not owns_store and not store.in_robot_admission_transaction():
+        raise RobotAdmissionRejected("Robot admission transaction is not active")
+    context = store.robot_admission_transaction() if owns_store else nullcontext()
     try:
-        candidates = store.load_robot_candidates(PAPER_ACCOUNT_ID)
-        sources = [item for item in candidates if item.candidate_id.startswith(source_prefix)]
-        if len(sources) != 1:
-            raise RobotAdmissionRejected("Scanner candidate is not admissible")
-        source = sources[0]
-        error = box_plan_source_admission_error(source)
-        if error is not None:
-            raise RobotAdmissionRejected(error)
+        with context:
+            candidates = store.load_robot_candidates(PAPER_ACCOUNT_ID)
+            sources = [item for item in candidates if item.candidate_id.startswith(source_prefix)]
+            if len(sources) != 1:
+                raise RobotAdmissionRejected("Scanner candidate is not admissible")
+            source = sources[0]
+            error = box_plan_source_admission_error(source)
+            if error is not None:
+                raise RobotAdmissionRejected(error)
+            if (expected_snapshot_sha256 is not None
+                    and source.snapshot_sha256 != expected_snapshot_sha256):
+                raise RobotAdmissionRejected("Robot candidate immutable snapshot changed")
 
-        linked = [
-            item for item in candidates
-            if item.status != "BOX_PLAN_ONLY"
-            and item.signal_snapshot.get("source_box_candidate_id") == source.candidate_id
-        ]
-        if len(linked) > 1:
-            raise RobotAdmissionRejected("Robot candidate identity conflicts with durable state")
-        if linked:
-            return linked[0], False
+            linked = [
+                item for item in candidates
+                if item.status != "BOX_PLAN_ONLY"
+                and item.signal_snapshot.get("source_box_candidate_id") == source.candidate_id
+            ]
+            if len(linked) > 1:
+                raise RobotAdmissionRejected("Robot candidate identity conflicts with durable state")
+            if linked:
+                return linked[0], False
 
-        runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
-        if runtime is None:
-            raise RobotAdmissionRejected("Robot runtime state is unavailable")
-        if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
-            raise RobotAdmissionRejected("Robot admission is not ready")
-        owners = active_robot_owner_candidate_ids(store, PAPER_ACCOUNT_ID, source.symbol)
-        if owners:
-            raise RobotAdmissionRejected(
-                "Robot symbol already has an active exposure owner: " + ",".join(owners)
-            )
-        try:
-            return store.handoff_box_plan_to_robot(
-                source.candidate_id,
-                symbol=source.symbol,
-                expected_snapshot_sha256=source.snapshot_sha256,
-                approved_at_ms=now,
-            )
-        except (PersistenceError, ValueError) as exc:
-            raise RobotAdmissionRejected("Robot candidate identity conflicts with durable state") from exc
+            runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+            if runtime is None:
+                raise RobotAdmissionRejected("Robot runtime state is unavailable")
+            if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
+                raise RobotAdmissionRejected("Robot admission is not ready")
+            owners = active_robot_owner_candidate_ids(store, PAPER_ACCOUNT_ID, source.symbol)
+            if owners:
+                raise RobotAdmissionRejected(
+                    "Robot symbol already has an active exposure owner: " + ",".join(owners)
+                )
+            try:
+                return store.handoff_box_plan_to_robot(
+                    source.candidate_id,
+                    symbol=source.symbol,
+                    expected_snapshot_sha256=source.snapshot_sha256,
+                    approved_at_ms=now,
+                )
+            except (PersistenceError, ValueError) as exc:
+                raise RobotAdmissionRejected(
+                    "Robot candidate identity conflicts with durable state"
+                ) from exc
     finally:
-        store.close()
+        if owns_store:
+            store.close()
 
 
 def active_robot_owner_candidate_ids(
@@ -221,6 +245,9 @@ def admit_robot_candidate(
     database_path: Path | str | None = None,
     store_dir: Path | str | None = None,
     clock_ms=None,
+    transaction_store: SQLiteStore | None = None,
+    expected_snapshot_sha256: str | None = None,
+    mark_legacy_approved: bool = True,
 ) -> tuple[RobotCandidateRecord, bool]:
     """Admit one approved Scanner candidate into authoritative SQLite state.
 
@@ -232,6 +259,8 @@ def admit_robot_candidate(
     if str(candidate_id).startswith(BOX_PLAN_HANDLE_PREFIX):
         return _admit_box_plan_candidate(
             str(candidate_id), database_path=database_path, clock_ms=clock_ms,
+            transaction_store=transaction_store,
+            expected_snapshot_sha256=expected_snapshot_sha256,
         )
 
     candidate = load_candidate(candidate_id, store_dir=store_dir)
@@ -240,6 +269,10 @@ def admit_robot_candidate(
         raise RobotAdmissionRejected(error)
     symbol = Symbol(str(candidate["symbol"]).strip())
     snapshot = candidate["signal_snapshot"]
+    snapshot_sha256 = candidate_snapshot_sha256(snapshot)
+    if (expected_snapshot_sha256 is not None
+            and snapshot_sha256 != expected_snapshot_sha256):
+        raise RobotAdmissionRejected("Robot candidate immutable snapshot changed")
     is_l_shape = robot_l_shape.is_l_shape_snapshot(snapshot)
 
     resolved_database_path = (
@@ -249,63 +282,76 @@ def admit_robot_candidate(
     if not isinstance(now, int) or isinstance(now, bool) or now < 0:
         raise RobotAdmissionRejected("Robot admission clock returned invalid timestamp")
 
-    store = SQLiteStore.open(resolved_database_path)
+    owns_store = transaction_store is None
+    store = transaction_store or SQLiteStore.open(resolved_database_path)
+    if not owns_store and not store.in_robot_admission_transaction():
+        raise RobotAdmissionRejected("Robot admission transaction is not active")
+    if not owns_store and mark_legacy_approved:
+        raise ValueError("external Robot admission transaction must defer legacy approval")
+    context = store.robot_admission_transaction() if owns_store else nullcontext()
     try:
-        existing = store.get_robot_candidate(candidate_id)
-        if existing is not None:
-            if existing.status == "BOX_PLAN_ONLY":
-                raise RobotAdmissionRejected("BOX_PLAN_ONLY cannot enter execution admission")
-            if (
-                existing.trading_account_id != PAPER_ACCOUNT_ID
-                or existing.symbol != symbol
-            ):
-                raise RobotAdmissionRejected("Robot candidate identity conflicts with durable state")
-            return existing, False
+        with context:
+            existing = store.get_robot_candidate(candidate_id)
+            if existing is not None:
+                if existing.status == "BOX_PLAN_ONLY":
+                    raise RobotAdmissionRejected("BOX_PLAN_ONLY cannot enter execution admission")
+                if (
+                    existing.trading_account_id != PAPER_ACCOUNT_ID
+                    or existing.symbol != symbol
+                    or (expected_snapshot_sha256 is not None
+                        and existing.snapshot_sha256 != expected_snapshot_sha256)
+                ):
+                    raise RobotAdmissionRejected(
+                        "Robot candidate identity conflicts with durable state"
+                    )
+                record, created = existing, False
+            else:
+                runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
+                if runtime is None:
+                    raise RobotAdmissionRejected("Robot runtime state is unavailable")
+                if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
+                    raise RobotAdmissionRejected("Robot admission is not ready")
 
-        runtime = store.get_robot_runtime_state(PAPER_ACCOUNT_ID)
-        if runtime is None:
-            raise RobotAdmissionRejected("Robot runtime state is unavailable")
-        if runtime.mode != "ROBOT_RUNNING" or runtime.recovery_status != "READY":
-            raise RobotAdmissionRejected("Robot admission is not ready")
+                owners = active_robot_owner_candidate_ids(
+                    store, PAPER_ACCOUNT_ID, symbol, excluding_candidate_id=candidate_id,
+                )
+                if owners:
+                    raise RobotAdmissionRejected(
+                        "Robot symbol already has an active exposure owner: " + ",".join(owners)
+                    )
 
-        owners = active_robot_owner_candidate_ids(
-            store, PAPER_ACCOUNT_ID, symbol, excluding_candidate_id=candidate_id,
-        )
-        if owners:
-            raise RobotAdmissionRejected(
-                "Robot symbol already has an active exposure owner: " + ",".join(owners)
-            )
-
-        record, created = store.create_robot_candidate(
-            candidate_id=candidate_id,
-            trading_account_id=PAPER_ACCOUNT_ID,
-            symbol=symbol,
-            status="APPROVED",
-            signal_snapshot=snapshot,
-            approved_at_ms=now,
-            updated_at_ms=now,
-        )
-        if created and is_l_shape:
-            state, _event = robot_l_shape.initialize_state({
-                "candidate_id": candidate_id,
-                "status": "APPROVED",
-                "signal_snapshot": snapshot,
-            })
-            record = store.save_robot_candidate_state(
-                candidate_id,
-                status="APPROVED",
-                robot_state=state,
-                expected_revision=record.state_revision,
-                updated_at_ms=now,
-            )
+                record, created = store.create_robot_candidate(
+                    candidate_id=candidate_id,
+                    trading_account_id=PAPER_ACCOUNT_ID,
+                    symbol=symbol,
+                    status="APPROVED",
+                    signal_snapshot=snapshot,
+                    approved_at_ms=now,
+                    updated_at_ms=now,
+                )
+                if created and is_l_shape:
+                    state, _event = robot_l_shape.initialize_state({
+                        "candidate_id": candidate_id,
+                        "status": "APPROVED",
+                        "signal_snapshot": snapshot,
+                    })
+                    record = store.save_robot_candidate_state(
+                        candidate_id,
+                        status="APPROVED",
+                        robot_state=state,
+                        expected_revision=record.state_revision,
+                        updated_at_ms=now,
+                    )
     finally:
-        store.close()
+        if owns_store:
+            store.close()
 
     # Legacy JSON is only the Scanner handoff envelope. Its approval marker is
     # updated after authoritative SQLite admission and remains idempotent.
-    approve_candidate(
-        candidate_id,
-        approval=approval,
-        store_dir=store_dir,
-    )
+    if mark_legacy_approved:
+        approve_candidate(
+            candidate_id,
+            approval=approval,
+            store_dir=store_dir,
+        )
     return record, created

@@ -15,12 +15,14 @@ from robot_candidate_store import create_signal_snapshot, load_candidate
 from terminal.application.robot_autopilot import (
     OUTCOME_ALLOW, OUTCOME_REJECT, OUTCOME_WAIT, POLICY_VERSION, REASON_ELIGIBLE,
     REASON_CANDIDATE_INVALID, REASON_CANDIDATE_NOT_EXECUTABLE, REASON_PORTFOLIO_POLICY_UNSET,
+    REASON_PORTFOLIO_AGGREGATE_CAP,
     REASON_PROTECTION_HEALTH_UNKNOWN, REASON_PROTECTION_UNHEALTHY, REASON_ROBOT_NOT_READY,
     REASON_SYMBOL_OWNED,
 )
 from terminal.application.robot_autopilot_shadow import (
     SOURCE_BOX_PLAN, SOURCE_SCANNER, observe_shadow_candidate,
 )
+from terminal.application.robot_portfolio import collect_portfolio_facts
 from terminal.domain.models import Symbol, TradingAccountId
 from terminal.persistence.sqlite_store import SQLiteStore
 from tests.test_continuity_recovery_candidate_snapshot import _runtime
@@ -195,6 +197,85 @@ class ShadowObserverTests(unittest.TestCase):
         later = db.observe("later", health=lambda: True, now=8000)
         self.assertEqual((later.result.outcome, later.result.reason_code), (OUTCOME_WAIT, REASON_SYMBOL_OWNED))
         self.assertEqual([d.candidate_ref for d in db.decisions()], ["first", "later"])  # arrival order
+
+    def test_paper_auto_rechecks_competing_cap_and_converts_own_ro_once(self):
+        from terminal.application.robot_autopilot_shadow import admit_paper_auto_candidate
+
+        def reserve_ideas(db, count):
+            for index in range(count):
+                db.store.create_robot_candidate(
+                    candidate_id=f"reserved-{index}", trading_account_id=ACCOUNT,
+                    symbol=Symbol(f"R{index}USDT"), status="APPROVED",
+                    signal_snapshot={"pattern": "Falling Wedge", "slot": index},
+                    approved_at_ms=2000 + index, updated_at_ms=2000 + index,
+                )
+
+        def enable_paper_auto(db):
+            state = db.store.get_robot_autopilot_state(ACCOUNT)
+            db.store.update_robot_autopilot_state(
+                ACCOUNT, mode="PAPER_AUTO", expected_version=state.version,
+                updated_at_ms=6000,
+            )
+
+        with tempfile.TemporaryDirectory() as temp:
+            db = _Db(Path(temp))
+            try:
+                reserve_ideas(db, 18)
+                _wedge(db.candidates, "auto-race")
+                allowed = db.observe("auto-race", health=lambda: True, now=5000)
+                self.assertEqual(allowed.result.outcome, OUTCOME_ALLOW)
+                db.store.create_robot_candidate(
+                    candidate_id="manual-race", trading_account_id=ACCOUNT,
+                    symbol=Symbol("MANUALUSDT"), status="APPROVED",
+                    signal_snapshot={"pattern": "Falling Wedge", "owner": "manual"},
+                    approved_at_ms=5500, updated_at_ms=5500,
+                )
+                enable_paper_auto(db)
+
+                result = admit_paper_auto_candidate(
+                    db.store, ACCOUNT, allow_decision_id=allowed.decision.decision_id,
+                    source=SOURCE_SCANNER, protection_healthy=lambda: True,
+                    candidate_store_dir=db.candidates, clock_ms=lambda: 7000,
+                )
+
+                self.assertEqual(
+                    (result.result.outcome, result.result.reason_code),
+                    (OUTCOME_WAIT, REASON_PORTFOLIO_AGGREGATE_CAP),
+                )
+                self.assertIsNone(db.store.get_robot_candidate("auto-race"))
+            finally:
+                db.store.close()
+
+        with tempfile.TemporaryDirectory() as temp:
+            db = _Db(Path(temp))
+            try:
+                reserve_ideas(db, 18)
+                _wedge(db.candidates, "auto-once")
+                allowed = db.observe("auto-once", health=lambda: True, now=5000)
+                enable_paper_auto(db)
+
+                first = admit_paper_auto_candidate(
+                    db.store, ACCOUNT, allow_decision_id=allowed.decision.decision_id,
+                    source=SOURCE_SCANNER, protection_healthy=lambda: True,
+                    candidate_store_dir=db.candidates, clock_ms=lambda: 7000,
+                )
+                again = admit_paper_auto_candidate(
+                    db.store, ACCOUNT, allow_decision_id=allowed.decision.decision_id,
+                    source=SOURCE_SCANNER, protection_healthy=lambda: True,
+                    candidate_store_dir=db.candidates, clock_ms=lambda: 8000,
+                )
+
+                self.assertEqual(first.result.outcome, OUTCOME_ALLOW)
+                self.assertTrue(first.candidate_created)
+                self.assertFalse(again.candidate_created)
+                self.assertEqual(first.decision, again.decision)
+                self.assertEqual(first.candidate.candidate_id, "auto-once")
+                self.assertEqual(load_candidate("auto-once", store_dir=db.candidates)["status"],
+                                 "APPROVED")
+                self.assertEqual(collect_portfolio_facts(db.store, ACCOUNT)["occupied_ro"], 19)
+                self.assertEqual(db.footprint()[:len(TRADING_TABLES)], (0,) * len(TRADING_TABLES))
+            finally:
+                db.store.close()
 
 
 class ShadowRuntimeHookTests(unittest.TestCase):
