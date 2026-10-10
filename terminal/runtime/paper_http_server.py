@@ -1220,7 +1220,7 @@ def make_autopilot_protection_health(
 
     True only with healthy coverage and a calm recent ingress window; False on
     overload; None (-> WAIT, PROTECTION_HEALTH_UNKNOWN) when a required metric is
-    missing or invalid. Read-only: it never touches protection, admission or
+    missing or invalid, or when the window has no sample while symbols are covered. Read-only: it never touches protection, admission or
     manual lifecycle, only the Autopilot policy input.
     """
 
@@ -1252,6 +1252,22 @@ def make_autopilot_protection_health(
             return False
         if latency > max_queue_latency_ms or processing > max_processing_ms:
             return False
+        if samples == 0:
+            # No ingress sample is proof of calm only while nothing is covered:
+            # a covered or armed symbol streams ordered events through ingress,
+            # so a silent window there is unproven freshness (UNKNOWN).
+            try:
+                health = coverage.health()
+                covered = health.get("covered_symbols")
+                armed = health.get("armed_symbols")
+            except Exception:
+                return None
+            if not isinstance(covered, (tuple, list, set, frozenset)):
+                return None
+            if not isinstance(armed, (tuple, list, set, frozenset)):
+                return None
+            if covered or armed:
+                return None
         return True
 
     return provider
