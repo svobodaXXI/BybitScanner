@@ -186,7 +186,8 @@ def _observe_shadow_candidate_locked(
     portfolio["audit_sequence"] = len(decisions) + 1
     runtime = store.get_robot_runtime_state(account)
     try:
-        healthy = None if protection_healthy is None else bool(protection_healthy())
+        healthy = None if protection_healthy is None else protection_healthy()
+        healthy = None if healthy is None else bool(healthy)
     except Exception:
         healthy = None
     facts = RobotAutoAdmissionFacts(

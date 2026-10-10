@@ -10,6 +10,7 @@ import queue
 import socket
 import ssl
 import threading
+import math
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -1167,6 +1168,12 @@ class _BookUpdateNotification:
 
 SLOW_OWNER_TASK_WARNING_MS = 200.0
 
+# Autopilot admission gate (#448 S2). Owner-tunable; any breach is WAIT, never ALLOW.
+AUTOPILOT_INGRESS_WINDOW_S = 60.0
+AUTOPILOT_MAX_QUEUE_LATENCY_MS = 2000.0
+AUTOPILOT_MAX_PROCESSING_MS = 2000.0
+AUTOPILOT_MAX_PENDING_FRACTION = 0.5
+
 
 BOOK_UPDATE_TASK_LABEL = "process_orderbook_update"
 
@@ -1200,6 +1207,56 @@ class ProtectionIngressOverflow(RuntimeError):
     """
 
 
+def make_autopilot_protection_health(
+    coverage,
+    runtime,
+    *,
+    window_s: float = AUTOPILOT_INGRESS_WINDOW_S,
+    max_queue_latency_ms: float = AUTOPILOT_MAX_QUEUE_LATENCY_MS,
+    max_processing_ms: float = AUTOPILOT_MAX_PROCESSING_MS,
+    max_pending_fraction: float = AUTOPILOT_MAX_PENDING_FRACTION,
+):
+    """Autopilot protection-health source: coverage health AND recent ingress load.
+
+    True only with healthy coverage and a calm recent ingress window; False on
+    overload; None (-> WAIT, PROTECTION_HEALTH_UNKNOWN) when a required metric is
+    missing or invalid. Read-only: it never touches protection, admission or
+    manual lifecycle, only the Autopilot policy input.
+    """
+
+    def number(value, *, positive=False):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if not math.isfinite(value) or value < 0 or (positive and value == 0):
+            return None
+        return value
+
+    def provider():
+        try:
+            if not coverage.is_healthy():
+                return False
+            read = getattr(runtime, "protection_ingress_recent", None)
+            metrics = read(window_s) if callable(read) else None
+            if not isinstance(metrics, Mapping):
+                return None
+            capacity = number(metrics.get("capacity"), positive=True)
+            pending = number(metrics.get("current_pending"))
+            samples = number(metrics.get("recent_samples"))
+            latency = number(metrics.get("recent_max_queue_latency_ms"))
+            processing = number(metrics.get("recent_max_processing_ms"))
+            if None in (capacity, pending, samples, latency, processing):
+                return None
+        except Exception:
+            return None
+        if pending >= capacity * max_pending_fraction:
+            return False
+        if latency > max_queue_latency_ms or processing > max_processing_ms:
+            return False
+        return True
+
+    return provider
+
+
 class SerializedPaperRuntime:
     def __init__(self, factory, *, protection_ingress_capacity: int = 64) -> None:
         if protection_ingress_capacity <= 0:
@@ -1227,6 +1284,8 @@ class SerializedPaperRuntime:
         self._protection_ingress_high_watermark = 0
         self._protection_ingress_max_queue_latency_ms = 0.0
         self._protection_ingress_max_processing_ms = 0.0
+        # (monotonic end, queue latency ms, processing ms) of recent protection tasks.
+        self._protection_ingress_recent: deque[tuple[float, float, float]] = deque(maxlen=512)
         # Slowest owner request of any kind since start: (ms, kind, label source).
         # Written only by the owner thread as one tuple; the label is resolved lazily.
         self._slowest_owner_task: tuple[float, str | None, object] = (0.0, None, None)
@@ -1412,6 +1471,31 @@ class SerializedPaperRuntime:
                 "last_overflow_role": self._protection_ingress_last_overflow_role,
             }
 
+    def protection_ingress_recent(self, window_s: float) -> dict[str, object]:
+        """Recent-window protection ingress load for the Autopilot admission gate.
+
+        The lifetime maxima in protection_ingress_metrics() never decay and the
+        owner has drained its backlog whenever an admission runs, so only
+        completed samples inside ``window_s`` plus the age of the oldest
+        still-queued task describe the load an admission would join.
+        """
+        now = time.monotonic()
+        now_perf = time.perf_counter()
+        with self._protection_ingress_lock:
+            samples = [item for item in self._protection_ingress_recent if now - item[0] <= window_s]
+            queued_wait_ms = (
+                (now_perf - self._protection_tasks[0].enqueued_at) * 1000
+                if self._protection_tasks else 0.0
+            )
+            return {
+                "capacity": self._protection_ingress_capacity,
+                "current_pending": self._protection_ingress_pending,
+                "recent_samples": len(samples),
+                "recent_max_queue_latency_ms": max(
+                    [queued_wait_ms, *(item[1] for item in samples)]),
+                "recent_max_processing_ms": max([0.0, *(item[2] for item in samples)]),
+            }
+
     def close(self) -> None:
         if not self._thread.is_alive():
             return
@@ -1475,6 +1559,8 @@ class SerializedPaperRuntime:
                     self._protection_ingress_max_processing_ms,
                     processing_ms,
                 )
+                self._protection_ingress_recent.append(
+                    (time.monotonic(), queue_latency_ms, processing_ms))
             self._observe_owner_task(
                 "protection", task.operation, processing_ms,
                 f" queue_latency_ms={queue_latency_ms:.1f} protection_pending={pending}"
@@ -3906,7 +3992,7 @@ def main() -> None:
             robot_protection_coverage.release_entry_coverage,
         ))
         runtime.call(lambda owned: owned.bind_autopilot_protection_health(
-            robot_protection_coverage.is_healthy,
+            make_autopilot_protection_health(robot_protection_coverage, runtime),
         ))
         runtime.start_robot_monitor()
 

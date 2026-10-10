@@ -33,6 +33,11 @@ class _Coverage:
         return self.healthy
 
 
+class _Owned:
+    def close(self):
+        pass
+
+
 class _Metrics:
     """Stand-in exposing only the recent-window ingress read the gate may use."""
 
@@ -87,7 +92,7 @@ class IngressGateProviderTests(unittest.TestCase):
 
 class RecentWindowOnRealIngressTests(unittest.TestCase):
     def test_recent_latency_gates_then_window_expires_and_protection_still_runs(self):
-        runtime = SerializedPaperRuntime(lambda: object())
+        runtime = SerializedPaperRuntime(_Owned)
         self.addCleanup(runtime.close)
         release = threading.Event()
         runtime.enqueue(lambda _owned: release.wait(5), symbol="AAAUSDT", coverage_role="EXPOSURE")
