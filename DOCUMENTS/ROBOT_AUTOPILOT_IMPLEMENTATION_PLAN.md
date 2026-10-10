@@ -480,3 +480,49 @@ The first useful product result is a SHADOW report answering:
 
 Only after that evidence exists do we connect the same ALLOW result to
 canonical PAPER admission.
+
+
+## A3 owner override — 2026-10-10 / #446
+
+SHADOW uses First Eligible with fixed reference capital 5000 USDT, 1 RO =
+250 USDT, aggregate cap 19 RO (4750 USDT). An eligible next selection at
+18 RO reaches 19; at 19 or more it waits PORTFOLIO_AGGREGATE_CAP.
+Each identified Robot idea reserves one full RO across fills and resting orders.
+Each manual working LIMIT without proven shared identity reserves one RO.
+Fills of that same order share its reservation. Manual net positions without
+fill history and without overlapping obligations reserve at least one RO,
+rounded up by 250 USDT notional; mixed/ambiguous positions or partial reductions
+across multiple ideas fail closed with PORTFOLIO_DATA_UNAVAILABLE.
+The collector does not create manual idea identity or mutate trading objects.
+
+The existing append-only audit gains facts_json through additive schema v25;
+legacy rows retain {}. Deferred per-asset 2 RO, correlation, cluster, direction
+and daily-loss controls are NOT_EVALUATED. They are never reported as passed.
+Snapshot, replay lookup and ALLOW append share BEGIN IMMEDIATE, serializing
+parallel callers across SQLite connections. Repeats return the original facts.
+ALLOW rows are virtual SHADOW reservations, independent of real PAPER capital.
+They survive OFF/restart and do not expire speculatively. A linked physical
+Robot idea replaces the virtual reservation; a terminal linked idea releases
+it only when no physical obligation remains. Pure SHADOW does not simulate
+closure; unresolved virtual selections keep capacity reserved conservatively.
+No new executor, admission/RR change, LIVE, #447/#448 work or PAPER_AUTO enablement.
+
+Real-history compatibility is evidence-based. A zero-quantity `Flat` projection
+with zero engaged notional is historical zero exposure even when its old
+`sync_state` remains `reconciliation_required`; the separate runtime and
+reconciliation gates still decide whether Robot is ready. An unfinished
+`create_market / submitting` command without an exchange order identity is
+ignored only when a strictly later `synced Flat` projection proves zero quantity
+and zero engaged notional for the same symbol and no working LIMIT remains.
+Other unfinished commands remain `PORTFOLIO_DATA_UNAVAILABLE`; old status rows
+are not rewritten.
+
+A virtual SHADOW reservation may be released only by a durable terminal event
+bound to the same immutable signal identity: either the linked Robot candidate
+is `CLOSED`, `EXPIRED` or `INVALIDATED` and the physical collector proves no
+remaining position/order obligation, or a future source adapter appends a
+durable source-signal `EXPIRED`/`INVALIDATED` observation. Wall-clock age alone
+is not release evidence. Until that source terminal event exists, a pure SHADOW
+ALLOW survives restart/OFF and continues to reserve one RO. A3 implements the
+linked Robot-candidate release route only; consuming a source-only terminal
+observation requires its own future append-and-release integration.

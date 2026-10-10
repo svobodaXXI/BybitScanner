@@ -8,11 +8,12 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from decimal import Decimal
 
 import pattern_robot_integration as integration
 from robot_candidate_store import create_signal_snapshot, load_candidate
 from terminal.application.robot_autopilot import (
-    OUTCOME_REJECT, OUTCOME_WAIT, POLICY_VERSION,
+    OUTCOME_ALLOW, OUTCOME_REJECT, OUTCOME_WAIT, POLICY_VERSION, REASON_ELIGIBLE,
     REASON_CANDIDATE_INVALID, REASON_CANDIDATE_NOT_EXECUTABLE, REASON_PORTFOLIO_POLICY_UNSET,
     REASON_PROTECTION_HEALTH_UNKNOWN, REASON_PROTECTION_UNHEALTHY, REASON_ROBOT_NOT_READY,
     REASON_SYMBOL_OWNED,
@@ -59,6 +60,7 @@ class _Db:
     def __init__(self, root: Path, *, autopilot="SHADOW", robot=("ROBOT_RUNNING", "READY")):
         self.candidates = root / "candidates"
         self.store = SQLiteStore.open(root / "paper.sqlite3")
+        self.store.initialize_paper_account(ACCOUNT, Decimal("5000"), updated_at_ms=1)
         state = self.store.initialize_robot_runtime_state(ACCOUNT, updated_at_ms=1000)
         self.store.update_robot_runtime_state(ACCOUNT, mode=robot[0], recovery_status=robot[1],
                                               reason=None, expected_version=state.version,
@@ -118,11 +120,11 @@ class ShadowObserverTests(unittest.TestCase):
         self.assertIsNone(db.store.get_robot_candidate("wedge-1"))
         self.assertEqual(load_candidate("wedge-1", store_dir=db.candidates)["status"], "AVAILABLE")
 
-    def test_portfolio_policy_has_no_source_so_shadow_never_allows(self):
+    def test_owner_approved_portfolio_policy_allows_empty_portfolio(self):
         db = self._db()
         _wedge(db.candidates)
         result = db.observe("wedge-1", health=lambda: True).result
-        self.assertEqual((result.outcome, result.reason_code), (OUTCOME_WAIT, REASON_PORTFOLIO_POLICY_UNSET))
+        self.assertEqual((result.outcome, result.reason_code), (OUTCOME_ALLOW, REASON_ELIGIBLE))
 
     def test_unhealthy_or_failing_protection_source_never_counts_as_healthy(self):
         db = self._db()
@@ -163,7 +165,7 @@ class ShadowObserverTests(unittest.TestCase):
         # A valid L-shape passes its own gate and reaches the portfolio gate.
         _l_shape(db.candidates, "l-ok", reward_risk=2.5, symbol="BBBUSDT")
         self.assertEqual(db.observe("l-ok", health=lambda: True).result.reason_code,
-                         REASON_PORTFOLIO_POLICY_UNSET)
+                         REASON_ELIGIBLE)
 
     def test_not_executable_snapshot_is_rejected(self):
         db = self._db()
@@ -217,7 +219,7 @@ class ShadowRuntimeHookTests(unittest.TestCase):
                     "BTCUSDT", "5", _CONFIRMED_BOX_FORMATION)
                 decisions = runtime.store.load_robot_auto_decisions(ACCOUNT)
                 self.assertEqual([(d.candidate_ref, d.pattern, d.reason_code) for d in decisions],
-                                 [(source_id, "IKIGAI_BOX", REASON_PORTFOLIO_POLICY_UNSET)])
+                                 [(source_id, "IKIGAI_BOX", REASON_ELIGIBLE)])
                 self.assertEqual(runtime.store.get_robot_candidate(source_id).status, "BOX_PLAN_ONLY")
                 linked = [c for c in runtime.store.load_robot_candidates(ACCOUNT)
                           if c.status != "BOX_PLAN_ONLY"]
