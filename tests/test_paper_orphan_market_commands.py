@@ -367,5 +367,116 @@ class ToolGuardTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(self.db.read_bytes()).hexdigest(), before)
 
 
+class RuntimeProbeTests(unittest.TestCase):
+    """Windows reports a refusal on a closed loopback port only after ~2.04 s.
+
+    The probe must wait for that confirmed refusal and still treat every other
+    outcome (timeout, any HTTP response, unknown error) as a possibly active runtime.
+    """
+
+    URL = "http://127.0.0.1:8765/api/health"
+
+    def probe(self, outcome):
+        import urllib.request
+        from unittest import mock
+
+        calls = []
+
+        def fake_open(_opener, url, data=None, timeout=None):
+            calls.append(timeout)
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+
+        with mock.patch.object(urllib.request.OpenerDirector, "open", fake_open):
+            result = tool.probe_listening(self.URL)
+        self.assertEqual(len(calls), 1)
+        return result, calls[0]
+
+    def test_probe_waits_longer_than_the_windows_refusal_delay(self):
+        _result, timeout = self.probe(ConnectionRefusedError(10061, "refused"))
+        self.assertGreaterEqual(timeout, 6.0)
+        self.assertGreater(tool.PROBE_TIMEOUT_S, 2.1)
+
+    def test_a_confirmed_connection_refusal_means_offline(self):
+        import urllib.error
+
+        for label, error in (
+            ("direct", ConnectionRefusedError(10061, "refused")),
+            ("wrapped by urllib", urllib.error.URLError(ConnectionRefusedError(10061, "refused"))),
+        ):
+            with self.subTest(label):
+                self.assertFalse(self.probe(error)[0])
+
+    def test_anything_else_means_the_runtime_may_be_active(self):
+        import io
+        import socket
+        import urllib.error
+
+        http_error = urllib.error.HTTPError(self.URL, 502, "bad gateway", {}, io.BytesIO(b""))
+        for label, outcome in (
+            ("answered", object()),
+            ("http response", http_error),
+            ("timeout", urllib.error.URLError(socket.timeout("timed out"))),
+            ("bare timeout", TimeoutError("timed out")),
+            ("dns failure", urllib.error.URLError(socket.gaierror(11001, "no host"))),
+            ("connection reset", urllib.error.URLError(ConnectionResetError(10054, "reset"))),
+            ("unknown error", RuntimeError("anything")),
+        ):
+            with self.subTest(label):
+                self.assertTrue(self.probe(outcome)[0])
+
+    def test_the_probe_ignores_proxy_settings(self):
+        import urllib.request
+        from unittest import mock
+
+        seen = {}
+        real_build = urllib.request.build_opener
+
+        def spy(*handlers):
+            seen["handlers"] = handlers
+            return real_build(*handlers)
+
+        with mock.patch.dict("os.environ", {"HTTP_PROXY": "http://127.0.0.1:9", "NO_PROXY": ""}):
+            with mock.patch.object(urllib.request, "build_opener", spy):
+                with mock.patch.object(
+                    urllib.request.OpenerDirector, "open",
+                    side_effect=ConnectionRefusedError(10061, "refused"),
+                ):
+                    self.assertFalse(tool.probe_listening(self.URL))
+        proxy_handlers = [h for h in seen["handlers"] if isinstance(h, urllib.request.ProxyHandler)]
+        self.assertEqual([h.proxies for h in proxy_handlers], [{}])
+
+    def test_a_really_closed_port_is_offline_and_a_listening_one_is_not(self):
+        import socket
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()  # nothing listens here any more: a genuine, possibly delayed refusal
+        self.assertFalse(tool.probe_listening(f"http://127.0.0.1:{port}/api/health"))
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *_args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            self.assertTrue(tool.probe_listening(
+                f"http://127.0.0.1:{server.server_address[1]}/api/health"))
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
 if __name__ == "__main__":
     unittest.main()
