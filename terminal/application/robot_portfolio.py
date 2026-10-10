@@ -113,6 +113,31 @@ def collect_portfolio_facts(store: SQLiteStore, account: TradingAccountId) -> di
         reservations = {}
         symbols = set()
 
+        # A Box plan and its handed-off Robot candidate are one physical idea
+        # only when both immutable snapshot lineage and Robot state agree.
+        # Never canonicalize merely because two candidate IDs look alike.
+        handoffs = {}
+        for robot in candidates.values():
+            source_id = robot.signal_snapshot.get("source_box_candidate_id")
+            if not source_id:
+                continue
+            source = candidates.get(source_id)
+            state = robot.robot_state or {}
+            snapshot = dict(robot.signal_snapshot)
+            snapshot.pop("source_box_candidate_id", None)
+            if (source is None or source.status != "BOX_PLAN_ONLY"
+                    or source.symbol.value != robot.symbol.value
+                    or state.get("source_box_candidate_id") != source_id
+                    or snapshot != source.signal_snapshot):
+                continue
+            if source_id in handoffs:
+                handoffs[source_id] = None  # multiple handoffs: unsafe to assign
+            else:
+                handoffs[source_id] = robot.candidate_id
+
+        def canonical_owner(candidate_id):
+            return handoffs.get(candidate_id) or candidate_id
+
         def reserve(key, symbol, ro=1):
             previous = reservations.get(key)
             if previous is not None and previous["symbol"] != symbol:
@@ -123,6 +148,7 @@ def collect_portfolio_facts(store: SQLiteStore, account: TradingAccountId) -> di
 
         def own(order_id, candidate_id):
             c = candidates.get(candidate_id)
+            candidate_id = canonical_owner(candidate_id)
             if c is None or (order_id in owners and owners[order_id] != candidate_id):
                 raise Unavailable("order ownership is ambiguous")
             order = orders.get(order_id)
