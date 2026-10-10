@@ -49,6 +49,7 @@ class WaitReevaluationTests(unittest.TestCase):
         return admit_paper_auto_candidate(
             self.db.store, ACCOUNT, allow_decision_id=decision.decision_id,
             source=SOURCE_SCANNER, protection_healthy=health,
+            candidate_fresh=lambda *_: True,
             candidate_store_dir=self.db.candidates, clock_ms=lambda: now,
         )
 

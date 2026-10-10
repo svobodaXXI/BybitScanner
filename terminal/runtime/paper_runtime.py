@@ -26,7 +26,8 @@ from terminal.api.models import (
     LiveMarketCommandRequest,
 )
 from terminal.application.robot_autopilot_shadow import (
-    SOURCE_BOX_PLAN, SOURCE_SCANNER, observe_shadow_candidate, shadow_mode_or_off,
+    SOURCE_BOX_PLAN, SOURCE_SCANNER, admit_arrived_auto_candidate,
+    observe_shadow_candidate, owner_autopilot_mode,
 )
 from terminal.application.robot_breakout_monitor import (
     DEFAULT_TICK_INTERVAL_S, EmergencyClosePath, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
@@ -923,26 +924,37 @@ class PaperRuntime:
     ) -> object:
         def prepare(runtime: "PaperRuntime") -> object:
             source_id = runtime._prepare_ikigai_box_robot_plan(symbol, timeframe, formation)
-            runtime.observe_autopilot_shadow_candidate(SOURCE_BOX_PLAN, source_id)
+            runtime.observe_autopilot_candidate(SOURCE_BOX_PLAN, source_id)
             return source_id
 
         return self._dispatch_robot_command(prepare)
 
     def _dispatch_autopilot_shadow_scanner_candidate(self, candidate_id: str) -> None:
         self._dispatch_robot_command(
-            lambda runtime: runtime.observe_autopilot_shadow_candidate(SOURCE_SCANNER, candidate_id)
+            lambda runtime: runtime.observe_autopilot_candidate(SOURCE_SCANNER, candidate_id)
         )
 
     def bind_autopilot_protection_health(self, provider: Callable[[], bool] | None) -> None:
         self._autopilot_protection_health = provider
 
-    def observe_autopilot_shadow_candidate(self, source: str, candidate_ref: str):
-        """Owner thread. Autopilot SHADOW evaluation of one arrived candidate.
+    def observe_autopilot_candidate(self, source: str, candidate_ref: str):
+        """Owner thread. Autopilot evaluation of one arrived candidate.
 
-        Never admits, plans or trades. A failure is logged and never reaches the
-        Scanner pass or the Box plan freeze.
+        OFF does nothing. SHADOW stays read-only for every trading object.
+        PAPER_AUTO routes the same policy result through the canonical Robot
+        admission boundary. A failure is logged and never reaches the Scanner
+        pass or the Box plan freeze.
         """
+        state = self.store.get_robot_autopilot_state(self._paper_account_id)
+        mode = state.mode if state is not None else "OFF"
         try:
+            if mode == "PAPER_AUTO":
+                return admit_arrived_auto_candidate(
+                    self.store, self._paper_account_id,
+                    source=source, candidate_ref=str(candidate_ref),
+                    protection_healthy=self._autopilot_protection_health,
+                    candidate_fresh=self._autopilot_candidate_fresh,
+                )
             return observe_shadow_candidate(
                 self.store, self._paper_account_id,
                 source=source, candidate_ref=str(candidate_ref),
@@ -950,17 +962,59 @@ class PaperRuntime:
             )
         except Exception as error:
             print(
-                "[AUTOPILOT SHADOW ERROR] "
+                f"[AUTOPILOT {mode} ERROR] "
                 f"source={source} candidate_ref={candidate_ref} error_class={type(error).__name__}"
             )
             return None
 
+    # Back-compatible name used by existing callers and tests.
+    observe_autopilot_shadow_candidate = observe_autopilot_candidate
+
+    def _autopilot_candidate_fresh(self, symbol: str, signal_snapshot) -> bool | None:
+        """Owner thread. Prove from authoritative closed candles that an idea is live.
+
+        Evidence is only what was prepared off the owner thread (no REST here) and
+        is replayed through the existing Robot state machine: a setup that reached
+        its apex is dead. No evidence, an unsupported pattern or any failure means
+        unproven -> None, which the policy turns into WAIT, never ALLOW.
+        """
+        import robot_state_machine
+
+        evidence = self.robot_catchup_evidence
+        if evidence is None or not isinstance(signal_snapshot, Mapping):
+            return None
+        try:
+            candles = tuple(evidence(symbol, dict(signal_snapshot)))
+        except Exception:
+            return None
+        if not candles:
+            return None
+        try:
+            state, _event = robot_state_machine.initialize_state({
+                "status": "APPROVED",
+                "timeframe": "1",
+                "signal_snapshot": dict(signal_snapshot),
+            })
+            replayed, _events = robot_state_machine.replay_closed_candles(
+                dict(signal_snapshot), state, candles,
+            )
+        except Exception:
+            return None
+        return replayed.get("phase") != robot_state_machine.PHASE_EXPIRED_AT_APEX
+
     def autopilot_state(self):
         return self.store.get_robot_autopilot_state(self._paper_account_id)
 
-    def set_autopilot_mode(self, mode: str):
-        """Owner switch for this slice: OFF or SHADOW only; PAPER_AUTO is rejected."""
-        target = shadow_mode_or_off(mode)
+    def set_autopilot_mode(self, mode: str, *, confirm_paper_auto: bool = False):
+        """Owner switch. OFF/SHADOW are free; PAPER_AUTO needs explicit confirmation.
+
+        Enabling automation stays an owner action: nothing here turns it on by
+        itself, and restart recovery still forces PAPER_AUTO back to OFF.
+        """
+        target = owner_autopilot_mode(
+            mode, environment="PAPER" if self._paper_account_id.value == "paper" else "LIVE",
+            confirm_paper_auto=confirm_paper_auto,
+        )
         current = self.store.get_robot_autopilot_state(self._paper_account_id)
         if current is None:
             raise RuntimeError("Robot Autopilot state is unavailable")

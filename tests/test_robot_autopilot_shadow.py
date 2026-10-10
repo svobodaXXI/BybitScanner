@@ -235,6 +235,7 @@ class ShadowObserverTests(unittest.TestCase):
                 result = admit_paper_auto_candidate(
                     db.store, ACCOUNT, allow_decision_id=allowed.decision.decision_id,
                     source=SOURCE_SCANNER, protection_healthy=lambda: True,
+                    candidate_fresh=lambda *_: True,
                     candidate_store_dir=db.candidates, clock_ms=lambda: 7000,
                 )
 
@@ -257,11 +258,13 @@ class ShadowObserverTests(unittest.TestCase):
                 first = admit_paper_auto_candidate(
                     db.store, ACCOUNT, allow_decision_id=allowed.decision.decision_id,
                     source=SOURCE_SCANNER, protection_healthy=lambda: True,
+                    candidate_fresh=lambda *_: True,
                     candidate_store_dir=db.candidates, clock_ms=lambda: 7000,
                 )
                 again = admit_paper_auto_candidate(
                     db.store, ACCOUNT, allow_decision_id=allowed.decision.decision_id,
                     source=SOURCE_SCANNER, protection_healthy=lambda: True,
+                    candidate_fresh=lambda *_: True,
                     candidate_store_dir=db.candidates, clock_ms=lambda: 8000,
                 )
 

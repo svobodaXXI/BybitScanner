@@ -45,6 +45,7 @@ class AdmissionConcurrencyTests(unittest.TestCase):
         return admit_paper_auto_candidate(
             store, ACCOUNT, allow_decision_id=decision.decision_id,
             source=SOURCE_SCANNER, protection_healthy=lambda: True,
+            candidate_fresh=lambda *_: True,
             candidate_store_dir=self.db.candidates, clock_ms=lambda: 7000,
         )
 
