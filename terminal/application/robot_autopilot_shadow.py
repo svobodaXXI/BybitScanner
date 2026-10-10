@@ -12,9 +12,9 @@ evaluated in arrival order, one by one; the audit order is that order.
 
 A6 bounded WAIT reevaluation: there is no scheduler or polling. Only the existing
 observer / S3 calls may evaluate a recorded WAIT again, and only on a newly closed
-source candle or a durable Robot/Autopilot state transition while the idea is
-still fresh. A stale or invalidated idea gets one terminal REJECT and is never
-resumed; ALLOW and REJECT stay frozen.
+source candle or a durable Robot/Autopilot state transition. There is no
+age-based expiration; an invalidated idea is rejected and never resumed.
+ALLOW and REJECT stay frozen.
 
 Facts come only from authoritative state. A fact without an authoritative
 source is reported as such (WAIT with an exact reason), never assumed:
@@ -66,11 +66,6 @@ SHADOW_MODE = "SHADOW"
 PAPER_AUTO_MODE = "PAPER_AUTO"
 _TERMINAL_STATUSES = {"EXPIRED", "INVALIDATED"}
 _ACTIVE_STATUSES = ("APPROVED", "OPEN")
-# A6 owner-approved bounded freshness for short-lived scanner candidates.
-# Box lifecycle validity needs independent proof before exempting it from this
-# fail-closed cap; never admit an old Box on frozen geometry alone.
-WAIT_REEVALUATION_CANDLES = 5
-
 
 @dataclass(frozen=True, slots=True)
 class ShadowObservation:
@@ -108,22 +103,6 @@ class _Candidate:
 def _candle_ms(timeframe: str) -> int | None:
     text = str(timeframe).strip()
     return int(text) * 60_000 if text.isdecimal() and int(text) > 0 else None
-
-
-def _candidate_stale(
-    decisions: tuple[RobotAutoDecisionRecord, ...], candidate_ref: str,
-    source_identity: str, timeframe: str, now_ms: int,
-) -> bool:
-    """Age of one immutable idea since its first audited evaluation, in any mode."""
-    first = min((item.evaluated_at_ms for item in decisions
-                 if item.candidate_ref == candidate_ref
-                 and item.source_identity == source_identity), default=None)
-    if first is None:
-        return False  # first evaluation happens at arrival, the decision time
-    candle = _candle_ms(timeframe)
-    if candle is None:
-        return True  # freshness cannot be proven without a source candle
-    return now_ms // candle - first // candle > WAIT_REEVALUATION_CANDLES
 
 
 def _latest_decision(
@@ -263,7 +242,7 @@ def _without_own_shadow_reservation(
 def _fresh_facts(
     store: SQLiteStore, account: TradingAccountId, *, mode: str, candidate: _Candidate,
     decisions: tuple[RobotAutoDecisionRecord, ...],
-    protection_healthy: Callable[[], bool] | None, now_ms: int,
+    protection_healthy: Callable[[], bool] | None,
     prior_shadow_allow: RobotAutoDecisionRecord | None = None,
 ) -> RobotAutoAdmissionFacts:
     portfolio = collect_portfolio_facts(store, account)
@@ -282,9 +261,7 @@ def _fresh_facts(
         robot_recovery_status=runtime.recovery_status if runtime is not None else None,
         candidate_valid=candidate.valid,
         candidate_executable=candidate.executable,
-        candidate_stale=_candidate_stale(
-            decisions, candidate.ref, candidate.source_identity, candidate.timeframe, now_ms,
-        ),
+        candidate_stale=False,  # no age-based expiry; other admission gates still apply
         candidate_invalidated=candidate.invalidated,
         already_admitted=candidate.already_admitted,
         reconciliation_clear=(
@@ -335,7 +312,7 @@ def _observe_shadow_candidate_locked(
 
     facts = _fresh_facts(
         store, account, mode=state.mode, candidate=candidate, decisions=decisions,
-        protection_healthy=protection_healthy, now_ms=now,
+        protection_healthy=protection_healthy,
     )
     result = evaluate_auto_admission(facts)
 
@@ -421,7 +398,7 @@ def admit_paper_auto_candidate(
             facts = _fresh_facts(
                 store, account, mode=PAPER_AUTO_MODE, candidate=candidate,
                 decisions=decisions, protection_healthy=protection_healthy,
-                now_ms=now, prior_shadow_allow=prior,
+                prior_shadow_allow=prior,
             )
             result = evaluate_auto_admission(facts)
             robot_candidate = None
@@ -512,7 +489,7 @@ def observe_shadow_candidate(
 def _due_wait_refs(
     store: SQLiteStore, account: TradingAccountId, state: Any, now_ms: int,
 ) -> list[tuple[str, str]]:
-    """Fresh WAIT ideas due for reevaluation, oldest arrival first; read-only."""
+    """WAIT ideas due for reevaluation, oldest arrival first; read-only."""
     decisions = store.load_robot_auto_decisions(account)
     runtime = store.get_robot_runtime_state(account)
     latest: dict[tuple[str, str], RobotAutoDecisionRecord] = {}
@@ -524,8 +501,6 @@ def _due_wait_refs(
          SOURCE_BOX_PLAN if last.pattern == "IKIGAI_BOX" else SOURCE_SCANNER)
         for last in latest.values()
         if _wait_reevaluation_due(last, now_ms, state, runtime)
-        and not _candidate_stale(
-            decisions, last.candidate_ref, last.source_identity, last.timeframe, now_ms)
     ]
 
 
