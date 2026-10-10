@@ -82,6 +82,28 @@ admission для другого. Pattern-specific остаются только 
 торговые правила adapter'а.
 
 
+### No harness recovery spiral — OWNER RULE 2026-10-10
+
+A tool/harness error is NOT authorization to launch a new infrastructure task.
+For `PREEXISTING_DIRTY`, `not a managed worktree`, reparse-point/`apply_patch`
+failure, or a nested task-transaction rejection:
+
+1. Preserve the current task diff, user changes and exact failure evidence; identify
+   whether the failure is workspace/tooling rather than product code.
+2. Reuse the original task/worktree and its already-passing checks. Attempt at most
+   ONE narrowly supported, authorized recovery with the existing harness.
+3. Never silently stash/pop, reset, clean, move worktrees, recreate tasks, or modify
+   audit contracts, task metadata or harness guards merely to manufacture PASS.
+   A workaround requires a proven supported procedure and explicit permission;
+   no permission bypasses a mandatory gate.
+4. If recovery fails, STOP with exact blocker, location of preserved diff and
+   smallest supported next action. Do not chain fallbacks or reopen transactions.
+5. Once unblocked, finish the original product delta and mandatory targeted proof,
+   then STOP. Do not create another preparatory quest.
+
+This rule does not weaken repository integrity, fail-closed protection, PAPER/LIVE
+boundaries, mandatory gates or owner runtime authority.
+
 ## Mandatory task execution gate — OWNER RULE 2026-10-10
 
 This is an **enforcement entry point**, not a new planning process. Apply the
