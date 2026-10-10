@@ -1,5 +1,6 @@
 """A3 focused acceptance: disposable SQLite databases, no services/orders submitted."""
 import json
+from dataclasses import replace
 import sqlite3
 import tempfile
 import threading
@@ -126,17 +127,19 @@ class PortfolioTests(unittest.TestCase):
         self.candidate(robot, "BOXUSDT", {"limit_order_id": "slot"})
         original = {"id": "frozen-source"}
         snapshot = {**original, "source_box_candidate_id": source}
-        self.store._connection.execute(
-            "UPDATE robot_candidates SET status='BOX_PLAN_ONLY', approved_at_ms=NULL, "
-            "robot_state_json=NULL, state_revision=0, signal_snapshot_json=? "
-            "WHERE candidate_id=?", (json.dumps(original), source))
-        self.store._connection.execute(
-            "UPDATE robot_candidates SET signal_snapshot_json=?, robot_state_json=? "
-            "WHERE candidate_id=?",
-            (json.dumps(snapshot), json.dumps({
+        source_record = replace(
+            self.store.get_robot_candidate(source),
+            status="BOX_PLAN_ONLY", signal_snapshot=original, robot_state=None,
+            state_revision=0, approved_at_ms=None,
+        )
+        robot_record = replace(
+            self.store.get_robot_candidate(robot),
+            signal_snapshot=snapshot,
+            robot_state={
                 "execution": {"limit_order_id": "slot"},
                 "source_box_candidate_id": source,
-            }), robot))
+            },
+        )
         self.store._connection.execute(
             "INSERT INTO box_attempt_ownership VALUES (?,?,?,?,?,?,?,?)",
             (source, "paper", "BOXUSDT", 1, 1, 0, 0, "0" * 64))
@@ -144,16 +147,22 @@ class PortfolioTests(unittest.TestCase):
         self.store._connection.execute(
             "INSERT INTO box_order_ownership VALUES ('paper','slot',?,'ENTRY',1)",
             (source,))
-        facts = self.facts()
+        # Exercise collector ownership without forging immutable Box rows in
+        # SQLite: persistence validates their entire canonical Box contract.
+        with patch.object(self.store, "load_robot_candidates",
+                          return_value=(source_record, robot_record)):
+            facts = self.facts()
         self.assertTrue(facts["available"], facts.get("data_error"))
         self.assertEqual(facts["occupied_ro"], 1)
         self.assertEqual(facts["reservations"][0]["identity"], "robot:" + robot)
 
         # A snapshot link alone is insufficient; Robot state must also agree.
-        self.store._connection.execute(
-            "UPDATE robot_candidates SET robot_state_json=? WHERE candidate_id=?",
-            (json.dumps({"execution": {"limit_order_id": "slot"}}), robot))
-        facts = self.facts()
+        unlinked_robot = replace(robot_record, robot_state={
+            "execution": {"limit_order_id": "slot"},
+        })
+        with patch.object(self.store, "load_robot_candidates",
+                          return_value=(source_record, unlinked_robot)):
+            facts = self.facts()
         self.assertFalse(facts["available"])
         self.assertEqual(facts["data_error"], "order ownership is ambiguous")
 
