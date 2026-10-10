@@ -34,10 +34,21 @@ DEFAULT_TELEGRAM_HEALTH = "http://127.0.0.1:8766/health"
 EXIT_OK, EXIT_BLOCKED, EXIT_REFUSED, EXIT_USAGE = 0, 2, 3, 64
 
 
+# Windows reports a refusal on a closed loopback port only after ~2.04 s (SYN
+# retries), so a shorter wait cannot tell "closed" from "unknown".
+PROBE_TIMEOUT_S = 6.0
+
+
 def probe_listening(url: str) -> bool:
-    """True unless the endpoint provably refuses the connection (fail closed)."""
+    """True unless the endpoint provably refuses the connection (fail closed).
+
+    Only a confirmed ConnectionRefusedError means offline. A timeout, any HTTP
+    response and any other error leave the runtime potentially active. Proxy
+    settings are ignored so the answer always comes from the endpoint itself.
+    """
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with urllib.request.urlopen(url, timeout=2):
+        with opener.open(url, timeout=PROBE_TIMEOUT_S):
             return True
     except urllib.error.HTTPError:
         return True
