@@ -540,3 +540,90 @@ are not used (the owner has drained its backlog whenever an admission runs).
 Thresholds are owner-tunable constants in `paper_http_server.py`. Read-only:
 manual admission and protection of open positions are untouched. Not covered:
 per-candidate book freshness and PAPER_AUTO (still unavailable).
+
+
+## 2026-10-10 implementation alignment review — A7 merged / A8 next
+
+This section refines rollout ordering, not the original architecture or an
+authorization to start PAPER_AUTO. The runtime implementation is not evidence of
+a successful owner-run PAPER acceptance. The source of truth remains the current
+code, CI and host-local evidence, not stage names alone.
+
+### Verified delivery versus acceptance
+
+- Stage A/SHADOW and Stage B policy/canonical admission primitives exist.
+- Stage C reuses current Scanner candidate ingress; full real-universe, per-symbol
+  5m→1m discovery acceptance is still required before unattended rollout.
+- Stage D/A7 runtime wiring was merged through PR #463; **PAPER_AUTO stays OFF**.
+  Current preflight identified missing owner confirmation propagation in HTTP
+  mode control and missing prepared pre-admission candle evidence for newly
+  discovered ideas. A8 is limited to these two blockers.
+- Stage E has A3's explicit 19-RO aggregate reservations and related
+  fail-closed protection. The documented per-asset, correlation, directional,
+  loss/drawdown and other deferred safeguards are NOT_EVALUATED, not PASS.
+- Stage F is partial; complete owner controls, notifications and visibility
+  must be accepted through the existing Telegram/control surfaces.
+- Stage G remains deferred until real PAPER outcome evidence supports ranking.
+
+### Signal validity is not wall-clock age
+
+There is **no universal candle-count or elapsed-time WAIT expiration**. A6
+allows bounded-event reevaluation (new closed source candle or relevant durable
+state transition), not admission based merely on an older frozen snapshot.
+An idea is invalid when existing pattern-owned execution/admission terms and
+authoritative current market/lifecycle evidence prove it invalid. A missing,
+untrusted or unsupported validity proof fails closed as WAIT; a proven
+invalidation is REJECT. No automatic admission solely because the idea has
+remained CONFIRMED or because protective connectivity has recovered.
+
+Preserve the individual adapters and trade lifecycles for Wedge, L-shape and
+Ikigai Box. At A7, the runtime current-validity prover is wedge-only;
+unsupported Box/L-shape remain WAIT on PAPER_AUTO, while the current manual
+admission path remains unchanged. Finish those adapters with existing
+strategy rules and focused regressions after A8, not a new generic geometry
+engine or clock-based expiry.
+
+### External project lessons — applicability only
+
+- Hummingbot V2 separates long-lived controllers from finite executors:
+  retain existing Scanner/Autopilot as admission-side coordination and Robot
+  as the sole execution/protection lifecycle; do not copy its execution stack.
+- QuantConnect LEAN separates signal, portfolio/risk and execution, while
+  noting that strategies with coupled entry/exit conditions may need a hybrid:
+  keep pattern-specific frozen trade terms and canonical Robot handoff.
+- Jesse's `should_cancel_entry()` models rechecking an unfilled entry against
+  strategy conditions: apply conceptually to source validity, not an arbitrary
+  five-candle cutoff and not new order-cancellation authority.
+- Freqtrade separates cooldown/stoploss/drawdown protections from signal
+  generation: implement only owner-approved, evidence-backed portfolio guards;
+  never label deferred guards as active.
+
+References: https://hummingbot.org/strategies/v2-strategies/ ;
+https://www.quantconnect.com/docs/v2/writing-algorithms/algorithm-framework/overview ;
+https://docs.jesse.trade/docs/strategies/entering-and-exiting.html ;
+https://www.freqtrade.io/en/stable/plugins/ .
+
+### Gate order toward first real autonomous PAPER acceptance
+
+1. Complete A8's two proven blockers through existing owner HTTP controls and
+   pre-admission off-owner candle preparation; no runtime launch or mode enable.
+2. Add authoritative current-validity proof for Box and L-shape through their
+   existing strategy adapters (one minimal slice or tightly bounded slices).
+3. On the owner host, establish actual database version, recovery/position/order
+   state, protection health and safe STOP before any run. Never assume an old
+   laptop snapshot remains current or auto-migrate during a read-only probe.
+4. Owner starts existing Scanner/Robot paths and observes one complete SHADOW
+   scan across the eligible universe/patterns, 5m→1m per symbol, with real
+   Telegram and audit evidence. Do not accept interrupted/partial passes.
+5. Verify explicit accepted portfolio limits and any deliberately deferred
+   protection gates; keep unproven requirements fail-closed.
+6. Only then owner-authorize PAPER_AUTO through the canonical control and run
+   complete autonomous PAPER discovery → admission → entry → protection →
+   closure/reconciliation acceptance. Do not call code merge PAPER acceptance.
+7. LIVE remains prohibited; ranking/expectancy comes after sufficient PAPER
+   outcomes.
+
+Keep the scope of follow-up work proportional to demonstrated blockers.
+No new discovery scheduler, second executor, duplicate protections or
+owner-mediated patch transfers. Agent owns branch, harness, commit, push and
+PR; ChatGPT reviews and merges only with scoped owner approval.
