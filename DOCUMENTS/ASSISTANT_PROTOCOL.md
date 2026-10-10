@@ -71,6 +71,28 @@ Architecture → Contracts → Documentation → Implementation → Validation �
 
 # 2. COMMUNICATION AND USER ACTIONS
 
+### Owner-authorized GitHub squash merge via ChatGPT — OWNER RULE 2026-10-10
+
+For BybitScanner PRs, do not send the owner to the GitHub website to click
+"Squash and merge" when the connected GitHub tool can perform the operation.
+A clear owner instruction to merge a specified PR is sufficient authorization
+for **that PR only**; it does not grant blanket autonomous merging.
+
+On authorization, the assistant:
+1. Reads the current PR state, target base, head SHA, mergeability and required
+   CI/review/safety gates. Reuse valid existing evidence; do not rerun tests
+   without changed inputs or new blockers.
+2. If gates pass, invokes GitHub's squash merge with the exact expected head
+   SHA. Confirm the returned merged status and commit SHA before claiming success.
+3. If the head moved, checks are pending/failed, or a blocker exists, do NOT
+   merge. Report the single decisive obstacle or next action.
+4. Continue the approved project task after a verified merge; leave local
+   runtime, PAPER DB, LIVE and worktrees untouched unless separately authorized.
+
+For now, **no auto-merge on CI success and no automatic blanket consent**.
+Even a docs-only or low-risk PR requires the owner's explicit merge instruction.
+This removes manual website clicks, not owner authority or fail-closed checks.
+
 ### OUTCOME-FIRST EXECUTION — OWNER RULE 2026-10-08
 
 The assistant owns progress toward the current owner-approved, observable outcome, not an expanding sequence of preparatory tasks. Before interrupting acceptance or adding a task for a newly discovered risk, classify it against current evidence and mandatory safety/acceptance contracts:
