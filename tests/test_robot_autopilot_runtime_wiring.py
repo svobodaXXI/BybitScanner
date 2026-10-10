@@ -201,6 +201,8 @@ class RuntimeWiringTests(unittest.TestCase):
                 runtime.robot_catchup_evidence = None
                 self.assertIsNone(runtime._autopilot_candidate_fresh("ONGUSDT", snapshot))
 
+                # A8: a successful empty load is not a failure (see the owner-auth
+                # tests); an unsupported snapshot still cannot be replayed -> unproven.
                 def empty(_symbol, _snapshot):
                     return ()
 
