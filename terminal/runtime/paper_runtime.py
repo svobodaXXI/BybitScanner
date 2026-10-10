@@ -27,7 +27,7 @@ from terminal.api.models import (
 )
 from terminal.application.robot_autopilot_shadow import (
     SOURCE_BOX_PLAN, SOURCE_SCANNER, admit_arrived_auto_candidate,
-    observe_shadow_candidate, owner_autopilot_mode,
+    observe_shadow_candidate, owner_autopilot_mode, resolve_autopilot_evidence_target,
 )
 from terminal.application.robot_breakout_monitor import (
     DEFAULT_TICK_INTERVAL_S, EmergencyClosePath, INACTIVE_LIMIT_STATUSES, RobotBreakoutMonitor,
@@ -922,16 +922,50 @@ class PaperRuntime:
     def _dispatch_ikigai_box_plan_preparation(
         self, symbol: str, timeframe: str, formation: Mapping[str, object],
     ) -> object:
-        def prepare(runtime: "PaperRuntime") -> object:
-            source_id = runtime._prepare_ikigai_box_robot_plan(symbol, timeframe, formation)
-            runtime.observe_autopilot_candidate(SOURCE_BOX_PLAN, source_id)
-            return source_id
-
-        return self._dispatch_robot_command(prepare)
+        source_id = self._dispatch_robot_command(
+            lambda runtime: runtime._prepare_ikigai_box_robot_plan(symbol, timeframe, formation)
+        )
+        self._observe_autopilot_with_prepared_evidence(SOURCE_BOX_PLAN, source_id)
+        return source_id
 
     def _dispatch_autopilot_shadow_scanner_candidate(self, candidate_id: str) -> None:
+        self._observe_autopilot_with_prepared_evidence(SOURCE_SCANNER, candidate_id)
+
+    def _observe_autopilot_with_prepared_evidence(self, source: str, candidate_ref: str) -> None:
+        """A8: closed-candle evidence is fetched here, off the owner, then observed.
+
+        Runs on the Scanner/handler thread. The owner only reads the prepared
+        result; a failed preparation leaves no evidence, so the freshness proof
+        is unknown and the Autopilot WAITs. It never reaches the Scanner pass.
+        """
+        try:
+            self._prepare_autopilot_evidence(source, candidate_ref)
+        except Exception as error:
+            print(
+                "[AUTOPILOT EVIDENCE PREPARATION ERROR] "
+                f"source={source} candidate_ref={candidate_ref} "
+                f"error_class={type(error).__name__}"
+            )
         self._dispatch_robot_command(
-            lambda runtime: runtime.observe_autopilot_candidate(SOURCE_SCANNER, candidate_id)
+            lambda runtime: runtime.observe_autopilot_candidate(source, candidate_ref)
+        )
+
+    def _prepare_autopilot_evidence(self, source: str, candidate_ref: str) -> None:
+        evidence = self.robot_catchup_evidence
+        prepare = getattr(evidence, "prepare", None)
+        if prepare is None:
+            return
+        target = self._dispatch_robot_command(
+            lambda runtime: runtime.autopilot_evidence_target(source, candidate_ref)
+        )
+        if target is not None:
+            prepare([target])
+
+    def autopilot_evidence_target(self, source: str, candidate_ref: str):
+        """Owner thread. (symbol, snapshot) to prepare off-owner; PAPER_AUTO only."""
+        return resolve_autopilot_evidence_target(
+            self.store, self._paper_account_id,
+            source=source, candidate_ref=str(candidate_ref),
         )
 
     def bind_autopilot_protection_health(self, provider: Callable[[], bool] | None) -> None:
@@ -975,8 +1009,10 @@ class PaperRuntime:
 
         Evidence is only what was prepared off the owner thread (no REST here) and
         is replayed through the existing Robot state machine: a setup that reached
-        its apex is dead. No evidence, an unsupported pattern or any failure means
-        unproven -> None, which the policy turns into WAIT, never ALLOW.
+        its apex is dead. A load that succeeded with no new closed candle is still
+        proof the setup has not reached its apex. No evidence, an unsupported
+        pattern or any failure means unproven -> None, which the policy turns into
+        WAIT, never ALLOW.
         """
         import robot_state_machine
 
@@ -986,8 +1022,6 @@ class PaperRuntime:
         try:
             candles = tuple(evidence(symbol, dict(signal_snapshot)))
         except Exception:
-            return None
-        if not candles:
             return None
         try:
             state, _event = robot_state_machine.initialize_state({

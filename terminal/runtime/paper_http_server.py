@@ -294,6 +294,9 @@ def _execute_robot_route(runtime: PaperRuntime, command: str, operation):
 
 RUNTIME_INTENT_FIELDS = {"intent"}
 AUTOPILOT_MODE_FIELDS = {"mode"}
+AUTOPILOT_MODE_OPTIONAL_FIELDS = frozenset({"confirm_paper_auto"})
+AUTOPILOT_OWNER_TOKEN_ENV = "BYBITSCANNER_AUTOPILOT_OWNER_TOKEN"
+AUTOPILOT_OWNER_TOKEN_HEADER = "X-BybitScanner-Autopilot-Owner-Token"
 RUNTIME_SHUTDOWN_FIELDS = {"database_identity"}
 
 
@@ -3601,16 +3604,37 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/robot/autopilot":
-            # Slice A1 (issue #446): OFF and SHADOW only. PAPER_AUTO is rejected.
+            # A8: OFF/SHADOW are open to the local owner UI. PAPER_AUTO needs the
+            # dedicated owner token (403) and an explicit boolean confirmation
+            # (400 malformed, 409 absent/false). Nothing here enables it by itself.
             try:
-                mode = self._payload(AUTOPILOT_MODE_FIELDS)["mode"]
+                payload = self._payload(AUTOPILOT_MODE_FIELDS, AUTOPILOT_MODE_OPTIONAL_FIELDS)
+                mode = payload["mode"]
+                confirm = payload.get("confirm_paper_auto", False)
                 if not isinstance(mode, str):
                     raise ValueError("mode must be a string")
             except (ValueError, TypeError, json.JSONDecodeError):
+                # Without a parsable request the target mode is unknown.
                 self._json_response(400, {"ok": False, "error": "invalid_autopilot_mode"})
                 return
+            paper_auto = mode.strip().upper() == "PAPER_AUTO"
+            # Authorization comes first so an unauthorized caller learns nothing
+            # about confirmation handling.
+            if paper_auto and not self._autopilot_owner_authorized():
+                self._json_response(403, {"ok": False, "error": "autopilot_owner_required"})
+                return
+            if not isinstance(confirm, bool):
+                self._json_response(400, {"ok": False, "error": "invalid_autopilot_confirmation"})
+                return
+            if paper_auto:
+                if confirm is not True:
+                    self._json_response(
+                        409, {"ok": False, "error": "paper_auto_confirmation_required"})
+                    return
             try:
-                state = self.server.runtime.call(lambda runtime: runtime.set_autopilot_mode(mode))
+                state = self.server.runtime.call(
+                    lambda runtime: runtime.set_autopilot_mode(
+                        mode, confirm_paper_auto=confirm))
             except ValueError as exc:
                 self._json_response(409, {"ok": False, "error": str(exc)})
                 return
@@ -3857,7 +3881,7 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             _decimal(payload["slippage_value"]),
         )
 
-    def _payload(self, fields: set[str]) -> dict:
+    def _payload(self, fields: set[str], optional: frozenset[str] = frozenset()) -> dict:
         content_length = int(self.headers.get("Content-Length", ""))
         if content_length <= 0:
             raise ValueError("request body is required")
@@ -3865,13 +3889,19 @@ class PaperHttpHandler(BaseHTTPRequestHandler):
             self.rfile.read(content_length).decode("utf-8"),
             parse_float=Decimal,
         )
-        if not isinstance(payload, dict) or set(payload) != fields:
+        if not isinstance(payload, dict) or set(payload) - optional != fields:
             raise ValueError("invalid request fields")
         return payload
 
     def _operator_authorized(self) -> bool:
         expected = getattr(self.server, "operator_token", "")
         supplied = self.headers.get("X-BybitScanner-Operator-Token", "")
+        return bool(len(expected) >= 32 and supplied and hmac.compare_digest(expected, supplied))
+
+    def _autopilot_owner_authorized(self) -> bool:
+        """A8: PAPER_AUTO needs the dedicated owner secret (>= 32 chars), constant-time."""
+        expected = getattr(self.server, "autopilot_owner_token", "")
+        supplied = self.headers.get(AUTOPILOT_OWNER_TOKEN_HEADER, "")
         return bool(len(expected) >= 32 and supplied and hmac.compare_digest(expected, supplied))
 
     def _json_response(self, status: int, payload: dict) -> None:
@@ -4026,6 +4056,7 @@ def main() -> None:
         runtime.start_robot_monitor()
 
         server.operator_token = os.environ.get("BYBITSCANNER_OPERATOR_TOKEN", "").strip()
+        server.autopilot_owner_token = os.environ.get(AUTOPILOT_OWNER_TOKEN_ENV, "").strip()
         server.runtime = runtime
         server.market_data = market_data
         server.robot_protection_coverage = robot_protection_coverage

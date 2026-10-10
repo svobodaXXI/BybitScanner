@@ -217,6 +217,25 @@ def _resolve_candidate(
     raise ValueError(f"unknown Autopilot source: {source!r}")
 
 
+def resolve_autopilot_evidence_target(
+    store: SQLiteStore, account: TradingAccountId, *, source: str, candidate_ref: str,
+    candidate_store_dir: Path | str | None = None,
+) -> tuple[str, dict] | None:
+    """A8: (symbol, signal snapshot) whose closed candles must be prepared off the owner.
+
+    Read-only. None unless the durable mode is PAPER_AUTO, because OFF and SHADOW
+    never consume freshness evidence and must not cause market-data requests.
+    """
+    state = store.get_robot_autopilot_state(account)
+    if state is None or state.mode != PAPER_AUTO_MODE:
+        return None
+    candidate = _resolve_candidate(
+        store, account, source=source, candidate_ref=str(candidate_ref),
+        candidate_store_dir=candidate_store_dir,
+    )
+    return candidate.symbol.value, dict(candidate.snapshot)
+
+
 def _without_own_shadow_reservation(
     portfolio: dict, candidate: _Candidate, prior_allow: RobotAutoDecisionRecord | None,
 ) -> dict:
