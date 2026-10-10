@@ -104,6 +104,31 @@ failure, or a nested task-transaction rejection:
 This rule does not weaken repository integrity, fail-closed protection, PAPER/LIVE
 boundaries, mandatory gates or owner runtime authority.
 
+### Agent-owned GitHub delivery — OWNER RULE 2026-10-10
+
+The owner is NOT a courier between ChatGPT, Codex, Claude, sandboxes and GitHub.
+For tasks whose outcome is code or a PR, select an execution environment with
+write access to the intended repository and a supported task harness **before**
+delegation. The assigned agent owns the complete chain: scoped edit, targeted
+verification, harness finish, commit, push and opening its own PR. ChatGPT owns
+PR review, CI/safety-gate verification and an owner-authorized merge.
+
+Do not ask the owner to copy patches, paste code between agents, upload working
+tree diffs, perform routine git push or run GitHub UI merge merely because an
+agent chose a read-only sandbox. A read-only agent may audit or design, but is
+not the default executor for a delivery requiring publication.
+
+If the assigned environment unexpectedly lacks write access: STOP, preserve
+the exact changes and evidence, state the access blocker, and use an already
+connected and permitted direct GitHub workflow if one exists. Do not initiate
+a chain of sandbox-to-sandbox transfers or invent an infrastructure workaround.
+If no supported direct path exists, ask for the smallest *one-time connection*
+action rather than repeated manual patch forwarding. Never claim that a
+read-only sandbox's task finish passed if it failed.
+
+All existing scope, owner authorization, CI/harness, PAPER/LIVE, safety,
+runtime-start and no-auto-merge boundaries still apply.
+
 ### GitHub PR merge via ChatGPT — OWNER RULE 2026-10-10
 
 The owner should not need to click "Squash and merge" on GitHub when the
