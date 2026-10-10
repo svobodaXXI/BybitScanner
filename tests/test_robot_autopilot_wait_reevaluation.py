@@ -128,6 +128,7 @@ class WaitReevaluationTests(unittest.TestCase):
         _wedge(db.candidates, "old-allow", symbol="AAAUSDT")
         db.observe("old-wait", now=T0)
         allowed = db.observe("old-allow", health=_healthy, now=T0)
+        self.assertEqual(WAIT_REEVALUATION_CANDLES, 5)  # owner-approved A6 limit
         expired = T0 + (WAIT_REEVALUATION_CANDLES + 1) * MINUTE
 
         # Another arrival does not revive the expired WAIT ...
