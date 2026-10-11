@@ -18,7 +18,8 @@ import tkinter as tk
 from pathlib import Path
 from typing import Callable
 
-from tools.SwordCounter.bybit_positions import Credentials, fetch_open_positions
+from tools.SwordCounter.bybit_positions import fetch_open_positions
+from tools.SwordCounter.credential_store import resolve_credentials
 from tools.SwordCounter.settings_store import (
     AppSettings, default_settings_path, load_settings, parse_ro_usdt, parse_total_swords,
     save_settings, to_sword_settings,
@@ -76,9 +77,13 @@ class Refresher:
 
 
 def make_live_counter(get_settings: Callable[[], AppSettings]) -> Callable[[], object]:
-    """S1 read + S2 count with the settings current at call time. Missing keys = no connection."""
+    """S1 read + S2 count with the settings current at call time.
+
+    The key is SwordCounter's own (Windows Credential Manager). A missing or unreadable key is
+    "Нет соединения"; no network request is made without it.
+    """
     def count():
-        return count_swords_from_api(lambda: fetch_open_positions(Credentials.from_env()),
+        return count_swords_from_api(lambda: fetch_open_positions(resolve_credentials()[0]),
                                      to_sword_settings(get_settings()))
     return count
 

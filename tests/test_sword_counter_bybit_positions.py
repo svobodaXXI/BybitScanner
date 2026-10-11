@@ -123,7 +123,9 @@ class RequestShapeTests(unittest.TestCase):
         for forbidden in ("/v5/order", "create-order", "amend", "cancel", "set-leverage",
                           ".post(", ".put(", ".delete("):
             self.assertNotIn(forbidden, source, forbidden)
-        self.assertEqual(re.findall(r'"/v5/[a-z/\-]+"', source), ['"/v5/position/list"'])
+        # Exactly two documented read-only GET endpoints: positions and the key's own Read-Only flag.
+        self.assertEqual(re.findall(r'"/v5/[a-z/\-]+"', source),
+                         ['"/v5/position/list"', '"/v5/user/query-api"'])
         for banned in ("terminal.", "robot_", "paper_runtime", "sqlite3", "config"):
             self.assertNotRegex(source, rf"(?m)^\s*(from|import)\s+{re.escape(banned)}", banned)
 

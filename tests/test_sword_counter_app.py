@@ -199,7 +199,11 @@ class RefresherTests(unittest.TestCase):
         self.assertIs(posted[0], vm.WORKER_FAILED)
 
     def test_the_live_counter_uses_s1_and_s2_and_reports_missing_keys_as_no_connection(self):
-        with mock.patch.dict(os.environ, {}, clear=True):
+        from tools.SwordCounter.bybit_positions import BybitCredentialsError
+
+        # Never consult the real Credential Manager from a test.
+        with mock.patch.object(app_module, "resolve_credentials",
+                               side_effect=BybitCredentialsError("Ключ SwordCounter не настроен")):
             counted = app_module.make_live_counter(lambda: AppSettings())()
         self.assertEqual(counted.status, STATUS_NO_CONNECTION)
         self.assertIsNone(counted.used_swords)

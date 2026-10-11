@@ -20,9 +20,10 @@ Zero open positions is returned only for a well-formed successful reply with an
 empty list. An API error, HTTP error, timeout, malformed reply or any unparsable
 row raises a ``BybitPositionsError`` subclass; nothing is substituted or skipped.
 
-Credentials come from the environment (``SWORDCOUNTER_BYBIT_API_KEY`` and
-``SWORDCOUNTER_BYBIT_API_SECRET``), are never logged, never part of a URL and
-hidden from ``repr``. Use a key with read-only permission.
+Credentials are SwordCounter's own (see ``credential_store``: Windows Credential Manager, with
+the ``SWORDCOUNTER_BYBIT_API_KEY`` / ``SWORDCOUNTER_BYBIT_API_SECRET`` variables only as a
+fallback). They are never logged, never part of a URL and hidden from ``repr``. Use a
+Read-Only key; ``fetch_api_key_info`` lets the setup wizard confirm it with Bybit.
 """
 
 from __future__ import annotations
@@ -45,6 +46,9 @@ BASE_URL = "https://api.bybit.com"
 # the API key and signature in headers, so it may never be sent anywhere else.
 ALLOWED_API_HOSTS = frozenset({"api.bybit.com", "api.bytick.com", "api-testnet.bybit.com"})
 POSITION_LIST_PATH = "/v5/position/list"
+API_KEY_INFO_PATH = "/v5/user/query-api"
+# The only endpoints this module can ever sign: both are read-only GET requests.
+ALLOWED_READ_PATHS = frozenset({POSITION_LIST_PATH, API_KEY_INFO_PATH})
 SUPPORTED_CATEGORY = "linear"
 DEFAULT_SETTLE_COINS = ("USDT", "USDC")
 DEFAULT_RECV_WINDOW_MS = 5000
@@ -218,7 +222,66 @@ def _api_origin(base_url: object) -> str:
     return f"https://{host}"
 
 
-def _signed_get(http, credentials, origin, params, recv_window_ms, timeout_s, clock_ms):
+@dataclass(frozen=True)
+class ApiKeyInfo:
+    """What Bybit reports about the key itself; the key and IP addresses are never kept."""
+
+    read_only: bool            # ``readOnly`` == 1: the key cannot place or change anything
+    ip_restricted: bool        # the key is bound to specific IP addresses
+    is_master: bool | None
+
+
+def fetch_api_key_info(
+    credentials: Credentials,
+    *,
+    base_url: str = BASE_URL,
+    recv_window_ms: int = DEFAULT_RECV_WINDOW_MS,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    session: _Session | None = None,
+    clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+) -> ApiKeyInfo:
+    """Ask Bybit whether this key is Read-Only (GET with no parameters). Raises on any doubt."""
+    if not isinstance(recv_window_ms, int) or not 1 <= recv_window_ms <= MAX_RECV_WINDOW_MS:
+        raise ValueError("recv_window_ms must be between 1 and 60000")
+    if not timeout_s > 0:
+        raise ValueError("timeout_s must be positive")
+    origin = _api_origin(base_url)
+    http = session if session is not None else requests.Session()
+    body = _signed_get(http, credentials, origin, {}, recv_window_ms, timeout_s, clock_ms,
+                       path=API_KEY_INFO_PATH)
+    result = _result_object(body)
+    read_only = result.get("readOnly")
+    if isinstance(read_only, bool) or not isinstance(read_only, int) or read_only not in (0, 1):
+        raise BybitResponseError("readOnly is not 0 or 1")
+    ips = result.get("ips", [])
+    if not isinstance(ips, list):
+        raise BybitResponseError("ips is not a list")
+    is_master = result.get("isMaster")
+    return ApiKeyInfo(
+        read_only=read_only == 1,
+        ip_restricted=any(isinstance(ip, str) and ip.strip() not in ("", "*") for ip in ips),
+        is_master=is_master if isinstance(is_master, bool) else None,
+    )
+
+
+def _result_object(body: dict) -> dict:
+    ret_code = body.get("retCode")
+    if isinstance(ret_code, bool) or not isinstance(ret_code, int):
+        raise BybitResponseError("Bybit reply has no integer retCode")
+    if ret_code != 0:
+        ret_msg = body.get("retMsg")
+        ret_msg = ret_msg if isinstance(ret_msg, str) else ""
+        raise BybitApiError(f"Bybit retCode {ret_code}: {ret_msg}", ret_code=ret_code, ret_msg=ret_msg)
+    result = body.get("result")
+    if not isinstance(result, dict):
+        raise BybitResponseError("Bybit reply has no result object")
+    return result
+
+
+def _signed_get(http, credentials, origin, params, recv_window_ms, timeout_s, clock_ms,
+                path=POSITION_LIST_PATH):
+    if path not in ALLOWED_READ_PATHS:
+        raise ValueError("only the documented read-only endpoints may be signed")
     query = urlencode(params)
     timestamp = str(clock_ms())
     payload = f"{timestamp}{credentials.api_key}{recv_window_ms}{query}"
@@ -233,8 +296,8 @@ def _signed_get(http, credentials, origin, params, recv_window_ms, timeout_s, cl
     failure = None
     try:
         # Never follow redirects: requests would forward the X-BAPI key/signature headers.
-        response = http.get(f"{origin}{POSITION_LIST_PATH}?{query}", headers=headers,
-                            timeout=timeout_s, allow_redirects=False)
+        url = f"{origin}{path}?{query}" if query else f"{origin}{path}"
+        response = http.get(url, headers=headers, timeout=timeout_s, allow_redirects=False)
     except requests.RequestException as error:
         failure = type(error).__name__
     if failure is not None:
