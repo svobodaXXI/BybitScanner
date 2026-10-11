@@ -7,6 +7,7 @@ WAITs beyond the batch stay due for the next arrival: nothing is skipped, nothin
 is written twice and nothing becomes a trading object.
 """
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -199,6 +200,59 @@ class BoundedDueWaitBatchTests(unittest.TestCase):
         self.arrive("arrival-1", now=T1)
         evaluated = sorted(d.candidate_ref for d in self.evaluated_at(T1))
         self.assertEqual(evaluated, sorted([*refs[1:], "arrival-1"]))
+
+    def test_busy_begin_waits_one_timeout_writes_nothing_and_keeps_the_queue(self):
+        refs = self.seed_waits(12)
+        _wedge(self.db.candidates, "arrival-1", symbol="ARRIVALUSDT")
+        store = self.db.store
+        store._connection.execute("PRAGMA busy_timeout = 300")
+        attempts = []
+        original = SQLiteStore.autopilot_decision_transaction
+
+        def counted(self_store):
+            attempts.append(1)
+            return original(self_store)
+
+        SQLiteStore.autopilot_decision_transaction = counted
+        self.addCleanup(setattr, SQLiteStore, "autopilot_decision_transaction", original)
+        before, decisions_before = self.db.footprint(), len(self.db.decisions())
+        holder = sqlite3.connect(Path(self.tmp.name) / "paper.sqlite3", isolation_level=None)
+        holder.execute("BEGIN IMMEDIATE")
+        try:
+            with self.assertRaises(sqlite3.OperationalError):
+                self.db.observe("arrival-1", now=T1)
+        finally:
+            holder.execute("ROLLBACK")
+            holder.close()
+        self.assertEqual(len(attempts), 1)  # one BEGIN, one busy timeout, no arrival retry
+        self.assertEqual(len(self.db.decisions()), decisions_before)
+        self.assertEqual(self.db.footprint(), before)
+        # Once the writer is gone the same arrival resumes the untouched backlog.
+        self.db.observe("arrival-1", now=T1)
+        self.assertEqual(sorted(d.candidate_ref for d in self.evaluated_at(T1)),
+                         sorted([*refs[:LIMIT], "arrival-1"]))
+
+    def test_sqlite_error_inside_a_begun_batch_rolls_back_and_evaluates_the_arrival_alone(self):
+        refs = self.seed_waits(6)
+        original = shadow._scanner_candidate
+
+        def failing(store, ref, store_dir):
+            if ref == refs[2]:
+                raise sqlite3.OperationalError("disk I/O error")
+            return original(store, ref, store_dir)
+
+        shadow._scanner_candidate = failing
+        self.addCleanup(setattr, shadow, "_scanner_candidate", original)
+        before = self.db.footprint()
+        observation = self.arrive("arrival-1", now=T1)
+        self.assertEqual(observation.decision.candidate_ref, "arrival-1")
+        # Fail closed: the begun batch is rolled back whole; only the arrival is written.
+        self.assertEqual([d.candidate_ref for d in self.evaluated_at(T1)], ["arrival-1"])
+        self.assertEqual(self.db.footprint(), before)
+        shadow._scanner_candidate = original
+        self.arrive("arrival-2", now=T1)
+        self.assertEqual(sorted(d.candidate_ref for d in self.evaluated_at(T1)
+                                if d.candidate_ref.startswith("w")), refs)
 
     def test_trading_footprint_and_candidate_files_are_unchanged(self):
         refs = self.seed_waits(20)

@@ -690,9 +690,10 @@ def observe_shadow_candidate(
     # arrival from one consistent read set; the rest stay due for the next arrival.
     # Protection/owner work waits at most one batch, never the whole WAIT backlog.
     arrival_error: Exception | None = None
-    in_arrival = False
+    began = in_arrival = False
     try:
         with store.autopilot_decision_transaction():
+            began = True
             state = store.get_robot_autopilot_state(account)
             if state is None or state.mode != SHADOW_MODE:
                 return None
@@ -721,8 +722,8 @@ def observe_shadow_candidate(
             except Exception as error:  # keep the completed batch, then report
                 arrival_error = error
     except sqlite3.Error as error:
-        if in_arrival:
-            raise
+        if in_arrival or not began:
+            raise  # busy BEGIN IMMEDIATE: one timeout, nothing written, WAITs stay due
         # The whole batch rolled back; nothing is lost, those WAITs stay due.
         print(
             "[AUTOPILOT SHADOW WAIT BATCH ERROR] "
