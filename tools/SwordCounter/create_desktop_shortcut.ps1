@@ -14,6 +14,9 @@ param(
     [switch]$DryRun
 )
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 writes redirected output in the OEM code page; the shortcut name is
+# Cyrillic, so emit UTF-8 for callers that read the output (tests, wrappers).
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 # "Mechi" written with code points so this file stays pure ASCII.
 $Mechi = [string]::new([char[]](0x041C, 0x0435, 0x0447, 0x0438))
