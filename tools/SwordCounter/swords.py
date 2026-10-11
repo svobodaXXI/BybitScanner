@@ -2,7 +2,9 @@
 
 Rules
 -----
-- ``total_swords`` swords of ``sword_size_usdt`` each (default 20 x 5 USDT), both configurable.
+- ``total_swords`` swords (default 20). Live, one sword (1 RO) = Account Equity / total swords,
+  rounded half up to whole USDT (``count_swords_with_equity``); unknown or non-positive equity, or
+  an RO that rounds to 0, makes the count unavailable instead of guessing.
 - Working volume is the sum of ``size x avgPrice`` (USDT entry notional, not divided by leverage)
   over every open position from S1. ``positionValue`` (by mark price) and ``positionIM`` (margin)
   are not used for the count.
@@ -18,8 +20,8 @@ guess, so the count is unavailable instead.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from decimal import ROUND_CEILING, Decimal, InvalidOperation, localcontext
+from dataclasses import dataclass, field, replace
+from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal, InvalidOperation, localcontext
 from typing import Callable, Iterable
 
 from tools.SwordCounter.bybit_positions import BybitPositionsError, OpenPosition
@@ -63,7 +65,7 @@ class SwordSettings:
 class SwordCount:
     status: str
     total_swords: int
-    sword_size_usdt: Decimal
+    sword_size_usdt: Decimal | None   # None when the RO could not be derived
     positions_count: int | None    # None when positions could not be read
     occupied_margin_usdt: Decimal | None = None   # working volume: sum of size x avgPrice, USDT
     used_swords: int | None = None
@@ -71,6 +73,7 @@ class SwordCount:
     over_limit: bool | None = None
     unknown_margin_symbols: tuple[str, ...] = field(default=())
     reason: str = ""
+    equity_usdt: Decimal | None = None   # Account Equity the RO was derived from (None: unknown)
 
     @property
     def status_label(self) -> str:
@@ -102,6 +105,40 @@ def count_swords(positions: Iterable[OpenPosition], settings: SwordSettings) -> 
     return SwordCount(STATUS_OK, occupied_margin_usdt=occupied, used_swords=used,
                       free_swords=max(0, settings.total_swords - used),
                       over_limit=used > settings.total_swords, **base)
+
+
+def ro_from_equity(equity: Decimal, total_swords: int) -> Decimal | None:
+    """1 RO = Account Equity / total swords, ROUND_HALF_UP to whole USDT; None if not positive."""
+    if not equity.is_finite() or equity <= 0:
+        return None
+    with localcontext() as ctx:
+        ctx.prec = 200
+        ro = (equity / Decimal(total_swords)).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    return ro if ro > 0 else None
+
+
+def count_swords_with_equity(fetch_positions: Callable[[], Iterable[OpenPosition]],
+                             fetch_equity: Callable[[], Decimal], total_swords: int) -> SwordCount:
+    """Read Account Equity and positions now; RO = equity / total swords. Never a guessed RO."""
+    if isinstance(total_swords, bool) or not isinstance(total_swords, int) or total_swords <= 0:
+        raise ValueError("total_swords must be a positive integer")
+    failure = None
+    try:
+        equity = fetch_equity()
+        positions = tuple(fetch_positions())
+    except BybitPositionsError as error:
+        failure = f"{type(error).__name__}: {error}"
+    if failure is not None:
+        return SwordCount(STATUS_NO_CONNECTION, total_swords=total_swords, sword_size_usdt=None,
+                          positions_count=None, reason=failure)
+    ro = ro_from_equity(equity, total_swords)
+    if ro is None:
+        why = ("Account Equity is not positive" if equity <= 0 else
+               f"1 RO = {equity} / {total_swords} rounds to 0 USDT (minimum RO rule not agreed)")
+        return SwordCount(STATUS_UNAVAILABLE, total_swords=total_swords, sword_size_usdt=None,
+                          positions_count=len(positions), reason=why, equity_usdt=equity)
+    result = count_swords(positions, SwordSettings(total_swords=total_swords, sword_size_usdt=ro))
+    return replace(result, equity_usdt=equity)
 
 
 def count_swords_from_api(fetch_positions: Callable[[], Iterable[OpenPosition]],

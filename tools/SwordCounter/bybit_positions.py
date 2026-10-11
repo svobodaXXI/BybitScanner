@@ -47,8 +47,10 @@ BASE_URL = "https://api.bybit.com"
 ALLOWED_API_HOSTS = frozenset({"api.bybit.com", "api.bytick.com", "api-testnet.bybit.com"})
 POSITION_LIST_PATH = "/v5/position/list"
 API_KEY_INFO_PATH = "/v5/user/query-api"
-# The only endpoints this module can ever sign: both are read-only GET requests.
-ALLOWED_READ_PATHS = frozenset({POSITION_LIST_PATH, API_KEY_INFO_PATH})
+WALLET_BALANCE_PATH = "/v5/account/wallet-balance"
+EQUITY_ACCOUNT_TYPE = "UNIFIED"
+# The only endpoints this module can ever sign: all are read-only GET requests.
+ALLOWED_READ_PATHS = frozenset({POSITION_LIST_PATH, API_KEY_INFO_PATH, WALLET_BALANCE_PATH})
 SUPPORTED_CATEGORY = "linear"
 DEFAULT_SETTLE_COINS = ("USDT", "USDC")
 DEFAULT_RECV_WINDOW_MS = 5000
@@ -262,6 +264,37 @@ def fetch_api_key_info(
         ip_restricted=any(isinstance(ip, str) and ip.strip() not in ("", "*") for ip in ips),
         is_master=is_master if isinstance(is_master, bool) else None,
     )
+
+
+def fetch_account_equity(
+    credentials: Credentials,
+    *,
+    base_url: str = BASE_URL,
+    recv_window_ms: int = DEFAULT_RECV_WINDOW_MS,
+    timeout_s: float = DEFAULT_TIMEOUT_S,
+    session: _Session | None = None,
+    clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+) -> Decimal:
+    """Account Equity of the Unified account: ``totalEquity`` exactly as Bybit reports it.
+
+    Bybit: the sum of every asset's equity in USD, where asset equity = wallet balance + perp and
+    futures unrealised PnL + option value. Not the available balance, margin or position value.
+    Raises on any doubt; never substitutes another field.
+    """
+    if not isinstance(recv_window_ms, int) or not 1 <= recv_window_ms <= MAX_RECV_WINDOW_MS:
+        raise ValueError("recv_window_ms must be between 1 and 60000")
+    if not timeout_s > 0:
+        raise ValueError("timeout_s must be positive")
+    origin = _api_origin(base_url)
+    http = session if session is not None else requests.Session()
+    body = _signed_get(http, credentials, origin, {"accountType": EQUITY_ACCOUNT_TYPE}, recv_window_ms,
+                       timeout_s, clock_ms, path=WALLET_BALANCE_PATH)
+    accounts = _result(body)["list"]
+    if len(accounts) != 1 or not isinstance(accounts[0], dict):
+        raise BybitResponseError("wallet balance reply does not hold exactly one account")
+    if accounts[0].get("accountType") != EQUITY_ACCOUNT_TYPE:
+        raise BybitResponseError("wallet balance reply is not for the Unified account")
+    return _decimal(accounts[0], "totalEquity")
 
 
 def _result_object(body: dict) -> dict:

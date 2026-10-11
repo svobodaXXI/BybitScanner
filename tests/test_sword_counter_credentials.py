@@ -129,8 +129,9 @@ class ApiKeyInfoTests(unittest.TestCase):
         with self.assertRaises(BybitResponseError):
             self.fetch(FakeResponse({"retCode": 0, "retMsg": "", "result": []}))
 
-    def test_only_two_read_only_get_paths_can_ever_be_signed(self):
-        self.assertEqual(bp.ALLOWED_READ_PATHS, frozenset({"/v5/position/list", "/v5/user/query-api"}))
+    def test_only_three_read_only_get_paths_can_ever_be_signed(self):
+        self.assertEqual(bp.ALLOWED_READ_PATHS, frozenset({"/v5/position/list", "/v5/user/query-api",
+                                                     "/v5/account/wallet-balance"}))
         session = FakeSession()
         with mock.patch.object(bp.hmac, "new", side_effect=AssertionError("signed")):
             with self.assertRaises(ValueError):

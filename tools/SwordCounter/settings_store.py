@@ -1,6 +1,7 @@
-"""SwordCounter S3: user settings (total swords, RO cost) persisted outside the Git repository.
+"""SwordCounter S3: user settings (total swords) persisted outside the Git repository.
 
-Only the two numbers are stored, as JSON in ``%APPDATA%\\SwordCounter\\settings.json``.
+The RO cost is not a setting: it is Account Equity / total swords, read live from Bybit.
+Only the number of swords is stored, as JSON in ``%APPDATA%\\SwordCounter\\settings.json``.
 API keys are never read or written here.
 """
 
@@ -11,13 +12,9 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
-from tools.SwordCounter.swords import SwordSettings
-
 DEFAULT_TOTAL_SWORDS = 20
-DEFAULT_RO_USDT = 5
 SETTINGS_VERSION = 1
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _INTEGER = re.compile(r"^\d+$")
@@ -25,14 +22,12 @@ _INTEGER = re.compile(r"^\d+$")
 
 @dataclass(frozen=True)
 class AppSettings:
-    total_swords: int = DEFAULT_TOTAL_SWORDS
-    ro_usdt: int = DEFAULT_RO_USDT  # cost of one RO (one sword), whole USDT
+    total_swords: int = DEFAULT_TOTAL_SWORDS   # also the number of equity parts: 1 RO = equity / total
 
     def __post_init__(self) -> None:
-        for name in ("total_swords", "ro_usdt"):
-            value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                raise ValueError(f"{name} must be a positive integer")
+        value = self.total_swords
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError("total_swords must be a positive integer")
 
 
 def parse_total_swords(text: str) -> int:
@@ -41,25 +36,6 @@ def parse_total_swords(text: str) -> int:
     if not _INTEGER.match(value) or int(value) <= 0:
         raise ValueError("Всего мечей: целое положительное число")
     return int(value)
-
-
-def parse_ro_usdt(text: str) -> int:
-    """RO cost from user input, rounded half up to whole USDT; must stay positive."""
-    value = str(text).strip().replace(",", ".")
-    try:
-        number = Decimal(value)
-    except InvalidOperation:
-        raise ValueError("Стоимость РО: положительное число USDT") from None
-    if not number.is_finite():
-        raise ValueError("Стоимость РО: положительное число USDT")
-    rounded = int(number.quantize(Decimal(1), rounding=ROUND_HALF_UP))
-    if rounded <= 0:
-        raise ValueError("Стоимость РО после округления должна быть не меньше 1 USDT")
-    return rounded
-
-
-def to_sword_settings(settings: AppSettings) -> SwordSettings:
-    return SwordSettings(total_swords=settings.total_swords, sword_size_usdt=Decimal(settings.ro_usdt))
 
 
 def default_settings_path() -> Path:
@@ -76,20 +52,19 @@ def load_settings(path: Path | None = None) -> tuple[AppSettings, str | None]:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict) or data.get("version") != SETTINGS_VERSION:
             raise ValueError("unsupported settings format")
-        return AppSettings(total_swords=data.get("total_swords"), ro_usdt=data.get("ro_usdt")), None
+        return AppSettings(total_swords=data.get("total_swords")), None   # an old "ro_usdt" is ignored
     except (OSError, ValueError, TypeError) as error:
         return AppSettings(), f"настройки не прочитаны ({type(error).__name__}), используются значения по умолчанию"
 
 
 def save_settings(settings: AppSettings, path: Path | None = None) -> Path:
-    """Atomically write the two settings. Refuses any location inside the Git repository."""
+    """Atomically write the settings. Refuses any location inside the Git repository."""
     path = Path(path) if path is not None else default_settings_path()
     resolved = path.resolve()
     if resolved == _REPO_ROOT or _REPO_ROOT in resolved.parents:
         raise ValueError("settings must be stored outside the Git repository")
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({"version": SETTINGS_VERSION, "total_swords": settings.total_swords,
-                          "ro_usdt": settings.ro_usdt}, indent=1)
+    payload = json.dumps({"version": SETTINGS_VERSION, "total_swords": settings.total_swords}, indent=1)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".settings-", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

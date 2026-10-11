@@ -20,14 +20,13 @@ import tkinter as tk
 from pathlib import Path
 from typing import Callable
 
-from tools.SwordCounter.bybit_positions import fetch_open_positions
+from tools.SwordCounter.bybit_positions import fetch_account_equity, fetch_open_positions
 from tools.SwordCounter.connection import ConnectionController
 from tools.SwordCounter.credential_store import CredentialStore, WindowsCredentialStore, resolve_credentials
 from tools.SwordCounter.settings_store import (
-    AppSettings, default_settings_path, load_settings, parse_ro_usdt, parse_total_swords,
-    save_settings, to_sword_settings,
+    AppSettings, default_settings_path, load_settings, parse_total_swords, save_settings,
 )
-from tools.SwordCounter.swords import count_swords_from_api
+from tools.SwordCounter.swords import count_swords_with_equity
 from tools.SwordCounter.view_model import GREY, WORKER_FAILED, build_display, header_text
 
 REFRESH_INTERVAL_S = 10
@@ -96,14 +95,24 @@ class Refresher:
 
 
 def make_live_counter(get_settings: Callable[[], AppSettings]) -> Callable[[], object]:
-    """S1 read + S2 count with the settings current at call time.
+    """Account Equity + open positions + S2 count with the settings current at call time.
 
-    The key is SwordCounter's own (Windows Credential Manager). A missing or unreadable key is
-    "Нет соединения"; no network request is made without it.
+    1 RO = Account Equity / total swords, recomputed on every refresh. The key is SwordCounter's
+    own (Windows Credential Manager). A missing or unreadable key is "Нет соединения"; no network
+    request is made without it.
     """
     def count():
-        return count_swords_from_api(lambda: fetch_open_positions(resolve_credentials()[0]),
-                                     to_sword_settings(get_settings()))
+        credentials = None
+
+        def creds():
+            nonlocal credentials
+            if credentials is None:
+                credentials = resolve_credentials()[0]
+            return credentials
+
+        return count_swords_with_equity(lambda: fetch_open_positions(creds()),
+                                        lambda: fetch_account_equity(creds()),
+                                        get_settings().total_swords)
     return count
 
 
@@ -160,7 +169,7 @@ class SwordCounterApp:
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.configure(padx=10, pady=8)
 
-        self.header_label = tk.Label(root, text=header_text(self.settings), font=(FONT, 10))
+        self.header_label = tk.Label(root, text=header_text(), font=(FONT, 10))
         self.header_label.grid(row=0, column=0, columnspan=2, sticky="w")
         self.gear_button = tk.Button(root, text=GEAR_ICON, font=(FONT, 11), relief="flat",
                                      command=self.open_settings, cursor="hand2")
@@ -212,9 +221,9 @@ class SwordCounterApp:
         self._after_id = self.root.after(POLL_MS, self._tick)
 
     # ---- settings -------------------------------------------------------
-    def save_settings_from_text(self, total_text: str, ro_text: str) -> AppSettings:
+    def save_settings_from_text(self, total_text: str) -> AppSettings:
         """Validate, persist and apply. Raises ValueError (input) or OSError (disk) unchanged."""
-        new = AppSettings(total_swords=parse_total_swords(total_text), ro_usdt=parse_ro_usdt(ro_text))
+        new = AppSettings(total_swords=parse_total_swords(total_text))
         save_settings(new, self.settings_path)
         self.settings = new
         self._settings_warning = None
@@ -230,17 +239,16 @@ class SwordCounterApp:
         dialog.transient(self.root)
         dialog.configure(padx=10, pady=8)
         total_var = tk.StringVar(value=str(self.settings.total_swords))
-        ro_var = tk.StringVar(value=str(self.settings.ro_usdt))
         tk.Label(dialog, text="Всего мечей").grid(row=0, column=0, sticky="w")
         tk.Entry(dialog, textvariable=total_var, width=8).grid(row=0, column=1, padx=(8, 0))
-        tk.Label(dialog, text="Стоимость 1 РО, USDT").grid(row=1, column=0, sticky="w", pady=(4, 0))
-        tk.Entry(dialog, textvariable=ro_var, width=8).grid(row=1, column=1, padx=(8, 0), pady=(4, 0))
+        tk.Label(dialog, text="1 РО = Equity аккаунта / всего мечей (авто, до целых USDT)", fg=GREY
+                 ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
         error = tk.Label(dialog, text="", fg="#D32F2F", wraplength=220, justify="left")
         error.grid(row=2, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         def save() -> None:
             try:
-                self.save_settings_from_text(total_var.get(), ro_var.get())
+                self.save_settings_from_text(total_var.get())
             except ValueError as problem:
                 error.configure(text=str(problem))
                 return
