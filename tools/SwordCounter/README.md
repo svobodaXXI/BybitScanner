@@ -7,7 +7,22 @@
 - S1 (готово): read-only модуль чтения открытых позиций Bybit — `bybit_positions.py`.
 - S2 (готово): расчёт мечей — `swords.py`.
 - S3 (готово): компактное окно Windows — `app.py`, `view_model.py`, `settings_store.py`.
-- Общий ярлык MetaScalp + Мечи пока не создан.
+- S4 (готово): общий запуск «MetaScalp + Мечи» — `launcher.py`, `create_desktop_shortcut.ps1`.
+
+## Общий запуск «MetaScalp + Мечи» (S4)
+
+Один ярлык запускает два независимых приложения и не ждёт их завершения. MetaScalp запускается из своей установки
+`%LOCALAPPDATA%\MetaScalp\current\MetaScalp.exe` без аргументов (как его собственные ярлыки), SwordCounter — через `pythonw` из `venv`.
+
+- Если MetaScalp уже запущен, второй экземпляр не создаётся, запускается только SwordCounter. Если SwordCounter уже запущен, он не запускается повторно (защита именованным мьютексом сеанса пользователя, она же работает при запуске через `start_sword_counter.bat`).
+- Если не удалось определить, запущен ли MetaScalp, второй экземпляр не запускается. Неизвестный путь MetaScalp — блокер: ничего не запускается, показывается сообщение.
+- Права администратора не требуются. Ключи API не передаются ни в ярлыке, ни в аргументах; MetaScalp получает окружение без переменных `SWORDCOUNTER_BYBIT_API_*`.
+- Существующие ярлыки и настройки MetaScalp и BybitScanner не изменяются.
+
+Создание ярлыка на рабочем столе (из корня репозитория, где лежит `tools\SwordCounter`):
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools\SwordCounter\create_desktop_shortcut.ps1 -PythonW <путь к venv\Scripts\pythonw.exe> [-DryRun]`.
+Скрипт не перезаписывает уже существующий ярлык «MetaScalp + Мечи» и проверяет созданный ярлык чтением обратно. Ярлык хранит путь к папке репозитория: после переноса или удаления worktree пересоздайте его из нового корня.
+Пробный запуск без запуска приложений: `venv\Scripts\python.exe -m tools.SwordCounter.launcher --dry-run`.
 
 ## Запуск окна (S3)
 
