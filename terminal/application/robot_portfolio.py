@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from decimal import Decimal, ROUND_CEILING
 import sqlite3
+from typing import Iterable
 
 from terminal.domain.models import TradingAccountId
-from terminal.persistence.sqlite_store import SQLiteStore, PersistenceError
+from terminal.persistence.sqlite_store import (
+    PersistenceError, RobotAutoDecisionRecord, RobotCandidateRecord, SQLiteStore,
+)
 
 RO_USDT = 250
 CAP_RO = 19
@@ -29,8 +32,16 @@ def _number(value):
     return number
 
 
-def collect_portfolio_facts(store: SQLiteStore, account: TradingAccountId) -> dict:
-    """Caller serializes this read with audit append. No PAPER writes or services."""
+def collect_portfolio_facts(
+    store: SQLiteStore, account: TradingAccountId, *,
+    robot_candidates: Iterable[RobotCandidateRecord] | None = None,
+    auto_decisions: Iterable[RobotAutoDecisionRecord] | None = None,
+) -> dict:
+    """Caller serializes this read with audit append. No PAPER writes or services.
+
+    ``robot_candidates``/``auto_decisions`` may be rows the caller already read
+    inside the same decision transaction; they are never a cache across transactions.
+    """
     facts = {"available": False, "reference_capital_usdt": 5000,
              "ro_usdt": RO_USDT, "cap_ro": CAP_RO, "new_reserve_ro": 1,
              "deferred_controls": {name: "NOT_EVALUATED" for name in DEFERRED}}
@@ -39,7 +50,8 @@ def collect_portfolio_facts(store: SQLiteStore, account: TradingAccountId) -> di
         if account.value != "paper" or paper_account is None:
             raise Unavailable("PAPER account is unavailable")
         rows = store.load_paper_portfolio_rows(account)
-        candidates = {c.candidate_id: c for c in store.load_robot_candidates(account)}
+        candidates = {c.candidate_id: c for c in (
+            store.load_robot_candidates(account) if robot_candidates is None else robot_candidates)}
         trades = store.load_open_robot_trades(account)
         orders = {o["order_id"]: o for o in rows["paper_limit_orders"]}
         commands = {c["command_id"]: c for c in rows["trading_commands"]}
@@ -278,7 +290,8 @@ def collect_portfolio_facts(store: SQLiteStore, account: TradingAccountId) -> di
             for c in candidates.values() if "robot:" + c.candidate_id in reservations
         ]
         physical = set(reservations)
-        for decision in store.load_robot_auto_decisions(account):
+        for decision in (store.load_robot_auto_decisions(account)
+                         if auto_decisions is None else auto_decisions):
             if decision.mode != "SHADOW" or decision.outcome != "ALLOW":
                 continue
             linked = [c for c in candidates.values() if c.candidate_id == decision.candidate_ref
