@@ -1,16 +1,17 @@
-"""SwordCounter S2: working-volume count ("swords") from Bybit occupied margin.
+"""SwordCounter S2: working-volume count ("swords") from Bybit position value.
 
 Rules
 -----
 - ``total_swords`` swords of ``sword_size_usdt`` each (default 20 x 5 USDT), both configurable.
-- Occupied margin is the sum of ``positionIM`` over every open position from S1.
-- used swords = ceil(total occupied margin / sword size); free = max(0, total - used).
+- Working volume is the sum of ``positionValue`` (USDT notional, not divided by leverage) over
+  every open position from S1. Bybit reports it by mark price, so it moves with the price.
+- used swords = ceil(total working volume / sword size); free = max(0, total - used).
   Over the limit is shown, not hidden: used may exceed the total while free stays 0.
 - Exact Decimal arithmetic only.
-- If the margin of any open position is unknown, not in USDT, or negative, the result is
+- If the value of any open position is unknown, not in USDT, or negative, the result is
   "Недоступно" with no numbers. A Bybit read error is "Нет соединения", never zero swords.
 
-Margin in another settle coin (e.g. USDC) is not converted: treating it as USDT would be a
+Value in another settle coin (e.g. USDC) is not converted: treating it as USDT would be a
 guess, so the count is unavailable instead.
 """
 
@@ -63,7 +64,7 @@ class SwordCount:
     total_swords: int
     sword_size_usdt: Decimal
     positions_count: int | None    # None when positions could not be read
-    occupied_margin_usdt: Decimal | None = None
+    occupied_margin_usdt: Decimal | None = None   # working volume: sum of positionValue, USDT
     used_swords: int | None = None
     free_swords: int | None = None
     over_limit: bool | None = None
@@ -80,22 +81,22 @@ def count_swords(positions: Iterable[OpenPosition], settings: SwordSettings) -> 
     positions = tuple(positions)
     base = dict(total_swords=settings.total_swords, sword_size_usdt=settings.sword_size_usdt,
                 positions_count=len(positions))
-    unknown = tuple(p.symbol for p in positions if p.position_im is None)
+    unknown = tuple(p.symbol for p in positions if p.position_value is None)
     if unknown:
         return SwordCount(STATUS_UNAVAILABLE, unknown_margin_symbols=unknown,
-                          reason="margin (positionIM) is unknown for: " + ", ".join(unknown), **base)
+                          reason="position value (positionValue) is unknown for: " + ", ".join(unknown), **base)
     other_coin = tuple(p.symbol for p in positions if p.settle_coin != MARGIN_COIN)
     if other_coin:
         return SwordCount(STATUS_UNAVAILABLE, unknown_margin_symbols=other_coin,
-                          reason=f"margin is not in {MARGIN_COIN} for: " + ", ".join(other_coin), **base)
-    negative = tuple(p.symbol for p in positions if p.position_im < 0)
+                          reason=f"position value is not in {MARGIN_COIN} for: " + ", ".join(other_coin), **base)
+    negative = tuple(p.symbol for p in positions if p.position_value < 0)
     if negative:
         return SwordCount(STATUS_UNAVAILABLE, unknown_margin_symbols=negative,
-                          reason="negative margin (positionIM) for: " + ", ".join(negative), **base)
+                          reason="negative position value (positionValue) for: " + ", ".join(negative), **base)
 
     with localcontext() as ctx:
         ctx.prec = 200  # exact for any realistic margin; avoids rounding near a boundary
-        occupied = sum((p.position_im for p in positions), Decimal("0"))
+        occupied = sum((p.position_value for p in positions), Decimal("0"))
         used = int((occupied / settings.sword_size_usdt).to_integral_value(rounding=ROUND_CEILING))
     return SwordCount(STATUS_OK, occupied_margin_usdt=occupied, used_swords=used,
                       free_swords=max(0, settings.total_swords - used),
