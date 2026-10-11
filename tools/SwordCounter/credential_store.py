@@ -21,8 +21,8 @@ CRED_TYPE_GENERIC = 1
 CRED_PERSIST_LOCAL_MACHINE = 2
 _ERROR_NOT_FOUND = 1168
 _BLOB_VERSION = 1
-SETUP_HINT = "tools\\SwordCounter\\setup_sword_counter_keys.bat"
-NOT_CONFIGURED = f"Ключ SwordCounter не настроен: запустите {SETUP_HINT}"
+SETUP_HINT = "⚙ → «Подключение Bybit»"
+NOT_CONFIGURED = f"Ключ SwordCounter не настроен: откройте {SETUP_HINT}"
 
 
 class CredentialStoreError(BybitCredentialsError):

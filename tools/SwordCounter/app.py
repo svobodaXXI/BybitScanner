@@ -6,7 +6,8 @@ renders. Independent of MetaScalp and of the BybitScanner trading runtime; it ne
 trading commands.
 
 Run: ``python -m tools.SwordCounter`` (or ``tools\\SwordCounter\\start_sword_counter.bat``).
-The Read-Only API key comes only from the Windows Credential Manager (see ``setup_keys``).
+The Read-Only API key comes only from the Windows Credential Manager; it is entered, checked
+and saved in the ⚙ settings window, section «Подключение Bybit» (see ``connection``).
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ from pathlib import Path
 from typing import Callable
 
 from tools.SwordCounter.bybit_positions import fetch_open_positions
-from tools.SwordCounter.credential_store import resolve_credentials
+from tools.SwordCounter.connection import ConnectionController
+from tools.SwordCounter.credential_store import CredentialStore, WindowsCredentialStore, resolve_credentials
 from tools.SwordCounter.settings_store import (
     AppSettings, default_settings_path, load_settings, parse_ro_usdt, parse_total_swords,
     save_settings, to_sword_settings,
@@ -32,6 +34,7 @@ POLL_MS = 500
 SWORDS_ICON = "⚔"   # crossed swords
 GEAR_ICON = "⚙"
 FONT = "Segoe UI"
+SECRET_MASK = "•"
 
 
 class Refresher:
@@ -88,11 +91,31 @@ def make_live_counter(get_settings: Callable[[], AppSettings]) -> Callable[[], o
     return count
 
 
+def bind_clipboard_keys(entry: tk.Entry) -> Callable[[object], str | None]:
+    """Ctrl+V/C/X/A by physical key: Tk's default bindings miss them on a Russian layout."""
+    events = {86: "<<Paste>>", 67: "<<Copy>>", 88: "<<Cut>>"}
+
+    def on_control(event) -> str | None:
+        if event.keycode in events:
+            entry.event_generate(events[event.keycode])
+            return "break"
+        if event.keycode == 65:
+            entry.select_range(0, "end")
+            entry.icursor("end")
+            return "break"
+        return None
+
+    entry.bind("<Control-KeyPress>", on_control)
+    return on_control
+
+
 class SwordCounterApp:
     def __init__(self, root: tk.Tk, *, settings_path: Path | None = None,
                  counter_factory: Callable[[Callable[[], AppSettings]], Callable[[], object]] = make_live_counter,
-                 interval_s: float = REFRESH_INTERVAL_S, start_worker: bool = True) -> None:
+                 interval_s: float = REFRESH_INTERVAL_S, start_worker: bool = True,
+                 credential_store: CredentialStore | None = None) -> None:
         self.root = root
+        self.credential_store = credential_store if credential_store is not None else WindowsCredentialStore()
         self.settings_path = Path(settings_path) if settings_path is not None else default_settings_path()
         self.settings, self._settings_warning = load_settings(self.settings_path)
         self._results: queue.Queue = queue.Queue()
@@ -210,7 +233,83 @@ class SwordCounterApp:
         buttons.grid(row=3, column=0, columnspan=2, sticky="e", pady=(8, 0))
         tk.Button(buttons, text="Сохранить", command=save).pack(side="left")
         tk.Button(buttons, text="Отмена", command=dialog.destroy).pack(side="left", padx=(6, 0))
+        self._build_connection_section(dialog, row=4)
         dialog.grab_set()
+
+    def _build_connection_section(self, dialog: tk.Toplevel, row: int) -> None:
+        """«Подключение Bybit»: visible key, secret with show/hide, check off the GUI thread, save."""
+        controller = ConnectionController(self.credential_store)
+        frame = tk.LabelFrame(dialog, text="Подключение Bybit (ключ только для чтения)", padx=8, pady=6)
+        frame.grid(row=row, column=0, columnspan=2, sticky="we", pady=(10, 0))
+        key_var, secret_var = tk.StringVar(), tk.StringVar()
+        tk.Label(frame, text="API Key").grid(row=0, column=0, sticky="w")
+        key_entry = tk.Entry(frame, textvariable=key_var, width=40)
+        key_entry.grid(row=0, column=1, columnspan=2, sticky="we", padx=(8, 0))
+        tk.Label(frame, text="API Secret").grid(row=1, column=0, sticky="w", pady=(4, 0))
+        secret_entry = tk.Entry(frame, textvariable=secret_var, width=32, show=SECRET_MASK)
+        secret_entry.grid(row=1, column=1, sticky="we", padx=(8, 0), pady=(4, 0))
+        show_button = tk.Button(frame, text="Показать", width=8)
+        show_button.grid(row=1, column=2, padx=(4, 0), pady=(4, 0))
+        result = tk.Label(frame, text="", wraplength=330, justify="left", anchor="w")
+        result.grid(row=3, column=0, columnspan=3, sticky="we", pady=(6, 0))
+        for entry in (key_entry, secret_entry):
+            bind_clipboard_keys(entry)
+
+        def toggle_secret() -> None:
+            hidden = secret_entry.cget("show") != ""
+            secret_entry.configure(show="" if hidden else SECRET_MASK)
+            show_button.configure(text="Скрыть" if hidden else "Показать")
+
+        def changed(*_args) -> None:
+            controller.fields_changed()
+            save_button.configure(state="disabled")
+            if not controller.checking:
+                result.configure(text="", fg="black")
+
+        def show(outcome_ok: bool | None, text: str) -> None:
+            color = {True: "#2E7D32", False: "#D32F2F", None: "black"}[outcome_ok]
+            result.configure(text=text, fg=color)
+
+        def poll() -> None:
+            if not dialog.winfo_exists():
+                return
+            outcome = controller.poll()
+            if outcome is None:
+                dialog.after(150, poll)
+                return
+            check_button.configure(state="normal")
+            show(outcome.ok, outcome.message)
+            save_button.configure(state="normal" if controller.confirmed else "disabled")
+
+        def check() -> None:
+            text = controller.start_check(key_var.get(), secret_var.get())
+            if not controller.checking:
+                show(False, text)
+                return
+            check_button.configure(state="disabled")
+            save_button.configure(state="disabled")
+            show(None, text)
+            dialog.after(150, poll)
+
+        def save_key() -> None:
+            outcome = controller.save(key_var.get(), secret_var.get())
+            show(outcome.ok, outcome.message)
+            if outcome.ok:
+                save_button.configure(state="disabled")
+                self.refresher.request_now()
+
+        show_button.configure(command=toggle_secret)
+        buttons = tk.Frame(frame)
+        buttons.grid(row=2, column=0, columnspan=3, sticky="e", pady=(6, 0))
+        check_button = tk.Button(buttons, text="Проверить подключение", command=check)
+        check_button.pack(side="left")
+        save_button = tk.Button(buttons, text="Сохранить ключ", command=save_key, state="disabled")
+        save_button.pack(side="left", padx=(6, 0))
+        key_var.trace_add("write", changed)
+        secret_var.trace_add("write", changed)
+        self._connection_widgets = {"key": key_entry, "secret": secret_entry, "show": show_button,
+                                    "check": check_button, "save": save_button, "result": result,
+                                    "controller": controller}
 
     def close(self) -> None:
         if self._closed:

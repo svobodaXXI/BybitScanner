@@ -15,6 +15,9 @@ from pathlib import Path
 from unittest import mock
 
 from tools.SwordCounter import app as app_module
+from tools.SwordCounter import connection, setup_keys
+from tools.SwordCounter.connection import ConnectionController
+from tools.SwordCounter.setup_keys import CheckResult
 from tools.SwordCounter import settings_store as store
 from tools.SwordCounter import view_model as vm
 from tools.SwordCounter.settings_store import AppSettings, parse_ro_usdt, parse_total_swords
@@ -249,6 +252,138 @@ class GuiSmokeTests(unittest.TestCase):
                     gui.save_settings_from_text("0", "5")
             finally:
                 gui.close()
+
+    def test_connection_section_visible_key_secret_toggle_and_save_only_after_check(self):
+        try:
+            import tkinter
+            root = tkinter.Tk()
+        except Exception as error:  # no display (e.g. CI)
+            self.skipTest(f"Tk unavailable: {type(error).__name__}")
+        root.withdraw()
+        fake_store = FakeCredentialStore()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            store.save_settings(AppSettings(total_swords=12, ro_usdt=8), path)
+            gui = app_module.SwordCounterApp(root, settings_path=path, credential_store=fake_store,
+                                             counter_factory=lambda get: (lambda: result()),
+                                             interval_s=60, start_worker=False)
+            try:
+                gui.open_settings()
+                w = gui._connection_widgets
+                w["controller"]._verify = lambda c: CheckResult(True, "Bybit подтвердил: ключ Read-Only")
+                self.assertEqual(w["key"].cget("show"), "")
+                self.assertEqual(w["secret"].cget("show"), app_module.SECRET_MASK)
+                w["show"].invoke()
+                self.assertEqual(w["secret"].cget("show"), "")
+                w["show"].invoke()
+                self.assertEqual(w["secret"].cget("show"), app_module.SECRET_MASK)
+                handler = app_module.bind_clipboard_keys(w["key"])
+                with mock.patch.object(w["key"], "event_generate") as generate:   # Russian layout
+                    self.assertEqual(handler(mock.Mock(keycode=86, keysym="Cyrillic_em")), "break")
+                generate.assert_called_once_with("<<Paste>>")   # Ctrl+V by physical key, pasted once
+                w["key"].insert(0, FAKE_KEY)
+                w["secret"].insert(0, FAKE_SECRET)
+                self.assertEqual(w["save"].cget("state"), "disabled")
+                w["check"].invoke()
+                deadline = time.monotonic() + 5
+                while w["controller"].checking and time.monotonic() < deadline:
+                    root.update()
+                    time.sleep(0.02)
+                root.update()
+                self.assertEqual(w["save"].cget("state"), "normal")
+                with mock.patch.object(gui.refresher, "request_now") as refresh:
+                    w["save"].invoke()
+                refresh.assert_called_once()
+                self.assertEqual(fake_store.saves, [(FAKE_KEY, FAKE_SECRET)])
+                self.assertNotIn(FAKE_SECRET, w["result"].cget("text"))
+                self.assertEqual(store.load_settings(path)[0], AppSettings(total_swords=12, ro_usdt=8))
+                self.assertNotIn(FAKE_SECRET, path.read_text(encoding="utf-8"))
+            finally:
+                gui.close()
+
+
+FAKE_KEY = "GUIKEY0123456789"
+FAKE_SECRET = "GUISECRET0123456789abcdef"
+
+
+class FakeCredentialStore:
+    def __init__(self):
+        self.saves = []
+
+    def save(self, credentials):
+        self.saves.append((credentials.api_key, credentials.api_secret))
+
+    def load(self):
+        return None
+
+    def delete(self):
+        return False
+
+
+class ConnectionControllerTests(unittest.TestCase):
+    def make(self, ok=True, verify=None):
+        fake_store, seen, jobs = FakeCredentialStore(), [], []
+
+        def default_verify(credentials):
+            seen.append((credentials.api_key, credentials.api_secret))
+            return CheckResult(ok, "проверено")
+        controller = ConnectionController(fake_store, verify=verify or default_verify, run_async=jobs.append)
+        return controller, fake_store, seen, jobs
+
+    def test_save_only_the_exact_values_that_passed_the_check(self):
+        controller, fake_store, seen, jobs = self.make()
+        self.assertFalse(controller.save(FAKE_KEY, FAKE_SECRET).ok)          # never checked
+        self.assertEqual(controller.start_check(f" {FAKE_KEY}\n", FAKE_SECRET), connection.CHECKING)
+        self.assertIsNone(controller.poll())                               # still running
+        jobs.pop()()
+        self.assertTrue(controller.poll().ok)
+        self.assertEqual(seen, [(FAKE_KEY, FAKE_SECRET)])
+        self.assertFalse(controller.save(FAKE_KEY, FAKE_SECRET + "x").ok)   # other values
+        self.assertTrue(controller.save(FAKE_KEY, FAKE_SECRET).ok)
+        self.assertEqual(fake_store.saves, [(FAKE_KEY, FAKE_SECRET)])
+
+    def test_any_edit_drops_the_confirmation_even_back_to_the_same_value(self):
+        controller, fake_store, _seen, jobs = self.make()
+        controller.start_check(FAKE_KEY, FAKE_SECRET)
+        jobs.pop()()
+        controller.poll()
+        controller.fields_changed()
+        self.assertFalse(controller.save(FAKE_KEY, FAKE_SECRET).ok)
+        self.assertEqual(fake_store.saves, [])
+
+    def test_a_check_finished_after_an_edit_is_discarded(self):
+        controller, fake_store, _seen, jobs = self.make()
+        controller.start_check(FAKE_KEY, FAKE_SECRET)
+        controller.fields_changed()
+        jobs.pop()()
+        self.assertFalse(controller.poll().ok)
+        self.assertFalse(controller.confirmed)
+
+    def test_refusal_empty_fields_and_crash_save_nothing_and_leak_nothing(self):
+        controller, fake_store, seen, jobs = self.make(ok=False)
+        self.assertEqual(controller.start_check("", FAKE_SECRET), "Введите API Key.")
+        self.assertEqual(controller.start_check(FAKE_KEY, "  "), "Введите API Secret.")
+        self.assertEqual((seen, jobs), ([], []))
+        controller.start_check(FAKE_KEY, FAKE_SECRET)
+        jobs.pop()()
+        self.assertFalse(controller.poll().ok)
+        self.assertFalse(controller.save(FAKE_KEY, FAKE_SECRET).ok)
+
+        def crash(_credentials):
+            raise RuntimeError(f"boom {FAKE_SECRET}")
+        controller, fake_store, _seen, jobs = self.make(verify=crash)
+        controller.start_check(FAKE_KEY, FAKE_SECRET)
+        jobs.pop()()
+        outcome = controller.poll()
+        self.assertFalse(outcome.ok)
+        self.assertNotIn(FAKE_SECRET, outcome.message)
+        self.assertEqual(fake_store.saves, [])
+
+    def test_real_check_uses_only_the_two_read_only_endpoints(self):
+        self.assertIs(ConnectionController(FakeCredentialStore())._verify, setup_keys.verify_key)
+        source = Path(connection.__file__).read_text(encoding="utf-8")
+        for forbidden in ("print(", "logging", "os.environ", "settings_store", "/v5/order", ".post("):
+            self.assertNotIn(forbidden, source)
 
 
 if __name__ == "__main__":

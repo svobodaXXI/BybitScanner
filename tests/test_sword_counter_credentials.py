@@ -228,7 +228,7 @@ class ResolveCredentialsTests(unittest.TestCase):
         with self.assertRaises(BybitCredentialsError) as raised:
             cs.resolve_credentials(FakeStore())
         text = str(raised.exception)
-        self.assertIn("setup_sword_counter_keys.bat", text)
+        self.assertIn("Подключение Bybit", text)
         self.assertNotIn(SECRET, text)
 
     def test_the_wizard_and_the_window_never_read_environment_variables(self):
