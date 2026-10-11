@@ -123,7 +123,10 @@ class RequestShapeTests(unittest.TestCase):
         for forbidden in ("/v5/order", "create-order", "amend", "cancel", "set-leverage",
                           ".post(", ".put(", ".delete("):
             self.assertNotIn(forbidden, source, forbidden)
-        self.assertEqual(re.findall(r'"/v5/[a-z/\-]+"', source), ['"/v5/position/list"'])
+        # Exactly three documented read-only GET endpoints: positions, the key's own Read-Only flag
+        # and the account wallet balance (Account Equity for the RO cost).
+        self.assertEqual(re.findall(r'"/v5/[a-z/\-]+"', source),
+                         ['"/v5/position/list"', '"/v5/user/query-api"', '"/v5/account/wallet-balance"'])
         for banned in ("terminal.", "robot_", "paper_runtime", "sqlite3", "config"):
             self.assertNotRegex(source, rf"(?m)^\s*(from|import)\s+{re.escape(banned)}", banned)
 
@@ -381,6 +384,44 @@ class RestartTests(unittest.TestCase):
         source = Path(bp.__file__).read_text(encoding="utf-8")
         for persistence in ("open(", "write_text", "pickle", "shelve", "json.dump(", "sqlite3"):
             self.assertNotIn(persistence, source, persistence)
+
+
+
+def wallet(equity="106.22345059", account_type="UNIFIED", accounts=None):
+    acc = {"accountType": account_type, "totalEquity": equity, "totalWalletBalance": "106.38454184",
+           "totalMarginBalance": "105.76490859", "totalAvailableBalance": "103.86754691",
+           "totalPerpUPL": "-0.61963324", "totalInitialMargin": "1.89736168", "coin": []}
+    return {"retCode": 0, "retMsg": "OK", "result": {"list": [acc] if accounts is None else accounts},
+            "retExtInfo": {}, "time": NOW_MS}
+
+
+class AccountEquityTests(unittest.TestCase):
+    def equity(self, *responses):
+        session = FakeSession(*responses)
+        return bp.fetch_account_equity(creds(), session=session, clock_ms=lambda: NOW_MS), session
+
+    def test_reads_total_equity_of_the_unified_account_with_a_signed_read_only_get(self):
+        value, session = self.equity(FakeResponse(wallet()))
+        self.assertEqual(value, Decimal("106.22345059"))   # totalEquity, not wallet/margin/available
+        call = session.calls[0]
+        parts = urlsplit(call["url"])
+        self.assertEqual((parts.netloc, parts.path, parts.query),
+                         ("api.bybit.com", "/v5/account/wallet-balance", "accountType=UNIFIED"))
+        expected = hmac.new(SECRET.encode(), f"{NOW_MS}{KEY}5000accountType=UNIFIED".encode(),
+                            hashlib.sha256).hexdigest()
+        self.assertEqual(call["headers"]["X-BAPI-SIGN"], expected)
+        self.assertFalse(call["allow_redirects"])
+
+    def test_missing_or_doubtful_equity_is_an_error_never_another_field(self):
+        for payload in (wallet(equity=""), wallet(equity=None), wallet(equity="abc"), wallet(equity="NaN"),
+                        wallet(account_type="CONTRACT"), wallet(accounts=[]),
+                        wallet(accounts=[wallet()["result"]["list"][0]] * 2)):
+            with self.subTest(payload=str(payload)[:80]), self.assertRaises(BybitResponseError):
+                self.equity(FakeResponse(payload))
+        with self.assertRaises(BybitApiError):
+            self.equity(FakeResponse({"retCode": 10005, "retMsg": "Permission denied", "result": {}}))
+        with self.assertRaises(BybitTransportError):
+            self.equity(requests.Timeout("slow"))
 
 
 if __name__ == "__main__":

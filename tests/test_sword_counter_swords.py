@@ -1,4 +1,4 @@
-"""SwordCounter S2: working-volume ("swords") count from Bybit positionIM. Offline, no keys."""
+"""SwordCounter S2: working-volume ("swords") count from Bybit size x avgPrice (entry notional). Offline, no keys."""
 
 import re
 import unittest
@@ -11,15 +11,16 @@ from tools.SwordCounter.bybit_positions import (
 )
 from tools.SwordCounter.swords import (
     STATUS_NO_CONNECTION, STATUS_OK, STATUS_UNAVAILABLE, SwordSettings, count_swords,
-    count_swords_from_api,
+    count_swords_from_api, count_swords_with_equity, ro_from_equity,
 )
 
 
-def pos(symbol="BTCUSDT", im="5", coin="USDT", idx=0, side="Buy"):
+def pos(symbol="BTCUSDT", value="5", coin="USDT", idx=0, side="Buy", im="0.1", size="1", pv="999"):
+    """``value`` is the entry price; with the default size 1 it is the entry notional."""
     return OpenPosition(
-        symbol=symbol, side=side, position_idx=idx, settle_coin=coin, size=Decimal("1"),
-        avg_price=Decimal("100"), position_value=Decimal("100"), position_status="Normal",
-        mark_price=Decimal("100"), position_im=None if im is None else Decimal(im),
+        symbol=symbol, side=side, position_idx=idx, settle_coin=coin, size=Decimal(size),
+        avg_price=None if value is None else Decimal(value), position_value=Decimal(pv), position_status="Normal",
+        mark_price=Decimal("100"), position_im=Decimal(im),
         position_mm=Decimal("1"), leverage=Decimal("10"), unrealised_pnl=Decimal("0"),
         updated_time_ms=1,
     )
@@ -34,7 +35,7 @@ class DefaultsAndSettingsTests(unittest.TestCase):
 
     def test_both_parameters_are_configurable(self):
         s = SwordSettings(total_swords=10, sword_size_usdt=Decimal("2.5"))
-        r = count_swords([pos(im="6")], s)
+        r = count_swords([pos(value="6")], s)
         self.assertEqual((r.used_swords, r.free_swords, r.total_swords, r.sword_size_usdt),
                          (3, 7, 10, Decimal("2.5")))
         self.assertEqual(SwordSettings(sword_size_usdt="7.5").sword_size_usdt, Decimal("7.5"))
@@ -64,9 +65,9 @@ class CountTests(unittest.TestCase):
         self.assertEqual((r.used_swords, r.free_swords, r.positions_count), (4, 16, 3))
 
     def test_a_partial_sword_counts_as_a_whole_sword(self):
-        for im, used in (("0.01", 1), ("4.99", 1), ("5", 1), ("5.0000001", 2), ("12.5", 3)):
-            with self.subTest(im=im):
-                self.assertEqual(count_swords([pos(im=im)], DEFAULT).used_swords, used)
+        for value, used in (("0.01", 1), ("4.99", 1), ("5", 1), ("5.0000001", 2), ("12.5", 3)):
+            with self.subTest(value=value):
+                self.assertEqual(count_swords([pos(value=value)], DEFAULT).used_swords, used)
 
     def test_exact_limit_boundary(self):
         r = count_swords([pos("A", "60"), pos("B", "40")], DEFAULT)
@@ -83,8 +84,41 @@ class CountTests(unittest.TestCase):
         # 0.1 + 0.2 is exactly 0.3; a value a hair over a boundary still costs a sword.
         r = count_swords([pos("A", "0.1"), pos("B", "0.2"), pos("C", "4.7")], DEFAULT)
         self.assertEqual((r.occupied_margin_usdt, r.used_swords), (Decimal("5.0"), 1))
-        hair = count_swords([pos(im="100.0000000000000000000000000000000001")], DEFAULT)
+        hair = count_swords([pos(value="100.0000000000000000000000000000000001")], DEFAULT)
         self.assertEqual((hair.used_swords, hair.over_limit), (21, True))
+
+    def test_metabroker_four_positions_5_4_5_5_use_four_swords(self):
+        # Regression: positionIM (~1.9 USDT margin) gave 1 sword; the working volume is the
+        # position value without dividing by leverage: 5 + 4 + 5 + 5 = 19 USDT -> 4 used, 16 free.
+        positions = [pos("SENTUSDT", "5", im="0.1", side="Buy"), pos("VELVETUSDT", "4", im="0.8", side="Sell"),
+                     pos("XNYUSDT", "5", im="1.0"), pos("LYNUSDT", "5", im="0.2")]
+        r = count_swords(positions, DEFAULT)
+        self.assertEqual((r.status, r.occupied_margin_usdt, r.used_swords, r.free_swords, r.over_limit),
+                         (STATUS_OK, Decimal("19"), 4, 16, False))
+
+    def test_real_positions_use_size_times_entry_price_not_mark_value_or_margin(self):
+        # Live case of 2026-10-11 (MetaBroker 5 + 4 + 5 + 5): positionValue (by mark price) summed
+        # to 17.70 and positionIM to 1.9; the entry notional size x avgPrice is 18.3847.
+        positions = [pos("SENTUSDT", "0.022818", size="210", pv="4.68531", im="0.09628896"),
+                     pos("VELVETUSDT", "0.0728", size="50", pv="3.469", im="0.6962024", side="Sell"),
+                     pos("XNYUSDT", "0.006218", size="800", pv="4.6624", im="0.93466873"),
+                     pos("LYNUSDT", "0.01753", size="284", pv="4.88764", im="0.19813425")]
+        r = count_swords(positions, DEFAULT)
+        self.assertEqual((r.status, r.occupied_margin_usdt, r.used_swords, r.free_swords),
+                         (STATUS_OK, Decimal("18.3847"), 4, 16))
+
+    def test_mark_value_does_not_decide_a_boundary(self):
+        # Entry notional 20.1 costs 5 swords even when the mark value has dropped to 19.8.
+        r = count_swords([pos(value="20.1", pv="19.8")], DEFAULT)
+        self.assertEqual((r.used_swords, r.free_swords), (5, 15))
+
+    def test_non_positive_entry_price_is_not_trusted(self):
+        self.assertEqual(count_swords([pos(value="0")], DEFAULT).status, STATUS_UNAVAILABLE)
+
+    def test_leverage_and_margin_do_not_change_the_volume(self):
+        low = count_swords([pos(value="19", im="19")], DEFAULT)
+        high = count_swords([pos(value="19", im="0.19")], DEFAULT)
+        self.assertEqual((low.used_swords, high.used_swords), (4, 4))
 
     def test_no_float_arithmetic_in_the_module(self):
         source = Path(sw.__file__).read_text(encoding="utf-8")
@@ -111,7 +145,7 @@ class UnavailableTests(unittest.TestCase):
         self.assertUnavailable(count_swords([pos("A", "10"), pos("BTCPERP", "10", coin="USDC")], DEFAULT))
 
     def test_negative_margin_is_not_trusted(self):
-        self.assertUnavailable(count_swords([pos(im="-1")], DEFAULT))
+        self.assertUnavailable(count_swords([pos(value="-1")], DEFAULT))
 
 
 class ConnectionTests(unittest.TestCase):
@@ -142,11 +176,52 @@ class ConnectionTests(unittest.TestCase):
         calls = []
         def fetch():
             calls.append(1)
-            return (pos(im=str(5 * len(calls))),)
+            return (pos(value=str(5 * len(calls))),)
         first = count_swords_from_api(fetch, DEFAULT)
         second = count_swords_from_api(fetch, DEFAULT)
         self.assertEqual((first.used_swords, second.used_swords, len(calls)), (1, 2, 2))
         self.assertEqual(first.status_label, "Доступно")
+
+
+
+class EquityRoTests(unittest.TestCase):
+    LIVE = [pos("SENTUSDT", "0.022818", size="210"), pos("VELVETUSDT", "0.0728", size="50", side="Sell"),
+            pos("XNYUSDT", "0.006218", size="800"), pos("LYNUSDT", "0.01753", size="284")]
+
+    def test_ro_is_equity_over_total_swords_rounded_half_up(self):
+        for equity, total, ro in (("106.22345059", 20, 5), ("110", 20, 6), ("109.99", 20, 5), ("50", 20, 3),
+                                  ("49.99", 20, 2), ("100", 10, 10), ("1000", 20, 50)):
+            with self.subTest(equity=equity, total=total):
+                self.assertEqual(ro_from_equity(Decimal(equity), total), Decimal(ro))
+
+    def test_live_case_equity_106_22_gives_ro_5_and_4_used_16_free(self):
+        r = count_swords_with_equity(lambda: self.LIVE, lambda: Decimal("106.22345059"), 20)
+        self.assertEqual((r.status, r.sword_size_usdt, r.equity_usdt, r.occupied_margin_usdt, r.used_swords, r.free_swords),
+                         (STATUS_OK, Decimal("5"), Decimal("106.22345059"), Decimal("18.3847"), 4, 16))
+
+    def test_ro_follows_equity_and_the_number_of_swords(self):
+        bigger = count_swords_with_equity(lambda: self.LIVE, lambda: Decimal("210"), 20)    # RO 11 (10.5 up)
+        self.assertEqual((bigger.sword_size_usdt, bigger.used_swords, bigger.free_swords), (Decimal("11"), 2, 18))
+        ten = count_swords_with_equity(lambda: self.LIVE, lambda: Decimal("106.22"), 10)     # RO 11 (10.622)
+        self.assertEqual((ten.sword_size_usdt, ten.used_swords, ten.free_swords), (Decimal("11"), 2, 8))
+
+    def test_unknown_equity_or_api_failure_shows_no_ro_and_no_numbers(self):
+        def down():
+            raise BybitApiError("Bybit retCode 10005: Permission denied", ret_code=10005)
+        for fetch_equity, fetch_positions in ((down, lambda: self.LIVE), (lambda: Decimal("100"), down)):
+            r = count_swords_with_equity(fetch_positions, fetch_equity, 20)
+            self.assertEqual((r.status, r.sword_size_usdt, r.used_swords, r.free_swords),
+                             (STATUS_NO_CONNECTION, None, None, None))
+
+    def test_non_positive_equity_or_an_ro_rounding_to_zero_is_unavailable_not_a_division_by_zero(self):
+        for equity in ("0", "-5", "9.99", "0.01"):       # 9.99 / 20 = 0.4995 -> 0 USDT
+            with self.subTest(equity=equity):
+                r = count_swords_with_equity(lambda: self.LIVE, lambda: Decimal(equity), 20)
+                self.assertEqual((r.status, r.sword_size_usdt, r.used_swords, r.free_swords),
+                                 (STATUS_UNAVAILABLE, None, None, None))
+                self.assertTrue(r.reason)
+        self.assertIsNone(ro_from_equity(Decimal("9.99"), 20))
+        self.assertEqual(ro_from_equity(Decimal("10"), 20), Decimal("1"))   # 0.5 rounds half up to 1
 
 
 if __name__ == "__main__":
