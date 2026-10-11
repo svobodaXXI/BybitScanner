@@ -41,6 +41,9 @@ from urllib.parse import urlencode, urlsplit
 import requests
 
 BASE_URL = "https://api.bybit.com"
+# Official Bybit V5 REST hosts (mainnet and its alternative, testnet). The signed request carries
+# the API key and signature in headers, so it may never be sent anywhere else.
+ALLOWED_API_HOSTS = frozenset({"api.bybit.com", "api.bytick.com", "api-testnet.bybit.com"})
 POSITION_LIST_PATH = "/v5/position/list"
 SUPPORTED_CATEGORY = "linear"
 DEFAULT_SETTLE_COINS = ("USDT", "USDC")
@@ -159,11 +162,7 @@ def fetch_open_positions(
         raise ValueError("recv_window_ms must be between 1 and 60000")
     if not timeout_s > 0:
         raise ValueError("timeout_s must be positive")
-    parts = urlsplit(base_url)
-    if parts.scheme != "https" or not parts.netloc or parts.path not in ("", "/") \
-            or parts.query or parts.fragment or parts.username or parts.password:
-        raise ValueError("base_url must be a plain https origin")
-    origin = f"https://{parts.netloc}"
+    origin = _api_origin(base_url)
 
     http = session if session is not None else requests.Session()
     positions: list[OpenPosition] = []
@@ -200,6 +199,25 @@ def fetch_open_positions(
     return tuple(positions)
 
 
+def _api_origin(base_url: object) -> str:
+    """Return ``https://<host>`` for an official Bybit API host, else raise before any request."""
+    if not isinstance(base_url, str):
+        raise ValueError("base_url must be an official Bybit API host")
+    parts = urlsplit(base_url)
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
+    host = parts.hostname or ""
+    if (parts.scheme != "https" or "@" in parts.netloc or parts.username is not None
+            or parts.password is not None or port not in (None, 443)
+            or parts.path not in ("", "/") or parts.query or parts.fragment
+            or host not in ALLOWED_API_HOSTS):
+        raise ValueError("base_url must be https://<official Bybit API host> without port, "
+                         "credentials, path, query or fragment")
+    return f"https://{host}"
+
+
 def _signed_get(http, credentials, origin, params, recv_window_ms, timeout_s, clock_ms):
     query = urlencode(params)
     timestamp = str(clock_ms())
@@ -214,13 +232,19 @@ def _signed_get(http, credentials, origin, params, recv_window_ms, timeout_s, cl
     }
     failure = None
     try:
-        response = http.get(f"{origin}{POSITION_LIST_PATH}?{query}", headers=headers, timeout=timeout_s)
+        # Never follow redirects: requests would forward the X-BAPI key/signature headers.
+        response = http.get(f"{origin}{POSITION_LIST_PATH}?{query}", headers=headers,
+                            timeout=timeout_s, allow_redirects=False)
     except requests.RequestException as error:
         failure = type(error).__name__
     if failure is not None:
         # Raised outside the except block on purpose: the transport exception (whose message
         # may embed proxy credentials) must not stay reachable through __cause__/__context__.
         raise BybitTransportError(f"Bybit request failed: {failure}")
+    final_url = getattr(response, "url", None)
+    if getattr(response, "history", None) or (
+            isinstance(final_url, str) and f"https://{urlsplit(final_url).hostname or ''}" != origin):
+        raise BybitResponseError("Bybit reply came through a redirect or from another host")
     status = getattr(response, "status_code", None)
     if status != 200:
         raise BybitApiError(f"Bybit HTTP status {status}", http_status=status)

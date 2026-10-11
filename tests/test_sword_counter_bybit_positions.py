@@ -48,10 +48,12 @@ def page(rows, cursor="", ret_code=0, ret_msg="OK"):
 
 
 class FakeResponse:
-    def __init__(self, payload=None, status=200, text=None):
+    def __init__(self, payload=None, status=200, text=None, url=None, history=()):
         self.status_code = status
         self._payload = payload
         self.text = text if text is not None else json.dumps(payload)
+        self.url = url          # None: the fake keeps whatever URL was requested
+        self.history = list(history)
 
     def json(self):
         if self._payload is None:
@@ -66,11 +68,14 @@ class FakeSession:
         self.responses = list(responses)
         self.calls = []
 
-    def get(self, url, headers=None, timeout=None):
-        self.calls.append({"url": url, "headers": dict(headers or {}), "timeout": timeout})
+    def get(self, url, headers=None, timeout=None, allow_redirects=True):
+        self.calls.append({"url": url, "headers": dict(headers or {}), "timeout": timeout,
+                           "allow_redirects": allow_redirects})
         item = self.responses.pop(0)
         if isinstance(item, BaseException):
             raise item
+        if item.url is None:
+            item.url = url
         return item
 
 
@@ -257,6 +262,71 @@ class ErrorsAreExplicitTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 fetch(session, **kwargs)
         self.assertEqual(session.calls, [])
+
+
+class HostAllowlistTests(unittest.TestCase):
+    """The signed request (API key + signature headers) may only ever reach official Bybit API hosts."""
+
+    def test_only_the_official_mainnet_and_testnet_hosts_are_allowed(self):
+        self.assertEqual(bp.ALLOWED_API_HOSTS,
+                         frozenset({"api.bybit.com", "api.bytick.com", "api-testnet.bybit.com"}))
+        for base, host in (("https://api.bybit.com", "api.bybit.com"),
+                           ("https://api.bytick.com/", "api.bytick.com"),
+                           ("https://api-testnet.bybit.com", "api-testnet.bybit.com"),
+                           ("https://API.Bybit.com", "api.bybit.com"),
+                           ("https://api.bybit.com:443", "api.bybit.com")):
+            with self.subTest(base=base):
+                session = FakeSession(FakeResponse(page([])))
+                fetch(session, base_url=base)
+                self.assertEqual(urlsplit(session.calls[0]["url"]).netloc, host)
+
+    def test_any_other_address_is_rejected_before_a_request_or_signature(self):
+        for base in (
+            "https://evil.example",                      # arbitrary host
+            "https://api.bybit.com.evil.example",        # look-alike suffix
+            "https://evilapi.bybit.com",                 # other subdomain
+            "https://bybit.com",                         # not an API host
+            "https://api.bybit.com.",                    # trailing dot
+            "https://127.0.0.1",                         # IP literal
+            "https://api.bybit.com:8443",                # non-standard port
+            "https://api.bybit.com:80",
+            "https://user:pw@api.bybit.com",             # credentials in the URL
+            "https://api.bybit.com@evil.example",        # userinfo trick
+            "https://evil.example/api.bybit.com",        # host in the path
+            "https://api.bybit.com/v5",                  # path
+            "https://api.bybit.com?x=1",                 # query
+            "https://api.bybit.com#f",                   # fragment
+            "http://api.bybit.com",                      # plain http
+            "https://api.bybit.com:abc",                 # broken port
+            "",
+        ):
+            with self.subTest(base=base):
+                session = FakeSession()
+                with mock.patch.object(bp.hmac, "new", side_effect=AssertionError("signed")) as signer:
+                    with self.assertRaises(ValueError):
+                        fetch(session, base_url=base)
+                self.assertEqual(session.calls, [])
+                signer.assert_not_called()
+
+    def test_redirects_are_never_followed(self):
+        session = FakeSession(FakeResponse(page([])))
+        fetch(session)
+        self.assertIs(session.calls[0]["allow_redirects"], False)
+        for status in (301, 302, 307, 308):
+            with self.subTest(status=status):
+                redirect = FakeSession(FakeResponse(None, status=status, text=""))
+                with self.assertRaises(BybitApiError) as raised:
+                    fetch(redirect)
+                self.assertEqual(raised.exception.http_status, status)
+                self.assertEqual(len(redirect.calls), 1)
+
+    def test_a_session_that_followed_a_redirect_anyway_is_rejected(self):
+        for label, response in (
+            ("final url on another host", FakeResponse(page([row()]), url="https://evil.example/v5/position/list")),
+            ("redirect history", FakeResponse(page([row()]), history=[FakeResponse(None, status=302, text="")])),
+        ):
+            with self.subTest(label), self.assertRaises(BybitResponseError):
+                fetch(FakeSession(response))
 
 
 class SecretsTests(unittest.TestCase):
