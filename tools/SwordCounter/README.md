@@ -68,10 +68,7 @@ SwordCounter использует **отдельный** API-ключ Bybit то
 
 Пока ключ не настроен, окно показывает «Нет соединения» и не делает запросов. Проверку с настоящим ключом и реальным аккаунтом выполняет владелец сам.
 
-Запасной вариант (не рекомендуется, переменные пользователя хранятся в реестре открытым текстом): переменные окружения только SwordCounter:
-
-- `SWORDCOUNTER_BYBIT_API_KEY`
-- `SWORDCOUNTER_BYBIT_API_SECRET`
+Единственный источник ключа — Credential Manager. Переменные окружения (в том числе `SWORDCOUNTER_BYBIT_API_*`) окном и мастером не читаются.
 
 ```python
 from tools.SwordCounter.bybit_positions import Credentials, fetch_open_positions

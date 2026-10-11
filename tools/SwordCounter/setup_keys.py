@@ -18,11 +18,11 @@ import getpass
 import re
 import sys
 from dataclasses import dataclass
-from typing import Callable, Mapping
+from typing import Callable
 
 from tools.SwordCounter.bybit_positions import (
-    API_KEY_ENV, API_SECRET_ENV, ApiKeyInfo, BybitCredentialsError, BybitPositionsError, Credentials,
-    fetch_api_key_info, fetch_open_positions,
+    ApiKeyInfo, BybitCredentialsError, BybitPositionsError, Credentials, fetch_api_key_info,
+    fetch_open_positions,
 )
 from tools.SwordCounter.credential_store import (
     DEFAULT_TARGET, CredentialStore, WindowsCredentialStore, resolve_credentials,
@@ -122,23 +122,17 @@ def _ask_yes_no(question: str) -> bool:
 
 def main(argv: list[str] | None = None, *, store: CredentialStore | None = None,
          out: Callable[[str], object] | None = None, verify: Callable[[Credentials], CheckResult] | None = None,
-         environ: Mapping[str, str] | None = None, ask_yes_no: Callable[[str], bool] = _ask_yes_no,
+         ask_yes_no: Callable[[str], bool] = _ask_yes_no,
          ask_secret: Callable[[str], str] = getpass.getpass) -> int:
     args = build_parser().parse_args(argv)
     out = out if out is not None else sys.stdout.write
     store = store if store is not None else WindowsCredentialStore()
     verify = verify if verify is not None else verify_key
-    if environ is None:
-        import os
-
-        environ = os.environ
 
     try:
         if args.status:
             configured = store.load() is not None
             out(f"Credential Manager ({DEFAULT_TARGET}): {'ключ настроен' if configured else 'ключ не настроен'}\n")
-            fallback = bool(environ.get(API_KEY_ENV, "").strip() and environ.get(API_SECRET_ENV, "").strip())
-            out(f"Переменные окружения SWORDCOUNTER_BYBIT_API_*: {'заданы (запасной вариант)' if fallback else 'не заданы'}\n")
             return 0
         if args.delete:
             if store.load() is None:
@@ -152,7 +146,7 @@ def main(argv: list[str] | None = None, *, store: CredentialStore | None = None,
             return 0
         if args.test:
             try:
-                credentials, source = resolve_credentials(store, environ)
+                credentials, source = resolve_credentials(store)
             except BybitCredentialsError as error:
                 out(f"{error}\n")
                 return 1

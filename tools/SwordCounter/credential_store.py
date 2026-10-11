@@ -4,8 +4,7 @@
   by Windows encrypted with the user's logon secret (DPAPI). No file, registry value, dotenv
   file, batch file or JSON ever holds the key or the secret.
 - The target name is SwordCounter's own. The BybitScanner robot's keys and variables are
-  never read: only this entry and, as a fallback, the two ``SWORDCOUNTER_BYBIT_API_*``
-  variables.
+  never read, and neither are environment variables: this entry is the only key source.
 - Errors carry Windows error codes only, never stored content.
 """
 
@@ -13,11 +12,9 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Mapping, Protocol
+from typing import Protocol
 
-from tools.SwordCounter.bybit_positions import (
-    API_KEY_ENV, API_SECRET_ENV, BybitCredentialsError, Credentials,
-)
+from tools.SwordCounter.bybit_positions import BybitCredentialsError, Credentials
 
 DEFAULT_TARGET = "SwordCounter/BybitReadOnly"
 CRED_TYPE_GENERIC = 1
@@ -139,18 +136,14 @@ class WindowsCredentialStore:
         raise CredentialStoreError(f"CredDelete failed (Windows error {code})")
 
 
-def resolve_credentials(store: CredentialStore | None = None,
-                        environ: Mapping[str, str] | None = None) -> tuple[Credentials, str]:
-    """SwordCounter's credentials and where they came from; never the robot's, never guessed."""
+def resolve_credentials(store: CredentialStore | None = None) -> tuple[Credentials, str]:
+    """SwordCounter's own key from the Windows Credential Manager, and only from there.
+
+    No environment variables, no files, never the robot's keys. A missing entry is an explicit
+    error, never a guess.
+    """
     store = store if store is not None else WindowsCredentialStore()
     stored = store.load()
-    if stored is not None:
-        return stored, "credential_manager"
-    if environ is None:
-        import os
-
-        environ = os.environ
-    key, secret = environ.get(API_KEY_ENV, ""), environ.get(API_SECRET_ENV, "")
-    if key.strip() and secret.strip():
-        return Credentials(key, secret), "environment"
-    raise BybitCredentialsError(NOT_CONFIGURED)
+    if stored is None:
+        raise BybitCredentialsError(NOT_CONFIGURED)
+    return stored, "credential_manager"

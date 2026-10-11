@@ -6,7 +6,7 @@ renders. Independent of MetaScalp and of the BybitScanner trading runtime; it ne
 trading commands.
 
 Run: ``python -m tools.SwordCounter`` (or ``tools\\SwordCounter\\start_sword_counter.bat``).
-API keys come from the environment variables documented in ``bybit_positions``.
+The Read-Only API key comes only from the Windows Credential Manager (see ``setup_keys``).
 """
 
 from __future__ import annotations

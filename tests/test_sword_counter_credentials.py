@@ -206,34 +206,41 @@ class StoreSourceTests(unittest.TestCase):
 
 
 class ResolveCredentialsTests(unittest.TestCase):
-    def test_credential_manager_wins_and_reports_only_its_source(self):
+    def test_the_key_comes_from_the_credential_manager_and_nowhere_else(self):
         stored = Credentials(KEY, SECRET)
-        env = {"SWORDCOUNTER_BYBIT_API_KEY": "ENVKEY", "SWORDCOUNTER_BYBIT_API_SECRET": "ENVSECRET"}
-        creds, source = cs.resolve_credentials(FakeStore(stored), env)
+        creds, source = cs.resolve_credentials(FakeStore(stored))
         self.assertEqual((creds, source), (stored, "credential_manager"))
 
-    def test_environment_is_only_a_fallback_for_the_swordcounter_variables(self):
-        env = {"SWORDCOUNTER_BYBIT_API_KEY": KEY, "SWORDCOUNTER_BYBIT_API_SECRET": SECRET}
-        creds, source = cs.resolve_credentials(FakeStore(), env)
-        self.assertEqual((creds.api_key, source), (KEY, "environment"))
-
-    def test_robot_or_generic_variables_are_never_read(self):
-        env = {"BYBIT_API_KEY": KEY, "BYBIT_API_SECRET": SECRET, "BYBITSCANNER_BYBIT_API_KEY": KEY,
-               "API_KEY": KEY, "API_SECRET": SECRET}
-        with self.assertRaises(BybitCredentialsError):
-            cs.resolve_credentials(FakeStore(), env)
+    def test_environment_variables_are_ignored_entirely(self):
+        # Even the SwordCounter variable names must not be a key source any more.
+        env = {"SWORDCOUNTER_BYBIT_API_KEY": KEY, "SWORDCOUNTER_BYBIT_API_SECRET": SECRET,
+               "BYBIT_API_KEY": KEY, "BYBIT_API_SECRET": SECRET, "BYBITSCANNER_BYBIT_API_KEY": KEY}
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaises(BybitCredentialsError):
+                cs.resolve_credentials(FakeStore())
+            stored = Credentials("STOREDKEY12345678", "STOREDSECRET1234567890")
+            self.assertEqual(cs.resolve_credentials(FakeStore(stored))[0], stored)
+        source = Path(cs.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("os.environ", source)
+        self.assertNotIn("SWORDCOUNTER_BYBIT_API", source)
 
     def test_nothing_configured_gives_a_clear_message_without_values(self):
         with self.assertRaises(BybitCredentialsError) as raised:
-            cs.resolve_credentials(FakeStore(), {})
+            cs.resolve_credentials(FakeStore())
         text = str(raised.exception)
         self.assertIn("setup_sword_counter_keys.bat", text)
         self.assertNotIn(SECRET, text)
 
-    def test_half_configured_environment_is_not_used(self):
-        for env in ({"SWORDCOUNTER_BYBIT_API_KEY": KEY}, {"SWORDCOUNTER_BYBIT_API_SECRET": SECRET}):
-            with self.assertRaises(BybitCredentialsError):
-                cs.resolve_credentials(FakeStore(), env)
+    def test_the_wizard_and_the_window_never_read_environment_variables(self):
+        for module in (sk, cs):
+            source = Path(module.__file__).read_text(encoding="utf-8")
+            with self.subTest(module=module.__name__):
+                self.assertNotIn("os.environ", source)
+                self.assertNotIn("SWORDCOUNTER_BYBIT_API", source)
+        from tools.SwordCounter import app as app_module
+        app_source = Path(app_module.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("from_env", app_source)
+        self.assertNotIn("os.environ", app_source)
 
 
 class VerifyKeyTests(unittest.TestCase):
@@ -361,7 +368,7 @@ class EntryPointTests(unittest.TestCase):
     def test_status_never_prints_values_and_delete_removes_only_the_swordcounter_entry(self):
         out = io.StringIO()
         store = FakeStore(Credentials(KEY, SECRET))
-        self.assertEqual(sk.main(["--status"], store=store, out=out.write, environ={}), 0)
+        self.assertEqual(sk.main(["--status"], store=store, out=out.write), 0)
         self.assertIn("Credential Manager", out.getvalue())
         self.assertNotIn(KEY, out.getvalue())
         self.assertNotIn(SECRET, out.getvalue())
@@ -373,11 +380,11 @@ class EntryPointTests(unittest.TestCase):
         store = FakeStore(Credentials(KEY, SECRET))
         seen = []
         verify = lambda c: (seen.append(c), sk.CheckResult(True, "ключ принят"))[1]
-        self.assertEqual(sk.main(["--test"], store=store, out=out.write, verify=verify, environ={}), 0)
+        self.assertEqual(sk.main(["--test"], store=store, out=out.write, verify=verify), 0)
         self.assertEqual(len(seen), 1)
         self.assertNotIn(SECRET, out.getvalue())
         empty = FakeStore()
-        self.assertEqual(sk.main(["--test"], store=empty, out=out.write, verify=verify, environ={}), 1)
+        self.assertEqual(sk.main(["--test"], store=empty, out=out.write, verify=verify), 1)
 
     def test_the_wizard_sources_leak_nothing_and_touch_no_trading_code(self):
         for module in (sk, cs):
